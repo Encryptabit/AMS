@@ -3,11 +3,11 @@
         xmlns:vm="using:AMS.ViewModels"
         xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
-        mc:Ignorable="d" d:DesignWidth="800" d:DesignHeight="450"
+        mc:Ignorable="d" d:DesignWidth="1200" d:DesignHeight="800"
         x:Class="AMS.Views.MainWindow"
         x:DataType="vm:MainWindowViewModel"
         Icon="/Assets/avalonia-logo.ico"
-        Title="AMS">
+        Title="Audiobook Mastering Suite">
 
     <Design.DataContext>
         <!-- This only sets the DataContext for the previewer in an IDE,
@@ -15,6 +15,192 @@
         <vm:MainWindowViewModel/>
     </Design.DataContext>
 
-    <TextBlock Text="{Binding Greeting}" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+    <Window.Styles>
+        <Style Selector="Button">
+            <Setter Property="Padding" Value="8,4" />
+            <Setter Property="Margin" Value="4" />
+            <Setter Property="Background" Value="#3E3E42" />
+            <Setter Property="Foreground" Value="White" />
+        </Style>
+        <Style Selector="Button:pointerover">
+            <Setter Property="Background" Value="#505050" />
+        </Style>
+        <Style Selector="ComboBox">
+            <Setter Property="Background" Value="#3E3E42" />
+            <Setter Property="Foreground" Value="White" />
+            <Setter Property="Margin" Value="4" />
+        </Style>
+        <Style Selector="Border.sentence">
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="CornerRadius" Value="3" />
+            <Setter Property="Padding" Value="4" />
+        </Style>
+        <Style Selector="Border.sentence:pointerover">
+            <Setter Property="Background" Value="#3E3E7A" />
+            <Setter Property="Cursor" Value="Hand" />
+        </Style>
+        <Style Selector="Border.activeSentence">
+            <Setter Property="Background" Value="#2D2D50" />
+        </Style>
+        <Style Selector="Border.word">
+            <Setter Property="Padding" Value="2,1" />
+            <Setter Property="CornerRadius" Value="2" />
+            <Setter Property="Background" Value="#3E3E42" />
+        </Style>
+        <Style Selector="Border.activeWord">
+            <Setter Property="Background" Value="#4080FF" />
+        </Style>
+    </Window.Styles>
 
+    <DockPanel LastChildFill="True">
+        <!-- Top toolbar with chapter selection and action buttons -->
+        <Border DockPanel.Dock="Top" Background="#2D2D30" Padding="8" BorderThickness="0,0,0,1" BorderBrush="#444">
+            <Grid ColumnDefinitions="Auto,*,Auto,Auto,Auto">
+                <!-- Chapter Selection -->
+                <ComboBox Grid.Column="0" Width="200" PlaceholderText="Select Chapter" ItemsSource="{Binding Chapters}" SelectedItem="{Binding SelectedChapter}" />
+
+                <!-- Spacer -->
+                <TextBlock Grid.Column="1" />
+
+                <!-- Action Buttons -->
+                <Button Grid.Column="2" Content="Run Whisper" Margin="5,0" Command="{Binding RunWhisperCommand}" />
+                <Button Grid.Column="3" Content="Run Aeneas" Margin="5,0" Command="{Binding RunAeneasCommand}" />
+                <Button Grid.Column="4" Content="Reload Chapter" Margin="5,0" Command="{Binding ReloadChapterCommand}" />
+            </Grid>
+        </Border>
+
+        <!-- Bottom status bar with stats, playback controls and settings -->
+        <Border DockPanel.Dock="Bottom" Background="#2D2D30" Padding="8" BorderThickness="0,1,0,0" BorderBrush="#444">
+            <Grid ColumnDefinitions="*,*,*">
+                <!-- Transcript Stats -->
+                <StackPanel Grid.Column="0" Orientation="Horizontal" HorizontalAlignment="Left" VerticalAlignment="Center">
+                    <TextBlock Text="⏱" FontSize="16" VerticalAlignment="Center" Foreground="LightGray" />
+                    <TextBlock Text="Duration: " Margin="5,0,0,0" Foreground="LightGray" VerticalAlignment="Center" />
+                    <TextBlock Text="{Binding Duration}" Margin="0,0,5,0" Foreground="LightGray" VerticalAlignment="Center" />
+                    <TextBlock Text="Words: " Margin="10,0,0,0" Foreground="LightGray" VerticalAlignment="Center" />
+                    <TextBlock Text="{Binding WordCount}" Margin="0,0,5,0" Foreground="LightGray" VerticalAlignment="Center" />
+                </StackPanel>
+
+                <!-- Playback Controls -->
+                <StackPanel Grid.Column="1" Orientation="Horizontal" HorizontalAlignment="Center" VerticalAlignment="Center">
+                    <Button Content="⏮" ToolTip.Tip="Previous" />
+                    <Button Content="◀" ToolTip.Tip="Backward" />
+                    <Button Content="▶" ToolTip.Tip="Play" Command="{Binding PlayPauseCommand}" />
+                    <Button Content="⏹" ToolTip.Tip="Stop" Command="{Binding StopCommand}" />
+                    <Button Content="⏭" ToolTip.Tip="Next" />
+                    <TextBlock Text="{Binding CurrentTime}" VerticalAlignment="Center" Margin="5,0" Foreground="White" />
+                </StackPanel>
+
+                <!-- Settings -->
+                <StackPanel Grid.Column="2" Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
+                    <Button Content="⚙️ Settings" Command="{Binding OpenSettingsCommand}" />
+                </StackPanel>
+            </Grid>
+        </Border>
+
+        <!-- Waveform display area -->
+        <Border DockPanel.Dock="Bottom" Background="#252526" Height="120" Padding="5">
+            <Canvas ClipToBounds="True">
+                <!-- Sample waveform visualization -->
+                <Polyline Points="0,60 50,50 100,70 150,40 200,75 250,55 300,45 350,65 400,35 450,60 500,50 550,70 600,40 650,75 700,55 750,45 800,65 850,35 900,60 950,50 1000,70 1050,40 1100,75 1150,60" 
+                          Stroke="#4080FF" StrokeThickness="1.5" />
+
+                <!-- Playhead -->
+                <Line StartPoint="200,0" EndPoint="200,120" Stroke="Red" StrokeThickness="1" />
+            </Canvas>
+        </Border>
+
+        <!-- Editing Tools Bar -->
+        <Border DockPanel.Dock="Bottom" Background="#2D2D30" Padding="8">
+            <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+                <Button Content="🎛 Split" Command="{Binding SplitCommand}" />
+                <Button Content="Trim" Command="{Binding TrimCommand}" />
+                <Button Content="Crossfade" Command="{Binding CrossfadeCommand}" />
+                <Button Content="Normalize" Command="{Binding NormalizeCommand}" />
+                <Button Content="Insert Room Tone" Command="{Binding AddRoomToneCommand}" />
+            </StackPanel>
+        </Border>
+
+        <!-- Main Content Area - Script and Transcript panels -->
+        <Grid ColumnDefinitions="3*,7*">
+            <!-- Left Panel: Expected Script -->
+            <Border Grid.Column="0" Background="#1E1E1E" Margin="4" BorderThickness="1" BorderBrush="#333333">
+                <DockPanel>
+                    <TextBlock DockPanel.Dock="Top" Text="Expected Script" FontWeight="Bold" Margin="5" Foreground="White" />
+                    <ScrollViewer>
+                        <StackPanel Margin="5">
+                            <TextBlock TextWrapping="Wrap" Margin="5" Foreground="#CCCCCC">
+                                Lorem ipsum dolor sit amet, consectetur adipiscing elit. Nullam in dui mauris. Vivamus hendrerit arcu sed erat molestie vehicula. Sed auctor neque eu tellus rhoncus ut eleifend nibh porttitor. Ut in nulla enim.
+                            </TextBlock>
+                            <TextBlock TextWrapping="Wrap" Margin="5" Foreground="White" FontWeight="Bold">
+                                Sed auctor neque eu tellus rhoncus ut eleifend nibh porttitor.
+                            </TextBlock>
+                            <TextBlock TextWrapping="Wrap" Margin="5" Foreground="#CCCCCC">
+                                Praesent dapibus, neque id cursus faucibus, tortor neque egestas augue, eu vulputate magna eros eu erat. Aliquam erat volutpat. Nam dui mi, tincidunt quis, accumsan porttitor, facilisis luctus, metus.
+                            </TextBlock>
+                        </StackPanel>
+                    </ScrollViewer>
+                </DockPanel>
+            </Border>
+
+            <!-- Right Panel: Transcript -->
+            <Border Grid.Column="1" Background="#1E1E1E" Margin="4" BorderThickness="1" BorderBrush="#333333">
+                <DockPanel>
+                    <!-- Header with status and export button -->
+                    <Grid DockPanel.Dock="Top" ColumnDefinitions="*,Auto">
+                        <StackPanel Grid.Column="0" Orientation="Horizontal" Margin="5">
+                            <TextBlock Text="📄 Status: " Foreground="White" FontWeight="Bold" VerticalAlignment="Center" />
+                            <TextBlock Text="Saved" Foreground="#90EE90" VerticalAlignment="Center" />
+                        </StackPanel>
+                        <Button Grid.Column="1" Content="⬆️ Export" Margin="5" HorizontalAlignment="Right" />
+                    </Grid>
+
+                    <!-- Title -->
+                    <TextBlock DockPanel.Dock="Top" Text="📝 Transcript Panel" FontWeight="Bold" Margin="5" Foreground="White" />
+
+                    <!-- Time-based transcript visualization -->
+                    <ScrollViewer HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Auto">
+                        <ItemsControl ItemsSource="{Binding TranscriptSentences}" Margin="5">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <!-- Sentence with time-based margin (1ms = 1px) -->
+                                    <Border Classes="sentence" Margin="0,{Binding MarginBeforeSentence},0,0"
+                                            Classes.activeSentence="{Binding IsActive}">
+                                        <StackPanel>
+                                            <!-- Sentence text -->
+                                            <TextBlock Text="{Binding Text}" TextWrapping="Wrap" Foreground="White" FontSize="14" />
+
+                                            <!-- Timestamp display -->
+                                            <StackPanel Orientation="Horizontal" Margin="0,4,0,0">
+                                                <TextBlock Text="{Binding StartTime}" FontSize="10" Foreground="#AAAAAA" />
+                                                <TextBlock Text=" - " FontSize="10" Foreground="#AAAAAA" />
+                                                <TextBlock Text="{Binding EndTime}" FontSize="10" Foreground="#AAAAAA" />
+                                            </StackPanel>
+
+                                            <!-- Words with time-based spacing -->
+                                            <ItemsControl ItemsSource="{Binding Words}">
+                                                <ItemsControl.ItemsPanel>
+                                                    <ItemsPanelTemplate>
+                                                        <WrapPanel />
+                                                    </ItemsPanelTemplate>
+                                                </ItemsControl.ItemsPanel>
+                                                <ItemsControl.ItemTemplate>
+                                                    <DataTemplate>
+                                                        <Border Classes="word" Margin="{Binding TimeMargin}"
+                                                                Classes.activeWord="{Binding IsActive}">
+                                                            <TextBlock Text="{Binding Text}" FontSize="12" Foreground="White" />
+                                                        </Border>
+                                                    </DataTemplate>
+                                                </ItemsControl.ItemTemplate>
+                                            </ItemsControl>
+                                        </StackPanel>
+                                    </Border>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </ScrollViewer>
+                </DockPanel>
+            </Border>
+        </Grid>
+    </DockPanel>
 </Window>
