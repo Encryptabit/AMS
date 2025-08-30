@@ -1,0 +1,32 @@
+# OS
+.DS_Store
+Thumbs.db
+
+# Build output
+bin/
+obj/
+out/
+artifacts/
+*.dll
+*.so
+*.dylib
+*.exe
+*.pdb
+
+# User-specific
+*.user
+*.suo
+*.swp
+
+# IDE
+.vscode/
+.idea/
+*.sln.docstates
+
+# Dotnet
+**/bin/
+**/obj/
+
+# Zig cache/output
+zig-cache/
+zig-out/
