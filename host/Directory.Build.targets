@@ -1,0 +1,37 @@
+<Project>
+  <PropertyGroup>
+    <!-- Resolve paths relative to this targets file -->
+    <DspDir>$(MSBuildThisFileDirectory)..\dsp</DspDir>
+    <AmsDspDllPathLib>$(DspDir)\zig-out\lib\ams_dsp.dll</AmsDspDllPathLib>
+    <AmsDspDllPathBin>$(DspDir)\zig-out\bin\ams_dsp.dll</AmsDspDllPathBin>
+
+    <!-- Map MSBuild config -> Zig optimize mode -->
+    <ZigOptimize Condition="'$(Configuration)' == 'Release'">ReleaseFast</ZigOptimize>
+    <ZigOptimize Condition="'$(Configuration)' != 'Release'">Debug</ZigOptimize>
+    
+    <!-- Optional: make the zig exe configurable -->
+    <ZigExe>zig</ZigExe>
+  </PropertyGroup>
+
+  <!-- Build Zig before managed Build -->
+  <Target Name="BuildZig" BeforeTargets="Build">
+    <Exec Command="&quot;$(ZigExe)&quot; build -Doptimize=$(ZigOptimize)"
+          WorkingDirectory="$(DspDir)" />
+  </Target>
+
+  <!-- Copy DLL to each project's output -->
+  <Target Name="CopyAmsDspDll" AfterTargets="Build">
+    <ItemGroup>
+      <_AmsDll Include="$(AmsDspDllPathLib)" Condition="Exists('$(AmsDspDllPathLib)')" />
+      <_AmsDll Include="$(AmsDspDllPathBin)" Condition="Exists('$(AmsDspDllPathBin)')" />
+    </ItemGroup>
+
+    <Copy SourceFiles="@(_AmsDll)"
+          DestinationFolder="$(OutDir)"
+          SkipUnchangedFiles="true"
+          Condition="'@(_AmsDll)' != ''" />
+
+    <Warning Text="ams_dsp.dll not found in $(AmsDspDllPathLib) or $(AmsDspDllPathBin). Check Zig build output."
+             Condition="'@(_AmsDll)' == ''" />
+  </Target>
+</Project>
