@@ -12,10 +12,15 @@ internal static class Program
         const float sampleRate = 48000f;
         const uint channels = 2;
         const uint maxBlock = 512;
-        const double seconds = 2.0;
+       // const double seconds = 2.0;
         const double hz = 440.0;      // A4 test tone
         const float inGainDb = -12.0f; // input sine amplitude
         const uint paramIdGain = 0;   // match your Zig param id
+
+        Console.Write("Enter gain (0–1): ");
+        float g = float.Parse(Console.ReadLine() ?? "0.5", CultureInfo.InvariantCulture);
+        Console.Write("How long?(seconds) ");
+        double seconds = double.Parse(Console.ReadLine() ?? "2.0", CultureInfo.InvariantCulture);
 
         int totalFrames = checked((int)Math.Round(seconds * sampleRate, MidpointRounding.AwayFromZero));
 
@@ -36,8 +41,11 @@ internal static class Program
 
         using var dsp = AmsDsp.Create(sampleRate, maxBlock, channels);
 
+
+        dsp.SetParameter(paramIdGain, g, 0);  
+
         // Example: set parameter (e.g., smoothed gain at 0.50)
-        dsp.SetParameter(paramIdGain, value01: 0.5f, sampleOffset: 0);
+        //dsp.SetParameter(paramIdGain, value01: 0.5f, sampleOffset: 0);
 
         var sw = Stopwatch.StartNew();
         dsp.ProcessLong(input, output, totalFrames);
@@ -60,9 +68,18 @@ internal static class Program
         Console.WriteLine($"Latency (report) : {dsp.LatencySamples} samples");
         Console.WriteLine($"Output written   : {outPath}");
 
+        Console.WriteLine($"Input RMS: {Rms(input[0]):F6}");
+        Console.WriteLine($"Output RMS: {Rms(output[0]):F6}");
+        Console.WriteLine($"Delta (dB): {20 * Math.Log10(Rms(output[0]) / Rms(input[0])):F2} dB");  
+
         return 0;
     }
-
+    static double Rms(float[] buf)
+    {
+        double sum = 0;
+        foreach (var v in buf) sum += v * v;
+        return Math.Sqrt(sum / buf.Length);
+    }
     private static float[][] NewPlanar(uint channels, int frames)
     {
         var arr = new float[channels][];
