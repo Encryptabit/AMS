@@ -1,10 +1,266 @@
-﻿namespace Ams.Tests;
+using Ams.Core;
+using Ams.Core.Validation;
 
-public class UnitTest1
+namespace Ams.Tests;
+
+public class TextNormalizerTests
+{
+    [Theory]
+    [InlineData("Hello, World!", "hello world")]
+    [InlineData("Don't you think it's great?", "do not you think it is great")]
+    [InlineData("I can't believe it's 123 degrees!", "i can not believe it is one hundred twenty three degrees")]
+    [InlineData("  Multiple    spaces   ", "multiple spaces")]
+    [InlineData("", "")]
+    public void Normalize_ShouldNormalizeTextCorrectly(string input, string expected)
+    {
+        var result = TextNormalizer.Normalize(input);
+        Assert.Equal(expected, result);
+    }
+
+    [Theory]
+    [InlineData("hello world", "hello world", 1.0)]
+    [InlineData("hello", "helo", 0.8)]
+    [InlineData("completely", "different", 0.0)]
+    [InlineData("", "", 1.0)]
+    [InlineData("", "something", 0.0)]
+    public void CalculateSimilarity_ShouldReturnCorrectSimilarity(string text1, string text2, double expectedMin)
+    {
+        var similarity = TextNormalizer.CalculateSimilarity(text1, text2);
+        Assert.True(similarity >= expectedMin - 0.1, $"Expected similarity >= {expectedMin}, got {similarity}");
+    }
+
+    [Theory]
+    [InlineData("hello world test", new[] { "hello", "world", "test" })]
+    [InlineData("", new string[0])]
+    [InlineData("single", new[] { "single" })]
+    public void TokenizeWords_ShouldTokenizeCorrectly(string input, string[] expected)
+    {
+        var result = TextNormalizer.TokenizeWords(input);
+        Assert.Equal(expected, result);
+    }
+}
+
+public class ScriptValidatorTests
 {
     [Fact]
-    public void Test1()
+    public void Validate_PerfectMatch_ShouldReturnZeroWER()
     {
+        var validator = new ScriptValidator();
+        var scriptText = "hello world test";
+        var asrResponse = new AsrResponse(
+            ModelVersion: "test@v1",
+            Segments: new[]
+            {
+                new AsrSegment(
+                    Start: 0.0,
+                    End: 2.0,
+                    Text: "hello world test",
+                    Confidence: 0.95,
+                    Tokens: new[]
+                    {
+                        new AsrToken(StartTime: 0.0, Duration: 0.5, Word: "hello", Confidence: 0.95),
+                        new AsrToken(StartTime: 0.5, Duration: 0.5, Word: "world", Confidence: 0.95),
+                        new AsrToken(StartTime: 1.0, Duration: 0.5, Word: "test", Confidence: 0.95)
+                    }
+                )
+            }
+        );
 
+        var report = validator.Validate("audio.wav", "script.txt", "asr.json", scriptText, asrResponse);
+
+        Assert.Equal(0.0, report.WordErrorRate);
+        Assert.Equal(3, report.TotalWords);
+        Assert.Equal(3, report.CorrectWords);
+        Assert.Equal(0, report.Substitutions);
+        Assert.Equal(0, report.Insertions);
+        Assert.Equal(0, report.Deletions);
+    }
+
+    [Fact]
+    public void Validate_WithSubstitution_ShouldCalculateCorrectWER()
+    {
+        var validator = new ScriptValidator();
+        var scriptText = "hello world test";
+        var asrResponse = new AsrResponse(
+            ModelVersion: "test@v1",
+            Segments: new[]
+            {
+                new AsrSegment(
+                    Start: 0.0,
+                    End: 2.0,
+                    Text: "hello word test", // "world" -> "word"
+                    Confidence: 0.90,
+                    Tokens: new[]
+                    {
+                        new AsrToken(StartTime: 0.0, Duration: 0.5, Word: "hello", Confidence: 0.95),
+                        new AsrToken(StartTime: 0.5, Duration: 0.5, Word: "word", Confidence: 0.85),
+                        new AsrToken(StartTime: 1.0, Duration: 0.5, Word: "test", Confidence: 0.95)
+                    }
+                )
+            }
+        );
+
+        var report = validator.Validate("audio.wav", "script.txt", "asr.json", scriptText, asrResponse);
+
+        Assert.Equal(1.0/3.0, report.WordErrorRate, 2); // 1 error out of 3 words
+        Assert.Equal(3, report.TotalWords);
+        Assert.Equal(2, report.CorrectWords);
+        Assert.Equal(1, report.Substitutions);
+        Assert.Equal(0, report.Insertions);
+        Assert.Equal(0, report.Deletions);
+        
+        var substitutionFindings = report.Findings.Where(f => f.Type == FindingType.Substitution).ToList();
+        Assert.Single(substitutionFindings);
+        Assert.Equal("world", substitutionFindings[0].Expected);
+        Assert.Equal("word", substitutionFindings[0].Actual);
+    }
+
+    [Fact]
+    public void Validate_WithInsertion_ShouldCalculateCorrectWER()
+    {
+        var validator = new ScriptValidator();
+        var scriptText = "hello world";
+        var asrResponse = new AsrResponse(
+            ModelVersion: "test@v1",
+            Segments: new[]
+            {
+                new AsrSegment(
+                    Start: 0.0,
+                    End: 2.0,
+                    Text: "hello beautiful world", // extra "beautiful"
+                    Confidence: 0.90,
+                    Tokens: new[]
+                    {
+                        new AsrToken(StartTime: 0.0, Duration: 0.5, Word: "hello", Confidence: 0.95),
+                        new AsrToken(StartTime: 0.5, Duration: 0.5, Word: "beautiful", Confidence: 0.85),
+                        new AsrToken(StartTime: 1.0, Duration: 0.5, Word: "world", Confidence: 0.95)
+                    }
+                )
+            }
+        );
+
+        var report = validator.Validate("audio.wav", "script.txt", "asr.json", scriptText, asrResponse);
+
+        Assert.Equal(0.5, report.WordErrorRate); // 1 insertion out of 2 expected words
+        Assert.Equal(2, report.TotalWords);
+        Assert.Equal(2, report.CorrectWords);
+        Assert.Equal(0, report.Substitutions);
+        Assert.Equal(1, report.Insertions);
+        Assert.Equal(0, report.Deletions);
+        
+        var insertionFindings = report.Findings.Where(f => f.Type == FindingType.Extra).ToList();
+        Assert.Single(insertionFindings);
+        Assert.Equal("beautiful", insertionFindings[0].Actual);
+    }
+
+    [Fact]
+    public void Validate_WithDeletion_ShouldCalculateCorrectWER()
+    {
+        var validator = new ScriptValidator();
+        var scriptText = "hello beautiful world";
+        var asrResponse = new AsrResponse(
+            ModelVersion: "test@v1",
+            Segments: new[]
+            {
+                new AsrSegment(
+                    Start: 0.0,
+                    End: 2.0,
+                    Text: "hello world", // missing "beautiful"
+                    Confidence: 0.90,
+                    Tokens: new[]
+                    {
+                        new AsrToken(StartTime: 0.0, Duration: 0.5, Word: "hello", Confidence: 0.95),
+                        new AsrToken(StartTime: 1.0, Duration: 0.5, Word: "world", Confidence: 0.95)
+                    }
+                )
+            }
+        );
+
+        var report = validator.Validate("audio.wav", "script.txt", "asr.json", scriptText, asrResponse);
+
+        Assert.Equal(1.0/3.0, report.WordErrorRate, 2); // 1 deletion out of 3 expected words
+        Assert.Equal(3, report.TotalWords);
+        Assert.Equal(2, report.CorrectWords);
+        Assert.Equal(0, report.Substitutions);
+        Assert.Equal(0, report.Insertions);
+        Assert.Equal(1, report.Deletions);
+        
+        var deletionFindings = report.Findings.Where(f => f.Type == FindingType.Missing).ToList();
+        Assert.Single(deletionFindings);
+        Assert.Equal("beautiful", deletionFindings[0].Expected);
+    }
+
+    [Fact]
+    public void Validate_WithContractions_ShouldNormalizeCorrectly()
+    {
+        var validator = new ScriptValidator(new ValidationOptions { ExpandContractions = true });
+        var scriptText = "I can't believe it's working";
+        var asrResponse = new AsrResponse(
+            ModelVersion: "test@v1",
+            Segments: new[]
+            {
+                new AsrSegment(
+                    Start: 0.0,
+                    End: 3.0,
+                    Text: "I cannot believe it is working",
+                    Confidence: 0.90,
+                    Tokens: new[]
+                    {
+                        new AsrToken(StartTime: 0.0, Duration: 0.3, Word: "I", Confidence: 0.95),
+                        new AsrToken(StartTime: 0.3, Duration: 0.5, Word: "cannot", Confidence: 0.90),
+                        new AsrToken(StartTime: 0.8, Duration: 0.5, Word: "believe", Confidence: 0.95),
+                        new AsrToken(StartTime: 1.3, Duration: 0.3, Word: "it", Confidence: 0.95),
+                        new AsrToken(StartTime: 1.6, Duration: 0.3, Word: "is", Confidence: 0.90),
+                        new AsrToken(StartTime: 1.9, Duration: 0.5, Word: "working", Confidence: 0.95)
+                    }
+                )
+            }
+        );
+
+        var report = validator.Validate("audio.wav", "script.txt", "asr.json", scriptText, asrResponse);
+
+        Assert.Equal(0.0, report.WordErrorRate);
+        Assert.Equal(6, report.CorrectWords); // Should match after normalization
+    }
+
+    [Fact]
+    public void Validate_ComplexScenario_ShouldCalculateCorrectMetrics()
+    {
+        var validator = new ScriptValidator();
+        var scriptText = "The quick brown fox jumps over the lazy dog";
+        var asrResponse = new AsrResponse(
+            ModelVersion: "test@v1",
+            Segments: new[]
+            {
+                new AsrSegment(
+                    Start: 0.0,
+                    End: 4.0,
+                    Text: "The fast brown fox leaps over lazy dog", // quick->fast, jumps->leaps, missing "the"
+                    Confidence: 0.85,
+                    Tokens: new[]
+                    {
+                        new AsrToken(StartTime: 0.0, Duration: 0.3, Word: "The", Confidence: 0.95),
+                        new AsrToken(StartTime: 0.3, Duration: 0.4, Word: "fast", Confidence: 0.80),
+                        new AsrToken(StartTime: 0.7, Duration: 0.4, Word: "brown", Confidence: 0.90),
+                        new AsrToken(StartTime: 1.1, Duration: 0.3, Word: "fox", Confidence: 0.95),
+                        new AsrToken(StartTime: 1.4, Duration: 0.4, Word: "leaps", Confidence: 0.75),
+                        new AsrToken(StartTime: 1.8, Duration: 0.3, Word: "over", Confidence: 0.90),
+                        new AsrToken(StartTime: 2.1, Duration: 0.4, Word: "lazy", Confidence: 0.85),
+                        new AsrToken(StartTime: 2.5, Duration: 0.3, Word: "dog", Confidence: 0.90)
+                    }
+                )
+            }
+        );
+
+        var report = validator.Validate("audio.wav", "script.txt", "asr.json", scriptText, asrResponse);
+
+        Assert.Equal(9, report.TotalWords);
+        Assert.Equal(6, report.CorrectWords); // the, brown, fox, over, lazy, dog
+        Assert.Equal(2, report.Substitutions); // quick->fast, jumps->leaps
+        Assert.Equal(0, report.Insertions);
+        Assert.Equal(1, report.Deletions); // missing "the"
+        
+        var expectedWer = (2 + 0 + 1) / 9.0; // (S + I + D) / N
+        Assert.Equal(expectedWer, report.WordErrorRate, 3);
     }
 }

@@ -1,12 +1,37 @@
-﻿using System.Diagnostics;
+﻿using System.CommandLine;
+using System.Diagnostics;
 using System.Globalization;
 using Ams.Dsp.Native;
+using Ams.Cli.Commands;
 
 namespace Ams.Cli;
 
 internal static class Program
 {
-    private static int Main(string[] args)
+    private static async Task<int> Main(string[] args)
+    {
+        // If no arguments provided, run legacy DSP demo
+        if (args.Length == 0)
+        {
+            return RunLegacyDspDemo();
+        }
+        
+        // Create root command
+        var rootCommand = new RootCommand("AMS - Audio Management System CLI");
+        
+        // Add commands
+        rootCommand.AddCommand(AsrCommand.Create());
+        rootCommand.AddCommand(ValidateCommand.Create());
+        
+        // Add legacy DSP command
+        var dspCommand = new Command("dsp", "Run DSP processing demo");
+        dspCommand.SetHandler(() => RunLegacyDspDemo());
+        rootCommand.AddCommand(dspCommand);
+        
+        return await rootCommand.InvokeAsync(args);
+    }
+
+    private static int RunLegacyDspDemo()
     {
         // Params (easy to tweak)
         const float sampleRate = 48000f;
@@ -42,7 +67,7 @@ internal static class Program
         using var dsp = AmsDsp.Create(sampleRate, maxBlock, channels);
 
 
-        dsp.SetParameter(paramIdGain, g, 0);  
+        dsp.SetParameter(paramIdGain, g);  
 
         // Example: set parameter (e.g., smoothed gain at 0.50)
         //dsp.SetParameter(paramIdGain, value01: 0.5f, sampleOffset: 0);
@@ -105,15 +130,15 @@ internal static class Program
         using var fs = new FileStream(path, FileMode.Create, FileAccess.Write, FileShare.None);
         using var bw = new BinaryWriter(fs);
 
-        void WriteASCII(string s) => bw.Write(System.Text.Encoding.ASCII.GetBytes(s));
+        void WriteAscii(string s) => bw.Write(System.Text.Encoding.ASCII.GetBytes(s));
 
         // RIFF header
-        WriteASCII("RIFF");
+        WriteAscii("RIFF");
         bw.Write((uint)riffSize);
-        WriteASCII("WAVE");
+        WriteAscii("WAVE");
 
         // fmt chunk (PCM float)
-        WriteASCII("fmt ");
+        WriteAscii("fmt ");
         bw.Write((uint)fmtChunkSize);
         bw.Write((ushort)3); // WAVE_FORMAT_IEEE_FLOAT
         bw.Write((ushort)channels);
@@ -123,7 +148,7 @@ internal static class Program
         bw.Write((ushort)bitsPerSample);
 
         // data chunk
-        WriteASCII("data");
+        WriteAscii("data");
         bw.Write((uint)dataBytes);
 
         // interleave
