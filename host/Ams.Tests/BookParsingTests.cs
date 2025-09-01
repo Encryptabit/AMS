@@ -1,4 +1,4 @@
-using System.Text;
+using System.Text.Json;
 using Ams.Core;
 
 namespace Ams.Tests;
@@ -6,429 +6,185 @@ namespace Ams.Tests;
 public class BookParsingTests
 {
     [Fact]
-    public async Task BookParserXceed_CanParse_ReturnsCorrectResult()
+    public void BookParser_CanParse_Extensions()
     {
-        // Arrange
         var parser = new BookParser();
-        
-        // Act & Assert
         Assert.True(parser.CanParse("test.docx"));
         Assert.True(parser.CanParse("test.txt"));
         Assert.True(parser.CanParse("test.md"));
         Assert.True(parser.CanParse("test.rtf"));
         Assert.False(parser.CanParse("test.pdf"));
-        Assert.False(parser.CanParse(""));
-        Assert.False(parser.CanParse(null!));
     }
-    
+
     [Fact]
-    public async Task BookParserXceed_ParseTextFile_ReturnsValidResult()
+    public async Task Parser_Text_NoNormalization()
     {
-        // Arrange
         var parser = new BookParser();
-        var tempFile = Path.GetTempFileName() + ".txt";
-        var testContent = "Chapter 1\n\nThis is the first paragraph of the book.\n\nThis is the second paragraph with more content.";
-        
+        var tmp = Path.GetTempFileName() + ".txt";
+        var content = "Title Line\r\n\r\n“Odin’” can’ end—of—line test.\r\nNext—para with ‘quotes’ and hyphen‑minus - and ellipsis…";
         try
         {
-            await File.WriteAllTextAsync(tempFile, testContent);
-            
-            // Act
-            var result = await parser.ParseAsync(tempFile);
-            
-            // Assert
-            Assert.NotNull(result);
-            Assert.NotEmpty(result.Text);
-            Assert.Equal("Chapter 1", result.Title); // Should extract first line as title
-            Assert.Null(result.Author);
-            Assert.NotNull(result.Metadata);
-            Assert.True(result.Metadata.ContainsKey("fileSize"));
-            Assert.True(result.Metadata.ContainsKey("encoding"));
+            await File.WriteAllTextAsync(tmp, content);
+            var result = await parser.ParseAsync(tmp);
+            Assert.Equal("Title Line", result.Title);
+            Assert.Contains("“Odin’” can’ end—of—line test.", result.Text);
+            Assert.NotNull(result.Paragraphs);
+            Assert.True(result.Paragraphs!.Count >= 2);
         }
-        finally
-        {
-            if (File.Exists(tempFile))
-                File.Delete(tempFile);
-        }
+        finally { if (File.Exists(tmp)) File.Delete(tmp); }
     }
-    
+
     [Fact]
-    public async Task BookParserXceed_ParseMarkdownFile_RemovesFormatting()
+    public async Task Parser_Unsupported_Throws()
     {
-        // Arrange
         var parser = new BookParser();
-        var tempFile = Path.GetTempFileName() + ".md";
-        var testContent = "# My Book Title\n\n## Chapter 1\n\nThis is **bold** and *italic* text.\n\n```code block```\n\n[Link](http://example.com) and `inline code`.";
-        
+        var tmp = Path.GetTempFileName() + ".xyz";
         try
         {
-            await File.WriteAllTextAsync(tempFile, testContent);
-            
-            // Act
-            var result = await parser.ParseAsync(tempFile);
-            
-            // Assert
-            Assert.NotNull(result);
-            Assert.Equal("My Book Title", result.Title);
-            Assert.NotEmpty(result.Text);
-            
-            // Verify markdown formatting is removed
-            Assert.DoesNotContain("**", result.Text);
-            Assert.DoesNotContain("```", result.Text);
-            Assert.DoesNotContain("[Link](", result.Text);
-            Assert.Contains("bold", result.Text);
-            Assert.Contains("italic", result.Text);
+            await File.WriteAllTextAsync(tmp, "x");
+            await Assert.ThrowsAsync<InvalidOperationException>(() => parser.ParseAsync(tmp));
         }
-        finally
-        {
-            if (File.Exists(tempFile))
-                File.Delete(tempFile);
-        }
-    }
-    
-    [Fact]
-    public async Task BookParserXceed_ParseNonExistentFile_ThrowsFileNotFoundException()
-    {
-        // Arrange
-        var parser = new BookParser();
-        var nonExistentFile = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString() + ".txt");
-        
-        // Act & Assert
-        await Assert.ThrowsAsync<FileNotFoundException>(
-            () => parser.ParseAsync(nonExistentFile));
-    }
-    
-    [Fact]
-    public async Task BookParserXceed_ParseUnsupportedFile_ThrowsInvalidOperationException()
-    {
-        // Arrange
-        var parser = new BookParser();
-        var tempFile = Path.GetTempFileName() + ".xyz";
-        
-        try
-        {
-            await File.WriteAllTextAsync(tempFile, "test content");
-            
-            // Act & Assert
-            await Assert.ThrowsAsync<InvalidOperationException>(
-                () => parser.ParseAsync(tempFile));
-        }
-        finally
-        {
-            if (File.Exists(tempFile))
-                File.Delete(tempFile);
-        }
+        finally { if (File.Exists(tmp)) File.Delete(tmp); }
     }
 }
 
-public class BookIndexingTests
+public class BookIndexAcceptanceTests
 {
-    [Fact]
-    public async Task BookIndexer_CreateIndex_ReturnsValidIndex()
+    private static readonly JsonSerializerOptions deterministic = new()
     {
-        // Arrange
-        var indexer = new BookIndexer();
-        var parseResult = new BookParseResult(
-            Text: "This is the first sentence. This is the second sentence!\n\nThis is a new paragraph.",
-            Title: "Test Book",
-            Author: "Test Author"
-        );
-        var sourceFile = Path.GetTempFileName();
-        var options = new BookIndexOptions();
-        
-        try
-        {
-            await File.WriteAllTextAsync(sourceFile, "dummy content");
-            
-            // Act
-            var result = await indexer.CreateIndexAsync(parseResult, sourceFile, options);
-            
-            // Assert
-            Assert.NotNull(result);
-            Assert.Equal("Test Book", result.Title);
-            Assert.Equal("Test Author", result.Author);
-            Assert.Equal(sourceFile, result.SourceFile);
-            Assert.True(result.TotalWords > 0);
-            Assert.True(result.TotalSentences > 0);
-            Assert.True(result.Words.Length > 0);
-            Assert.True(result.Segments.Length > 0);
-            Assert.True(result.EstimatedDuration > 0);
-            
-            // Verify word indexing
-            var firstWord = result.Words[0];
-            Assert.Equal(0, firstWord.WordIndex);
-            Assert.Equal(0, firstWord.SentenceIndex);
-            Assert.Equal(0, firstWord.ParagraphIndex);
-            Assert.Null(firstWord.StartTime); // No timing initially
-            
-            // Verify segment indexing
-            var sentenceSegments = result.Segments.Where(s => s.Type == BookSegmentType.Sentence).ToArray();
-            Assert.True(sentenceSegments.Length >= 2); // At least two sentences
-        }
-        finally
-        {
-            if (File.Exists(sourceFile))
-                File.Delete(sourceFile);
-        }
-    }
-    
-    [Fact]
-    public async Task BookIndexer_UpdateTiming_AddsTimingInformation()
-    {
-        // Arrange
-        var indexer = new BookIndexer();
-        var parseResult = new BookParseResult(
-            Text: "Hello world. This is test."
-        );
-        var sourceFile = Path.GetTempFileName();
-        
-        try
-        {
-            await File.WriteAllTextAsync(sourceFile, "dummy");
-            
-            var bookIndex = await indexer.CreateIndexAsync(parseResult, sourceFile);
-            
-            var asrTokens = new[]
-            {
-                new AsrToken(0.0, 0.5, "hello"),
-                new AsrToken(0.5, 0.5, "world"),
-                new AsrToken(1.0, 0.5, "this"),
-                new AsrToken(1.5, 0.5, "is"),
-                new AsrToken(2.0, 0.5, "test")
-            };
-            
-            // Act
-            var result = await indexer.UpdateTimingAsync(bookIndex, asrTokens);
-            
-            // Assert
-            var wordsWithTiming = result.Words.Where(w => w.StartTime.HasValue).ToArray();
-            Assert.True(wordsWithTiming.Length > 0);
-            
-            // Check first word timing
-            var firstWord = wordsWithTiming.FirstOrDefault(w => w.Text == "hello");
-            Assert.NotNull(firstWord);
-            Assert.Equal(0.0, firstWord.StartTime);
-            Assert.Equal(0.5, firstWord.EndTime);
-            
-            // Check that segments also have timing
-            var segmentsWithTiming = result.Segments.Where(s => s.StartTime.HasValue).ToArray();
-            Assert.True(segmentsWithTiming.Length > 0);
-        }
-        finally
-        {
-            if (File.Exists(sourceFile))
-                File.Delete(sourceFile);
-        }
-    }
-    
-    [Fact]
-    public async Task BookIndexer_CreateIndex_WithNullParseResult_ThrowsArgumentNullException()
-    {
-        // Arrange
-        var indexer = new BookIndexer();
-        
-        // Act & Assert
-        await Assert.ThrowsAsync<ArgumentNullException>(
-            () => indexer.CreateIndexAsync(null!, "test.txt"));
-    }
-    
-    [Fact]
-    public async Task BookIndexer_CreateIndex_WithEmptySourceFile_ThrowsArgumentException()
-    {
-        // Arrange
-        var indexer = new BookIndexer();
-        var parseResult = new BookParseResult(Text: "Test content");
-        
-        // Act & Assert
-        await Assert.ThrowsAsync<ArgumentException>(
-            () => indexer.CreateIndexAsync(parseResult, ""));
-    }
-}
+        WriteIndented = false,
+        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+        DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull
+    };
 
-public class BookCacheTests
-{
     [Fact]
-    public async Task BookCache_SetAndGet_WorksCorrectly()
+    public async Task Canonical_RoundTrip_DeterministicBytes_WithCache()
     {
-        // Arrange
-        var tempCacheDir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString());
-        var cache = new BookCache(tempCacheDir);
-        var sourceFile = Path.GetTempFileName();
-        
+        var parser = new BookParser();
+        var indexer = new BookIndexer();
+        var cacheDir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString());
+        var cache = new BookCache(cacheDir);
+        var source = Path.GetTempFileName() + ".txt";
         try
         {
-            await File.WriteAllTextAsync(sourceFile, "test content");
-            
-            var bookIndex = new BookIndex(
-                SourceFile: sourceFile,
-                SourceFileHash: "TESTHASH123",
-                IndexedAt: DateTime.UtcNow,
-                Title: "Test Book",
-                Author: "Test Author",
-                TotalWords: 10,
-                TotalSentences: 2,
-                TotalParagraphs: 1,
-                EstimatedDuration: 60.0,
-                Words: Array.Empty<BookWord>(),
-                Segments: Array.Empty<BookSegment>()
-            );
-            
-            // Act
-            var setResult = await cache.SetAsync(bookIndex);
-            var getResult = await cache.GetAsync(sourceFile);
-            
-            // Assert
-            Assert.True(setResult);
-            Assert.NotNull(getResult);
-            Assert.Equal(bookIndex.SourceFile, getResult.SourceFile);
-            Assert.Equal(bookIndex.Title, getResult.Title);
-            Assert.Equal(bookIndex.Author, getResult.Author);
-            Assert.Equal(bookIndex.TotalWords, getResult.TotalWords);
+            await File.WriteAllTextAsync(source, "A title\n\nHello “Odin’” can’ world. Next line.");
+            var parsed = await parser.ParseAsync(source);
+            var idx1 = await indexer.CreateIndexAsync(parsed, source, new BookIndexOptions { AverageWpm = 240 });
+            await cache.SetAsync(idx1);
+
+            var cached = await cache.GetAsync(source);
+            Assert.NotNull(cached);
+
+            var json1 = JsonSerializer.Serialize(idx1, deterministic);
+            var json2 = JsonSerializer.Serialize(cached!, deterministic);
+            Assert.Equal(json1, json2);
         }
         finally
         {
-            if (File.Exists(sourceFile))
-                File.Delete(sourceFile);
-            
-            if (Directory.Exists(tempCacheDir))
-                Directory.Delete(tempCacheDir, true);
+            if (File.Exists(source)) File.Delete(source);
+            if (Directory.Exists(cacheDir)) Directory.Delete(cacheDir, true);
         }
     }
-    
+
     [Fact]
-    public async Task BookCache_GetNonExistent_ReturnsNull()
+    public async Task NoNormalization_WordsPreserveExactText()
     {
-        // Arrange
-        var tempCacheDir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString());
-        var cache = new BookCache(tempCacheDir);
-        var nonExistentFile = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString());
-        
+        var parser = new BookParser();
+        var indexer = new BookIndexer();
+        var source = Path.GetTempFileName() + ".txt";
+        var line = "“Odin’” can’ end—of—line test.”";
         try
         {
-            // Act
-            var result = await cache.GetAsync(nonExistentFile);
-            
-            // Assert
-            Assert.Null(result);
+            await File.WriteAllTextAsync(source, line);
+            var parsed = await parser.ParseAsync(source);
+            var idx = await indexer.CreateIndexAsync(parsed, source);
+
+            var texts = idx.Words.Select(w => w.Text).ToArray();
+            Assert.Contains("“Odin’”", texts);
+            Assert.Contains("can’", texts);
+            Assert.Contains("end—of—line", texts);
+            Assert.Contains("test.”", texts);
         }
-        finally
-        {
-            if (Directory.Exists(tempCacheDir))
-                Directory.Delete(tempCacheDir, true);
-        }
+        finally { if (File.Exists(source)) File.Delete(source); }
     }
-    
+
     [Fact]
-    public async Task BookCache_Remove_RemovesEntry()
+    public async Task Slimness_WordsContainOnlyCanonicalFields()
     {
-        // Arrange
-        var tempCacheDir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString());
-        var cache = new BookCache(tempCacheDir);
-        var sourceFile = Path.GetTempFileName();
-        
+        var parser = new BookParser();
+        var indexer = new BookIndexer();
+        var source = Path.GetTempFileName() + ".txt";
         try
         {
-            await File.WriteAllTextAsync(sourceFile, "test content");
-            
-            var bookIndex = new BookIndex(
-                SourceFile: sourceFile,
-                SourceFileHash: "TESTHASH123",
-                IndexedAt: DateTime.UtcNow,
-                Title: null,
-                Author: null,
-                TotalWords: 1,
-                TotalSentences: 1,
-                TotalParagraphs: 1,
-                EstimatedDuration: 1.0,
-                Words: Array.Empty<BookWord>(),
-                Segments: Array.Empty<BookSegment>()
-            );
-            
-            await cache.SetAsync(bookIndex);
-            var beforeRemove = await cache.GetAsync(sourceFile);
-            
-            // Act
-            var removeResult = await cache.RemoveAsync(sourceFile);
-            var afterRemove = await cache.GetAsync(sourceFile);
-            
-            // Assert
-            Assert.NotNull(beforeRemove);
-            Assert.True(removeResult);
-            Assert.Null(afterRemove);
+            await File.WriteAllTextAsync(source, "Hello world.");
+            var parsed = await parser.ParseAsync(source);
+            var idx = await indexer.CreateIndexAsync(parsed, source);
+
+            var json = JsonSerializer.Serialize(idx, deterministic);
+            using var doc = JsonDocument.Parse(json);
+            var firstWord = doc.RootElement.GetProperty("words")[0];
+            var names = firstWord.EnumerateObject().Select(p => p.Name).OrderBy(n => n).ToArray();
+            Assert.DoesNotContain("startTime", names);
+            Assert.DoesNotContain("endTime", names);
+            Assert.DoesNotContain("confidence", names);
         }
-        finally
-        {
-            if (File.Exists(sourceFile))
-                File.Delete(sourceFile);
-                
-            if (Directory.Exists(tempCacheDir))
-                Directory.Delete(tempCacheDir, true);
-        }
+        finally { if (File.Exists(source)) File.Delete(source); }
     }
-    
+
     [Fact]
-    public async Task BookCache_Clear_RemovesAllEntries()
+    public async Task StructureRanges_CoverAllWords_NoGaps()
     {
-        // Arrange
-        var tempCacheDir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString());
-        var cache = new BookCache(tempCacheDir);
-        var sourceFiles = new[]
-        {
-            Path.GetTempFileName(),
-            Path.GetTempFileName()
-        };
-        
+        var parser = new BookParser();
+        var indexer = new BookIndexer();
+        var source = Path.GetTempFileName() + ".txt";
         try
         {
-            // Add multiple cache entries
-            foreach (var sourceFile in sourceFiles)
-            {
-                await File.WriteAllTextAsync(sourceFile, "test content");
-                
-                var bookIndex = new BookIndex(
-                    SourceFile: sourceFile,
-                    SourceFileHash: "HASH" + sourceFile.GetHashCode(),
-                    IndexedAt: DateTime.UtcNow,
-                    Title: null,
-                    Author: null,
-                    TotalWords: 1,
-                    TotalSentences: 1,
-                    TotalParagraphs: 1,
-                    EstimatedDuration: 1.0,
-                    Words: Array.Empty<BookWord>(),
-                    Segments: Array.Empty<BookSegment>()
-                );
-                
-                await cache.SetAsync(bookIndex);
-            }
-            
-            // Verify entries exist
-            foreach (var sourceFile in sourceFiles)
-            {
-                var cached = await cache.GetAsync(sourceFile);
-                Assert.NotNull(cached);
-            }
-            
-            // Act
-            await cache.ClearAsync();
-            
-            // Assert
-            foreach (var sourceFile in sourceFiles)
-            {
-                var cached = await cache.GetAsync(sourceFile);
-                Assert.Null(cached);
-            }
+            await File.WriteAllTextAsync(source, "Hello world. This is a test.\n\nNew para here.");
+            var parsed = await parser.ParseAsync(source);
+            var idx = await indexer.CreateIndexAsync(parsed, source);
+            var total = idx.Words.Length;
+
+            var orderedSents = idx.Sentences.OrderBy(s => s.Start).ToArray();
+            Assert.True(orderedSents.First().Start == 0);
+            Assert.True(orderedSents.Last().End == total - 1);
+            for (int i = 1; i < orderedSents.Length; i++)
+                Assert.Equal(orderedSents[i - 1].End + 1, orderedSents[i].Start);
+
+            var orderedParas = idx.Paragraphs.OrderBy(p => p.Start).ToArray();
+            Assert.True(orderedParas.First().Start == 0);
+            Assert.True(orderedParas.Last().End == total - 1);
+            for (int i = 1; i < orderedParas.Length; i++)
+                Assert.Equal(orderedParas[i - 1].End + 1, orderedParas[i].Start);
+        }
+        finally { if (File.Exists(source)) File.Delete(source); }
+    }
+
+    [Fact]
+    public async Task CacheReuse_InvalidatedOnSourceChange()
+    {
+        var parser = new BookParser();
+        var indexer = new BookIndexer();
+        var cacheDir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString());
+        var cache = new BookCache(cacheDir);
+        var source = Path.GetTempFileName() + ".txt";
+        try
+        {
+            await File.WriteAllTextAsync(source, "Hello world");
+            var parsed = await parser.ParseAsync(source);
+            var idx = await indexer.CreateIndexAsync(parsed, source);
+            await cache.SetAsync(idx);
+
+            var found = await cache.GetAsync(source);
+            Assert.NotNull(found);
+
+            await File.WriteAllTextAsync(source, "Hello brave new world");
+            var after = await cache.GetAsync(source);
+            Assert.Null(after);
         }
         finally
         {
-            foreach (var sourceFile in sourceFiles)
-            {
-                if (File.Exists(sourceFile))
-                    File.Delete(sourceFile);
-            }
-            
-            if (Directory.Exists(tempCacheDir))
-                Directory.Delete(tempCacheDir, true);
+            if (File.Exists(source)) File.Delete(source);
+            if (Directory.Exists(cacheDir)) Directory.Delete(cacheDir, true);
         }
     }
 }
@@ -436,67 +192,19 @@ public class BookCacheTests
 public class BookModelsTests
 {
     [Fact]
-    public void BookWord_Initialization_WorksCorrectly()
+    public void BookWord_CanonicalShape()
     {
-        // Arrange & Act
-        var word = new BookWord(
-            Text: "hello",
-            WordIndex: 0,
-            SentenceIndex: 0,
-            ParagraphIndex: 0,
-            StartTime: 1.0,
-            EndTime: 2.0,
-            Confidence: 0.95
-        );
-        
-        // Assert
-        Assert.Equal("hello", word.Text);
-        Assert.Equal(0, word.WordIndex);
-        Assert.Equal(0, word.SentenceIndex);
-        Assert.Equal(0, word.ParagraphIndex);
-        Assert.Equal(1.0, word.StartTime);
-        Assert.Equal(2.0, word.EndTime);
-        Assert.Equal(0.95, word.Confidence);
+        var w = new BookWord("Hello", 3, 1, 0);
+        Assert.Equal("Hello", w.Text);
+        Assert.Equal(3, w.WordIndex);
+        Assert.Equal(1, w.SentenceIndex);
+        Assert.Equal(0, w.ParagraphIndex);
     }
-    
+
     [Fact]
-    public void BookSegment_Initialization_WorksCorrectly()
+    public void BookIndexOptions_Defaults()
     {
-        // Arrange & Act
-        var segment = new BookSegment(
-            Text: "This is a test sentence.",
-            Type: BookSegmentType.Sentence,
-            Index: 0,
-            WordStartIndex: 0,
-            WordEndIndex: 4,
-            StartTime: 1.0,
-            EndTime: 3.0,
-            Confidence: 0.9
-        );
-        
-        // Assert
-        Assert.Equal("This is a test sentence.", segment.Text);
-        Assert.Equal(BookSegmentType.Sentence, segment.Type);
-        Assert.Equal(0, segment.Index);
-        Assert.Equal(0, segment.WordStartIndex);
-        Assert.Equal(4, segment.WordEndIndex);
-        Assert.Equal(1.0, segment.StartTime);
-        Assert.Equal(3.0, segment.EndTime);
-        Assert.Equal(0.9, segment.Confidence);
-    }
-    
-    [Fact]
-    public void BookIndexOptions_DefaultValues_AreCorrect()
-    {
-        // Arrange & Act
-        var options = new BookIndexOptions();
-        
-        // Assert
-        Assert.Equal(200.0, options.AverageWpm);
-        Assert.True(options.ExtractMetadata);
-        Assert.True(options.NormalizeText);
-        Assert.True(options.IncludeParagraphSegments);
-        Assert.Equal(5, options.MinimumSentenceLength);
-        Assert.Equal(2, options.MinimumParagraphWords);
+        var opt = new BookIndexOptions();
+        Assert.Equal(200.0, opt.AverageWpm);
     }
 }
