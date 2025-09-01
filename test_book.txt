@@ -1,0 +1,11 @@
+Test Book Title
+
+This is the first paragraph of our test book. It contains multiple sentences to demonstrate the parsing and indexing capabilities.
+
+This is the second paragraph. It has different content to show how the system handles paragraph boundaries and word indexing.
+
+Chapter 1: The Beginning
+
+The story begins here with the first chapter. This paragraph introduces the main characters and setting.
+
+We can see how the indexer will split this into words, sentences, and paragraphs for later validation against audio transcripts.

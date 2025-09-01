@@ -1,0 +1,842 @@
+{
+  "sourceFile": "C:\\Projects\\ams\\test_book.txt",
+  "sourceFileHash": "A53DEE25F921133F10211558D8A32F54BFB34551DA21857724A359E3736DE996",
+  "indexedAt": "2025-09-01T08:55:48.5456651Z",
+  "title": "Test Book Title",
+  "author": null,
+  "totalWords": 83,
+  "totalSentences": 7,
+  "totalParagraphs": 1,
+  "estimatedDuration": 24.9,
+  "words": [
+    {
+      "text": "test",
+      "wordIndex": 0,
+      "sentenceIndex": 0,
+      "paragraphIndex": 0,
+      "startTime": null,
+      "endTime": null,
+      "confidence": null
+    },
+    {
+      "text": "book",
+      "wordIndex": 1,
+      "sentenceIndex": 0,
+      "paragraphIndex": 0,
+      "startTime": null,
+      "endTime": null,
+      "confidence": null
+    },
+    {
+      "text": "title",
+      "wordIndex": 2,
+      "sentenceIndex": 0,
+      "paragraphIndex": 0,
+      "startTime": null,
+      "endTime": null,
+      "confidence": null
+    },
+    {
+      "text": "this",
+      "wordIndex": 3,
+      "sentenceIndex": 0,
+      "paragraphIndex": 0,
+      "startTime": null,
+      "endTime": null,
+      "confidence": null
+    },
+    {
+      "text": "is",
+      "wordIndex": 4,
+      "sentenceIndex": 0,
+      "paragraphIndex": 0,
+      "startTime": null,
+      "endTime": null,
+      "confidence": null
+    },
+    {
+      "text": "the",
+      "wordIndex": 5,
+      "sentenceIndex": 0,
+      "paragraphIndex": 0,
+      "startTime": null,
+      "endTime": null,
+      "confidence": null
+    },
+    {
+      "text": "first",
+      "wordIndex": 6,
+      "sentenceIndex": 0,
+      "paragraphIndex": 0,
+      "startTime": null,
+      "endTime": null,
+      "confidence": null
+    },
+    {
+      "text": "paragraph",
+      "wordIndex": 7,
+      "sentenceIndex": 0,
+      "paragraphIndex": 0,
+      "startTime": null,
+      "endTime": null,
+      "confidence": null
+    },
+    {
+      "text": "of",
+      "wordIndex": 8,
+      "sentenceIndex": 0,
+      "paragraphIndex": 0,
+      "startTime": null,
+      "endTime": null,
+      "confidence": null
+    },
+    {
+      "text": "our",
+      "wordIndex": 9,
+      "sentenceIndex": 0,
+      "paragraphIndex": 0,
+      "startTime": null,
+      "endTime": null,
+      "confidence": null
+    },
+    {
+      "text": "test",
+      "wordIndex": 10,
+      "sentenceIndex": 0,
+      "paragraphIndex": 0,
+      "startTime": null,
+      "endTime": null,
+      "confidence": null
+    },
+    {
+      "text": "book",
+      "wordIndex": 11,
+      "sentenceIndex": 0,
+      "paragraphIndex": 0,
+      "startTime": null,
+      "endTime": null,
+      "confidence": null
+    },
+    {
+      "text": "it",
+      "wordIndex": 12,
+      "sentenceIndex": 1,
+      "paragraphIndex": 0,
+      "startTime": null,
+      "endTime": null,
+      "confidence": null
+    },
+    {
+      "text": "contains",
+      "wordIndex": 13,
+      "sentenceIndex": 1,
+      "paragraphIndex": 0,
+      "startTime": null,
+      "endTime": null,
+      "confidence": null
+    },
+    {
+      "text": "multiple",
+      "wordIndex": 14,
+      "sentenceIndex": 1,
+      "paragraphIndex": 0,
+      "startTime": null,
+      "endTime": null,
+      "confidence": null
+    },
+    {
+      "text": "sentences",
+      "wordIndex": 15,
+      "sentenceIndex": 1,
+      "paragraphIndex": 0,
+      "startTime": null,
+      "endTime": null,
+      "confidence": null
+    },
+    {
+      "text": "to",
+      "wordIndex": 16,
+      "sentenceIndex": 1,
+      "paragraphIndex": 0,
+      "startTime": null,
+      "endTime": null,
+      "confidence": null
+    },
+    {
+      "text": "demonstrate",
+      "wordIndex": 17,
+      "sentenceIndex": 1,
+      "paragraphIndex": 0,
+      "startTime": null,
+      "endTime": null,
+      "confidence": null
+    },
+    {
+      "text": "the",
+      "wordIndex": 18,
+      "sentenceIndex": 1,
+      "paragraphIndex": 0,
+      "startTime": null,
+      "endTime": null,
+      "confidence": null
+    },
+    {
+      "text": "parsing",
+      "wordIndex": 19,
+      "sentenceIndex": 1,
+      "paragraphIndex": 0,
+      "startTime": null,
+      "endTime": null,
+      "confidence": null
+    },
+    {
+      "text": "and",
+      "wordIndex": 20,
+      "sentenceIndex": 1,
+      "paragraphIndex": 0,
+      "startTime": null,
+      "endTime": null,
+      "confidence": null
+    },
+    {
+      "text": "indexing",
+      "wordIndex": 21,
+      "sentenceIndex": 1,
+      "paragraphIndex": 0,
+      "startTime": null,
+      "endTime": null,
+      "confidence": null
+    },
+    {
+      "text": "capabilities",
+      "wordIndex": 22,
+      "sentenceIndex": 1,
+      "paragraphIndex": 0,
+      "startTime": null,
+      "endTime": null,
+      "confidence": null
+    },
+    {
+      "text": "this",
+      "wordIndex": 23,
+      "sentenceIndex": 2,
+      "paragraphIndex": 0,
+      "startTime": null,
+      "endTime": null,
+      "confidence": null
+    },
+    {
+      "text": "is",
+      "wordIndex": 24,
+      "sentenceIndex": 2,
+      "paragraphIndex": 0,
+      "startTime": null,
+      "endTime": null,
+      "confidence": null
+    },
+    {
+      "text": "the",
+      "wordIndex": 25,
+      "sentenceIndex": 2,
+      "paragraphIndex": 0,
+      "startTime": null,
+      "endTime": null,
+      "confidence": null
+    },
+    {
+      "text": "second",
+      "wordIndex": 26,
+      "sentenceIndex": 2,
+      "paragraphIndex": 0,
+      "startTime": null,
+      "endTime": null,
+      "confidence": null
+    },
+    {
+      "text": "paragraph",
+      "wordIndex": 27,
+      "sentenceIndex": 2,
+      "paragraphIndex": 0,
+      "startTime": null,
+      "endTime": null,
+      "confidence": null
+    },
+    {
+      "text": "it",
+      "wordIndex": 28,
+      "sentenceIndex": 3,
+      "paragraphIndex": 0,
+      "startTime": null,
+      "endTime": null,
+      "confidence": null
+    },
+    {
+      "text": "has",
+      "wordIndex": 29,
+      "sentenceIndex": 3,
+      "paragraphIndex": 0,
+      "startTime": null,
+      "endTime": null,
+      "confidence": null
+    },
+    {
+      "text": "different",
+      "wordIndex": 30,
+      "sentenceIndex": 3,
+      "paragraphIndex": 0,
+      "startTime": null,
+      "endTime": null,
+      "confidence": null
+    },
+    {
+      "text": "content",
+      "wordIndex": 31,
+      "sentenceIndex": 3,
+      "paragraphIndex": 0,
+      "startTime": null,
+      "endTime": null,
+      "confidence": null
+    },
+    {
+      "text": "to",
+      "wordIndex": 32,
+      "sentenceIndex": 3,
+      "paragraphIndex": 0,
+      "startTime": null,
+      "endTime": null,
+      "confidence": null
+    },
+    {
+      "text": "show",
+      "wordIndex": 33,
+      "sentenceIndex": 3,
+      "paragraphIndex": 0,
+      "startTime": null,
+      "endTime": null,
+      "confidence": null
+    },
+    {
+      "text": "how",
+      "wordIndex": 34,
+      "sentenceIndex": 3,
+      "paragraphIndex": 0,
+      "startTime": null,
+      "endTime": null,
+      "confidence": null
+    },
+    {
+      "text": "the",
+      "wordIndex": 35,
+      "sentenceIndex": 3,
+      "paragraphIndex": 0,
+      "startTime": null,
+      "endTime": null,
+      "confidence": null
+    },
+    {
+      "text": "system",
+      "wordIndex": 36,
+      "sentenceIndex": 3,
+      "paragraphIndex": 0,
+      "startTime": null,
+      "endTime": null,
+      "confidence": null
+    },
+    {
+      "text": "handles",
+      "wordIndex": 37,
+      "sentenceIndex": 3,
+      "paragraphIndex": 0,
+      "startTime": null,
+      "endTime": null,
+      "confidence": null
+    },
+    {
+      "text": "paragraph",
+      "wordIndex": 38,
+      "sentenceIndex": 3,
+      "paragraphIndex": 0,
+      "startTime": null,
+      "endTime": null,
+      "confidence": null
+    },
+    {
+      "text": "boundaries",
+      "wordIndex": 39,
+      "sentenceIndex": 3,
+      "paragraphIndex": 0,
+      "startTime": null,
+      "endTime": null,
+      "confidence": null
+    },
+    {
+      "text": "and",
+      "wordIndex": 40,
+      "sentenceIndex": 3,
+      "paragraphIndex": 0,
+      "startTime": null,
+      "endTime": null,
+      "confidence": null
+    },
+    {
+      "text": "word",
+      "wordIndex": 41,
+      "sentenceIndex": 3,
+      "paragraphIndex": 0,
+      "startTime": null,
+      "endTime": null,
+      "confidence": null
+    },
+    {
+      "text": "indexing",
+      "wordIndex": 42,
+      "sentenceIndex": 3,
+      "paragraphIndex": 0,
+      "startTime": null,
+      "endTime": null,
+      "confidence": null
+    },
+    {
+      "text": "chapter",
+      "wordIndex": 43,
+      "sentenceIndex": 4,
+      "paragraphIndex": 0,
+      "startTime": null,
+      "endTime": null,
+      "confidence": null
+    },
+    {
+      "text": "1",
+      "wordIndex": 44,
+      "sentenceIndex": 4,
+      "paragraphIndex": 0,
+      "startTime": null,
+      "endTime": null,
+      "confidence": null
+    },
+    {
+      "text": "the",
+      "wordIndex": 45,
+      "sentenceIndex": 4,
+      "paragraphIndex": 0,
+      "startTime": null,
+      "endTime": null,
+      "confidence": null
+    },
+    {
+      "text": "beginning",
+      "wordIndex": 46,
+      "sentenceIndex": 4,
+      "paragraphIndex": 0,
+      "startTime": null,
+      "endTime": null,
+      "confidence": null
+    },
+    {
+      "text": "the",
+      "wordIndex": 47,
+      "sentenceIndex": 4,
+      "paragraphIndex": 0,
+      "startTime": null,
+      "endTime": null,
+      "confidence": null
+    },
+    {
+      "text": "story",
+      "wordIndex": 48,
+      "sentenceIndex": 4,
+      "paragraphIndex": 0,
+      "startTime": null,
+      "endTime": null,
+      "confidence": null
+    },
+    {
+      "text": "begins",
+      "wordIndex": 49,
+      "sentenceIndex": 4,
+      "paragraphIndex": 0,
+      "startTime": null,
+      "endTime": null,
+      "confidence": null
+    },
+    {
+      "text": "here",
+      "wordIndex": 50,
+      "sentenceIndex": 4,
+      "paragraphIndex": 0,
+      "startTime": null,
+      "endTime": null,
+      "confidence": null
+    },
+    {
+      "text": "with",
+      "wordIndex": 51,
+      "sentenceIndex": 4,
+      "paragraphIndex": 0,
+      "startTime": null,
+      "endTime": null,
+      "confidence": null
+    },
+    {
+      "text": "the",
+      "wordIndex": 52,
+      "sentenceIndex": 4,
+      "paragraphIndex": 0,
+      "startTime": null,
+      "endTime": null,
+      "confidence": null
+    },
+    {
+      "text": "first",
+      "wordIndex": 53,
+      "sentenceIndex": 4,
+      "paragraphIndex": 0,
+      "startTime": null,
+      "endTime": null,
+      "confidence": null
+    },
+    {
+      "text": "chapter",
+      "wordIndex": 54,
+      "sentenceIndex": 4,
+      "paragraphIndex": 0,
+      "startTime": null,
+      "endTime": null,
+      "confidence": null
+    },
+    {
+      "text": "this",
+      "wordIndex": 55,
+      "sentenceIndex": 5,
+      "paragraphIndex": 0,
+      "startTime": null,
+      "endTime": null,
+      "confidence": null
+    },
+    {
+      "text": "paragraph",
+      "wordIndex": 56,
+      "sentenceIndex": 5,
+      "paragraphIndex": 0,
+      "startTime": null,
+      "endTime": null,
+      "confidence": null
+    },
+    {
+      "text": "introduces",
+      "wordIndex": 57,
+      "sentenceIndex": 5,
+      "paragraphIndex": 0,
+      "startTime": null,
+      "endTime": null,
+      "confidence": null
+    },
+    {
+      "text": "the",
+      "wordIndex": 58,
+      "sentenceIndex": 5,
+      "paragraphIndex": 0,
+      "startTime": null,
+      "endTime": null,
+      "confidence": null
+    },
+    {
+      "text": "main",
+      "wordIndex": 59,
+      "sentenceIndex": 5,
+      "paragraphIndex": 0,
+      "startTime": null,
+      "endTime": null,
+      "confidence": null
+    },
+    {
+      "text": "characters",
+      "wordIndex": 60,
+      "sentenceIndex": 5,
+      "paragraphIndex": 0,
+      "startTime": null,
+      "endTime": null,
+      "confidence": null
+    },
+    {
+      "text": "and",
+      "wordIndex": 61,
+      "sentenceIndex": 5,
+      "paragraphIndex": 0,
+      "startTime": null,
+      "endTime": null,
+      "confidence": null
+    },
+    {
+      "text": "setting",
+      "wordIndex": 62,
+      "sentenceIndex": 5,
+      "paragraphIndex": 0,
+      "startTime": null,
+      "endTime": null,
+      "confidence": null
+    },
+    {
+      "text": "we",
+      "wordIndex": 63,
+      "sentenceIndex": 6,
+      "paragraphIndex": 0,
+      "startTime": null,
+      "endTime": null,
+      "confidence": null
+    },
+    {
+      "text": "can",
+      "wordIndex": 64,
+      "sentenceIndex": 6,
+      "paragraphIndex": 0,
+      "startTime": null,
+      "endTime": null,
+      "confidence": null
+    },
+    {
+      "text": "see",
+      "wordIndex": 65,
+      "sentenceIndex": 6,
+      "paragraphIndex": 0,
+      "startTime": null,
+      "endTime": null,
+      "confidence": null
+    },
+    {
+      "text": "how",
+      "wordIndex": 66,
+      "sentenceIndex": 6,
+      "paragraphIndex": 0,
+      "startTime": null,
+      "endTime": null,
+      "confidence": null
+    },
+    {
+      "text": "the",
+      "wordIndex": 67,
+      "sentenceIndex": 6,
+      "paragraphIndex": 0,
+      "startTime": null,
+      "endTime": null,
+      "confidence": null
+    },
+    {
+      "text": "indexer",
+      "wordIndex": 68,
+      "sentenceIndex": 6,
+      "paragraphIndex": 0,
+      "startTime": null,
+      "endTime": null,
+      "confidence": null
+    },
+    {
+      "text": "will",
+      "wordIndex": 69,
+      "sentenceIndex": 6,
+      "paragraphIndex": 0,
+      "startTime": null,
+      "endTime": null,
+      "confidence": null
+    },
+    {
+      "text": "split",
+      "wordIndex": 70,
+      "sentenceIndex": 6,
+      "paragraphIndex": 0,
+      "startTime": null,
+      "endTime": null,
+      "confidence": null
+    },
+    {
+      "text": "this",
+      "wordIndex": 71,
+      "sentenceIndex": 6,
+      "paragraphIndex": 0,
+      "startTime": null,
+      "endTime": null,
+      "confidence": null
+    },
+    {
+      "text": "into",
+      "wordIndex": 72,
+      "sentenceIndex": 6,
+      "paragraphIndex": 0,
+      "startTime": null,
+      "endTime": null,
+      "confidence": null
+    },
+    {
+      "text": "words",
+      "wordIndex": 73,
+      "sentenceIndex": 6,
+      "paragraphIndex": 0,
+      "startTime": null,
+      "endTime": null,
+      "confidence": null
+    },
+    {
+      "text": "sentences",
+      "wordIndex": 74,
+      "sentenceIndex": 6,
+      "paragraphIndex": 0,
+      "startTime": null,
+      "endTime": null,
+      "confidence": null
+    },
+    {
+      "text": "and",
+      "wordIndex": 75,
+      "sentenceIndex": 6,
+      "paragraphIndex": 0,
+      "startTime": null,
+      "endTime": null,
+      "confidence": null
+    },
+    {
+      "text": "paragraphs",
+      "wordIndex": 76,
+      "sentenceIndex": 6,
+      "paragraphIndex": 0,
+      "startTime": null,
+      "endTime": null,
+      "confidence": null
+    },
+    {
+      "text": "for",
+      "wordIndex": 77,
+      "sentenceIndex": 6,
+      "paragraphIndex": 0,
+      "startTime": null,
+      "endTime": null,
+      "confidence": null
+    },
+    {
+      "text": "later",
+      "wordIndex": 78,
+      "sentenceIndex": 6,
+      "paragraphIndex": 0,
+      "startTime": null,
+      "endTime": null,
+      "confidence": null
+    },
+    {
+      "text": "validation",
+      "wordIndex": 79,
+      "sentenceIndex": 6,
+      "paragraphIndex": 0,
+      "startTime": null,
+      "endTime": null,
+      "confidence": null
+    },
+    {
+      "text": "against",
+      "wordIndex": 80,
+      "sentenceIndex": 6,
+      "paragraphIndex": 0,
+      "startTime": null,
+      "endTime": null,
+      "confidence": null
+    },
+    {
+      "text": "audio",
+      "wordIndex": 81,
+      "sentenceIndex": 6,
+      "paragraphIndex": 0,
+      "startTime": null,
+      "endTime": null,
+      "confidence": null
+    },
+    {
+      "text": "transcripts",
+      "wordIndex": 82,
+      "sentenceIndex": 6,
+      "paragraphIndex": 0,
+      "startTime": null,
+      "endTime": null,
+      "confidence": null
+    }
+  ],
+  "segments": [
+    {
+      "text": "Test Book Title This is the first paragraph of our test book.",
+      "type": "Sentence",
+      "index": 0,
+      "wordStartIndex": 0,
+      "wordEndIndex": 11,
+      "startTime": null,
+      "endTime": null,
+      "confidence": null
+    },
+    {
+      "text": "It contains multiple sentences to demonstrate the parsing and indexing capabilities.",
+      "type": "Sentence",
+      "index": 1,
+      "wordStartIndex": 12,
+      "wordEndIndex": 22,
+      "startTime": null,
+      "endTime": null,
+      "confidence": null
+    },
+    {
+      "text": "This is the second paragraph.",
+      "type": "Sentence",
+      "index": 2,
+      "wordStartIndex": 23,
+      "wordEndIndex": 27,
+      "startTime": null,
+      "endTime": null,
+      "confidence": null
+    },
+    {
+      "text": "It has different content to show how the system handles paragraph boundaries and word indexing.",
+      "type": "Sentence",
+      "index": 3,
+      "wordStartIndex": 28,
+      "wordEndIndex": 42,
+      "startTime": null,
+      "endTime": null,
+      "confidence": null
+    },
+    {
+      "text": "Chapter 1: The Beginning The story begins here with the first chapter.",
+      "type": "Sentence",
+      "index": 4,
+      "wordStartIndex": 43,
+      "wordEndIndex": 54,
+      "startTime": null,
+      "endTime": null,
+      "confidence": null
+    },
+    {
+      "text": "This paragraph introduces the main characters and setting.",
+      "type": "Sentence",
+      "index": 5,
+      "wordStartIndex": 55,
+      "wordEndIndex": 62,
+      "startTime": null,
+      "endTime": null,
+      "confidence": null
+    },
+    {
+      "text": "We can see how the indexer will split this into words, sentences, and paragraphs for later validation against audio transcripts.",
+      "type": "Sentence",
+      "index": 6,
+      "wordStartIndex": 63,
+      "wordEndIndex": 82,
+      "startTime": null,
+      "endTime": null,
+      "confidence": null
+    },
+    {
+      "text": "Test Book Title This is the first paragraph of our test book. It contains multiple sentences to demonstrate the parsing and indexing capabilities. This is the second paragraph. It has different content to show how the system handles paragraph boundaries and word indexing. Chapter 1: The Beginning The story begins here with the first chapter. This paragraph introduces the main characters and setting. We can see how the indexer will split this into words, sentences, and paragraphs for later validation against audio transcripts.",
+      "type": "Paragraph",
+      "index": 0,
+      "wordStartIndex": 0,
+      "wordEndIndex": 82,
+      "startTime": null,
+      "endTime": null,
+      "confidence": null
+    }
+  ]
+}
