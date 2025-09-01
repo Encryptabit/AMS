@@ -16,8 +16,7 @@ public class BookParser : IBookParser
         ".docx", ".txt", ".md", ".rtf"
     };
 
-    private static readonly Regex _whitespaceRegex = new(@"\s+", RegexOptions.Compiled);
-    private static readonly Regex _paragraphBreakRegex = new(@"\r?\n\s*\r?\n", RegexOptions.Compiled);
+    private static readonly Regex _paragraphBreakRegex = new(@"(\r?\n){2,}", RegexOptions.Compiled);
 
     public IReadOnlyCollection<string> SupportedExtensions => _supportedExtensions;
 
@@ -75,57 +74,51 @@ public class BookParser : IBookParser
             return await Task.Run(() =>
             {
                 using var document = DocX.Load(filePath);
-                
-                // Extract metadata from CoreProperties dictionary
+
                 string? title = null;
                 string? author = null;
                 var metadata = new Dictionary<string, object>();
-                
+
                 if (document.CoreProperties != null)
                 {
                     var props = document.CoreProperties;
-                    
-                    // Extract title and author
                     title = props.GetValueOrDefault("title");
                     author = props.GetValueOrDefault("creator");
-                    
-                    // Add other metadata
+
                     foreach (var kvp in props.Where(kvp => !string.IsNullOrWhiteSpace(kvp.Value) && kvp.Key != "title" && kvp.Key != "creator"))
                     {
                         metadata[kvp.Key] = kvp.Value;
                     }
                 }
 
-                // Extract text content from paragraphs
-                var textBuilder = new StringBuilder();
+                var parsedParagraphs = new List<ParsedParagraph>();
+                var sb = new StringBuilder();
                 var paragraphs = document.Paragraphs;
-                
+
                 for (int i = 0; i < paragraphs.Count; i++)
                 {
                     cancellationToken.ThrowIfCancellationRequested();
-                    
-                    var paragraph = paragraphs[i];
-                    var paragraphText = paragraph.Text?.Trim();
-                    
-                    if (!string.IsNullOrWhiteSpace(paragraphText))
+
+                    var p = paragraphs[i];
+                    var text = p.Text ?? string.Empty; // Do not trim/normalize
+                    var style = p.StyleId ?? "Unknown";
+                    var kind = style.Contains("Heading", StringComparison.OrdinalIgnoreCase) ? "Heading" : "Body";
+
+                    if (!string.IsNullOrEmpty(text))
                     {
-                        textBuilder.AppendLine(paragraphText);
-                        
-                        // Add extra line break between paragraphs (except for the last one)
+                        parsedParagraphs.Add(new ParsedParagraph(text, style, kind));
+                        sb.Append(text);
                         if (i < paragraphs.Count - 1)
-                        {
-                            textBuilder.AppendLine();
-                        }
+                            sb.AppendLine().AppendLine();
                     }
                 }
 
-                var text = NormalizeText(textBuilder.ToString());
-                
                 return new BookParseResult(
-                    Text: text,
+                    Text: sb.ToString(),
                     Title: title,
                     Author: author,
-                    Metadata: metadata.Count > 0 ? metadata : null
+                    Metadata: metadata.Count > 0 ? metadata : null,
+                    Paragraphs: parsedParagraphs
                 );
                 
             }, cancellationToken);
@@ -141,14 +134,13 @@ public class BookParser : IBookParser
         try
         {
             var text = await File.ReadAllTextAsync(filePath, Encoding.UTF8, cancellationToken);
-            var normalizedText = NormalizeText(text);
             
             // Try to extract title from first line if it looks like a title
             string? title = null;
-            var lines = normalizedText.Split('\n', StringSplitOptions.RemoveEmptyEntries);
+            var lines = text.Split(new[] {'\n'}, StringSplitOptions.RemoveEmptyEntries);
             if (lines.Length > 0)
             {
-                var firstLine = lines[0].Trim();
+                var firstLine = lines[0].TrimEnd('\r');
                 // Heuristic: if first line is short and doesn't end with sentence punctuation, treat as title
                 if (firstLine.Length <= 100 && !firstLine.EndsWith('.') && !firstLine.EndsWith('!') && !firstLine.EndsWith('?'))
                 {
@@ -162,11 +154,24 @@ public class BookParser : IBookParser
                 ["encoding"] = "UTF-8"
             };
 
+            // Build simple paragraphs split on blank lines (preserve original paragraph text)
+            var paragraphs = _paragraphBreakRegex.Split(text)
+                .Where(s => !string.IsNullOrEmpty(s))
+                .ToArray();
+            var parsedParagraphs = new List<ParsedParagraph>();
+            foreach (var para in paragraphs)
+            {
+                var trimmed = para.TrimEnd('\r', '\n');
+                if (string.IsNullOrEmpty(trimmed)) continue;
+                parsedParagraphs.Add(new ParsedParagraph(trimmed, null, "Body"));
+            }
+
             return new BookParseResult(
-                Text: normalizedText,
+                Text: text,
                 Title: title,
                 Author: null,
-                Metadata: metadata
+                Metadata: metadata,
+                Paragraphs: parsedParagraphs
             );
         }
         catch (Exception ex) when (!(ex is OperationCanceledException))
@@ -180,8 +185,8 @@ public class BookParser : IBookParser
         try
         {
             var text = await File.ReadAllTextAsync(filePath, Encoding.UTF8, cancellationToken);
-            
-            // Extract title from markdown headers
+
+            // Extract title from markdown headers (best-effort, do not modify text)
             string? title = null;
             var lines = text.Split('\n');
             foreach (var line in lines.Take(10)) // Check first 10 lines for title
@@ -194,21 +199,30 @@ public class BookParser : IBookParser
                 }
             }
 
-            // Remove markdown formatting for plain text extraction
-            var cleanText = RemoveMarkdownFormatting(text);
-            var normalizedText = NormalizeText(cleanText);
-
             var metadata = new Dictionary<string, object>
             {
                 ["fileSize"] = new FileInfo(filePath).Length,
                 ["format"] = "Markdown"
             };
 
+            // Paragraphs split on blank lines
+            var paragraphs = _paragraphBreakRegex.Split(text)
+                .Where(s => !string.IsNullOrEmpty(s))
+                .ToArray();
+            var parsedParagraphs = new List<ParsedParagraph>();
+            foreach (var para in paragraphs)
+            {
+                var trimmed = para.TrimEnd('\r', '\n');
+                if (string.IsNullOrEmpty(trimmed)) continue;
+                parsedParagraphs.Add(new ParsedParagraph(trimmed, null, "Body"));
+            }
+
             return new BookParseResult(
-                Text: normalizedText,
+                Text: text,
                 Title: title,
                 Author: null,
-                Metadata: metadata
+                Metadata: metadata,
+                Paragraphs: parsedParagraphs
             );
         }
         catch (Exception ex) when (!(ex is OperationCanceledException))
@@ -230,8 +244,23 @@ public class BookParser : IBookParser
                 try
                 {
                     using var document = DocX.Load(filePath);
-                    var text = string.Join("\n\n", document.Paragraphs.Select(p => p.Text).Where(t => !string.IsNullOrWhiteSpace(t)));
-                    var normalizedText = NormalizeText(text);
+                    var parsedParagraphs = new List<ParsedParagraph>();
+                    var sb = new StringBuilder();
+                    var paras = document.Paragraphs;
+
+                    for (int i = 0; i < paras.Count; i++)
+                    {
+                        var p = paras[i];
+                        var text = p.Text ?? string.Empty;
+                        var style = p.StyleId ?? "Unknown";
+                        var kind = style.Contains("Heading", StringComparison.OrdinalIgnoreCase) ? "Heading" : "Body";
+                        if (!string.IsNullOrEmpty(text))
+                        {
+                            parsedParagraphs.Add(new ParsedParagraph(text, style, kind));
+                            sb.Append(text);
+                            if (i < paras.Count - 1) sb.AppendLine().AppendLine();
+                        }
+                    }
 
                     var metadata = new Dictionary<string, object>
                     {
@@ -240,19 +269,19 @@ public class BookParser : IBookParser
                     };
 
                     return new BookParseResult(
-                        Text: normalizedText,
+                        Text: sb.ToString(),
                         Title: null,
                         Author: null,
-                        Metadata: metadata
+                        Metadata: metadata,
+                        Paragraphs: parsedParagraphs
                     );
                 }
                 catch
                 {
                     // Fallback to plain text parsing for RTF
                     var text = File.ReadAllText(filePath, Encoding.UTF8);
-                    // Basic RTF cleanup - remove RTF control codes
+                    // Basic RTF control code removal (best-effort decoding only)
                     var cleanText = Regex.Replace(text, @"\\[a-z]+\d*\s?|\{|\}", "", RegexOptions.IgnoreCase);
-                    var normalizedText = NormalizeText(cleanText);
 
                     var metadata = new Dictionary<string, object>
                     {
@@ -260,11 +289,18 @@ public class BookParser : IBookParser
                         ["format"] = "RTF (fallback)"
                     };
 
+                    // Paragraphs split on blank lines
+                    var parts = _paragraphBreakRegex.Split(cleanText).Where(s => !string.IsNullOrEmpty(s)).ToArray();
+                    var parsedParagraphs = parts
+                        .Select(p => new ParsedParagraph(p.TrimEnd('\r', '\n'), null, "Body"))
+                        .ToList();
+
                     return new BookParseResult(
-                        Text: normalizedText,
+                        Text: cleanText,
                         Title: null,
                         Author: null,
-                        Metadata: metadata
+                        Metadata: metadata,
+                        Paragraphs: parsedParagraphs
                     );
                 }
             }, cancellationToken);
@@ -273,64 +309,5 @@ public class BookParser : IBookParser
         {
             throw new BookParseException($"Failed to parse RTF file '{filePath}': {ex.Message}", ex);
         }
-    }
-
-    /// <summary>
-    /// Normalizes text by cleaning up whitespace and formatting while preserving paragraph structure.
-    /// </summary>
-    private static string NormalizeText(string text)
-    {
-        if (string.IsNullOrWhiteSpace(text))
-            return string.Empty;
-
-        // First, normalize line endings
-        text = text.Replace("\r\n", "\n").Replace("\r", "\n");
-
-        // Split into paragraphs (preserving paragraph breaks)
-        var paragraphs = _paragraphBreakRegex.Split(text)
-            .Select(p => p.Trim())
-            .Where(p => !string.IsNullOrEmpty(p))
-            .Select(p => _whitespaceRegex.Replace(p, " ").Trim())
-            .Where(p => !string.IsNullOrEmpty(p));
-
-        // Rejoin paragraphs with double line breaks
-        return string.Join("\n\n", paragraphs);
-    }
-
-    /// <summary>
-    /// Removes basic markdown formatting to extract plain text.
-    /// This is a simplified implementation - for production use, consider a dedicated markdown parser.
-    /// </summary>
-    private static string RemoveMarkdownFormatting(string markdown)
-    {
-        if (string.IsNullOrWhiteSpace(markdown))
-            return string.Empty;
-
-        var text = markdown;
-
-        // Remove headers
-        text = Regex.Replace(text, @"^#{1,6}\s+", "", RegexOptions.Multiline);
-
-        // Remove emphasis and strong
-        text = Regex.Replace(text, @"\*\*(.*?)\*\*", "$1");
-        text = Regex.Replace(text, @"\*(.*?)\*", "$1");
-        text = Regex.Replace(text, @"__(.*?)__", "$1");
-        text = Regex.Replace(text, @"_(.*?)_", "$1");
-
-        // Remove links
-        text = Regex.Replace(text, @"\[([^\]]*)\]\([^)]*\)", "$1");
-
-        // Remove code blocks and inline code
-        text = Regex.Replace(text, @"```[\s\S]*?```", "");
-        text = Regex.Replace(text, @"`([^`]*)`", "$1");
-
-        // Remove horizontal rules
-        text = Regex.Replace(text, @"^[-*_]{3,}\s*$", "", RegexOptions.Multiline);
-
-        // Remove list markers
-        text = Regex.Replace(text, @"^[\s]*[-*+]\s+", "", RegexOptions.Multiline);
-        text = Regex.Replace(text, @"^[\s]*\d+\.\s+", "", RegexOptions.Multiline);
-
-        return text;
     }
 }

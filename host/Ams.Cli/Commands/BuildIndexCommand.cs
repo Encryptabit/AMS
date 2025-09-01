@@ -22,33 +22,16 @@ public static class BuildIndexCommand
         };
         outputOption.AddAlias("-o");
         
-        var asrJsonOption = new Option<FileInfo?>("--asr-json", "Optional ASR JSON file for timing alignment")
-        {
-            IsRequired = false
-        };
-        asrJsonOption.AddAlias("-a");
-        
         var forceCacheRefreshOption = new Option<bool>("--force-refresh", () => false, "Force cache refresh even if cached version exists");
         forceCacheRefreshOption.AddAlias("-f");
         
         var averageWpmOption = new Option<double>("--avg-wpm", () => 200.0, "Average words per minute for duration estimation");
-        var extractMetadataOption = new Option<bool>("--extract-metadata", () => true, "Extract document metadata (title, author)");
-        var normalizeTextOption = new Option<bool>("--normalize-text", () => false, "Normalize text (whitespace, punctuation)");
-        var includeParagraphsOption = new Option<bool>("--include-paragraphs", () => true, "Include paragraph segments");
-        var minSentenceLengthOption = new Option<int>("--min-sentence-length", () => 5, "Minimum characters for valid sentences");
-        var minParagraphWordsOption = new Option<int>("--min-paragraph-words", () => 2, "Minimum words for valid paragraphs");
         var noCacheOption = new Option<bool>("--no-cache", () => false, "Disable caching (don't read from or write to cache)");
         
         buildIndexCommand.AddOption(bookFileOption);
         buildIndexCommand.AddOption(outputOption);
-        buildIndexCommand.AddOption(asrJsonOption);
         buildIndexCommand.AddOption(forceCacheRefreshOption);
         buildIndexCommand.AddOption(averageWpmOption);
-        buildIndexCommand.AddOption(extractMetadataOption);
-        buildIndexCommand.AddOption(normalizeTextOption);
-        buildIndexCommand.AddOption(includeParagraphsOption);
-        buildIndexCommand.AddOption(minSentenceLengthOption);
-        buildIndexCommand.AddOption(minParagraphWordsOption);
         buildIndexCommand.AddOption(noCacheOption);
         
         buildIndexCommand.SetHandler(async (context) =>
@@ -57,29 +40,17 @@ public static class BuildIndexCommand
             {
                 var bookFile = context.ParseResult.GetValueForOption(bookFileOption)!;
                 var outputFile = context.ParseResult.GetValueForOption(outputOption)!;
-                var asrJsonFile = context.ParseResult.GetValueForOption(asrJsonOption);
                 var forceRefresh = context.ParseResult.GetValueForOption(forceCacheRefreshOption);
                 var averageWpm = context.ParseResult.GetValueForOption(averageWpmOption);
-                var extractMetadata = context.ParseResult.GetValueForOption(extractMetadataOption);
-                var normalizeText = context.ParseResult.GetValueForOption(normalizeTextOption);
-                var includeParagraphs = context.ParseResult.GetValueForOption(includeParagraphsOption);
-                var minSentenceLength = context.ParseResult.GetValueForOption(minSentenceLengthOption);
-                var minParagraphWords = context.ParseResult.GetValueForOption(minParagraphWordsOption);
                 var noCache = context.ParseResult.GetValueForOption(noCacheOption);
                 
                 await BuildBookIndexAsync(
                     bookFile, 
                     outputFile, 
-                    asrJsonFile, 
                     forceRefresh,
                     new BookIndexOptions
                     {
-                        AverageWpm = averageWpm,
-                        ExtractMetadata = extractMetadata,
-                        NormalizeText = normalizeText,
-                        IncludeParagraphSegments = includeParagraphs,
-                        MinimumSentenceLength = minSentenceLength,
-                        MinimumParagraphWords = minParagraphWords
+                        AverageWpm = averageWpm
                     },
                     noCache);
             }
@@ -96,7 +67,6 @@ public static class BuildIndexCommand
     private static async Task BuildBookIndexAsync(
         FileInfo bookFile, 
         FileInfo outputFile,
-        FileInfo? asrJsonFile,
         bool forceRefresh,
         BookIndexOptions options,
         bool noCache)
@@ -104,15 +74,12 @@ public static class BuildIndexCommand
         Console.WriteLine($"Building book index...");
         Console.WriteLine($"Book file: {bookFile.FullName}");
         Console.WriteLine($"Output file: {outputFile.FullName}");
-        if (asrJsonFile != null)
-            Console.WriteLine($"ASR file: {asrJsonFile.FullName}");
         
         // Validate input files
         if (!bookFile.Exists)
             throw new FileNotFoundException($"Book file not found: {bookFile.FullName}");
         
-        if (asrJsonFile != null && !asrJsonFile.Exists)
-            throw new FileNotFoundException($"ASR JSON file not found: {asrJsonFile.FullName}");
+        
         
         // Initialize services
         var parser = new BookParser();
@@ -153,31 +120,6 @@ public static class BuildIndexCommand
             bookIndex = await ProcessBookFromScratch(parser, indexer, cache, bookFile.FullName, options);
         }
         
-        // Apply ASR timing if provided
-        if (asrJsonFile != null)
-        {
-            Console.Write("Loading ASR data... ");
-            var asrJson = await File.ReadAllTextAsync(asrJsonFile.FullName);
-            var asrResponse = JsonSerializer.Deserialize<AsrResponse>(asrJson);
-            
-            if (asrResponse?.Tokens == null || asrResponse.Tokens.Length == 0)
-                throw new InvalidOperationException("ASR JSON file contains no valid tokens");
-            
-            Console.WriteLine($"Loaded {asrResponse.Tokens.Length} ASR tokens");
-            
-            Console.Write("Aligning timing data... ");
-            bookIndex = await indexer.UpdateTimingAsync(bookIndex, asrResponse.Tokens);
-            Console.WriteLine("Done");
-            
-            // Update cache with timing-aligned version if cache is enabled
-            if (cache != null)
-            {
-                Console.Write("Updating cache with timing data... ");
-                await cache.SetAsync(bookIndex);
-                Console.WriteLine("Done");
-            }
-        }
-        
         // Save the final index
         Console.Write("Saving book index... ");
         var jsonOptions = new JsonSerializerOptions 
@@ -197,31 +139,10 @@ public static class BuildIndexCommand
         Console.WriteLine($"Source file: {bookIndex.SourceFile}");
         Console.WriteLine($"Source file hash: {bookIndex.SourceFileHash[..16]}...");
         Console.WriteLine($"Indexed at: {bookIndex.IndexedAt:yyyy-MM-dd HH:mm:ss} UTC");
-        Console.WriteLine($"Total words: {bookIndex.TotalWords:n0}");
-        Console.WriteLine($"Total sentences: {bookIndex.TotalSentences:n0}");
-        Console.WriteLine($"Total paragraphs: {bookIndex.TotalParagraphs:n0}");
-        Console.WriteLine($"Estimated duration: {FormatDuration(bookIndex.EstimatedDuration)}");
-        
-        var wordsWithTiming = bookIndex.Words.Count(w => w.StartTime.HasValue);
-        var segmentsWithTiming = bookIndex.Segments.Count(s => s.StartTime.HasValue);
-        
-        if (wordsWithTiming > 0 || segmentsWithTiming > 0)
-        {
-            Console.WriteLine("\n=== Timing Information ===");
-            Console.WriteLine($"Words with timing: {wordsWithTiming:n0} ({wordsWithTiming / (double)bookIndex.TotalWords:P1})");
-            Console.WriteLine($"Segments with timing: {segmentsWithTiming:n0} ({segmentsWithTiming / (double)bookIndex.Segments.Length:P1})");
-            
-            if (wordsWithTiming > 0)
-            {
-                var avgConfidence = bookIndex.Words
-                    .Where(w => w.Confidence.HasValue)
-                    .DefaultIfEmpty()
-                    .Average(w => w.Confidence ?? 0.0);
-                
-                if (avgConfidence > 0)
-                    Console.WriteLine($"Average timing confidence: {avgConfidence:F3}");
-            }
-        }
+        Console.WriteLine($"Total words: {bookIndex.Totals.Words:n0}");
+        Console.WriteLine($"Total sentences: {bookIndex.Totals.Sentences:n0}");
+        Console.WriteLine($"Total paragraphs: {bookIndex.Totals.Paragraphs:n0}");
+        Console.WriteLine($"Estimated duration: {FormatDuration(bookIndex.Totals.EstimatedDurationSec)}");
         
         Console.WriteLine($"\nBook index saved to: {outputFile.FullName}");
     }

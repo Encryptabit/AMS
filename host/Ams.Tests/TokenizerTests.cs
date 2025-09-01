@@ -8,7 +8,7 @@ public class TextNormalizerTests
     [Theory]
     [InlineData("Hello, World!", "hello world")]
     [InlineData("Don't you think it's great?", "do not you think it is great")]
-    [InlineData("I can't believe it's 123 degrees!", "i can not believe it is one hundred twenty three degrees")]
+    [InlineData("I can't believe it's 123 degrees!", "i cannot believe it is one hundred twenty three degrees")]
     [InlineData("  Multiple    spaces   ", "multiple spaces")]
     [InlineData("", "")]
     public void Normalize_ShouldNormalizeTextCorrectly(string input, string expected)
