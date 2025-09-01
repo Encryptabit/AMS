@@ -49,20 +49,11 @@ public class ScriptValidatorTests
         var scriptText = "hello world test";
         var asrResponse = new AsrResponse(
             ModelVersion: "test@v1",
-            Segments: new[]
+            Tokens: new[]
             {
-                new AsrSegment(
-                    Start: 0.0,
-                    End: 2.0,
-                    Text: "hello world test",
-                    Confidence: 0.95,
-                    Tokens: new[]
-                    {
-                        new AsrToken(StartTime: 0.0, Duration: 0.5, Word: "hello", Confidence: 0.95),
-                        new AsrToken(StartTime: 0.5, Duration: 0.5, Word: "world", Confidence: 0.95),
-                        new AsrToken(StartTime: 1.0, Duration: 0.5, Word: "test", Confidence: 0.95)
-                    }
-                )
+                new AsrToken(StartTime: 0.0, Duration: 0.5, Word: "hello"),
+                new AsrToken(StartTime: 0.5, Duration: 0.5, Word: "world"),
+                new AsrToken(StartTime: 1.0, Duration: 0.5, Word: "test")
             }
         );
 
@@ -83,20 +74,11 @@ public class ScriptValidatorTests
         var scriptText = "hello world test";
         var asrResponse = new AsrResponse(
             ModelVersion: "test@v1",
-            Segments: new[]
+            Tokens: new[]
             {
-                new AsrSegment(
-                    Start: 0.0,
-                    End: 2.0,
-                    Text: "hello word test", // "world" -> "word"
-                    Confidence: 0.90,
-                    Tokens: new[]
-                    {
-                        new AsrToken(StartTime: 0.0, Duration: 0.5, Word: "hello", Confidence: 0.95),
-                        new AsrToken(StartTime: 0.5, Duration: 0.5, Word: "word", Confidence: 0.85),
-                        new AsrToken(StartTime: 1.0, Duration: 0.5, Word: "test", Confidence: 0.95)
-                    }
-                )
+                new AsrToken(StartTime: 0.0, Duration: 0.5, Word: "hello"),
+                new AsrToken(StartTime: 0.5, Duration: 0.5, Word: "word"), // "world" -> "word"
+                new AsrToken(StartTime: 1.0, Duration: 0.5, Word: "test")
             }
         );
 
@@ -122,20 +104,11 @@ public class ScriptValidatorTests
         var scriptText = "hello world";
         var asrResponse = new AsrResponse(
             ModelVersion: "test@v1",
-            Segments: new[]
+            Tokens: new[]
             {
-                new AsrSegment(
-                    Start: 0.0,
-                    End: 2.0,
-                    Text: "hello beautiful world", // extra "beautiful"
-                    Confidence: 0.90,
-                    Tokens: new[]
-                    {
-                        new AsrToken(StartTime: 0.0, Duration: 0.5, Word: "hello", Confidence: 0.95),
-                        new AsrToken(StartTime: 0.5, Duration: 0.5, Word: "beautiful", Confidence: 0.85),
-                        new AsrToken(StartTime: 1.0, Duration: 0.5, Word: "world", Confidence: 0.95)
-                    }
-                )
+                new AsrToken(StartTime: 0.0, Duration: 0.5, Word: "hello"),
+                new AsrToken(StartTime: 0.5, Duration: 0.5, Word: "beautiful"), // extra "beautiful"
+                new AsrToken(StartTime: 1.0, Duration: 0.5, Word: "world")
             }
         );
 
@@ -160,19 +133,10 @@ public class ScriptValidatorTests
         var scriptText = "hello beautiful world";
         var asrResponse = new AsrResponse(
             ModelVersion: "test@v1",
-            Segments: new[]
+            Tokens: new[]
             {
-                new AsrSegment(
-                    Start: 0.0,
-                    End: 2.0,
-                    Text: "hello world", // missing "beautiful"
-                    Confidence: 0.90,
-                    Tokens: new[]
-                    {
-                        new AsrToken(StartTime: 0.0, Duration: 0.5, Word: "hello", Confidence: 0.95),
-                        new AsrToken(StartTime: 1.0, Duration: 0.5, Word: "world", Confidence: 0.95)
-                    }
-                )
+                new AsrToken(StartTime: 0.0, Duration: 0.5, Word: "hello"),
+                new AsrToken(StartTime: 1.0, Duration: 0.5, Word: "world") // missing "beautiful"
             }
         );
 
@@ -197,23 +161,14 @@ public class ScriptValidatorTests
         var scriptText = "I can't believe it's working";
         var asrResponse = new AsrResponse(
             ModelVersion: "test@v1",
-            Segments: new[]
+            Tokens: new[]
             {
-                new AsrSegment(
-                    Start: 0.0,
-                    End: 3.0,
-                    Text: "I cannot believe it is working",
-                    Confidence: 0.90,
-                    Tokens: new[]
-                    {
-                        new AsrToken(StartTime: 0.0, Duration: 0.3, Word: "I", Confidence: 0.95),
-                        new AsrToken(StartTime: 0.3, Duration: 0.5, Word: "cannot", Confidence: 0.90),
-                        new AsrToken(StartTime: 0.8, Duration: 0.5, Word: "believe", Confidence: 0.95),
-                        new AsrToken(StartTime: 1.3, Duration: 0.3, Word: "it", Confidence: 0.95),
-                        new AsrToken(StartTime: 1.6, Duration: 0.3, Word: "is", Confidence: 0.90),
-                        new AsrToken(StartTime: 1.9, Duration: 0.5, Word: "working", Confidence: 0.95)
-                    }
-                )
+                new AsrToken(StartTime: 0.0, Duration: 0.3, Word: "I"),
+                new AsrToken(StartTime: 0.3, Duration: 0.5, Word: "cannot"),
+                new AsrToken(StartTime: 0.8, Duration: 0.5, Word: "believe"),
+                new AsrToken(StartTime: 1.3, Duration: 0.3, Word: "it"),
+                new AsrToken(StartTime: 1.6, Duration: 0.3, Word: "is"),
+                new AsrToken(StartTime: 1.9, Duration: 0.5, Word: "working")
             }
         );
 
@@ -230,25 +185,16 @@ public class ScriptValidatorTests
         var scriptText = "The quick brown fox jumps over the lazy dog";
         var asrResponse = new AsrResponse(
             ModelVersion: "test@v1",
-            Segments: new[]
+            Tokens: new[]
             {
-                new AsrSegment(
-                    Start: 0.0,
-                    End: 4.0,
-                    Text: "The fast brown fox leaps over lazy dog", // quick->fast, jumps->leaps, missing "the"
-                    Confidence: 0.85,
-                    Tokens: new[]
-                    {
-                        new AsrToken(StartTime: 0.0, Duration: 0.3, Word: "The", Confidence: 0.95),
-                        new AsrToken(StartTime: 0.3, Duration: 0.4, Word: "fast", Confidence: 0.80),
-                        new AsrToken(StartTime: 0.7, Duration: 0.4, Word: "brown", Confidence: 0.90),
-                        new AsrToken(StartTime: 1.1, Duration: 0.3, Word: "fox", Confidence: 0.95),
-                        new AsrToken(StartTime: 1.4, Duration: 0.4, Word: "leaps", Confidence: 0.75),
-                        new AsrToken(StartTime: 1.8, Duration: 0.3, Word: "over", Confidence: 0.90),
-                        new AsrToken(StartTime: 2.1, Duration: 0.4, Word: "lazy", Confidence: 0.85),
-                        new AsrToken(StartTime: 2.5, Duration: 0.3, Word: "dog", Confidence: 0.90)
-                    }
-                )
+                new AsrToken(StartTime: 0.0, Duration: 0.3, Word: "The"),
+                new AsrToken(StartTime: 0.3, Duration: 0.4, Word: "fast"), // quick->fast
+                new AsrToken(StartTime: 0.7, Duration: 0.4, Word: "brown"),
+                new AsrToken(StartTime: 1.1, Duration: 0.3, Word: "fox"),
+                new AsrToken(StartTime: 1.4, Duration: 0.4, Word: "leaps"), // jumps->leaps
+                new AsrToken(StartTime: 1.8, Duration: 0.3, Word: "over"),
+                new AsrToken(StartTime: 2.1, Duration: 0.4, Word: "lazy"),
+                new AsrToken(StartTime: 2.5, Duration: 0.3, Word: "dog") // missing "the"
             }
         );
 

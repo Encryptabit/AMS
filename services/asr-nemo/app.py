@@ -112,20 +112,14 @@ class AsrRequest(BaseModel):
     model: Optional[str] = None
     language: str = "en"
 
-class Token(BaseModel):
+class WordToken(BaseModel):
     t: float  # start time
     d: float  # duration
     w: str    # word
 
-class Segment(BaseModel):
-    start: float
-    end: float
-    text: str
-    tokens: List[Token]
-
 class AsrResponse(BaseModel):
     modelVersion: str
-    segments: List[Segment]
+    tokens: List[WordToken]
 
 _model = None
 _model_name = None
@@ -349,93 +343,35 @@ async def transcribe_audio(request: AsrRequest):
                 logging.debug(f"Sample word entry: {sample_word}")
                 logging.debug(f"Word entry keys: {list(sample_word.keys()) if sample_word else 'No words'}")
         
-        # Process NeMo output into our format using timestamp data
-        segments = []
+        # Process NeMo output into word tokens directly
+        tokens = []
         
-        # Check if timestamps are available (like in finding_nemo.py)
-        if hasattr(hypo, 'timestamp') and hypo.timestamp is not None:
-            # Use timestamp information for word-level timing (like finding_nemo.py)
+        # Check if timestamps are available
+        if hasattr(hypo, 'timestamp') and hypo.timestamp is not None and hypo.timestamp.get("word", []):
+            # Use word-level timestamp information directly
             word_entries = hypo.timestamp.get("word", [])
-            segment_entries = hypo.timestamp.get("segment", [])
             
-            # Process segments like finding_nemo.py does
-            for i, entry in enumerate(segment_entries):
-                # Normalize segment entry
-                normalized_segment = {
-                    "id": i,
-                    "text": "".join(entry.get("segment", [])),
-                    "start": float(entry.get("start", 0.0)),
-                    "end": float(entry.get("end", 0.0)),
-                    "start_offset": int(entry.get("start_offset", 0)),
-                    "end_offset": int(entry.get("end_offset", 0)),
-                }
-                
-                # Create tokens from word entries within this segment's timeframe
-                tokens = []
-                for j, word_entry in enumerate(word_entries):
-                    word_start = float(word_entry.get("start", 0.0))
-                    word_end = float(word_entry.get("end", 0.0))
-                    
-                    # Include words that fall within this segment's time range
-                    if (word_start >= normalized_segment["start"] and 
-                        word_end <= normalized_segment["end"]):
-                        
-                        tokens.append(Token(
-                            t=round(word_start, 2),
-                            d=round(word_end - word_start, 2),
-                            w="".join(word_entry.get("word", []))
-                        ))
-                
-                segments.append(Segment(
-                    start=round(normalized_segment["start"], 2),
-                    end=round(normalized_segment["end"], 2),
-                    text=normalized_segment["text"],
-                    tokens=tokens
-                ))
-        
-        # Check for word-level timestamps without segment data
-        elif hasattr(hypo, 'timestamp') and hypo.timestamp is not None and hypo.timestamp.get("word", []):
-            word_entries = hypo.timestamp.get("word", [])
-            tokens = []
-            
-            for j, word_entry in enumerate(word_entries):
+            for word_entry in word_entries:
                 word_start = float(word_entry.get("start", 0.0))
                 word_end = float(word_entry.get("end", 0.0))
                         
-                tokens.append(Token(
+                tokens.append(WordToken(
                     t=round(word_start, 2),
                     d=round(word_end - word_start, 2),
                     w="".join(word_entry.get("word", []))
                 ))
-            
-            # Create a single segment from all words
-            if tokens:
-                segments.append(Segment(
-                    start=tokens[0].t,
-                    end=tokens[-1].t + tokens[-1].d,
-                    text=hypo.text,
-                    tokens=tokens
-                ))
         
-        # Fallback: create basic segments without detailed timestamps
-        if not segments and hypo.text:
+        # Fallback: create basic tokens without detailed timestamps
+        elif hypo.text:
             words = hypo.text.split()
-            tokens = []
             
             # Create mock tokens with estimated timing
             for i, word in enumerate(words):
-                tokens.append(Token(
+                tokens.append(WordToken(
                     t=round(i * 0.5, 2),  # Estimate 0.5s per word
                     d=0.4,  # Estimate 0.4s duration per word
                     w=word
                 ))
-            
-            segments.append(Segment(
-                start=0.0,
-                end=round(len(words) * 0.5, 2),
-                text=hypo.text,
-                tokens=tokens
-            ))
         
         # Cleanup
         gc.collect()
@@ -444,10 +380,10 @@ async def transcribe_audio(request: AsrRequest):
         
         response = AsrResponse(
             modelVersion=_model_name or "unknown",
-            segments=segments
+            tokens=tokens
         )
         
-        logging.info(f"ASR processing completed - {len(segments)} segments generated")
+        logging.info(f"ASR processing completed - {len(tokens)} word tokens generated")
         return response
         
     except Exception as e:
