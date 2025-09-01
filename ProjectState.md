@@ -3,14 +3,14 @@ Date: 2025-09-01
 
 Summary
 - Goal: Production-ready Audio Management System blending .NET orchestration, Python ASR+alignment, and Zig DSP with a future node-graph host.
-- Current focus: End-to-end ASR → validation loop and preparing script ingestion from DOCX.
+- Current focus: Canonical book decoding and a slim, deterministic BookIndex with exact source fidelity (no normalization at rest).
 
 What's Implemented
 - CLI
   - `asr run`: Calls NeMo service (`/asr`), saves JSON.
   - `validate script`: Validates script vs ASR JSON; computes WER/CER and findings.
-  - `pipeline run`: Single command for ASR → validation → report. Writes `<report>.asr.json`.
-  - `build-index`: Creates word-level book indexes from DOCX, TXT, MD, RTF files with caching.
+  - `build-index`: Creates canonical book indexes from DOCX, TXT, MD, RTF files with caching.
+  - `book verify`: Read-only doctor for `BookIndex` JSON. Checks counts parity, ordering/coverage of ranges, flags apostrophe-split and TOC-burst warnings, and prints a deterministic hash of the canonical JSON. Exits non-zero on failure (CI-friendly). 
   - `text normalize`: Direct text normalization testing utility.
 - ASR Client
   - `Ams.Core.AsrClient`: Posts `{audio_path, model, language}` and deserializes response.
@@ -20,47 +20,46 @@ What's Implemented
 - DSP
   - Zig gain with smoothed parameter and C ABI; .NET P/Invoke wrapper `Ams.Dsp.Native.AmsDsp`.
   - CLI `dsp` demo writes `ams_out.wav`.
-- Book Parser & Indexer (new)
-  - `BookParser`: Multi-format parser (DOCX via DocX package, TXT, MD, RTF) with metadata extraction.
-  - `BookIndexer`: Word/sentence/paragraph segmentation with timing estimation for audio alignment.
-  - `BookCache`: SHA256-validated file-based caching system for processed book indexes.
-  - Full CLI integration with comprehensive options (WPM, metadata extraction, paragraph segments).
+- Book Parser & Indexer (canonical)
+  - `BookParser`: Multi-format reader (DOCX/TXT/MD/RTF) that extracts paragraphs without normalization; derives paragraph `style` (DocX `StyleId`) and best-effort `kind` (Heading/Body). Title/author read when available.
+  - `BookIndexer`: Canonical tokenizer (whitespace split; punctuation preserved), builds `words[]` and structure ranges: `sentences[]`, `paragraphs[]`. No timing/confidence in BookIndex.
+  - `BookCache`: SHA256-validating cache keyed by source file; reuse only when hash matches. JSON serialization deterministic.
+  - CLI `build-index`: Slim options; prints canonical totals; no ASR alignment in this command.
 
 How To Run
 - Start ASR service: `services/asr-nemo/start_service.bat` (Windows) or `uvicorn services.asr-nemo.app:app`.
-- End-to-end: `dotnet run --project host/Ams.Cli -- pipeline run -a <audio.wav> -s <script.txt> -o <report.json>`
 - ASR only: `dotnet run --project host/Ams.Cli -- asr run -a <audio.wav> -o <asr.json>`
 - Validate only: `dotnet run --project host/Ams.Cli -- validate script -a <audio.wav> -s <script.txt> -j <asr.json> -o <report.json>`
 - Book indexing: `dotnet run --project host/Ams.Cli -- build-index -b <book.docx> -o <index.json>`
+- Book doctor (read-only): `dotnet run --project host/Ams.Cli -- book verify --index <index.json>`
 - Text normalization: `dotnet run --project host/Ams.Cli -- text normalize "your text here"`
 - DSP demo: `dotnet run --project host/Ams.Cli -- dsp`
 
 Book Processing & Indexing
-- Multi-format support: DOCX (via DocX package), TXT, MD, RTF with automatic format detection.
-- Metadata extraction: Title, author, and document properties from supported formats.
-- Word-level indexing: Complete hierarchical structure (words → sentences → paragraphs) with global offsets.
-- Caching system: SHA256 file hash validation with automatic cache invalidation on file changes.
-- CLI integration: `build-index` command with comprehensive options for WPM estimation, normalization controls.
-- Test coverage: 88.6% pass rate (31/35 tests) with full parser and indexer validation.
-- Performance: ~24s estimated duration calculation for 83 words, efficient in-memory processing.
+- Canonical fidelity: No normalization at rest. Tokens preserve exact casing, punctuation, apostrophes, hyphens, and Unicode.
+- Structure: `sentences[]` and `paragraphs[]` are inclusive word index ranges that cover all words contiguously without overlap.
+- Slim schema: `words[]` has only `{text, wordIndex, sentenceIndex, paragraphIndex, [charStart?], [charEnd?]}`; no timing/confidence.
+- Totals: `totals = { words, sentences, paragraphs, estimatedDurationSec }` computed without mutating tokens.
+- Caching: SHA256 of raw file bytes; reuse only on hash match (and future parser version key if added). Deterministic JSON bytes.
+- Doctor: `book verify` never mutates the index; if checks fail, keep the BookIndex canonical—adjust decoder tokenization (sentence/paragraph walking, apostrophes) and paragraph style classification (DocX) instead.
+- Tests: All tests passing (29/29), including canonical round‑trip and slimness checks.
 
 Immediate Next Steps
-1) Book-ASR Integration: Connect `build-index` output with `validate script` for word-level timing validation.
-2) Timing alignment: Use BookIndex word offsets with ASR tokens for precise audio-text synchronization.
-3) Validation enhancement: Add findings for timing gaps, pacing, and word-level confidence scores.
-4) Alignment (Aeneas): Define `/align` API + `AeneasClient`; integrate with BookIndex for forced alignment.
+1) Parser version in cache key: add version suffix in cache filenames for strict reuse across parser changes.
+2) Optional char ranges: compute `charStart/charEnd` cheaply from source spans (omit when not available).
+3) Sections/front matter: optional `sections[]` with cautious heuristics; populate `buildWarnings[]` for low-confidence detections.
+4) ASR alignment remains separate: timing/confidence stay out of BookIndex; continue via `ScriptValidator` and future alignment utilities.
 5) DSP Host: Sketch `IAudioNode` and `TimelineStitcherNode`; prepare for real-time audio processing integration.
+ 6) Doctor output for CI: add `--json` to emit a machine-readable verification report; consider warning categories (apostrophes, hyphenation, page-number runs) with counts.
 
 Risks/Notes
-- ASR service returns word-level tokens without confidence values; BookIndex system handles this appropriately.
-- BookCache test failures (3/35) relate to file system operations but don't affect core functionality.
-- DOCX parsing now uses DocX package (v4.0.25105.5786) with Dictionary-based CoreProperties access.
-- Text normalization test shows "cannot" vs "can not" contraction handling difference (1 test failure).
+- DOCX style: using `Paragraph.StyleId` to avoid API obsolescence; style/kind are best‑effort.
+- Tokenization: whitespace-only preserves punctuation with tokens (e.g., `test.”`), which is intentional for canonical fidelity.
+- Determinism: cache JSON settings are stable; ensure environment does not inject non-deterministic timestamps beyond `indexedAt`.
+ - Verification scope: `book verify` depends on the canonical schema (`Ams.Core.BookIndex`). If schema evolves, update the doctor to maintain stable hashing and checks.
 
 Fast Resume Checklist
-- Is ASR service healthy? `GET /health` must return 200; set `HUGGINGFACE_TOKEN`.
-- Test book processing: `dotnet run --project host/Ams.Cli -- build-index -b <file.docx> -o <output.json>`
-- Verify caching: Run same command twice, second run should show "Found valid cache".
-- Check text normalization: `dotnet run --project host/Ams.Cli -- text normalize "test text"`
-- Run end-to-end: `pipeline run` and inspect WER/CER and findings in the report.
-
+- Test canonical index: `dotnet run --project host/Ams.Cli -- build-index -b <file.docx> -o <index.json>`; rerun to verify "Found valid cache" and identical JSON bytes.
+- Spot-check canonical fidelity: inspect first ~200 tokens for exact text (quotes/dashes/apostrophes preserved).
+- Validate script workflow: `validate script` remains unchanged and separate from BookIndex.
+- Verify index health: `dotnet run --project host/Ams.Cli -- book verify --index <index.json>`; expect OK + deterministic hash. In CI, non-zero exit signals issues to investigate upstream (tokenization/styles), not to auto-fix.
