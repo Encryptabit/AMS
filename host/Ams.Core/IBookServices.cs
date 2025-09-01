@@ -40,11 +40,14 @@ public interface IBookParser
 /// <param name="Title">Document title if available</param>
 /// <param name="Author">Document author if available</param>
 /// <param name="Metadata">Additional document properties</param>
+public record ParsedParagraph(string Text, string? Style = null, string? Kind = null);
+
 public record BookParseResult(
     string Text,
     string? Title = null,
     string? Author = null,
-    IReadOnlyDictionary<string, object>? Metadata = null
+    IReadOnlyDictionary<string, object>? Metadata = null,
+    IReadOnlyList<ParsedParagraph>? Paragraphs = null
 );
 
 /// <summary>
@@ -65,24 +68,9 @@ public interface IBookIndexer
     /// <returns>Complete book index with timing metadata</returns>
     /// <exception cref="ArgumentException">Invalid parse result or options</exception>
     Task<BookIndex> CreateIndexAsync(
-        BookParseResult parseResult, 
-        string sourceFile, 
+        BookParseResult parseResult,
+        string sourceFile,
         BookIndexOptions? options = null,
-        CancellationToken cancellationToken = default);
-    
-    /// <summary>
-    /// Updates timing information in an existing book index using ASR data.
-    /// This method aligns ASR tokens with book words to provide accurate
-    /// timing information for audio synchronization.
-    /// </summary>
-    /// <param name="bookIndex">Existing book index to update</param>
-    /// <param name="asrTokens">ASR tokens with timing information</param>
-    /// <param name="cancellationToken">Cancellation token</param>
-    /// <returns>Updated book index with timing information</returns>
-    /// <exception cref="ArgumentException">Invalid book index or ASR data</exception>
-    Task<BookIndex> UpdateTimingAsync(
-        BookIndex bookIndex,
-        AsrToken[] asrTokens,
         CancellationToken cancellationToken = default);
 }
 
