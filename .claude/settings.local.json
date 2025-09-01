@@ -8,7 +8,10 @@
       "Read(C:\\Projects\\AMS3\\Services/**)",
       "Bash(dotnet restore:*)",
       "Bash(dotnet build)",
-      "Bash(dotnet run:*)"
+      "Bash(dotnet run:*)",
+      "Bash(dotnet test:*)",
+      "Bash(find:*)",
+      "Bash(dotnet build:*)"
     ],
     "deny": [],
     "ask": []
