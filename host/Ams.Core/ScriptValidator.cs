@@ -67,22 +67,18 @@ public class ScriptValidator(ValidationOptions? options = null)
     {
         var words = new List<WordAlignment>();
         
-        foreach (var segment in asrResponse.Segments)
+        foreach (var token in asrResponse.Tokens)
         {
-            foreach (var token in segment.Tokens)
+            var normalizedWord = TextNormalizer.Normalize(token.Word, _options.ExpandContractions, _options.RemoveNumbers);
+            if (!string.IsNullOrEmpty(normalizedWord))
             {
-                var normalizedWord = TextNormalizer.Normalize(token.Word, _options.ExpandContractions, _options.RemoveNumbers);
-                if (!string.IsNullOrEmpty(normalizedWord))
+                words.Add(new WordAlignment
                 {
-                    words.Add(new WordAlignment
-                    {
-                        Word = normalizedWord,
-                        StartTime = token.StartTime,
-                        EndTime = token.StartTime + token.Duration,
-                        Confidence = token.Confidence,
-                        OriginalWord = token.Word
-                    });
-                }
+                    Word = normalizedWord,
+                    StartTime = token.StartTime,
+                    EndTime = token.StartTime + token.Duration,
+                    OriginalWord = token.Word
+                });
             }
         }
         
@@ -253,30 +249,29 @@ public class ScriptValidator(ValidationOptions? options = null)
     private List<SegmentStats> GenerateSegmentStats(AsrResponse asrResponse, string scriptText)
     {
         var stats = new List<SegmentStats>();
-        var scriptWords = ExtractWordsFromScript(scriptText);
-        var wordsPerSegment = Math.Max(1, scriptWords.Count / Math.Max(1, asrResponse.Segments.Length));
         
-        for (int i = 0; i < asrResponse.Segments.Length; i++)
-        {
-            var segment = asrResponse.Segments[i];
-            var expectedStartIdx = i * wordsPerSegment;
-            var expectedEndIdx = Math.Min(scriptWords.Count, (i + 1) * wordsPerSegment);
-            
-            var expectedText = string.Join(" ", scriptWords.Skip(expectedStartIdx).Take(expectedEndIdx - expectedStartIdx));
-            var actualText = TextNormalizer.Normalize(segment.Text, _options.ExpandContractions, _options.RemoveNumbers);
-            
-            var segmentWer = CalculateSegmentWER(expectedText, actualText);
-            
-            stats.Add(new SegmentStats(
-                Index: i,
-                StartTime: segment.Start,
-                EndTime: segment.End,
-                ExpectedText: expectedText,
-                ActualText: actualText,
-                WordErrorRate: segmentWer,
-                Confidence: segment.Confidence
-            ));
-        }
+        if (!asrResponse.Tokens.Any())
+            return stats;
+        
+        // Create a single segment from all tokens
+        var firstToken = asrResponse.Tokens.First();
+        var lastToken = asrResponse.Tokens.Last();
+        
+        var expectedText = TextNormalizer.Normalize(scriptText, _options.ExpandContractions, _options.RemoveNumbers);
+        var actualText = string.Join(" ", asrResponse.Tokens.Select(t => t.Word));
+        var normalizedActualText = TextNormalizer.Normalize(actualText, _options.ExpandContractions, _options.RemoveNumbers);
+        
+        var segmentWer = CalculateSegmentWER(expectedText, normalizedActualText);
+        
+        stats.Add(new SegmentStats(
+            Index: 0,
+            StartTime: firstToken.StartTime,
+            EndTime: lastToken.StartTime + lastToken.Duration,
+            ExpectedText: expectedText,
+            ActualText: normalizedActualText,
+            WordErrorRate: segmentWer,
+            Confidence: 0.0 // No confidence available in word-level response
+        ));
         
         return stats;
     }
@@ -351,7 +346,7 @@ public class ScriptValidator(ValidationOptions? options = null)
 
     private string GetTranscriptText(AsrResponse asrResponse)
     {
-        return string.Join(" ", asrResponse.Segments.Select(s => s.Text));
+        return string.Join(" ", asrResponse.Tokens.Select(t => t.Word));
     }
 
     private record WordAlignment
@@ -359,7 +354,6 @@ public class ScriptValidator(ValidationOptions? options = null)
         public required string Word { get; init; }
         public double StartTime { get; init; }
         public double EndTime { get; init; }
-        public double Confidence { get; init; }
         public required string OriginalWord { get; init; }
     }
 

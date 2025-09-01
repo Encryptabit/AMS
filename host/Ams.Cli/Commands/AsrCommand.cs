@@ -95,12 +95,6 @@ public static class AsrCommand
         
         Console.WriteLine($"Results saved to: {outputFile.FullName}");
         Console.WriteLine($"Model version: {response.ModelVersion}");
-        Console.WriteLine($"Segments: {response.Segments.Length}");
-        
-        var totalWords = response.Segments.Sum(s => s.Tokens.Length);
-        var avgConfidence = response.Segments.SelectMany(s => s.Tokens).Average(t => t.Confidence);
-        
-        Console.WriteLine($"Total words: {totalWords}");
-        Console.WriteLine($"Average confidence: {avgConfidence:F3}");
+        Console.WriteLine($"Total words: {response.Tokens.Length}");
     }
 }

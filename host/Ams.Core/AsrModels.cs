@@ -5,21 +5,12 @@ namespace Ams.Core;
 public record AsrToken(
     [property: JsonPropertyName("t")] double StartTime,
     [property: JsonPropertyName("d")] double Duration,
-    [property: JsonPropertyName("w")] string Word,
-    [property: JsonPropertyName("c")] double Confidence
-);
-
-public record AsrSegment(
-    [property: JsonPropertyName("start")] double Start,
-    [property: JsonPropertyName("end")] double End,
-    [property: JsonPropertyName("text")] string Text,
-    [property: JsonPropertyName("conf")] double Confidence,
-    [property: JsonPropertyName("tokens")] AsrToken[] Tokens
+    [property: JsonPropertyName("w")] string Word
 );
 
 public record AsrResponse(
     [property: JsonPropertyName("modelVersion")] string ModelVersion,
-    [property: JsonPropertyName("segments")] AsrSegment[] Segments
+    [property: JsonPropertyName("tokens")] AsrToken[] Tokens
 );
 
 public record AsrRequest(

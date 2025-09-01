@@ -3,7 +3,8 @@
     "allow": [
       "Bash(dir)",
       "Read(C:\\Projects\\AMS3\\python/**)",
-      "Read(C:\\Projects\\ams\\services\\asr-nemo/**)"
+      "Read(C:\\Projects\\ams\\services\\asr-nemo/**)",
+      "Bash(dotnet test)"
     ],
     "deny": [],
     "ask": []
