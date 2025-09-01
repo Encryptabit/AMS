@@ -7,6 +7,8 @@ bin/
 obj/
 out/
 artifacts/
+**/node_modules/
+**/venv**
 *.dll
 *.so
 *.dylib
@@ -20,6 +22,8 @@ artifacts/
 
 # IDE
 .vscode/
+.claude/
+agents.md
 .idea/
 *.sln.docstates
 
