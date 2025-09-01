@@ -1,0 +1,577 @@
+{
+  "sourceFile": "C:\\Projects\\ams\\test_book.md",
+  "sourceFileHash": "7D27067C393E8F321572D4F8984C5B4E97E958C2E21B1A253943D860F5FFF9C5",
+  "indexedAt": "2025-09-01T08:56:12.1827528Z",
+  "title": "My Test Book",
+  "author": null,
+  "totalWords": 58,
+  "totalSentences": 3,
+  "totalParagraphs": 1,
+  "estimatedDuration": 17.4,
+  "words": [
+    {
+      "text": "my",
+      "wordIndex": 0,
+      "sentenceIndex": 0,
+      "paragraphIndex": 0,
+      "startTime": null,
+      "endTime": null,
+      "confidence": null
+    },
+    {
+      "text": "test",
+      "wordIndex": 1,
+      "sentenceIndex": 0,
+      "paragraphIndex": 0,
+      "startTime": null,
+      "endTime": null,
+      "confidence": null
+    },
+    {
+      "text": "book",
+      "wordIndex": 2,
+      "sentenceIndex": 0,
+      "paragraphIndex": 0,
+      "startTime": null,
+      "endTime": null,
+      "confidence": null
+    },
+    {
+      "text": "chapter",
+      "wordIndex": 3,
+      "sentenceIndex": 0,
+      "paragraphIndex": 0,
+      "startTime": null,
+      "endTime": null,
+      "confidence": null
+    },
+    {
+      "text": "1",
+      "wordIndex": 4,
+      "sentenceIndex": 0,
+      "paragraphIndex": 0,
+      "startTime": null,
+      "endTime": null,
+      "confidence": null
+    },
+    {
+      "text": "getting",
+      "wordIndex": 5,
+      "sentenceIndex": 0,
+      "paragraphIndex": 0,
+      "startTime": null,
+      "endTime": null,
+      "confidence": null
+    },
+    {
+      "text": "started",
+      "wordIndex": 6,
+      "sentenceIndex": 0,
+      "paragraphIndex": 0,
+      "startTime": null,
+      "endTime": null,
+      "confidence": null
+    },
+    {
+      "text": "this",
+      "wordIndex": 7,
+      "sentenceIndex": 0,
+      "paragraphIndex": 0,
+      "startTime": null,
+      "endTime": null,
+      "confidence": null
+    },
+    {
+      "text": "is",
+      "wordIndex": 8,
+      "sentenceIndex": 0,
+      "paragraphIndex": 0,
+      "startTime": null,
+      "endTime": null,
+      "confidence": null
+    },
+    {
+      "text": "a",
+      "wordIndex": 9,
+      "sentenceIndex": 0,
+      "paragraphIndex": 0,
+      "startTime": null,
+      "endTime": null,
+      "confidence": null
+    },
+    {
+      "text": "markdown",
+      "wordIndex": 10,
+      "sentenceIndex": 0,
+      "paragraphIndex": 0,
+      "startTime": null,
+      "endTime": null,
+      "confidence": null
+    },
+    {
+      "text": "file",
+      "wordIndex": 11,
+      "sentenceIndex": 0,
+      "paragraphIndex": 0,
+      "startTime": null,
+      "endTime": null,
+      "confidence": null
+    },
+    {
+      "text": "with",
+      "wordIndex": 12,
+      "sentenceIndex": 0,
+      "paragraphIndex": 0,
+      "startTime": null,
+      "endTime": null,
+      "confidence": null
+    },
+    {
+      "text": "formatting",
+      "wordIndex": 13,
+      "sentenceIndex": 0,
+      "paragraphIndex": 0,
+      "startTime": null,
+      "endTime": null,
+      "confidence": null
+    },
+    {
+      "text": "that",
+      "wordIndex": 14,
+      "sentenceIndex": 0,
+      "paragraphIndex": 0,
+      "startTime": null,
+      "endTime": null,
+      "confidence": null
+    },
+    {
+      "text": "should",
+      "wordIndex": 15,
+      "sentenceIndex": 0,
+      "paragraphIndex": 0,
+      "startTime": null,
+      "endTime": null,
+      "confidence": null
+    },
+    {
+      "text": "be",
+      "wordIndex": 16,
+      "sentenceIndex": 0,
+      "paragraphIndex": 0,
+      "startTime": null,
+      "endTime": null,
+      "confidence": null
+    },
+    {
+      "text": "stripped",
+      "wordIndex": 17,
+      "sentenceIndex": 0,
+      "paragraphIndex": 0,
+      "startTime": null,
+      "endTime": null,
+      "confidence": null
+    },
+    {
+      "text": "during",
+      "wordIndex": 18,
+      "sentenceIndex": 0,
+      "paragraphIndex": 0,
+      "startTime": null,
+      "endTime": null,
+      "confidence": null
+    },
+    {
+      "text": "parsing",
+      "wordIndex": 19,
+      "sentenceIndex": 0,
+      "paragraphIndex": 0,
+      "startTime": null,
+      "endTime": null,
+      "confidence": null
+    },
+    {
+      "text": "chapter",
+      "wordIndex": 20,
+      "sentenceIndex": 1,
+      "paragraphIndex": 0,
+      "startTime": null,
+      "endTime": null,
+      "confidence": null
+    },
+    {
+      "text": "2",
+      "wordIndex": 21,
+      "sentenceIndex": 1,
+      "paragraphIndex": 0,
+      "startTime": null,
+      "endTime": null,
+      "confidence": null
+    },
+    {
+      "text": "the",
+      "wordIndex": 22,
+      "sentenceIndex": 1,
+      "paragraphIndex": 0,
+      "startTime": null,
+      "endTime": null,
+      "confidence": null
+    },
+    {
+      "text": "plot",
+      "wordIndex": 23,
+      "sentenceIndex": 1,
+      "paragraphIndex": 0,
+      "startTime": null,
+      "endTime": null,
+      "confidence": null
+    },
+    {
+      "text": "thickens",
+      "wordIndex": 24,
+      "sentenceIndex": 1,
+      "paragraphIndex": 0,
+      "startTime": null,
+      "endTime": null,
+      "confidence": null
+    },
+    {
+      "text": "here",
+      "wordIndex": 25,
+      "sentenceIndex": 1,
+      "paragraphIndex": 0,
+      "startTime": null,
+      "endTime": null,
+      "confidence": null
+    },
+    {
+      "text": "we",
+      "wordIndex": 26,
+      "sentenceIndex": 1,
+      "paragraphIndex": 0,
+      "startTime": null,
+      "endTime": null,
+      "confidence": null
+    },
+    {
+      "text": "have",
+      "wordIndex": 27,
+      "sentenceIndex": 1,
+      "paragraphIndex": 0,
+      "startTime": null,
+      "endTime": null,
+      "confidence": null
+    },
+    {
+      "text": "a",
+      "wordIndex": 28,
+      "sentenceIndex": 1,
+      "paragraphIndex": 0,
+      "startTime": null,
+      "endTime": null,
+      "confidence": null
+    },
+    {
+      "text": "link",
+      "wordIndex": 29,
+      "sentenceIndex": 1,
+      "paragraphIndex": 0,
+      "startTime": null,
+      "endTime": null,
+      "confidence": null
+    },
+    {
+      "text": "and",
+      "wordIndex": 30,
+      "sentenceIndex": 1,
+      "paragraphIndex": 0,
+      "startTime": null,
+      "endTime": null,
+      "confidence": null
+    },
+    {
+      "text": "some",
+      "wordIndex": 31,
+      "sentenceIndex": 1,
+      "paragraphIndex": 0,
+      "startTime": null,
+      "endTime": null,
+      "confidence": null
+    },
+    {
+      "text": "inline",
+      "wordIndex": 32,
+      "sentenceIndex": 1,
+      "paragraphIndex": 0,
+      "startTime": null,
+      "endTime": null,
+      "confidence": null
+    },
+    {
+      "text": "code",
+      "wordIndex": 33,
+      "sentenceIndex": 1,
+      "paragraphIndex": 0,
+      "startTime": null,
+      "endTime": null,
+      "confidence": null
+    },
+    {
+      "text": "that",
+      "wordIndex": 34,
+      "sentenceIndex": 1,
+      "paragraphIndex": 0,
+      "startTime": null,
+      "endTime": null,
+      "confidence": null
+    },
+    {
+      "text": "should",
+      "wordIndex": 35,
+      "sentenceIndex": 1,
+      "paragraphIndex": 0,
+      "startTime": null,
+      "endTime": null,
+      "confidence": null
+    },
+    {
+      "text": "be",
+      "wordIndex": 36,
+      "sentenceIndex": 1,
+      "paragraphIndex": 0,
+      "startTime": null,
+      "endTime": null,
+      "confidence": null
+    },
+    {
+      "text": "cleaned",
+      "wordIndex": 37,
+      "sentenceIndex": 1,
+      "paragraphIndex": 0,
+      "startTime": null,
+      "endTime": null,
+      "confidence": null
+    },
+    {
+      "text": "up",
+      "wordIndex": 38,
+      "sentenceIndex": 1,
+      "paragraphIndex": 0,
+      "startTime": null,
+      "endTime": null,
+      "confidence": null
+    },
+    {
+      "text": "subsection",
+      "wordIndex": 39,
+      "sentenceIndex": 2,
+      "paragraphIndex": 0,
+      "startTime": null,
+      "endTime": null,
+      "confidence": null
+    },
+    {
+      "text": "lists",
+      "wordIndex": 40,
+      "sentenceIndex": 2,
+      "paragraphIndex": 0,
+      "startTime": null,
+      "endTime": null,
+      "confidence": null
+    },
+    {
+      "text": "should",
+      "wordIndex": 41,
+      "sentenceIndex": 2,
+      "paragraphIndex": 0,
+      "startTime": null,
+      "endTime": null,
+      "confidence": null
+    },
+    {
+      "text": "be",
+      "wordIndex": 42,
+      "sentenceIndex": 2,
+      "paragraphIndex": 0,
+      "startTime": null,
+      "endTime": null,
+      "confidence": null
+    },
+    {
+      "text": "converted",
+      "wordIndex": 43,
+      "sentenceIndex": 2,
+      "paragraphIndex": 0,
+      "startTime": null,
+      "endTime": null,
+      "confidence": null
+    },
+    {
+      "text": "to",
+      "wordIndex": 44,
+      "sentenceIndex": 2,
+      "paragraphIndex": 0,
+      "startTime": null,
+      "endTime": null,
+      "confidence": null
+    },
+    {
+      "text": "plain",
+      "wordIndex": 45,
+      "sentenceIndex": 2,
+      "paragraphIndex": 0,
+      "startTime": null,
+      "endTime": null,
+      "confidence": null
+    },
+    {
+      "text": "text",
+      "wordIndex": 46,
+      "sentenceIndex": 2,
+      "paragraphIndex": 0,
+      "startTime": null,
+      "endTime": null,
+      "confidence": null
+    },
+    {
+      "text": "without",
+      "wordIndex": 47,
+      "sentenceIndex": 2,
+      "paragraphIndex": 0,
+      "startTime": null,
+      "endTime": null,
+      "confidence": null
+    },
+    {
+      "text": "bullets",
+      "wordIndex": 48,
+      "sentenceIndex": 2,
+      "paragraphIndex": 0,
+      "startTime": null,
+      "endTime": null,
+      "confidence": null
+    },
+    {
+      "text": "numbered",
+      "wordIndex": 49,
+      "sentenceIndex": 2,
+      "paragraphIndex": 0,
+      "startTime": null,
+      "endTime": null,
+      "confidence": null
+    },
+    {
+      "text": "lists",
+      "wordIndex": 50,
+      "sentenceIndex": 2,
+      "paragraphIndex": 0,
+      "startTime": null,
+      "endTime": null,
+      "confidence": null
+    },
+    {
+      "text": "too",
+      "wordIndex": 51,
+      "sentenceIndex": 2,
+      "paragraphIndex": 0,
+      "startTime": null,
+      "endTime": null,
+      "confidence": null
+    },
+    {
+      "text": "should",
+      "wordIndex": 52,
+      "sentenceIndex": 2,
+      "paragraphIndex": 0,
+      "startTime": null,
+      "endTime": null,
+      "confidence": null
+    },
+    {
+      "text": "be",
+      "wordIndex": 53,
+      "sentenceIndex": 2,
+      "paragraphIndex": 0,
+      "startTime": null,
+      "endTime": null,
+      "confidence": null
+    },
+    {
+      "text": "handled",
+      "wordIndex": 54,
+      "sentenceIndex": 2,
+      "paragraphIndex": 0,
+      "startTime": null,
+      "endTime": null,
+      "confidence": null
+    },
+    {
+      "text": "properly",
+      "wordIndex": 55,
+      "sentenceIndex": 2,
+      "paragraphIndex": 0,
+      "startTime": null,
+      "endTime": null,
+      "confidence": null
+    },
+    {
+      "text": "the",
+      "wordIndex": 56,
+      "sentenceIndex": 2,
+      "paragraphIndex": 0,
+      "startTime": null,
+      "endTime": null,
+      "confidence": null
+    },
+    {
+      "text": "end",
+      "wordIndex": 57,
+      "sentenceIndex": 2,
+      "paragraphIndex": 0,
+      "startTime": null,
+      "endTime": null,
+      "confidence": null
+    }
+  ],
+  "segments": [
+    {
+      "text": "My Test Book Chapter 1: Getting Started This is a markdown file with formatting that should be stripped during parsing.",
+      "type": "Sentence",
+      "index": 0,
+      "wordStartIndex": 0,
+      "wordEndIndex": 19,
+      "startTime": null,
+      "endTime": null,
+      "confidence": null
+    },
+    {
+      "text": "Chapter 2: The Plot Thickens Here we have a link and some inline code that should be cleaned up.",
+      "type": "Sentence",
+      "index": 1,
+      "wordStartIndex": 20,
+      "wordEndIndex": 38,
+      "startTime": null,
+      "endTime": null,
+      "confidence": null
+    },
+    {
+      "text": "Subsection Lists should be converted To plain text Without bullets Numbered lists too Should be handled properly The end.",
+      "type": "Sentence",
+      "index": 2,
+      "wordStartIndex": 39,
+      "wordEndIndex": 57,
+      "startTime": null,
+      "endTime": null,
+      "confidence": null
+    },
+    {
+      "text": "My Test Book Chapter 1: Getting Started This is a markdown file with formatting that should be stripped during parsing. Chapter 2: The Plot Thickens Here we have a link and some inline code that should be cleaned up. Subsection Lists should be converted To plain text Without bullets Numbered lists too Should be handled properly The end.",
+      "type": "Paragraph",
+      "index": 0,
+      "wordStartIndex": 0,
+      "wordEndIndex": 57,
+      "startTime": null,
+      "endTime": null,
+      "confidence": null
+    }
+  ]
+}
