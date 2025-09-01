@@ -4,7 +4,11 @@
       "Bash(dir)",
       "Read(C:\\Projects\\AMS3\\python/**)",
       "Read(C:\\Projects\\ams\\services\\asr-nemo/**)",
-      "Bash(dotnet test)"
+      "Bash(dotnet test)",
+      "Read(C:\\Projects\\AMS3\\Services/**)",
+      "Bash(dotnet restore:*)",
+      "Bash(dotnet build)",
+      "Bash(dotnet run:*)"
     ],
     "deny": [],
     "ask": []
