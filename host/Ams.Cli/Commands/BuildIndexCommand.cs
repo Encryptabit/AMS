@@ -143,6 +143,7 @@ public static class BuildIndexCommand
         Console.WriteLine($"Total sentences: {bookIndex.Totals.Sentences:n0}");
         Console.WriteLine($"Total paragraphs: {bookIndex.Totals.Paragraphs:n0}");
         Console.WriteLine($"Estimated duration: {FormatDuration(bookIndex.Totals.EstimatedDurationSec)}");
+        Console.WriteLine($"Sections (Heading 1): {bookIndex.Sections.Length}");
         
         Console.WriteLine($"\nBook index saved to: {outputFile.FullName}");
     }

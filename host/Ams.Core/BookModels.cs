@@ -10,7 +10,8 @@ public record BookWord(
     [property: JsonPropertyName("text")] string Text,
     [property: JsonPropertyName("wordIndex")] int WordIndex,
     [property: JsonPropertyName("sentenceIndex")] int SentenceIndex,
-    [property: JsonPropertyName("paragraphIndex")] int ParagraphIndex
+    [property: JsonPropertyName("paragraphIndex")] int ParagraphIndex,
+    [property: JsonPropertyName("sectionIndex")] int SectionIndex
 );
 
 /// <summary>
@@ -31,6 +32,21 @@ public record ParagraphRange(
     [property: JsonPropertyName("end")] int End,
     [property: JsonPropertyName("kind")] string Kind,
     [property: JsonPropertyName("style")] string Style
+);
+
+/// <summary>
+/// Section/chapter range derived from paragraph heading styles (e.g., Heading 1).
+/// Enables processing chapters individually without reparsing.
+/// </summary>
+public record SectionRange(
+    [property: JsonPropertyName("id")] int Id,
+    [property: JsonPropertyName("title")] string Title,
+    [property: JsonPropertyName("level")] int Level,
+    [property: JsonPropertyName("kind")] string Kind,
+    [property: JsonPropertyName("startWord")] int StartWord,
+    [property: JsonPropertyName("endWord")] int EndWord,
+    [property: JsonPropertyName("startParagraph")] int StartParagraph,
+    [property: JsonPropertyName("endParagraph")] int EndParagraph
 );
 
 /// <summary>
@@ -57,6 +73,7 @@ public record BookIndex(
     [property: JsonPropertyName("words")] BookWord[] Words,
     [property: JsonPropertyName("sentences")] SentenceRange[] Sentences,
     [property: JsonPropertyName("paragraphs")] ParagraphRange[] Paragraphs,
+    [property: JsonPropertyName("sections")] SectionRange[] Sections,
     [property: JsonPropertyName("buildWarnings")] string[]? BuildWarnings = null
 );
 
