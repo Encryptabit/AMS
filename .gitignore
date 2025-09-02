@@ -22,7 +22,7 @@ artifacts/
 
 # IDE
 .vscode/
-**.claude
+.claude/
 agents.md
 .idea/
 *.sln.docstates
