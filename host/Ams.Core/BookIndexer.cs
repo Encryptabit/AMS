@@ -53,9 +53,12 @@ public class BookIndexer : IBookIndexer
         var words = new List<BookWord>();
         var sentences = new List<SentenceRange>();
         var paragraphs = new List<ParagraphRange>();
+        var sections = new List<SectionRange>();
 
         int globalWord = 0;
         int sentenceIndex = 0;
+        int sectionId = 0;
+        SectionOpen? currentSection = null;
 
         for (int pIndex = 0; pIndex < paragraphTexts.Count; pIndex++)
         {
@@ -70,13 +73,45 @@ public class BookIndexer : IBookIndexer
             int paragraphStartWord = globalWord;
             int sentenceStartWord = globalWord;
 
+            // On a Heading paragraph, consider starting a new section before consuming tokens
+            int headingLevel = GetHeadingLevel(style);
+            if (string.Equals(kind, "Heading", StringComparison.OrdinalIgnoreCase) && headingLevel == 1)
+            {
+                // Close previous open section
+                if (currentSection != null)
+                {
+                    // End at the last word of the previous paragraph (globalWord - 1)
+                    int endWord = Math.Max(currentSection.StartWord - 1, globalWord - 1);
+                    int endParagraph = Math.Max(currentSection.StartParagraph, pIndex - 1);
+                    sections.Add(new SectionRange(
+                        Id: currentSection.Id,
+                        Title: currentSection.Title,
+                        Level: 1,
+                        Kind: currentSection.Kind,
+                        StartWord: currentSection.StartWord,
+                        EndWord: endWord,
+                        StartParagraph: currentSection.StartParagraph,
+                        EndParagraph: endParagraph
+                    ));
+                }
+
+                currentSection = new SectionOpen(
+                    Id: sectionId++,
+                    Title: pText.Trim(),
+                    Kind: ClassifySectionKind(pText),
+                    StartWord: globalWord,
+                    StartParagraph: pIndex
+                );
+            }
+
             foreach (var token in TokenizeByWhitespace(pText))
             {
                 var w = new BookWord(
                     Text: token,
                     WordIndex: globalWord,
                     SentenceIndex: sentenceIndex,
-                    ParagraphIndex: pIndex
+                    ParagraphIndex: pIndex,
+                    SectionIndex: currentSection?.Id ?? -1
                 );
                 words.Add(w);
                 globalWord++;
@@ -106,6 +141,23 @@ public class BookIndexer : IBookIndexer
             EstimatedDurationSec: words.Count / options.AverageWpm * 60.0
         );
 
+        // Close last open section if any
+        if (currentSection != null)
+        {
+            int endWord = Math.Max(currentSection.StartWord - 1, globalWord - 1);
+            int endParagraph = Math.Max(currentSection.StartParagraph, paragraphTexts.Count - 1);
+            sections.Add(new SectionRange(
+                Id: currentSection.Id,
+                Title: currentSection.Title,
+                Level: 1,
+                Kind: currentSection.Kind,
+                StartWord: currentSection.StartWord,
+                EndWord: endWord,
+                StartParagraph: currentSection.StartParagraph,
+                EndParagraph: endParagraph
+            ));
+        }
+
         var warnings = Array.Empty<string>();
 
         return new BookIndex(
@@ -118,9 +170,50 @@ public class BookIndexer : IBookIndexer
             Words: words.ToArray(),
             Sentences: sentences.ToArray(),
             Paragraphs: paragraphs.ToArray(),
+            Sections: sections.ToArray(),
             BuildWarnings: warnings
         );
     }
+
+    private static int GetHeadingLevel(string style)
+    {
+        if (string.IsNullOrEmpty(style)) return 0;
+        // Common forms: "Heading 1", "Heading1"
+        var s = style.Trim();
+        var idx = s.IndexOf("Heading", StringComparison.OrdinalIgnoreCase);
+        if (idx < 0) return 0;
+        // Extract trailing digits
+        for (int i = idx + 7; i < s.Length; i++)
+        {
+            if (char.IsDigit(s[i]))
+            {
+                int j = i;
+                while (j < s.Length && char.IsDigit(s[j])) j++;
+                if (int.TryParse(s[i..j], out int level)) return level;
+                break;
+            }
+        }
+        return 1; // treat generic Heading as level 1 if unspecified
+    }
+
+    private static string ClassifySectionKind(string headingText)
+    {
+        if (string.IsNullOrWhiteSpace(headingText)) return "chapter";
+        var t = headingText.Trim().ToLowerInvariant();
+        // Typical section kinds
+        if (t.Contains("prologue")) return "prologue";
+        if (t.Contains("epilogue")) return "epilogue";
+        if (t.Contains("prelude")) return "prelude";
+        if (t.Contains("foreword")) return "foreword";
+        if (t.Contains("introduction")) return "introduction";
+        if (t.Contains("afterword")) return "afterword";
+        if (t.Contains("acknowledg")) return "acknowledgments";
+        if (t.Contains("appendix")) return "appendix";
+        if (t.Contains("chapter")) return "chapter";
+        return "chapter";
+    }
+
+    private record SectionOpen(int Id, string Title, string Kind, int StartWord, int StartParagraph);
 
     private static IEnumerable<string> TokenizeByWhitespace(string text)
     {
