@@ -1,9 +1,9 @@
 ProjectState.md (Generated)
-Date: 2025-09-01
+Date: 2025-09-02
 
 Summary
 - Goal: Production-ready Audio Management System blending .NET orchestration, Python ASR+alignment, and Zig DSP with a future node-graph host.
-- Current focus: Canonical book decoding and a slim, deterministic BookIndex with exact source fidelity (no normalization at rest).
+- Current focus: Canonical book decoding, section-aware alignment primitives (n-gram anchors), and a slim, deterministic BookIndex with exact source fidelity (no normalization at rest).
 
 What's Implemented
 - CLI
@@ -12,11 +12,24 @@ What's Implemented
   - `build-index`: Creates canonical book indexes from DOCX, TXT, MD, RTF files with caching.
   - `book verify`: Read-only doctor for `BookIndex` JSON. Checks counts parity, ordering/coverage of ranges, flags apostrophe-split and TOC-burst warnings, and prints a deterministic hash of the canonical JSON. Exits non-zero on failure (CI-friendly). 
   - `text normalize`: Direct text normalization testing utility.
+  - `align anchors`: Computes n-gram anchors between a BookIndex and ASR JSON; optional section detection, tunable policy knobs, and optional windows output.
 - ASR Client
   - `Ams.Core.AsrClient`: Posts `{audio_path, model, language}` and deserializes response.
   - Updated to handle word-level tokens without segment structure for cleaner validation.
 - Validation Core
   - `ScriptValidator`: Text normalization, DP alignment (WER/CER), basic segment stats.
+- Alignment & Anchors
+  - `AnchorDiscovery`: N-gram based anchor selection with stopword filtering, sentence-boundary guarding, density control, and LIS-based monotonicity over ASR positions.
+    - Unique n-grams first; if sparse, relax to two occurrences per side when ≥ `MinSeparation`, then fallback to smaller `n` (e.g., 3→2).
+    - Content filter rejects anchors that start/end with stopwords and enforces minimum content tokens for trigrams+.
+    - Windows builder returns half-open search windows between anchors with sentinels.
+  - `SectionLocator`: Detects chapter/section by matching normalized ASR prefix to `BookIndex.sections[*].title` (e.g., “chapter fourteen”, “prologue”).
+    - Provides `DetectSection` and `DetectSectionWindow` APIs.
+  - Anchor selection overload that restricts to a book word-range `[start,end]` for section-scoped alignment.
+  - Core components for reuse beyond CLI:
+    - `AnchorTokenizer` (canonical normalization)
+    - `AnchorPreprocessor` (book/ASR views, section window mapping)
+    - `AnchorPipeline` (section detect → window map → anchors → windows)
 - DSP
   - Zig gain with smoothed parameter and C ABI; .NET P/Invoke wrapper `Ams.Dsp.Native.AmsDsp`.
   - CLI `dsp` demo writes `ams_out.wav`.
@@ -34,6 +47,7 @@ How To Run
 - Book doctor (read-only): `dotnet run --project host/Ams.Cli -- book verify --index <index.json>`
 - Text normalization: `dotnet run --project host/Ams.Cli -- text normalize "your text here"`
 - DSP demo: `dotnet run --project host/Ams.Cli -- dsp`
+ - Anchors (n‑grams): `dotnet run --project host/Ams.Cli -- align anchors -i out\book.index.json -j out\asr.json [--detect-section true] [--ngram 3] [--emit-windows] [--out anchors.json]`
 
 Book Processing & Indexing
 - Canonical fidelity: No normalization at rest. Tokens preserve exact casing, punctuation, apostrophes, hyphens, and Unicode.
@@ -42,21 +56,30 @@ Book Processing & Indexing
 - Totals: `totals = { words, sentences, paragraphs, estimatedDurationSec }` computed without mutating tokens.
 - Caching: SHA256 of raw file bytes; reuse only on hash match (and future parser version key if added). Deterministic JSON bytes.
 - Doctor: `book verify` never mutates the index; if checks fail, keep the BookIndex canonical—adjust decoder tokenization (sentence/paragraph walking, apostrophes) and paragraph style classification (DocX) instead.
-- Tests: All tests passing (29/29), including canonical round‑trip and slimness checks.
+- Tests: All tests passing (35/35), including canonical round‑trip, slimness checks, anchor/section detection, and pipeline/preprocessor tests.
 
 Immediate Next Steps
 1) Parser version in cache key: add version suffix in cache filenames for strict reuse across parser changes.
 2) Optional char ranges: compute `charStart/charEnd` cheaply from source spans (omit when not available).
-3) Sections/front matter: optional `sections[]` with cautious heuristics; populate `buildWarnings[]` for low-confidence detections.
-4) ASR alignment remains separate: timing/confidence stay out of BookIndex; continue via `ScriptValidator` and future alignment utilities.
-5) DSP Host: Sketch `IAudioNode` and `TimelineStitcherNode`; prepare for real-time audio processing integration.
- 6) Doctor output for CI: add `--json` to emit a machine-readable verification report; consider warning categories (apostrophes, hyphenation, page-number runs) with counts.
+3) Sections/front matter: optional `sections[]` with cautious heuristics; populate `buildWarnings[]` for low-confidence detections. (Implemented basic detection for alignment; keep improving title heuristics.)
+4) Policy tuning and benchmarks:
+   - Expose `NGram`, `TargetPerTokens`, `MinSeparation`, and `Stopwords` via config.
+   - Add micro-bench and chapter-scale perf tests for indexing + LIS.
+5) CLI output options:
+   - Add `--emit-times` to include ASR token timing for each anchor.
+   - Add `--emit-mapping` to include ASR filtered→original token index mapping.
+6) ASR alignment remains separate: timing/confidence stay out of BookIndex; continue via `ScriptValidator` and future alignment utilities.
+7) DSP Host: Sketch `IAudioNode` and `TimelineStitcherNode`; prepare for real-time audio processing integration.
+8) Doctor output for CI: add `--json` to emit a machine-readable verification report; consider warning categories (apostrophes, hyphenation, page-number runs) with counts.
 
 Risks/Notes
 - DOCX style: using `Paragraph.StyleId` to avoid API obsolescence; style/kind are best‑effort.
 - Tokenization: whitespace-only preserves punctuation with tokens (e.g., `test.”`), which is intentional for canonical fidelity.
 - Determinism: cache JSON settings are stable; ensure environment does not inject non-deterministic timestamps beyond `indexedAt`.
  - Verification scope: `book verify` depends on the canonical schema (`Ams.Core.BookIndex`). If schema evolves, update the doctor to maintain stable hashing and checks.
+ - Anchors: relaxation currently ignores `AllowDuplicates` flag and uses separation-based allowance; revisit API if duplicate policy needs to be explicit.
+ - Alignment complexity: n-gram indexing is linear in tokens; LIS is `O(k log k)` on candidate anchors `k`—fast for chapter-scale windows.
+  - Index spaces: Anchor pipeline/CLI operate in filtered token spaces. Output maps `bp` back to original book `wordIndex` (`bpWordIndex`). ASR timing and original token index are derivable from `AsrResponse.Tokens[ap]` and may be emitted later behind flags.
 
 Fast Resume Checklist
 - Test canonical index: `dotnet run --project host/Ams.Cli -- build-index -b <file.docx> -o <index.json>`; rerun to verify "Found valid cache" and identical JSON bytes.
