@@ -75,7 +75,9 @@ public class BookIndexer : IBookIndexer
 
             // On a Heading paragraph, consider starting a new section before consuming tokens
             int headingLevel = GetHeadingLevel(style);
-            if (string.Equals(kind, "Heading", StringComparison.OrdinalIgnoreCase) && headingLevel == 1)
+            // Some documents use Heading 2/3 for chapters; treat any Heading level >= 1 as a section start
+            // but only when the text looks like a real section title (e.g., "Chapter 3", "Prologue").
+            if (string.Equals(kind, "Heading", StringComparison.OrdinalIgnoreCase) && headingLevel >= 1 && LooksLikeSectionHeading(pText))
             {
                 // Close previous open section
                 if (currentSection != null)
@@ -211,6 +213,18 @@ public class BookIndexer : IBookIndexer
         if (t.Contains("appendix")) return "appendix";
         if (t.Contains("chapter")) return "chapter";
         return "chapter";
+    }
+
+    private static readonly Regex SectionTitleRegex = new(
+        @"^\s*(chapter\b|prologue\b|epilogue\b|prelude\b|foreword\b|introduction\b|afterword\b|appendix\b|part\b|book\b)",
+        RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
+    private static bool LooksLikeSectionHeading(string text)
+    {
+        if (string.IsNullOrWhiteSpace(text)) return false;
+        var t = text.Trim();
+        if (SectionTitleRegex.IsMatch(t)) return true;
+        return false;
     }
 
     private record SectionOpen(int Id, string Title, string Kind, int StartWord, int StartParagraph);
