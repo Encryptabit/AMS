@@ -17,6 +17,26 @@ public sealed record AnchorPolicy(
 
 public static class AnchorDiscovery
 {
+    // Convenience overload: restrict selection to a book word range [bookStart, bookEnd] (inclusive)
+    public static IReadOnlyList<Anchor> SelectAnchors(
+        IReadOnlyList<string> bookTokens,
+        IReadOnlyList<int> bookSentenceIndex,
+        IReadOnlyList<string> asrTokens,
+        AnchorPolicy policy,
+        int bookStart,
+        int bookEnd)
+    {
+        if (bookTokens.Count != bookSentenceIndex.Count) throw new ArgumentException("Mismatched book arrays");
+        if (bookStart < 0 || bookEnd >= bookTokens.Count || bookStart > bookEnd)
+            throw new ArgumentOutOfRangeException(nameof(bookStart), "Invalid book window");
+
+        int len = bookEnd - bookStart + 1;
+        var subBook = bookTokens.Skip(bookStart).Take(len).ToList();
+        var subSent = bookSentenceIndex.Skip(bookStart).Take(len).ToList();
+        var anchors = SelectAnchors(subBook, subSent, asrTokens, policy);
+        return anchors.Select(a => new Anchor(a.Bp + bookStart, a.Ap)).ToList();
+    }
+
     // tokens: normalized tokens for the chapter slice; sentenceIndex parallel to bookTokens
     public static IReadOnlyList<Anchor> SelectAnchors(
         IReadOnlyList<string> bookTokens,
@@ -190,4 +210,3 @@ public static class AnchorDiscovery
         return lis;
     }
 }
-
