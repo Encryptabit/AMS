@@ -50,19 +50,20 @@ internal static class Program
         Console.Write("How long? (seconds): ");
         double seconds = double.Parse(Console.ReadLine() ?? "2.0", CultureInfo.InvariantCulture);
 
-        var result = DspDemoRunner.RunDemo(sampleRate, channels, maxBlock, hz, inGainDb, seconds, gain);
+        // var result = DspDemoRunner.RunDemo(sampleRate, channels, maxBlock, hz, inGainDb, seconds, gain);
 
         Console.WriteLine("=== AMS CLI ===");
-        Console.WriteLine($"Frames processed : {result.FramesProcessed:n0}");
-        Console.WriteLine($"Channels         : {result.Channels}");
-        Console.WriteLine($"Sample Rate      : {result.SampleRate.ToString(CultureInfo.InvariantCulture)} Hz");
-        Console.WriteLine($"Max Block        : {result.MaxBlock}");
-        Console.WriteLine($"Elapsed          : {result.ElapsedMilliseconds:F3} ms");
-        Console.WriteLine($"Latency (report) : {result.LatencySamples} samples");
-        Console.WriteLine($"Output written   : {result.OutputPath}");
-        Console.WriteLine($"Input RMS        : {result.InputRms:F6}");
-        Console.WriteLine($"Output RMS       : {result.OutputRms:F6}");
-        Console.WriteLine($"Delta (dB)       : {result.DeltaDb:F2} dB");
+        Console.WriteLine("DSP Demo temporarily disabled");
+        // Console.WriteLine($"Frames processed : {result.FramesProcessed:n0}");
+        // Console.WriteLine($"Channels         : {result.Channels}");
+        // Console.WriteLine($"Sample Rate      : {result.SampleRate.ToString(CultureInfo.InvariantCulture)} Hz");
+        // Console.WriteLine($"Max Block        : {result.MaxBlock}");
+        // Console.WriteLine($"Elapsed          : {result.ElapsedMilliseconds:F3} ms");
+        // Console.WriteLine($"Latency (report) : {result.LatencySamples} samples");
+        // Console.WriteLine($"Output written   : {result.OutputPath}");
+        // Console.WriteLine($"Input RMS        : {result.InputRms:F6}");
+        // Console.WriteLine($"Output RMS       : {result.OutputRms:F6}");
+        // Console.WriteLine($"Delta (dB)       : {result.DeltaDb:F2} dB");
 
         return 0;
     }

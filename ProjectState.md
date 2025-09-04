@@ -1,13 +1,15 @@
 ProjectState.md (Generated)
-Date: 2025-09-03
+Date: 2025-09-04
 
 Summary
 - Goal: Production-ready Audio Management System blending .NET orchestration, Python ASR+alignment (services), and Zig/C# DSP with a future node-graph host.
-- Current focus: Canonical book decoding, section-aware alignment (n-gram anchors), sentence-only refinement (Aeneas starts + FFmpeg ends), and clean roomtone rendering between sentences.
+- Current focus: Canonical book decoding, section-aware alignment (n-gram anchors), sentence-only refinement (Aeneas starts + FFmpeg ends), clean roomtone rendering between sentences, and deterministic chapter chunking (silence-only cuts; 60–90s windows; DP planning).
 
 What's Implemented
 - CLI
   - `asr run`: Calls NeMo service (`/asr`), saves JSON.
+  - `asr silence`: Detects silence windows via `ffmpeg silencedetect` and writes `<chapter>.silence.json` (deterministic; stores audio SHA and ffmpeg version).
+  - `asr plan`: Plans chunk spans using DP over silence midpoints (strict 60–90s, target 75s) and writes `<chapter>.asr.index.json` with deterministic chunk IDs.
   - `validate script`: Validates script vs ASR JSON; computes WER/CER and findings.
   - `build-index`: Creates canonical book indexes from DOCX, TXT, MD, RTF files with caching.
   - `book verify`: Read-only doctor for `BookIndex` JSON. Checks counts parity, ordering/coverage of ranges, flags apostrophe-split and TOC-burst warnings, and prints a deterministic hash of the canonical JSON. Exits non-zero on failure (CI-friendly). 
@@ -21,6 +23,10 @@ What's Implemented
   - Updated to handle word-level tokens without segment structure for cleaner validation.
 - Validation Core
   - `ScriptValidator`: Text normalization, DP alignment (WER/CER), basic segment stats.
+- Chunking Core (deterministic)
+  - `FfmpegSilenceDetector` (+ `IProcessRunner`): wraps `ffmpeg` and parses `silence_start/end` → `SilenceTimeline` with midpoints.
+  - `SilenceWindowPlanner`: DP planner over silence mids; constraints `[60,90]` sec; target `75`; strict/relaxed tail.
+  - Manifest scaffold: deterministic chunk IDs `chunk-<startMs>-<endMs>` in `<chapter>.asr.index.json`.
 - Alignment & Anchors
   - `AnchorDiscovery`: N-gram based anchor selection with stopword filtering, sentence-boundary guarding, density control, and LIS-based monotonicity over ASR positions.
     - Unique n-grams first; if sparse, relax to two occurrences per side when ≥ `MinSeparation`, then fallback to smaller `n` (e.g., 3→2).
@@ -45,6 +51,10 @@ What's Implemented
 How To Run
 - Start ASR service: `services/asr-nemo/start_service.bat` (Windows) or `uvicorn services.asr-nemo.app:app`.
 - ASR only: `dotnet run --project host/Ams.Cli -- asr run -a <audio.wav> -o <asr.json>`
+- Chunking (deterministic):
+  - Detect silences: `dotnet run --project host/Ams.Cli -- asr silence -a <chapter.wav> -o <outdir> --db-floor -30 --min-silence-dur 0.3`
+  - Plan chunks: `dotnet run --project host/Ams.Cli -- asr plan -a <chapter.wav> -o <outdir> -s <outdir>/<chapter>.silence.json --win-min-sec 60 --win-max-sec 90 --win-target-sec 75 --strict-tail`
+  - Determinism: rerunning `plan` with same inputs yields identical manifest + chunk IDs.
 - Validate only: `dotnet run --project host/Ams.Cli -- validate script -a <audio.wav> -s <script.txt> -j <asr.json> -o <report.json>`
 - Book indexing: `dotnet run --project host/Ams.Cli -- build-index -b <book.docx> -o <index.json>`
 - Book doctor (read-only): `dotnet run --project host/Ams.Cli -- book verify --index <index.json>`
@@ -67,7 +77,7 @@ Book Processing & Indexing
 - Totals: `totals = { words, sentences, paragraphs, estimatedDurationSec }` computed without mutating tokens.
 - Caching: SHA256 of raw file bytes; reuse only on hash match (and future parser version key if added). Deterministic JSON bytes.
 - Doctor: `book verify` never mutates the index; if checks fail, keep the BookIndex canonical—adjust decoder tokenization (sentence/paragraph walking, apostrophes) and paragraph style classification (DocX) instead.
-- Tests: All tests passing (35/35), including canonical round‑trip, slimness checks, anchor/section detection, and pipeline/preprocessor tests.
+ - Tests: All tests passing (40/40), including new DP planner tests (dense candidates, strict no‑path, relaxed tail).
 
 Immediate Next Steps
 1) Parser version in cache key: add version suffix in cache filenames for strict reuse across parser changes.
@@ -144,6 +154,7 @@ Batch Orchestration (optional)
 File Index (by function)
 - Per Book: `BuildIndexCommand.cs`, `BookParser.cs`, `BookIndexer.cs`, `BookCommand.cs`.
 - ASR: `AsrCommand.cs`, `AsrClient.cs`, `services/asr-nemo/*`.
+- Chunking: `Ams.Core/Asr/Pipeline/{Models.cs,ProcessRunner.cs,FfmpegSilenceDetector.cs,SilenceWindowPlanner.cs}`, `Ams.Cli/Commands/AsrCommand.cs` (subcommands: `asr silence`, `asr plan`).
 - Align + TX: `AlignCommand.cs`, `Ams.Core/Align/*`, `Align/Tx/TranscriptModels.cs`.
 - Sentence refine: `RefineSentencesCommand.cs`, `SentenceRefinementService.cs` (env: `AENEAS_PYTHON`, `FFMPEG_EXE`).
 - Roomtone: `scripts/RoomtoneCli/*`, `Ams.Core/Io/WavIo.cs`.
