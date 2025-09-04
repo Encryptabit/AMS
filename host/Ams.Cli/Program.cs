@@ -20,6 +20,7 @@ internal static class Program
         
         // Add commands
         rootCommand.AddCommand(AsrCommand.Create());
+        rootCommand.AddCommand(EnvCommand.Create());
         rootCommand.AddCommand(ValidateCommand.Create());
         rootCommand.AddCommand(ValidateManifestCommand.Create());
         rootCommand.AddCommand(TextCommand.Create());
