@@ -59,6 +59,9 @@ public static class AsrCommand
         asrCommand.AddCommand(AsrRunCommand.Create());
         asrCommand.AddCommand(DetectSilenceCommand.Create());
         asrCommand.AddCommand(PlanWindowsCommand.Create());
+        asrCommand.AddCommand(AlignChunksCommand.Create());
+        asrCommand.AddCommand(RefineCommand.Create());
+        asrCommand.AddCommand(CollateCommand.Create());
 
         // Legacy commands (deprecated)
         asrCommand.AddCommand(CreateSilenceCommand());

@@ -8,7 +8,10 @@ public static class ValidateManifestCommand
 {
     public static Command Create()
     {
-        var cmd = new Command("validate", "Validate ASR pipeline manifest and artifacts");
+        var cmd = new Command("validate-manifest", "Validate ASR pipeline manifest and artifacts")
+        {
+            Description = "Validate ASR pipeline manifest and artifacts in a work directory"
+        };
 
         var workOption = new Option<DirectoryInfo>("--work", "Work directory containing manifest.json") { IsRequired = true };
         cmd.AddOption(workOption);
@@ -82,4 +85,3 @@ public static class ValidateManifestCommand
         return cmd;
     }
 }
-

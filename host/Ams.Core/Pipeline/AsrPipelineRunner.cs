@@ -20,13 +20,12 @@ public class AsrPipelineRunner
         {
             "timeline",      // detect-silence
             "plan",          // plan-windows
-            "chunks",        // chunk-audio (future)
-            "transcripts",   // transcribe (future)
-            "collate",
-            "align",
-            "refine",
-            "export",
-            "validate"
+            "chunks",        // chunk-audio
+            "transcripts",   // transcribe
+            "align-chunks",  // align-chunks (Aeneas)
+            "refine",        // refine (snap-to-silence)
+            "collate",       // collate (room tone)
+            "validate"       // validate (WER/CER)
         });
     }
 

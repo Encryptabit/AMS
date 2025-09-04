@@ -20,6 +20,7 @@ internal static class Program
         
         // Add commands
         rootCommand.AddCommand(AsrCommand.Create());
+        rootCommand.AddCommand(EnvCommand.Create());
         rootCommand.AddCommand(ValidateCommand.Create());
         rootCommand.AddCommand(ValidateManifestCommand.Create());
         rootCommand.AddCommand(TextCommand.Create());
@@ -28,6 +29,11 @@ internal static class Program
         rootCommand.AddCommand(AlignCommand.Create());
         rootCommand.AddCommand(AudioCommand.Create());
         rootCommand.AddCommand(RefineSentencesCommand.Create());
+        
+        // New staged-pipeline commands (top-level helpers)
+        rootCommand.AddCommand(Ams.Cli.Commands.AlignChunksCommand.Create());
+        rootCommand.AddCommand(Ams.Cli.Commands.RefineCommand.Create());
+        rootCommand.AddCommand(Ams.Cli.Commands.CollateCommand.Create());
         
         // Add legacy DSP command (interactive)
         var dspCommand = new Command("dsp", "Run DSP processing demo (interactive)");

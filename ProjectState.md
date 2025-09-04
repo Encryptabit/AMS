@@ -5,18 +5,27 @@ Summary
 - Goal: Production-ready Audio Management System blending .NET orchestration, Python ASR+alignment (services), and Zig/C# DSP with a future node-graph host.
 - Current focus: Canonical book decoding, section-aware alignment (n-gram anchors), sentence-only refinement (Aeneas starts + FFmpeg ends), clean roomtone rendering between sentences, and deterministic chapter chunking (silence-only cuts; 60–90s windows; DP planning).
 
-Architecture Refactor (2025-09-04): Staged Pipeline & CLI
-- Introduced an idempotent, artifact-first pipeline with a versioned manifest (schema: `asr-manifest/v2`).
+Architecture Refactor (2025-09-04): Complete Staged Pipeline Implementation
+- Implemented full idempotent, artifact-first pipeline with versioned manifest (schema: `asr-manifest/v2`).
+- Pipeline stages: `timeline` → `plan` → `chunks` → `transcripts` → `align-chunks` → `refine` → `collate` → `validate`
 - New Core components (Ams.Core/Pipeline):
   - `StageRunner` (fingerprint-based idempotency; writes `meta.json`, `params.snapshot.json`, `status.json`).
   - `AsrPipelineRunner` (ordered stage execution; `--from/--to`, `--force` via CLI).
-  - Stages implemented: `detect-silence` → `timeline/silence.json`; `plan-windows` → `plan/windows.json`.
-- Manifest v2 (embedded in `Ams.Core/Asr/Pipeline/Models.cs`): tracks input identity (sha256, duration), per-stage status, artifacts, fingerprints (input+params+tool versions), timestamps, attempts, errors.
-- New CLI verbs (Ams.Cli): `asr detect-silence`, `asr plan-windows`, `asr run` (orchestrator), and `validate` (manifest/artifact checks).
-- Backward compatibility: legacy `asr silence` and `asr plan` remain and print deprecation notices.
-- Tests: added `PipelineIntegrationTests` (mock ffmpeg) covering detect → plan and skip-on-up-to-date.
-
+  - All 8 stages implemented with full business logic as specified in Consolidate.md.
+ 
 What's Implemented
+  - All 8 stages implemented with full business logic as specified in Consolidate.md.
+- Aeneas Service (services/aeneas): FastAPI microservice wrapping aeneas.tools.execute_task for chunk-level forced alignment.
+- Core business rules implemented:
+  - Chunk-relative Aeneas alignment converted to chapter coordinates
+  - Sentence refinement via snap-to-earliest-silence.start rule (configurable noise floor)
+  - Room tone insertion for inter-sentence gaps and cross-chunk boundary slivers
+  - WER/CER validation with configurable thresholds
+- Manifest v2: tracks input identity, per-stage status, artifacts, fingerprints (input+params+tool versions)
+- CLI verbs: `asr run`, `asr align-chunks`, `asr refine`, `asr collate`, `env aeneas-validate`
+- Tests: Comprehensive unit tests for snap logic and fingerprint stability; mocked integration tests for AlignChunksStage
+
+
 - CLI
   - `asr detect-silence`: Detects silence windows via `ffmpeg silencedetect` and writes `timeline/silence.json` under `<input>.ams/` (stores audio SHA and ffmpeg version).
   - `asr plan-windows`: Plans chunk windows (DP over silence midpoints; 60–90s, target 75) and writes `plan/windows.json` under `<input>.ams/`.

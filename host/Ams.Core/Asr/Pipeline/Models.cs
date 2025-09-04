@@ -173,3 +173,102 @@ public sealed record ChunkIndex(
     string AudioSha256,
     ChunkingParams Params
 );
+
+// Transcription models
+public sealed record TranscriptionParams(
+    string Model = "nvidia/parakeet-ctc-0.6b",
+    string Language = "en",
+    int BeamSize = 1,
+    double TemperatureSampling = 1.0,
+    string ServiceUrl = "http://localhost:8081"
+);
+
+public sealed record TranscriptWord(
+    string Word,
+    double Start,
+    double End,
+    double Confidence
+);
+
+public sealed record ChunkTranscript(
+    string ChunkId,
+    string Text,
+    List<TranscriptWord> Words,
+    double DurationSec,
+    Dictionary<string, string> ToolVersions,
+    DateTime GeneratedAt
+);
+
+public sealed record TranscriptIndex(
+    List<string> ChunkIds,
+    Dictionary<string, string> ChunkToJsonMap,
+    TranscriptionParams Params,
+    Dictionary<string, string> ToolVersions
+);
+
+// Alignment models
+public sealed record AlignmentParams(
+    string Language = "eng",
+    int TimeoutSec = 600,
+    string ServiceUrl = "http://localhost:8082"
+);
+
+public sealed record AlignmentFragment(
+    double Begin,
+    double End
+);
+
+public sealed record ChunkAlignment(
+    string ChunkId,
+    double OffsetSec,
+    string Language,
+    string TextDigest,
+    List<AlignmentFragment> Fragments,
+    Dictionary<string, string> ToolVersions,
+    DateTime GeneratedAt
+);
+
+// Refinement models  
+public sealed record RefinementParams(
+    double SilenceThresholdDb = -30.0,
+    double MinSilenceDurSec = 0.12
+);
+
+public sealed record RefinedSentence(
+    string Id,
+    double Start,
+    double End,
+    int? StartWordIdx,
+    int? EndWordIdx,
+    string Source = "aeneas+silence.start"
+);
+
+// Collation models
+public sealed record CollationParams(
+    string RoomtoneSource = "auto", // "auto" or "file"
+    double RoomtoneLevelDb = -50.0,
+    int MinGapMs = 5,
+    int MaxGapMs = 2000,
+    int BridgeMaxMs = 60,
+    string? RoomtoneFilePath = null
+);
+
+public sealed record CollationReplacement(
+    string Kind, // "gap" or "boundary_sliver"
+    double From,
+    double To,
+    double Duration,
+    double RoomtoneLevelDb
+);
+
+public sealed record CollationSegments(
+    List<RefinedSentence> Sentences,
+    List<CollationReplacement> Replacements
+);
+
+// Validation models
+public sealed record ValidationParams(
+    double WerThreshold = 0.25,
+    double CerThreshold = 0.25,
+    Dictionary<string, double>? EditCosts = null
+);
