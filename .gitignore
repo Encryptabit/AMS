@@ -24,6 +24,7 @@ artifacts/
 .vscode/
 .claude/
 .code/
+.venv*/
 **/logs/
 agents.md
 .idea/

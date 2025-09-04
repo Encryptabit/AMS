@@ -235,7 +235,7 @@ public class AlignChunksStage : StageRunner
     {
         try
         {
-            var response = await _httpClient.PostAsync($"{_params.ServiceUrl}/v1/health", null, ct);
+            var response = await _httpClient.GetAsync($"{_params.ServiceUrl}/v1/health", ct);
             if (response.IsSuccessStatusCode)
             {
                 var healthJson = await response.Content.ReadAsStringAsync(ct);

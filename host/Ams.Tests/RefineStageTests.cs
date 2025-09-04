@@ -36,9 +36,9 @@ public class RefineStageTests
         Assert.Equal(5.2, refinedSentences[0].End, 3);
         Assert.Equal("aeneas+silence.start", refinedSentences[0].Source);
         
-        // Second sentence should snap to its qualifying silence  
-        Assert.Equal(6.1, refinedSentences[1].End, 3);
-        Assert.Equal("aeneas+silence.start", refinedSentences[1].Source);
+        // Second sentence has no qualifying silence after its end (9.0), so it stays unchanged
+        Assert.Equal(9.0, refinedSentences[1].End, 3);
+        Assert.Equal("aeneas+no-snap", refinedSentences[1].Source);
     }
 
     [Fact]

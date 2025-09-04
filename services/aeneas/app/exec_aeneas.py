@@ -84,7 +84,21 @@ def run_aeneas_alignment(
         raise FileNotFoundError(f"Audio file not found: {audio_path}")
     
     # Get Python executable from environment or use system default
-    python_exe = os.environ.get('AENEAS_PYTHON', sys.executable)
+    # Priority: AENEAS_PYTHON env var > system python > current python
+    python_exe = os.environ.get('AENEAS_PYTHON')
+    if not python_exe:
+        # Try to find system python with aeneas installed
+        for candidate in ['python', 'python3', sys.executable]:
+            try:
+                result = subprocess.run([candidate, '-c', 'import aeneas'], 
+                                      capture_output=True, timeout=5)
+                if result.returncode == 0:
+                    python_exe = candidate
+                    break
+            except (subprocess.TimeoutExpired, FileNotFoundError):
+                continue
+        else:
+            python_exe = sys.executable  # fallback
     
     logger.info(f"Running alignment: {audio_path} with {len(text_lines)} lines")
     logger.debug(f"Python executable: {python_exe}")
@@ -173,7 +187,21 @@ def validate_aeneas_installation() -> Dict[str, Any]:
     Returns:
         Dict with validation results and version info
     """
-    python_exe = os.environ.get('AENEAS_PYTHON', sys.executable)
+    # Use same logic as run_aeneas_alignment for finding Python executable
+    python_exe = os.environ.get('AENEAS_PYTHON')
+    if not python_exe:
+        # Try to find system python with aeneas installed
+        for candidate in ['python', 'python3', sys.executable]:
+            try:
+                result = subprocess.run([candidate, '-c', 'import aeneas'], 
+                                      capture_output=True, timeout=5)
+                if result.returncode == 0:
+                    python_exe = candidate
+                    break
+            except (subprocess.TimeoutExpired, FileNotFoundError):
+                continue
+        else:
+            python_exe = sys.executable  # fallback
     
     try:
         # Check Python version

@@ -470,4 +470,4 @@ if __name__ == "__main__":
     logging.info("Health check endpoint: http://0.0.0.0:8000/health")
     logging.info("=" * 50)
     
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    uvicorn.run(app, host="0.0.0.0", port=8081)

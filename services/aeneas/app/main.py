@@ -79,7 +79,7 @@ async def root():
         "endpoints": ["/v1/health", "/v1/align-chunk"]
     }
 
-@app.post("/v1/health", response_model=HealthResponse)
+@app.get("/v1/health", response_model=HealthResponse)
 async def health_check():
     """
     Health check endpoint that validates Aeneas installation.

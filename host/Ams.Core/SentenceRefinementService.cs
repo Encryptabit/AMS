@@ -15,7 +15,7 @@ public sealed class SentenceRefinementService
 
     public async Task<IReadOnlyList<SentenceRefined>> RefineAsync(
         string audioPath,
-        TranscriptIndex tx,
+        Ams.Align.Tx.TranscriptIndex tx,
         AsrResponse asr,
         string language = "eng",
         bool useSilence = true,

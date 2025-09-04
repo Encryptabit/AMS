@@ -138,23 +138,18 @@ public class TranscribeStage : StageRunner
         if (!File.Exists(normalizedPath))
             throw new FileNotFoundException($"Chunk file not found: {normalizedPath}");
 
-        // Read the audio file as base64 for the API
-        var audioBytes = await File.ReadAllBytesAsync(normalizedPath, ct);
-        var audioBase64 = Convert.ToBase64String(audioBytes);
-
+        // Use audio file path directly (not base64)
         var requestBody = new
         {
-            audio_data = audioBase64,
-            model_name = _params.Model,
-            language = _params.Language,
-            beam_size = _params.BeamSize,
-            temperature_sampling = _params.TemperatureSampling
+            audio_path = normalizedPath,
+            model = _params.Model,
+            language = _params.Language
         };
 
         var requestJson = JsonSerializer.Serialize(requestBody);
         var content = new StringContent(requestJson, Encoding.UTF8, "application/json");
 
-        var response = await _httpClient.PostAsync($"{_params.ServiceUrl}/v1/transcribe", content, ct);
+        var response = await _httpClient.PostAsync($"{_params.ServiceUrl}/asr", content, ct);
         
         if (!response.IsSuccessStatusCode)
         {
@@ -168,8 +163,31 @@ public class TranscribeStage : StageRunner
         var words = new List<TranscriptWord>();
         var fullText = "";
 
-        if (responseObj.TryGetProperty("words", out var wordsArray))
+        // Handle your ASR service format: {"tokens": [{"t": start, "d": duration, "w": word}]}
+        if (responseObj.TryGetProperty("tokens", out var tokensArray))
         {
+            foreach (var tokenElement in tokensArray.EnumerateArray())
+            {
+                var wordText = tokenElement.GetProperty("w").GetString() ?? "";
+                var startTime = tokenElement.GetProperty("t").GetDouble();
+                var duration = tokenElement.GetProperty("d").GetDouble();
+                var endTime = startTime + duration;
+                
+                var word = new TranscriptWord(
+                    wordText,
+                    startTime,
+                    endTime,
+                    1.0 // Default confidence since your ASR doesn't provide it
+                );
+                words.Add(word);
+            }
+            
+            // Create full text by joining all words
+            fullText = string.Join(" ", words.Select(w => w.Word));
+        }
+        else if (responseObj.TryGetProperty("words", out var wordsArray))
+        {
+            // Fallback: handle standard format if present
             foreach (var wordElement in wordsArray.EnumerateArray())
             {
                 var word = new TranscriptWord(
@@ -180,16 +198,15 @@ public class TranscribeStage : StageRunner
                 );
                 words.Add(word);
             }
-        }
-
-        if (responseObj.TryGetProperty("text", out var textProperty))
-        {
-            fullText = textProperty.GetString() ?? "";
-        }
-        else
-        {
-            // Fallback: join words if no full text provided
-            fullText = string.Join(" ", words.Select(w => w.Word));
+            
+            if (responseObj.TryGetProperty("text", out var textProperty))
+            {
+                fullText = textProperty.GetString() ?? "";
+            }
+            else
+            {
+                fullText = string.Join(" ", words.Select(w => w.Word));
+            }
         }
 
         var toolVersions = new Dictionary<string, string>();

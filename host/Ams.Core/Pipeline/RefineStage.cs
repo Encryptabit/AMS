@@ -215,9 +215,9 @@ public class RefineStage : StageRunner
             var sentence = rawSentences[i];
             var nextSentenceStart = i + 1 < rawSentences.Count ? rawSentences[i + 1].Start : double.MaxValue;
 
-            // BUSINESS RULE: Find earliest silence.start >= sentence.end and < nextSentence.start
+            // BUSINESS RULE: Find earliest silence.start >= sentence.start and < nextSentence.start
             var candidateSilences = qualifiedSilences
-                .Where(s => s.Start >= sentence.End && s.Start < nextSentenceStart)
+                .Where(s => s.Start >= sentence.Start && s.Start < nextSentenceStart)
                 .OrderBy(s => s.Start)
                 .ToList();
 

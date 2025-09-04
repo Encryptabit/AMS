@@ -18,6 +18,11 @@ public static class AsrRunCommand
         var resumeOption = new Option<bool>("--resume", "Resume (skip completed stages)");
         var forceOption = new Option<bool>("--force", "Force re-run from --from stage");
         var jobsOption = new Option<int>("--jobs", () => 1, "Parallelism for future stages");
+        var asrServiceOption = new Option<string>("--asr-service", () => "http://localhost:8081", "ASR service URL");
+        var alignServiceOption = new Option<string>("--align-service", () => "http://localhost:8082", "Aeneas alignment service URL");
+        var dbFloorOption = new Option<double>("--db-floor", () => -38.0, "Silence detection threshold in dBFS (lower = stricter)");
+        var minDurOption = new Option<double>("--min-dur", () => 0.12, "Minimum silence duration in seconds");
+        var roomtoneFileOption = new Option<string>("--roomtone-file", "Path to roomtone file (if not provided, will auto-generate)");
 
         cmd.AddOption(inOption);
         cmd.AddOption(workOption);
@@ -26,28 +31,48 @@ public static class AsrRunCommand
         cmd.AddOption(resumeOption);
         cmd.AddOption(forceOption);
         cmd.AddOption(jobsOption);
+        cmd.AddOption(asrServiceOption);
+        cmd.AddOption(alignServiceOption);
+        cmd.AddOption(dbFloorOption);
+        cmd.AddOption(minDurOption);
+        cmd.AddOption(roomtoneFileOption);
 
-        cmd.SetHandler(async (input, work, from, to, resume, force, jobs) =>
+        cmd.SetHandler(async (context) =>
         {
-            var workDir = work?.FullName ?? input!.FullName + ".ams";
+            var input = context.ParseResult.GetValueForOption(inOption)!;
+            var work = context.ParseResult.GetValueForOption(workOption);
+            var from = context.ParseResult.GetValueForOption(fromOption)!;
+            var to = context.ParseResult.GetValueForOption(toOption)!;
+            var resume = context.ParseResult.GetValueForOption(resumeOption);
+            var force = context.ParseResult.GetValueForOption(forceOption);
+            var jobs = context.ParseResult.GetValueForOption(jobsOption);
+            var asrService = context.ParseResult.GetValueForOption(asrServiceOption)!;
+            var alignService = context.ParseResult.GetValueForOption(alignServiceOption)!;
+            var dbFloor = context.ParseResult.GetValueForOption(dbFloorOption);
+            var minDur = context.ParseResult.GetValueForOption(minDurOption);
+            var roomtoneFile = context.ParseResult.GetValueForOption(roomtoneFileOption);
+            
+            var workDir = work?.FullName ?? input.FullName + ".ams";
             Directory.CreateDirectory(workDir);
 
             var httpClient = new HttpClient();
             var runner = new AsrPipelineRunner();
             
-            // Register all stages with default parameters
-            runner.RegisterStage("timeline", wd => new DetectSilenceStage(wd, new FfmpegSilenceDetector(), new DefaultProcessRunner(), new SilenceDetectionParams(-30.0, 0.3)));
+            // Register all stages with user-provided parameters
+            runner.RegisterStage("timeline", wd => new DetectSilenceStage(wd, new FfmpegSilenceDetector(), new DefaultProcessRunner(), new SilenceDetectionParams(dbFloor, minDur)));
             runner.RegisterStage("plan", wd => new PlanWindowsStage(wd, new SilenceWindowPlanner(), new WindowPlanningParams(60.0, 90.0, 75.0, true)));
             runner.RegisterStage("chunks", wd => new ChunkAudioStage(wd, new DefaultProcessRunner(), new ChunkingParams("wav", 44100)));
-            runner.RegisterStage("transcripts", wd => new TranscribeStage(wd, httpClient, new TranscriptionParams("nvidia/parakeet-ctc-0.6b", "en", 1, 1.0, "http://localhost:8081")));
-            runner.RegisterStage("align-chunks", wd => new AlignChunksStage(wd, httpClient, new AlignmentParams("eng", 600, "http://localhost:8082")));
-            runner.RegisterStage("refine", wd => new RefineStage(wd, new RefinementParams(-30.0, 0.12)));
-            runner.RegisterStage("collate", wd => new CollateStage(wd, new DefaultProcessRunner(), new CollationParams("auto", -50.0, 5, 2000, 60, null)));
+            runner.RegisterStage("transcripts", wd => new TranscribeStage(wd, httpClient, new TranscriptionParams("nvidia/parakeet-ctc-0.6b", "en", 1, 1.0, asrService)));
+            runner.RegisterStage("align-chunks", wd => new AlignChunksStage(wd, httpClient, new AlignmentParams("eng", 600, alignService)));
+            runner.RegisterStage("refine", wd => new RefineStage(wd, new RefinementParams(dbFloor, minDur)));
+            runner.RegisterStage("collate", wd => new CollateStage(wd, new DefaultProcessRunner(), new CollationParams(
+                roomtoneFile != null ? "file" : "auto", 
+                -50.0, 5, 2000, 60, roomtoneFile)));
             runner.RegisterStage("validate", wd => new ValidateStage(wd, new ValidationParams(0.25, 0.25, null)));
 
-            var ok = await runner.RunAsync(input!.FullName, workDir, from, to, force && !resume);
+            var ok = await runner.RunAsync(input.FullName, workDir, from, to, force && !resume);
             if (!ok) Environment.Exit(1);
-        }, inOption, workOption, fromOption, toOption, resumeOption, forceOption, jobsOption);
+        });
 
         return cmd;
     }

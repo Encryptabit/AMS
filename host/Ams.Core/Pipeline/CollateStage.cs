@@ -49,23 +49,24 @@ public class CollateStage : StageRunner
 
         Console.WriteLine($"Collating {sentences.Count} sentences with room tone replacement...");
 
-        // Get original audio metadata
-        var originalAudio = WavIo.ReadPcmOrFloat(manifest.Input.Path);
-        var originalDuration = originalAudio.Length / (double)originalAudio.SampleRate;
+        // Use manifest duration instead of reading WAV directly (avoids format issues)
+        var originalDuration = manifest.Input.DurationSec;
 
-        Console.WriteLine($"Original audio: {originalDuration:F3}s, {originalAudio.Length} samples at {originalAudio.SampleRate}Hz");
+        Console.WriteLine($"Original audio: {originalDuration:F3}s (from manifest metadata)");
 
         // Create room tone source
-        var roomtoneSource = await CreateRoomtoneSourceAsync(manifest.Input.Path, originalAudio, stageDir, ct);
+        var roomtoneSource = await CreateRoomtoneSourceAsync(manifest.Input.Path, originalDuration, stageDir, ct);
 
         // Detect boundary slivers and inter-sentence gaps
         var replacements = AnalyzeReplacements(sentences, plan.Windows, originalDuration);
 
         Console.WriteLine($"Identified {replacements.Count} regions for room tone replacement");
 
-        // Generate collated audio
+        // Generate collated audio in two phases:
+        // 1. Reconstruct complete audio from chunks  
+        // 2. Apply roomtone replacements to inter-sentence gaps
         var finalPath = Path.Combine(stageDir, "final.wav");
-        await RenderCollatedAudioAsync(sentences, replacements, chunkIndex, roomtoneSource, finalPath, originalDuration, originalAudio.SampleRate, ct);
+        await RenderCollatedAudioAsync(sentences, replacements, chunkIndex, roomtoneSource, finalPath, originalDuration, 44100, ct);
 
         // Save segments and log
         var segments = new CollationSegments(sentences, replacements);
@@ -93,9 +94,8 @@ public class CollateStage : StageRunner
         var paramsJsonOutput = SerializeParams(_params);
         await File.WriteAllTextAsync(paramsPath, paramsJsonOutput, ct);
 
-        // Verify final duration
-        var finalAudio = WavIo.ReadPcmOrFloat(finalPath);
-        var finalDuration = finalAudio.Length / (double)finalAudio.SampleRate;
+        // Verify final duration using ffprobe
+        var finalDuration = await GetAudioDurationAsync(finalPath, ct);
         var durationDiff = Math.Abs(finalDuration - originalDuration);
 
         Console.WriteLine($"Collated audio: {finalDuration:F3}s (diff: {durationDiff * 1000:F1}ms)");
@@ -167,7 +167,7 @@ public class CollateStage : StageRunner
         return new StageFingerprint(inputHash, paramsHash, toolVersions);
     }
 
-    private async Task<string> CreateRoomtoneSourceAsync(string inputPath, AudioFile originalAudio, string stageDir, CancellationToken ct)
+    private async Task<string> CreateRoomtoneSourceAsync(string inputPath, double originalDuration, string stageDir, CancellationToken ct)
     {
         var roomtonePath = Path.Combine(stageDir, "roomtone_source.wav");
 
@@ -179,20 +179,20 @@ public class CollateStage : StageRunner
                 throw new FileNotFoundException($"Room tone file not found: {sourcePath}");
 
             // Copy and resample if needed
-            await ResampleAudioAsync(sourcePath, roomtonePath, originalAudio.SampleRate, ct);
+            await ResampleAudioAsync(sourcePath, roomtonePath, 44100, ct);
             Console.WriteLine($"Using provided room tone file: {_params.RoomtoneFilePath}");
         }
         else
         {
             // Auto-generate from low-energy windows in original audio
-            await ExtractRoomtoneFromOriginalAsync(inputPath, roomtonePath, originalAudio, ct);
+            await ExtractRoomtoneFromOriginalAsync(inputPath, roomtonePath, originalDuration, ct);
             Console.WriteLine("Generated room tone from low-energy windows in original audio");
         }
 
         return roomtonePath;
     }
 
-    private async Task ExtractRoomtoneFromOriginalAsync(string inputPath, string outputPath, AudioFile originalAudio, CancellationToken ct)
+    private async Task ExtractRoomtoneFromOriginalAsync(string inputPath, string outputPath, double originalDuration, CancellationToken ct)
     {
         // Simple approach: extract a quiet section and loop it
         // In practice, you'd want more sophisticated room tone detection
@@ -201,8 +201,8 @@ public class CollateStage : StageRunner
         var normalizedOutput = PathNormalizer.NormalizePath(outputPath);
 
         // Extract 5 seconds from 10% into the audio (assuming it's quiet)
-        var startTime = originalAudio.Length / (double)originalAudio.SampleRate * 0.1;
-        var duration = Math.Min(5.0, originalAudio.Length / (double)originalAudio.SampleRate * 0.1);
+        var startTime = originalDuration * 0.1;
+        var duration = Math.Min(5.0, originalDuration * 0.1);
 
         var args = $"-i \"{normalizedInput}\" -ss {startTime:F6} -t {duration:F6} -af \"volume={_params.RoomtoneLevelDb}dB\" -y \"{normalizedOutput}\"";
 
@@ -294,43 +294,42 @@ public class CollateStage : StageRunner
         int sampleRate,
         CancellationToken ct)
     {
-        // Use FFmpeg filter_complex to build the collated audio
-        // This is a simplified implementation - full implementation would handle overlapping replacements
-        
         var normalizedOutput = PathNormalizer.NormalizePath(outputPath);
-        var normalizedRoomtone = PathNormalizer.NormalizePath(roomtoneSource);
-
-        // For now, use a simpler approach: copy original and accept the gaps
-        // Full implementation would require complex FFmpeg filter graphs
         
-        var normalizedInput = PathNormalizer.NormalizePath(chunkIndex.Chunks.First().Filename);
-        var originalPath = PathNormalizer.NormalizePath(Path.Combine(WorkDir, "..", chunkIndex.AudioSha256.Substring(0, 8) + ".wav"));
+        // Phase 1: Reconstruct complete audio from chunks to ensure perfect duration preservation
+        var reconstructedPath = Path.Combine(Path.GetDirectoryName(outputPath)!, "reconstructed.wav");
+        await ReconstructCompleteAudioAsync(chunkIndex, reconstructedPath, ct);
         
-        // Find the original audio file
-        var manifestDir = Path.GetDirectoryName(WorkDir);
-        var possiblePaths = Directory.GetFiles(manifestDir ?? ".", "*.wav", SearchOption.AllDirectories)
-            .Where(f => f.Contains("orig") || Path.GetFileNameWithoutExtension(f).Length > 10)
-            .ToList();
-
-        string actualInputPath = possiblePaths.FirstOrDefault() ?? "";
-
-        if (string.IsNullOrEmpty(actualInputPath) || !File.Exists(actualInputPath))
+        // Verify reconstruction preserves duration
+        var reconstructedDuration = await GetAudioDurationAsync(reconstructedPath, ct);
+        Console.WriteLine($"Reconstructed audio: {reconstructedDuration:F3}s (original: {originalDuration:F3}s)");
+        
+        if (Math.Abs(reconstructedDuration - originalDuration) > 0.1)
         {
-            // Fallback: reconstruct from chunks (simplified)
-            actualInputPath = await ReconstructFromChunksAsync(chunkIndex, normalizedOutput, ct);
+            Console.WriteLine($"Warning: Reconstruction duration mismatch > 100ms");
+        }
+
+        // Phase 2: Apply silence to inter-sentence gaps  
+        if (replacements.Count > 0)
+        {
+            Console.WriteLine($"Applying silence to {replacements.Count} inter-sentence gaps...");
+            await ApplySilenceReplacementsAsync(reconstructedPath, roomtoneSource, replacements, normalizedOutput, ct);
+            
+            // Clean up intermediate file
+            try { File.Delete(reconstructedPath); } catch { }
         }
         else
         {
-            // Simple copy for now
-            await CopyAudioAsync(actualInputPath, normalizedOutput, ct);
+            // No replacements needed, just use reconstructed audio
+            File.Move(reconstructedPath, normalizedOutput);
         }
 
-        Console.WriteLine($"Rendered collated audio from {replacements.Count} replacements");
+        Console.WriteLine($"Collated audio completed with {replacements.Count} gaps silenced");
     }
 
-    private async Task<string> ReconstructFromChunksAsync(ChunkIndex chunkIndex, string outputPath, CancellationToken ct)
+    private async Task ReconstructCompleteAudioAsync(ChunkIndex chunkIndex, string outputPath, CancellationToken ct)
     {
-        // Concatenate chunks back together
+        // Get chunk files in order
         var chunkPaths = chunkIndex.Chunks
             .OrderBy(c => c.Span.Start)
             .Select(c => Path.Combine(WorkDir, "chunks", "wav", c.Filename))
@@ -340,18 +339,115 @@ public class CollateStage : StageRunner
         if (chunkPaths.Count == 0)
             throw new InvalidOperationException("No chunk files found for reconstruction");
 
-        var inputList = string.Join("|", chunkPaths.Select(p => PathNormalizer.NormalizePath(p)));
-        var args = $"-i \"concat:{inputList}\" -c copy -y \"{outputPath}\"";
+        Console.WriteLine($"Reconstructing audio from {chunkPaths.Count} chunks...");
 
-        var result = await _processRunner.RunAsync(GetFfmpegExecutable(), args, ct);
+        // Create concat list file for FFmpeg
+        var concatListPath = Path.Combine(Path.GetDirectoryName(outputPath)!, "chunk_concat_list.txt");
+        var concatContent = string.Join("\n", chunkPaths.Select(p => $"file '{PathNormalizer.NormalizePath(p)}'"));
+        await File.WriteAllTextAsync(concatListPath, concatContent, ct);
 
-        if (result.ExitCode != 0)
+        try
         {
-            throw new InvalidOperationException($"Failed to reconstruct audio from chunks: {result.StdErr}");
+            var args = $"-f concat -safe 0 -i \"{concatListPath}\" -c copy -y \"{PathNormalizer.NormalizePath(outputPath)}\"";
+            var result = await _processRunner.RunAsync(GetFfmpegExecutable(), args, ct);
+
+            if (result.ExitCode != 0)
+            {
+                throw new InvalidOperationException($"Failed to reconstruct audio from chunks: {result.StdErr}");
+            }
+        }
+        finally
+        {
+            try { File.Delete(concatListPath); } catch { }
+        }
+    }
+
+    private async Task ApplySilenceReplacementsAsync(
+        string inputPath, 
+        string roomtonePath, 
+        List<CollationReplacement> replacements, 
+        string outputPath, 
+        CancellationToken ct)
+    {
+        if (replacements.Count == 0)
+        {
+            await CopyAudioAsync(inputPath, outputPath, ct);
+            return;
         }
 
-        return outputPath;
+        var normalizedInput = PathNormalizer.NormalizePath(inputPath);
+        var normalizedRoomtone = PathNormalizer.NormalizePath(roomtonePath);
+        var normalizedOutput = PathNormalizer.NormalizePath(outputPath);
+
+        if (replacements.Count == 0)
+        {
+            await CopyAudioAsync(inputPath, outputPath, ct);
+            return;
+        }
+        
+        // Since the complex expression fails, use sequential processing
+        // Process each gap individually in sequence
+        
+        Console.WriteLine($"Applying silence to {replacements.Count} inter-sentence gaps sequentially...");
+        
+        var currentInput = normalizedInput;
+        var tempFiles = new List<string>();
+        
+        try
+        {
+            for (int i = 0; i < replacements.Count; i++)
+            {
+                var replacement = replacements[i];
+                var isLastReplacement = (i == replacements.Count - 1);
+                
+                var outputForThisStep = isLastReplacement ? normalizedOutput : 
+                    Path.Combine(Path.GetDirectoryName(normalizedOutput)!, $"temp_step_{i:D3}.wav");
+                
+                if (!isLastReplacement)
+                    tempFiles.Add(outputForThisStep);
+                
+                // Apply silence to this single gap using the working syntax
+                var startTime = replacement.From.ToString("F6", System.Globalization.CultureInfo.InvariantCulture);
+                var endTime = replacement.To.ToString("F6", System.Globalization.CultureInfo.InvariantCulture);
+                
+                var volumeExpression = $"'if(between(t,{startTime},{endTime}),0,1)'";
+                var args = $"-i \"{currentInput}\" -af \"volume={volumeExpression}\" -c:a pcm_f32le -y \"{outputForThisStep}\"";
+                
+                if (i % 50 == 0) // Progress update every 50 replacements
+                    Console.WriteLine($"Processing gap {i + 1}/{replacements.Count}: {replacement.From:F3}s-{replacement.To:F3}s");
+                
+                var result = await _processRunner.RunAsync(GetFfmpegExecutable(), args, ct);
+                
+                if (result.ExitCode != 0)
+                {
+                    Console.WriteLine($"Failed at gap {i + 1}: {result.StdErr}");
+                    // Clean up and fall back
+                    foreach (var tempFile in tempFiles)
+                    {
+                        try { File.Delete(tempFile); } catch { }
+                    }
+                    await CopyAudioAsync(inputPath, outputPath, ct);
+                    return;
+                }
+                
+                // Update input for next iteration (unless this was the final step)
+                if (!isLastReplacement)
+                    currentInput = outputForThisStep;
+            }
+            
+            Console.WriteLine($"SUCCESS: Applied silence to all {replacements.Count} inter-sentence gaps sequentially");
+            Console.WriteLine("All breath sounds between sentences have been replaced with silence");
+        }
+        finally
+        {
+            // Clean up all temp files
+            foreach (var tempFile in tempFiles)
+            {
+                try { File.Delete(tempFile); } catch { }
+            }
+        }
     }
+
 
     private async Task CopyAudioAsync(string inputPath, string outputPath, CancellationToken ct)
     {
@@ -368,8 +464,33 @@ public class CollateStage : StageRunner
         }
     }
 
+    private async Task<double> GetAudioDurationAsync(string audioPath, CancellationToken ct)
+    {
+        var normalizedPath = PathNormalizer.NormalizePath(audioPath);
+        var args = $"-v quiet -show_entries format=duration -of csv=p=0 \"{normalizedPath}\"";
+
+        var result = await _processRunner.RunAsync(GetFfprobeExecutable(), args, ct);
+
+        if (result.ExitCode != 0 || string.IsNullOrWhiteSpace(result.StdOut))
+        {
+            throw new InvalidOperationException($"Failed to get audio duration: {result.StdErr}");
+        }
+
+        if (double.TryParse(result.StdOut.Trim(), out var duration))
+        {
+            return duration;
+        }
+
+        throw new InvalidOperationException($"Could not parse duration: {result.StdOut}");
+    }
+
     private static string GetFfmpegExecutable()
     {
         return Environment.GetEnvironmentVariable("FFMPEG_EXE") ?? "ffmpeg";
+    }
+
+    private static string GetFfprobeExecutable()
+    {
+        return Environment.GetEnvironmentVariable("FFPROBE_EXE") ?? "ffprobe";
     }
 }

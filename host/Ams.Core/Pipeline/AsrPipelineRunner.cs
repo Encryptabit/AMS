@@ -145,7 +145,17 @@ public class AsrPipelineRunner
 
     private void ClearStageStatuses(ManifestV2 manifest, string? fromStage)
     {
-        var startIndex = fromStage != null ? _stageOrder.IndexOf(fromStage) : 0;
+        var startIndex = 0;
+        if (fromStage != null)
+        {
+            startIndex = _stageOrder.IndexOf(fromStage);
+            if (startIndex == -1)
+            {
+                var validStages = string.Join(", ", _stageOrder);
+                throw new ArgumentException($"Invalid stage name '{fromStage}'. Valid stages are: {validStages}", nameof(fromStage));
+            }
+        }
+        
         for (int i = startIndex; i < _stageOrder.Count; i++)
         {
             var name = _stageOrder[i];

@@ -11,52 +11,10 @@ public static class AsrCommand
     {
         var asrCommand = new Command("asr", "ASR (Automatic Speech Recognition) operations");
         
-        var runCommand = new Command("run", "Run ASR on an audio file");
-        
-        var audioOption = new Option<FileInfo>("--audio", "Path to the audio file (WAV format)")
-        {
-            IsRequired = true
-        };
-        audioOption.AddAlias("-a");
-        
-        var outputOption = new Option<FileInfo>("--out", "Output ASR JSON file")
-        {
-            IsRequired = true
-        };
-        outputOption.AddAlias("-o");
-        
-        var serviceUrlOption = new Option<string>("--service", () => "http://localhost:8000", "ASR service URL");
-        serviceUrlOption.AddAlias("-s");
-        
-        var modelOption = new Option<string>("--model", "ASR model to use (optional)");
-        modelOption.AddAlias("-m");
-        
-        var languageOption = new Option<string>("--language", () => "en", "Language code");
-        languageOption.AddAlias("-l");
-        
-        runCommand.AddOption(audioOption);
-        runCommand.AddOption(outputOption);
-        runCommand.AddOption(serviceUrlOption);
-        runCommand.AddOption(modelOption);
-        runCommand.AddOption(languageOption);
-        
-        runCommand.SetHandler(async (audio, output, serviceUrl, model, language) =>
-        {
-            try
-            {
-                await RunAsrAsync(audio, output, serviceUrl, model, language);
-            }
-            catch (Exception ex)
-            {
-                Console.Error.WriteLine($"Error: {ex.Message}");
-                Environment.Exit(1);
-            }
-        }, audioOption, outputOption, serviceUrlOption, modelOption, languageOption);
-        
-        asrCommand.AddCommand(runCommand);
-
-        // New staged pipeline commands
+        // Delegate the 'run' subcommand to AsrRunCommand (pipeline orchestrator)
         asrCommand.AddCommand(AsrRunCommand.Create());
+
+        // New staged pipeline commands (also available at root via Program)
         asrCommand.AddCommand(DetectSilenceCommand.Create());
         asrCommand.AddCommand(PlanWindowsCommand.Create());
         asrCommand.AddCommand(AlignChunksCommand.Create());
