@@ -1,0 +1,289 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TestRun id="b1f73099-c9f3-409e-8852-dfb1c703b0ec" name="@DESKTOP-EEEM5EM 2025-09-04 04:48:44" xmlns="http://microsoft.com/schemas/VisualStudio/TeamTest/2010">
+  <Times creation="2025-09-04T04:48:44.5941436-07:00" queuing="2025-09-04T04:48:44.5941436-07:00" start="2025-09-04T04:48:43.4321876-07:00" finish="2025-09-04T04:48:45.6405764-07:00" />
+  <TestSettings name="default" id="2df80829-0a2e-4c58-bd82-41d4fb73b682">
+    <Deployment runDeploymentRoot="_DESKTOP-EEEM5EM_2025-09-04_04_48_44" />
+  </TestSettings>
+  <Results>
+    <UnitTestResult executionId="5aff758a-4372-4507-80c1-6f4da5d6f3e4" testId="54c4ad58-712a-a220-d291-9c7f35769d76" testName="Ams.Tests.TextNormalizerTests.TokenizeWords_ShouldTokenizeCorrectly(input: &quot;hello world test&quot;, expected: [&quot;hello&quot;, &quot;world&quot;, &quot;test&quot;])" computerName="DESKTOP-EEEM5EM" duration="00:00:00.0002953" startTime="2025-09-04T04:48:44.5169226-07:00" endTime="2025-09-04T04:48:44.5169226-07:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="5aff758a-4372-4507-80c1-6f4da5d6f3e4" />
+    <UnitTestResult executionId="eef72ae3-5a81-451e-af38-70cd5fddb42a" testId="b2ba35de-5f1b-8da9-9c7e-da6ffad84fe1" testName="AnchorDiscoveryTests.LisEnforcesMonotonicity" computerName="DESKTOP-EEEM5EM" duration="00:00:00.0312586" startTime="2025-09-04T04:48:44.4068374-07:00" endTime="2025-09-04T04:48:44.4068865-07:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="eef72ae3-5a81-451e-af38-70cd5fddb42a" />
+    <UnitTestResult executionId="767a772b-916f-49db-b241-548af8c50bdd" testId="c41ca717-f2c7-fb7b-ee40-a545934f7019" testName="Ams.Tests.TextNormalizerTests.Normalize_ShouldNormalizeTextCorrectly(input: &quot;I can't believe it's 123 degrees!&quot;, expected: &quot;i cannot believe it is one hundred twenty three de&quot;···)" computerName="DESKTOP-EEEM5EM" duration="00:00:00.0004354" startTime="2025-09-04T04:48:44.5165824-07:00" endTime="2025-09-04T04:48:44.5165824-07:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="767a772b-916f-49db-b241-548af8c50bdd" />
+    <UnitTestResult executionId="025d0ea5-af2f-4339-9149-dd4b6f958cee" testId="0fd2c988-bc56-323f-ffa3-36b6944f4aa8" testName="Ams.Tests.ScriptValidatorTests.Validate_WithSubstitution_ShouldCalculateCorrectWER" computerName="DESKTOP-EEEM5EM" duration="00:00:00.0139025" startTime="2025-09-04T04:48:44.6076074-07:00" endTime="2025-09-04T04:48:44.6076075-07:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="025d0ea5-af2f-4339-9149-dd4b6f958cee" />
+    <UnitTestResult executionId="b8023316-9193-4dc5-8198-2dbdfc0e95f2" testId="6f322658-ce49-816f-5f8f-134aa0023550" testName="TxAlignTests.WindowsFromAnchors_AreClampedAndHalfOpen" computerName="DESKTOP-EEEM5EM" duration="00:00:00.0132302" startTime="2025-09-04T04:48:44.5142893-07:00" endTime="2025-09-04T04:48:44.5142893-07:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="b8023316-9193-4dc5-8198-2dbdfc0e95f2" />
+    <UnitTestResult executionId="7165fd6f-7359-4c58-bcfe-266af4b997e2" testId="6f9d102c-37fa-89c4-7126-8b4bd721e427" testName="Ams.Tests.BookParsingTests.BookParser_CanParse_Extensions" computerName="DESKTOP-EEEM5EM" duration="00:00:00.0003289" startTime="2025-09-04T04:48:44.5180311-07:00" endTime="2025-09-04T04:48:44.5180311-07:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="7165fd6f-7359-4c58-bcfe-266af4b997e2" />
+    <UnitTestResult executionId="5e24262d-50aa-4230-a02b-a3ca283af407" testId="413897d6-4a2a-103d-b71e-91b6c44e340e" testName="Ams.Tests.TextNormalizerTests.Normalize_ShouldNormalizeTextCorrectly(input: &quot;  Multiple    spaces   &quot;, expected: &quot;multiple spaces&quot;)" computerName="DESKTOP-EEEM5EM" duration="00:00:00.0987317" startTime="2025-09-04T04:48:44.5143335-07:00" endTime="2025-09-04T04:48:44.5143336-07:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="5e24262d-50aa-4230-a02b-a3ca283af407" />
+    <UnitTestResult executionId="b910160c-3d11-4147-b212-c7f3f11d5eea" testId="1464447b-28fa-5bce-642d-f1222edd8ffd" testName="Ams.Tests.BookParsingTests.Parser_Unsupported_Throws" computerName="DESKTOP-EEEM5EM" duration="00:00:00.0102810" startTime="2025-09-04T04:48:44.5179056-07:00" endTime="2025-09-04T04:48:44.5179057-07:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="b910160c-3d11-4147-b212-c7f3f11d5eea" />
+    <UnitTestResult executionId="2eca1c71-b250-4a09-8b2d-57ce95adf71a" testId="1e5a9251-4654-e660-a358-c7f12eb79e77" testName="Ams.Tests.BookIndexAcceptanceTests.Canonical_RoundTrip_DeterministicBytes_WithCache" computerName="DESKTOP-EEEM5EM" duration="00:00:00.0512289" startTime="2025-09-04T04:48:44.6070351-07:00" endTime="2025-09-04T04:48:44.6070352-07:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="2eca1c71-b250-4a09-8b2d-57ce95adf71a" />
+    <UnitTestResult executionId="3acef887-0354-4eac-8976-b381cff7e4bf" testId="ce4505fc-376d-068a-361d-d8ba42ea8b4c" testName="SilenceWindowPlannerTests.RelaxesTail_When_Allowed" computerName="DESKTOP-EEEM5EM" duration="00:00:00.0481527" startTime="2025-09-04T04:48:44.4255957-07:00" endTime="2025-09-04T04:48:44.4255959-07:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="3acef887-0354-4eac-8976-b381cff7e4bf" />
+    <UnitTestResult executionId="590da05c-79ce-4d02-b977-d23f9b99cacf" testId="e25a67b2-092d-29ea-936e-e7ca57868fd1" testName="Ams.Tests.BookModelsTests.BookIndexOptions_Defaults" computerName="DESKTOP-EEEM5EM" duration="00:00:00.0151763" startTime="2025-09-04T04:48:44.5141533-07:00" endTime="2025-09-04T04:48:44.5141534-07:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="590da05c-79ce-4d02-b977-d23f9b99cacf" />
+    <UnitTestResult executionId="e55ea999-6028-4e86-a6cd-fdbe7d7524ab" testId="8283c47b-3b50-226b-bd96-47e3b726ed8e" testName="Ams.Tests.BookIndexAcceptanceTests.Slimness_WordsContainOnlyCanonicalFields" computerName="DESKTOP-EEEM5EM" duration="00:00:00.1244812" startTime="2025-09-04T04:48:44.5544407-07:00" endTime="2025-09-04T04:48:44.5544408-07:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="e55ea999-6028-4e86-a6cd-fdbe7d7524ab" />
+    <UnitTestResult executionId="54555c00-1acc-45c9-ac91-52c8ea7f64ae" testId="3b48470e-ddf2-574f-3365-1ac6c2f89433" testName="Ams.Tests.TextNormalizerTests.CalculateSimilarity_ShouldReturnCorrectSimilarity(text1: &quot;&quot;, text2: &quot;&quot;, expectedMin: 1)" computerName="DESKTOP-EEEM5EM" duration="00:00:00.0006931" startTime="2025-09-04T04:48:44.5176078-07:00" endTime="2025-09-04T04:48:44.5176078-07:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="54555c00-1acc-45c9-ac91-52c8ea7f64ae" />
+    <UnitTestResult executionId="7a381608-f0c3-4eb8-96bb-509d0e6af94a" testId="a2d9ec76-d348-4214-957c-d85d4723c049" testName="SectionLocatorTests.Preprocessor_And_Pipeline_Map_And_Restrict" computerName="DESKTOP-EEEM5EM" duration="00:00:00.0184130" startTime="2025-09-04T04:48:44.5167967-07:00" endTime="2025-09-04T04:48:44.5167967-07:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="7a381608-f0c3-4eb8-96bb-509d0e6af94a" />
+    <UnitTestResult executionId="b1967747-e999-453f-88b7-63feea23cf1b" testId="632ef7c6-71d1-3a9b-9119-502772aa3e45" testName="Ams.Tests.TextNormalizerTests.CalculateSimilarity_ShouldReturnCorrectSimilarity(text1: &quot;hello&quot;, text2: &quot;helo&quot;, expectedMin: 0.80000000000000004)" computerName="DESKTOP-EEEM5EM" duration="00:00:00.0011697" startTime="2025-09-04T04:48:44.5176933-07:00" endTime="2025-09-04T04:48:44.5176934-07:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="b1967747-e999-453f-88b7-63feea23cf1b" />
+    <UnitTestResult executionId="062590df-0f8b-49d8-8505-c62bd46a0a3b" testId="f75292ee-d5ad-2ea5-5648-85031c012d05" testName="SilenceWindowPlannerTests.Plans_DenseCandidates_Strict" computerName="DESKTOP-EEEM5EM" duration="00:00:00.0104797" startTime="2025-09-04T04:48:44.5135055-07:00" endTime="2025-09-04T04:48:44.5135055-07:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="062590df-0f8b-49d8-8505-c62bd46a0a3b" />
+    <UnitTestResult executionId="9a5d7782-fbd7-4781-b3cc-9472ea7188b1" testId="c3752748-5475-0142-24fa-0654d12f7328" testName="Ams.Tests.ScriptValidatorTests.Validate_WithContractions_ShouldNormalizeCorrectly" computerName="DESKTOP-EEEM5EM" duration="00:00:00.0334637" startTime="2025-09-04T04:48:44.6411493-07:00" endTime="2025-09-04T04:48:44.6411494-07:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="9a5d7782-fbd7-4781-b3cc-9472ea7188b1" />
+    <UnitTestResult executionId="b663c2f5-c4a6-46cb-b30f-0d846263b455" testId="97d4c0ad-695f-453e-9a23-6deba3f062e2" testName="SectionLocatorTests.Detects_Chapter_From_Asr_Prefix" computerName="DESKTOP-EEEM5EM" duration="00:00:00.1023928" startTime="2025-09-04T04:48:44.5166423-07:00" endTime="2025-09-04T04:48:44.5166423-07:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="b663c2f5-c4a6-46cb-b30f-0d846263b455" />
+    <UnitTestResult executionId="91b3831a-3a60-4801-8e0c-2975697af518" testId="bb9a5e2b-c764-c78c-86ff-2bb83564cb1e" testName="Ams.Tests.ScriptValidatorTests.Validate_ComplexScenario_ShouldCalculateCorrectMetrics" computerName="DESKTOP-EEEM5EM" duration="00:00:00.2211018" startTime="2025-09-04T04:48:44.5799779-07:00" endTime="2025-09-04T04:48:44.5799780-07:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="91b3831a-3a60-4801-8e0c-2975697af518" />
+    <UnitTestResult executionId="1e500365-295d-4a2b-b7c9-51eb3e0e748f" testId="00f1bc45-48c1-b12d-f6d6-5c7703be8472" testName="Ams.Tests.ScriptValidatorTests.Validate_WithDeletion_ShouldCalculateCorrectWER" computerName="DESKTOP-EEEM5EM" duration="00:00:00.0134923" startTime="2025-09-04T04:48:44.5935822-07:00" endTime="2025-09-04T04:48:44.5935823-07:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="1e500365-295d-4a2b-b7c9-51eb3e0e748f" />
+    <UnitTestResult executionId="5530f25c-64a9-445a-a1ee-6addb80e5621" testId="3551e2ef-90be-af89-b001-a537b687a3fc" testName="AnchorDiscoveryTests.UniqueTrigrams_ProduceAnchors" computerName="DESKTOP-EEEM5EM" duration="00:00:00.0277130" startTime="2025-09-04T04:48:44.5139330-07:00" endTime="2025-09-04T04:48:44.5139330-07:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="5530f25c-64a9-445a-a1ee-6addb80e5621" />
+    <UnitTestResult executionId="3bfddb9d-1c0c-441e-84f5-d6a1dab4b547" testId="4d01b460-4c7a-ee77-5aa8-5070df42945e" testName="Ams.Tests.TextNormalizerTests.Normalize_ShouldNormalizeTextCorrectly(input: &quot;&quot;, expected: &quot;&quot;)" computerName="DESKTOP-EEEM5EM" duration="00:00:00.0001864" startTime="2025-09-04T04:48:44.5164281-07:00" endTime="2025-09-04T04:48:44.5164281-07:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="3bfddb9d-1c0c-441e-84f5-d6a1dab4b547" />
+    <UnitTestResult executionId="287a28a0-1a50-4650-8f83-36d0d9861ad1" testId="c600fba3-eac4-0732-8d5f-50230ecfb70b" testName="Ams.Tests.TextNormalizerTests.CalculateSimilarity_ShouldReturnCorrectSimilarity(text1: &quot;&quot;, text2: &quot;something&quot;, expectedMin: 0)" computerName="DESKTOP-EEEM5EM" duration="00:00:00.0005097" startTime="2025-09-04T04:48:44.5177353-07:00" endTime="2025-09-04T04:48:44.5177354-07:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="287a28a0-1a50-4650-8f83-36d0d9861ad1" />
+    <UnitTestResult executionId="d0b85e4d-2c1a-461d-9cf2-333f1b911dfa" testId="be424ed0-f3cc-f9e3-c21e-6c4dcc1d723a" testName="Ams.Tests.BookParsingTests.Parser_Text_NoNormalization" computerName="DESKTOP-EEEM5EM" duration="00:00:00.1345619" startTime="2025-09-04T04:48:44.5177748-07:00" endTime="2025-09-04T04:48:44.5177748-07:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="d0b85e4d-2c1a-461d-9cf2-333f1b911dfa" />
+    <UnitTestResult executionId="15454e72-edf3-42d7-8fcd-916e7b94082f" testId="778d8c9a-449e-15af-321e-b8ec01eb1670" testName="Ams.Tests.ScriptValidatorTests.Validate_WithInsertion_ShouldCalculateCorrectWER" computerName="DESKTOP-EEEM5EM" duration="00:00:00.0101793" startTime="2025-09-04T04:48:44.6514831-07:00" endTime="2025-09-04T04:48:44.6514832-07:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="15454e72-edf3-42d7-8fcd-916e7b94082f" />
+    <UnitTestResult executionId="d17c6bbe-b4aa-4038-b879-d91a38c824a0" testId="f324b4ec-d3a2-90b7-9cb2-c60100e0c16e" testName="Ams.Tests.ScriptValidatorTests.Validate_PerfectMatch_ShouldReturnZeroWER" computerName="DESKTOP-EEEM5EM" duration="00:00:00.0080982" startTime="2025-09-04T04:48:44.6597288-07:00" endTime="2025-09-04T04:48:44.6597289-07:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="d17c6bbe-b4aa-4038-b879-d91a38c824a0" />
+    <UnitTestResult executionId="4876008b-5aa6-4d26-8a75-a93d7eeb8c8b" testId="c37a30f9-abf9-3ce1-ad9e-de44d465e94c" testName="Ams.Tests.TextNormalizerTests.Normalize_ShouldNormalizeTextCorrectly(input: &quot;Don't you think it's great?&quot;, expected: &quot;do not you think it is great&quot;)" computerName="DESKTOP-EEEM5EM" duration="00:00:00.0003511" startTime="2025-09-04T04:48:44.5165332-07:00" endTime="2025-09-04T04:48:44.5165332-07:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="4876008b-5aa6-4d26-8a75-a93d7eeb8c8b" />
+    <UnitTestResult executionId="faa4da88-f007-4a7e-8953-e7a85b31bfad" testId="1808feb9-34c3-753a-4208-391636bb17b0" testName="Ams.Tests.BookIndexAcceptanceTests.StructureRanges_CoverAllWords_NoGaps" computerName="DESKTOP-EEEM5EM" duration="00:00:00.0077979" startTime="2025-09-04T04:48:44.6342643-07:00" endTime="2025-09-04T04:48:44.6342645-07:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="faa4da88-f007-4a7e-8953-e7a85b31bfad" />
+    <UnitTestResult executionId="512956e3-81fd-4beb-835a-d2a2a2b2f6a1" testId="64233259-41b3-1a51-3dd5-18177003a0e3" testName="AnchorDiscoveryTests.WindowsAreClampedWithSentinels" computerName="DESKTOP-EEEM5EM" duration="00:00:00.0017164" startTime="2025-09-04T04:48:44.5139981-07:00" endTime="2025-09-04T04:48:44.5139981-07:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="512956e3-81fd-4beb-835a-d2a2a2b2f6a1" />
+    <UnitTestResult executionId="c25e4bde-ae43-4b62-acdc-f869796754c3" testId="87e7fd49-1555-7f90-7d39-50372fef26fb" testName="Ams.Tests.TextNormalizerTests.Normalize_ShouldNormalizeTextCorrectly(input: &quot;Hello, World!&quot;, expected: &quot;hello world&quot;)" computerName="DESKTOP-EEEM5EM" duration="00:00:00.0008022" startTime="2025-09-04T04:48:44.5164867-07:00" endTime="2025-09-04T04:48:44.5164867-07:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="c25e4bde-ae43-4b62-acdc-f869796754c3" />
+    <UnitTestResult executionId="c1b0195f-5134-4df7-a20a-a8374f6752df" testId="ce199e2a-e8a5-b4b0-308c-7a69711f4793" testName="Ams.Tests.BookIndexAcceptanceTests.NoNormalization_WordsPreserveExactText" computerName="DESKTOP-EEEM5EM" duration="00:00:00.0058759" startTime="2025-09-04T04:48:44.6256391-07:00" endTime="2025-09-04T04:48:44.6256392-07:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="c1b0195f-5134-4df7-a20a-a8374f6752df" />
+    <UnitTestResult executionId="24a8baa9-6f30-4a0c-ab01-026e80858186" testId="49fd7152-ce1b-b38e-13f3-c619091ada78" testName="Ams.Tests.BookModelsTests.BookWord_CanonicalShape" computerName="DESKTOP-EEEM5EM" duration="00:00:00.0025127" startTime="2025-09-04T04:48:44.5142473-07:00" endTime="2025-09-04T04:48:44.5142474-07:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="24a8baa9-6f30-4a0c-ab01-026e80858186" />
+    <UnitTestResult executionId="5c1ce9a7-4f88-44f0-9d98-3458405a442b" testId="47928c29-7d3b-7d6b-25de-80c48cd09090" testName="Ams.Tests.TextNormalizerTests.CalculateSimilarity_ShouldReturnCorrectSimilarity(text1: &quot;hello world&quot;, text2: &quot;hello world&quot;, expectedMin: 1)" computerName="DESKTOP-EEEM5EM" duration="00:00:00.0012962" startTime="2025-09-04T04:48:44.5176502-07:00" endTime="2025-09-04T04:48:44.5176503-07:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="5c1ce9a7-4f88-44f0-9d98-3458405a442b" />
+    <UnitTestResult executionId="c05af836-6180-44c8-95e3-665d7c951aa8" testId="c644a1e7-5e14-9700-be6c-d72e977211ce" testName="Ams.Tests.TextNormalizerTests.TokenizeWords_ShouldTokenizeCorrectly(input: &quot;single&quot;, expected: [&quot;single&quot;])" computerName="DESKTOP-EEEM5EM" duration="00:00:00.0305847" startTime="2025-09-04T04:48:44.5168447-07:00" endTime="2025-09-04T04:48:44.5168447-07:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="c05af836-6180-44c8-95e3-665d7c951aa8" />
+    <UnitTestResult executionId="07c5c54d-cc80-4a5b-9fa2-d3bbec12229d" testId="f61fff2b-ff7e-c6fc-05fb-1810c6c24a46" testName="Ams.Tests.BookIndexAcceptanceTests.CacheReuse_InvalidatedOnSourceChange" computerName="DESKTOP-EEEM5EM" duration="00:00:00.0113540" startTime="2025-09-04T04:48:44.6191064-07:00" endTime="2025-09-04T04:48:44.6191065-07:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="07c5c54d-cc80-4a5b-9fa2-d3bbec12229d" />
+    <UnitTestResult executionId="a570ffec-d53d-4322-8916-6e014afc2f05" testId="7dc5b82a-e9ad-170a-b83f-73c3bba3052f" testName="TxAlignTests.Align_SimpleNearMatch_YieldsSubNotDelIns" computerName="DESKTOP-EEEM5EM" duration="00:00:00.0322874" startTime="2025-09-04T04:48:44.5140733-07:00" endTime="2025-09-04T04:48:44.5140734-07:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="a570ffec-d53d-4322-8916-6e014afc2f05" />
+    <UnitTestResult executionId="66336bf5-caa1-48de-baec-0e764b4a0eac" testId="a23083ab-33a1-b02f-225f-4abc7443d317" testName="Ams.Tests.TextNormalizerTests.TokenizeWords_ShouldTokenizeCorrectly(input: &quot;&quot;, expected: [])" computerName="DESKTOP-EEEM5EM" duration="00:00:00.0000216" startTime="2025-09-04T04:48:44.5174838-07:00" endTime="2025-09-04T04:48:44.5174838-07:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="66336bf5-caa1-48de-baec-0e764b4a0eac" />
+    <UnitTestResult executionId="d23eb268-c95d-4b8a-a1a0-4682bbac5e64" testId="7eeaeb1e-d0fd-b280-5ab0-83b1e8cad390" testName="Ams.Tests.TextNormalizerTests.CalculateSimilarity_ShouldReturnCorrectSimilarity(text1: &quot;completely&quot;, text2: &quot;different&quot;, expectedMin: 0)" computerName="DESKTOP-EEEM5EM" duration="00:00:00.0011980" startTime="2025-09-04T04:48:44.5175647-07:00" endTime="2025-09-04T04:48:44.5175648-07:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="d23eb268-c95d-4b8a-a1a0-4682bbac5e64" />
+    <UnitTestResult executionId="bcaaefcc-5c8e-40f0-b367-18ea63241f71" testId="160dbc4b-1363-1ee1-fdc9-00f2be8c74bc" testName="Ams.Tests.Pipeline.PipelineIntegrationTests.DetectSilence_CreatesArtifacts" computerName="DESKTOP-EEEM5EM" duration="00:00:01.1022888" startTime="2025-09-04T04:48:45.4565312-07:00" endTime="2025-09-04T04:48:45.4565314-07:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="bcaaefcc-5c8e-40f0-b367-18ea63241f71" />
+    <UnitTestResult executionId="742de388-7838-4962-9001-5e02c2d2d30c" testId="dd4eae30-bdc6-a74b-db53-cdf389b2579a" testName="SectionLocatorTests.AnchorSelection_Respects_Book_Window" computerName="DESKTOP-EEEM5EM" duration="00:00:00.0101417" startTime="2025-09-04T04:48:44.5167072-07:00" endTime="2025-09-04T04:48:44.5167072-07:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="742de388-7838-4962-9001-5e02c2d2d30c" />
+    <UnitTestResult executionId="12acd25a-8fe7-4c6e-9b53-600b79563d54" testId="acf88023-75f2-8800-84c9-e7f94aa81257" testName="Ams.Tests.Pipeline.PipelineIntegrationTests.DetectThenPlan_EndToEnd" computerName="DESKTOP-EEEM5EM" duration="00:00:00.0986237" startTime="2025-09-04T04:48:45.5559442-07:00" endTime="2025-09-04T04:48:45.5559443-07:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="12acd25a-8fe7-4c6e-9b53-600b79563d54" />
+    <UnitTestResult executionId="6933f3ee-c72e-4cf8-811d-44a0f82036d2" testId="7aec94dc-d346-4a4b-143b-742f7e2fb894" testName="SilenceWindowPlannerTests.Fails_When_NoValidPath_Strict" computerName="DESKTOP-EEEM5EM" duration="00:00:00.0014166" startTime="2025-09-04T04:48:44.5138069-07:00" endTime="2025-09-04T04:48:44.5138070-07:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="6933f3ee-c72e-4cf8-811d-44a0f82036d2" />
+  </Results>
+  <TestDefinitions>
+    <UnitTest name="Ams.Tests.ScriptValidatorTests.Validate_WithContractions_ShouldNormalizeCorrectly" storage="/mnt/c/projects/ams/host/ams.tests/bin/release/net9.0/ams.tests.dll" id="c3752748-5475-0142-24fa-0654d12f7328">
+      <Execution id="9a5d7782-fbd7-4781-b3cc-9472ea7188b1" />
+      <TestMethod codeBase="/mnt/c/Projects/ams/host/Ams.Tests/bin/Release/net9.0/Ams.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="Ams.Tests.ScriptValidatorTests" name="Validate_WithContractions_ShouldNormalizeCorrectly" />
+    </UnitTest>
+    <UnitTest name="Ams.Tests.Pipeline.PipelineIntegrationTests.DetectSilence_CreatesArtifacts" storage="/mnt/c/projects/ams/host/ams.tests/bin/release/net9.0/ams.tests.dll" id="160dbc4b-1363-1ee1-fdc9-00f2be8c74bc">
+      <Execution id="bcaaefcc-5c8e-40f0-b367-18ea63241f71" />
+      <TestMethod codeBase="/mnt/c/Projects/ams/host/Ams.Tests/bin/Release/net9.0/Ams.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="Ams.Tests.Pipeline.PipelineIntegrationTests" name="DetectSilence_CreatesArtifacts" />
+    </UnitTest>
+    <UnitTest name="SilenceWindowPlannerTests.RelaxesTail_When_Allowed" storage="/mnt/c/projects/ams/host/ams.tests/bin/release/net9.0/ams.tests.dll" id="ce4505fc-376d-068a-361d-d8ba42ea8b4c">
+      <Execution id="3acef887-0354-4eac-8976-b381cff7e4bf" />
+      <TestMethod codeBase="/mnt/c/Projects/ams/host/Ams.Tests/bin/Release/net9.0/Ams.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="SilenceWindowPlannerTests" name="RelaxesTail_When_Allowed" />
+    </UnitTest>
+    <UnitTest name="SilenceWindowPlannerTests.Fails_When_NoValidPath_Strict" storage="/mnt/c/projects/ams/host/ams.tests/bin/release/net9.0/ams.tests.dll" id="7aec94dc-d346-4a4b-143b-742f7e2fb894">
+      <Execution id="6933f3ee-c72e-4cf8-811d-44a0f82036d2" />
+      <TestMethod codeBase="/mnt/c/Projects/ams/host/Ams.Tests/bin/Release/net9.0/Ams.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="SilenceWindowPlannerTests" name="Fails_When_NoValidPath_Strict" />
+    </UnitTest>
+    <UnitTest name="Ams.Tests.TextNormalizerTests.TokenizeWords_ShouldTokenizeCorrectly(input: &quot;hello world test&quot;, expected: [&quot;hello&quot;, &quot;world&quot;, &quot;test&quot;])" storage="/mnt/c/projects/ams/host/ams.tests/bin/release/net9.0/ams.tests.dll" id="54c4ad58-712a-a220-d291-9c7f35769d76">
+      <Execution id="5aff758a-4372-4507-80c1-6f4da5d6f3e4" />
+      <TestMethod codeBase="/mnt/c/Projects/ams/host/Ams.Tests/bin/Release/net9.0/Ams.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="Ams.Tests.TextNormalizerTests" name="TokenizeWords_ShouldTokenizeCorrectly" />
+    </UnitTest>
+    <UnitTest name="Ams.Tests.TextNormalizerTests.Normalize_ShouldNormalizeTextCorrectly(input: &quot;  Multiple    spaces   &quot;, expected: &quot;multiple spaces&quot;)" storage="/mnt/c/projects/ams/host/ams.tests/bin/release/net9.0/ams.tests.dll" id="413897d6-4a2a-103d-b71e-91b6c44e340e">
+      <Execution id="5e24262d-50aa-4230-a02b-a3ca283af407" />
+      <TestMethod codeBase="/mnt/c/Projects/ams/host/Ams.Tests/bin/Release/net9.0/Ams.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="Ams.Tests.TextNormalizerTests" name="Normalize_ShouldNormalizeTextCorrectly" />
+    </UnitTest>
+    <UnitTest name="Ams.Tests.BookModelsTests.BookWord_CanonicalShape" storage="/mnt/c/projects/ams/host/ams.tests/bin/release/net9.0/ams.tests.dll" id="49fd7152-ce1b-b38e-13f3-c619091ada78">
+      <Execution id="24a8baa9-6f30-4a0c-ab01-026e80858186" />
+      <TestMethod codeBase="/mnt/c/Projects/ams/host/Ams.Tests/bin/Release/net9.0/Ams.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="Ams.Tests.BookModelsTests" name="BookWord_CanonicalShape" />
+    </UnitTest>
+    <UnitTest name="Ams.Tests.TextNormalizerTests.Normalize_ShouldNormalizeTextCorrectly(input: &quot;I can't believe it's 123 degrees!&quot;, expected: &quot;i cannot believe it is one hundred twenty three de&quot;···)" storage="/mnt/c/projects/ams/host/ams.tests/bin/release/net9.0/ams.tests.dll" id="c41ca717-f2c7-fb7b-ee40-a545934f7019">
+      <Execution id="767a772b-916f-49db-b241-548af8c50bdd" />
+      <TestMethod codeBase="/mnt/c/Projects/ams/host/Ams.Tests/bin/Release/net9.0/Ams.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="Ams.Tests.TextNormalizerTests" name="Normalize_ShouldNormalizeTextCorrectly" />
+    </UnitTest>
+    <UnitTest name="Ams.Tests.TextNormalizerTests.TokenizeWords_ShouldTokenizeCorrectly(input: &quot;&quot;, expected: [])" storage="/mnt/c/projects/ams/host/ams.tests/bin/release/net9.0/ams.tests.dll" id="a23083ab-33a1-b02f-225f-4abc7443d317">
+      <Execution id="66336bf5-caa1-48de-baec-0e764b4a0eac" />
+      <TestMethod codeBase="/mnt/c/Projects/ams/host/Ams.Tests/bin/Release/net9.0/Ams.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="Ams.Tests.TextNormalizerTests" name="TokenizeWords_ShouldTokenizeCorrectly" />
+    </UnitTest>
+    <UnitTest name="AnchorDiscoveryTests.UniqueTrigrams_ProduceAnchors" storage="/mnt/c/projects/ams/host/ams.tests/bin/release/net9.0/ams.tests.dll" id="3551e2ef-90be-af89-b001-a537b687a3fc">
+      <Execution id="5530f25c-64a9-445a-a1ee-6addb80e5621" />
+      <TestMethod codeBase="/mnt/c/Projects/ams/host/Ams.Tests/bin/Release/net9.0/Ams.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="AnchorDiscoveryTests" name="UniqueTrigrams_ProduceAnchors" />
+    </UnitTest>
+    <UnitTest name="Ams.Tests.TextNormalizerTests.CalculateSimilarity_ShouldReturnCorrectSimilarity(text1: &quot;hello world&quot;, text2: &quot;hello world&quot;, expectedMin: 1)" storage="/mnt/c/projects/ams/host/ams.tests/bin/release/net9.0/ams.tests.dll" id="47928c29-7d3b-7d6b-25de-80c48cd09090">
+      <Execution id="5c1ce9a7-4f88-44f0-9d98-3458405a442b" />
+      <TestMethod codeBase="/mnt/c/Projects/ams/host/Ams.Tests/bin/Release/net9.0/Ams.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="Ams.Tests.TextNormalizerTests" name="CalculateSimilarity_ShouldReturnCorrectSimilarity" />
+    </UnitTest>
+    <UnitTest name="AnchorDiscoveryTests.WindowsAreClampedWithSentinels" storage="/mnt/c/projects/ams/host/ams.tests/bin/release/net9.0/ams.tests.dll" id="64233259-41b3-1a51-3dd5-18177003a0e3">
+      <Execution id="512956e3-81fd-4beb-835a-d2a2a2b2f6a1" />
+      <TestMethod codeBase="/mnt/c/Projects/ams/host/Ams.Tests/bin/Release/net9.0/Ams.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="AnchorDiscoveryTests" name="WindowsAreClampedWithSentinels" />
+    </UnitTest>
+    <UnitTest name="SectionLocatorTests.Preprocessor_And_Pipeline_Map_And_Restrict" storage="/mnt/c/projects/ams/host/ams.tests/bin/release/net9.0/ams.tests.dll" id="a2d9ec76-d348-4214-957c-d85d4723c049">
+      <Execution id="7a381608-f0c3-4eb8-96bb-509d0e6af94a" />
+      <TestMethod codeBase="/mnt/c/Projects/ams/host/Ams.Tests/bin/Release/net9.0/Ams.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="SectionLocatorTests" name="Preprocessor_And_Pipeline_Map_And_Restrict" />
+    </UnitTest>
+    <UnitTest name="Ams.Tests.TextNormalizerTests.TokenizeWords_ShouldTokenizeCorrectly(input: &quot;single&quot;, expected: [&quot;single&quot;])" storage="/mnt/c/projects/ams/host/ams.tests/bin/release/net9.0/ams.tests.dll" id="c644a1e7-5e14-9700-be6c-d72e977211ce">
+      <Execution id="c05af836-6180-44c8-95e3-665d7c951aa8" />
+      <TestMethod codeBase="/mnt/c/Projects/ams/host/Ams.Tests/bin/Release/net9.0/Ams.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="Ams.Tests.TextNormalizerTests" name="TokenizeWords_ShouldTokenizeCorrectly" />
+    </UnitTest>
+    <UnitTest name="Ams.Tests.TextNormalizerTests.CalculateSimilarity_ShouldReturnCorrectSimilarity(text1: &quot;completely&quot;, text2: &quot;different&quot;, expectedMin: 0)" storage="/mnt/c/projects/ams/host/ams.tests/bin/release/net9.0/ams.tests.dll" id="7eeaeb1e-d0fd-b280-5ab0-83b1e8cad390">
+      <Execution id="d23eb268-c95d-4b8a-a1a0-4682bbac5e64" />
+      <TestMethod codeBase="/mnt/c/Projects/ams/host/Ams.Tests/bin/Release/net9.0/Ams.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="Ams.Tests.TextNormalizerTests" name="CalculateSimilarity_ShouldReturnCorrectSimilarity" />
+    </UnitTest>
+    <UnitTest name="SectionLocatorTests.Detects_Chapter_From_Asr_Prefix" storage="/mnt/c/projects/ams/host/ams.tests/bin/release/net9.0/ams.tests.dll" id="97d4c0ad-695f-453e-9a23-6deba3f062e2">
+      <Execution id="b663c2f5-c4a6-46cb-b30f-0d846263b455" />
+      <TestMethod codeBase="/mnt/c/Projects/ams/host/Ams.Tests/bin/Release/net9.0/Ams.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="SectionLocatorTests" name="Detects_Chapter_From_Asr_Prefix" />
+    </UnitTest>
+    <UnitTest name="TxAlignTests.WindowsFromAnchors_AreClampedAndHalfOpen" storage="/mnt/c/projects/ams/host/ams.tests/bin/release/net9.0/ams.tests.dll" id="6f322658-ce49-816f-5f8f-134aa0023550">
+      <Execution id="b8023316-9193-4dc5-8198-2dbdfc0e95f2" />
+      <TestMethod codeBase="/mnt/c/Projects/ams/host/Ams.Tests/bin/Release/net9.0/Ams.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="TxAlignTests" name="WindowsFromAnchors_AreClampedAndHalfOpen" />
+    </UnitTest>
+    <UnitTest name="Ams.Tests.BookIndexAcceptanceTests.StructureRanges_CoverAllWords_NoGaps" storage="/mnt/c/projects/ams/host/ams.tests/bin/release/net9.0/ams.tests.dll" id="1808feb9-34c3-753a-4208-391636bb17b0">
+      <Execution id="faa4da88-f007-4a7e-8953-e7a85b31bfad" />
+      <TestMethod codeBase="/mnt/c/Projects/ams/host/Ams.Tests/bin/Release/net9.0/Ams.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="Ams.Tests.BookIndexAcceptanceTests" name="StructureRanges_CoverAllWords_NoGaps" />
+    </UnitTest>
+    <UnitTest name="Ams.Tests.TextNormalizerTests.CalculateSimilarity_ShouldReturnCorrectSimilarity(text1: &quot;&quot;, text2: &quot;&quot;, expectedMin: 1)" storage="/mnt/c/projects/ams/host/ams.tests/bin/release/net9.0/ams.tests.dll" id="3b48470e-ddf2-574f-3365-1ac6c2f89433">
+      <Execution id="54555c00-1acc-45c9-ac91-52c8ea7f64ae" />
+      <TestMethod codeBase="/mnt/c/Projects/ams/host/Ams.Tests/bin/Release/net9.0/Ams.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="Ams.Tests.TextNormalizerTests" name="CalculateSimilarity_ShouldReturnCorrectSimilarity" />
+    </UnitTest>
+    <UnitTest name="Ams.Tests.TextNormalizerTests.Normalize_ShouldNormalizeTextCorrectly(input: &quot;Don't you think it's great?&quot;, expected: &quot;do not you think it is great&quot;)" storage="/mnt/c/projects/ams/host/ams.tests/bin/release/net9.0/ams.tests.dll" id="c37a30f9-abf9-3ce1-ad9e-de44d465e94c">
+      <Execution id="4876008b-5aa6-4d26-8a75-a93d7eeb8c8b" />
+      <TestMethod codeBase="/mnt/c/Projects/ams/host/Ams.Tests/bin/Release/net9.0/Ams.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="Ams.Tests.TextNormalizerTests" name="Normalize_ShouldNormalizeTextCorrectly" />
+    </UnitTest>
+    <UnitTest name="Ams.Tests.BookModelsTests.BookIndexOptions_Defaults" storage="/mnt/c/projects/ams/host/ams.tests/bin/release/net9.0/ams.tests.dll" id="e25a67b2-092d-29ea-936e-e7ca57868fd1">
+      <Execution id="590da05c-79ce-4d02-b977-d23f9b99cacf" />
+      <TestMethod codeBase="/mnt/c/Projects/ams/host/Ams.Tests/bin/Release/net9.0/Ams.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="Ams.Tests.BookModelsTests" name="BookIndexOptions_Defaults" />
+    </UnitTest>
+    <UnitTest name="Ams.Tests.BookIndexAcceptanceTests.Canonical_RoundTrip_DeterministicBytes_WithCache" storage="/mnt/c/projects/ams/host/ams.tests/bin/release/net9.0/ams.tests.dll" id="1e5a9251-4654-e660-a358-c7f12eb79e77">
+      <Execution id="2eca1c71-b250-4a09-8b2d-57ce95adf71a" />
+      <TestMethod codeBase="/mnt/c/Projects/ams/host/Ams.Tests/bin/Release/net9.0/Ams.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="Ams.Tests.BookIndexAcceptanceTests" name="Canonical_RoundTrip_DeterministicBytes_WithCache" />
+    </UnitTest>
+    <UnitTest name="Ams.Tests.ScriptValidatorTests.Validate_WithDeletion_ShouldCalculateCorrectWER" storage="/mnt/c/projects/ams/host/ams.tests/bin/release/net9.0/ams.tests.dll" id="00f1bc45-48c1-b12d-f6d6-5c7703be8472">
+      <Execution id="1e500365-295d-4a2b-b7c9-51eb3e0e748f" />
+      <TestMethod codeBase="/mnt/c/Projects/ams/host/Ams.Tests/bin/Release/net9.0/Ams.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="Ams.Tests.ScriptValidatorTests" name="Validate_WithDeletion_ShouldCalculateCorrectWER" />
+    </UnitTest>
+    <UnitTest name="Ams.Tests.BookIndexAcceptanceTests.Slimness_WordsContainOnlyCanonicalFields" storage="/mnt/c/projects/ams/host/ams.tests/bin/release/net9.0/ams.tests.dll" id="8283c47b-3b50-226b-bd96-47e3b726ed8e">
+      <Execution id="e55ea999-6028-4e86-a6cd-fdbe7d7524ab" />
+      <TestMethod codeBase="/mnt/c/Projects/ams/host/Ams.Tests/bin/Release/net9.0/Ams.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="Ams.Tests.BookIndexAcceptanceTests" name="Slimness_WordsContainOnlyCanonicalFields" />
+    </UnitTest>
+    <UnitTest name="Ams.Tests.BookParsingTests.Parser_Text_NoNormalization" storage="/mnt/c/projects/ams/host/ams.tests/bin/release/net9.0/ams.tests.dll" id="be424ed0-f3cc-f9e3-c21e-6c4dcc1d723a">
+      <Execution id="d0b85e4d-2c1a-461d-9cf2-333f1b911dfa" />
+      <TestMethod codeBase="/mnt/c/Projects/ams/host/Ams.Tests/bin/Release/net9.0/Ams.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="Ams.Tests.BookParsingTests" name="Parser_Text_NoNormalization" />
+    </UnitTest>
+    <UnitTest name="SilenceWindowPlannerTests.Plans_DenseCandidates_Strict" storage="/mnt/c/projects/ams/host/ams.tests/bin/release/net9.0/ams.tests.dll" id="f75292ee-d5ad-2ea5-5648-85031c012d05">
+      <Execution id="062590df-0f8b-49d8-8505-c62bd46a0a3b" />
+      <TestMethod codeBase="/mnt/c/Projects/ams/host/Ams.Tests/bin/Release/net9.0/Ams.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="SilenceWindowPlannerTests" name="Plans_DenseCandidates_Strict" />
+    </UnitTest>
+    <UnitTest name="Ams.Tests.ScriptValidatorTests.Validate_PerfectMatch_ShouldReturnZeroWER" storage="/mnt/c/projects/ams/host/ams.tests/bin/release/net9.0/ams.tests.dll" id="f324b4ec-d3a2-90b7-9cb2-c60100e0c16e">
+      <Execution id="d17c6bbe-b4aa-4038-b879-d91a38c824a0" />
+      <TestMethod codeBase="/mnt/c/Projects/ams/host/Ams.Tests/bin/Release/net9.0/Ams.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="Ams.Tests.ScriptValidatorTests" name="Validate_PerfectMatch_ShouldReturnZeroWER" />
+    </UnitTest>
+    <UnitTest name="Ams.Tests.TextNormalizerTests.CalculateSimilarity_ShouldReturnCorrectSimilarity(text1: &quot;hello&quot;, text2: &quot;helo&quot;, expectedMin: 0.80000000000000004)" storage="/mnt/c/projects/ams/host/ams.tests/bin/release/net9.0/ams.tests.dll" id="632ef7c6-71d1-3a9b-9119-502772aa3e45">
+      <Execution id="b1967747-e999-453f-88b7-63feea23cf1b" />
+      <TestMethod codeBase="/mnt/c/Projects/ams/host/Ams.Tests/bin/Release/net9.0/Ams.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="Ams.Tests.TextNormalizerTests" name="CalculateSimilarity_ShouldReturnCorrectSimilarity" />
+    </UnitTest>
+    <UnitTest name="Ams.Tests.TextNormalizerTests.CalculateSimilarity_ShouldReturnCorrectSimilarity(text1: &quot;&quot;, text2: &quot;something&quot;, expectedMin: 0)" storage="/mnt/c/projects/ams/host/ams.tests/bin/release/net9.0/ams.tests.dll" id="c600fba3-eac4-0732-8d5f-50230ecfb70b">
+      <Execution id="287a28a0-1a50-4650-8f83-36d0d9861ad1" />
+      <TestMethod codeBase="/mnt/c/Projects/ams/host/Ams.Tests/bin/Release/net9.0/Ams.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="Ams.Tests.TextNormalizerTests" name="CalculateSimilarity_ShouldReturnCorrectSimilarity" />
+    </UnitTest>
+    <UnitTest name="TxAlignTests.Align_SimpleNearMatch_YieldsSubNotDelIns" storage="/mnt/c/projects/ams/host/ams.tests/bin/release/net9.0/ams.tests.dll" id="7dc5b82a-e9ad-170a-b83f-73c3bba3052f">
+      <Execution id="a570ffec-d53d-4322-8916-6e014afc2f05" />
+      <TestMethod codeBase="/mnt/c/Projects/ams/host/Ams.Tests/bin/Release/net9.0/Ams.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="TxAlignTests" name="Align_SimpleNearMatch_YieldsSubNotDelIns" />
+    </UnitTest>
+    <UnitTest name="Ams.Tests.BookParsingTests.Parser_Unsupported_Throws" storage="/mnt/c/projects/ams/host/ams.tests/bin/release/net9.0/ams.tests.dll" id="1464447b-28fa-5bce-642d-f1222edd8ffd">
+      <Execution id="b910160c-3d11-4147-b212-c7f3f11d5eea" />
+      <TestMethod codeBase="/mnt/c/Projects/ams/host/Ams.Tests/bin/Release/net9.0/Ams.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="Ams.Tests.BookParsingTests" name="Parser_Unsupported_Throws" />
+    </UnitTest>
+    <UnitTest name="AnchorDiscoveryTests.LisEnforcesMonotonicity" storage="/mnt/c/projects/ams/host/ams.tests/bin/release/net9.0/ams.tests.dll" id="b2ba35de-5f1b-8da9-9c7e-da6ffad84fe1">
+      <Execution id="eef72ae3-5a81-451e-af38-70cd5fddb42a" />
+      <TestMethod codeBase="/mnt/c/Projects/ams/host/Ams.Tests/bin/Release/net9.0/Ams.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="AnchorDiscoveryTests" name="LisEnforcesMonotonicity" />
+    </UnitTest>
+    <UnitTest name="Ams.Tests.ScriptValidatorTests.Validate_WithInsertion_ShouldCalculateCorrectWER" storage="/mnt/c/projects/ams/host/ams.tests/bin/release/net9.0/ams.tests.dll" id="778d8c9a-449e-15af-321e-b8ec01eb1670">
+      <Execution id="15454e72-edf3-42d7-8fcd-916e7b94082f" />
+      <TestMethod codeBase="/mnt/c/Projects/ams/host/Ams.Tests/bin/Release/net9.0/Ams.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="Ams.Tests.ScriptValidatorTests" name="Validate_WithInsertion_ShouldCalculateCorrectWER" />
+    </UnitTest>
+    <UnitTest name="Ams.Tests.ScriptValidatorTests.Validate_WithSubstitution_ShouldCalculateCorrectWER" storage="/mnt/c/projects/ams/host/ams.tests/bin/release/net9.0/ams.tests.dll" id="0fd2c988-bc56-323f-ffa3-36b6944f4aa8">
+      <Execution id="025d0ea5-af2f-4339-9149-dd4b6f958cee" />
+      <TestMethod codeBase="/mnt/c/Projects/ams/host/Ams.Tests/bin/Release/net9.0/Ams.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="Ams.Tests.ScriptValidatorTests" name="Validate_WithSubstitution_ShouldCalculateCorrectWER" />
+    </UnitTest>
+    <UnitTest name="Ams.Tests.ScriptValidatorTests.Validate_ComplexScenario_ShouldCalculateCorrectMetrics" storage="/mnt/c/projects/ams/host/ams.tests/bin/release/net9.0/ams.tests.dll" id="bb9a5e2b-c764-c78c-86ff-2bb83564cb1e">
+      <Execution id="91b3831a-3a60-4801-8e0c-2975697af518" />
+      <TestMethod codeBase="/mnt/c/Projects/ams/host/Ams.Tests/bin/Release/net9.0/Ams.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="Ams.Tests.ScriptValidatorTests" name="Validate_ComplexScenario_ShouldCalculateCorrectMetrics" />
+    </UnitTest>
+    <UnitTest name="Ams.Tests.BookIndexAcceptanceTests.CacheReuse_InvalidatedOnSourceChange" storage="/mnt/c/projects/ams/host/ams.tests/bin/release/net9.0/ams.tests.dll" id="f61fff2b-ff7e-c6fc-05fb-1810c6c24a46">
+      <Execution id="07c5c54d-cc80-4a5b-9fa2-d3bbec12229d" />
+      <TestMethod codeBase="/mnt/c/Projects/ams/host/Ams.Tests/bin/Release/net9.0/Ams.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="Ams.Tests.BookIndexAcceptanceTests" name="CacheReuse_InvalidatedOnSourceChange" />
+    </UnitTest>
+    <UnitTest name="Ams.Tests.TextNormalizerTests.Normalize_ShouldNormalizeTextCorrectly(input: &quot;&quot;, expected: &quot;&quot;)" storage="/mnt/c/projects/ams/host/ams.tests/bin/release/net9.0/ams.tests.dll" id="4d01b460-4c7a-ee77-5aa8-5070df42945e">
+      <Execution id="3bfddb9d-1c0c-441e-84f5-d6a1dab4b547" />
+      <TestMethod codeBase="/mnt/c/Projects/ams/host/Ams.Tests/bin/Release/net9.0/Ams.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="Ams.Tests.TextNormalizerTests" name="Normalize_ShouldNormalizeTextCorrectly" />
+    </UnitTest>
+    <UnitTest name="Ams.Tests.TextNormalizerTests.Normalize_ShouldNormalizeTextCorrectly(input: &quot;Hello, World!&quot;, expected: &quot;hello world&quot;)" storage="/mnt/c/projects/ams/host/ams.tests/bin/release/net9.0/ams.tests.dll" id="87e7fd49-1555-7f90-7d39-50372fef26fb">
+      <Execution id="c25e4bde-ae43-4b62-acdc-f869796754c3" />
+      <TestMethod codeBase="/mnt/c/Projects/ams/host/Ams.Tests/bin/Release/net9.0/Ams.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="Ams.Tests.TextNormalizerTests" name="Normalize_ShouldNormalizeTextCorrectly" />
+    </UnitTest>
+    <UnitTest name="Ams.Tests.BookParsingTests.BookParser_CanParse_Extensions" storage="/mnt/c/projects/ams/host/ams.tests/bin/release/net9.0/ams.tests.dll" id="6f9d102c-37fa-89c4-7126-8b4bd721e427">
+      <Execution id="7165fd6f-7359-4c58-bcfe-266af4b997e2" />
+      <TestMethod codeBase="/mnt/c/Projects/ams/host/Ams.Tests/bin/Release/net9.0/Ams.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="Ams.Tests.BookParsingTests" name="BookParser_CanParse_Extensions" />
+    </UnitTest>
+    <UnitTest name="Ams.Tests.Pipeline.PipelineIntegrationTests.DetectThenPlan_EndToEnd" storage="/mnt/c/projects/ams/host/ams.tests/bin/release/net9.0/ams.tests.dll" id="acf88023-75f2-8800-84c9-e7f94aa81257">
+      <Execution id="12acd25a-8fe7-4c6e-9b53-600b79563d54" />
+      <TestMethod codeBase="/mnt/c/Projects/ams/host/Ams.Tests/bin/Release/net9.0/Ams.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="Ams.Tests.Pipeline.PipelineIntegrationTests" name="DetectThenPlan_EndToEnd" />
+    </UnitTest>
+    <UnitTest name="SectionLocatorTests.AnchorSelection_Respects_Book_Window" storage="/mnt/c/projects/ams/host/ams.tests/bin/release/net9.0/ams.tests.dll" id="dd4eae30-bdc6-a74b-db53-cdf389b2579a">
+      <Execution id="742de388-7838-4962-9001-5e02c2d2d30c" />
+      <TestMethod codeBase="/mnt/c/Projects/ams/host/Ams.Tests/bin/Release/net9.0/Ams.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="SectionLocatorTests" name="AnchorSelection_Respects_Book_Window" />
+    </UnitTest>
+    <UnitTest name="Ams.Tests.BookIndexAcceptanceTests.NoNormalization_WordsPreserveExactText" storage="/mnt/c/projects/ams/host/ams.tests/bin/release/net9.0/ams.tests.dll" id="ce199e2a-e8a5-b4b0-308c-7a69711f4793">
+      <Execution id="c1b0195f-5134-4df7-a20a-a8374f6752df" />
+      <TestMethod codeBase="/mnt/c/Projects/ams/host/Ams.Tests/bin/Release/net9.0/Ams.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="Ams.Tests.BookIndexAcceptanceTests" name="NoNormalization_WordsPreserveExactText" />
+    </UnitTest>
+  </TestDefinitions>
+  <TestEntries>
+    <TestEntry testId="54c4ad58-712a-a220-d291-9c7f35769d76" executionId="5aff758a-4372-4507-80c1-6f4da5d6f3e4" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="b2ba35de-5f1b-8da9-9c7e-da6ffad84fe1" executionId="eef72ae3-5a81-451e-af38-70cd5fddb42a" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="c41ca717-f2c7-fb7b-ee40-a545934f7019" executionId="767a772b-916f-49db-b241-548af8c50bdd" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="0fd2c988-bc56-323f-ffa3-36b6944f4aa8" executionId="025d0ea5-af2f-4339-9149-dd4b6f958cee" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="6f322658-ce49-816f-5f8f-134aa0023550" executionId="b8023316-9193-4dc5-8198-2dbdfc0e95f2" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="6f9d102c-37fa-89c4-7126-8b4bd721e427" executionId="7165fd6f-7359-4c58-bcfe-266af4b997e2" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="413897d6-4a2a-103d-b71e-91b6c44e340e" executionId="5e24262d-50aa-4230-a02b-a3ca283af407" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="1464447b-28fa-5bce-642d-f1222edd8ffd" executionId="b910160c-3d11-4147-b212-c7f3f11d5eea" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="1e5a9251-4654-e660-a358-c7f12eb79e77" executionId="2eca1c71-b250-4a09-8b2d-57ce95adf71a" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="ce4505fc-376d-068a-361d-d8ba42ea8b4c" executionId="3acef887-0354-4eac-8976-b381cff7e4bf" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="e25a67b2-092d-29ea-936e-e7ca57868fd1" executionId="590da05c-79ce-4d02-b977-d23f9b99cacf" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="8283c47b-3b50-226b-bd96-47e3b726ed8e" executionId="e55ea999-6028-4e86-a6cd-fdbe7d7524ab" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="3b48470e-ddf2-574f-3365-1ac6c2f89433" executionId="54555c00-1acc-45c9-ac91-52c8ea7f64ae" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="a2d9ec76-d348-4214-957c-d85d4723c049" executionId="7a381608-f0c3-4eb8-96bb-509d0e6af94a" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="632ef7c6-71d1-3a9b-9119-502772aa3e45" executionId="b1967747-e999-453f-88b7-63feea23cf1b" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="f75292ee-d5ad-2ea5-5648-85031c012d05" executionId="062590df-0f8b-49d8-8505-c62bd46a0a3b" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="c3752748-5475-0142-24fa-0654d12f7328" executionId="9a5d7782-fbd7-4781-b3cc-9472ea7188b1" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="97d4c0ad-695f-453e-9a23-6deba3f062e2" executionId="b663c2f5-c4a6-46cb-b30f-0d846263b455" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="bb9a5e2b-c764-c78c-86ff-2bb83564cb1e" executionId="91b3831a-3a60-4801-8e0c-2975697af518" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="00f1bc45-48c1-b12d-f6d6-5c7703be8472" executionId="1e500365-295d-4a2b-b7c9-51eb3e0e748f" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="3551e2ef-90be-af89-b001-a537b687a3fc" executionId="5530f25c-64a9-445a-a1ee-6addb80e5621" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="4d01b460-4c7a-ee77-5aa8-5070df42945e" executionId="3bfddb9d-1c0c-441e-84f5-d6a1dab4b547" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="c600fba3-eac4-0732-8d5f-50230ecfb70b" executionId="287a28a0-1a50-4650-8f83-36d0d9861ad1" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="be424ed0-f3cc-f9e3-c21e-6c4dcc1d723a" executionId="d0b85e4d-2c1a-461d-9cf2-333f1b911dfa" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="778d8c9a-449e-15af-321e-b8ec01eb1670" executionId="15454e72-edf3-42d7-8fcd-916e7b94082f" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="f324b4ec-d3a2-90b7-9cb2-c60100e0c16e" executionId="d17c6bbe-b4aa-4038-b879-d91a38c824a0" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="c37a30f9-abf9-3ce1-ad9e-de44d465e94c" executionId="4876008b-5aa6-4d26-8a75-a93d7eeb8c8b" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="1808feb9-34c3-753a-4208-391636bb17b0" executionId="faa4da88-f007-4a7e-8953-e7a85b31bfad" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="64233259-41b3-1a51-3dd5-18177003a0e3" executionId="512956e3-81fd-4beb-835a-d2a2a2b2f6a1" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="87e7fd49-1555-7f90-7d39-50372fef26fb" executionId="c25e4bde-ae43-4b62-acdc-f869796754c3" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="ce199e2a-e8a5-b4b0-308c-7a69711f4793" executionId="c1b0195f-5134-4df7-a20a-a8374f6752df" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="49fd7152-ce1b-b38e-13f3-c619091ada78" executionId="24a8baa9-6f30-4a0c-ab01-026e80858186" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="47928c29-7d3b-7d6b-25de-80c48cd09090" executionId="5c1ce9a7-4f88-44f0-9d98-3458405a442b" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="c644a1e7-5e14-9700-be6c-d72e977211ce" executionId="c05af836-6180-44c8-95e3-665d7c951aa8" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="f61fff2b-ff7e-c6fc-05fb-1810c6c24a46" executionId="07c5c54d-cc80-4a5b-9fa2-d3bbec12229d" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="7dc5b82a-e9ad-170a-b83f-73c3bba3052f" executionId="a570ffec-d53d-4322-8916-6e014afc2f05" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="a23083ab-33a1-b02f-225f-4abc7443d317" executionId="66336bf5-caa1-48de-baec-0e764b4a0eac" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="7eeaeb1e-d0fd-b280-5ab0-83b1e8cad390" executionId="d23eb268-c95d-4b8a-a1a0-4682bbac5e64" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="160dbc4b-1363-1ee1-fdc9-00f2be8c74bc" executionId="bcaaefcc-5c8e-40f0-b367-18ea63241f71" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="dd4eae30-bdc6-a74b-db53-cdf389b2579a" executionId="742de388-7838-4962-9001-5e02c2d2d30c" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="acf88023-75f2-8800-84c9-e7f94aa81257" executionId="12acd25a-8fe7-4c6e-9b53-600b79563d54" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="7aec94dc-d346-4a4b-143b-742f7e2fb894" executionId="6933f3ee-c72e-4cf8-811d-44a0f82036d2" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+  </TestEntries>
+  <TestLists>
+    <TestList name="Results Not in a List" id="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestList name="All Loaded Results" id="19431567-8539-422a-85d7-44ee4e166bda" />
+  </TestLists>
+  <ResultSummary outcome="Completed">
+    <Counters total="42" executed="42" passed="42" failed="0" error="0" timeout="0" aborted="0" inconclusive="0" passedButRunAborted="0" notRunnable="0" notExecuted="0" disconnected="0" warning="0" completed="0" inProgress="0" pending="0" />
+    <Output>
+      <StdOut>[xUnit.net 00:00:00.00] xUnit.net VSTest Adapter v2.8.2+699d445a1a (64-bit .NET 9.0.8)
+[xUnit.net 00:00:00.14]   Discovering: Ams.Tests
+[xUnit.net 00:00:00.25]   Discovered:  Ams.Tests
+[xUnit.net 00:00:00.25]   Starting:    Ams.Tests
+Detecting silences (db-floor=-30dB, min-dur=0.3s)...
+Found 1 silence events
+Completed timeline
+Detecting silences (db-floor=-30dB, min-dur=0.3s)...
+Found 3 silence events
+Completed timeline
+Planning windows (min=60s, max=90s, target=75s)...
+Planned 4 windows (tail relaxed: False)
+Completed plan
+[xUnit.net 00:00:01.52]   Finished:    Ams.Tests
+</StdOut>
+    </Output>
+  </ResultSummary>
+</TestRun>
