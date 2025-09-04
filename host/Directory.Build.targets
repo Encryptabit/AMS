@@ -2,8 +2,11 @@
   <PropertyGroup>
     <!-- Resolve paths relative to this targets file -->
     <DspDir>$(MSBuildThisFileDirectory)..\dsp</DspDir>
-    <AmsDspDllPathLib>$(DspDir)\zig-out\lib\ams_dsp.dll</AmsDspDllPathLib>
-    <AmsDspDllPathBin>$(DspDir)\zig-out\bin\ams_dsp.dll</AmsDspDllPathBin>
+    <!-- Use .so on Linux/WSL, .dll on Windows -->
+    <AmsDspDllPathLib Condition="'$(OS)' != 'Windows_NT'">$(DspDir)/zig-out/lib/libams_dsp.so</AmsDspDllPathLib>
+    <AmsDspDllPathLib Condition="'$(OS)' == 'Windows_NT'">$(DspDir)\zig-out\lib\ams_dsp.dll</AmsDspDllPathLib>
+    <AmsDspDllPathBin Condition="'$(OS)' != 'Windows_NT'">$(DspDir)/zig-out/bin/libams_dsp.so</AmsDspDllPathBin>
+    <AmsDspDllPathBin Condition="'$(OS)' == 'Windows_NT'">$(DspDir)\zig-out\bin\ams_dsp.dll</AmsDspDllPathBin>
 
     <!-- Map MSBuild config -> Zig optimize mode -->
     <ZigOptimize Condition="'$(Configuration)' == 'Release'">ReleaseFast</ZigOptimize>
@@ -14,8 +17,8 @@
   </PropertyGroup>
 
   <!-- Build Zig before managed Build -->
-  <Target Name="BuildZig" BeforeTargets="Build">
-    <Exec Command="&quot;$(ZigExe)&quot; build -Doptimize=$(ZigOptimize)"
+  <Target Name="BuildZig" BeforeTargets="Build" Condition="'$(SkipZig)' != 'true'">
+    <Exec Command="&quot;$(ZigExe)&quot; build -Doptimize=$(ZigOptimize) --cache-dir /tmp/zig-cache"
           WorkingDirectory="$(DspDir)" />
   </Target>
 
