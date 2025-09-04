@@ -75,10 +75,9 @@ public sealed class FfmpegSilenceDetector : ISilenceDetector
         return evts;
     }
 
-    private static string? ParseVersion(string text)
+    public static string? ParseVersion(string text)
     {
         var m = VersionRx.Match(text);
         return m.Success ? m.Groups[1].Value : null;
     }
 }
-

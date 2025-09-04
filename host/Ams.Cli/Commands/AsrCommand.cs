@@ -55,9 +55,13 @@ public static class AsrCommand
         
         asrCommand.AddCommand(runCommand);
 
-        // Silence detection command
+        // New staged pipeline commands
+        asrCommand.AddCommand(AsrRunCommand.Create());
+        asrCommand.AddCommand(DetectSilenceCommand.Create());
+        asrCommand.AddCommand(PlanWindowsCommand.Create());
+
+        // Legacy commands (deprecated)
         asrCommand.AddCommand(CreateSilenceCommand());
-        // Planning command (deterministic DP over silence windows)
         asrCommand.AddCommand(CreatePlanCommand());
         return asrCommand;
     }
@@ -79,6 +83,10 @@ public static class AsrCommand
 
         cmd.SetHandler(async (audio, outDir, dbFloor, minDur) =>
         {
+            // Print deprecation notice
+            Console.WriteLine("⚠️  DEPRECATED: 'asr silence' will be removed in a future version.");
+            Console.WriteLine("   Use 'asr detect-silence' instead for the new staged pipeline.");
+            Console.WriteLine();
             var audioPath = audio!.FullName;
             var outRoot = outDir!.FullName;
             System.IO.Directory.CreateDirectory(outRoot);
@@ -135,6 +143,10 @@ public static class AsrCommand
 
         cmd.SetHandler(async (audio, outDir, silencesFile, min, max, target, strictTail) =>
         {
+            // Print deprecation notice
+            Console.WriteLine("⚠️  DEPRECATED: 'asr plan' will be removed in a future version.");
+            Console.WriteLine("   Use 'asr plan-windows' instead for the new staged pipeline.");
+            Console.WriteLine();
             var audioPath = audio!.FullName;
             var outRoot = outDir!.FullName;
             System.IO.Directory.CreateDirectory(outRoot);

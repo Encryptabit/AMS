@@ -5,11 +5,24 @@ Summary
 - Goal: Production-ready Audio Management System blending .NET orchestration, Python ASR+alignment (services), and Zig/C# DSP with a future node-graph host.
 - Current focus: Canonical book decoding, section-aware alignment (n-gram anchors), sentence-only refinement (Aeneas starts + FFmpeg ends), clean roomtone rendering between sentences, and deterministic chapter chunking (silence-only cuts; 60–90s windows; DP planning).
 
+Architecture Refactor (2025-09-04): Staged Pipeline & CLI
+- Introduced an idempotent, artifact-first pipeline with a versioned manifest (schema: `asr-manifest/v2`).
+- New Core components (Ams.Core/Pipeline):
+  - `StageRunner` (fingerprint-based idempotency; writes `meta.json`, `params.snapshot.json`, `status.json`).
+  - `AsrPipelineRunner` (ordered stage execution; `--from/--to`, `--force` via CLI).
+  - Stages implemented: `detect-silence` → `timeline/silence.json`; `plan-windows` → `plan/windows.json`.
+- Manifest v2 (embedded in `Ams.Core/Asr/Pipeline/Models.cs`): tracks input identity (sha256, duration), per-stage status, artifacts, fingerprints (input+params+tool versions), timestamps, attempts, errors.
+- New CLI verbs (Ams.Cli): `asr detect-silence`, `asr plan-windows`, `asr run` (orchestrator), and `validate` (manifest/artifact checks).
+- Backward compatibility: legacy `asr silence` and `asr plan` remain and print deprecation notices.
+- Tests: added `PipelineIntegrationTests` (mock ffmpeg) covering detect → plan and skip-on-up-to-date.
+
 What's Implemented
 - CLI
-  - `asr run`: Calls NeMo service (`/asr`), saves JSON.
-  - `asr silence`: Detects silence windows via `ffmpeg silencedetect` and writes `<chapter>.silence.json` (deterministic; stores audio SHA and ffmpeg version).
-  - `asr plan`: Plans chunk spans using DP over silence midpoints (strict 60–90s, target 75s) and writes `<chapter>.asr.index.json` with deterministic chunk IDs.
+  - `asr detect-silence`: Detects silence windows via `ffmpeg silencedetect` and writes `timeline/silence.json` under `<input>.ams/` (stores audio SHA and ffmpeg version).
+  - `asr plan-windows`: Plans chunk windows (DP over silence midpoints; 60–90s, target 75) and writes `plan/windows.json` under `<input>.ams/`.
+  - `asr run`: Orchestrates the staged pipeline (respects cache, supports `--from/--to`, `--resume`, `--force`).
+  - `validate`: Validates `manifest.json` and stage artifacts in `<input>.ams/`.
+  - Legacy (deprecated): `asr silence`, `asr plan` kept for compatibility.
   - `validate script`: Validates script vs ASR JSON; computes WER/CER and findings.
   - `build-index`: Creates canonical book indexes from DOCX, TXT, MD, RTF files with caching.
   - `book verify`: Read-only doctor for `BookIndex` JSON. Checks counts parity, ordering/coverage of ranges, flags apostrophe-split and TOC-burst warnings, and prints a deterministic hash of the canonical JSON. Exits non-zero on failure (CI-friendly). 
@@ -50,6 +63,11 @@ What's Implemented
 
 How To Run
 - Start ASR service: `services/asr-nemo/start_service.bat` (Windows) or `uvicorn services.asr-nemo.app:app`.
+- New staged pipeline (preferred):
+  - Detect:   `dotnet run --project host/Ams.Cli -- asr detect-silence --in <audio.wav> --work <audio.wav.ams>`
+  - Plan:     `dotnet run --project host/Ams.Cli -- asr plan-windows   --in <audio.wav> --work <audio.wav.ams>`
+  - Run (E2E):`dotnet run --project host/Ams.Cli -- asr run            --in <audio.wav> --work <audio.wav.ams> --from timeline --to plan --resume`
+  - Validate: `dotnet run --project host/Ams.Cli -- validate            --work <audio.wav.ams>`
 - ASR only: `dotnet run --project host/Ams.Cli -- asr run -a <audio.wav> -o <asr.json>`
 - Chunking (deterministic):
   - Detect silences: `dotnet run --project host/Ams.Cli -- asr silence -a <chapter.wav> -o <outdir> --db-floor -30 --min-silence-dur 0.3`
@@ -77,7 +95,7 @@ Book Processing & Indexing
 - Totals: `totals = { words, sentences, paragraphs, estimatedDurationSec }` computed without mutating tokens.
 - Caching: SHA256 of raw file bytes; reuse only on hash match (and future parser version key if added). Deterministic JSON bytes.
 - Doctor: `book verify` never mutates the index; if checks fail, keep the BookIndex canonical—adjust decoder tokenization (sentence/paragraph walking, apostrophes) and paragraph style classification (DocX) instead.
- - Tests: All tests passing (40/40), including new DP planner tests (dense candidates, strict no‑path, relaxed tail).
+ - Tests: All tests passing (42/42), including pipeline integration tests (detect→plan) and DP planner tests (dense candidates, strict no‑path, relaxed tail).
 
 Immediate Next Steps
 1) Parser version in cache key: add version suffix in cache filenames for strict reuse across parser changes.
@@ -154,6 +172,11 @@ Batch Orchestration (optional)
 File Index (by function)
 - Per Book: `BuildIndexCommand.cs`, `BookParser.cs`, `BookIndexer.cs`, `BookCommand.cs`.
 - ASR: `AsrCommand.cs`, `AsrClient.cs`, `services/asr-nemo/*`.
+- Pipeline (staged):
+  - Core runners: `Ams.Core/Pipeline/{StageRunner.cs,AsrPipelineRunner.cs}`
+  - Stages: `Ams.Core/Pipeline/{DetectSilenceStage.cs,PlanWindowsStage.cs}`
+  - Manifest v2 models (embedded): `Ams.Core/Asr/Pipeline/Models.cs`
+  - CLI: `Ams.Cli/Commands/{DetectSilenceCommand.cs,PlanWindowsCommand.cs,AsrRunCommand.cs,ValidateManifestCommand.cs}`
 - Chunking: `Ams.Core/Asr/Pipeline/{Models.cs,ProcessRunner.cs,FfmpegSilenceDetector.cs,SilenceWindowPlanner.cs}`, `Ams.Cli/Commands/AsrCommand.cs` (subcommands: `asr silence`, `asr plan`).
 - Align + TX: `AlignCommand.cs`, `Ams.Core/Align/*`, `Align/Tx/TranscriptModels.cs`.
 - Sentence refine: `RefineSentencesCommand.cs`, `SentenceRefinementService.cs` (env: `AENEAS_PYTHON`, `FFMPEG_EXE`).

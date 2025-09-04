@@ -24,6 +24,7 @@ artifacts/
 .vscode/
 .claude/
 .code/
+**/logs/
 agents.md
 .idea/
 *.sln.docstates
