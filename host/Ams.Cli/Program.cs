@@ -25,6 +25,8 @@ internal static class Program
         rootCommand.AddCommand(BuildIndexCommand.Create());
         rootCommand.AddCommand(BookCommand.Create());
         rootCommand.AddCommand(AlignCommand.Create());
+        rootCommand.AddCommand(AudioCommand.Create());
+        rootCommand.AddCommand(RefineSentencesCommand.Create());
         
         // Add legacy DSP command (interactive)
         var dspCommand = new Command("dsp", "Run DSP processing demo (interactive)");
