@@ -15,6 +15,7 @@ public static class CollateCommand
         var roomtoneOption = new Option<string>("--roomtone", () => "auto", "Room tone source: 'auto' or path to room tone file");
         var levelOption = new Option<double>("--level-db", () => -50.0, "Room tone level in dB");
         var bridgeMaxOption = new Option<int>("--bridge-max-ms", () => 60, "Maximum cross-chunk boundary sliver duration to bridge (ms)");
+        var dbFloorOption = new Option<double>("--db-floor", () => -45.0, "Highband detection floor threshold in dB (for fricative avoidance)");
         var forceOption = new Option<bool>("--force", "Force re-run even if up-to-date");
 
         cmd.AddOption(inOption);
@@ -22,9 +23,10 @@ public static class CollateCommand
         cmd.AddOption(roomtoneOption);
         cmd.AddOption(levelOption);
         cmd.AddOption(bridgeMaxOption);
+        cmd.AddOption(dbFloorOption);
         cmd.AddOption(forceOption);
 
-        cmd.SetHandler(async (input, work, roomtone, levelDb, bridgeMaxMs, force) =>
+        cmd.SetHandler(async (input, work, roomtone, levelDb, bridgeMaxMs, dbFloor, force) =>
         {
             var workDir = work?.FullName ?? input!.FullName + ".ams";
             Directory.CreateDirectory(workDir);
@@ -52,7 +54,8 @@ public static class CollateCommand
                 5, // minGapMs
                 2000, // maxGapMs  
                 bridgeMaxMs,
-                roomtoneFilePath
+                roomtoneFilePath,
+                dbFloor  // Now explicitly setting DbFloor
             );
 
             var stage = new CollateStage(workDir, new DefaultProcessRunner(), collationParams);
@@ -68,7 +71,7 @@ public static class CollateCommand
             {
                 Environment.Exit(1);
             }
-        }, inOption, workOption, roomtoneOption, levelOption, bridgeMaxOption, forceOption);
+        }, inOption, workOption, roomtoneOption, levelOption, bridgeMaxOption, dbFloorOption, forceOption);
 
         return cmd;
     }

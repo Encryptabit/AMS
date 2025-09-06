@@ -35,8 +35,7 @@ public sealed record ChunkSpan(
     double End
 )
 {
-    [JsonIgnore]
-    public double Length => Math.Max(0, End - Start);
+    [JsonIgnore] public double Length => Math.Max(0, End - Start);
 }
 
 public sealed record ChunkPlan(
@@ -250,7 +249,8 @@ public sealed record CollationParams(
     int MinGapMs = 5,
     int MaxGapMs = 2000,
     int BridgeMaxMs = 60,
-    string? RoomtoneFilePath = null
+    string? RoomtoneFilePath = null,
+    double DbFloor = -45.0
 );
 
 public sealed record CollationReplacement(

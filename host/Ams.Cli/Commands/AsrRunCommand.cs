@@ -67,7 +67,7 @@ public static class AsrRunCommand
             runner.RegisterStage("refine", wd => new RefineStage(wd, new RefinementParams(dbFloor, minDur)));
             runner.RegisterStage("collate", wd => new CollateStage(wd, new DefaultProcessRunner(), new CollationParams(
                 roomtoneFile != null ? "file" : "auto", 
-                -50.0, 5, 2000, 60, roomtoneFile)));
+                -50.0, 5, 2000, 60,  roomtoneFile, dbFloor)));
             runner.RegisterStage("validate", wd => new ValidateStage(wd, new ValidationParams(0.25, 0.25, null)));
 
             var ok = await runner.RunAsync(input.FullName, workDir, from, to, force && !resume);
