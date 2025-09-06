@@ -34,6 +34,10 @@ internal static class Program
         rootCommand.AddCommand(Ams.Cli.Commands.AlignChunksCommand.Create());
         rootCommand.AddCommand(Ams.Cli.Commands.RefineCommand.Create());
         rootCommand.AddCommand(Ams.Cli.Commands.CollateCommand.Create());
+        rootCommand.AddCommand(Ams.Cli.Commands.AnchorsCommand.Create());
+        rootCommand.AddCommand(Ams.Cli.Commands.WindowsCommand.Create());
+        rootCommand.AddCommand(Ams.Cli.Commands.WindowAlignCommand.Create());
+        rootCommand.AddCommand(Ams.Cli.Commands.ScriptCompareCommand.Create());
         
         // Add legacy DSP command (interactive)
         var dspCommand = new Command("dsp", "Run DSP processing demo (interactive)");

@@ -63,11 +63,27 @@ public static class AsrRunCommand
             runner.RegisterStage("plan", wd => new PlanWindowsStage(wd, new SilenceWindowPlanner(), new WindowPlanningParams(60.0, 90.0, 75.0, true)));
             runner.RegisterStage("chunks", wd => new ChunkAudioStage(wd, new DefaultProcessRunner(), new ChunkingParams("wav", 44100)));
             runner.RegisterStage("transcripts", wd => new TranscribeStage(wd, httpClient, new TranscriptionParams("nvidia/parakeet-ctc-0.6b", "en", 1, 1.0, asrService)));
+            // Optional legacy: align-chunks (kept for experiments)
             runner.RegisterStage("align-chunks", wd => new AlignChunksStage(wd, httpClient, new AlignmentParams("eng", 600, alignService)));
+            // New v2 stages
+            runner.RegisterStage("anchors", wd =>
+            {
+                var bookIndexPath = Path.Combine(wd, "book.index.json"); // expects user-provided
+                var asrMerged = Path.Combine(wd, "transcripts", "merged.json");
+                return new AnchorsStage(wd, bookIndexPath, asrMerged, new AnchorsParams(3, 50, 2, 50, "v1", "english+domain"));
+            });
+            runner.RegisterStage("windows", wd => new WindowsStage(wd, new WindowsParams(1.0, 0.6)));
+            runner.RegisterStage("window-align", wd => new WindowAlignStage(wd, httpClient, new WindowAlignParams("eng", 600, 600, alignService)));
             runner.RegisterStage("refine", wd => new RefineStage(wd, new RefinementParams(dbFloor, minDur)));
             runner.RegisterStage("collate", wd => new CollateStage(wd, new DefaultProcessRunner(), new CollationParams(
                 roomtoneFile != null ? "file" : "auto", 
                 -50.0, 5, 2000, 60,  roomtoneFile, dbFloor)));
+            runner.RegisterStage("script-compare", wd =>
+            {
+                var bookIndexPath = Path.Combine(wd, "book.index.json");
+                var rules = new ComparisonRules(true, true, true, new (string,string)[]{}, new string[]{}, "cmp-rules/v1");
+                return new ScriptCompareStage(wd, bookIndexPath, new ScriptCompareParams(rules, "default"));
+            });
             runner.RegisterStage("validate", wd => new ValidateStage(wd, new ValidationParams(0.25, 0.25, null)));
 
             var ok = await runner.RunAsync(input.FullName, workDir, from, to, force && !resume);

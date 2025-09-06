@@ -18,14 +18,17 @@ public class AsrPipelineRunner
     {
         _stageOrder.AddRange(new[]
         {
-            "timeline",      // detect-silence
-            "plan",          // plan-windows
-            "chunks",        // chunk-audio
-            "transcripts",   // transcribe
-            "align-chunks",  // align-chunks (Aeneas)
-            "refine",        // refine (snap-to-silence)
-            "collate",       // collate (room tone)
-            "validate"       // validate (WER/CER)
+            "timeline",      // 1
+            "plan",          // 2 (chunk plan)
+            "chunks",        // 3
+            "transcripts",   // 4
+            "anchors",       // 5
+            "windows",       // 6 (anchor windows)
+            "window-align",  // 7
+            "refine",        // 8
+            "collate",       // 9
+            "script-compare",// 10
+            "validate"       // 11
         });
     }
 

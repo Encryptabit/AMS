@@ -46,12 +46,24 @@ public class RefineStage : StageRunner
         Console.WriteLine($"Refining sentence boundaries using snap-to-silence.start rule...");
         Console.WriteLine($"Silence threshold: {_params.SilenceThresholdDb}dB, Min duration: {_params.MinSilenceDurSec}s");
 
-        // Load all chunk alignments
-        var alignmentsDir = Path.Combine(WorkDir, "align-chunks", "chunks");
-        var chunkAlignments = await LoadChunkAlignmentsAsync(alignmentsDir, chunkIndex.Chunks, ct);
-
-        // Convert chunk-relative alignment fragments to chapter-relative sentences
-        var rawSentences = ConvertAlignmentsToSentences(chunkAlignments);
+        // Prefer window-align if available; fallback to align-chunks (ASR-informed variant)
+        List<RefinedSentence> rawSentences;
+        var winIndexPath = Path.Combine(WorkDir, "window-align", "index.json");
+        if (File.Exists(winIndexPath))
+        {
+            var winIndexJson = await File.ReadAllTextAsync(winIndexPath, ct);
+            var winIndex = JsonSerializer.Deserialize<WindowAlignIndex>(winIndexJson) ?? throw new InvalidOperationException("Invalid window-align index");
+            var winDir = Path.Combine(WorkDir, "window-align", "windows");
+            rawSentences = await LoadWindowAlignmentsAsSentencesAsync(winDir, winIndex.WindowIds, winIndex.WindowToJsonMap, ct);
+        }
+        else
+        {
+            var alignmentsDir = Path.Combine(WorkDir, "align-chunks", "chunks");
+            var transcriptsDir = Path.Combine(WorkDir, "transcripts", "raw");
+            var chunkAlignments = await LoadChunkAlignmentsAsync(alignmentsDir, chunkIndex.Chunks, ct);
+            var tokenIndex = await LoadChunkTokenIndexAsync(transcriptsDir, chunkIndex.Chunks, ct);
+            rawSentences = ConvertAlignmentsToSentences_AsrInformed(chunkAlignments, tokenIndex);
+        }
 
         Console.WriteLine($"Found {rawSentences.Count} raw sentences from alignment");
 
@@ -163,6 +175,35 @@ public class RefineStage : StageRunner
         return alignments;
     }
 
+    private async Task<List<RefinedSentence>> LoadWindowAlignmentsAsSentencesAsync(string winDir, IReadOnlyList<string> windowIds, IDictionary<string,string> map, CancellationToken ct)
+    {
+        var sentences = new List<RefinedSentence>();
+        int sentenceCounter = 0;
+        foreach (var id in windowIds)
+        {
+            if (!map.TryGetValue(id, out var file)) continue;
+            var path = Path.Combine(winDir, file);
+            if (!File.Exists(path)) continue;
+            var json = await File.ReadAllTextAsync(path, ct);
+            var entry = JsonSerializer.Deserialize<WindowAlignEntry>(json);
+            if (entry == null) continue;
+            foreach (var f in entry.Fragments)
+            {
+                var sId = $"sentence_{sentenceCounter:D3}";
+                sentences.Add(new RefinedSentence(
+                    sId,
+                    entry.OffsetSec + f.Begin,
+                    entry.OffsetSec + f.End,
+                    null,
+                    null,
+                    "aeneas-window+pre-snap"
+                ));
+                sentenceCounter++;
+            }
+        }
+        return sentences.OrderBy(s => s.Start).ToList();
+    }
+
     private List<RefinedSentence> ConvertAlignmentsToSentences(List<ChunkAlignment> chunkAlignments)
     {
         var sentences = new List<RefinedSentence>();
@@ -192,6 +233,74 @@ public class RefineStage : StageRunner
         return sentences;
     }
 
+    private sealed record TokenTime(double Start, double End);
+
+    private async Task<Dictionary<string, List<TokenTime>>> LoadChunkTokenIndexAsync(string transcriptsDir, List<ChunkInfo> chunks, CancellationToken ct)
+    {
+        var map = new Dictionary<string, List<TokenTime>>(StringComparer.Ordinal);
+        foreach (var ch in chunks)
+        {
+            var path = Path.Combine(transcriptsDir, $"{ch.Id}.json");
+            if (!File.Exists(path)) continue;
+            var json = await File.ReadAllTextAsync(path, ct);
+            var doc = JsonSerializer.Deserialize<JsonElement>(json);
+            var list = new List<TokenTime>();
+            if (doc.TryGetProperty("Words", out var words))
+            {
+                foreach (var w in words.EnumerateArray())
+                {
+                    double s = w.GetProperty("Start").GetDouble();
+                    double e = w.GetProperty("End").GetDouble();
+                    list.Add(new TokenTime(s, e));
+                }
+            }
+            map[ch.Id] = list;
+        }
+        return map;
+    }
+
+    private List<RefinedSentence> ConvertAlignmentsToSentences_AsrInformed(List<ChunkAlignment> chunkAlignments, Dictionary<string, List<TokenTime>> tokenIndex)
+    {
+        var sentences = new List<RefinedSentence>();
+        int sentenceCounter = 0;
+
+        foreach (var alignment in chunkAlignments.OrderBy(a => a.OffsetSec))
+        {
+            tokenIndex.TryGetValue(alignment.ChunkId, out var toks);
+            var tokens = toks ?? new List<TokenTime>();
+
+            for (int i = 0; i < alignment.Fragments.Count; i++)
+            {
+                var fragment = alignment.Fragments[i];
+                var sChapter = fragment.Begin + alignment.OffsetSec;
+                var eChapterAeneas = fragment.End + alignment.OffsetSec;
+
+                double eChapterAsr = eChapterAeneas;
+                // Find ASR tokens inside the fragment window (chunk-relative)
+                var within = tokens.Where(t => t.Start >= fragment.Begin - 1e-3 && t.End <= fragment.End + 1e-3).ToList();
+                if (within.Count > 0)
+                {
+                    var maxEnd = within.Max(t => t.End);
+                    eChapterAsr = Math.Max(eChapterAeneas, alignment.OffsetSec + maxEnd);
+                }
+
+                var sentenceId = $"sentence_{sentenceCounter:D3}";
+                var sentence = new RefinedSentence(
+                    sentenceId,
+                    sChapter,
+                    eChapterAsr, // provisional end from ASR tokens
+                    null,
+                    null,
+                    "aeneas+asr-dur+pre-snap"
+                );
+                sentences.Add(sentence);
+                sentenceCounter++;
+            }
+        }
+
+        return sentences.OrderBy(s => s.Start).ToList();
+    }
+
     private List<RefinedSentence> ApplySnapToSilenceRule(
         List<RefinedSentence> rawSentences,
         List<SilenceEvent> silenceEvents,
@@ -215,9 +324,9 @@ public class RefineStage : StageRunner
             var sentence = rawSentences[i];
             var nextSentenceStart = i + 1 < rawSentences.Count ? rawSentences[i + 1].Start : double.MaxValue;
 
-            // BUSINESS RULE: Find earliest silence.start >= sentence.start and < nextSentence.start
+            // BUSINESS RULE: Find earliest silence.start >= sentence.end and < nextSentence.start
             var candidateSilences = qualifiedSilences
-                .Where(s => s.Start >= sentence.Start && s.Start < nextSentenceStart)
+                .Where(s => s.Start >= sentence.End - 1e-6 && s.Start < nextSentenceStart - 1e-6)
                 .OrderBy(s => s.Start)
                 .ToList();
 

@@ -125,6 +125,123 @@ public sealed record ManifestV2(
 }
 
 // Stage-specific artifact models
+// ---- Anchors (v2) ----
+public sealed record AnchorsParams(
+    int NGram = 3,
+    int MinSeparation = 50,
+    int RelaxDown = 2,
+    int TargetPerTokens = 50,
+    string TokenizerVersion = "v1",
+    string StopwordsDigest = "none"
+);
+
+public sealed record AnchorSelection(int Bp, int Ap, int N);
+
+public sealed record AnchorsArtifact(
+    string BookSha256,
+    string AsrMergedSha256,
+    AnchorsParams Params,
+    int BookTokenCount,
+    int AsrTokenCount,
+    IReadOnlyList<AnchorSelection> Selected,
+    IReadOnlyList<AnchorSelection>? Candidates,
+    object Stats,
+    Dictionary<string, string> ToolVersions
+);
+
+// ---- Windows (anchor windows; half-open book spans) ----
+public sealed record WindowsParams(double PrePadSec = 1.0, double PadSec = 0.6);
+
+public sealed record AnchorWindow(
+    string Id,
+    int BookStart, // inclusive
+    int BookEnd,   // exclusive (half-open)
+    int? AsrStart,
+    int? AsrEnd,
+    int? PrevAnchorBp,
+    int? NextAnchorBp
+);
+
+public sealed record WindowsArtifact(
+    IReadOnlyList<AnchorWindow> Windows,
+    WindowsParams Params,
+    double Coverage,
+    double LargestGapSec,
+    Dictionary<string, string> ToolVersions
+);
+
+// ---- Window Align ----
+public sealed record WindowAlignParams(
+    string Language = "eng",
+    int TimeoutSec = 600,
+    int BandWidthMs = 600,
+    string ServiceUrl = "http://localhost:8082"
+);
+
+public sealed record WindowAlignFragment(double Begin, double End);
+
+public sealed record WindowAlignEntry(
+    string WindowId,
+    double OffsetSec,
+    string TextDigest,
+    IReadOnlyList<WindowAlignFragment> Fragments,
+    Dictionary<string, string> ToolVersions,
+    DateTime GeneratedAt
+);
+
+public sealed record WindowAlignIndex(
+    IReadOnlyList<string> WindowIds,
+    Dictionary<string, string> WindowToJsonMap,
+    WindowAlignParams Params,
+    Dictionary<string, string> ToolVersions
+);
+
+// ---- Comparison ----
+public sealed record ComparisonRules(
+    bool CaseFold = true,
+    bool StripPunct = true,
+    bool UsUkEquiv = true,
+    IReadOnlyList<(string A, string B)>? Confusions = null,
+    IReadOnlyList<string>? Fillers = null,
+    string Version = "cmp-rules/v1"
+);
+
+public sealed record ScriptCompareParams(ComparisonRules Rules, string? Preset = "default");
+
+public sealed record ScriptCompareMetrics(
+    double Wer,
+    double Cer,
+    double OpeningRetention0_10s,
+    double ShortPhraseLoss,
+    int SeamDuplications,
+    int SeamOmissions,
+    double AnchorCoverage,
+    double AnchorDriftP50,
+    double AnchorDriftP95,
+    double RuntimeSec
+);
+
+public sealed record ScriptCompareReport(
+    ScriptCompareMetrics Global,
+    Dictionary<string, ScriptCompareMetrics> PerWindow,
+    IReadOnlyList<string> Errors,
+    object Stats,
+    DateTime GeneratedAt
+);
+
+// ---- Validation gates ----
+public sealed record ValidationGates(
+    double MinOpeningRetention = 0.995,
+    int MaxSeamDup = 0,
+    int MaxSeamOmit = 0,
+    double MaxShortPhraseLoss = 0.005,
+    double MaxAnchorDriftP95 = 0.8,
+    double MinAnchorCoverage = 0.85,
+    double MaxWer = 0.25,
+    double MaxCer = 0.25
+);
+
+public sealed record RepairPlan(IReadOnlyList<string> WindowIds, IReadOnlyList<string> Hints);
 public sealed record SilenceDetectionParams(
     double DbFloor,
     double MinSilenceDur

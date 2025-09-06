@@ -20,7 +20,7 @@ public class ValidateStage : StageRunner
 
     protected override async Task<Dictionary<string, string>> RunStageAsync(ManifestV2 manifest, string stageDir, CancellationToken ct)
     {
-        Console.WriteLine("Validating manifest and artifacts (lean checks)...");
+        Console.WriteLine("Validating manifest and artifacts (gates)...");
 
         var issues = new List<string>();
         var warnings = new List<string>();
@@ -43,14 +43,46 @@ public class ValidateStage : StageRunner
                 issues.Add($"Stage not completed: {s}");
         }
 
-        var reportObj = new
+        // Try script-compare/report.json for metrics
+        var compareReport = Path.Combine(WorkDir, "script-compare", "report.json");
+        double wer = double.NaN, cer = double.NaN, opening = double.NaN;
+        if (File.Exists(compareReport))
         {
-            ok = issues.Count == 0,
+            var json = await File.ReadAllTextAsync(compareReport, ct);
+            var root = JsonSerializer.Deserialize<JsonElement>(json);
+            if (root.TryGetProperty("Global", out var g))
+            {
+                if (g.TryGetProperty("Wer", out var jw)) wer = jw.GetDouble();
+                if (g.TryGetProperty("Cer", out var jc)) cer = jc.GetDouble();
+                if (g.TryGetProperty("OpeningRetention0_10s", out var jr)) opening = jr.GetDouble();
+            }
+        }
+
+        var gates = new ValidationGates(
+            MinOpeningRetention: 0.995,
+            MaxSeamDup: 0,
+            MaxSeamOmit: 0,
+            MaxShortPhraseLoss: 0.005,
+            MaxAnchorDriftP95: 0.8,
+            MinAnchorCoverage: 0.85,
+            MaxWer: _params.WerThreshold,
+            MaxCer: _params.CerThreshold
+        );
+        var reasons = new List<string>(issues);
+        if (!double.IsNaN(wer) && wer > gates.MaxWer) reasons.Add($"WER {wer:F3} > {gates.MaxWer:F3}");
+        if (!double.IsNaN(cer) && cer > gates.MaxCer) reasons.Add($"CER {cer:F3} > {gates.MaxCer:F3}");
+        if (!double.IsNaN(opening) && opening < gates.MinOpeningRetention) reasons.Add($"Opening retention {opening:F4} < {gates.MinOpeningRetention:F4}");
+
+        var okAll = reasons.Count == 0;
+        object reportObj = new
+        {
+            ok = okAll,
             input = manifest.Input.Path,
             stages = manifest.Stages.Keys.OrderBy(k => k).ToArray(),
-            issues,
+            issues = reasons,
             warnings,
-            thresholds = new { _params.WerThreshold, _params.CerThreshold },
+            metrics = new { wer, cer, opening_retention_0_10s = opening },
+            gates,
             generatedAt = DateTime.UtcNow
         };
 

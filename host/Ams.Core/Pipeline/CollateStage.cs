@@ -91,6 +91,13 @@ public class CollateStage : StageRunner
         var segmentsPath = Path.Combine(stageDir, "segments.json");
         var segmentsJson = JsonSerializer.Serialize(segments, new JsonSerializerOptions { WriteIndented = true });
         await File.WriteAllTextAsync(segmentsPath, segmentsJson, ct);
+        // Emit seam map for observability
+        var seamMap = new
+        {
+            seams = replacements.Select(r => new { r.Kind, r.From, r.To, r.Duration }).ToList(),
+            counts = new { gaps = replacements.Count(r => r.Kind == "gap"), slivers = replacements.Count(r => r.Kind == "boundary_sliver") }
+        };
+        await File.WriteAllTextAsync(Path.Combine(stageDir, "map.json"), JsonSerializer.Serialize(seamMap, new JsonSerializerOptions { WriteIndented = true }), ct);
 
         var logData = new
         {
@@ -131,6 +138,7 @@ public class CollateStage : StageRunner
         {
             ["final"] = "final.wav",
             ["segments"] = "segments.json",
+            ["map"] = "map.json",
             ["log"] = "log.json",
             ["params"] = "params.snapshot.json"
         };

@@ -6,8 +6,6 @@
 
   <ItemGroup>
     <Compile Remove="DspDemoRunner.cs" />
-    <Compile Remove="Pipeline\ScriptCompareStage.cs" />
-    <Compile Remove="Pipeline\WindowAlignStage.cs" />
   </ItemGroup>
 
   <ItemGroup>
