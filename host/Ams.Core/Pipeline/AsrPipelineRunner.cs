@@ -18,6 +18,7 @@ public class AsrPipelineRunner
     {
         _stageOrder.AddRange(new[]
         {
+            "book-index",   // 0 (required pre-req)
             "timeline",      // 1
             "plan",          // 2 (chunk plan)
             "chunks",        // 3

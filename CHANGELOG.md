@@ -9,7 +9,7 @@ All notable changes to this project will be documented in this file.
 - Added
   - Core: `Ams.Core/Pipeline/{StageRunner, AsrPipelineRunner}`.
   - Stages: `DetectSilenceStage` → `timeline/silence.json`; `PlanWindowsStage` → `plan/windows.json`.
-  - CLI: `asr detect-silence`, `asr plan-windows`, `asr run` (orchestrator), `validate`.
+- CLI: `asr detect-silence`, `asr plan-windows`, `asr run` (orchestrator), `validate-manifest`.
   - Manifest v2 (schema: `asr-manifest/v2`) embedded in `Ams.Core/Asr/Pipeline/Models.cs`.
   - Pipeline integration tests (mock ffmpeg). Total tests now 42.
 
@@ -18,7 +18,7 @@ All notable changes to this project will be documented in this file.
   - `AsrCommand` wired to new stage verbs; `Program` exposes `validate` manifest command.
 
 - Deprecated
-  - `asr silence` and `asr plan` remain functional but print deprecation notices. Prefer `detect-silence` and `plan-windows`.
+Removed legacy `asr silence` and `asr plan`. Use `detect-silence` and `plan-windows`.
 
 - Notes
   - Workdir convention: `<input>.ams/` with per‑stage `params.snapshot.json`, `meta.json`, `status.json`.
@@ -27,4 +27,3 @@ All notable changes to this project will be documented in this file.
 - Migration
   - Continue using legacy verbs if needed; begin adopting new stage verbs and orchestrator.
   - UI can read v2 manifest; legacy flows unaffected.
-

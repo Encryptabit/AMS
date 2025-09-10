@@ -9,9 +9,18 @@ public static class AsrRunCommand
 {
     public static Command Create()
     {
-        var cmd = new Command("run", "Run ASR pipeline from start to finish or between specified stages");
+        var cmd = new Command(
+            "run",
+            "Run ASR pipeline from start to finish or a specific span.\n" +
+            "Required prerequisites:\n" +
+            "- --book <file> (DOCX/TXT/MD/RTF). This command writes <work>/book.index.json via the 'book-index' stage.\n" +
+            "- FFmpeg in PATH (silence detection, slicing).\n" +
+            "- Services: ASR at --asr-service (default http://localhost:8081); Aeneas at --align-service (default http://localhost:8082) if running alignment stages.\n" +
+            "Tips: use --from/--to to run a 1..n span (e.g., --from book-index --to validate)."
+        );
 
         var inOption = new Option<FileInfo>("--in", "Path to input audio file (WAV format)") { IsRequired = true };
+        var bookOption = new Option<FileInfo>("--book", "Path to the book file (DOCX, TXT, MD, RTF)") { IsRequired = true };
         var workOption = new Option<DirectoryInfo>("--work", "Work directory (default: <input>.ams)");
         var fromOption = new Option<string>("--from", () => "timeline", "Start stage name");
         var toOption = new Option<string>("--to", () => "validate", "End stage name");
@@ -25,6 +34,7 @@ public static class AsrRunCommand
         var roomtoneFileOption = new Option<string>("--roomtone-file", "Path to roomtone file (if not provided, will auto-generate)");
 
         cmd.AddOption(inOption);
+        cmd.AddOption(bookOption);
         cmd.AddOption(workOption);
         cmd.AddOption(fromOption);
         cmd.AddOption(toOption);
@@ -40,6 +50,7 @@ public static class AsrRunCommand
         cmd.SetHandler(async (context) =>
         {
             var input = context.ParseResult.GetValueForOption(inOption)!;
+            var book  = context.ParseResult.GetValueForOption(bookOption)!;
             var work = context.ParseResult.GetValueForOption(workOption);
             var from = context.ParseResult.GetValueForOption(fromOption)!;
             var to = context.ParseResult.GetValueForOption(toOption)!;
@@ -57,8 +68,9 @@ public static class AsrRunCommand
 
             var httpClient = new HttpClient();
             var runner = new AsrPipelineRunner();
-            
+
             // Register all stages with user-provided parameters
+            runner.RegisterStage("book-index", wd => new BookIndexStage(wd, book.FullName, new BookIndexOptions { AverageWpm = 200.0 }));
             runner.RegisterStage("timeline", wd => new DetectSilenceStage(wd, new FfmpegSilenceDetector(), new DefaultProcessRunner(), new SilenceDetectionParams(dbFloor, minDur)));
             runner.RegisterStage("plan", wd => new PlanWindowsStage(wd, new SilenceWindowPlanner(), new WindowPlanningParams(60.0, 90.0, 75.0, true)));
             runner.RegisterStage("chunks", wd => new ChunkAudioStage(wd, new DefaultProcessRunner(), new ChunkingParams("wav", 44100)));
@@ -77,7 +89,18 @@ public static class AsrRunCommand
             runner.RegisterStage("refine", wd => new RefineStage(wd, new RefinementParams(dbFloor, minDur)));
             runner.RegisterStage("collate", wd => new CollateStage(wd, new DefaultProcessRunner(), new CollationParams(
                 roomtoneFile != null ? "file" : "auto", 
-                -50.0, 5, 2000, 60,  roomtoneFile, dbFloor)));
+                -50.0,
+                5,
+                2000,
+                60,
+                roomtoneFile,
+                dbFloor,
+                // Interword defaults (feature off)
+                false,
+                null,
+                5.0,
+                15.0,
+                true)));
             runner.RegisterStage("script-compare", wd =>
             {
                 var bookIndexPath = Path.Combine(wd, "book.index.json");

@@ -20,7 +20,7 @@ Scope: Consolidate functionality in `/host`, remove duplicated steps (e.g., sile
     - `ProcessRunner.cs` (IProcessRunner)
   - `Io/WavIo.cs`, `Dsp/RoomtoneRenderer.cs`, `Align/*`, `Normalization/*`, etc.
 - `host/Ams.Cli` — System.CommandLine CLI
-  - `Commands/AsrCommand.cs` (includes `asr silence`, `asr plan` today)
+- `Commands/AsrCommand.cs`
 - `host/Ams.Dsp.Native` — interop wrapper over native (Zig) DSP
 - `host/Ams.UI.Avalonia` — desktop UI
 - `host/Ams.Tests` — unit tests (e.g., `SilenceWindowPlannerTests.cs`)
@@ -247,4 +247,3 @@ book.wav.ams/
   validate/
     report.json
 ```
-

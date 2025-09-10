@@ -27,6 +27,7 @@ public class ValidateStage : StageRunner
 
         string[] mustHave =
         {
+            Path.Combine(WorkDir, "book.index.json"),
             Path.Combine(WorkDir, "timeline", "silence.json"),
             Path.Combine(WorkDir, "plan", "windows.json"),
             Path.Combine(WorkDir, "refine", "sentences.json")
@@ -36,11 +37,20 @@ public class ValidateStage : StageRunner
         var collated = Path.Combine(WorkDir, "collate", "final.wav");
         if (!File.Exists(collated)) warnings.Add($"Missing: {collated} (run collate)");
 
-        var requiredStages = new[] { "timeline", "plan", "chunks", "transcripts", "align-chunks", "refine" };
-        foreach (var s in requiredStages)
+        // Completed stages: always require book-index, timeline, plan, chunks, transcripts, refine.
+        var requiredAlways = new[] { "book-index", "timeline", "plan", "chunks", "transcripts", "refine" };
+        foreach (var s in requiredAlways)
         {
             if (!manifest.Stages.TryGetValue(s, out var entry) || entry.Status.Status != "completed")
                 issues.Add($"Stage not completed: {s}");
+        }
+
+        // Alignment can be via chunk alignment OR anchor window alignment.
+        bool hasChunkAlign = manifest.Stages.TryGetValue("align-chunks", out var ac) && ac.Status.Status == "completed";
+        bool hasWindowAlign = manifest.Stages.TryGetValue("window-align", out var wa) && wa.Status.Status == "completed";
+        if (!hasChunkAlign && !hasWindowAlign)
+        {
+            issues.Add("Alignment not completed: run either 'align-chunks' or 'window-align'");
         }
 
         // Try script-compare/report.json for metrics

@@ -367,11 +367,17 @@ public sealed record CollationParams(
     int MaxGapMs = 2000,
     int BridgeMaxMs = 60,
     string? RoomtoneFilePath = null,
-    double DbFloor = -45.0
+    double DbFloor = -45.0,
+    // Chapter-wide interword fill (feature-flagged)
+    bool EnableInterwordRoomtone = false,
+    double? InterwordMinSilenceDurSec = null,
+    double? InterwordMaxSilenceDurSec = 5.0,
+    double InterwordGuardMs = 15.0,
+    bool InterwordRespectSentenceBounds = true
 );
 
 public sealed record CollationReplacement(
-    string Kind, // "gap" or "boundary_sliver"
+    string Kind, // "gap" | "boundary_sliver" | "interword_gap"
     double From,
     double To,
     double Duration,
