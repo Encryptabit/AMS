@@ -74,8 +74,64 @@ public class CollateStage : StageRunner
         // Create room tone source
         var roomtoneSource = await CreateRoomtoneSourceAsync(manifest.Input.Path, originalDuration, stageDir, ct);
 
-        // Detect boundary slivers and inter-sentence gaps
+        // Detect boundary slivers and inter-sentence gaps (existing behavior)
         var replacements = AnalyzeReplacements(sentences, plan.Windows, originalDuration);
+
+        // Optionally add chapter-wide interword gaps from silence timeline
+        List<(double From, double To)>? interwordSeams = null;
+        int interwordCandidates = 0;
+        int interwordAccepted = 0;
+        if (_params.EnableInterwordRoomtone)
+        {
+            var silencePath = Path.Combine(WorkDir, "timeline", "silence.json");
+            if (File.Exists(silencePath))
+            {
+                var timelineJson = await File.ReadAllTextAsync(silencePath, ct);
+                var timeline = JsonSerializer.Deserialize<SilenceTimelineV2>(timelineJson);
+                if (timeline != null)
+                {
+                    // Prefer explicit param; else fall back to refine snapshot if available; else 0.12s
+                    double minSilSec = _params.InterwordMinSilenceDurSec ?? 0.12;
+                    if (_params.InterwordMinSilenceDurSec is null)
+                    {
+                        try
+                        {
+                            var refineParamsPath = Path.Combine(WorkDir, "refine", "params.snapshot.json");
+                            if (File.Exists(refineParamsPath))
+                            {
+                                var refineJson = await File.ReadAllTextAsync(refineParamsPath, ct);
+                                var refineParams = JsonSerializer.Deserialize<RefinementParams>(refineJson);
+                                if (refineParams is not null)
+                                {
+                                    minSilSec = refineParams.MinSilenceDurSec;
+                                }
+                            }
+                        }
+                        catch { /* non-fatal: keep default */ }
+                    }
+                    double maxSilSec = _params.InterwordMaxSilenceDurSec ?? 5.0;
+                    double guardSec = Math.Max(0.0, _params.InterwordGuardMs / 1000.0);
+                    var seams = AnalyzeInterwordGaps(sentences, plan.Windows, timeline.Events, minSilSec, maxSilSec, guardSec, _params.InterwordRespectSentenceBounds);
+                    interwordCandidates = seams.totalCandidates;
+                    interwordAccepted = seams.approved.Count;
+
+                    // Merge into replacements as dedicated kind "interword_gap"
+                    foreach (var (from, to) in seams.approved)
+                    {
+                        var dur = Math.Max(0.0, to - from);
+                        // skip if overlaps an existing replacement significantly
+                        if (replacements.Any(r => !(to <= r.From || from >= r.To)))
+                            continue;
+                        replacements.Add(new CollationReplacement("interword_gap", from, to, dur, _params.RoomtoneLevelDb));
+                    }
+                    interwordSeams = seams.approved;
+                }
+            }
+            else
+            {
+                Console.WriteLine("Warning: timeline/silence.json not found; skipping chapter-wide interword fills");
+            }
+        }
 
         Console.WriteLine($"Identified {replacements.Count} candidate regions for room tone replacement");
 
@@ -95,7 +151,8 @@ public class CollateStage : StageRunner
         var seamMap = new
         {
             seams = replacements.Select(r => new { r.Kind, r.From, r.To, r.Duration }).ToList(),
-            counts = new { gaps = replacements.Count(r => r.Kind == "gap"), slivers = replacements.Count(r => r.Kind == "boundary_sliver") }
+            counts = new { gaps = replacements.Count(r => r.Kind == "gap"), slivers = replacements.Count(r => r.Kind == "boundary_sliver"), interword = replacements.Count(r => r.Kind == "interword_gap") },
+            interword = _params.EnableInterwordRoomtone ? new { candidates = interwordCandidates, approved = interwordAccepted } : null
         };
         await File.WriteAllTextAsync(Path.Combine(stageDir, "map.json"), JsonSerializer.Serialize(seamMap, new JsonSerializerOptions { WriteIndented = true }), ct);
 
@@ -106,6 +163,9 @@ public class CollateStage : StageRunner
             ReplacementCount = replacements.Count,
             InterSentenceGaps = replacements.Count(r => r.Kind == "gap"),
             BoundarySlivers = replacements.Count(r => r.Kind == "boundary_sliver"),
+            InterwordEnabled = _params.EnableInterwordRoomtone,
+            InterwordCandidates = interwordCandidates,
+            InterwordGaps = replacements.Count(r => r.Kind == "interword_gap"),
             TotalRoomtoneDuration = replacements.Sum(r => r.Duration),
             RoomtoneSource = _params.RoomtoneSource,
             GeneratedAt = DateTime.UtcNow
@@ -204,7 +264,15 @@ public class CollateStage : StageRunner
             planHash = ComputeHash(planContent);
         }
 
-        var inputHash = ComputeHash(manifest.Input.Sha256 + sentencesHash + chunkHash + planHash);
+        var silencePath = Path.Combine(WorkDir, "timeline", "silence.json");
+        var silenceHash = "";
+        if (_params.EnableInterwordRoomtone && File.Exists(silencePath))
+        {
+            var silenceContent = await File.ReadAllTextAsync(silencePath, ct);
+            silenceHash = ComputeHash(silenceContent);
+        }
+
+        var inputHash = ComputeHash(manifest.Input.Sha256 + sentencesHash + chunkHash + planHash + silenceHash);
 
         var toolVersions = new Dictionary<string, string>();
         try
@@ -222,6 +290,92 @@ public class CollateStage : StageRunner
         }
 
         return new StageFingerprint(inputHash, paramsHash, toolVersions);
+    }
+
+    // Build candidate interword gaps from silence timeline with safeguards
+    private (List<(double from, double to)> approved, int totalCandidates) AnalyzeInterwordGaps(
+        List<RefinedSentence> sentences,
+        List<ChunkSpan> windows,
+        List<SilenceEvent> events,
+        double minSilSec,
+        double maxSilSec,
+        double guardSec,
+        bool respectSentenceBounds)
+    {
+        int total = 0;
+        var approved = new List<(double, double)>();
+
+        // Precompute sentence spans with guards
+        var sentenceSpans = sentences.Select(s => (start: s.Start, end: s.End)).OrderBy(t => t.start).ToList();
+        var guardZones = new List<(double s, double e)>();
+        foreach (var (s, e) in sentenceSpans)
+        {
+            guardZones.Add((Math.Max(0.0, s - guardSec), Math.Max(0.0, s + guardSec)));
+            guardZones.Add((Math.Max(0.0, e - guardSec), Math.Max(0.0, e + guardSec)));
+        }
+
+        // Window boundaries
+        var windowSpans = windows.OrderBy(w => w.Start).Select(w => (w.Start, w.End)).ToList();
+
+        foreach (var ev in events.OrderBy(e => e.Start))
+        {
+            var dur = ev.End - ev.Start;
+            if (dur < minSilSec || dur > maxSilSec) { total++; continue; }
+
+            double a = ev.Start;
+            double b = ev.End;
+
+            // Clamp to windows (reject if it crosses any boundary and ends up too small)
+            bool intersectsAnyWindow = false;
+            foreach (var (ws, we) in windowSpans)
+            {
+                if (b <= ws || a >= we) continue;
+                // candidate overlap with this window
+                var ca = Math.Max(a, ws);
+                var cb = Math.Min(b, we);
+                if (cb - ca < minSilSec) continue;
+
+                // Optional sentence-bound respect: if enabled and overlaps sentence core region, skip
+                if (respectSentenceBounds)
+                {
+                    bool overlapsSentence = sentenceSpans.Any(sp => !(cb <= sp.start || ca >= sp.end));
+                    if (overlapsSentence) { intersectsAnyWindow = true; continue; }
+                }
+
+                // Guard zones near sentence edges
+                bool overlapsGuard = guardZones.Any(gz => !(cb <= gz.s || ca >= gz.e));
+                if (overlapsGuard) { intersectsAnyWindow = true; continue; }
+
+                approved.Add((ca, cb));
+                intersectsAnyWindow = true;
+            }
+
+            if (!intersectsAnyWindow)
+            {
+                // Completely outside windows; ignore
+            }
+
+            total++;
+        }
+
+        // Merge overlapping approved seams and normalize
+        approved = approved.OrderBy(t => t.Item1)
+            .Aggregate(new List<(double, double)>(), (acc, cur) =>
+            {
+                if (acc.Count == 0) { acc.Add(cur); return acc; }
+                var last = acc[^1];
+                if (cur.Item1 <= last.Item2)
+                {
+                    var merged = (last.Item1, Math.Max(last.Item2, cur.Item2));
+                    acc[^1] = merged;
+                }
+                else acc.Add(cur);
+                return acc;
+            })
+            .Where(t => t.Item2 - t.Item1 >= minSilSec)
+            .ToList();
+
+        return (approved, total);
     }
 
     private async Task<string> CreateRoomtoneSourceAsync(string inputPath, double originalDuration, string stageDir,

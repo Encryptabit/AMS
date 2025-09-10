@@ -77,7 +77,18 @@ public static class AsrRunCommand
             runner.RegisterStage("refine", wd => new RefineStage(wd, new RefinementParams(dbFloor, minDur)));
             runner.RegisterStage("collate", wd => new CollateStage(wd, new DefaultProcessRunner(), new CollationParams(
                 roomtoneFile != null ? "file" : "auto", 
-                -50.0, 5, 2000, 60,  roomtoneFile, dbFloor)));
+                -50.0,
+                5,
+                2000,
+                60,
+                roomtoneFile,
+                dbFloor,
+                // Interword defaults (feature off)
+                false,
+                null,
+                5.0,
+                15.0,
+                true)));
             runner.RegisterStage("script-compare", wd =>
             {
                 var bookIndexPath = Path.Combine(wd, "book.index.json");
