@@ -1,10 +1,6 @@
-using System;
-using System.Collections.Generic;
-using System.Linq;
-using Ams.Core;
 using Ams.Core.Validation;
 
-namespace Ams.Align.Anchors;
+namespace Ams.Core.Align;
 
 /// <summary>
 /// Detects the most likely book section from the first few ASR tokens

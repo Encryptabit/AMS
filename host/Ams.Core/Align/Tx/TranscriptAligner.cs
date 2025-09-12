@@ -1,8 +1,4 @@
-using System;
-using System.Collections.Generic;
-using System.Linq;
-
-namespace Ams.Align.Tx;
+namespace Ams.Core.Align.Tx;
 
 // (3) Cost helpers and windowed DP aligner + rollups
 public static class TranscriptAligner

@@ -13,7 +13,7 @@ public static class BookCommand
         var book = new Command("book", "Book-related operations");
         book.AddCommand(CreateVerify());
         return book;
-    }
+    } 
 
     private static Command CreateVerify()
     {

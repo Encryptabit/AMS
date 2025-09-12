@@ -8,7 +8,7 @@ public static class AsrCommand
     public static Command Create()
     {
         var asrCommand = new Command("asr", "ASR (Automatic Speech Recognition) operations");
-        
+         
         // Delegate the 'run' subcommand to AsrRunCommand (pipeline orchestrator)
         asrCommand.AddCommand(AsrRunCommand.Create());
 

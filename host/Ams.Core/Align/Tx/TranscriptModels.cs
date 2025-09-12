@@ -1,7 +1,4 @@
-using System;
-using System.Collections.Generic;
-
-namespace Ams.Align.Tx;
+namespace Ams.Core.Align.Tx;
 
 // (1) Enums and POCOs for deterministic transcript indices
 

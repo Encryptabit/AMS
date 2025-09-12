@@ -2,6 +2,9 @@ using System.CommandLine;
 using System.Text.Json;
 using Ams.Align.Anchors;
 using Ams.Core;
+using Ams.Core.Align;
+using Ams.Core.Align.Anchors;
+using Ams.Core.Align.Tx;
 using Ams.Core.Validation;
 
 namespace Ams.Cli.Commands;
@@ -187,7 +190,7 @@ public static class AlignCommand
         var asr = JsonSerializer.Deserialize<AsrResponse>(asrJson, jsonOptions) ?? throw new InvalidOperationException("Failed to parse ASR JSON");
 
         var txJson = await File.ReadAllTextAsync(txFile.FullName);
-        var tx = JsonSerializer.Deserialize<Ams.Align.Tx.TranscriptIndex>(txJson, jsonOptions) ?? throw new InvalidOperationException("Failed to parse TranscriptIndex JSON");
+        var tx = JsonSerializer.Deserialize<Ams.Core.Align.Tx.TranscriptIndex>(txJson, jsonOptions) ?? throw new InvalidOperationException("Failed to parse TranscriptIndex JSON");
 
         // Hydrate words with values (1)
         var words = tx.Words.Select(w => new
@@ -276,8 +279,8 @@ public static class AlignCommand
         var asr = JsonSerializer.Deserialize<AsrResponse>(asrJson, jsonOptions) ?? throw new InvalidOperationException("Failed to parse ASR JSON");
 
         // Build normalized views (1)
-        var bookView = Ams.Align.Anchors.AnchorPreprocessor.BuildBookView(book);
-        var asrView = Ams.Align.Anchors.AnchorPreprocessor.BuildAsrView(asr);
+        var bookView = AnchorPreprocessor.BuildBookView(book);
+        var asrView = AnchorPreprocessor.BuildAsrView(asr);
 
         // Compute anchors & windows (2)
         var stop = domainStopwords ? StopwordSets.EnglishPlusDomain : new HashSet<string>(StringComparer.Ordinal);
@@ -300,7 +303,7 @@ public static class AlignCommand
         var fillers = new HashSet<string>(new[] { "uh", "um", "erm", "uhh", "hmm", "mm", "huh", "like" }, StringComparer.Ordinal);
 
         // Align in filtered coordinates (4)
-        var opsNm = Ams.Align.Tx.TranscriptAligner.AlignWindows(
+        var opsNm = TranscriptAligner.AlignWindows(
             bookView.Tokens,
             asrView.Tokens,
             windows,
@@ -308,12 +311,12 @@ public static class AlignCommand
             fillers);
 
         // Map back to original indices (5)
-        var wordOps = new List<Ams.Align.Tx.WordAlign>(opsNm.Count);
+        var wordOps = new List<WordAlign>(opsNm.Count);
         foreach (var (bi, aj, op, reason, score) in opsNm)
         {
             int? bookIdx = bi.HasValue ? pipe.BookFilteredToOriginalWord[bi.Value] : (int?)null;
             int? asrIdx = aj.HasValue ? asrView.FilteredToOriginalToken[aj.Value] : (int?)null;
-            wordOps.Add(new Ams.Align.Tx.WordAlign(bookIdx, asrIdx, op, reason, score));
+            wordOps.Add(new WordAlign(bookIdx, asrIdx, op, reason, score));
         }
 
         // Section range on original indices (6)
@@ -334,12 +337,12 @@ public static class AlignCommand
             .Select(p => (p.Index, Math.Max(secStartWord, p.Start), Math.Min(secEndWord, p.End)))
             .ToList();
 
-        var (sentAlign, paraAlign) = Ams.Align.Tx.TranscriptAligner.Rollup(
+        var (sentAlign, paraAlign) = TranscriptAligner.Rollup(
             wordOps,
             sentTuples.Select(t => (t.Index, t.Item2, t.Item3)).ToList(),
             paraTuples.Select(t => (t.Index, t.Item2, t.Item3)).ToList());
 
-        var tx = new Ams.Align.Tx.TranscriptIndex(
+        var tx = new Ams.Core.Align.Tx.TranscriptIndex(
             AudioPath: audioFile.FullName,
             ScriptPath: asrFile.FullName,
             BookIndexPath: indexFile.FullName,

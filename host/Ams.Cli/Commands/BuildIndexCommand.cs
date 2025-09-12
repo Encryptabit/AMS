@@ -9,7 +9,7 @@ public static class BuildIndexCommand
     public static Command Create()
     {
         var buildIndexCommand = new Command("build-index", "Build book index from document files");
-        
+         
         var bookFileOption = new Option<FileInfo>("--book", "Path to the book file (DOCX, TXT, MD, RTF)")
         {
             IsRequired = true

@@ -1,8 +1,4 @@
-using System;
-using System.Collections.Generic;
-using System.Linq;
-
-namespace Ams.Align.Tx;
+namespace Ams.Core.Align.Tx;
 
 // (2) Anchors -> clamped half-open windows builder
 public static class WindowBuilder

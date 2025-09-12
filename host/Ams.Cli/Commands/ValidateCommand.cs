@@ -16,7 +16,7 @@ public static class ValidateCommand
         {
             IsRequired = true
         };
-        audioOption.AddAlias("-a");
+        audioOption.AddAlias("-a"); 
         
         var scriptOption = new Option<FileInfo>("--script", "Path to the script text file")
         {

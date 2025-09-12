@@ -30,6 +30,7 @@ agents.md
 .idea/
 *.sln.docstates
 
+
 # Dotnet
 **/bin/
 **/obj/
@@ -37,3 +38,7 @@ agents.md
 # Zig cache/output
 **/.zig-cache/
 **/zig-out/
+**/.code/agents/*.txt
+
+.serena/*
+**/__pycache__/

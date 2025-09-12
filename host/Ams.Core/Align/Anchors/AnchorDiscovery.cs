@@ -1,8 +1,4 @@
-using System;
-using System.Collections.Generic;
-using System.Linq;
-
-namespace Ams.Align.Anchors;
+namespace Ams.Core.Align.Anchors;
 
 public sealed record Anchor(int Bp, int Ap);
 

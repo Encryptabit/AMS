@@ -3,6 +3,8 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Text.Json;
 using Ams.Core;
+using Ams.Core.Align;
+using Ams.Core.Align.Anchors;
 
 namespace Ams.Align.Anchors;
 

@@ -1,6 +1,8 @@
 using System.Collections.Generic;
 using Ams.Align.Anchors;
 using Ams.Core;
+using Ams.Core.Align;
+using Ams.Core.Align.Anchors;
 using Xunit;
 
 public class AnchorDiscoveryTests

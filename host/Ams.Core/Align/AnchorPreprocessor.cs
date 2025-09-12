@@ -1,11 +1,8 @@
-using System;
-using System.Collections.Generic;
-using System.Linq;
-using Ams.Core;
+using Ams.Align.Anchors;
 
-namespace Ams.Align.Anchors;
+namespace Ams.Core.Align;
 
-public sealed record BookAnchorView(
+public sealed record BookAnchorView( 
     IReadOnlyList<string> Tokens,
     IReadOnlyList<int> SentenceIndex,
     IReadOnlyList<int> FilteredToOriginalWord,

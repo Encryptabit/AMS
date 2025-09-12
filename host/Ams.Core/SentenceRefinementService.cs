@@ -1,7 +1,7 @@
 using System.Diagnostics;
 using System.Text;
 using System.Text.Json;
-using Ams.Align.Tx;
+using Ams.Core.Align.Tx;
 
 namespace Ams.Core;
 
@@ -15,7 +15,7 @@ public sealed class SentenceRefinementService
 
     public async Task<IReadOnlyList<SentenceRefined>> RefineAsync(
         string audioPath,
-        Ams.Align.Tx.TranscriptIndex tx,
+        Ams.Core.Align.Tx.TranscriptIndex tx,
         AsrResponse asr,
         string language = "eng",
         bool useSilence = true,

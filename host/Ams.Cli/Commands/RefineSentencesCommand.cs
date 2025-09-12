@@ -1,6 +1,6 @@
 using System.CommandLine;
 using System.Text.Json;
-using Ams.Align.Tx;
+using Ams.Core.Align.Tx;
 using Ams.Core;
 
 namespace Ams.Cli.Commands;
@@ -61,7 +61,7 @@ public static class RefineSentencesCommand
     private static async Task RunAsync(FileInfo txFile, FileInfo asrFile, FileInfo audioFile, FileInfo outFile, string language, bool withSilence, double silenceDb, double silenceMin)
     {
         var jsonOptions = new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
-        var tx = JsonSerializer.Deserialize<Ams.Align.Tx.TranscriptIndex>(await File.ReadAllTextAsync(txFile.FullName), jsonOptions)
+        var tx = JsonSerializer.Deserialize<Ams.Core.Align.Tx.TranscriptIndex>(await File.ReadAllTextAsync(txFile.FullName), jsonOptions)
                  ?? throw new InvalidOperationException("Failed to read TX");
         var asr = JsonSerializer.Deserialize<AsrResponse>(await File.ReadAllTextAsync(asrFile.FullName), jsonOptions)
                  ?? throw new InvalidOperationException("Failed to read ASR");

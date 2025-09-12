@@ -1,7 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using Ams.Align.Tx;
+using Ams.Core.Align.Tx;
 using Xunit;
 
 public class TxAlignTests

@@ -1,6 +1,6 @@
 using System.CommandLine;
 using System.Text.Json;
-using Ams.Align.Tx;
+using Ams.Core.Align.Tx;
 using Ams.Core;
 
 namespace Ams.Cli.Commands;
@@ -64,7 +64,7 @@ public static class AudioCommand
 
         var jsonOptions = new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
         var txJson = await File.ReadAllTextAsync(txFile.FullName);
-        var tx = JsonSerializer.Deserialize<Ams.Align.Tx.TranscriptIndex>(txJson, jsonOptions) ?? throw new InvalidOperationException("Failed to parse TranscriptIndex");
+        var tx = JsonSerializer.Deserialize<Ams.Core.Align.Tx.TranscriptIndex>(txJson, jsonOptions) ?? throw new InvalidOperationException("Failed to parse TranscriptIndex");
 
         string audioPath = NormalizePath(tx.AudioPath);
         string asrPath = NormalizePath(tx.ScriptPath);
