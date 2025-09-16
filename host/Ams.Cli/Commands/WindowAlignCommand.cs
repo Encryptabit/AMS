@@ -37,7 +37,11 @@ public static class WindowAlignCommand
                 Environment.Exit(2);
                 return;
             }
-            var p = new WindowAlignParams(ctx.ParseResult.GetValueForOption(lang), ctx.ParseResult.GetValueForOption(timeout), ctx.ParseResult.GetValueForOption(bw), ctx.ParseResult.GetValueForOption(url));
+            var p = new WindowAlignParams(
+                ctx.ParseResult.GetValueForOption(lang) ?? "eng",
+                ctx.ParseResult.GetValueForOption(timeout),
+                ctx.ParseResult.GetValueForOption(bw),
+                ctx.ParseResult.GetValueForOption(url) ?? "http://localhost:8082");
             var stage = new WindowAlignStage(wd, new HttpClient(), p);
             var manifestPath = Path.Combine(wd, "manifest.json");
             if (!File.Exists(manifestPath))

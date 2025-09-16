@@ -86,7 +86,7 @@ public class TranscribeStage : StageRunner
 
         // Create transcript index
         var toolVersions = await GetToolVersionsAsync(ct);
-        var transcriptIndex = new TranscriptIndex(
+        var transcriptIndex = new ChunkTranscriptIndex(
             chunkIndex.Chunks.Select(c => c.Id).ToList(),
             chunkToJsonMap,
             _params,

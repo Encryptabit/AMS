@@ -54,10 +54,11 @@ public class WindowAlignStage : StageRunner
             const double MaxSliceSec = 90.0; // align within ~chunk length
             if (!okRange)
             {
-                // if no token bounds, derive a reasonable window near the middle
+                // If no token bounds, derive a fixed-size window near the middle
                 double center = inputDuration > 0 ? inputDuration / 2.0 : 30.0;
                 startSec = Math.Max(0.0, center - MaxSliceSec / 2.0);
-                endSec = Math.Min(inputDuration > 0 ? inputDuration : center + MaxSliceSec / 2.0, (inputDuration > 0 ? inputDuration : center + MaxSliceSec / 2.0));
+                var desiredEnd = center + MaxSliceSec / 2.0;
+                endSec = inputDuration > 0 ? Math.Min(desiredEnd, inputDuration) : desiredEnd;
             }
             else
             {

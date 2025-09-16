@@ -49,11 +49,12 @@ internal static class Program
 
     private static int RunLegacyDspDemoInteractive()
     {
-        const float sampleRate = 48000f;
-        const int channels = 2;
-        const uint maxBlock = 512;
-        const double hz = 440.0;       // A4 test tone
-        const float inGainDb = -12.0f; // input sine amplitude
+        // DSP demo parameters (left commented while demo is disabled)
+        // const float sampleRate = 48000f;
+        // const int channels = 2;
+        // const uint maxBlock = 512;
+        // const double hz = 440.0;       // A4 test tone
+        // const float inGainDb = -12.0f; // input sine amplitude
 
         Console.Write("Enter gain (0-1): ");
         float gain = float.Parse(Console.ReadLine() ?? "0.5", CultureInfo.InvariantCulture);

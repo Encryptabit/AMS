@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Ams.Align.Anchors;
+using Ams.Core.Align;
 using Ams.Core.Align.Anchors;
 
 namespace Ams.Core.Pipeline;
@@ -24,13 +25,27 @@ public class WindowsStage : StageRunner
         var mergedJson = await File.ReadAllTextAsync(mergedPath, ct);
         var anchors = JsonSerializer.Deserialize<AnchorsArtifact>(anchorsJson) ?? throw new InvalidOperationException("Invalid anchors.json");
         var merged = JsonSerializer.Deserialize<JsonElement>(mergedJson);
-        var asrWordCount = merged.TryGetProperty("TotalWords", out var tw) ? tw.GetInt32() : 0;
+
+        // Reconstruct ASR response from merged Words and build normalized view for filtered->original mapping
+        var tokens = new List<AsrToken>();
+        if (merged.TryGetProperty("Words", out var wordsArr))
+        {
+            foreach (var w in wordsArr.EnumerateArray())
+            {
+                var txt = w.GetProperty("Word").GetString() ?? string.Empty;
+                var start = w.GetProperty("Start").GetDouble();
+                var end = w.GetProperty("End").GetDouble();
+                tokens.Add(new AsrToken(start, Math.Max(0.0, end - start), txt));
+            }
+        }
+        var asr = new AsrResponse("merged/derived", tokens.ToArray());
+        var asrView = AnchorPreprocessor.BuildAsrView(asr);
 
         // Build half-open windows [BookStart, BookEnd) based on selected anchors, padded
         var selected = anchors.Selected.OrderBy(a => a.Bp).ToList();
         int bookStart = 0, bookEnd = anchors.BookTokenCount; // filtered token count proxy
         var core = selected.Select(a => new Anchor(a.Bp, a.Ap)).ToList();
-        var ranges = AnchorDiscovery.BuildWindows(core, bookStart, Math.Max(bookStart, bookEnd - 1), 0, Math.Max(0, asrWordCount - 1));
+        var ranges = AnchorDiscovery.BuildWindows(core, bookStart, Math.Max(bookStart, bookEnd - 1), 0, Math.Max(0, asrView.Tokens.Count - 1));
 
         var winList = new List<AnchorWindow>();
         for (int i = 0; i < ranges.Count; i++)
@@ -39,7 +54,15 @@ public class WindowsStage : StageRunner
             int b0 = Math.Max(bookStart, bLo);
             int b1 = Math.Min(bookEnd, bHi);
             var id = $"win_{i:D4}";
-            winList.Add(new AnchorWindow(id, b0, b1, aLo, aHi, i > 0 ? core[i - 1].Bp : null, i < core.Count ? core[i].Bp : null));
+            int? a0 = null, a1 = null;
+            if (aLo < aHi && asrView.FilteredToOriginalToken.Count > 0)
+            {
+                int origStart = asrView.FilteredToOriginalToken[Math.Clamp(aLo, 0, asrView.FilteredToOriginalToken.Count - 1)];
+                int origLast = asrView.FilteredToOriginalToken[Math.Clamp(aHi - 1, 0, asrView.FilteredToOriginalToken.Count - 1)];
+                a0 = origStart;
+                a1 = origLast + 1; // exclusive
+            }
+            winList.Add(new AnchorWindow(id, b0, b1, a0, a1, i > 0 ? core[i - 1].Bp : null, i < core.Count ? core[i].Bp : null));
         }
 
         // Coverage: fraction of [bookStart,bookEnd) covered by windows

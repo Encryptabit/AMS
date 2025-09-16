@@ -315,7 +315,7 @@ public sealed record ChunkTranscript(
     DateTime GeneratedAt
 );
 
-public sealed record TranscriptIndex(
+public sealed record ChunkTranscriptIndex(
     List<string> ChunkIds,
     Dictionary<string, string> ChunkToJsonMap,
     TranscriptionParams Params,

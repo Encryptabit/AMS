@@ -136,7 +136,8 @@ public class AsrPipelineRunner
         double duration;
         try
         {
-            var audio = WavIo.ReadPcmOrFloat(inputPath);
+            var normalized = Ams.Core.Io.PathNormalizer.NormalizePath(inputPath);
+            var audio = WavIo.ReadPcmOrFloat(normalized);
             duration = audio.Length / (double)audio.SampleRate;
         }
         catch
