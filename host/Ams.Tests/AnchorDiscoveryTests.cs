@@ -1,4 +1,5 @@
-using System.Collections.Generic;
+﻿using System.Collections.Generic;
+using System.Linq;
 using Ams.Align.Anchors;
 using Ams.Core;
 using Ams.Core.Align;
@@ -48,7 +49,7 @@ public class SectionLocatorTests
         var words = new List<BookWord>();
         for (int i = 0; i < 100; i++)
         {
-            words.Add(new BookWord($"w{i}", i, i/5, i/10, -1));
+            words.Add(new BookWord($"w{i}", i, i / 5, i / 10));
         }
 
         var sections = new[]
@@ -57,18 +58,37 @@ public class SectionLocatorTests
             new SectionRange(1, "Chapter 14: Storm", 1, "Heading", 30, 99, 3, 9)
         };
 
+        var sentenceSegments = new List<BookSegment>();
+        for (int i = 0; i < 20; i++)
+        {
+            int start = i * 5;
+            int end = System.Math.Min(start + 4, words.Count - 1);
+            sentenceSegments.Add(new BookSegment($"sentence {i}", "Sentence", i, start, end));
+        }
+
+        var paragraphSegments = new List<BookSegment>();
+        for (int i = 0; i < 10; i++)
+        {
+            int start = i * 10;
+            int end = System.Math.Min(start + 9, words.Count - 1);
+            paragraphSegments.Add(new BookSegment($"paragraph {i}", "Paragraph", i, start, end));
+        }
+
+        var segments = sentenceSegments.Concat(paragraphSegments).ToArray();
+
         return new BookIndex(
             SourceFile: "fake.docx",
             SourceFileHash: "hash",
             IndexedAt: System.DateTime.UtcNow,
             Title: "Test",
             Author: "Author",
-            Totals: new BookTotals(100, 20, 10, 30.0),
+            TotalWords: words.Count,
+            TotalSentences: sentenceSegments.Count,
+            TotalParagraphs: paragraphSegments.Count,
+            EstimatedDuration: 30.0,
             Words: words.ToArray(),
-            Sentences: new[] { new SentenceRange(0,0,4) },
-            Paragraphs: new[] { new ParagraphRange(0,0,9,"","Heading 1") },
-            Sections: sections,
-            BuildWarnings: null
+            Segments: segments,
+            Sections: sections
         );
     }
 
@@ -109,17 +129,26 @@ public class SectionLocatorTests
         var bookTokens = new List<string> { "a","b","c","d","e","f","g","h","i","j","k","l","black","forest","m","n","o" };
         var words = new List<BookWord>();
         for (int i = 0; i < bookTokens.Count; i++)
-            words.Add(new BookWord(bookTokens[i], i, 0, 0, -1));
+            words.Add(new BookWord(bookTokens[i], i, 0, 0));
+
+        var segments = new[]
+        {
+            new BookSegment("sentence 0", "Sentence", 0, 0, words.Count - 1),
+            new BookSegment("paragraph 0", "Paragraph", 0, 0, words.Count - 1)
+        };
+
         var book = new BookIndex(
             SourceFile: "fake.docx",
             SourceFileHash: "hash",
             IndexedAt: System.DateTime.UtcNow,
             Title: null,
             Author: null,
-            Totals: new BookTotals(words.Count, 1, 1, 1),
+            TotalWords: words.Count,
+            TotalSentences: 1,
+            TotalParagraphs: 1,
+            EstimatedDuration: 1,
             Words: words.ToArray(),
-            Sentences: new[] { new SentenceRange(0,0,words.Count-1) },
-            Paragraphs: new[] { new ParagraphRange(0,0,words.Count-1,"","Body") },
+            Segments: segments,
             Sections: new[] { new SectionRange(0, "Chapter 1", 1, "Heading", 10, 16, 0, 0) }
         );
 
@@ -136,3 +165,6 @@ public class SectionLocatorTests
         Assert.NotNull(res.Windows);
     }
 }
+
+
+

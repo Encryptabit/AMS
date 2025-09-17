@@ -1,3 +1,4 @@
+using System;
 using System.CommandLine;
 using System.Net.Http;
 using Ams.Core;
@@ -9,15 +10,21 @@ public static class WindowAlignCommand
 {
     public static Command Create()
     {
+        var descriptionLines = new[]
+        {
+            "Align anchor windows via Aeneas service.",
+            "Required prerequisites:",
+            "- <work>/book.index.json.",
+            "- windows/windows.json (produced by 'windows' stage).",
+            "- transcripts/merged.json under <work>.",
+            "- Aeneas service reachable at --service (default http://localhost:8082).",
+            "Note: extracts audio slices with FFmpeg; ensure ffmpeg is on PATH.",
+            "Outputs microsecond-precision fragments (6 decimal places)."
+        };
+        var description = string.Join(Environment.NewLine, descriptionLines);
         var cmd = new Command(
             "window-align",
-            "Align anchor windows via Aeneas service.\n" +
-            "Required prerequisites:\n" +
-            "- <work>/book.index.json.\n" +
-            "- windows/windows.json (produced by 'windows' stage).\n" +
-            "- transcripts/merged.json under <work>.\n" +
-            "- Aeneas service reachable at --service (default http://localhost:8082).\n" +
-            "Note: extracts audio slices with FFmpeg; ensure ffmpeg is on PATH."
+            description
         );
         var work = new Option<DirectoryInfo>("--work"){ IsRequired = true };
         var url = new Option<string>("--service", () => "http://localhost:8082", "Aeneas service URL");
@@ -42,7 +49,8 @@ public static class WindowAlignCommand
                 ctx.ParseResult.GetValueForOption(timeout),
                 ctx.ParseResult.GetValueForOption(bw),
                 ctx.ParseResult.GetValueForOption(url) ?? "http://localhost:8082");
-            var stage = new WindowAlignStage(wd, new HttpClient(), p);
+            using var httpClient = new HttpClient();
+            var stage = new WindowAlignStage(wd, httpClient, p);
             var manifestPath = Path.Combine(wd, "manifest.json");
             if (!File.Exists(manifestPath))
             {

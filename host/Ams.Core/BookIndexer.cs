@@ -1,11 +1,11 @@
-using System.Security.Cryptography;
+﻿using System.Security.Cryptography;
 using System.Text.RegularExpressions;
 
 namespace Ams.Core;
 
 /// <summary>
-/// Canonical indexer: preserves exact token text, builds sentence/paragraph ranges only.
-/// No normalization, no timing.
+/// Canonical indexer: preserves exact token text and legacy JSON layout so
+/// downstream tools keep working while we grow more advanced metadata.
 /// </summary>
 public class BookIndexer : IBookIndexer
 {
@@ -51,8 +51,8 @@ public class BookIndexer : IBookIndexer
                 .ToList();
 
         var words = new List<BookWord>();
-        var sentences = new List<SentenceRange>();
-        var paragraphs = new List<ParagraphRange>();
+        var sentenceRanges = new List<(int Index, int Start, int End)>();
+        var paragraphRanges = new List<(int Index, int Start, int End, string Kind, string Style)>();
         var sections = new List<SectionRange>();
 
         int globalWord = 0;
@@ -66,7 +66,7 @@ public class BookIndexer : IBookIndexer
             var (pText, style, kind) = paragraphTexts[pIndex];
             if (string.IsNullOrEmpty(pText))
             {
-                paragraphs.Add(new ParagraphRange(pIndex, globalWord, globalWord - 1, kind, style));
+                paragraphRanges.Add((pIndex, globalWord, globalWord - 1, kind, style));
                 continue;
             }
 
@@ -75,14 +75,10 @@ public class BookIndexer : IBookIndexer
 
             // On a Heading paragraph, consider starting a new section before consuming tokens
             int headingLevel = GetHeadingLevel(style);
-            // Some documents use Heading 2/3 for chapters; treat any Heading level >= 1 as a section start
-            // but only when the text looks like a real section title (e.g., "Chapter 3", "Prologue").
             if (string.Equals(kind, "Heading", StringComparison.OrdinalIgnoreCase) && headingLevel >= 1 && LooksLikeSectionHeading(pText))
             {
-                // Close previous open section
                 if (currentSection != null)
                 {
-                    // End at the last word of the previous paragraph (globalWord - 1)
                     int endWord = Math.Max(currentSection.StartWord - 1, globalWord - 1);
                     int endParagraph = Math.Max(currentSection.StartParagraph, pIndex - 1);
                     sections.Add(new SectionRange(
@@ -108,40 +104,31 @@ public class BookIndexer : IBookIndexer
 
             foreach (var token in TokenizeByWhitespace(pText))
             {
-                var w = new BookWord(
+                var word = new BookWord(
                     Text: token,
                     WordIndex: globalWord,
                     SentenceIndex: sentenceIndex,
-                    ParagraphIndex: pIndex,
-                    SectionIndex: currentSection?.Id ?? -1
+                    ParagraphIndex: pIndex
                 );
-                words.Add(w);
+                words.Add(word);
                 globalWord++;
 
                 if (IsSentenceTerminal(token))
                 {
-                    sentences.Add(new SentenceRange(Index: sentenceIndex, Start: sentenceStartWord, End: globalWord - 1));
+                    sentenceRanges.Add((sentenceIndex, sentenceStartWord, globalWord - 1));
                     sentenceIndex++;
                     sentenceStartWord = globalWord;
                 }
             }
 
-            // If paragraph ends without terminal punctuation but has words, close sentence
             if (globalWord > sentenceStartWord)
             {
-                sentences.Add(new SentenceRange(Index: sentenceIndex, Start: sentenceStartWord, End: globalWord - 1));
+                sentenceRanges.Add((sentenceIndex, sentenceStartWord, globalWord - 1));
                 sentenceIndex++;
             }
 
-            paragraphs.Add(new ParagraphRange(Index: pIndex, Start: paragraphStartWord, End: globalWord - 1, Kind: kind, Style: style));
+            paragraphRanges.Add((pIndex, paragraphStartWord, globalWord - 1, kind, style));
         }
-
-        var totals = new BookTotals(
-            Words: words.Count,
-            Sentences: sentences.Count,
-            Paragraphs: paragraphs.Count,
-            EstimatedDurationSec: words.Count / options.AverageWpm * 60.0
-        );
 
         // Close last open section if any
         if (currentSection != null)
@@ -160,7 +147,24 @@ public class BookIndexer : IBookIndexer
             ));
         }
 
-        var warnings = Array.Empty<string>();
+        int totalWords = words.Count;
+        int totalSentences = sentenceRanges.Count;
+        int totalParagraphs = paragraphRanges.Count;
+        double estimatedDuration = totalWords / options.AverageWpm * 60.0;
+
+        var segments = new List<BookSegment>(totalSentences + totalParagraphs);
+        foreach (var (index, start, end) in sentenceRanges)
+        {
+            if (start < 0 || end < start) continue;
+            var text = JoinTokens(words, start, end);
+            segments.Add(new BookSegment(text, "Sentence", index, start, end));
+        }
+        foreach (var (index, start, end, _, _) in paragraphRanges)
+        {
+            if (start < 0 || end < start) continue;
+            var text = JoinTokens(words, start, end);
+            segments.Add(new BookSegment(text, "Paragraph", index, start, end));
+        }
 
         return new BookIndex(
             SourceFile: sourceFile,
@@ -168,23 +172,28 @@ public class BookIndexer : IBookIndexer
             IndexedAt: DateTime.UtcNow,
             Title: parseResult.Title,
             Author: parseResult.Author,
-            Totals: totals,
+            TotalWords: totalWords,
+            TotalSentences: totalSentences,
+            TotalParagraphs: totalParagraphs,
+            EstimatedDuration: estimatedDuration,
             Words: words.ToArray(),
-            Sentences: sentences.ToArray(),
-            Paragraphs: paragraphs.ToArray(),
-            Sections: sections.ToArray(),
-            BuildWarnings: warnings
+            Segments: segments.ToArray(),
+            Sections: sections.Count == 0 ? null : sections.ToArray()
         );
+    }
+
+    private static string JoinTokens(List<BookWord> words, int start, int end)
+    {
+        var span = words.Skip(start).Take(end - start + 1).Select(w => w.Text);
+        return string.Join(" ", span);
     }
 
     private static int GetHeadingLevel(string style)
     {
         if (string.IsNullOrEmpty(style)) return 0;
-        // Common forms: "Heading 1", "Heading1"
         var s = style.Trim();
         var idx = s.IndexOf("Heading", StringComparison.OrdinalIgnoreCase);
         if (idx < 0) return 0;
-        // Extract trailing digits
         for (int i = idx + 7; i < s.Length; i++)
         {
             if (char.IsDigit(s[i]))
@@ -195,14 +204,13 @@ public class BookIndexer : IBookIndexer
                 break;
             }
         }
-        return 1; // treat generic Heading as level 1 if unspecified
+        return 1;
     }
 
     private static string ClassifySectionKind(string headingText)
     {
         if (string.IsNullOrWhiteSpace(headingText)) return "chapter";
         var t = headingText.Trim().ToLowerInvariant();
-        // Typical section kinds
         if (t.Contains("prologue")) return "prologue";
         if (t.Contains("epilogue")) return "epilogue";
         if (t.Contains("prelude")) return "prelude";
@@ -223,8 +231,7 @@ public class BookIndexer : IBookIndexer
     {
         if (string.IsNullOrWhiteSpace(text)) return false;
         var t = text.Trim();
-        if (SectionTitleRegex.IsMatch(t)) return true;
-        return false;
+        return SectionTitleRegex.IsMatch(t);
     }
 
     private record SectionOpen(int Id, string Title, string Kind, int StartWord, int StartParagraph);
@@ -237,7 +244,6 @@ public class BookIndexer : IBookIndexer
         int n = text.Length;
         while (i < n)
         {
-            // Skip whitespace
             while (i < n && char.IsWhiteSpace(text[i])) i++;
             if (i >= n) yield break;
 
@@ -250,12 +256,12 @@ public class BookIndexer : IBookIndexer
     private static bool IsSentenceTerminal(string token)
     {
         if (string.IsNullOrEmpty(token)) return false;
-        // Strip common closing punctuation to inspect terminal char
         int i = token.Length - 1;
-        while (i >= 0 && ")]}\'\"»”’".IndexOf(token[i]) >= 0) i--;
+        const string trailing = ")]}'\"»”’";
+        while (i >= 0 && trailing.IndexOf(token[i]) >= 0) i--;
         if (i < 0) return false;
         char c = token[i];
-        return c == '.' || c == '!' || c == '?' || c == '…';
+        return c == '.' || c == '!' || c == '?' || c == '\u2026';
     }
 
     private static string ComputeFileHash(string filePath)

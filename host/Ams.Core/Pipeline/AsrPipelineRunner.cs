@@ -23,13 +23,14 @@ public class AsrPipelineRunner
             "plan",          // 2 (chunk plan)
             "chunks",        // 3
             "transcripts",   // 4
-            "anchors",       // 5
-            "windows",       // 6 (anchor windows)
-            "window-align",  // 7
-            "refine",        // 8
-            "collate",       // 9
-            "script-compare",// 10
-            "validate"       // 11
+            "align-chunks",  // 5 (chunk-level alignment)
+            "anchors",       // 6
+            "windows",       // 7 (optional legacy anchor windows)
+            "window-align",  // 8 (optional window reconciliation)
+            "refine",        // 9
+            "collate",       // 10
+            "script-compare",// 11
+            "validate"       // 12
         });
     }
 

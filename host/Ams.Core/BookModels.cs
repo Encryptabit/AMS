@@ -1,37 +1,34 @@
-using System.Text.Json.Serialization;
+﻿using System.Text.Json.Serialization;
 
 namespace Ams.Core;
 
 /// <summary>
-/// Canonical word token from the source, with exact text preserved.
-/// Only positional indexes are stored. No timing/confidence/normalization.
+/// Canonical word token from the source text. Timing metadata stays optional
+/// to support future hydrated indexes from aligned audio.
 /// </summary>
 public record BookWord(
     [property: JsonPropertyName("text")] string Text,
     [property: JsonPropertyName("wordIndex")] int WordIndex,
     [property: JsonPropertyName("sentenceIndex")] int SentenceIndex,
     [property: JsonPropertyName("paragraphIndex")] int ParagraphIndex,
-    [property: JsonPropertyName("sectionIndex")] int SectionIndex = -1
+    [property: JsonPropertyName("startTime")] double? StartTime = null,
+    [property: JsonPropertyName("endTime")] double? EndTime = null,
+    [property: JsonPropertyName("confidence")] double? Confidence = null
 );
 
 /// <summary>
-/// Sentence range by word indices (inclusive).
+/// Sentence or paragraph slice expressed in word offsets. Keeps text as it
+/// appeared in the original document to remain human friendly.
 /// </summary>
-public record SentenceRange(
+public record BookSegment(
+    [property: JsonPropertyName("text")] string Text,
+    [property: JsonPropertyName("type")] string Type,
     [property: JsonPropertyName("index")] int Index,
-    [property: JsonPropertyName("start")] int Start,
-    [property: JsonPropertyName("end")] int End
-);
-
-/// <summary>
-/// Paragraph range by word indices (inclusive), with optional kind/style.
-/// </summary>
-public record ParagraphRange(
-    [property: JsonPropertyName("index")] int Index,
-    [property: JsonPropertyName("start")] int Start,
-    [property: JsonPropertyName("end")] int End,
-    [property: JsonPropertyName("kind")] string Kind,
-    [property: JsonPropertyName("style")] string Style
+    [property: JsonPropertyName("wordStartIndex")] int WordStartIndex,
+    [property: JsonPropertyName("wordEndIndex")] int WordEndIndex,
+    [property: JsonPropertyName("startTime")] double? StartTime = null,
+    [property: JsonPropertyName("endTime")] double? EndTime = null,
+    [property: JsonPropertyName("confidence")] double? Confidence = null
 );
 
 /// <summary>
@@ -50,18 +47,9 @@ public record SectionRange(
 );
 
 /// <summary>
-/// Totals computed from arrays; estimatedDurationSec is WPM-based.
-/// </summary>
-public record BookTotals(
-    [property: JsonPropertyName("words")] int Words,
-    [property: JsonPropertyName("sentences")] int Sentences,
-    [property: JsonPropertyName("paragraphs")] int Paragraphs,
-    [property: JsonPropertyName("estimatedDurationSec")] double EstimatedDurationSec
-);
-
-/// <summary>
-/// Canonical, slim BookIndex: exact text, structure ranges, and minimal metadata.
-/// Deterministic ordering and no normalization at rest.
+/// Legacy-friendly book index schema used by downstream tooling and tests.
+/// Totals stay as top-level properties and segments collapse sentences and
+/// paragraphs into a single collection for easy inspection.
 /// </summary>
 public record BookIndex(
     [property: JsonPropertyName("sourceFile")] string SourceFile,
@@ -69,12 +57,13 @@ public record BookIndex(
     [property: JsonPropertyName("indexedAt")] DateTime IndexedAt,
     [property: JsonPropertyName("title")] string? Title,
     [property: JsonPropertyName("author")] string? Author,
-    [property: JsonPropertyName("totals")] BookTotals Totals,
+    [property: JsonPropertyName("totalWords")] int TotalWords,
+    [property: JsonPropertyName("totalSentences")] int TotalSentences,
+    [property: JsonPropertyName("totalParagraphs")] int TotalParagraphs,
+    [property: JsonPropertyName("estimatedDuration")] double EstimatedDuration,
     [property: JsonPropertyName("words")] BookWord[] Words,
-    [property: JsonPropertyName("sentences")] SentenceRange[] Sentences,
-    [property: JsonPropertyName("paragraphs")] ParagraphRange[] Paragraphs,
-    [property: JsonPropertyName("sections")] SectionRange[] Sections,
-    [property: JsonPropertyName("buildWarnings")] string[]? BuildWarnings = null
+    [property: JsonPropertyName("segments")] BookSegment[] Segments,
+    [property: JsonPropertyName("sections"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] SectionRange[]? Sections = null
 );
 
 /// <summary>

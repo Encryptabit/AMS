@@ -18,10 +18,11 @@ public static class AnchorPreprocessor
 {
     public static BookAnchorView BuildBookView(BookIndex book)
     {
-        var tokens = new List<string>(book.Totals.Words);
-        var sentIdx = new List<int>(book.Totals.Words);
-        var filteredToOriginal = new List<int>(book.Totals.Words);
-        var originalToFiltered = Enumerable.Repeat(-1, book.Totals.Words).ToArray();
+        var capacity = System.Math.Max(0, book.Words.Length);
+        var tokens = new List<string>(capacity);
+        var sentIdx = new List<int>(capacity);
+        var filteredToOriginal = new List<int>(capacity);
+        var originalToFiltered = Enumerable.Repeat(-1, capacity).ToArray();
 
         for (int i = 0; i < book.Words.Length; i++)
         {

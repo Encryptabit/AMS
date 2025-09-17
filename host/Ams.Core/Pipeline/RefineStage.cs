@@ -5,6 +5,7 @@ using System.Linq;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
+using Ams.Core.Models;
 
 namespace Ams.Core.Pipeline;
 
@@ -175,7 +176,7 @@ public class RefineStage : StageRunner
         return alignments;
     }
 
-    private async Task<List<RefinedSentence>> LoadWindowAlignmentsAsSentencesAsync(string winDir, IReadOnlyList<string> windowIds, IDictionary<string,string> map, CancellationToken ct)
+    private async Task<List<RefinedSentence>> LoadWindowAlignmentsAsSentencesAsync(string winDir, IReadOnlyList<string> windowIds, IReadOnlyDictionary<string,string> map, CancellationToken ct)
     {
         var sentences = new List<RefinedSentence>();
         int sentenceCounter = 0;

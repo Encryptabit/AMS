@@ -139,11 +139,11 @@ public static class BuildIndexCommand
         Console.WriteLine($"Source file: {bookIndex.SourceFile}");
         Console.WriteLine($"Source file hash: {bookIndex.SourceFileHash[..16]}...");
         Console.WriteLine($"Indexed at: {bookIndex.IndexedAt:yyyy-MM-dd HH:mm:ss} UTC");
-        Console.WriteLine($"Total words: {bookIndex.Totals.Words:n0}");
-        Console.WriteLine($"Total sentences: {bookIndex.Totals.Sentences:n0}");
-        Console.WriteLine($"Total paragraphs: {bookIndex.Totals.Paragraphs:n0}");
-        Console.WriteLine($"Estimated duration: {FormatDuration(bookIndex.Totals.EstimatedDurationSec)}");
-        Console.WriteLine($"Sections (Heading 1): {bookIndex.Sections.Length}");
+        Console.WriteLine($"Total words: {bookIndex.TotalWords:n0}");
+        Console.WriteLine($"Total sentences: {bookIndex.TotalSentences:n0}");
+        Console.WriteLine($"Total paragraphs: {bookIndex.TotalParagraphs:n0}");
+        Console.WriteLine($"Estimated duration: {FormatDuration(bookIndex.EstimatedDuration)}");
+        Console.WriteLine($"Sections (Heading 1): {bookIndex.Sections?.Length ?? 0}");
         
         Console.WriteLine($"\nBook index saved to: {outputFile.FullName}");
     }

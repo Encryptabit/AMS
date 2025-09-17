@@ -1,4 +1,5 @@
-using System.CommandLine;
+﻿using System.CommandLine;
+using System.Linq;
 using System.Text.Json;
 using Ams.Align.Anchors;
 using Ams.Core;
@@ -328,19 +329,28 @@ public static class AlignCommand
             secEndWord = Math.Min(book.Words.Length - 1, pipe.Section.EndWord);
         }
 
-        var sentTuples = book.Sentences
-            .Where(s => s.Start <= secEndWord && s.End >= secStartWord)
-            .Select(s => (s.Index, Math.Max(secStartWord, s.Start), Math.Min(secEndWord, s.End)))
+        var sentenceSegments = (book.Segments ?? Array.Empty<BookSegment>())
+            .Where(s => string.Equals(s.Type, "Sentence", StringComparison.OrdinalIgnoreCase))
+            .OrderBy(s => s.Index)
             .ToList();
-        var paraTuples = book.Paragraphs
-            .Where(p => p.Start <= secEndWord && p.End >= secStartWord)
-            .Select(p => (p.Index, Math.Max(secStartWord, p.Start), Math.Min(secEndWord, p.End)))
+        var paragraphSegments = (book.Segments ?? Array.Empty<BookSegment>())
+            .Where(s => string.Equals(s.Type, "Paragraph", StringComparison.OrdinalIgnoreCase))
+            .OrderBy(s => s.Index)
+            .ToList();
+
+        var sentTuples = sentenceSegments
+            .Where(s => s.WordStartIndex <= secEndWord && s.WordEndIndex >= secStartWord)
+            .Select(s => (s.Index, Math.Max(secStartWord, s.WordStartIndex), Math.Min(secEndWord, s.WordEndIndex)))
+            .ToList();
+        var paraTuples = paragraphSegments
+            .Where(p => p.WordStartIndex <= secEndWord && p.WordEndIndex >= secStartWord)
+            .Select(p => (p.Index, Math.Max(secStartWord, p.WordStartIndex), Math.Min(secEndWord, p.WordEndIndex)))
             .ToList();
 
         var (sentAlign, paraAlign) = TranscriptAligner.Rollup(
             wordOps,
-            sentTuples.Select(t => (t.Index, t.Item2, t.Item3)).ToList(),
-            paraTuples.Select(t => (t.Index, t.Item2, t.Item3)).ToList());
+            sentTuples.Select(t => (t.Item1, t.Item2, t.Item3)).ToList(),
+            paraTuples.Select(t => (t.Item1, t.Item2, t.Item3)).ToList());
 
         var tx = new Ams.Core.Align.Tx.TranscriptIndex(
             AudioPath: audioFile.FullName,
@@ -425,3 +435,7 @@ public static class AlignCommand
         }
     }
 }
+
+
+
+

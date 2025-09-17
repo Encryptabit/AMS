@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Text.Json.Serialization;
+using Ams.Core.Models;
 
 namespace Ams.Core;
 
@@ -150,7 +151,15 @@ public sealed record AnchorsArtifact(
 );
 
 // ---- Windows (anchor windows; half-open book spans) ----
-public sealed record WindowsParams(double PrePadSec = 1.0, double PadSec = 0.6);
+public sealed record WindowsParams(
+    double PrePadSec = 1.0,
+    double PadSec = 0.6,
+    double MinDurationSec = 25.0,
+    double TargetDurationSec = 45.0,
+    double MaxDurationSec = 70.0,
+    int MinWordCount = 40,
+    int MaxWordCount = 200
+);
 
 public sealed record AnchorWindow(
     string Id,
@@ -176,24 +185,6 @@ public sealed record WindowAlignParams(
     int TimeoutSec = 600,
     int BandWidthMs = 600,
     string ServiceUrl = "http://localhost:8082"
-);
-
-public sealed record WindowAlignFragment(double Begin, double End);
-
-public sealed record WindowAlignEntry(
-    string WindowId,
-    double OffsetSec,
-    string TextDigest,
-    IReadOnlyList<WindowAlignFragment> Fragments,
-    Dictionary<string, string> ToolVersions,
-    DateTime GeneratedAt
-);
-
-public sealed record WindowAlignIndex(
-    IReadOnlyList<string> WindowIds,
-    Dictionary<string, string> WindowToJsonMap,
-    WindowAlignParams Params,
-    Dictionary<string, string> ToolVersions
 );
 
 // ---- Comparison ----
@@ -348,15 +339,6 @@ public sealed record ChunkAlignment(
 public sealed record RefinementParams(
     double SilenceThresholdDb = -30.0,
     double MinSilenceDurSec = 0.12
-);
-
-public sealed record RefinedSentence(
-    string Id,
-    double Start,
-    double End,
-    int? StartWordIdx,
-    int? EndWordIdx,
-    string Source = "aeneas+silence.start"
 );
 
 // Collation models

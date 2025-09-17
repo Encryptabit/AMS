@@ -1,3 +1,4 @@
+﻿using System.Linq;
 using System.Text.Json;
 using Ams.Core;
 
@@ -21,13 +22,13 @@ public class BookParsingTests
     {
         var parser = new BookParser();
         var tmp = Path.GetTempFileName() + ".txt";
-        var content = "Title Line\r\n\r\n“Odin’” can’ end—of—line test.\r\nNext—para with ‘quotes’ and hyphen‑minus - and ellipsis…";
+        var content = "Title Line\r\n\r\nâ€œOdinâ€™â€ canâ€™ endâ€”ofâ€”line test.\r\nNextâ€”para with â€˜quotesâ€™ and hyphenâ€‘minus - and ellipsisâ€¦";
         try
         {
             await File.WriteAllTextAsync(tmp, content);
             var result = await parser.ParseAsync(tmp);
             Assert.Equal("Title Line", result.Title);
-            Assert.Contains("“Odin’” can’ end—of—line test.", result.Text);
+            Assert.Contains("â€œOdinâ€™â€ canâ€™ endâ€”ofâ€”line test.", result.Text);
             Assert.NotNull(result.Paragraphs);
             Assert.True(result.Paragraphs!.Count >= 2);
         }
@@ -67,7 +68,7 @@ public class BookIndexAcceptanceTests
         var source = Path.GetTempFileName() + ".txt";
         try
         {
-            await File.WriteAllTextAsync(source, "A title\n\nHello “Odin’” can’ world. Next line.");
+            await File.WriteAllTextAsync(source, "A title\n\nHello â€œOdinâ€™â€ canâ€™ world. Next line.");
             var parsed = await parser.ParseAsync(source);
             var idx1 = await indexer.CreateIndexAsync(parsed, source, new BookIndexOptions { AverageWpm = 240 });
             await cache.SetAsync(idx1);
@@ -92,7 +93,7 @@ public class BookIndexAcceptanceTests
         var parser = new BookParser();
         var indexer = new BookIndexer();
         var source = Path.GetTempFileName() + ".txt";
-        var line = "“Odin’” can’ end—of—line test.”";
+        var line = "â€œOdinâ€™â€ canâ€™ endâ€”ofâ€”line test.â€";
         try
         {
             await File.WriteAllTextAsync(source, line);
@@ -100,10 +101,10 @@ public class BookIndexAcceptanceTests
             var idx = await indexer.CreateIndexAsync(parsed, source);
 
             var texts = idx.Words.Select(w => w.Text).ToArray();
-            Assert.Contains("“Odin’”", texts);
-            Assert.Contains("can’", texts);
-            Assert.Contains("end—of—line", texts);
-            Assert.Contains("test.”", texts);
+            Assert.Contains("â€œOdinâ€™â€", texts);
+            Assert.Contains("canâ€™", texts);
+            Assert.Contains("endâ€”ofâ€”line", texts);
+            Assert.Contains("test.â€", texts);
         }
         finally { if (File.Exists(source)) File.Delete(source); }
     }
@@ -144,17 +145,23 @@ public class BookIndexAcceptanceTests
             var idx = await indexer.CreateIndexAsync(parsed, source);
             var total = idx.Words.Length;
 
-            var orderedSents = idx.Sentences.OrderBy(s => s.Start).ToArray();
-            Assert.True(orderedSents.First().Start == 0);
-            Assert.True(orderedSents.Last().End == total - 1);
-            for (int i = 1; i < orderedSents.Length; i++)
-                Assert.Equal(orderedSents[i - 1].End + 1, orderedSents[i].Start);
+            var sentenceSegments = (idx.Segments ?? Array.Empty<BookSegment>())
+                .Where(s => string.Equals(s.Type, "Sentence", StringComparison.OrdinalIgnoreCase))
+                .OrderBy(s => s.WordStartIndex)
+                .ToArray();
+            Assert.True(sentenceSegments.First().WordStartIndex == 0);
+            Assert.True(sentenceSegments.Last().WordEndIndex == total - 1);
+            for (int i = 1; i < sentenceSegments.Length; i++)
+                Assert.Equal(sentenceSegments[i - 1].WordEndIndex + 1, sentenceSegments[i].WordStartIndex);
 
-            var orderedParas = idx.Paragraphs.OrderBy(p => p.Start).ToArray();
-            Assert.True(orderedParas.First().Start == 0);
-            Assert.True(orderedParas.Last().End == total - 1);
-            for (int i = 1; i < orderedParas.Length; i++)
-                Assert.Equal(orderedParas[i - 1].End + 1, orderedParas[i].Start);
+            var paragraphSegments = (idx.Segments ?? Array.Empty<BookSegment>())
+                .Where(s => string.Equals(s.Type, "Paragraph", StringComparison.OrdinalIgnoreCase))
+                .OrderBy(s => s.WordStartIndex)
+                .ToArray();
+            Assert.True(paragraphSegments.First().WordStartIndex == 0);
+            Assert.True(paragraphSegments.Last().WordEndIndex == total - 1);
+            for (int i = 1; i < paragraphSegments.Length; i++)
+                Assert.Equal(paragraphSegments[i - 1].WordEndIndex + 1, paragraphSegments[i].WordStartIndex);
         }
         finally { if (File.Exists(source)) File.Delete(source); }
     }
@@ -208,3 +215,6 @@ public class BookModelsTests
         Assert.Equal(200.0, opt.AverageWpm);
     }
 }
+
+
+

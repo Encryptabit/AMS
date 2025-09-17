@@ -1,4 +1,4 @@
-using System.Text.Json;
+﻿using System.Text.Json;
 using Ams.Core;
 using Ams.Core.Pipeline;
 using Xunit;
@@ -22,8 +22,13 @@ public class AnchorsWindowsStageTests
             // Create minimal book.index.json
             var words = new[]
             {
-                new BookWord("hello", 0, 0, 0, -1),
-                new BookWord("world", 1, 0, 0, -1)
+                new BookWord("hello", 0, 0, 0),
+                new BookWord("world", 1, 0, 0)
+            };
+            var segments = new[]
+            {
+                new BookSegment("hello world", "Sentence", 0, 0, 1),
+                new BookSegment("hello world", "Paragraph", 0, 0, 1)
             };
             var book = new BookIndex(
                 SourceFile: "test.txt",
@@ -31,12 +36,13 @@ public class AnchorsWindowsStageTests
                 IndexedAt: DateTime.UtcNow,
                 Title: "Test",
                 Author: "Tester",
-                Totals: new BookTotals(2, 1, 1, 1.0),
+                TotalWords: words.Length,
+                TotalSentences: 1,
+                TotalParagraphs: 1,
+                EstimatedDuration: 1.0,
                 Words: words,
-                Sentences: new[] { new SentenceRange(0, 0, 1) },
-                Paragraphs: new[] { new ParagraphRange(0, 0, 1, "p", "") },
-                Sections: Array.Empty<SectionRange>(),
-                BuildWarnings: null
+                Segments: segments,
+                Sections: Array.Empty<SectionRange>()
             );
             var bookPath = Path.Combine(tmp, "book.index.json");
             await File.WriteAllTextAsync(bookPath, JsonSerializer.Serialize(book, new JsonSerializerOptions { WriteIndented = true }));
@@ -88,4 +94,6 @@ public class AnchorsWindowsStageTests
         }
     }
 }
+
+
 

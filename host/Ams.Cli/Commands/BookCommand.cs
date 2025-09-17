@@ -1,4 +1,4 @@
-using System.CommandLine;
+﻿using System.CommandLine;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -48,7 +48,6 @@ public static class BookCommand
 
         var rawJson = await File.ReadAllTextAsync(indexFile.FullName);
 
-        // Try to deserialize as current canonical model
         var jsonOptions = new JsonSerializerOptions
         {
             PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
@@ -69,112 +68,155 @@ public static class BookCommand
         if (idx == null)
             throw new InvalidOperationException("Deserialized BookIndex is null.");
 
-        // Perform checks
         var failures = new List<string>();
         var warnings = new List<string>();
+        bool hasTotalFailures = false;
+        bool hasOrderingFailures = false;
 
-        // Counts parity
-        var wordsCount = idx.Words?.Length ?? 0;
-        var sentencesCount = idx.Sentences?.Length ?? 0;
-        var paragraphsCount = idx.Paragraphs?.Length ?? 0;
+        var words = idx.Words ?? Array.Empty<BookWord>();
+        var sentenceSegments = (idx.Segments ?? Array.Empty<BookSegment>())
+            .Where(s => string.Equals(s.Type, "Sentence", StringComparison.OrdinalIgnoreCase))
+            .OrderBy(s => s.Index)
+            .ToArray();
+        var paragraphSegments = (idx.Segments ?? Array.Empty<BookSegment>())
+            .Where(s => string.Equals(s.Type, "Paragraph", StringComparison.OrdinalIgnoreCase))
+            .OrderBy(s => s.Index)
+            .ToArray();
 
-        if (idx.Totals.Words != wordsCount)
-            failures.Add($"Totals.words ({idx.Totals.Words}) != words.Length ({wordsCount})");
-        if (idx.Totals.Sentences != sentencesCount)
-            failures.Add($"Totals.sentences ({idx.Totals.Sentences}) != sentences.Length ({sentencesCount})");
-        if (idx.Totals.Paragraphs != paragraphsCount)
-            failures.Add($"Totals.paragraphs ({idx.Totals.Paragraphs}) != paragraphs.Length ({paragraphsCount})");
+        int wordsCount = words.Length;
+        int sentencesCount = sentenceSegments.Length;
+        int paragraphsCount = paragraphSegments.Length;
 
-        // Ordering & coverage checks for words
+        if (idx.TotalWords != wordsCount)
+        {
+            failures.Add($"Totals.words ({idx.TotalWords}) != words.Length ({wordsCount})");
+            hasTotalFailures = true;
+        }
+        if (idx.TotalSentences != sentencesCount)
+        {
+            failures.Add($"Totals.sentences ({idx.TotalSentences}) != sentence segments ({sentencesCount})");
+            hasTotalFailures = true;
+        }
+        if (idx.TotalParagraphs != paragraphsCount)
+        {
+            failures.Add($"Totals.paragraphs ({idx.TotalParagraphs}) != paragraph segments ({paragraphsCount})");
+            hasTotalFailures = true;
+        }
+
         if (wordsCount > 0)
         {
-            if (idx.Words![0].WordIndex != 0)
-                failures.Add($"First wordIndex is {idx.Words![0].WordIndex}, expected 0");
-            for (int i = 1; i < idx.Words!.Length; i++)
+            if (words[0].WordIndex != 0)
+        {
+            failures.Add($"First wordIndex is {words[0].WordIndex}, expected 0");
+            hasOrderingFailures = true;
+        }
+            for (int i = 1; i < words.Length; i++)
             {
-                if (idx.Words[i].WordIndex != i)
+                if (words[i].WordIndex != i)
                 {
-                    failures.Add($"wordIndex at position {i} is {idx.Words[i].WordIndex}, expected {i}");
+                    failures.Add($"wordIndex at position {i} is {words[i].WordIndex}, expected {i}");
+                    hasOrderingFailures = true;
                     break;
                 }
             }
         }
 
-        // Sentences ordering & coverage
         if (sentencesCount > 0)
         {
-            var sents = idx.Sentences!;
-            if (sents[0].Start != 0)
-                failures.Add($"First sentence.start is {sents[0].Start}, expected 0");
-            if (sents[^1].End != wordsCount - 1)
-                failures.Add($"Last sentence.end is {sents[^1].End}, expected {wordsCount - 1}");
+            var sents = sentenceSegments;
+            if (sents[0].WordStartIndex != 0)
+            {
+                failures.Add($"First sentence.start is {sents[0].WordStartIndex}, expected 0");
+                hasOrderingFailures = true;
+            }
+            if (sents[^1].WordEndIndex != wordsCount - 1)
+                failures.Add($"Last sentence.end is {sents[^1].WordEndIndex}, expected {wordsCount - 1}");
             for (int i = 0; i < sents.Length; i++)
             {
                 var s = sents[i];
-                if (s.Start < 0 || s.End < s.Start || s.End >= wordsCount)
-                    failures.Add($"Sentence {i} has invalid range [{s.Start},{s.End}] for wordsCount {wordsCount}");
+                if (s.WordStartIndex < 0 || s.WordEndIndex < s.WordStartIndex || s.WordEndIndex >= wordsCount)
+                {
+                    failures.Add($"Sentence {i} has invalid range [{s.WordStartIndex},{s.WordEndIndex}] for wordsCount {wordsCount}");
+                    hasOrderingFailures = true;
+                }
                 if (s.Index != i)
+                {
                     failures.Add($"Sentence index mismatch: sentence.Index={s.Index}, expected {i}");
+                    hasOrderingFailures = true;
+                }
                 if (i > 0)
                 {
                     var prev = sents[i - 1];
-                    if (s.Start != prev.End + 1)
-                        failures.Add($"Sentence {i} does not continue from previous (prev.end={prev.End}, start={s.Start})");
-                }
-                // Verify word -> sentence mapping
-                for (int w = s.Start; w <= s.End; w++)
-                {
-                    if (idx.Words![w].SentenceIndex != s.Index)
+                    if (s.WordStartIndex != prev.WordEndIndex + 1)
                     {
-                        failures.Add($"Word {w} sentenceIndex={idx.Words![w].SentenceIndex} != sentence.Index={s.Index}");
+                        failures.Add($"Sentence {i} does not continue from previous (prev.end={prev.WordEndIndex}, start={s.WordStartIndex})");
+                        hasOrderingFailures = true;
+                    }
+                }
+                for (int w = s.WordStartIndex; w <= s.WordEndIndex; w++)
+                {
+                    if (words[w].SentenceIndex != s.Index)
+                    {
+                        failures.Add($"word[{w}].sentenceIndex={words[w].SentenceIndex}, expected {s.Index}");
+                        hasOrderingFailures = true;
                         break;
                     }
                 }
             }
         }
 
-        // Paragraphs ordering & coverage
         if (paragraphsCount > 0)
         {
-            var paras = idx.Paragraphs!;
-            if (paras[0].Start != 0)
-                failures.Add($"First paragraph.start is {paras[0].Start}, expected 0");
-            if (paras[^1].End != wordsCount - 1)
-                failures.Add($"Last paragraph.end is {paras[^1].End}, expected {wordsCount - 1}");
+            var paras = paragraphSegments;
+            if (paras[0].WordStartIndex != 0)
+            {
+                failures.Add($"First paragraph.start is {paras[0].WordStartIndex}, expected 0");
+                hasOrderingFailures = true;
+            }
+            if (paras[^1].WordEndIndex != wordsCount - 1)
+                failures.Add($"Last paragraph.end is {paras[^1].WordEndIndex}, expected {wordsCount - 1}");
             for (int i = 0; i < paras.Length; i++)
             {
                 var p = paras[i];
-                if (p.Start < 0 || p.End < p.Start || p.End >= wordsCount)
-                    failures.Add($"Paragraph {i} has invalid range [{p.Start},{p.End}] for wordsCount {wordsCount}");
+                if (p.WordStartIndex < 0 || p.WordEndIndex < p.WordStartIndex || p.WordEndIndex >= wordsCount)
+                {
+                    failures.Add($"Paragraph {i} has invalid range [{p.WordStartIndex},{p.WordEndIndex}] for wordsCount {wordsCount}");
+                    hasOrderingFailures = true;
+                }
                 if (p.Index != i)
+                {
                     failures.Add($"Paragraph index mismatch: paragraph.Index={p.Index}, expected {i}");
+                    hasOrderingFailures = true;
+                }
                 if (i > 0)
                 {
                     var prev = paras[i - 1];
-                    if (p.Start != prev.End + 1)
-                        failures.Add($"Paragraph {i} does not continue from previous (prev.end={prev.End}, start={p.Start})");
-                }
-                // Verify word -> paragraph mapping
-                for (int w = p.Start; w <= p.End; w++)
-                {
-                    if (idx.Words![w].ParagraphIndex != p.Index)
+                    if (p.WordStartIndex != prev.WordEndIndex + 1)
                     {
-                        failures.Add($"Word {w} paragraphIndex={idx.Words![w].ParagraphIndex} != paragraph.Index={p.Index}");
+                        failures.Add($"Paragraph {i} does not continue from previous (prev.end={prev.WordEndIndex}, start={p.WordStartIndex})");
+                        hasOrderingFailures = true;
+                    }
+                }
+                for (int w = p.WordStartIndex; w <= p.WordEndIndex && w < wordsCount; w++)
+                {
+                    if (words[w].ParagraphIndex != p.Index)
+                    {
+                        failures.Add($"word[{w}].paragraphIndex={words[w].ParagraphIndex}, expected {p.Index}");
+                        hasOrderingFailures = true;
                         break;
                     }
                 }
             }
         }
 
-        // Heuristic warnings: apostrophe splits and TOC bursts
         if (wordsCount > 1)
         {
             int apostropheSplitCount = 0;
             var examples = new List<string>();
-            for (int i = 1; i < idx.Words!.Length; i++)
+            for (int i = 1; i < words.Length; i++)
             {
-                var prev = idx.Words[i - 1].Text;
-                var cur = idx.Words[i].Text;
+                var prev = words[i - 1].Text;
+                var cur = words[i].Text;
                 if (IsContractionSuffix(cur) && EndsWithLetter(prev))
                 {
                     apostropheSplitCount++;
@@ -196,13 +238,12 @@ public static class BookCommand
 
         if (sentencesCount > 0 && paragraphsCount > 0)
         {
-            // For each paragraph, compute sentence lengths within paragraph
             var paraSentences = new Dictionary<int, List<int>>();
-            foreach (var s in idx.Sentences!)
+            foreach (var s in sentenceSegments)
             {
-                if (s.Start > s.End) continue;
-                var pStart = idx.Words![s.Start].ParagraphIndex;
-                var pEnd = idx.Words![s.End].ParagraphIndex;
+                if (s.WordStartIndex > s.WordEndIndex) continue;
+                var pStart = words[s.WordStartIndex].ParagraphIndex;
+                var pEnd = words[s.WordEndIndex].ParagraphIndex;
                 if (pStart == pEnd)
                 {
                     if (!paraSentences.TryGetValue(pStart, out var list))
@@ -210,7 +251,7 @@ public static class BookCommand
                         list = new List<int>();
                         paraSentences[pStart] = list;
                     }
-                    list.Add(s.End - s.Start + 1);
+                    list.Add(s.WordEndIndex - s.WordStartIndex + 1);
                 }
             }
 
@@ -231,7 +272,6 @@ public static class BookCommand
             }
         }
 
-        // Deterministic hash of canonical serialization
         var canonical = JsonSerializer.Serialize(idx, new JsonSerializerOptions
         {
             PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
@@ -240,12 +280,11 @@ public static class BookCommand
         });
         var stableHash = Sha256Hex(Encoding.UTF8.GetBytes(canonical));
 
-        // Emit results
         Console.WriteLine("\n=== Book Verify Results ===");
         Console.WriteLine($"Source file: {idx.SourceFile}");
         Console.WriteLine($"Words/Sentences/Paragraphs: {wordsCount}/{sentencesCount}/{paragraphsCount}");
-        Console.WriteLine($"Counts parity: {(failures.Any(f => f.Contains("Totals")) ? "FAIL" : "OK")}");
-        Console.WriteLine($"Ordering/coverage: {(failures.Except(failures.Where(f=>f.Contains("Totals"))).Any() ? "FAIL" : "OK")}");
+        Console.WriteLine($"Counts parity: {(hasTotalFailures ? "FAIL" : "OK")}");
+        Console.WriteLine($"Ordering/coverage: {(hasOrderingFailures ? "FAIL" : "OK")}");
         Console.WriteLine($"Warnings: {(warnings.Count == 0 ? "none" : warnings.Count.ToString())}");
         Console.WriteLine($"Determinism hash (canonical JSON): {stableHash}");
 
@@ -261,9 +300,9 @@ public static class BookCommand
             Console.WriteLine("\n- Failures:");
             foreach (var f in failures)
                 Console.WriteLine($"  - {f}");
-            Console.WriteLine("\nKeep BookIndex canonical — do not normalize to fix.");
+            Console.WriteLine("\nKeep BookIndex canonical - do not normalize to fix.");
             Console.WriteLine("Adjust decoder tokenization and paragraph style classification (DocX) instead.");
-            Environment.ExitCode = 2; // Non-zero for CI
+            Environment.ExitCode = 2;
         }
         else
         {
@@ -275,13 +314,13 @@ public static class BookCommand
         => !string.IsNullOrEmpty(s) && char.IsLetter(s[^1]);
 
     private static bool IsStandaloneApostrophe(string s)
-        => s == "'" || s == "’";
+        => s == "'" || s == "\u2019";
 
     private static bool IsContractionSuffix(string s)
     {
         if (string.IsNullOrEmpty(s)) return false;
         var lower = s.ToLowerInvariant();
-        return lower is "'s" or "’s" or "'re" or "'m" or "'ve" or "'ll" or "'d" or "n't";
+        return lower is "'s" or "\u2019s" or "'re" or "'m" or "'ve" or "'ll" or "'d" or "n't";
     }
 
     private static double Median(List<int> values)
@@ -300,4 +339,14 @@ public static class BookCommand
         return Convert.ToHexString(hash);
     }
 }
+
+
+
+
+
+
+
+
+
+
 

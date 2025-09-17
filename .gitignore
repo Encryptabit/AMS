@@ -30,6 +30,11 @@ agents.md
 .idea/
 *.sln.docstates
 
+# Agent configuration (keep plan.json tracked)
+.agents/*
+!.agents/plan.json
+!.agents/mcp.policy.json
+
 
 # Dotnet
 **/bin/
