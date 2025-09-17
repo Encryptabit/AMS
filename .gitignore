@@ -27,6 +27,7 @@ artifacts/
 .venv*/
 **/logs/
 agents.md
+analysis/
 .idea/
 *.sln.docstates
 

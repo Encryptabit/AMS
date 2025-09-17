@@ -22,7 +22,9 @@ public static class RefineSentencesCommand
         var langOption = new Option<string>("--language", () => "eng", "Aeneas language code");
         var useSilenceOption = new Option<bool>("--with-silence", () => true, "Use FFmpeg silencedetect to refine sentence ends");
         var silenceThreshOption = new Option<double>("--silence-threshold-db", () => -30.0, "Silence threshold in dBFS (e.g., -30)");
+        silenceThreshOption.AddAlias("--db-floor");
         var silenceMinDurOption = new Option<double>("--silence-min-dur", () => 0.1, "Minimum silence duration in seconds");
+        silenceMinDurOption.AddAlias("--min-dur");
 
         cmd.AddOption(txOption);
         cmd.AddOption(asrOption);

@@ -13,18 +13,17 @@ public class RefineStageTests
     [Fact]
     public void SnapToSilenceStart_FindsEarliestQualifyingSilence()
     {
-        // Arrange: Raw sentence ends at 5.0s, silence starts at 5.2s and 5.8s
+        // Arrange: Raw sentence end overruns into a long silence window.
         var rawSentences = new List<RefinedSentence>
         {
-            new("sentence_001", 2.0, 5.0, null, null, "aeneas+pre-snap"),
+            new("sentence_001", 2.0, 5.8, null, null, "aeneas+pre-snap"),
             new("sentence_002", 6.0, 9.0, null, null, "aeneas+pre-snap")
         };
 
         var silenceEvents = new List<SilenceEvent>
         {
-            new(5.2, 5.5, 0.3, 5.35), // Qualified silence (>= 0.12s)
-            new(5.8, 5.9, 0.1, 5.85), // Too short
-            new(6.1, 6.3, 0.2, 6.2)   // Qualified silence
+            new(5.2, 5.9, 0.7, 5.55), // Qualified silence spanning the late tail of sentence_001
+            new(6.1, 6.3, 0.2, 6.2) // Separate silence for sentence_002 (ignored here)
         };
 
         var parameters = new RefinementParams(-30.0, 0.12);
@@ -32,12 +31,12 @@ public class RefineStageTests
         // Act: Apply snap-to-silence rule
         var refinedSentences = ApplySnapToSilenceRule(rawSentences, silenceEvents, parameters);
 
-        // Assert: First sentence should snap to earliest qualifying silence.start (5.2s)
+        // Assert: First sentence shortens to the silence start (5.2s)
         Assert.Equal(2, refinedSentences.Count);
         Assert.Equal(5.2, refinedSentences[0].End, 3);
         Assert.Equal("aeneas+silence.start", refinedSentences[0].Source);
-        
-        // Second sentence has no qualifying silence after its end (9.0), so it stays unchanged
+
+        // Second sentence has no qualifying silence overlapping its end, so it stays unchanged
         Assert.Equal(9.0, refinedSentences[1].End, 3);
         Assert.Equal("aeneas+no-snap", refinedSentences[1].Source);
     }
@@ -45,18 +44,17 @@ public class RefineStageTests
     [Fact]
     public void SnapToSilenceStart_RespectsBoundaryConstraints()
     {
-        // Arrange: Sentence ends at 5.0s, next sentence starts at 7.0s
-        // Silence at 8.0s is after next sentence start, so should not be used
+        // Arrange: Sentence_001 overruns; next sentence begins at 7.0s.
         var rawSentences = new List<RefinedSentence>
         {
-            new("sentence_001", 2.0, 5.0, null, null, "aeneas+pre-snap"),
+            new("sentence_001", 2.0, 6.6, null, null, "aeneas+pre-snap"),
             new("sentence_002", 7.0, 10.0, null, null, "aeneas+pre-snap")
         };
 
         var silenceEvents = new List<SilenceEvent>
         {
-            new(6.0, 6.3, 0.3, 6.15), // Valid: 6.0 >= 5.0 and < 7.0
-            new(8.0, 8.5, 0.5, 8.25)  // Invalid: 8.0 >= 7.0 (after next sentence)
+            new(6.1, 6.7, 0.6, 6.4), // Valid: overlaps the tail of sentence_001 and ends before 7.0s
+            new(7.4, 7.8, 0.4, 7.6) // Invalid: starts after the next sentence begins
         };
 
         var parameters = new RefinementParams(-30.0, 0.12);
@@ -64,9 +62,12 @@ public class RefineStageTests
         // Act
         var refinedSentences = ApplySnapToSilenceRule(rawSentences, silenceEvents, parameters);
 
-        // Assert: Should snap to 6.0s, not 8.0s
-        Assert.Equal(6.0, refinedSentences[0].End, 3);
+        // Assert: Should snap to 6.1s, ignoring the silence that begins after the next sentence
+        Assert.Equal(6.1, refinedSentences[0].End, 3);
         Assert.Equal("aeneas+silence.start", refinedSentences[0].Source);
+
+        Assert.Equal(10.0, refinedSentences[1].End, 3);
+        Assert.Equal("aeneas+no-snap", refinedSentences[1].Source);
     }
 
     [Fact]
@@ -82,7 +83,7 @@ public class RefineStageTests
         var silenceEvents = new List<SilenceEvent>
         {
             new(4.0, 4.05, 0.05, 4.025), // Too short (< 0.12s)
-            new(7.0, 7.5, 0.5, 7.25)     // After next sentence start
+            new(7.0, 7.5, 0.5, 7.25) // After next sentence start
         };
 
         var parameters = new RefinementParams(-30.0, 0.12);
@@ -107,7 +108,7 @@ public class RefineStageTests
         var silenceEvents = new List<SilenceEvent>
         {
             new(5.1, 5.2, 0.1, 5.15), // 0.1s < 0.12s minimum
-            new(5.3, 5.4, 0.1, 5.35), // 0.1s < 0.12s minimum
+            new(5.3, 5.4, 0.1, 5.35) // 0.1s < 0.12s minimum
         };
 
         var parameters = new RefinementParams(-30.0, 0.12);
@@ -118,6 +119,50 @@ public class RefineStageTests
         // Assert: No qualified silences, should keep original
         Assert.Equal(5.0, refinedSentences[0].End, 3);
         Assert.Equal("aeneas+no-snap", refinedSentences[0].Source);
+    }
+
+    [Fact]
+    public void SnapToSilenceStart_IgnoresSilenceStartBeforeSentence()
+    {
+        var rawSentences = new List<RefinedSentence>
+        {
+            new("sentence_001", 2.0, 4.0, null, null, "aeneas+pre-snap")
+        };
+
+        var silenceEvents = new List<SilenceEvent>
+        {
+            new(1.6, 4.6, 3.0, 3.1)
+        };
+
+        var parameters = new RefinementParams(-30.0, 0.12);
+
+        var refinedSentences = ApplySnapToSilenceRule(rawSentences, silenceEvents, parameters);
+
+        Assert.Single(refinedSentences);
+        Assert.Equal(4.0, refinedSentences[0].End, 3);
+        Assert.Equal("aeneas+no-snap", refinedSentences[0].Source);
+    }
+
+    [Fact]
+    public void SnapToSilenceStart_ChoosesSilenceEndWhenEarlierThanRaw()
+    {
+        var rawSentences = new List<RefinedSentence>
+        {
+            new("sentence_001", 2.0, 4.43, null, null, "aeneas+pre-snap"),
+            new("sentence_002", 6.0, 7.0, null, null, "aeneas+pre-snap")
+        };
+
+        var silenceEvents = new List<SilenceEvent>
+        {
+            new(1.5, 4.4, 2.9, 2.95)
+        };
+
+        var parameters = new RefinementParams(-30.0, 0.12);
+
+        var refinedSentences = ApplySnapToSilenceRule(rawSentences, silenceEvents, parameters);
+
+        Assert.Equal(4.4, refinedSentences[0].End, 3);
+        Assert.Equal("aeneas+silence.end", refinedSentences[0].Source);
     }
 
     [Fact]
@@ -133,8 +178,8 @@ public class RefineStageTests
         // Act
         var constrained = EnforceConstraints(sentences);
 
-        // Assert: Should enforce minimum 50ms duration
-        Assert.Equal(5.05, constrained[0].End, 3); // 5.0 + 0.05 minimum
+        // Assert: Should enforce minimum 10ms duration
+        Assert.Equal(5.01, constrained[0].End, 3); // 5.0 + 0.01 minimum
     }
 
     [Fact]
@@ -166,7 +211,7 @@ public class RefineStageTests
                 new(1.0, 3.0), // Fragment relative to chunk
                 new(4.0, 6.0)
             }, new Dictionary<string, string>(), DateTime.UtcNow),
-            
+
             new("chunk_002", 10.0, "eng", "def456", new List<AlignmentFragment>
             {
                 new(2.0, 5.0) // Fragment relative to chunk (starts at 2s in chunk)
@@ -178,16 +223,16 @@ public class RefineStageTests
 
         // Assert: Times should be converted to chapter coordinates
         Assert.Equal(3, sentences.Count);
-        
+
         // First chunk fragments: offset by 0.0
         Assert.Equal(1.0, sentences[0].Start, 3);
         Assert.Equal(3.0, sentences[0].End, 3);
         Assert.Equal(4.0, sentences[1].Start, 3);
         Assert.Equal(6.0, sentences[1].End, 3);
-        
+
         // Second chunk fragment: offset by 10.0
         Assert.Equal(12.0, sentences[2].Start, 3); // 2.0 + 10.0
-        Assert.Equal(15.0, sentences[2].End, 3);   // 5.0 + 10.0
+        Assert.Equal(15.0, sentences[2].End, 3); // 5.0 + 10.0
     }
 
     [Fact]
@@ -221,7 +266,7 @@ public class RefineStageTests
     }
 
     // Helper methods (simplified versions of the actual RefineStage logic)
-    
+
     private List<RefinedSentence> ApplySnapToSilenceRule(
         List<RefinedSentence> rawSentences,
         List<SilenceEvent> silenceEvents,
@@ -235,33 +280,63 @@ public class RefineStageTests
             .OrderBy(s => s.Start)
             .ToList();
 
-        var refinedSentences = new List<RefinedSentence>();
+        const double CoverageSlackSec = 0.05;
+
+        var refinedSentences = new List<RefinedSentence>(rawSentences.Count);
 
         for (int i = 0; i < rawSentences.Count; i++)
         {
             var sentence = rawSentences[i];
             var nextSentenceStart = i + 1 < rawSentences.Count ? rawSentences[i + 1].Start : double.MaxValue;
+            var upperBound = nextSentenceStart - 0.010;
+            var lowerBound = sentence.Start;
 
-            var candidateSilences = qualifiedSilences
-                .Where(s => s.Start >= sentence.End && s.Start < nextSentenceStart)
-                .OrderBy(s => s.Start)
+            var clampedRawEnd = Math.Clamp(sentence.End, lowerBound, upperBound);
+            var candidates = new List<(double Value, string Source)>
+            {
+                (clampedRawEnd, "aeneas+no-snap")
+            };
+
+            var coveringSilences = qualifiedSilences
+                .Where(s =>
+                    s.Start >= sentence.End - CoverageSlackSec && // CORRECT: silence must start after/at
+                    s.Start < nextSentenceStart && // CORRECT: silence must start before next
+                    s.End < nextSentenceStart + CoverageSlackSec) // CORRECT: silence must end before next
                 .ToList();
 
-            double refinedEnd;
-            string refinedSource;
-
-            if (candidateSilences.Count > 0)
+            foreach (var silence in coveringSilences)
             {
-                refinedEnd = candidateSilences.First().Start;
-                refinedSource = "aeneas+silence.start";
-            }
-            else
-            {
-                refinedEnd = sentence.End;
-                refinedSource = "aeneas+no-snap";
+                var startCandidate = Math.Clamp(silence.Start, lowerBound, upperBound);
+                var endCandidate = Math.Clamp(silence.End, lowerBound, upperBound);
+
+                if (startCandidate > lowerBound + 1e-6)
+                {
+                    candidates.Add((startCandidate, "aeneas+silence.start"));
+                }
+
+                if (endCandidate > lowerBound + 1e-6)
+                {
+                    candidates.Add((endCandidate, "aeneas+silence.end"));
+                }
             }
 
-            var refinedSentence = sentence with { End = refinedEnd, Source = refinedSource };
+            var chosen = candidates
+                .OrderByDescending(c => c.Value) // Longest duration first
+                .ThenBy(c => c.Source switch // Then by preference
+                {
+                    "aeneas+silence.start" => 1, // Prefer silence start
+                    "aeneas+silence.end" => 2, // Then silence end
+                    "aeneas+no-snap" => 3, // Last resort: original
+                    _ => 4
+                })
+                .First();
+
+            var refinedSentence = sentence with
+            {
+                End = chosen.Value,
+                Source = chosen.Source
+            };
+
             refinedSentences.Add(refinedSentence);
         }
 
@@ -270,7 +345,7 @@ public class RefineStageTests
 
     private List<RefinedSentence> EnforceConstraints(List<RefinedSentence> sentences)
     {
-        const double MinSentenceDuration = 0.05; // 50ms minimum
+        const double MinSentenceDuration = 0.01; // 10ms minimum to mirror production constraints
         var constrained = new List<RefinedSentence>();
 
         for (int i = 0; i < sentences.Count; i++)
@@ -308,7 +383,7 @@ public class RefineStageTests
                 var sentence = new RefinedSentence(
                     sentenceId,
                     fragment.Begin + alignment.OffsetSec, // Convert to chapter time
-                    fragment.End + alignment.OffsetSec,   // Convert to chapter time
+                    fragment.End + alignment.OffsetSec, // Convert to chapter time
                     null,
                     null,
                     "aeneas+pre-snap"
@@ -329,7 +404,7 @@ public class RefineStageTests
             WriteIndented = false,
             PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.CamelCase
         });
-        
+
         var bytes = System.Text.Encoding.UTF8.GetBytes(json);
         var hash = System.Security.Cryptography.SHA256.HashData(bytes);
         return Convert.ToHexString(hash);

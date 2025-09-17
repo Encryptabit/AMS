@@ -13,7 +13,9 @@ public static class RefineCommand
         var inOption = new Option<FileInfo>("--in", "Path to input audio file (WAV format)") { IsRequired = true };
         var workOption = new Option<DirectoryInfo>("--work", "Work directory (default: <input>.ams)");
         var silenceThresholdOption = new Option<double>("--silence-threshold-db", () => -30.0, "Silence threshold in dB");
+        silenceThresholdOption.AddAlias("--db-floor");
         var silenceMinDurOption = new Option<double>("--silence-min-dur", () => 0.12, "Minimum silence duration in seconds");
+        silenceMinDurOption.AddAlias("--min-dur");
         var forceOption = new Option<bool>("--force", "Force re-run even if up-to-date");
 
         cmd.AddOption(inOption);

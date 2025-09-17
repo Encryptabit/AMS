@@ -29,9 +29,15 @@ public static class AsrRunCommand
         var jobsOption = new Option<int>("--jobs", () => 1, "Parallelism for future stages");
         var asrServiceOption = new Option<string>("--asr-service", () => "http://localhost:8081", "ASR service URL");
         var alignServiceOption = new Option<string>("--align-service", () => "http://localhost:8082", "Aeneas alignment service URL");
-        var dbFloorOption = new Option<double>("--db-floor", () => -38.0, "Silence detection threshold in dBFS (lower = stricter)");
-        var minDurOption = new Option<double>("--min-dur", () => 0.12, "Minimum silence duration in seconds");
+
+        var silenceThresholdOption = new Option<double>("--silence-threshold-db", () => -38.0, "Silence threshold in dBFS (lower = stricter)");
+        silenceThresholdOption.AddAlias("--db-floor");
+
+        var silenceMinOption = new Option<double>("--silence-min-dur", () => 0.30, "Minimum silence duration in seconds");
+        silenceMinOption.AddAlias("--min-dur");
+
         var roomtoneFileOption = new Option<string>("--roomtone-file", "Path to roomtone file (if not provided, will auto-generate)");
+        roomtoneFileOption.AddAlias("--roomtone");
 
         cmd.AddOption(inOption);
         cmd.AddOption(bookOption);
@@ -43,8 +49,8 @@ public static class AsrRunCommand
         cmd.AddOption(jobsOption);
         cmd.AddOption(asrServiceOption);
         cmd.AddOption(alignServiceOption);
-        cmd.AddOption(dbFloorOption);
-        cmd.AddOption(minDurOption);
+        cmd.AddOption(silenceThresholdOption);
+        cmd.AddOption(silenceMinOption);
         cmd.AddOption(roomtoneFileOption);
 
         cmd.SetHandler(async (context) =>
@@ -59,8 +65,8 @@ public static class AsrRunCommand
             var jobs = context.ParseResult.GetValueForOption(jobsOption);
             var asrService = context.ParseResult.GetValueForOption(asrServiceOption)!;
             var alignService = context.ParseResult.GetValueForOption(alignServiceOption)!;
-            var dbFloor = context.ParseResult.GetValueForOption(dbFloorOption);
-            var minDur = context.ParseResult.GetValueForOption(minDurOption);
+            var silenceThresholdDb = context.ParseResult.GetValueForOption(silenceThresholdOption);
+            var silenceMinDur = context.ParseResult.GetValueForOption(silenceMinOption);
             var roomtoneFile = context.ParseResult.GetValueForOption(roomtoneFileOption);
             
             var workDir = work?.FullName ?? input.FullName + ".ams";
@@ -71,7 +77,7 @@ public static class AsrRunCommand
 
             // Register all stages with user-provided parameters
             runner.RegisterStage("book-index", wd => new BookIndexStage(wd, book.FullName, new BookIndexOptions { AverageWpm = 200.0 }));
-            runner.RegisterStage("timeline", wd => new DetectSilenceStage(wd, new FfmpegSilenceDetector(), new DefaultProcessRunner(), new SilenceDetectionParams(dbFloor, minDur)));
+            runner.RegisterStage("timeline", wd => new DetectSilenceStage(wd, new FfmpegSilenceDetector(), new DefaultProcessRunner(), new SilenceDetectionParams(silenceThresholdDb, silenceMinDur)));
             runner.RegisterStage("plan", wd => new PlanWindowsStage(wd, new SilenceWindowPlanner(), new WindowPlanningParams(60.0, 90.0, 75.0, true)));
             runner.RegisterStage("chunks", wd => new ChunkAudioStage(wd, new DefaultProcessRunner(), new ChunkingParams("wav", 44100)));
             runner.RegisterStage("transcripts", wd => new TranscribeStage(wd, httpClient, new TranscriptionParams("nvidia/parakeet-ctc-0.6b", "en", 1, 1.0, asrService)));
@@ -83,7 +89,7 @@ public static class AsrRunCommand
                 var asrMerged = Path.Combine(wd, "transcripts", "merged.json");
                 return new AnchorsStage(wd, bookIndexPath, asrMerged, new AnchorsParams(3, 50, 2, 50, "v1", "english+domain"));
             });
-            runner.RegisterStage("refine", wd => new RefineStage(wd, new RefinementParams(dbFloor, minDur)));
+            runner.RegisterStage("refine", wd => new RefineStage(wd, new RefinementParams(silenceThresholdDb, silenceMinDur)));
             runner.RegisterStage("collate", wd => new CollateStage(wd, new DefaultProcessRunner(), new CollationParams(
                 roomtoneFile != null ? "file" : "auto", 
                 -50.0,
@@ -91,7 +97,7 @@ public static class AsrRunCommand
                 2000,
                 60,
                 roomtoneFile,
-                dbFloor,
+                silenceThresholdDb,
                 // Interword defaults (feature off)
                 false,
                 null,

@@ -16,6 +16,7 @@ public static class CollateCommand
         var levelOption = new Option<double>("--level-db", () => -50.0, "Room tone level in dB");
         var bridgeMaxOption = new Option<int>("--bridge-max-ms", () => 60, "Maximum cross-chunk boundary sliver duration to bridge (ms)");
         var dbFloorOption = new Option<double>("--db-floor", () => -45.0, "Highband detection floor threshold in dB (for fricative avoidance)");
+        dbFloorOption.AddAlias("--silence-threshold-db");
         // Chapter-wide interword options (feature-flagged)
         var enableInterwordOption = new Option<bool>("--enable-interword", () => true, "Enable chapter-wide interword roomtone over long silences");
         var interwordMinSilenceOption = new Option<double>("--interword-min-silence", () => 0.12, "Minimum silence duration (sec) to consider as interword gap");

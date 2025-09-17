@@ -5,6 +5,8 @@ using System.Linq;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
+using Ams.Core;
+using Ams.Core.Align;
 using Ams.Core.Models;
 
 namespace Ams.Core.Pipeline;
@@ -12,6 +14,9 @@ namespace Ams.Core.Pipeline;
 public class RefineStage : StageRunner
 {
     private readonly RefinementParams _params;
+
+    private static readonly JsonSerializerOptions s_jsonOptions = new JsonSerializerOptions
+        { PropertyNameCaseInsensitive = true };
 
     public RefineStage(
         string workDir,
@@ -21,7 +26,8 @@ public class RefineStage : StageRunner
         _params = parameters ?? throw new ArgumentNullException(nameof(parameters));
     }
 
-    protected override async Task<Dictionary<string, string>> RunStageAsync(ManifestV2 manifest, string stageDir, CancellationToken ct)
+    protected override async Task<Dictionary<string, string>> RunStageAsync(ManifestV2 manifest, string stageDir,
+        CancellationToken ct)
     {
         // Load silence timeline
         var timelinePath = Path.Combine(WorkDir, "timeline", "silence.json");
@@ -36,23 +42,30 @@ public class RefineStage : StageRunner
             throw new InvalidOperationException("Chunk index or plan not found. Run 'chunks' stage first.");
 
         var timelineJson = await File.ReadAllTextAsync(timelinePath, ct);
-        var timeline = JsonSerializer.Deserialize<SilenceTimelineV2>(timelineJson) ?? throw new InvalidOperationException("Invalid silence timeline");
+        var timeline = JsonSerializer.Deserialize<SilenceTimelineV2>(timelineJson) ??
+                       throw new InvalidOperationException("Invalid silence timeline");
 
         var chunkIndexJson = await File.ReadAllTextAsync(chunkIndexPath, ct);
-        var chunkIndex = JsonSerializer.Deserialize<ChunkIndex>(chunkIndexJson) ?? throw new InvalidOperationException("Invalid chunk index");
+        var chunkIndex = JsonSerializer.Deserialize<ChunkIndex>(chunkIndexJson) ??
+                         throw new InvalidOperationException("Invalid chunk index");
 
         var planJson = await File.ReadAllTextAsync(planPath, ct);
-        var plan = JsonSerializer.Deserialize<WindowPlanV2>(planJson) ?? throw new InvalidOperationException("Invalid window plan");
+        var plan = JsonSerializer.Deserialize<WindowPlanV2>(planJson) ??
+                   throw new InvalidOperationException("Invalid window plan");
 
         Console.WriteLine($"Refining sentence boundaries using snap-to-silence.start rule...");
-        Console.WriteLine($"Silence threshold: {_params.SilenceThresholdDb}dB, Min duration: {_params.MinSilenceDurSec}s");
+        Console.WriteLine(
+            $"Silence threshold: {_params.SilenceThresholdDb}dB, Min duration: {_params.MinSilenceDurSec}s");
 
         // Build alignment-derived sentences from chunk-level alignment
         var alignmentsDir = Path.Combine(WorkDir, "align-chunks", "chunks");
         var transcriptsDir = Path.Combine(WorkDir, "transcripts", "raw");
         var chunkAlignments = await LoadChunkAlignmentsAsync(alignmentsDir, chunkIndex.Chunks, ct);
         var tokenIndex = await LoadChunkTokenIndexAsync(transcriptsDir, chunkIndex.Chunks, ct);
-        var rawSentences = ConvertAlignmentsToSentences_AsrInformed(chunkAlignments, tokenIndex);
+        var mergedWords = await LoadMergedWordsAsync(ct);
+        var anchorMap = await LoadAnchorTokenMapAsync(mergedWords, ct);
+        var rawSentences =
+            ConvertAlignmentsToSentences_AsrInformed(chunkAlignments, tokenIndex, mergedWords, anchorMap);
 
         Console.WriteLine($"Found {rawSentences.Count} raw sentences from alignment");
 
@@ -63,7 +76,8 @@ public class RefineStage : StageRunner
 
         // Save refined sentences
         var sentencesPath = Path.Combine(stageDir, "sentences.json");
-        var sentencesJson = JsonSerializer.Serialize(refinedSentences, new JsonSerializerOptions { WriteIndented = true });
+        var sentencesJson =
+            JsonSerializer.Serialize(refinedSentences, new JsonSerializerOptions { WriteIndented = true });
         await File.WriteAllTextAsync(sentencesPath, sentencesJson, ct);
 
         var paramsPath = Path.Combine(stageDir, "params.snapshot.json");
@@ -131,6 +145,7 @@ public class RefineStage : StageRunner
                 var content = await File.ReadAllTextAsync(file, ct);
                 alignmentContents.Add(content);
             }
+
             alignmentHash = ComputeHash(string.Join("", alignmentContents));
         }
 
@@ -139,7 +154,8 @@ public class RefineStage : StageRunner
         return new StageFingerprint(inputHash, paramsHash, new Dictionary<string, string>());
     }
 
-    private async Task<List<ChunkAlignment>> LoadChunkAlignmentsAsync(string alignmentsDir, List<ChunkInfo> chunks, CancellationToken ct)
+    private async Task<List<ChunkAlignment>> LoadChunkAlignmentsAsync(string alignmentsDir, List<ChunkInfo> chunks,
+        CancellationToken ct)
     {
         var alignments = new List<ChunkAlignment>();
 
@@ -179,7 +195,7 @@ public class RefineStage : StageRunner
                 var sentence = new RefinedSentence(
                     sentenceId,
                     fragment.Begin + alignment.OffsetSec, // Convert to chapter time
-                    fragment.End + alignment.OffsetSec,   // Convert to chapter time
+                    fragment.End + alignment.OffsetSec, // Convert to chapter time
                     null, // StartWordIdx not available from Aeneas
                     null, // EndWordIdx not available from Aeneas
                     "aeneas+pre-snap"
@@ -195,7 +211,13 @@ public class RefineStage : StageRunner
 
     private sealed record TokenTime(double Start, double End);
 
-    private async Task<Dictionary<string, List<TokenTime>>> LoadChunkTokenIndexAsync(string transcriptsDir, List<ChunkInfo> chunks, CancellationToken ct)
+    private sealed record AnchorTokenMap(
+        int[] FilteredToOriginal,
+        int[] OriginalToFiltered,
+        int[] AnchorFilteredIndices);
+
+    private async Task<Dictionary<string, List<TokenTime>>> LoadChunkTokenIndexAsync(string transcriptsDir,
+        List<ChunkInfo> chunks, CancellationToken ct)
     {
         var map = new Dictionary<string, List<TokenTime>>(StringComparer.Ordinal);
         foreach (var ch in chunks)
@@ -214,44 +236,155 @@ public class RefineStage : StageRunner
                     list.Add(new TokenTime(s, e));
                 }
             }
+
             map[ch.Id] = list;
         }
+
         return map;
     }
 
-    private List<RefinedSentence> ConvertAlignmentsToSentences_AsrInformed(List<ChunkAlignment> chunkAlignments, Dictionary<string, List<TokenTime>> tokenIndex)
+
+    private async Task<List<TranscriptWord>> LoadMergedWordsAsync(CancellationToken ct)
+    {
+        var mergedPath = Path.Combine(WorkDir, "transcripts", "merged.json");
+        if (!File.Exists(mergedPath))
+            throw new InvalidOperationException("Missing transcripts/merged.json");
+
+        var mergedJson = await File.ReadAllTextAsync(mergedPath, ct);
+        var merged = JsonSerializer.Deserialize<MergedTranscript>(mergedJson, s_jsonOptions)
+                     ?? throw new InvalidOperationException("Invalid merged transcript");
+
+        return merged.Words?.OrderBy(w => w.Start).ToList() ?? new List<TranscriptWord>();
+    }
+
+    private async Task<AnchorTokenMap> LoadAnchorTokenMapAsync(List<TranscriptWord> mergedWords, CancellationToken ct)
+    {
+        var anchorsPath = Path.Combine(WorkDir, "anchors", "anchors.json");
+        if (!File.Exists(anchorsPath) || mergedWords.Count == 0)
+        {
+            return new AnchorTokenMap(Array.Empty<int>(), Array.Empty<int>(), Array.Empty<int>());
+        }
+
+        var anchorsJson = await File.ReadAllTextAsync(anchorsPath, ct);
+        var anchors = JsonSerializer.Deserialize<AnchorsArtifact>(anchorsJson, s_jsonOptions)
+                      ?? throw new InvalidOperationException("Invalid anchors artifact");
+
+        var asrTokens = mergedWords
+            .Select(w => new AsrToken(w.Start, Math.Max(0.0, w.End - w.Start), w.Word))
+            .ToArray();
+        var asrView = AnchorPreprocessor.BuildAsrView(new AsrResponse("merged/derived", asrTokens));
+
+        var filteredToOriginal = asrView.FilteredToOriginalToken.ToArray();
+        var originalToFiltered = Enumerable.Repeat(-1, mergedWords.Count).ToArray();
+        for (int i = 0; i < filteredToOriginal.Length; i++)
+        {
+            var originalIndex = filteredToOriginal[i];
+            if (originalIndex >= 0 && originalIndex < originalToFiltered.Length)
+            {
+                originalToFiltered[originalIndex] = i;
+            }
+        }
+
+        var anchorFilteredIndices = anchors.Selected
+            .Select(a => a.Ap)
+            .Where(ap => ap >= 0)
+            .OrderBy(ap => ap)
+            .ToArray();
+
+        return new AnchorTokenMap(filteredToOriginal, originalToFiltered, anchorFilteredIndices);
+    }
+
+    private sealed record MergedTranscript(List<TranscriptWord> Words);
+
+    private List<RefinedSentence> ConvertAlignmentsToSentences_AsrInformed(List<ChunkAlignment> chunkAlignments,
+        Dictionary<string, List<TokenTime>> tokenIndex, List<TranscriptWord> mergedWords, AnchorTokenMap anchorMap)
     {
         var sentences = new List<RefinedSentence>();
+        if (mergedWords is null)
+        {
+            mergedWords = new List<TranscriptWord>();
+        }
+
+        var orderedWords = mergedWords;
         int sentenceCounter = 0;
+        int wordCursor = 0;
+        const double tokenEpsilon = 1e-4;
 
         foreach (var alignment in chunkAlignments.OrderBy(a => a.OffsetSec))
         {
             tokenIndex.TryGetValue(alignment.ChunkId, out var toks);
             var tokens = toks ?? new List<TokenTime>();
 
-            for (int i = 0; i < alignment.Fragments.Count; i++)
+            foreach (var fragment in alignment.Fragments)
             {
-                var fragment = alignment.Fragments[i];
                 var sChapter = fragment.Begin + alignment.OffsetSec;
                 var eChapterAeneas = fragment.End + alignment.OffsetSec;
 
                 double eChapterAsr = eChapterAeneas;
-                // Find ASR tokens inside the fragment window (chunk-relative)
-                var within = tokens.Where(t => t.Start >= fragment.Begin - 1e-3 && t.End <= fragment.End + 1e-3).ToList();
+                var within = tokens.Where(t => t.Start >= fragment.Begin - 1e-3 && t.End <= fragment.End + 1e-3)
+                    .ToList();
                 if (within.Count > 0)
                 {
                     var maxEnd = within.Max(t => t.End);
-                    eChapterAsr = Math.Max(eChapterAeneas, alignment.OffsetSec + maxEnd);
+                    eChapterAsr = Math.Max(eChapterAsr, alignment.OffsetSec + maxEnd);
+                }
+
+                while (wordCursor < orderedWords.Count && orderedWords[wordCursor].End <= sChapter + tokenEpsilon)
+                {
+                    wordCursor++;
+                }
+
+                int firstWordIndex = -1;
+                int lastWordIndex = -1;
+                int scanIndex = wordCursor;
+                while (scanIndex < orderedWords.Count && orderedWords[scanIndex].Start < eChapterAsr + tokenEpsilon)
+                {
+                    if (firstWordIndex < 0 && orderedWords[scanIndex].End > sChapter - tokenEpsilon)
+                    {
+                        firstWordIndex = scanIndex;
+                    }
+
+                    if (orderedWords[scanIndex].End <= eChapterAsr + tokenEpsilon)
+                    {
+                        lastWordIndex = scanIndex;
+                    }
+
+                    scanIndex++;
+                }
+
+                int anchorStartIndex = ResolveAnchorAlignedWordIndex(anchorMap, firstWordIndex);
+                int anchorEndIndex = ResolveAnchorAlignedWordIndex(anchorMap, lastWordIndex);
+
+                if (anchorEndIndex >= 0 && anchorEndIndex < orderedWords.Count)
+                {
+                    eChapterAsr = Math.Min(eChapterAsr, orderedWords[anchorEndIndex].End);
+                }
+
+                if (lastWordIndex >= 0)
+                {
+                    wordCursor = Math.Max(wordCursor, lastWordIndex);
                 }
 
                 var sentenceId = $"sentence_{sentenceCounter:D3}";
+                int? startWordIdx = anchorStartIndex >= 0
+                    ? anchorStartIndex
+                    : (firstWordIndex >= 0 ? firstWordIndex : null);
+                int? endWordIdx = anchorEndIndex >= 0 ? anchorEndIndex : (lastWordIndex >= 0 ? lastWordIndex : null);
+
+                if (startWordIdx is not null && endWordIdx is not null && startWordIdx > endWordIdx)
+                {
+                    startWordIdx = endWordIdx;
+                }
+
+                var source = anchorEndIndex >= 0 ? "anchor+asr" : "asr+next-word";
+
                 var sentence = new RefinedSentence(
                     sentenceId,
                     sChapter,
-                    eChapterAsr, // provisional end from ASR tokens
-                    null,
-                    null,
-                    "aeneas+asr-dur+pre-snap"
+                    eChapterAsr,
+                    startWordIdx,
+                    endWordIdx,
+                    source
                 );
                 sentences.Add(sentence);
                 sentenceCounter++;
@@ -259,6 +392,78 @@ public class RefineStage : StageRunner
         }
 
         return sentences.OrderBy(s => s.Start).ToList();
+    }
+
+
+    private static int ResolveAnchorAlignedWordIndex(AnchorTokenMap anchorMap, int fallbackWordIndex)
+    {
+        if (fallbackWordIndex < 0)
+            return -1;
+
+        var originalToFiltered = anchorMap.OriginalToFiltered;
+        if (originalToFiltered.Length == 0)
+            return fallbackWordIndex;
+
+        if (fallbackWordIndex >= originalToFiltered.Length)
+        {
+            fallbackWordIndex = originalToFiltered.Length - 1;
+        }
+
+        int filteredIndex = fallbackWordIndex >= 0 ? originalToFiltered[fallbackWordIndex] : -1;
+        int probe = fallbackWordIndex;
+        while (filteredIndex < 0 && probe >= 0)
+        {
+            filteredIndex = originalToFiltered[probe];
+            if (filteredIndex >= 0)
+            {
+                fallbackWordIndex = probe;
+                break;
+            }
+
+            probe--;
+        }
+
+        if (filteredIndex < 0)
+            return fallbackWordIndex;
+
+        var anchorFiltered = anchorMap.AnchorFilteredIndices;
+        if (anchorFiltered.Length == 0)
+            return fallbackWordIndex;
+
+        int anchorIdx = BinarySearchLessOrEqual(anchorFiltered, filteredIndex);
+        if (anchorIdx >= 0)
+        {
+            var filteredToOriginal = anchorMap.FilteredToOriginal;
+            int filteredTokenIndex = anchorFiltered[anchorIdx];
+            if (filteredTokenIndex >= 0 && filteredTokenIndex < filteredToOriginal.Length)
+            {
+                return filteredToOriginal[filteredTokenIndex];
+            }
+        }
+
+        return fallbackWordIndex;
+    }
+
+    private static int BinarySearchLessOrEqual(int[] values, int target)
+    {
+        int lo = 0;
+        int hi = values.Length - 1;
+        int result = -1;
+        while (lo <= hi)
+        {
+            int mid = lo + ((hi - lo) >> 1);
+            if (values[mid] <= target)
+            {
+                result = mid;
+                lo = mid + 1;
+            }
+            else
+            {
+                hi = mid - 1;
+            }
+        }
+
+        return result;
     }
 
     private List<RefinedSentence> ApplySnapToSilenceRule(
@@ -269,66 +474,94 @@ public class RefineStage : StageRunner
         if (rawSentences.Count == 0)
             return rawSentences;
 
-        // Filter silence events by our threshold parameters
         var qualifiedSilences = silenceEvents
             .Where(s => s.Duration >= parameters.MinSilenceDurSec)
             .OrderBy(s => s.Start)
             .ToList();
 
-        Console.WriteLine($"Using {qualifiedSilences.Count} qualified silence events (>= {parameters.MinSilenceDurSec}s)");
+        Console.WriteLine(
+            $"Using {qualifiedSilences.Count} qualified silence events (>= {parameters.MinSilenceDurSec}s)");
 
-        var refinedSentences = new List<RefinedSentence>();
+        const double CoverageSlackSec = 0.05; // allow 50ms tolerance when matching silence windows
+
+        var refinedSentences = new List<RefinedSentence>(rawSentences.Count);
 
         for (int i = 0; i < rawSentences.Count; i++)
         {
             var sentence = rawSentences[i];
             var nextSentenceStart = i + 1 < rawSentences.Count ? rawSentences[i + 1].Start : double.MaxValue;
+            var upperBound = nextSentenceStart - 1e-6;
+            var lowerBound = sentence.Start;
 
-            // BUSINESS RULE: Find earliest silence.start >= sentence.end and < nextSentence.start
-            var candidateSilences = qualifiedSilences
-                .Where(s => s.Start >= sentence.End - 1e-6 && s.End <= nextSentenceStart - 1e-6)
-                .OrderBy(s => s.Start)
+            var clampedRawEnd = Math.Clamp(sentence.End, lowerBound, upperBound);
+            var candidates = new List<(double Value, string Source, SilenceEvent? Silence)>
+            {
+                (clampedRawEnd, "aeneas+no-snap", null)
+            };
+
+            var coveringSilences = qualifiedSilences
+                .Where(s =>
+                    s.Start >= sentence.End - CoverageSlackSec && // CORRECT: silence must start after/at sentence end
+                    s.Start < nextSentenceStart && // CORRECT: silence must start before next sentence
+                    s.End < nextSentenceStart + CoverageSlackSec) // CORRECT: silence must end before next sentence
                 .ToList();
 
-            double refinedEnd;
-            string refinedSource;
-
-            if (candidateSilences.Count > 0)
+            foreach (var silence in coveringSilences)
             {
-                // Snap to earliest qualifying silence.start
-                var targetSilence = candidateSilences.First();
-                refinedEnd = targetSilence.Start;
-                refinedSource = "aeneas+silence.start";
-                
-                Console.WriteLine($"Sentence {sentence.Id}: {sentence.End:F3}s -> {refinedEnd:F3}s (snapped to silence)");
+                var startCandidate = Math.Clamp(silence.Start, lowerBound, upperBound);
+                var endCandidate = Math.Clamp(silence.End, lowerBound, upperBound);
+
+                if (startCandidate > lowerBound + 1e-6)
+                {
+                    candidates.Add((startCandidate, "aeneas+silence.start", silence));
+                }
+
+                if (endCandidate > lowerBound + 1e-6)
+                {
+                    candidates.Add((endCandidate, "aeneas+silence.end", silence));
+                }
+            }
+
+            var chosen = candidates
+                .OrderByDescending(c => c.Value)
+                .ThenBy(c => c.Source switch // Then by preference
+                {
+                    "aeneas+silence.start" => 1, // Prefer silence start
+                    "aeneas+silence.end" => 2, // Then silence end
+                    "aeneas+no-snap" => 3, // Last resort: original
+                    _ => 4
+                })
+                .First();
+
+            var refinedEnd = chosen.Value;
+            var refinedSource = chosen.Source;
+
+            if (chosen.Silence is SilenceEvent selectedSilence)
+            {
+                Console.WriteLine(
+                    $"Sentence {sentence.Id}: {sentence.End:F3}s -> {refinedEnd:F3}s ({refinedSource}) using silence [{selectedSilence.Start:F3}, {selectedSilence.End:F3}]");
             }
             else
             {
-                // No qualifying silence found, keep original end
-                refinedEnd = sentence.End;
-                refinedSource = "aeneas+no-snap";
-                
-                Console.WriteLine($"Sentence {sentence.Id}: {sentence.End:F3}s (no qualifying silence)");
+                Console.WriteLine($"Sentence {sentence.Id}: {sentence.End:F3}s -> {refinedEnd:F3}s ({refinedSource})");
             }
 
-            var refinedSentence = sentence with 
-            { 
-                End = refinedEnd, 
-                Source = refinedSource 
+            var refinedSentence = sentence with
+            {
+                End = refinedEnd,
+                Source = refinedSource
             };
 
             refinedSentences.Add(refinedSentence);
         }
 
-        // Final pass: ensure monotonic non-overlap and minimum length
         var finalSentences = EnforceConstraints(refinedSentences);
-
         return finalSentences;
     }
 
     private List<RefinedSentence> EnforceConstraints(List<RefinedSentence> sentences)
     {
-        const double MinSentenceDuration = 0.05; // 50ms minimum
+        const double MinSentenceDuration = 0.01; // 50ms minimum
         var constrained = new List<RefinedSentence>();
 
         for (int i = 0; i < sentences.Count; i++)
@@ -343,8 +576,9 @@ public class RefineStage : StageRunner
             // Ensure no overlap with next sentence
             if (nextSentence != null && adjustedEnd >= nextSentence.Start)
             {
-                adjustedEnd = Math.Max(nextSentence.Start - 0.001, minEnd);
-                Console.WriteLine($"Sentence {sentence.Id}: adjusted end to avoid overlap: {sentence.End:F3}s -> {adjustedEnd:F3}s");
+                adjustedEnd = Math.Max(nextSentence.Start - 0.020, minEnd);
+                Console.WriteLine(
+                    $"Sentence {sentence.Id}: adjusted end to avoid overlap: {sentence.End:F3}s -> {adjustedEnd:F3}s");
             }
 
             var constrainedSentence = sentence with { End = adjustedEnd };
