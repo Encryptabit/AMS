@@ -9,10 +9,10 @@ internal static class Program
 {
     private static async Task<int> Main(string[] args)
     {
-        // If no arguments provided, run legacy DSP demo (interactive)
+        // If no arguments provided, launch the interactive pipeline shell
         if (args.Length == 0)
         {
-            return RunLegacyDspDemoInteractive();
+            return await InteractivePipelineCommand.RunInteractiveLoopAsync();
         }
         
         // Create root command
@@ -29,6 +29,7 @@ internal static class Program
         rootCommand.AddCommand(AlignCommand.Create());
         rootCommand.AddCommand(AudioCommand.Create());
         rootCommand.AddCommand(RefineSentencesCommand.Create());
+        rootCommand.AddCommand(InteractivePipelineCommand.Create());
         
         // New staged-pipeline commands (top-level helpers)
         rootCommand.AddCommand(Ams.Cli.Commands.AlignChunksCommand.Create());
@@ -79,3 +80,4 @@ internal static class Program
         return 0;
     }
 }
+

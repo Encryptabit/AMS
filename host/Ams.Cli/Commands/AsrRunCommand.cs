@@ -1,3 +1,4 @@
+using Ams.Core.Asr.Pipeline;
 using System.CommandLine;
 using System.Net.Http;
 using Ams.Core;
@@ -79,7 +80,7 @@ public static class AsrRunCommand
             runner.RegisterStage("book-index", wd => new BookIndexStage(wd, book.FullName, new BookIndexOptions { AverageWpm = 200.0 }));
             runner.RegisterStage("timeline", wd => new DetectSilenceStage(wd, new FfmpegSilenceDetector(), new DefaultProcessRunner(), new SilenceDetectionParams(silenceThresholdDb, silenceMinDur)));
             runner.RegisterStage("plan", wd => new PlanWindowsStage(wd, new SilenceWindowPlanner(), new WindowPlanningParams(60.0, 90.0, 75.0, true)));
-            runner.RegisterStage("chunks", wd => new ChunkAudioStage(wd, new DefaultProcessRunner(), new ChunkingParams("wav", 44100)));
+            runner.RegisterStage("chunks", wd => new ChunkAudioStage(wd, new DefaultProcessRunner(), new ChunkingParams("wav", 44100, CreateDefaultVolumeParams())));
             runner.RegisterStage("transcripts", wd => new TranscribeStage(wd, httpClient, new TranscriptionParams("nvidia/parakeet-ctc-0.6b", "en", 1, 1.0, asrService)));
             runner.RegisterStage("align-chunks", wd => new AlignChunksStage(wd, httpClient, new AlignmentParams("eng", 600, alignService)));
             // Downstream alignment-dependent stages
@@ -117,5 +118,22 @@ public static class AsrRunCommand
         });
 
         return cmd;
+    }
+    private static VolumeAnalysisParams CreateDefaultVolumeParams()
+    {
+        return new VolumeAnalysisParams(
+            DbFloor: -45.0,
+            SpeechFloorDb: -35.0,
+            MinProbeSec: 0.080,
+            ProbeWindowSec: 0.050,
+            HfBandLowHz: 3500.0,
+            HfBandHighHz: 12000.0,
+            HfMarginDb: 5.0,
+            WeakMarginDb: 2.5,
+            NudgeStepSec: 0.003,
+            MaxLeftNudges: 8,
+            MaxRightNudges: 3,
+            GuardLeftSec: 0.012,
+            GuardRightSec: 0.015);
     }
 }

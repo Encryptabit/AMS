@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using Ams.Core.Asr.Pipeline;
 using System.Text.Json.Serialization;
 using Ams.Core.Models;
 
@@ -239,7 +240,8 @@ public sealed record WindowPlanningParams(
 
 public sealed record ChunkingParams(
     string Format = "wav", // output format for chunks
-    int SampleRate = 44100
+    int SampleRate = 44100,
+    VolumeAnalysisParams? VolumeAnalysis = null
 );
 
 // Updated silence timeline for v2

@@ -6,6 +6,7 @@ using System.Security.Cryptography;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
+using Ams.Core.Asr.Pipeline;
 using Ams.Core.Io;
 
 namespace Ams.Core.Pipeline;
@@ -14,6 +15,8 @@ public class ChunkAudioStage : StageRunner
 {
     private readonly IProcessRunner _processRunner;
     private readonly ChunkingParams _params;
+    private readonly AudioAnalysisService _analysisService;
+    private readonly VolumeAnalysisParams _analysisParams;
 
     public ChunkAudioStage(
         string workDir,
@@ -23,6 +26,21 @@ public class ChunkAudioStage : StageRunner
     {
         _processRunner = processRunner ?? throw new ArgumentNullException(nameof(processRunner));
         _params = parameters ?? throw new ArgumentNullException(nameof(parameters));
+        _analysisService = new AudioAnalysisService(_processRunner, _params.SampleRate);
+        _analysisParams = parameters.VolumeAnalysis ?? new VolumeAnalysisParams(
+            DbFloor: -45.0,
+            SpeechFloorDb: -35.0,
+            MinProbeSec: 0.080,
+            ProbeWindowSec: 0.050,
+            HfBandLowHz: 3500.0,
+            HfBandHighHz: 12000.0,
+            HfMarginDb: 5.0,
+            WeakMarginDb: 2.5,
+            NudgeStepSec: 0.003,
+            MaxLeftNudges: 8,
+            MaxRightNudges: 3,
+            GuardLeftSec: 0.012,
+            GuardRightSec: 0.015);
     }
 
     protected override async Task<Dictionary<string, string>> RunStageAsync(ManifestV2 manifest, string stageDir, CancellationToken ct)
@@ -50,10 +68,9 @@ public class ChunkAudioStage : StageRunner
 
             Console.WriteLine($"Creating chunk {chunkId}: {window.Start:F2}s - {window.End:F2}s ({window.Length:F2}s)");
 
-            await ExtractChunkAsync(manifest.Input.Path, chunkPath, window, ct);
+            var adjustedSpan = await ExtractChunkWithVolumeNudging(manifest.Input.Path, chunkPath, window, ct);
 
-            // Compute chunk metadata
-            var chunkInfo = await CreateChunkInfoAsync(chunkId, window, chunkFilename, chunkPath, ct);
+            var chunkInfo = await CreateChunkInfoAsync(chunkId, adjustedSpan, chunkFilename, chunkPath, ct);
             chunkInfos.Add(chunkInfo);
 
             Console.WriteLine($"Chunk {chunkId}: {chunkInfo.DurationSec:F2}s, SHA256: {chunkInfo.Sha256[..8]}...");
@@ -82,7 +99,6 @@ public class ChunkAudioStage : StageRunner
     {
         var paramsHash = ComputeHash(SerializeParams(_params));
 
-        // Include plan hash in input hash since chunks depend on the plan
         var planPath = Path.Combine(WorkDir, "plan", "windows.json");
         var planHash = "";
         if (File.Exists(planPath))
@@ -111,11 +127,35 @@ public class ChunkAudioStage : StageRunner
         return new StageFingerprint(inputHash, paramsHash, toolVersions);
     }
 
+    private async Task<ChunkSpan> ExtractChunkWithVolumeNudging(
+        string inputAudioPath,
+        string outputChunkPath,
+        ChunkSpan window,
+        CancellationToken ct)
+    {
+        var analysis = await _analysisService
+            .GetVolumeAnalysis(inputAudioPath, window.Start, window.Length, _analysisParams, ct)
+            .ConfigureAwait(false);
+
+        var suggestedStart = Math.Max(window.Start, Math.Min(window.End - 0.002, analysis.SuggestedStart));
+        var suggestedEnd = Math.Max(suggestedStart + 0.002, Math.Min(window.End + 0.050, analysis.SuggestedEnd));
+        var adjustedSpan = new ChunkSpan(suggestedStart, suggestedEnd);
+
+        if (analysis.LeftNudges > 0 || analysis.RightNudges > 0)
+        {
+            Console.WriteLine(
+                $"  Nudged boundaries -> start {window.Start:F3}s ? {adjustedSpan.Start:F3}s, end {window.End:F3}s ? {adjustedSpan.End:F3}s");
+        }
+
+        await ExtractChunkAsync(inputAudioPath, outputChunkPath, adjustedSpan, ct).ConfigureAwait(false);
+        return adjustedSpan;
+    }
+
     private async Task ExtractChunkAsync(string inputAudioPath, string outputChunkPath, ChunkSpan window, CancellationToken ct)
     {
         var normalizedInputPath = PathNormalizer.NormalizePath(inputAudioPath);
         var normalizedOutputPath = PathNormalizer.NormalizePath(outputChunkPath);
-        
+
         PathNormalizer.EnsureDirectory(normalizedOutputPath);
 
         var ffmpegExe = GetFfmpegExecutable();
@@ -141,10 +181,9 @@ public class ChunkAudioStage : StageRunner
             "-i", $"\"{inputPath}\"",
             "-ss", window.Start.ToString("F6"),
             "-t", window.Length.ToString("F6"),
-            "-c", "copy" // Copy without re-encoding for speed
+            "-c", "copy"
         };
 
-        // Apply sample rate conversion if needed
         if (_params.SampleRate != 44100)
         {
             args.AddRange(new[] { "-ar", _params.SampleRate.ToString() });
@@ -159,12 +198,10 @@ public class ChunkAudioStage : StageRunner
 
     private async Task<ChunkInfo> CreateChunkInfoAsync(string chunkId, ChunkSpan window, string filename, string chunkPath, CancellationToken ct)
     {
-        // Compute SHA256 hash
         await using var stream = File.OpenRead(chunkPath);
         var hash = await SHA256.HashDataAsync(stream, ct);
         var sha256 = Convert.ToHexString(hash);
 
-        // Get actual duration from the file
         double duration;
         try
         {
@@ -173,7 +210,6 @@ public class ChunkAudioStage : StageRunner
         }
         catch
         {
-            // Fallback to window length if we can't read the file
             duration = window.Length;
         }
 
