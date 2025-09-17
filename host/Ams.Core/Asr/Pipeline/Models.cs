@@ -151,7 +151,7 @@ public sealed record AnchorsArtifact(
 );
 
 // ---- Windows (anchor windows; half-open book spans) ----
-public sealed record WindowsParams(
+public sealed record AnchorWindowParams(
     double PrePadSec = 1.0,
     double PadSec = 0.6,
     double MinDurationSec = 25.0,
@@ -171,20 +171,12 @@ public sealed record AnchorWindow(
     int? NextAnchorBp
 );
 
-public sealed record WindowsArtifact(
+public sealed record AnchorWindowsArtifact(
     IReadOnlyList<AnchorWindow> Windows,
-    WindowsParams Params,
+    AnchorWindowParams Params,
     double Coverage,
     double LargestGapSec,
     Dictionary<string, string> ToolVersions
-);
-
-// ---- Window Align ----
-public sealed record WindowAlignParams(
-    string Language = "eng",
-    int TimeoutSec = 600,
-    int BandWidthMs = 600,
-    string ServiceUrl = "http://localhost:8082"
 );
 
 // ---- Comparison ----

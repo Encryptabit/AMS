@@ -18,19 +18,18 @@ public class AsrPipelineRunner
     {
         _stageOrder.AddRange(new[]
         {
-            "book-index",   // 0 (required pre-req)
-            "timeline",      // 1
-            "plan",          // 2 (chunk plan)
-            "chunks",        // 3
-            "transcripts",   // 4
-            "align-chunks",  // 5 (chunk-level alignment)
-            "anchors",       // 6
-            "windows",       // 7 (optional legacy anchor windows)
-            "window-align",  // 8 (optional window reconciliation)
-            "refine",        // 9
-            "collate",       // 10
-            "script-compare",// 11
-            "validate"       // 12
+            "book-index",      // 0 (required pre-req)
+            "timeline",        // 1
+            "plan",            // 2 (chunk plan)
+            "chunks",          // 3
+            "transcripts",     // 4
+            "align-chunks",    // 5 (chunk-level alignment)
+            "anchors",         // 6
+            "anchor-windows",  // 7 (optional anchor window export)
+            "refine",          // 8
+            "collate",         // 9
+            "script-compare",  // 10
+            "validate"         // 11
         });
     }
 

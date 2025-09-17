@@ -1,4 +1,4 @@
-﻿using System.CommandLine;
+using System.CommandLine;
 using System.Globalization;
 using Ams.Cli.Commands;
 using Ams.Core;
@@ -35,8 +35,7 @@ internal static class Program
         rootCommand.AddCommand(Ams.Cli.Commands.RefineCommand.Create());
         rootCommand.AddCommand(Ams.Cli.Commands.CollateCommand.Create());
         rootCommand.AddCommand(Ams.Cli.Commands.AnchorsCommand.Create());
-        rootCommand.AddCommand(Ams.Cli.Commands.WindowsCommand.Create());
-        rootCommand.AddCommand(Ams.Cli.Commands.WindowAlignCommand.Create());
+        rootCommand.AddCommand(Ams.Cli.Commands.AnchorWindowsCommand.Create());
         rootCommand.AddCommand(Ams.Cli.Commands.ScriptCompareCommand.Create());
         
         // Add legacy DSP command (interactive)

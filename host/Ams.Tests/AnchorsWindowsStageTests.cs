@@ -1,14 +1,14 @@
-﻿using System.Text.Json;
+using System.Text.Json;
 using Ams.Core;
 using Ams.Core.Pipeline;
 using Xunit;
 
 namespace Ams.Tests;
 
-public class AnchorsWindowsStageTests
+public class AnchorWindowsStageTests
 {
     [Fact]
-    public async Task AnchorsAndWindowsStages_ProduceDeterministicArtifacts()
+    public async Task AnchorsAndAnchorWindowsStages_ProduceDeterministicArtifacts()
     {
         var tmp = Path.Combine(Path.GetTempPath(), "ams_test_" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(tmp);
@@ -72,19 +72,19 @@ public class AnchorsWindowsStageTests
             var anchorsJson = await File.ReadAllTextAsync(Path.Combine(tmp, "anchors", "anchors.json"));
             Assert.Contains("\"Selected\"", anchorsJson);
 
-            // Run windows stage
-            var windowsStage = new WindowsStage(tmp, new WindowsParams());
-            Assert.True(await windowsStage.RunAsync(manifest));
+            // Run anchor windows stage
+            var anchorWindowsStage = new AnchorWindowsStage(tmp, new AnchorWindowParams());
+            Assert.True(await anchorWindowsStage.RunAsync(manifest));
 
             // Check windows artifact
-            var windowsJson = await File.ReadAllTextAsync(Path.Combine(tmp, "windows", "windows.json"));
+            var windowsJson = await File.ReadAllTextAsync(Path.Combine(tmp, "anchor-windows", "anchor-windows.json"));
             Assert.Contains("\"Windows\"", windowsJson);
 
             // Determinism: rerun and ensure fingerprint matches (skip)
             var manifestAfter = JsonSerializer.Deserialize<ManifestV2>(await File.ReadAllTextAsync(Path.Combine(tmp, "manifest.json")))!;
-            var beforeFp = manifestAfter.Stages["windows"].Fingerprint;
-            Assert.True(await windowsStage.RunAsync(manifestAfter));
-            var afterFp = JsonSerializer.Deserialize<ManifestV2>(await File.ReadAllTextAsync(Path.Combine(tmp, "manifest.json")))!.Stages["windows"].Fingerprint;
+            var beforeFp = manifestAfter.Stages["anchor-windows"].Fingerprint;
+            Assert.True(await anchorWindowsStage.RunAsync(manifestAfter));
+            var afterFp = JsonSerializer.Deserialize<ManifestV2>(await File.ReadAllTextAsync(Path.Combine(tmp, "manifest.json")))!.Stages["anchor-windows"].Fingerprint;
             Assert.Equal(beforeFp.InputHash, afterFp.InputHash);
             Assert.Equal(beforeFp.ParamsHash, afterFp.ParamsHash);
         }

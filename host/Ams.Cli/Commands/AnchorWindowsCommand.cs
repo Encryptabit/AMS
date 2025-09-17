@@ -4,12 +4,12 @@ using Ams.Core.Pipeline;
 
 namespace Ams.Cli.Commands;
 
-public static class WindowsCommand
+public static class AnchorWindowsCommand
 {
     public static Command Create()
     {
         var cmd = new Command(
-            "windows",
+            "anchor-windows",
             "Build half-open anchor windows (token search windows) with pads.\n" +
             "Required prerequisites:\n" +
             "- <work>/book.index.json (build-index or asr run --book).\n" +
@@ -31,8 +31,8 @@ public static class WindowsCommand
                 Environment.Exit(2);
                 return;
             }
-            var p = new WindowsParams(ctx.ParseResult.GetValueForOption(pre), ctx.ParseResult.GetValueForOption(pad));
-            var stage = new WindowsStage(wd, p);
+            var p = new AnchorWindowParams(ctx.ParseResult.GetValueForOption(pre), ctx.ParseResult.GetValueForOption(pad));
+            var stage = new AnchorWindowsStage(wd, p);
             var manifestPath = Path.Combine(wd, "manifest.json");
             if (!File.Exists(manifestPath))
             {

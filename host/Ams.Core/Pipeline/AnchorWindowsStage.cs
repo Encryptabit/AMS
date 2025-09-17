@@ -8,11 +8,11 @@ using Ams.Core.Align.Anchors;
 
 namespace Ams.Core.Pipeline;
 
-public class WindowsStage : StageRunner
+public class AnchorWindowsStage : StageRunner
 {
-    private readonly WindowsParams _params;
+    private readonly AnchorWindowParams _params;
 
-    public WindowsStage(string workDir, WindowsParams parameters) : base(workDir, "windows")
+    public AnchorWindowsStage(string workDir, AnchorWindowParams parameters) : base(workDir, "anchor-windows")
     {
         _params = parameters ?? throw new ArgumentNullException(nameof(parameters));
     }
@@ -74,7 +74,7 @@ public class WindowsStage : StageRunner
         var covered = mergedWindows.Sum(w => Math.Max(0, w.BookEnd - w.BookStart));
         var coverage = Math.Min(1.0, (double)covered / Math.Max(1.0, (bookEnd - bookStart)));
 
-        var artifact = new WindowsArtifact(
+        var artifact = new AnchorWindowsArtifact(
             Windows: mergedWindows,
             Params: _params,
             Coverage: coverage,
@@ -83,12 +83,12 @@ public class WindowsStage : StageRunner
         );
 
         Directory.CreateDirectory(stageDir);
-        await File.WriteAllTextAsync(Path.Combine(stageDir, "windows.json"), JsonSerializer.Serialize(artifact, new JsonSerializerOptions { WriteIndented = true }), ct);
+        await File.WriteAllTextAsync(Path.Combine(stageDir, "anchor-windows.json"), JsonSerializer.Serialize(artifact, new JsonSerializerOptions { WriteIndented = true }), ct);
         await File.WriteAllTextAsync(Path.Combine(stageDir, "params.snapshot.json"), SerializeParams(_params), ct);
 
         return new Dictionary<string, string>
         {
-            ["windows"] = "windows.json",
+            ["anchor-windows"] = "anchor-windows.json",
             ["params"] = "params.snapshot.json"
         };
     }

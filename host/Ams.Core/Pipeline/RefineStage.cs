@@ -47,24 +47,12 @@ public class RefineStage : StageRunner
         Console.WriteLine($"Refining sentence boundaries using snap-to-silence.start rule...");
         Console.WriteLine($"Silence threshold: {_params.SilenceThresholdDb}dB, Min duration: {_params.MinSilenceDurSec}s");
 
-        // Prefer window-align if available; fallback to align-chunks (ASR-informed variant)
-        List<RefinedSentence> rawSentences;
-        var winIndexPath = Path.Combine(WorkDir, "window-align", "index.json");
-        if (File.Exists(winIndexPath))
-        {
-            var winIndexJson = await File.ReadAllTextAsync(winIndexPath, ct);
-            var winIndex = JsonSerializer.Deserialize<WindowAlignIndex>(winIndexJson) ?? throw new InvalidOperationException("Invalid window-align index");
-            var winDir = Path.Combine(WorkDir, "window-align", "windows");
-            rawSentences = await LoadWindowAlignmentsAsSentencesAsync(winDir, winIndex.WindowIds, winIndex.WindowToJsonMap, ct);
-        }
-        else
-        {
-            var alignmentsDir = Path.Combine(WorkDir, "align-chunks", "chunks");
-            var transcriptsDir = Path.Combine(WorkDir, "transcripts", "raw");
-            var chunkAlignments = await LoadChunkAlignmentsAsync(alignmentsDir, chunkIndex.Chunks, ct);
-            var tokenIndex = await LoadChunkTokenIndexAsync(transcriptsDir, chunkIndex.Chunks, ct);
-            rawSentences = ConvertAlignmentsToSentences_AsrInformed(chunkAlignments, tokenIndex);
-        }
+        // Build alignment-derived sentences from chunk-level alignment
+        var alignmentsDir = Path.Combine(WorkDir, "align-chunks", "chunks");
+        var transcriptsDir = Path.Combine(WorkDir, "transcripts", "raw");
+        var chunkAlignments = await LoadChunkAlignmentsAsync(alignmentsDir, chunkIndex.Chunks, ct);
+        var tokenIndex = await LoadChunkTokenIndexAsync(transcriptsDir, chunkIndex.Chunks, ct);
+        var rawSentences = ConvertAlignmentsToSentences_AsrInformed(chunkAlignments, tokenIndex);
 
         Console.WriteLine($"Found {rawSentences.Count} raw sentences from alignment");
 
@@ -174,35 +162,6 @@ public class RefineStage : StageRunner
         }
 
         return alignments;
-    }
-
-    private async Task<List<RefinedSentence>> LoadWindowAlignmentsAsSentencesAsync(string winDir, IReadOnlyList<string> windowIds, IReadOnlyDictionary<string,string> map, CancellationToken ct)
-    {
-        var sentences = new List<RefinedSentence>();
-        int sentenceCounter = 0;
-        foreach (var id in windowIds)
-        {
-            if (!map.TryGetValue(id, out var file)) continue;
-            var path = Path.Combine(winDir, file);
-            if (!File.Exists(path)) continue;
-            var json = await File.ReadAllTextAsync(path, ct);
-            var entry = JsonSerializer.Deserialize<WindowAlignEntry>(json);
-            if (entry == null) continue;
-            foreach (var f in entry.Fragments)
-            {
-                var sId = $"sentence_{sentenceCounter:D3}";
-                sentences.Add(new RefinedSentence(
-                    sId,
-                    entry.OffsetSec + f.Begin,
-                    entry.OffsetSec + f.End,
-                    null,
-                    null,
-                    "aeneas-window+pre-snap"
-                ));
-                sentenceCounter++;
-            }
-        }
-        return sentences.OrderBy(s => s.Start).ToList();
     }
 
     private List<RefinedSentence> ConvertAlignmentsToSentences(List<ChunkAlignment> chunkAlignments)
@@ -327,7 +286,7 @@ public class RefineStage : StageRunner
 
             // BUSINESS RULE: Find earliest silence.start >= sentence.end and < nextSentence.start
             var candidateSilences = qualifiedSilences
-                .Where(s => s.Start >= sentence.End - 1e-6 && s.Start < nextSentenceStart - 1e-6)
+                .Where(s => s.Start >= sentence.End - 1e-6 && s.End <= nextSentenceStart - 1e-6)
                 .OrderBy(s => s.Start)
                 .ToList();
 
