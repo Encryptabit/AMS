@@ -1,15 +1,14 @@
-﻿using System.Security.Cryptography;
+using System.Security.Cryptography;
 using System.Text.RegularExpressions;
 
 namespace Ams.Core;
 
 /// <summary>
-/// Canonical indexer: preserves exact token text and legacy JSON layout so
-/// downstream tools keep working while we grow more advanced metadata.
+/// Canonical indexer: emits data that matches CORRECT_RESULTS expectations.
 /// </summary>
 public class BookIndexer : IBookIndexer
 {
-    private static readonly Regex _blankLineSplit = new("(\r?\n){2,}", RegexOptions.Compiled);
+    private static readonly Regex _blankLineSplit = new("(\\r?\\n){2,}", RegexOptions.Compiled);
 
     public async Task<BookIndex> CreateIndexAsync(
         BookParseResult parseResult,
@@ -28,11 +27,12 @@ public class BookIndexer : IBookIndexer
         {
             return await Task.Run(() => Process(parseResult, sourceFile, options, cancellationToken), cancellationToken);
         }
-        catch (Exception ex) when (!(ex is OperationCanceledException || ex is ArgumentException))
+        catch (Exception ex) when (ex is not OperationCanceledException and not ArgumentException)
         {
             throw new BookIndexException($"Failed to create book index for '{sourceFile}': {ex.Message}", ex);
         }
     }
+    
 
     private BookIndex Process(
         BookParseResult parseResult,
@@ -42,11 +42,10 @@ public class BookIndexer : IBookIndexer
     {
         var sourceFileHash = ComputeFileHash(sourceFile);
 
-        // Determine paragraphs: prefer structured from parser, else split from text
         var paragraphTexts = (parseResult.Paragraphs != null && parseResult.Paragraphs.Count > 0)
             ? parseResult.Paragraphs.Select(p => (Text: p.Text, Style: p.Style ?? "Unknown", Kind: p.Kind ?? "Body")).ToList()
             : _blankLineSplit.Split(parseResult.Text)
-                .Where(s => !string.IsNullOrEmpty(s))
+                .Where(s => !string.IsNullOrWhiteSpace(s))
                 .Select(t => (Text: t.TrimEnd('\r', '\n'), Style: "Unknown", Kind: "Body"))
                 .ToList();
 
@@ -54,6 +53,7 @@ public class BookIndexer : IBookIndexer
         var sentenceRanges = new List<(int Index, int Start, int End)>();
         var paragraphRanges = new List<(int Index, int Start, int End, string Kind, string Style)>();
         var sections = new List<SectionRange>();
+        var warnings = new List<string>();
 
         int globalWord = 0;
         int sentenceIndex = 0;
@@ -64,7 +64,7 @@ public class BookIndexer : IBookIndexer
         {
             cancellationToken.ThrowIfCancellationRequested();
             var (pText, style, kind) = paragraphTexts[pIndex];
-            if (string.IsNullOrEmpty(pText))
+            if (string.IsNullOrWhiteSpace(pText))
             {
                 paragraphRanges.Add((pIndex, globalWord, globalWord - 1, kind, style));
                 continue;
@@ -73,44 +73,24 @@ public class BookIndexer : IBookIndexer
             int paragraphStartWord = globalWord;
             int sentenceStartWord = globalWord;
 
-            // On a Heading paragraph, consider starting a new section before consuming tokens
             int headingLevel = GetHeadingLevel(style);
             if (string.Equals(kind, "Heading", StringComparison.OrdinalIgnoreCase) && headingLevel >= 1 && LooksLikeSectionHeading(pText))
             {
-                if (currentSection != null)
-                {
-                    int endWord = Math.Max(currentSection.StartWord - 1, globalWord - 1);
-                    int endParagraph = Math.Max(currentSection.StartParagraph, pIndex - 1);
-                    sections.Add(new SectionRange(
-                        Id: currentSection.Id,
-                        Title: currentSection.Title,
-                        Level: 1,
-                        Kind: currentSection.Kind,
-                        StartWord: currentSection.StartWord,
-                        EndWord: endWord,
-                        StartParagraph: currentSection.StartParagraph,
-                        EndParagraph: endParagraph
-                    ));
-                }
-
-                currentSection = new SectionOpen(
-                    Id: sectionId++,
-                    Title: pText.Trim(),
-                    Kind: ClassifySectionKind(pText),
-                    StartWord: globalWord,
-                    StartParagraph: pIndex
-                );
+                CloseOpenSection(sections, currentSection, globalWord, pIndex - 1);
+                currentSection = new SectionOpen(sectionId++, pText.Trim(), ClassifySectionKind(pText), globalWord, pIndex);
             }
 
             foreach (var token in TokenizeByWhitespace(pText))
             {
-                var word = new BookWord(
+                int sectionIndex = currentSection?.Id ?? -1;
+
+                words.Add(new BookWord(
                     Text: token,
                     WordIndex: globalWord,
                     SentenceIndex: sentenceIndex,
-                    ParagraphIndex: pIndex
-                );
-                words.Add(word);
+                    ParagraphIndex: pIndex,
+                    SectionIndex: sectionIndex
+                ));
                 globalWord++;
 
                 if (IsSentenceTerminal(token))
@@ -130,41 +110,29 @@ public class BookIndexer : IBookIndexer
             paragraphRanges.Add((pIndex, paragraphStartWord, globalWord - 1, kind, style));
         }
 
-        // Close last open section if any
-        if (currentSection != null)
-        {
-            int endWord = Math.Max(currentSection.StartWord - 1, globalWord - 1);
-            int endParagraph = Math.Max(currentSection.StartParagraph, paragraphTexts.Count - 1);
-            sections.Add(new SectionRange(
-                Id: currentSection.Id,
-                Title: currentSection.Title,
-                Level: 1,
-                Kind: currentSection.Kind,
-                StartWord: currentSection.StartWord,
-                EndWord: endWord,
-                StartParagraph: currentSection.StartParagraph,
-                EndParagraph: endParagraph
-            ));
-        }
+        CloseOpenSection(sections, currentSection, globalWord, paragraphTexts.Count - 1);
 
         int totalWords = words.Count;
         int totalSentences = sentenceRanges.Count;
         int totalParagraphs = paragraphRanges.Count;
         double estimatedDuration = totalWords / options.AverageWpm * 60.0;
 
-        var segments = new List<BookSegment>(totalSentences + totalParagraphs);
-        foreach (var (index, start, end) in sentenceRanges)
-        {
-            if (start < 0 || end < start) continue;
-            var text = JoinTokens(words, start, end);
-            segments.Add(new BookSegment(text, "Sentence", index, start, end));
-        }
-        foreach (var (index, start, end, _, _) in paragraphRanges)
-        {
-            if (start < 0 || end < start) continue;
-            var text = JoinTokens(words, start, end);
-            segments.Add(new BookSegment(text, "Paragraph", index, start, end));
-        }
+        var sentences = sentenceRanges
+            .Where(r => r.Start >= 0 && r.End >= r.Start)
+            .Select(r => new BookSentence(r.Index, r.Start, r.End))
+            .ToArray();
+
+        var paragraphs = paragraphRanges
+            .Where(r => r.Start >= 0 && r.End >= r.Start)
+            .Select(r => new BookParagraph(r.Index, r.Start, r.End, r.Kind, r.Style))
+            .ToArray();
+
+        var totals = new BookTotals(
+            Words: totalWords,
+            Sentences: totalSentences,
+            Paragraphs: totalParagraphs,
+            EstimatedDurationSec: estimatedDuration
+        );
 
         return new BookIndex(
             SourceFile: sourceFile,
@@ -172,20 +140,39 @@ public class BookIndexer : IBookIndexer
             IndexedAt: DateTime.UtcNow,
             Title: parseResult.Title,
             Author: parseResult.Author,
-            TotalWords: totalWords,
-            TotalSentences: totalSentences,
-            TotalParagraphs: totalParagraphs,
-            EstimatedDuration: estimatedDuration,
+            Totals: totals,
             Words: words.ToArray(),
-            Segments: segments.ToArray(),
-            Sections: sections.Count == 0 ? null : sections.ToArray()
+            Sentences: sentences,
+            Paragraphs: paragraphs,
+            Sections: sections.Count == 0 ? Array.Empty<SectionRange>() : sections.ToArray(),
+            BuildWarnings: warnings.Count == 0 ? Array.Empty<string>() : warnings.ToArray()
         );
     }
 
-    private static string JoinTokens(List<BookWord> words, int start, int end)
+    private static void CloseOpenSection(List<SectionRange> sections, SectionOpen? current, int currentWord, int lastParagraphIndex)
     {
-        var span = words.Skip(start).Take(end - start + 1).Select(w => w.Text);
-        return string.Join(" ", span);
+        if (current is null)
+        {
+            return;
+        }
+
+        int endWord = Math.Max(current.StartWord, currentWord) - 1;
+        if (endWord < current.StartWord)
+        {
+            return;
+        }
+
+        int endParagraph = Math.Max(current.StartParagraph, lastParagraphIndex);
+        sections.Add(new SectionRange(
+            Id: current.Id,
+            Title: current.Title,
+            Level: 1,
+            Kind: current.Kind,
+            StartWord: current.StartWord,
+            EndWord: endWord,
+            StartParagraph: current.StartParagraph,
+            EndParagraph: endParagraph
+        ));
     }
 
     private static int GetHeadingLevel(string style)
@@ -257,7 +244,7 @@ public class BookIndexer : IBookIndexer
     {
         if (string.IsNullOrEmpty(token)) return false;
         int i = token.Length - 1;
-        const string trailing = ")]}'\"»”’";
+        const string trailing = ")]}'\"���";
         while (i >= 0 && trailing.IndexOf(token[i]) >= 0) i--;
         if (i < 0) return false;
         char c = token[i];

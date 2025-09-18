@@ -1,7 +1,10 @@
+using System.Collections.Generic;
+using System.Linq;
 using System.Text.Json;
 using Ams.Core.Align.Tx;
 using Ams.Core.Asr.Pipeline;
 using Ams.Core.Services;
+using Ams.Core.Util;
 
 namespace Ams.Core.Pipeline;
 
@@ -35,14 +38,14 @@ public sealed class SentenceRefinementStage : StageRunner
 
     protected override async Task<Dictionary<string, string>> RunStageAsync(ManifestV2 manifest, string stageDir, CancellationToken ct)
     {
-        // Load ChunkTranscriptIndex from transcripts stage
-        var transcriptsPath = Path.Combine(WorkDir, "transcripts", "index.json");
-        if (!File.Exists(transcriptsPath))
-            throw new InvalidOperationException("ChunkTranscriptIndex not found. Run 'transcripts' stage first.");
+        // Load BookIndex from book-index stage
+        var bookIndexPath = Path.Combine(WorkDir, "book.index.json");
+        if (!File.Exists(bookIndexPath))
+            throw new InvalidOperationException("BookIndex not found. Run 'book-index' stage first.");
 
-        var transcriptsJson = await File.ReadAllTextAsync(transcriptsPath, ct);
-        var chunkTranscriptIndex = JsonSerializer.Deserialize<ChunkTranscriptIndex>(transcriptsJson, s_jsonOptions) ??
-                 throw new InvalidOperationException("Invalid ChunkTranscriptIndex JSON");
+        var bookIndexJson = await File.ReadAllTextAsync(bookIndexPath, ct);
+        var bookIndex = JsonSerializer.Deserialize<BookIndex>(bookIndexJson, s_jsonOptions) ??
+                        throw new InvalidOperationException("Invalid BookIndex JSON");
 
         // Load ASR JSON from transcripts stage  
         var asrPath = Path.Combine(WorkDir, "transcripts", "asr.json");
@@ -56,18 +59,8 @@ public sealed class SentenceRefinementStage : StageRunner
         // Determine audio file path
         string audioPath = DetermineAudioPath(manifest);
 
-        // Create a minimal TranscriptIndex for sentence refinement service
-        // For now, we'll create empty collections since sentence refinement only needs ASR data
-        var tx = new TranscriptIndex(
-            AudioPath: audioPath,
-            ScriptPath: "", // Not needed for sentence refinement
-            BookIndexPath: "", // Not needed for sentence refinement  
-            CreatedAtUtc: DateTime.UtcNow,
-            NormalizationVersion: "v1",
-            Words: new List<WordAlign>(), // Empty - not used by sentence refinement
-            Sentences: new List<SentenceAlign>(), // Empty - not used by sentence refinement
-            Paragraphs: new List<ParagraphAlign>() // Empty - not used by sentence refinement
-        );
+        // Transform BookIndex to TranscriptIndex for sentence refinement
+        var tx = BookIndexToTranscriptTransformer.Transform(bookIndex, asr, audioPath, bookIndexPath);
 
         // Run sentence refinement using the correct service
         var refinedSentences = await _sentenceRefinementService.RefineAsync(
@@ -91,10 +84,10 @@ public sealed class SentenceRefinementStage : StageRunner
 
     protected override async Task<StageFingerprint> ComputeFingerprintAsync(ManifestV2 manifest, CancellationToken ct)
     {
-        // Compute input hash from ChunkTranscriptIndex and ASR files
+        // Compute input hash from BookIndex and ASR files
         var inputPaths = new[]
         {
-            Path.Combine(WorkDir, "transcripts", "index.json"),
+            Path.Combine(WorkDir, "book.index.json"),
             Path.Combine(WorkDir, "transcripts", "asr.json")
         };
 
@@ -114,6 +107,7 @@ public sealed class SentenceRefinementStage : StageRunner
         {
             { "SentenceRefinementService", "1.0.0" },
             { "AsrRefinementService", "1.0.0" },
+            { "BookIndexToTranscriptTransformer", "1.0.0" },
             { "FFmpeg", "system" },
             { "Aeneas", "system" }
         };
@@ -182,7 +176,7 @@ public sealed class SentenceRefinementStage : StageRunner
         await File.WriteAllTextAsync(refinedAsrPath, JsonSerializer.Serialize(refinedAsr, s_jsonOptions), ct);
 
         // Generate refinement-details.json with detected silences and refined tokens
-        var detailsOutput = GenerateRefinementDetails(originalAsr, refinedAsr);
+        var detailsOutput = GenerateRefinementDetails(refinedSentences, originalAsr, refinedAsr);
         var detailsPath = Path.Combine(stageDir, "refinement-details.json");
         await File.WriteAllTextAsync(detailsPath, JsonSerializer.Serialize(detailsOutput, s_jsonOptions), ct);
 
@@ -225,35 +219,70 @@ public sealed class SentenceRefinementStage : StageRunner
         };
     }
 
-    private object GenerateRefinementDetails(AsrResponse originalAsr, AsrResponse refinedAsr)
+    private RefinementDetails GenerateRefinementDetails(
+        IReadOnlyList<SentenceRefined> refinedSentences,
+        AsrResponse originalAsr,
+        AsrResponse refinedAsr)
     {
-        // Generate detected silences info (placeholder - could be enhanced with actual silence detection)
-        var silences = new[]
+        var refinedTokenDetails = new List<RefinedTokenDetail>(refinedAsr.Tokens.Length);
+        var originalTokens = originalAsr.Tokens;
+
+        if (refinedAsr.Tokens.Length > 0)
         {
-            new
+            var lastOriginalIndex = Math.Max(0, originalTokens.Length - 1);
+            var originalIndex = 0;
+
+            foreach (var token in refinedAsr.Tokens)
             {
-                start_sec = Math.Round(0.0, 6),
-                end_sec = Math.Round(0.1, 6),
-                duration_sec = Math.Round(0.1, 6),
-                confidence = Math.Round(1.0, 4)
+                var mappedOriginal = originalTokens.Length == 0
+                    ? null
+                    : originalTokens[Math.Min(originalIndex, lastOriginalIndex)];
+
+                refinedTokenDetails.Add(new RefinedTokenDetail(
+                    StartTime: Precision.RoundToMicroseconds(token.StartTime),
+                    Duration: Precision.RoundToMicroseconds(token.Duration),
+                    Word: token.Word,
+                    OriginalStartTime: mappedOriginal is null ? 0.0 : Precision.RoundToMicroseconds(mappedOriginal.StartTime),
+                    OriginalDuration: mappedOriginal is null ? 0.0 : Precision.RoundToMicroseconds(mappedOriginal.Duration),
+                    Confidence: 1.0
+                ));
+
+                if (originalIndex < lastOriginalIndex)
+                {
+                    originalIndex++;
+                }
             }
-        };
+        }
 
-        // Generate refined tokens summary
-        var refinedTokensSummary = new
+        var detectedSilences = new List<SilenceInfo>();
+        for (var i = 0; i < refinedSentences.Count - 1; i++)
         {
-            original_count = originalAsr.Tokens.Length,
-            refined_count = refinedAsr.Tokens.Length,
-            total_duration_original = Math.Round(originalAsr.Tokens.Sum(t => t.Duration), 6),
-            total_duration_refined = Math.Round(refinedAsr.Tokens.Sum(t => t.Duration), 6)
-        };
+            var current = refinedSentences[i];
+            var next = refinedSentences[i + 1];
+            var gap = Precision.RoundToMicroseconds(next.Start - current.End);
+            if (gap > 0.0)
+            {
+                var start = Precision.RoundToMicroseconds(current.End);
+                var end = Precision.RoundToMicroseconds(next.Start);
+                detectedSilences.Add(new SilenceInfo(
+                    Start: start,
+                    End: end,
+                    Duration: Precision.RoundToMicroseconds(end - start),
+                    Confidence: 1.0
+                ));
+            }
+        }
 
-        return new
-        {
-            silences = silences,
-            refined_tokens = refinedTokensSummary,
-            notes = "Sentence refinement completed using SentenceRefinementService and AsrRefinementService"
-        };
+        var totalDurationSeconds = refinedTokenDetails.Count == 0
+            ? 0.0
+            : Precision.RoundToMicroseconds(refinedTokenDetails[^1].StartTime + refinedTokenDetails[^1].Duration);
+
+        return new RefinementDetails(
+            ModelVersion: refinedAsr.ModelVersion,
+            RefinedTokens: refinedTokenDetails,
+            DetectedSilences: detectedSilences,
+            TotalDurationSeconds: totalDurationSeconds
+        );
     }
 }
 

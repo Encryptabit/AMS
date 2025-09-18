@@ -78,12 +78,35 @@ public sealed class HydratedTxServiceTests
         // Arrange
         var bookWords = new[]
         {
-            new BookWord("Hello", 0, 0, 0),
-            new BookWord("world", 1, 0, 0)
+            new BookWord("Hello", 0, 0, 0, 0),
+            new BookWord("world", 1, 0, 0, 0)
         };
+        var sentences = new[]
+        {
+            new BookSentence(0, 0, 1)
+        };
+        var paragraphs = new[]
+        {
+            new BookParagraph(0, 0, 1, "Body", "Normal")
+        };
+        var totals = new BookTotals(
+            Words: bookWords.Length,
+            Sentences: sentences.Length,
+            Paragraphs: paragraphs.Length,
+            EstimatedDurationSec: 1.0
+        );
         var book = new BookIndex(
-            "test.txt", "hash", DateTime.UtcNow, null, null,
-            2, 1, 1, 1.0, bookWords, new BookSegment[0]);
+            SourceFile: "test.txt",
+            SourceFileHash: "hash",
+            IndexedAt: DateTime.UtcNow,
+            Title: null,
+            Author: null,
+            Totals: totals,
+            Words: bookWords,
+            Sentences: sentences,
+            Paragraphs: paragraphs,
+            Sections: Array.Empty<SectionRange>()
+        );
 
         var asrTokens = new[]
         {
@@ -100,18 +123,18 @@ public sealed class HydratedTxServiceTests
 
         var tx = new TranscriptIndex(
             "audio.wav", "script.txt", "book.json", DateTime.UtcNow, "v1",
-            wordAligns, new SentenceAlign[0], new ParagraphAlign[0]);
+            wordAligns, Array.Empty<SentenceAlign>(), Array.Empty<ParagraphAlign>());
 
         // Act
         var result = _service.GenerateHydratedTx(tx, book, asr);
-        
+
         var json = JsonSerializer.Serialize(result, new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase });
         var hydrated = JsonSerializer.Deserialize<JsonElement>(json);
 
         // Assert
         var words = hydrated.GetProperty("words").EnumerateArray().ToArray();
         Assert.Equal(2, words.Length);
-        
+
         var firstWord = words[0];
         Assert.Equal(0, firstWord.GetProperty("bookIdx").GetInt32());
         Assert.Equal(0, firstWord.GetProperty("asrIdx").GetInt32());
@@ -249,13 +272,39 @@ public sealed class HydratedTxServiceTests
     {
         var words = new[]
         {
-            new BookWord("Hello", 0, 0, 0),
-            new BookWord("world", 1, 0, 0)
+            new BookWord("Hello", 0, 0, 0, 0),
+            new BookWord("world", 1, 0, 0, 0)
         };
 
+        var sentences = new[]
+        {
+            new BookSentence(0, 0, 1)
+        };
+
+        var paragraphs = new[]
+        {
+            new BookParagraph(0, 0, 1, "Body", "Normal")
+        };
+
+        var totals = new BookTotals(
+            Words: words.Length,
+            Sentences: sentences.Length,
+            Paragraphs: paragraphs.Length,
+            EstimatedDurationSec: 5.0
+        );
+
         return new BookIndex(
-            "test.txt", "hash123", DateTime.UtcNow, "Test Title", "Test Author",
-            2, 1, 1, 5.0, words, new BookSegment[0]);
+            SourceFile: "test.txt",
+            SourceFileHash: "hash123",
+            IndexedAt: DateTime.UtcNow,
+            Title: "Test Title",
+            Author: "Test Author",
+            Totals: totals,
+            Words: words,
+            Sentences: sentences,
+            Paragraphs: paragraphs,
+            Sections: Array.Empty<SectionRange>()
+        );
     }
 
     private AsrResponse CreateTestAsrResponse()

@@ -1,4 +1,4 @@
-﻿using System.CommandLine;
+using System.CommandLine;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -74,12 +74,10 @@ public static class BookCommand
         bool hasOrderingFailures = false;
 
         var words = idx.Words ?? Array.Empty<BookWord>();
-        var sentenceSegments = (idx.Segments ?? Array.Empty<BookSegment>())
-            .Where(s => string.Equals(s.Type, "Sentence", StringComparison.OrdinalIgnoreCase))
+        var sentenceSegments = idx.Sentences
             .OrderBy(s => s.Index)
             .ToArray();
-        var paragraphSegments = (idx.Segments ?? Array.Empty<BookSegment>())
-            .Where(s => string.Equals(s.Type, "Paragraph", StringComparison.OrdinalIgnoreCase))
+        var paragraphSegments = idx.Paragraphs
             .OrderBy(s => s.Index)
             .ToArray();
 
@@ -87,19 +85,19 @@ public static class BookCommand
         int sentencesCount = sentenceSegments.Length;
         int paragraphsCount = paragraphSegments.Length;
 
-        if (idx.TotalWords != wordsCount)
+        if (idx.Totals.Words != wordsCount)
         {
-            failures.Add($"Totals.words ({idx.TotalWords}) != words.Length ({wordsCount})");
+            failures.Add($"Totals.words ({idx.Totals.Words}) != words.Length ({wordsCount})");
             hasTotalFailures = true;
         }
-        if (idx.TotalSentences != sentencesCount)
+        if (idx.Totals.Sentences != sentencesCount)
         {
-            failures.Add($"Totals.sentences ({idx.TotalSentences}) != sentence segments ({sentencesCount})");
+            failures.Add($"Totals.sentences ({idx.Totals.Sentences}) != sentence segments ({sentencesCount})");
             hasTotalFailures = true;
         }
-        if (idx.TotalParagraphs != paragraphsCount)
+        if (idx.Totals.Paragraphs != paragraphsCount)
         {
-            failures.Add($"Totals.paragraphs ({idx.TotalParagraphs}) != paragraph segments ({paragraphsCount})");
+            failures.Add($"Totals.paragraphs ({idx.Totals.Paragraphs}) != paragraph segments ({paragraphsCount})");
             hasTotalFailures = true;
         }
 
@@ -124,19 +122,19 @@ public static class BookCommand
         if (sentencesCount > 0)
         {
             var sents = sentenceSegments;
-            if (sents[0].WordStartIndex != 0)
+            if (sents[0].Start != 0)
             {
-                failures.Add($"First sentence.start is {sents[0].WordStartIndex}, expected 0");
+                failures.Add($"First sentence.start is {sents[0].Start}, expected 0");
                 hasOrderingFailures = true;
             }
-            if (sents[^1].WordEndIndex != wordsCount - 1)
-                failures.Add($"Last sentence.end is {sents[^1].WordEndIndex}, expected {wordsCount - 1}");
+            if (sents[^1].End != wordsCount - 1)
+                failures.Add($"Last sentence.end is {sents[^1].End}, expected {wordsCount - 1}");
             for (int i = 0; i < sents.Length; i++)
             {
                 var s = sents[i];
-                if (s.WordStartIndex < 0 || s.WordEndIndex < s.WordStartIndex || s.WordEndIndex >= wordsCount)
+                if (s.Start < 0 || s.End < s.Start || s.End >= wordsCount)
                 {
-                    failures.Add($"Sentence {i} has invalid range [{s.WordStartIndex},{s.WordEndIndex}] for wordsCount {wordsCount}");
+                    failures.Add($"Sentence {i} has invalid range [{s.Start},{s.End}] for wordsCount {wordsCount}");
                     hasOrderingFailures = true;
                 }
                 if (s.Index != i)
@@ -147,13 +145,13 @@ public static class BookCommand
                 if (i > 0)
                 {
                     var prev = sents[i - 1];
-                    if (s.WordStartIndex != prev.WordEndIndex + 1)
+                    if (s.Start != prev.End + 1)
                     {
-                        failures.Add($"Sentence {i} does not continue from previous (prev.end={prev.WordEndIndex}, start={s.WordStartIndex})");
+                        failures.Add($"Sentence {i} does not continue from previous (prev.end={prev.End}, start={s.Start})");
                         hasOrderingFailures = true;
                     }
                 }
-                for (int w = s.WordStartIndex; w <= s.WordEndIndex; w++)
+                for (int w = s.Start; w <= s.End; w++)
                 {
                     if (words[w].SentenceIndex != s.Index)
                     {
@@ -168,19 +166,19 @@ public static class BookCommand
         if (paragraphsCount > 0)
         {
             var paras = paragraphSegments;
-            if (paras[0].WordStartIndex != 0)
+            if (paras[0].Start != 0)
             {
-                failures.Add($"First paragraph.start is {paras[0].WordStartIndex}, expected 0");
+                failures.Add($"First paragraph.start is {paras[0].Start}, expected 0");
                 hasOrderingFailures = true;
             }
-            if (paras[^1].WordEndIndex != wordsCount - 1)
-                failures.Add($"Last paragraph.end is {paras[^1].WordEndIndex}, expected {wordsCount - 1}");
+            if (paras[^1].End != wordsCount - 1)
+                failures.Add($"Last paragraph.end is {paras[^1].End}, expected {wordsCount - 1}");
             for (int i = 0; i < paras.Length; i++)
             {
                 var p = paras[i];
-                if (p.WordStartIndex < 0 || p.WordEndIndex < p.WordStartIndex || p.WordEndIndex >= wordsCount)
+                if (p.Start < 0 || p.End < p.Start || p.End >= wordsCount)
                 {
-                    failures.Add($"Paragraph {i} has invalid range [{p.WordStartIndex},{p.WordEndIndex}] for wordsCount {wordsCount}");
+                    failures.Add($"Paragraph {i} has invalid range [{p.Start},{p.End}] for wordsCount {wordsCount}");
                     hasOrderingFailures = true;
                 }
                 if (p.Index != i)
@@ -191,13 +189,13 @@ public static class BookCommand
                 if (i > 0)
                 {
                     var prev = paras[i - 1];
-                    if (p.WordStartIndex != prev.WordEndIndex + 1)
+                    if (p.Start != prev.End + 1)
                     {
-                        failures.Add($"Paragraph {i} does not continue from previous (prev.end={prev.WordEndIndex}, start={p.WordStartIndex})");
+                        failures.Add($"Paragraph {i} does not continue from previous (prev.end={prev.End}, start={p.Start})");
                         hasOrderingFailures = true;
                     }
                 }
-                for (int w = p.WordStartIndex; w <= p.WordEndIndex && w < wordsCount; w++)
+                for (int w = p.Start; w <= p.End && w < wordsCount; w++)
                 {
                     if (words[w].ParagraphIndex != p.Index)
                     {
@@ -241,9 +239,9 @@ public static class BookCommand
             var paraSentences = new Dictionary<int, List<int>>();
             foreach (var s in sentenceSegments)
             {
-                if (s.WordStartIndex > s.WordEndIndex) continue;
-                var pStart = words[s.WordStartIndex].ParagraphIndex;
-                var pEnd = words[s.WordEndIndex].ParagraphIndex;
+                if (s.Start > s.End) continue;
+                var pStart = words[s.Start].ParagraphIndex;
+                var pEnd = words[s.End].ParagraphIndex;
                 if (pStart == pEnd)
                 {
                     if (!paraSentences.TryGetValue(pStart, out var list))
@@ -251,7 +249,7 @@ public static class BookCommand
                         list = new List<int>();
                         paraSentences[pStart] = list;
                     }
-                    list.Add(s.WordEndIndex - s.WordStartIndex + 1);
+                    list.Add(s.End - s.Start + 1);
                 }
             }
 

@@ -197,21 +197,27 @@ public sealed class PipelineRefinementIntegrationTests : IAsyncLifetime
             var detailsJson = await File.ReadAllTextAsync(detailsPath);
             var details = JsonSerializer.Deserialize<JsonElement>(detailsJson);
 
-            // Validate structure
-            Assert.True(details.TryGetProperty("silences", out var silences));
-            Assert.True(details.TryGetProperty("refined_tokens", out var refinedTokens));
-            Assert.True(details.TryGetProperty("notes", out var notes));
+            Assert.True(details.TryGetProperty("modelVersion", out var modelVersion));
+            Assert.True(details.TryGetProperty("refinedTokens", out var refinedTokens));
+            Assert.True(details.TryGetProperty("detectedSilences", out var detectedSilences));
+            Assert.True(details.TryGetProperty("totalDurationSeconds", out var totalDurationSeconds));
 
-            // Validate refined tokens summary
-            Assert.True(refinedTokens.TryGetProperty("original_count", out _));
-            Assert.True(refinedTokens.TryGetProperty("refined_count", out _));
-            Assert.True(refinedTokens.TryGetProperty("total_duration_original", out _));
-            Assert.True(refinedTokens.TryGetProperty("total_duration_refined", out _));
+            Assert.False(string.IsNullOrWhiteSpace(modelVersion.GetString()));
+            Assert.True(totalDurationSeconds.GetDouble() >= 0);
 
-            // Validate notes contain service names
-            var notesStr = notes.GetString() ?? "";
-            Assert.Contains("SentenceRefinementService", notesStr);
-            Assert.Contains("AsrRefinementService", notesStr);
+            var tokensArray = refinedTokens.EnumerateArray().ToArray();
+            if (tokensArray.Length > 0)
+            {
+                var token = tokensArray[0];
+                Assert.True(token.TryGetProperty("startTime", out _));
+                Assert.True(token.TryGetProperty("duration", out _));
+                Assert.True(token.TryGetProperty("word", out _));
+                Assert.True(token.TryGetProperty("originalStartTime", out _));
+                Assert.True(token.TryGetProperty("originalDuration", out _));
+                Assert.True(token.TryGetProperty("confidence", out _));
+            }
+
+            Assert.Equal(JsonValueKind.Array, detectedSilences.ValueKind);
         }
     }
 
@@ -407,32 +413,43 @@ public sealed class PipelineRefinementIntegrationTests : IAsyncLifetime
     {
         var bookWords = new[]
         {
-            new BookWord("Chapter", 0, 0, 0),
-            new BookWord("14:", 1, 0, 0),
-            new BookWord("More", 2, 1, 0),
-            new BookWord("than", 3, 1, 0),
-            new BookWord("ever", 4, 1, 0),
-            new BookWord("before", 5, 1, 0)
+            new BookWord("Chapter", 0, 0, 0, 0),
+            new BookWord("14:", 1, 0, 0, 0),
+            new BookWord("More", 2, 1, 0, 0),
+            new BookWord("than", 3, 1, 0, 0),
+            new BookWord("ever", 4, 1, 0, 0),
+            new BookWord("before", 5, 1, 0, 0)
         };
 
-        var bookSegments = new[]
+        var sentences = new[]
         {
-            new BookSegment("Chapter 14:", "sentence", 0, 0, 1),
-            new BookSegment("More than ever before", "sentence", 1, 2, 5)
+            new BookSentence(0, 0, 1),
+            new BookSentence(1, 2, 5)
         };
+
+        var paragraphs = new[]
+        {
+            new BookParagraph(0, 0, 5, "Body", "Normal")
+        };
+
+        var totals = new BookTotals(
+            Words: bookWords.Length,
+            Sentences: sentences.Length,
+            Paragraphs: paragraphs.Length,
+            EstimatedDurationSec: 5.0
+        );
 
         return new BookIndex(
-            "test-book.json",
-            "test-sha256",
-            DateTime.UtcNow,
-            "Test Book",
-            "Test Author",
-            6, // totalWords
-            2, // totalSentences
-            1, // totalParagraphs
-            5.0, // estimatedDuration
-            bookWords,
-            bookSegments
+            SourceFile: "test-book.json",
+            SourceFileHash: "test-sha256",
+            IndexedAt: DateTime.UtcNow,
+            Title: "Test Book",
+            Author: "Test Author",
+            Totals: totals,
+            Words: bookWords,
+            Sentences: sentences,
+            Paragraphs: paragraphs,
+            Sections: Array.Empty<SectionRange>()
         );
     }
 
@@ -495,7 +512,7 @@ public sealed class PipelineRefinementIntegrationTests : IAsyncLifetime
         {
             var sentencesJson = await File.ReadAllTextAsync(sentencesPath);
             var sentences = JsonSerializer.Deserialize<JsonElement>(sentencesJson);
-            
+
             Assert.True(sentences.TryGetProperty("sr", out _));
             Assert.True(sentences.TryGetProperty("sentences", out _));
         }
@@ -515,9 +532,9 @@ public sealed class PipelineRefinementIntegrationTests : IAsyncLifetime
         {
             var detailsJson = await File.ReadAllTextAsync(detailsPath);
             var details = JsonSerializer.Deserialize<JsonElement>(detailsJson);
-            
-            Assert.True(details.TryGetProperty("silences", out _));
-            Assert.True(details.TryGetProperty("refined_tokens", out _));
+
+            Assert.True(details.TryGetProperty("detectedSilences", out _));
+            Assert.True(details.TryGetProperty("refinedTokens", out _));
         }
     }
 }

@@ -22,27 +22,39 @@ public class AnchorWindowsStageTests
             // Create minimal book.index.json
             var words = new[]
             {
-                new BookWord("hello", 0, 0, 0),
-                new BookWord("world", 1, 0, 0)
+                new BookWord("hello", 0, 0, 0, 0),
+                new BookWord("world", 1, 0, 0, 0)
             };
-            var segments = new[]
+            var sentences = new[]
             {
-                new BookSegment("hello world", "Sentence", 0, 0, 1),
-                new BookSegment("hello world", "Paragraph", 0, 0, 1)
+                new BookSentence(0, 0, 1)
             };
+
+            var paragraphs = new[]
+            {
+                new BookParagraph(0, 0, 1, "Body", "Normal")
+            };
+
+            var sections = Array.Empty<SectionRange>();
+
+            var totals = new BookTotals(
+                Words: words.Length,
+                Sentences: sentences.Length,
+                Paragraphs: paragraphs.Length,
+                EstimatedDurationSec: 1.0
+            );
+
             var book = new BookIndex(
                 SourceFile: "test.txt",
                 SourceFileHash: "B00K",
                 IndexedAt: DateTime.UtcNow,
                 Title: "Test",
                 Author: "Tester",
-                TotalWords: words.Length,
-                TotalSentences: 1,
-                TotalParagraphs: 1,
-                EstimatedDuration: 1.0,
+                Totals: totals,
                 Words: words,
-                Segments: segments,
-                Sections: Array.Empty<SectionRange>()
+                Sentences: sentences,
+                Paragraphs: paragraphs,
+                Sections: sections
             );
             var bookPath = Path.Combine(tmp, "book.index.json");
             await File.WriteAllTextAsync(bookPath, JsonSerializer.Serialize(book, new JsonSerializerOptions { WriteIndented = true }));
