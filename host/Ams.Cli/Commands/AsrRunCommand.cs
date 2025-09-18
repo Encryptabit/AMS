@@ -1,3 +1,4 @@
+using Ams.Core.Asr.Pipeline;
 using System.CommandLine;
 using System.Net.Http;
 using Ams.Core;
@@ -29,9 +30,15 @@ public static class AsrRunCommand
         var jobsOption = new Option<int>("--jobs", () => 1, "Parallelism for future stages");
         var asrServiceOption = new Option<string>("--asr-service", () => "http://localhost:8081", "ASR service URL");
         var alignServiceOption = new Option<string>("--align-service", () => "http://localhost:8082", "Aeneas alignment service URL");
-        var dbFloorOption = new Option<double>("--db-floor", () => -38.0, "Silence detection threshold in dBFS (lower = stricter)");
-        var minDurOption = new Option<double>("--min-dur", () => 0.12, "Minimum silence duration in seconds");
+
+        var silenceThresholdOption = new Option<double>("--silence-threshold-db", () => -38.0, "Silence threshold in dBFS (lower = stricter)");
+        silenceThresholdOption.AddAlias("--db-floor");
+
+        var silenceMinOption = new Option<double>("--silence-min-dur", () => 0.30, "Minimum silence duration in seconds");
+        silenceMinOption.AddAlias("--min-dur");
+
         var roomtoneFileOption = new Option<string>("--roomtone-file", "Path to roomtone file (if not provided, will auto-generate)");
+        roomtoneFileOption.AddAlias("--roomtone");
 
         cmd.AddOption(inOption);
         cmd.AddOption(bookOption);
@@ -43,8 +50,8 @@ public static class AsrRunCommand
         cmd.AddOption(jobsOption);
         cmd.AddOption(asrServiceOption);
         cmd.AddOption(alignServiceOption);
-        cmd.AddOption(dbFloorOption);
-        cmd.AddOption(minDurOption);
+        cmd.AddOption(silenceThresholdOption);
+        cmd.AddOption(silenceMinOption);
         cmd.AddOption(roomtoneFileOption);
 
         cmd.SetHandler(async (context) =>
@@ -59,8 +66,8 @@ public static class AsrRunCommand
             var jobs = context.ParseResult.GetValueForOption(jobsOption);
             var asrService = context.ParseResult.GetValueForOption(asrServiceOption)!;
             var alignService = context.ParseResult.GetValueForOption(alignServiceOption)!;
-            var dbFloor = context.ParseResult.GetValueForOption(dbFloorOption);
-            var minDur = context.ParseResult.GetValueForOption(minDurOption);
+            var silenceThresholdDb = context.ParseResult.GetValueForOption(silenceThresholdOption);
+            var silenceMinDur = context.ParseResult.GetValueForOption(silenceMinOption);
             var roomtoneFile = context.ParseResult.GetValueForOption(roomtoneFileOption);
             
             var workDir = work?.FullName ?? input.FullName + ".ams";
@@ -71,22 +78,19 @@ public static class AsrRunCommand
 
             // Register all stages with user-provided parameters
             runner.RegisterStage("book-index", wd => new BookIndexStage(wd, book.FullName, new BookIndexOptions { AverageWpm = 200.0 }));
-            runner.RegisterStage("timeline", wd => new DetectSilenceStage(wd, new FfmpegSilenceDetector(), new DefaultProcessRunner(), new SilenceDetectionParams(dbFloor, minDur)));
+            runner.RegisterStage("timeline", wd => new DetectSilenceStage(wd, new FfmpegSilenceDetector(), new DefaultProcessRunner(), new SilenceDetectionParams(silenceThresholdDb, silenceMinDur)));
             runner.RegisterStage("plan", wd => new PlanWindowsStage(wd, new SilenceWindowPlanner(), new WindowPlanningParams(60.0, 90.0, 75.0, true)));
-            runner.RegisterStage("chunks", wd => new ChunkAudioStage(wd, new DefaultProcessRunner(), new ChunkingParams("wav", 44100)));
+            runner.RegisterStage("chunks", wd => new ChunkAudioStage(wd, new DefaultProcessRunner(), new ChunkingParams("wav", 44100, CreateDefaultVolumeParams())));
             runner.RegisterStage("transcripts", wd => new TranscribeStage(wd, httpClient, new TranscriptionParams("nvidia/parakeet-ctc-0.6b", "en", 1, 1.0, asrService)));
-            // Optional legacy: align-chunks (kept for experiments)
             runner.RegisterStage("align-chunks", wd => new AlignChunksStage(wd, httpClient, new AlignmentParams("eng", 600, alignService)));
-            // New v2 stages
+            // Downstream alignment-dependent stages
             runner.RegisterStage("anchors", wd =>
             {
                 var bookIndexPath = Path.Combine(wd, "book.index.json"); // expects user-provided
                 var asrMerged = Path.Combine(wd, "transcripts", "merged.json");
                 return new AnchorsStage(wd, bookIndexPath, asrMerged, new AnchorsParams(3, 50, 2, 50, "v1", "english+domain"));
             });
-            runner.RegisterStage("windows", wd => new WindowsStage(wd, new WindowsParams(1.0, 0.6)));
-            runner.RegisterStage("window-align", wd => new WindowAlignStage(wd, httpClient, new WindowAlignParams("eng", 600, 600, alignService)));
-            runner.RegisterStage("refine", wd => new RefineStage(wd, new RefinementParams(dbFloor, minDur)));
+            runner.RegisterStage("refine", wd => new SentenceRefinementStage(wd, new SentenceRefinementParams("eng", true, silenceThresholdDb, silenceMinDur)));
             runner.RegisterStage("collate", wd => new CollateStage(wd, new DefaultProcessRunner(), new CollationParams(
                 roomtoneFile != null ? "file" : "auto", 
                 -50.0,
@@ -94,7 +98,7 @@ public static class AsrRunCommand
                 2000,
                 60,
                 roomtoneFile,
-                dbFloor,
+                silenceThresholdDb,
                 // Interword defaults (feature off)
                 false,
                 null,
@@ -114,5 +118,22 @@ public static class AsrRunCommand
         });
 
         return cmd;
+    }
+    private static VolumeAnalysisParams CreateDefaultVolumeParams()
+    {
+        return new VolumeAnalysisParams(
+            DbFloor: -45.0,
+            SpeechFloorDb: -35.0,
+            MinProbeSec: 0.080,
+            ProbeWindowSec: 0.050,
+            HfBandLowHz: 3500.0,
+            HfBandHighHz: 12000.0,
+            HfMarginDb: 5.0,
+            WeakMarginDb: 2.5,
+            NudgeStepSec: 0.003,
+            MaxLeftNudges: 8,
+            MaxRightNudges: 3,
+            GuardLeftSec: 0.012,
+            GuardRightSec: 0.015);
     }
 }

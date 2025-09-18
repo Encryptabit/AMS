@@ -1,7 +1,4 @@
-using System;
-using System.Collections.Generic;
-
-namespace Ams.Align.Anchors;
+namespace Ams.Core.Align;
 
 public static class StopwordSets
 {

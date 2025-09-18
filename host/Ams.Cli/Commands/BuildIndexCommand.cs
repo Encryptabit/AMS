@@ -9,7 +9,7 @@ public static class BuildIndexCommand
     public static Command Create()
     {
         var buildIndexCommand = new Command("build-index", "Build book index from document files");
-        
+         
         var bookFileOption = new Option<FileInfo>("--book", "Path to the book file (DOCX, TXT, MD, RTF)")
         {
             IsRequired = true
@@ -143,7 +143,7 @@ public static class BuildIndexCommand
         Console.WriteLine($"Total sentences: {bookIndex.Totals.Sentences:n0}");
         Console.WriteLine($"Total paragraphs: {bookIndex.Totals.Paragraphs:n0}");
         Console.WriteLine($"Estimated duration: {FormatDuration(bookIndex.Totals.EstimatedDurationSec)}");
-        Console.WriteLine($"Sections (Heading 1): {bookIndex.Sections.Length}");
+        Console.WriteLine($"Sections (Heading 1): {bookIndex.Sections?.Length ?? 0}");
         
         Console.WriteLine($"\nBook index saved to: {outputFile.FullName}");
     }

@@ -42,7 +42,7 @@ public class AlignChunksStage : StageRunner
         var chunkIndex = JsonSerializer.Deserialize<ChunkIndex>(chunkIndexJson) ?? throw new InvalidOperationException("Invalid chunk index");
 
         var transcriptIndexJson = await File.ReadAllTextAsync(transcriptIndexPath, ct);
-        var transcriptIndex = JsonSerializer.Deserialize<TranscriptIndex>(transcriptIndexJson) ?? throw new InvalidOperationException("Invalid transcript index");
+        var transcriptIndex = JsonSerializer.Deserialize<ChunkTranscriptIndex>(transcriptIndexJson) ?? throw new InvalidOperationException("Invalid transcript index");
 
         Console.WriteLine($"Aligning {chunkIndex.Chunks.Count} chunks using Aeneas service...");
 
@@ -104,7 +104,7 @@ public class AlignChunksStage : StageRunner
         return new StageFingerprint(inputHash, paramsHash, toolVersions);
     }
 
-    private async Task<ChunkAlignment> AlignChunkAsync(ChunkInfo chunk, TranscriptIndex transcriptIndex, CancellationToken ct)
+    private async Task<ChunkAlignment> AlignChunkAsync(ChunkInfo chunk, ChunkTranscriptIndex transcriptIndex, CancellationToken ct)
     {
         // Get transcript for this chunk
         if (!transcriptIndex.ChunkToJsonMap.TryGetValue(chunk.Id, out var transcriptFile))

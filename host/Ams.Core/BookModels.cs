@@ -3,8 +3,18 @@ using System.Text.Json.Serialization;
 namespace Ams.Core;
 
 /// <summary>
-/// Canonical word token from the source, with exact text preserved.
-/// Only positional indexes are stored. No timing/confidence/normalization.
+/// Aggregate counts for the canonical book index. Matches CORRECT_RESULTS layout.
+/// </summary>
+public record BookTotals(
+    [property: JsonPropertyName("words")] int Words,
+    [property: JsonPropertyName("sentences")] int Sentences,
+    [property: JsonPropertyName("paragraphs")] int Paragraphs,
+    [property: JsonPropertyName("estimatedDurationSec")] double EstimatedDurationSec
+);
+
+/// <summary>
+/// Canonical word token from the source text. Timing metadata is omitted until
+/// refined artifacts hydrate it back in.
 /// </summary>
 public record BookWord(
     [property: JsonPropertyName("text")] string Text,
@@ -15,18 +25,18 @@ public record BookWord(
 );
 
 /// <summary>
-/// Sentence range by word indices (inclusive).
+/// Sentence slice expressed in word offsets.
 /// </summary>
-public record SentenceRange(
+public record BookSentence(
     [property: JsonPropertyName("index")] int Index,
     [property: JsonPropertyName("start")] int Start,
     [property: JsonPropertyName("end")] int End
 );
 
 /// <summary>
-/// Paragraph range by word indices (inclusive), with optional kind/style.
+/// Paragraph slice expressed in word offsets, tracked with style metadata for downstream heuristics.
 /// </summary>
-public record ParagraphRange(
+public record BookParagraph(
     [property: JsonPropertyName("index")] int Index,
     [property: JsonPropertyName("start")] int Start,
     [property: JsonPropertyName("end")] int End,
@@ -50,18 +60,7 @@ public record SectionRange(
 );
 
 /// <summary>
-/// Totals computed from arrays; estimatedDurationSec is WPM-based.
-/// </summary>
-public record BookTotals(
-    [property: JsonPropertyName("words")] int Words,
-    [property: JsonPropertyName("sentences")] int Sentences,
-    [property: JsonPropertyName("paragraphs")] int Paragraphs,
-    [property: JsonPropertyName("estimatedDurationSec")] double EstimatedDurationSec
-);
-
-/// <summary>
-/// Canonical, slim BookIndex: exact text, structure ranges, and minimal metadata.
-/// Deterministic ordering and no normalization at rest.
+/// Canonical book index schema identical to CORRECT_RESULTS artifacts.
 /// </summary>
 public record BookIndex(
     [property: JsonPropertyName("sourceFile")] string SourceFile,
@@ -71,9 +70,9 @@ public record BookIndex(
     [property: JsonPropertyName("author")] string? Author,
     [property: JsonPropertyName("totals")] BookTotals Totals,
     [property: JsonPropertyName("words")] BookWord[] Words,
-    [property: JsonPropertyName("sentences")] SentenceRange[] Sentences,
-    [property: JsonPropertyName("paragraphs")] ParagraphRange[] Paragraphs,
-    [property: JsonPropertyName("sections")] SectionRange[] Sections,
+    [property: JsonPropertyName("sentences")] BookSentence[] Sentences,
+    [property: JsonPropertyName("paragraphs")] BookParagraph[] Paragraphs,
+    [property: JsonPropertyName("sections")] SectionRange[]? Sections,
     [property: JsonPropertyName("buildWarnings")] string[]? BuildWarnings = null
 );
 

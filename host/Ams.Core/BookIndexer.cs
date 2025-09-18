@@ -4,12 +4,11 @@ using System.Text.RegularExpressions;
 namespace Ams.Core;
 
 /// <summary>
-/// Canonical indexer: preserves exact token text, builds sentence/paragraph ranges only.
-/// No normalization, no timing.
+/// Canonical indexer: emits data that matches CORRECT_RESULTS expectations.
 /// </summary>
 public class BookIndexer : IBookIndexer
 {
-    private static readonly Regex _blankLineSplit = new("(\r?\n){2,}", RegexOptions.Compiled);
+    private static readonly Regex _blankLineSplit = new("(\\r?\\n){2,}", RegexOptions.Compiled);
 
     public async Task<BookIndex> CreateIndexAsync(
         BookParseResult parseResult,
@@ -28,11 +27,12 @@ public class BookIndexer : IBookIndexer
         {
             return await Task.Run(() => Process(parseResult, sourceFile, options, cancellationToken), cancellationToken);
         }
-        catch (Exception ex) when (!(ex is OperationCanceledException || ex is ArgumentException))
+        catch (Exception ex) when (ex is not OperationCanceledException and not ArgumentException)
         {
             throw new BookIndexException($"Failed to create book index for '{sourceFile}': {ex.Message}", ex);
         }
     }
+    
 
     private BookIndex Process(
         BookParseResult parseResult,
@@ -42,18 +42,18 @@ public class BookIndexer : IBookIndexer
     {
         var sourceFileHash = ComputeFileHash(sourceFile);
 
-        // Determine paragraphs: prefer structured from parser, else split from text
         var paragraphTexts = (parseResult.Paragraphs != null && parseResult.Paragraphs.Count > 0)
             ? parseResult.Paragraphs.Select(p => (Text: p.Text, Style: p.Style ?? "Unknown", Kind: p.Kind ?? "Body")).ToList()
             : _blankLineSplit.Split(parseResult.Text)
-                .Where(s => !string.IsNullOrEmpty(s))
+                .Where(s => !string.IsNullOrWhiteSpace(s))
                 .Select(t => (Text: t.TrimEnd('\r', '\n'), Style: "Unknown", Kind: "Body"))
                 .ToList();
 
         var words = new List<BookWord>();
-        var sentences = new List<SentenceRange>();
-        var paragraphs = new List<ParagraphRange>();
+        var sentenceRanges = new List<(int Index, int Start, int End)>();
+        var paragraphRanges = new List<(int Index, int Start, int End, string Kind, string Style)>();
         var sections = new List<SectionRange>();
+        var warnings = new List<string>();
 
         int globalWord = 0;
         int sentenceIndex = 0;
@@ -64,103 +64,75 @@ public class BookIndexer : IBookIndexer
         {
             cancellationToken.ThrowIfCancellationRequested();
             var (pText, style, kind) = paragraphTexts[pIndex];
-            if (string.IsNullOrEmpty(pText))
+            if (string.IsNullOrWhiteSpace(pText))
             {
-                paragraphs.Add(new ParagraphRange(pIndex, globalWord, globalWord - 1, kind, style));
+                paragraphRanges.Add((pIndex, globalWord, globalWord - 1, kind, style));
                 continue;
             }
 
             int paragraphStartWord = globalWord;
             int sentenceStartWord = globalWord;
 
-            // On a Heading paragraph, consider starting a new section before consuming tokens
             int headingLevel = GetHeadingLevel(style);
-            // Some documents use Heading 2/3 for chapters; treat any Heading level >= 1 as a section start
-            // but only when the text looks like a real section title (e.g., "Chapter 3", "Prologue").
             if (string.Equals(kind, "Heading", StringComparison.OrdinalIgnoreCase) && headingLevel >= 1 && LooksLikeSectionHeading(pText))
             {
-                // Close previous open section
-                if (currentSection != null)
-                {
-                    // End at the last word of the previous paragraph (globalWord - 1)
-                    int endWord = Math.Max(currentSection.StartWord - 1, globalWord - 1);
-                    int endParagraph = Math.Max(currentSection.StartParagraph, pIndex - 1);
-                    sections.Add(new SectionRange(
-                        Id: currentSection.Id,
-                        Title: currentSection.Title,
-                        Level: 1,
-                        Kind: currentSection.Kind,
-                        StartWord: currentSection.StartWord,
-                        EndWord: endWord,
-                        StartParagraph: currentSection.StartParagraph,
-                        EndParagraph: endParagraph
-                    ));
-                }
-
-                currentSection = new SectionOpen(
-                    Id: sectionId++,
-                    Title: pText.Trim(),
-                    Kind: ClassifySectionKind(pText),
-                    StartWord: globalWord,
-                    StartParagraph: pIndex
-                );
+                CloseOpenSection(sections, currentSection, globalWord, pIndex - 1);
+                currentSection = new SectionOpen(sectionId++, pText.Trim(), ClassifySectionKind(pText), globalWord, pIndex);
             }
 
             foreach (var token in TokenizeByWhitespace(pText))
             {
-                var w = new BookWord(
+                int sectionIndex = currentSection?.Id ?? -1;
+
+                words.Add(new BookWord(
                     Text: token,
                     WordIndex: globalWord,
                     SentenceIndex: sentenceIndex,
                     ParagraphIndex: pIndex,
-                    SectionIndex: currentSection?.Id ?? -1
-                );
-                words.Add(w);
+                    SectionIndex: sectionIndex
+                ));
                 globalWord++;
 
                 if (IsSentenceTerminal(token))
                 {
-                    sentences.Add(new SentenceRange(Index: sentenceIndex, Start: sentenceStartWord, End: globalWord - 1));
+                    sentenceRanges.Add((sentenceIndex, sentenceStartWord, globalWord - 1));
                     sentenceIndex++;
                     sentenceStartWord = globalWord;
                 }
             }
 
-            // If paragraph ends without terminal punctuation but has words, close sentence
             if (globalWord > sentenceStartWord)
             {
-                sentences.Add(new SentenceRange(Index: sentenceIndex, Start: sentenceStartWord, End: globalWord - 1));
+                sentenceRanges.Add((sentenceIndex, sentenceStartWord, globalWord - 1));
                 sentenceIndex++;
             }
 
-            paragraphs.Add(new ParagraphRange(Index: pIndex, Start: paragraphStartWord, End: globalWord - 1, Kind: kind, Style: style));
+            paragraphRanges.Add((pIndex, paragraphStartWord, globalWord - 1, kind, style));
         }
+
+        CloseOpenSection(sections, currentSection, globalWord, paragraphTexts.Count - 1);
+
+        int totalWords = words.Count;
+        int totalSentences = sentenceRanges.Count;
+        int totalParagraphs = paragraphRanges.Count;
+        double estimatedDuration = totalWords / options.AverageWpm * 60.0;
+
+        var sentences = sentenceRanges
+            .Where(r => r.Start >= 0 && r.End >= r.Start)
+            .Select(r => new BookSentence(r.Index, r.Start, r.End))
+            .ToArray();
+
+        var paragraphs = paragraphRanges
+            .Where(r => r.Start >= 0 && r.End >= r.Start)
+            .Select(r => new BookParagraph(r.Index, r.Start, r.End, r.Kind, r.Style))
+            .ToArray();
 
         var totals = new BookTotals(
-            Words: words.Count,
-            Sentences: sentences.Count,
-            Paragraphs: paragraphs.Count,
-            EstimatedDurationSec: words.Count / options.AverageWpm * 60.0
+            Words: totalWords,
+            Sentences: totalSentences,
+            Paragraphs: totalParagraphs,
+            EstimatedDurationSec: estimatedDuration
         );
-
-        // Close last open section if any
-        if (currentSection != null)
-        {
-            int endWord = Math.Max(currentSection.StartWord - 1, globalWord - 1);
-            int endParagraph = Math.Max(currentSection.StartParagraph, paragraphTexts.Count - 1);
-            sections.Add(new SectionRange(
-                Id: currentSection.Id,
-                Title: currentSection.Title,
-                Level: 1,
-                Kind: currentSection.Kind,
-                StartWord: currentSection.StartWord,
-                EndWord: endWord,
-                StartParagraph: currentSection.StartParagraph,
-                EndParagraph: endParagraph
-            ));
-        }
-
-        var warnings = Array.Empty<string>();
 
         return new BookIndex(
             SourceFile: sourceFile,
@@ -170,21 +142,45 @@ public class BookIndexer : IBookIndexer
             Author: parseResult.Author,
             Totals: totals,
             Words: words.ToArray(),
-            Sentences: sentences.ToArray(),
-            Paragraphs: paragraphs.ToArray(),
-            Sections: sections.ToArray(),
-            BuildWarnings: warnings
+            Sentences: sentences,
+            Paragraphs: paragraphs,
+            Sections: sections.Count == 0 ? Array.Empty<SectionRange>() : sections.ToArray(),
+            BuildWarnings: warnings.Count == 0 ? Array.Empty<string>() : warnings.ToArray()
         );
+    }
+
+    private static void CloseOpenSection(List<SectionRange> sections, SectionOpen? current, int currentWord, int lastParagraphIndex)
+    {
+        if (current is null)
+        {
+            return;
+        }
+
+        int endWord = Math.Max(current.StartWord, currentWord) - 1;
+        if (endWord < current.StartWord)
+        {
+            return;
+        }
+
+        int endParagraph = Math.Max(current.StartParagraph, lastParagraphIndex);
+        sections.Add(new SectionRange(
+            Id: current.Id,
+            Title: current.Title,
+            Level: 1,
+            Kind: current.Kind,
+            StartWord: current.StartWord,
+            EndWord: endWord,
+            StartParagraph: current.StartParagraph,
+            EndParagraph: endParagraph
+        ));
     }
 
     private static int GetHeadingLevel(string style)
     {
         if (string.IsNullOrEmpty(style)) return 0;
-        // Common forms: "Heading 1", "Heading1"
         var s = style.Trim();
         var idx = s.IndexOf("Heading", StringComparison.OrdinalIgnoreCase);
         if (idx < 0) return 0;
-        // Extract trailing digits
         for (int i = idx + 7; i < s.Length; i++)
         {
             if (char.IsDigit(s[i]))
@@ -195,14 +191,13 @@ public class BookIndexer : IBookIndexer
                 break;
             }
         }
-        return 1; // treat generic Heading as level 1 if unspecified
+        return 1;
     }
 
     private static string ClassifySectionKind(string headingText)
     {
         if (string.IsNullOrWhiteSpace(headingText)) return "chapter";
         var t = headingText.Trim().ToLowerInvariant();
-        // Typical section kinds
         if (t.Contains("prologue")) return "prologue";
         if (t.Contains("epilogue")) return "epilogue";
         if (t.Contains("prelude")) return "prelude";
@@ -223,8 +218,7 @@ public class BookIndexer : IBookIndexer
     {
         if (string.IsNullOrWhiteSpace(text)) return false;
         var t = text.Trim();
-        if (SectionTitleRegex.IsMatch(t)) return true;
-        return false;
+        return SectionTitleRegex.IsMatch(t);
     }
 
     private record SectionOpen(int Id, string Title, string Kind, int StartWord, int StartParagraph);
@@ -237,7 +231,6 @@ public class BookIndexer : IBookIndexer
         int n = text.Length;
         while (i < n)
         {
-            // Skip whitespace
             while (i < n && char.IsWhiteSpace(text[i])) i++;
             if (i >= n) yield break;
 
@@ -250,12 +243,12 @@ public class BookIndexer : IBookIndexer
     private static bool IsSentenceTerminal(string token)
     {
         if (string.IsNullOrEmpty(token)) return false;
-        // Strip common closing punctuation to inspect terminal char
         int i = token.Length - 1;
-        while (i >= 0 && ")]}\'\"»”’".IndexOf(token[i]) >= 0) i--;
+        const string trailing = ")]}'\"���";
+        while (i >= 0 && trailing.IndexOf(token[i]) >= 0) i--;
         if (i < 0) return false;
         char c = token[i];
-        return c == '.' || c == '!' || c == '?' || c == '…';
+        return c == '.' || c == '!' || c == '?' || c == '\u2026';
     }
 
     private static string ComputeFileHash(string filePath)

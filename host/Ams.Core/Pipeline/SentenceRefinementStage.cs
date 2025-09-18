@@ -1,0 +1,297 @@
+using System.Collections.Generic;
+using System.Linq;
+using System.Text.Json;
+using Ams.Core.Align.Tx;
+using Ams.Core.Asr.Pipeline;
+using Ams.Core.Services;
+using Ams.Core.Util;
+
+namespace Ams.Core.Pipeline;
+
+/// <summary>
+/// Pipeline stage that replaces RefineStage with SentenceRefinementService-based implementation.
+/// Produces ./CORRECT_RESULTS-compatible artifacts including sentences.json, refined.asr.json, and refinement-details.json.
+/// </summary>
+public sealed class SentenceRefinementStage : StageRunner
+{
+    private readonly SentenceRefinementService _sentenceRefinementService;
+    private readonly AsrRefinementService _asrRefinementService;
+    private readonly SentenceRefinementParams _params;
+
+    private static readonly JsonSerializerOptions s_jsonOptions = new JsonSerializerOptions
+    {
+        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+        WriteIndented = true
+    };
+
+    public SentenceRefinementStage(
+        string workDir,
+        SentenceRefinementParams parameters,
+        SentenceRefinementService? sentenceRefinementService = null,
+        AsrRefinementService? asrRefinementService = null)
+        : base(workDir, "refine")
+    {
+        _params = parameters ?? throw new ArgumentNullException(nameof(parameters));
+        _sentenceRefinementService = sentenceRefinementService ?? new SentenceRefinementService();
+        _asrRefinementService = asrRefinementService ?? new AsrRefinementService();
+    }
+
+    protected override async Task<Dictionary<string, string>> RunStageAsync(ManifestV2 manifest, string stageDir, CancellationToken ct)
+    {
+        // Load BookIndex from book-index stage
+        var bookIndexPath = Path.Combine(WorkDir, "book.index.json");
+        if (!File.Exists(bookIndexPath))
+            throw new InvalidOperationException("BookIndex not found. Run 'book-index' stage first.");
+
+        var bookIndexJson = await File.ReadAllTextAsync(bookIndexPath, ct);
+        var bookIndex = JsonSerializer.Deserialize<BookIndex>(bookIndexJson, s_jsonOptions) ??
+                        throw new InvalidOperationException("Invalid BookIndex JSON");
+
+        // Load ASR JSON from transcripts stage  
+        var asrPath = Path.Combine(WorkDir, "transcripts", "asr.json");
+        if (!File.Exists(asrPath))
+            throw new InvalidOperationException("ASR JSON not found. Run 'transcripts' stage first.");
+
+        var asrJson = await File.ReadAllTextAsync(asrPath, ct);
+        var asr = JsonSerializer.Deserialize<AsrResponse>(asrJson, s_jsonOptions) ??
+                  throw new InvalidOperationException("Invalid ASR JSON");
+
+        // Determine audio file path
+        string audioPath = DetermineAudioPath(manifest);
+
+        // Transform BookIndex to TranscriptIndex for sentence refinement
+        var tx = BookIndexToTranscriptTransformer.Transform(bookIndex, asr, audioPath, bookIndexPath);
+
+        // Run sentence refinement using the correct service
+        var refinedSentences = await _sentenceRefinementService.RefineAsync(
+            audioPath: audioPath,
+            tx: tx,
+            asr: asr,
+            language: _params.Language ?? "eng",
+            useSilence: _params.UseSilence,
+            silenceThresholdDb: _params.SilenceThresholdDb,
+            silenceMinDurationSec: _params.SilenceMinDurationSec
+        );
+
+        // Generate refined ASR output using AsrRefinementService
+        var refinedAsr = _asrRefinementService.GenerateRefinedAsr(asr, refinedSentences);
+
+        // Generate outputs in ./CORRECT_RESULTS/ compatible format
+        var outputs = await GenerateStageOutputs(stageDir, refinedSentences, refinedAsr, asr, ct);
+
+        return outputs;
+    }
+
+    protected override async Task<StageFingerprint> ComputeFingerprintAsync(ManifestV2 manifest, CancellationToken ct)
+    {
+        // Compute input hash from BookIndex and ASR files
+        var inputPaths = new[]
+        {
+            Path.Combine(WorkDir, "book.index.json"),
+            Path.Combine(WorkDir, "transcripts", "asr.json")
+        };
+
+        var inputContents = new List<string>();
+        foreach (var path in inputPaths)
+        {
+            if (File.Exists(path))
+            {
+                inputContents.Add(await File.ReadAllTextAsync(path, ct));
+            }
+        }
+
+        var inputHash = ComputeHash(string.Join("\n", inputContents));
+        var paramsHash = ComputeHash(SerializeParams(_params));
+
+        var toolVersions = new Dictionary<string, string>
+        {
+            { "SentenceRefinementService", "1.0.0" },
+            { "AsrRefinementService", "1.0.0" },
+            { "BookIndexToTranscriptTransformer", "1.0.0" },
+            { "FFmpeg", "system" },
+            { "Aeneas", "system" }
+        };
+
+        return new StageFingerprint(inputHash, paramsHash, toolVersions);
+    }
+
+    private string DetermineAudioPath(ManifestV2 manifest)
+    {
+        // Try multiple possible audio file locations
+        var candidatePaths = new[]
+        {
+            manifest.Input.Path, // Manifest audio path
+            Path.Combine(WorkDir, "audio.wav"), // Common convention
+            Path.Combine(WorkDir, Path.GetFileName(manifest.Input.Path)), // Workdir + filename
+        };
+
+        foreach (var path in candidatePaths)
+        {
+            if (!string.IsNullOrEmpty(path) && File.Exists(path))
+            {
+                return path;
+            }
+        }
+
+        throw new InvalidOperationException($"Audio file not found. Tried paths: {string.Join(", ", candidatePaths)}");
+    }
+
+    private async Task<Dictionary<string, string>> GenerateStageOutputs(
+        string stageDir,
+        IReadOnlyList<SentenceRefined> refinedSentences,
+        AsrResponse refinedAsr,
+        AsrResponse originalAsr,
+        CancellationToken ct)
+    {
+        // Determine sample rate - assume 44100 if not available from audio analysis
+        const int defaultSampleRate = 44100;
+        int sampleRate = defaultSampleRate;
+
+        // Try to get actual sample rate from timeline/silence.json if available
+        var timelinePath = Path.Combine(WorkDir, "timeline", "silence.json");
+        if (File.Exists(timelinePath))
+        {
+            try
+            {
+                var timelineJson = await File.ReadAllTextAsync(timelinePath, ct);
+                var timeline = JsonSerializer.Deserialize<JsonElement>(timelineJson);
+                if (timeline.TryGetProperty("sr", out var srProperty))
+                {
+                    sampleRate = srProperty.GetInt32();
+                }
+            }
+            catch
+            {
+                // Use default if timeline parsing fails
+            }
+        }
+
+        // Generate sentences.json - ./CORRECT_RESULTS compatible format
+        var sentencesOutput = GenerateSentencesJson(refinedSentences, sampleRate);
+        var sentencesPath = Path.Combine(stageDir, "sentences.json");
+        await File.WriteAllTextAsync(sentencesPath, JsonSerializer.Serialize(sentencesOutput, s_jsonOptions), ct);
+
+        // Generate refined.asr.json
+        var refinedAsrPath = Path.Combine(stageDir, "refined.asr.json");
+        await File.WriteAllTextAsync(refinedAsrPath, JsonSerializer.Serialize(refinedAsr, s_jsonOptions), ct);
+
+        // Generate refinement-details.json with detected silences and refined tokens
+        var detailsOutput = GenerateRefinementDetails(refinedSentences, originalAsr, refinedAsr);
+        var detailsPath = Path.Combine(stageDir, "refinement-details.json");
+        await File.WriteAllTextAsync(detailsPath, JsonSerializer.Serialize(detailsOutput, s_jsonOptions), ct);
+
+        return new Dictionary<string, string>
+        {
+            { "sentences", sentencesPath },
+            { "refined_asr", refinedAsrPath },
+            { "refinement_details", detailsPath }
+        };
+    }
+
+    private object GenerateSentencesJson(IReadOnlyList<SentenceRefined> refinedSentences, int sampleRate)
+    {
+        var sentences = refinedSentences.Select((sentence, index) => new
+        {
+            start_frame = (int)Math.Round(sentence.Start * sampleRate, 0),
+            end_frame = (int)Math.Round(sentence.End * sampleRate, 0),
+            start_sec = Math.Round(sentence.Start, 6), // 6 decimal places precision
+            end_sec = Math.Round(sentence.End, 6),     // 6 decimal places precision
+            text = $"Sentence {index + 1}", // Placeholder - could be enhanced with actual text
+            startwordidx = sentence.StartWordIdx,
+            endwordidx = sentence.EndWordIdx,
+            conf = Math.Round(1.0, 4) // Default confidence - 4 decimal places precision
+        }).ToArray();
+
+        return new
+        {
+            sr = sampleRate,
+            sentences = sentences,
+            details = new
+            {
+                silences = new object[0], // Placeholder for silence detection results
+                notes = "Generated by SentenceRefinementStage"
+            },
+            refined_asr = new
+            {
+                modelVersion = "processed",
+                tokens = new object[0] // Will be populated from refined ASR
+            }
+        };
+    }
+
+    private RefinementDetails GenerateRefinementDetails(
+        IReadOnlyList<SentenceRefined> refinedSentences,
+        AsrResponse originalAsr,
+        AsrResponse refinedAsr)
+    {
+        var refinedTokenDetails = new List<RefinedTokenDetail>(refinedAsr.Tokens.Length);
+        var originalTokens = originalAsr.Tokens;
+
+        if (refinedAsr.Tokens.Length > 0)
+        {
+            var lastOriginalIndex = Math.Max(0, originalTokens.Length - 1);
+            var originalIndex = 0;
+
+            foreach (var token in refinedAsr.Tokens)
+            {
+                var mappedOriginal = originalTokens.Length == 0
+                    ? null
+                    : originalTokens[Math.Min(originalIndex, lastOriginalIndex)];
+
+                refinedTokenDetails.Add(new RefinedTokenDetail(
+                    StartTime: Precision.RoundToMicroseconds(token.StartTime),
+                    Duration: Precision.RoundToMicroseconds(token.Duration),
+                    Word: token.Word,
+                    OriginalStartTime: mappedOriginal is null ? 0.0 : Precision.RoundToMicroseconds(mappedOriginal.StartTime),
+                    OriginalDuration: mappedOriginal is null ? 0.0 : Precision.RoundToMicroseconds(mappedOriginal.Duration),
+                    Confidence: 1.0
+                ));
+
+                if (originalIndex < lastOriginalIndex)
+                {
+                    originalIndex++;
+                }
+            }
+        }
+
+        var detectedSilences = new List<SilenceInfo>();
+        for (var i = 0; i < refinedSentences.Count - 1; i++)
+        {
+            var current = refinedSentences[i];
+            var next = refinedSentences[i + 1];
+            var gap = Precision.RoundToMicroseconds(next.Start - current.End);
+            if (gap > 0.0)
+            {
+                var start = Precision.RoundToMicroseconds(current.End);
+                var end = Precision.RoundToMicroseconds(next.Start);
+                detectedSilences.Add(new SilenceInfo(
+                    Start: start,
+                    End: end,
+                    Duration: Precision.RoundToMicroseconds(end - start),
+                    Confidence: 1.0
+                ));
+            }
+        }
+
+        var totalDurationSeconds = refinedTokenDetails.Count == 0
+            ? 0.0
+            : Precision.RoundToMicroseconds(refinedTokenDetails[^1].StartTime + refinedTokenDetails[^1].Duration);
+
+        return new RefinementDetails(
+            ModelVersion: refinedAsr.ModelVersion,
+            RefinedTokens: refinedTokenDetails,
+            DetectedSilences: detectedSilences,
+            TotalDurationSeconds: totalDurationSeconds
+        );
+    }
+}
+
+/// <summary>
+/// Parameters for sentence refinement stage.
+/// </summary>
+public sealed record SentenceRefinementParams(
+    string? Language = "eng",
+    bool UseSilence = true,
+    double SilenceThresholdDb = -30.0,
+    double SilenceMinDurationSec = 0.1
+);

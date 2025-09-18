@@ -18,18 +18,18 @@ public class AsrPipelineRunner
     {
         _stageOrder.AddRange(new[]
         {
-            "book-index",   // 0 (required pre-req)
-            "timeline",      // 1
-            "plan",          // 2 (chunk plan)
-            "chunks",        // 3
-            "transcripts",   // 4
-            "anchors",       // 5
-            "windows",       // 6 (anchor windows)
-            "window-align",  // 7
-            "refine",        // 8
-            "collate",       // 9
-            "script-compare",// 10
-            "validate"       // 11
+            "book-index",      // 0 (required pre-req)
+            "timeline",        // 1
+            "plan",            // 2 (chunk plan)
+            "chunks",          // 3
+            "transcripts",     // 4
+            "align-chunks",    // 5 (chunk-level alignment)
+            "anchors",         // 6
+            "anchor-windows",  // 7 (optional anchor window export)
+            "refine",          // 8
+            "collate",         // 9
+            "script-compare",  // 10
+            "validate"         // 11
         });
     }
 
@@ -136,7 +136,8 @@ public class AsrPipelineRunner
         double duration;
         try
         {
-            var audio = WavIo.ReadPcmOrFloat(inputPath);
+            var normalized = Ams.Core.Io.PathNormalizer.NormalizePath(inputPath);
+            var audio = WavIo.ReadPcmOrFloat(normalized);
             duration = audio.Length / (double)audio.SampleRate;
         }
         catch

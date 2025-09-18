@@ -5,7 +5,7 @@ namespace Ams.Cli.Commands;
 
 public static class TextCommand
 {
-    public static Command Create()
+    public static Command Create() 
     {
         var textCommand = new Command("text", "Text processing operations");
         

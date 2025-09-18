@@ -18,9 +18,9 @@ Generated vs existing
 ---
 
 ## Architecture Map (Current)
-- `host/Ams.Cli`: CLI entry points (`asr`, `anchors`, `windows`, `window-align`, `refine`, `collate`, `script-compare`, `validate`, helpers under `align/*`).
+- `host/Ams.Cli`: CLI entry points (`asr`, `anchors`, `anchor-windows`, `refine`, `collate`, `script-compare`, `validate`, helpers under `align/*`).
 - `host/Ams.Core`: Pipeline stages, IO, alignment, TX, normalization/comparison, DSP interop scaffolding.
-  - Pipeline stages implemented: `DetectSilenceStage`, `PlanWindowsStage`, `ChunkAudioStage`, `TranscribeStage`, `AnchorsStage`, `WindowsStage`, `WindowAlignStage`, `RefineStage`, `CollateStage`, `ScriptCompareStage`, `ValidateStage`.
+  - Pipeline stages implemented: `DetectSilenceStage`, `PlanWindowsStage`, `ChunkAudioStage`, `TranscribeStage`, `AnchorsStage`, `AnchorWindowsStage`, `RefineStage`, `CollateStage`, `ScriptCompareStage`, `ValidateStage`.
   - Runner: `AsrPipelineRunner` orchestrates 11 stages; writes `.ams/manifest.json`.
 - `host/Ams.Tests`: Unit/integration tests for planner, parser, anchors, TX alignment, refine, pipeline glue.
 - `services/aeneas`: FastAPI wrapper for forced alignment.
@@ -36,11 +36,11 @@ Reference specs
 
 ## Stage Graph (v2) — What Exists Today
 
-Order: timeline → plan → chunks → transcripts → anchors → windows → window-align → refine → collate → script-compare → validate
+Order: timeline → plan → chunks → transcripts → anchors → anchor-windows → refine → collate → script-compare → validate
 
 Implementation snapshot
 - Implemented (code present under `host/Ams.Core/Pipeline`):
-  - `DetectSilenceStage.cs`, `PlanWindowsStage.cs`, `ChunkAudioStage.cs`, `TranscribeStage.cs`, `AnchorsStage.cs`, `WindowsStage.cs`, `WindowAlignStage.cs`, `RefineStage.cs`, `CollateStage.cs`, `ScriptCompareStage.cs`, `ValidateStage.cs`.
+  - `DetectSilenceStage.cs`, `PlanWindowsStage.cs`, `ChunkAudioStage.cs`, `TranscribeStage.cs`, `AnchorsStage.cs`, `AnchorWindowsStage.cs`, `RefineStage.cs`, `CollateStage.cs`, `ScriptCompareStage.cs`, `ValidateStage.cs`.
 - Runner: `AsrPipelineRunner.cs` defines and runs all 11 stages; supports `--from/--to` and `--force` semantics via stage status clearing.
 - CLI: Commands exist in `host/Ams.Cli/Commands` (see `AlignCommand.cs` and related commands); verbs match the stage names and helper tools.
 - Manifests: `.ams/manifest.json` plus per‑stage `status.json`, `meta.json`, canonical JSON and fingerprints.
@@ -96,12 +96,12 @@ Notes
 ## .NET Systems Track (Short → Mid)
 - Short (1–2 weeks)
   - Wire per‑window scorecards and seam logs to CI artifacts.
-  - Implement `repair` verb and selective re‑run (windows → window-align → refine → collate → script-compare → validate).
+  - Implement `repair` verb and selective re‑run (anchor-windows → refine → collate → script-compare → validate).
   - Stabilize canonical JSON writer (key order, decimals, no scientific notation) across all stages.
 - Mid (3–6 weeks)
   - Desktop runner (Avalonia) to visualize windows, anchors, seams, and failing gates.
   - Project templates and “book profile” config (per‑title thresholds, stopwords, pads).
-  - Parallelism controls and back‑pressure for transcripts/window‑align.
+  - Parallelism controls and back‑pressure for transcripts/anchor-windows.
 
 ---
 
@@ -127,7 +127,7 @@ Notes
 
 ## Testing & CI
 - Unit: tokenizer, anchors LIS, windows coverage, TX invariants, fingerprint stability, zipper monotonicity.
-- Integration: tiny assets for anchors → windows → window‑align → refine; byte‑stable JSON.
+- Integration: tiny assets for anchors → anchor-windows → refine; byte‑stable JSON.
 - E2E: compose services; enforce gates from Quality section.
 - Local command: `dotnet test` under `host/`.
 

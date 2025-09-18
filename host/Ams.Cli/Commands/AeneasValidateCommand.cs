@@ -113,7 +113,7 @@ public static class AeneasValidateCommand
         return cmd;
     }
 
-    private static async Task CreateSilentWavAsync(string filePath, double durationSec, int sampleRate)
+    private static Task CreateSilentWavAsync(string filePath, double durationSec, int sampleRate)
     {
         var samples = (int)(durationSec * sampleRate);
         var data = new short[samples];
@@ -142,5 +142,7 @@ public static class AeneasValidateCommand
         {
             writer.Write(sample);
         }
+
+        return Task.CompletedTask;
     }
 }

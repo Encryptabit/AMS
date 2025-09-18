@@ -1,6 +1,6 @@
 using System.CommandLine;
 using System.Text.Json;
-using Ams.Align.Tx;
+using Ams.Core.Align.Tx;
 using Ams.Core;
 
 namespace Ams.Cli.Commands;
@@ -22,7 +22,9 @@ public static class RefineSentencesCommand
         var langOption = new Option<string>("--language", () => "eng", "Aeneas language code");
         var useSilenceOption = new Option<bool>("--with-silence", () => true, "Use FFmpeg silencedetect to refine sentence ends");
         var silenceThreshOption = new Option<double>("--silence-threshold-db", () => -30.0, "Silence threshold in dBFS (e.g., -30)");
+        silenceThreshOption.AddAlias("--db-floor");
         var silenceMinDurOption = new Option<double>("--silence-min-dur", () => 0.1, "Minimum silence duration in seconds");
+        silenceMinDurOption.AddAlias("--min-dur");
 
         cmd.AddOption(txOption);
         cmd.AddOption(asrOption);
@@ -61,7 +63,7 @@ public static class RefineSentencesCommand
     private static async Task RunAsync(FileInfo txFile, FileInfo asrFile, FileInfo audioFile, FileInfo outFile, string language, bool withSilence, double silenceDb, double silenceMin)
     {
         var jsonOptions = new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
-        var tx = JsonSerializer.Deserialize<Ams.Align.Tx.TranscriptIndex>(await File.ReadAllTextAsync(txFile.FullName), jsonOptions)
+        var tx = JsonSerializer.Deserialize<Ams.Core.Align.Tx.TranscriptIndex>(await File.ReadAllTextAsync(txFile.FullName), jsonOptions)
                  ?? throw new InvalidOperationException("Failed to read TX");
         var asr = JsonSerializer.Deserialize<AsrResponse>(await File.ReadAllTextAsync(asrFile.FullName), jsonOptions)
                  ?? throw new InvalidOperationException("Failed to read ASR");

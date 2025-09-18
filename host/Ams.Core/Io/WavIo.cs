@@ -69,6 +69,22 @@ public static class WavIo
                 }
             }
         }
+        else if (audioFormat == 1 && bitsPerSample == 24)
+        {
+            // PCM24 (s24le) -> float
+            for (int i = 0; i < frames; i++)
+            {
+                for (int ch = 0; ch < numChannels; ch++)
+                {
+                    int b0 = br.ReadByte();
+                    int b1 = br.ReadByte();
+                    int b2 = br.ReadByte();
+                    int val = b0 | (b1 << 8) | (b2 << 16);
+                    if ((val & 0x800000) != 0) val -= 1 << 24; // sign-extend 24-bit
+                    buf.Planar[ch][i] = (float)(val / 8388608.0); // 2^23
+                }
+            }
+        }
         else if (audioFormat == 3 && bitsPerSample == 32)
         {
             for (int i = 0; i < frames; i++)

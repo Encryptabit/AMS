@@ -116,7 +116,7 @@ public class AlignChunksStageTests
         await File.WriteAllTextAsync(chunkIndexPath, JsonSerializer.Serialize(chunkIndex));
 
         // Create mock transcript index
-        var transcriptIndex = new TranscriptIndex(
+        var transcriptIndex = new ChunkTranscriptIndex(
             new List<string> { "chunk_001", "chunk_002" },
             new Dictionary<string, string> 
             { 
@@ -221,7 +221,7 @@ public class AlignChunksStageTests
         Directory.CreateDirectory(Path.GetDirectoryName(chunkIndexPath)!);
         await File.WriteAllTextAsync(chunkIndexPath, JsonSerializer.Serialize(chunkIndex));
 
-        var transcriptIndex = new TranscriptIndex(
+        var transcriptIndex = new ChunkTranscriptIndex(
             new List<string> { "chunk_001" },
             new Dictionary<string, string> { ["chunk_001"] = "chunk_001.json" },
             new TranscriptionParams(),
@@ -278,7 +278,7 @@ public class AlignChunksStageTests
         Directory.CreateDirectory(Path.Combine(workDir, "transcripts"));
         
         await File.WriteAllTextAsync(Path.Combine(workDir, "chunks", "index.json"), JsonSerializer.Serialize(new ChunkIndex(new List<ChunkInfo>(), "sha1", new ChunkingParams())));
-        await File.WriteAllTextAsync(Path.Combine(workDir, "transcripts", "index.json"), JsonSerializer.Serialize(new TranscriptIndex(new List<string>(), new Dictionary<string, string>(), new TranscriptionParams(), new Dictionary<string, string>())));
+        await File.WriteAllTextAsync(Path.Combine(workDir, "transcripts", "index.json"), JsonSerializer.Serialize(new ChunkTranscriptIndex(new List<string>(), new Dictionary<string, string>(), new TranscriptionParams(), new Dictionary<string, string>())));
 
         var manifest1 = ManifestV2.CreateNew(new InputMetadata("test.wav", "sha1", 10.0, 1000, DateTime.UtcNow));
         var manifest2 = ManifestV2.CreateNew(new InputMetadata("test.wav", "sha2", 10.0, 1000, DateTime.UtcNow)); // Different input hash

@@ -16,12 +16,13 @@ public static class CollateCommand
         var levelOption = new Option<double>("--level-db", () => -50.0, "Room tone level in dB");
         var bridgeMaxOption = new Option<int>("--bridge-max-ms", () => 60, "Maximum cross-chunk boundary sliver duration to bridge (ms)");
         var dbFloorOption = new Option<double>("--db-floor", () => -45.0, "Highband detection floor threshold in dB (for fricative avoidance)");
+        dbFloorOption.AddAlias("--silence-threshold-db");
         // Chapter-wide interword options (feature-flagged)
-        var enableInterwordOption = new Option<bool>("--enable-interword", () => false, "Enable chapter-wide interword roomtone over long silences");
+        var enableInterwordOption = new Option<bool>("--enable-interword", () => true, "Enable chapter-wide interword roomtone over long silences");
         var interwordMinSilenceOption = new Option<double>("--interword-min-silence", () => 0.12, "Minimum silence duration (sec) to consider as interword gap");
         var interwordMaxSilenceOption = new Option<double>("--interword-max-silence", () => 5.0, "Maximum silence duration (sec) to consider as interword gap");
         var interwordGuardMsOption = new Option<double>("--interword-guard-ms", () => 15.0, "Guard (ms) around sentence and window boundaries to avoid speech erasure");
-        var interwordRespectSentencesOption = new Option<bool>("--interword-respect-sentences", () => true, "If true, only fill gaps outside sentence spans");
+        var interwordRespectSentencesOption = new Option<bool>("--interword-respect-sentences", () => false, "If true, only fill gaps outside sentence spans");
         var forceOption = new Option<bool>("--force", "Force re-run even if up-to-date");
 
         cmd.AddOption(inOption);

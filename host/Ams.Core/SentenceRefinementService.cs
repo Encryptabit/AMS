@@ -1,7 +1,8 @@
 using System.Diagnostics;
 using System.Text;
 using System.Text.Json;
-using Ams.Align.Tx;
+using Ams.Core.Align.Tx;
+using Ams.Core.Util;
 
 namespace Ams.Core;
 
@@ -15,7 +16,7 @@ public sealed class SentenceRefinementService
 
     public async Task<IReadOnlyList<SentenceRefined>> RefineAsync(
         string audioPath,
-        Ams.Align.Tx.TranscriptIndex tx,
+        Ams.Core.Align.Tx.TranscriptIndex tx,
         AsrResponse asr,
         string language = "eng",
         bool useSilence = true,
@@ -59,10 +60,10 @@ public sealed class SentenceRefinementService
                 continue;
             }
             var frag = fragments[i];
-            double start = Math.Max(0, frag.begin);
+            double start = Precision.RoundToMicroseconds(Math.Max(0, frag.begin));
             double nextBegin = i + 1 < fragments.Count ? fragments[i + 1].begin : double.MaxValue;
             // Choose end: if using silence, prefer nearest silence_end after fragment; else use aeneas end
-            double end = frag.end;
+            double end = Precision.RoundToMicroseconds(frag.end);
             if (useSilence && silences.Length > 0)
             {
                 foreach (var s in silences)
@@ -76,6 +77,7 @@ public sealed class SentenceRefinementService
             // Clamp end not earlier than start + 50 ms, and not beyond nextBegin
             end = Math.Max(end, start + 0.05);
             end = Math.Min(end, nextBegin);
+            end = Precision.RoundToMicroseconds(end);
             results.Add(new SentenceRefined(start, end, si, ei));
         }
 
@@ -85,7 +87,7 @@ public sealed class SentenceRefinementService
             if (results[i].Start < results[i - 1].End)
             {
                 var prev = results[i - 1];
-                results[i - 1] = prev with { End = results[i].Start };
+                results[i - 1] = prev with { End = Precision.RoundToMicroseconds(results[i].Start) };
             }
         }
 
@@ -126,8 +128,8 @@ public sealed class SentenceRefinementService
             var frags = new List<(double, double)>();
             foreach (var f in arr)
             {
-                double b = ParseDouble(f.GetProperty("begin"));
-                double e = ParseDouble(f.GetProperty("end"));
+                double b = Precision.RoundToMicroseconds(ParseDouble(f.GetProperty("begin")));
+                double e = Precision.RoundToMicroseconds(ParseDouble(f.GetProperty("end")));
                 frags.Add((b, e));
             }
             return frags;
@@ -178,7 +180,9 @@ public sealed class SentenceRefinementService
                 if (m.Success)
                 {
                     var end = double.Parse(m.Groups[1].Value);
-                    silences.Add(new SilenceInfo(cur.Value, end, end - cur.Value, 1.0));
+                    var roundedStart = Precision.RoundToMicroseconds(cur.Value);
+                    var roundedEnd = Precision.RoundToMicroseconds(end);
+                    silences.Add(new SilenceInfo(roundedStart, roundedEnd, Precision.RoundToMicroseconds(roundedEnd - roundedStart), 1.0));
                     cur = null;
                 }
             }

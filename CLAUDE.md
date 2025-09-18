@@ -38,3 +38,15 @@ dotnet .\scripts\RoomtoneCli\bin\Release\net9.0\RoomtoneCli.dll `
 
 Notes
 - Silence detection is assumed; pass your noise floor with `--silence-threshold-db` (default -30 dBFS). No token timing changes.
+
+## Agent Configuration
+
+**Default Agent Plan**: `.agents/plan.json` (pinned configuration)
+
+This file contains the canonical agent orchestration configuration following the Handoff Contract schema defined in `agents.md`. The plan includes:
+- MCP execution mode with proper tool whitelisting
+- Sequential thinking with GPT-5-Codex implementer  
+- Sandbox and approval policies
+- Acceptance test definitions
+
+See `agents.md` for the complete schema specification and usage guidelines.

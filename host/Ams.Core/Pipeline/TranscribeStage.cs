@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Net.Http;
 using System.Text;
 using System.Text.Json;
@@ -84,9 +85,17 @@ public class TranscribeStage : StageRunner
         var mergedJson = JsonSerializer.Serialize(merged, new JsonSerializerOptions { WriteIndented = true });
         await File.WriteAllTextAsync(mergedPath, mergedJson, ct);
 
+        // Create ASR response format for SentenceRefinementStage
+        var asrTokens = mergedWords.Select(w => new AsrToken(w.Start, w.End - w.Start, w.Word)).ToArray();
+        var asrResponse = new AsrResponse(_params.Model, asrTokens);
+        
+        var asrPath = Path.Combine(stageDir, "asr.json");
+        var asrJson = JsonSerializer.Serialize(asrResponse, new JsonSerializerOptions { WriteIndented = true });
+        await File.WriteAllTextAsync(asrPath, asrJson, ct);
+
         // Create transcript index
         var toolVersions = await GetToolVersionsAsync(ct);
-        var transcriptIndex = new TranscriptIndex(
+        var transcriptIndex = new ChunkTranscriptIndex(
             chunkIndex.Chunks.Select(c => c.Id).ToList(),
             chunkToJsonMap,
             _params,
@@ -107,6 +116,7 @@ public class TranscribeStage : StageRunner
         {
             ["index"] = "index.json",
             ["merged"] = "merged.json",
+            ["asr"] = "asr.json",
             ["raw_dir"] = "raw",
             ["params"] = "params.snapshot.json"
         };

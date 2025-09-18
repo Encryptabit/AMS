@@ -1,3 +1,4 @@
+using System.Linq;
 using System.Text.Json;
 using Ams.Core;
 
@@ -144,17 +145,21 @@ public class BookIndexAcceptanceTests
             var idx = await indexer.CreateIndexAsync(parsed, source);
             var total = idx.Words.Length;
 
-            var orderedSents = idx.Sentences.OrderBy(s => s.Start).ToArray();
-            Assert.True(orderedSents.First().Start == 0);
-            Assert.True(orderedSents.Last().End == total - 1);
-            for (int i = 1; i < orderedSents.Length; i++)
-                Assert.Equal(orderedSents[i - 1].End + 1, orderedSents[i].Start);
+            var sentenceSegments = idx.Sentences
+                .OrderBy(s => s.Start)
+                .ToArray();
+            Assert.True(sentenceSegments.First().Start == 0);
+            Assert.True(sentenceSegments.Last().End == total - 1);
+            for (int i = 1; i < sentenceSegments.Length; i++)
+                Assert.Equal(sentenceSegments[i - 1].End + 1, sentenceSegments[i].Start);
 
-            var orderedParas = idx.Paragraphs.OrderBy(p => p.Start).ToArray();
-            Assert.True(orderedParas.First().Start == 0);
-            Assert.True(orderedParas.Last().End == total - 1);
-            for (int i = 1; i < orderedParas.Length; i++)
-                Assert.Equal(orderedParas[i - 1].End + 1, orderedParas[i].Start);
+            var paragraphSegments = idx.Paragraphs
+                .OrderBy(s => s.Start)
+                .ToArray();
+            Assert.True(paragraphSegments.First().Start == 0);
+            Assert.True(paragraphSegments.Last().End == total - 1);
+            for (int i = 1; i < paragraphSegments.Length; i++)
+                Assert.Equal(paragraphSegments[i - 1].End + 1, paragraphSegments[i].Start);
         }
         finally { if (File.Exists(source)) File.Delete(source); }
     }
@@ -194,7 +199,7 @@ public class BookModelsTests
     [Fact]
     public void BookWord_CanonicalShape()
     {
-        var w = new BookWord("Hello", 3, 1, 0);
+        var w = new BookWord("Hello", 3, 1, 0, 0);
         Assert.Equal("Hello", w.Text);
         Assert.Equal(3, w.WordIndex);
         Assert.Equal(1, w.SentenceIndex);
@@ -208,3 +213,6 @@ public class BookModelsTests
         Assert.Equal(200.0, opt.AverageWpm);
     }
 }
+
+
+

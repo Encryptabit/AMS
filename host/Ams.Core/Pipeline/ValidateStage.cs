@@ -45,15 +45,13 @@ public class ValidateStage : StageRunner
                 issues.Add($"Stage not completed: {s}");
         }
 
-        // Alignment can be via chunk alignment OR anchor window alignment.
+        // Alignment must complete via chunk alignment before refinement.
         bool hasChunkAlign = manifest.Stages.TryGetValue("align-chunks", out var ac) && ac.Status.Status == "completed";
-        bool hasWindowAlign = manifest.Stages.TryGetValue("window-align", out var wa) && wa.Status.Status == "completed";
-        if (!hasChunkAlign && !hasWindowAlign)
+        if (!hasChunkAlign)
         {
-            issues.Add("Alignment not completed: run either 'align-chunks' or 'window-align'");
+            issues.Add("Alignment not completed: run 'align-chunks'");
         }
-
-        // Try script-compare/report.json for metrics
+        // Try script-compare/report.json for metrics
         var compareReport = Path.Combine(WorkDir, "script-compare", "report.json");
         double wer = double.NaN, cer = double.NaN, opening = double.NaN;
         if (File.Exists(compareReport))

@@ -20,13 +20,13 @@ public class ScriptCompareStage : StageRunner
         if (!File.Exists(segmentsPath)) throw new InvalidOperationException("Missing collate/segments.json");
         var anchorsPath = Path.Combine(WorkDir, "anchors", "anchors.json");
         if (!File.Exists(anchorsPath)) throw new InvalidOperationException("Missing anchors/anchors.json");
-        var windowsPath = Path.Combine(WorkDir, "windows", "windows.json");
-        if (!File.Exists(windowsPath)) throw new InvalidOperationException("Missing windows/windows.json");
+        var windowsPath = Path.Combine(WorkDir, "anchor-windows", "anchor-windows.json");
+        if (!File.Exists(windowsPath)) throw new InvalidOperationException("Missing anchor-windows/anchor-windows.json");
 
         var book = JsonSerializer.Deserialize<BookIndex>(await File.ReadAllTextAsync(_bookIndexPath, ct))!;
         var segments = JsonSerializer.Deserialize<CollationSegments>(await File.ReadAllTextAsync(segmentsPath, ct))!;
         var anchors = JsonSerializer.Deserialize<AnchorsArtifact>(await File.ReadAllTextAsync(anchorsPath, ct))!;
-        var windows = JsonSerializer.Deserialize<WindowsArtifact>(await File.ReadAllTextAsync(windowsPath, ct))!;
+        var anchorWindows = JsonSerializer.Deserialize<AnchorWindowsArtifact>(await File.ReadAllTextAsync(windowsPath, ct))!;
 
         // MVP metrics (placeholders; replace with real per-window comp later)
         double wer = 0.0;
@@ -40,7 +40,7 @@ public class ScriptCompareStage : StageRunner
             ShortPhraseLoss: 0.0,
             SeamDuplications: 0,
             SeamOmissions: 0,
-            AnchorCoverage: windows.Coverage,
+            AnchorCoverage: anchorWindows.Coverage,
             AnchorDriftP50: 0.0,
             AnchorDriftP95: 0.0,
             RuntimeSec: 0.0
@@ -49,7 +49,7 @@ public class ScriptCompareStage : StageRunner
             Global: global,
             PerWindow: new Dictionary<string, ScriptCompareMetrics>(),
             Errors: Array.Empty<string>(),
-            Stats: new { windows = windows.Windows.Count, anchors = anchors.Selected.Count },
+            Stats: new { anchorWindows = anchorWindows.Windows.Count, anchors = anchors.Selected.Count },
             GeneratedAt: DateTime.UtcNow
         );
 
@@ -85,7 +85,7 @@ public class ScriptCompareStage : StageRunner
         if (File.Exists(sPath)) s = ComputeHash(await File.ReadAllTextAsync(sPath, ct));
         var aPath = Path.Combine(WorkDir, "anchors", "anchors.json");
         if (File.Exists(aPath)) a = ComputeHash(await File.ReadAllTextAsync(aPath, ct));
-        var wPath = Path.Combine(WorkDir, "windows", "windows.json");
+        var wPath = Path.Combine(WorkDir, "anchor-windows", "anchor-windows.json");
         if (File.Exists(wPath)) w = ComputeHash(await File.ReadAllTextAsync(wPath, ct));
         var inputHash = ComputeHash(s + "\n" + a + "\n" + w);
         return new StageFingerprint(inputHash, paramsHash, new Dictionary<string, string>());

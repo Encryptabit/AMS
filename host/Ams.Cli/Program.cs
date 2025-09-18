@@ -1,4 +1,4 @@
-﻿using System.CommandLine;
+using System.CommandLine;
 using System.Globalization;
 using Ams.Cli.Commands;
 using Ams.Core;
@@ -9,10 +9,10 @@ internal static class Program
 {
     private static async Task<int> Main(string[] args)
     {
-        // If no arguments provided, run legacy DSP demo (interactive)
+        // If no arguments provided, launch the interactive pipeline shell
         if (args.Length == 0)
         {
-            return RunLegacyDspDemoInteractive();
+            return await InteractivePipelineCommand.RunInteractiveLoopAsync();
         }
         
         // Create root command
@@ -29,14 +29,13 @@ internal static class Program
         rootCommand.AddCommand(AlignCommand.Create());
         rootCommand.AddCommand(AudioCommand.Create());
         rootCommand.AddCommand(RefineSentencesCommand.Create());
+        rootCommand.AddCommand(InteractivePipelineCommand.Create());
         
         // New staged-pipeline commands (top-level helpers)
         rootCommand.AddCommand(Ams.Cli.Commands.AlignChunksCommand.Create());
-        rootCommand.AddCommand(Ams.Cli.Commands.RefineCommand.Create());
         rootCommand.AddCommand(Ams.Cli.Commands.CollateCommand.Create());
         rootCommand.AddCommand(Ams.Cli.Commands.AnchorsCommand.Create());
-        rootCommand.AddCommand(Ams.Cli.Commands.WindowsCommand.Create());
-        rootCommand.AddCommand(Ams.Cli.Commands.WindowAlignCommand.Create());
+        rootCommand.AddCommand(Ams.Cli.Commands.AnchorWindowsCommand.Create());
         rootCommand.AddCommand(Ams.Cli.Commands.ScriptCompareCommand.Create());
         
         // Add legacy DSP command (interactive)
@@ -49,11 +48,12 @@ internal static class Program
 
     private static int RunLegacyDspDemoInteractive()
     {
-        const float sampleRate = 48000f;
-        const int channels = 2;
-        const uint maxBlock = 512;
-        const double hz = 440.0;       // A4 test tone
-        const float inGainDb = -12.0f; // input sine amplitude
+        // DSP demo parameters (left commented while demo is disabled)
+        // const float sampleRate = 48000f;
+        // const int channels = 2;
+        // const uint maxBlock = 512;
+        // const double hz = 440.0;       // A4 test tone
+        // const float inGainDb = -12.0f; // input sine amplitude
 
         Console.Write("Enter gain (0-1): ");
         float gain = float.Parse(Console.ReadLine() ?? "0.5", CultureInfo.InvariantCulture);
@@ -79,3 +79,4 @@ internal static class Program
         return 0;
     }
 }
+

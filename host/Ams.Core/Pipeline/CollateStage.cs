@@ -1,6 +1,7 @@
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using Ams.Core.Io;
+using Ams.Core.Services;
 
 namespace Ams.Core.Pipeline;
 
@@ -53,7 +54,7 @@ public class CollateStage : StageRunner
             throw new InvalidOperationException("Chunk index or plan not found. Run 'chunks' stage first.");
 
         var sentencesJson = await File.ReadAllTextAsync(sentencesPath, ct);
-        var sentences = JsonSerializer.Deserialize<List<RefinedSentence>>(sentencesJson) ??
+        var sentences = JsonSerializer.Deserialize<List<SentenceRefined>>(sentencesJson) ??
                         throw new InvalidOperationException("Invalid sentences");
 
         var chunkIndexJson = await File.ReadAllTextAsync(chunkIndexPath, ct);
@@ -100,10 +101,10 @@ public class CollateStage : StageRunner
                             if (File.Exists(refineParamsPath))
                             {
                                 var refineJson = await File.ReadAllTextAsync(refineParamsPath, ct);
-                                var refineParams = JsonSerializer.Deserialize<RefinementParams>(refineJson);
+                                var refineParams = JsonSerializer.Deserialize<SentenceRefinementParams>(refineJson);
                                 if (refineParams is not null)
                                 {
-                                    minSilSec = refineParams.MinSilenceDurSec;
+                                    minSilSec = refineParams.SilenceMinDurationSec;
                                 }
                             }
                         }
@@ -294,7 +295,7 @@ public class CollateStage : StageRunner
 
     // Build candidate interword gaps from silence timeline with safeguards
     private (List<(double from, double to)> approved, int totalCandidates) AnalyzeInterwordGaps(
-        List<RefinedSentence> sentences,
+        List<SentenceRefined> sentences,
         List<ChunkSpan> windows,
         List<SilenceEvent> events,
         double minSilSec,
@@ -444,7 +445,7 @@ public class CollateStage : StageRunner
         }
     }
 
-    private List<CollationReplacement> AnalyzeReplacements(List<RefinedSentence> sentences, List<ChunkSpan> windows,
+    private List<CollationReplacement> AnalyzeReplacements(List<SentenceRefined> sentences, List<ChunkSpan> windows,
         double originalDuration)
     {
         var replacements = new List<CollationReplacement>();
@@ -503,7 +504,7 @@ public class CollateStage : StageRunner
     }
 
     private async Task RenderCollatedAudioAsync(
-        List<RefinedSentence> sentences,
+        List<SentenceRefined> sentences,
         List<CollationReplacement> replacements,
         ChunkIndex chunkIndex,
         string roomtoneSource,
@@ -770,11 +771,19 @@ public class CollateStage : StageRunner
             }
 
             double delta = band.Value - full.Value;
-            bool hot = (band.Value > _params.DbFloor) && (delta >= HfMarginDb);
+            bool hotAbsolute = band.Value > _params.DbFloor;
+            bool hotRelative = delta >= HfMarginDb;
+            
+            // Enhanced hot detection: if clearly speech level, preserve regardless of HF margin
+            bool hot = hotAbsolute && (band.Value > -35.0 || hotRelative);
 
-            // Weak-hot hysteresis: don't chase Δ ~ 2–3 dB
-            if (!hot || delta < WeakMarginDb)
+            Console.WriteLine($"  Left edge analysis: band={band.Value:F1}dB, full={full.Value:F1}dB, delta={delta:F1}dB");
+            Console.WriteLine($"  Hot checks: absolute={hotAbsolute} (>{_params.DbFloor:F1}dB), relative={hotRelative} (>={HfMarginDb:F1}dB), speech-level={band.Value > -35.0}, combined={hot}");
+
+            // Weak-hot hysteresis: don't chase Δ ~ 2–3 dB (but override for speech-level audio)
+            if (!hot || (delta < WeakMarginDb && band.Value <= -35.0))
             {
+                Console.WriteLine($"  Left edge: NOT hot (weak margin check: {delta:F1} < {WeakMarginDb:F1}, speech-level: {band.Value > -35.0})");
                 hfLeft = false;
                 break;
             }
@@ -802,7 +811,7 @@ public class CollateStage : StageRunner
             var full = await GetFullbandRmsAsync(audioPath, probeStart, leftWin, ct);
             hfLeft = (band is not null && full is not null) &&
                      (band.Value > _params.DbFloor) &&
-                     (band.Value - full.Value >= HfMarginDb);
+                     (band.Value > -35.0 || band.Value - full.Value >= HfMarginDb);
         }
 
         // ---- RIGHT EDGE ----
@@ -824,19 +833,27 @@ public class CollateStage : StageRunner
             }
 
             double delta = band.Value - full.Value;
-            bool hot = (band.Value > _params.DbFloor) && (delta >= HfMarginDb);
+            bool hotAbsolute = band.Value > _params.DbFloor;
+            bool hotRelative = delta >= HfMarginDb;
+            
+            // Enhanced hot detection: if clearly speech level, preserve regardless of HF margin
+            bool hot = hotAbsolute && (band.Value > -35.0 || hotRelative);
 
-            if (!hot || delta < WeakMarginDb)
+            Console.WriteLine($"  Right edge analysis: band={band.Value:F1}dB, full={full.Value:F1}dB, delta={delta:F1}dB");
+            Console.WriteLine($"  Hot checks: absolute={hotAbsolute} (>{_params.DbFloor:F1}dB), relative={hotRelative} (>={HfMarginDb:F1}dB), speech-level={band.Value > -35.0}, combined={hot}");
+
+            if (!hot || (delta < WeakMarginDb && band.Value <= -35.0))
             {
+                Console.WriteLine($"  Right edge: NOT hot (weak margin check: {delta:F1} < {WeakMarginDb:F1}, speech-level: {band.Value > -35.0})");
                 hfRight = false;
                 break;
             }
 
             tb = Math.Min(totalDuration, tb + NudgeStepSec);
-            tries++;
             rightNudges++;
             Console.WriteLine(
                 $"  Right nudge #{rightNudges}: tb -> {tb:F3}s (band={band.Value:F1}, full={full.Value:F1}, Δ={delta:F1})");
+            tries++;
         }
 
         // final right status
@@ -847,17 +864,11 @@ public class CollateStage : StageRunner
             var full = await GetFullbandRmsAsync(audioPath, rs, rd, ct);
             hfRight = (band is not null && full is not null) &&
                       (band.Value > _params.DbFloor) &&
-                      (band.Value - full.Value >= HfMarginDb);
+                      (band.Value > -35.0 || band.Value - full.Value >= HfMarginDb);
         }
 
-        // Log gap change
-        if (leftNudges > 0 || rightNudges > 0)
-        {
-            double originalGap = initialTb - initialTa;
-            double finalGap = tb - ta;
-            Console.WriteLine(
-                $"  Nudging complete: L={leftNudges}, R={rightNudges}. Gap: {originalGap * 1000:F1}ms -> {finalGap * 1000:F1}ms");
-        }
+        Console.WriteLine(
+            $"Final seam: ta={ta:F3}s, tb={tb:F3}s (nudges: L={leftNudges}, R={rightNudges}, HF: L={hfLeft}, R={hfRight})");
 
         return (ta, tb, hfLeft, hfRight, leftNudges, rightNudges);
     }
@@ -889,29 +900,82 @@ public class CollateStage : StageRunner
     private async Task<double?> GetBandRmsAsync(string audioPath, double start, double dur, double lowHz, double highHz,
         CancellationToken ct)
     {
-        var ci = System.Globalization.CultureInfo.InvariantCulture;
-        var normalized = PathNormalizer.NormalizePath(audioPath);
+        try
+        {
+            Console.WriteLine($"[DEBUG] GetBandRmsAsync called with: audioPath='{audioPath}', start={start}, dur={dur}, lowHz={lowHz}, highHz={highHz}");
+            
+            var ci = System.Globalization.CultureInfo.InvariantCulture;
+            Console.WriteLine($"[DEBUG] CultureInfo created: {ci?.Name}");
+            
+            var normalized = PathNormalizer.NormalizePath(audioPath);
+            Console.WriteLine($"[DEBUG] Normalized path: '{normalized}'");
 
-        string afilter =
-            $"aformat=sample_fmts=flt:sample_rates={TargetRate}:channel_layouts=mono," +
-            $"lowpass=f={highHz.ToString("F0", ci)}," +
-            $"highpass=f={lowHz.ToString("F0", ci)}," +
-            $"volumedetect";
+            string afilter =
+                $"aformat=sample_fmts=flt:sample_rates={TargetRate}:channel_layouts=mono," +
+                $"lowpass=f={highHz.ToString("F0", ci)}," +
+                $"highpass=f={lowHz.ToString("F0", ci)}," +
+                $"volumedetect";
+            Console.WriteLine($"[DEBUG] Audio filter: '{afilter}'");
 
-        string args =
-            $"-v info -ss {start.ToString("F6", ci)} -t {dur.ToString("F6", ci)} " +
-            $"-i \"{normalized}\" -af \"{afilter}\" -f null -";
+            string args =
+                $"-v info -ss {start.ToString("F6", ci)} -t {dur.ToString("F6", ci)} " +
+                $"-i \"{normalized}\" -af \"{afilter}\" -f null -";
+            Console.WriteLine($"[DEBUG] FFmpeg args: '{args}'");
 
-        var res = await _processRunner.RunAsync(GetFfmpegExecutable(), args, ct);
-        var stderr = res.StdErr ?? string.Empty;
+            Console.WriteLine($"[DEBUG] Running FFmpeg executable: '{GetFfmpegExecutable()}'");
+            var res = await _processRunner.RunAsync(GetFfmpegExecutable(), args, ct);
+            Console.WriteLine($"[DEBUG] FFmpeg completed with exit code: {res.ExitCode}");
+            
+            var stderr = res.StdErr ?? string.Empty;
+            var stdout = res.StdOut ?? string.Empty;
+            Console.WriteLine($"[DEBUG] FFmpeg stderr length: {stderr.Length}");
+            Console.WriteLine($"[DEBUG] FFmpeg stdout length: {stdout.Length}");
+            
+            if (res.ExitCode != 0)
+            {
+                Console.WriteLine($"[ERROR] FFmpeg failed with exit code {res.ExitCode}");
+                Console.WriteLine($"[ERROR] FFmpeg stderr: {stderr}");
+                Console.WriteLine($"[ERROR] FFmpeg stdout: {stdout}");
+                return null;
+            }
 
-        var mv = System.Text.RegularExpressions.Regex.Match(stderr, @"mean_volume:\s*(-?\d+(?:\.\d+)?)\s*dB");
-        if (mv.Success && double.TryParse(mv.Groups[1].Value, out var meanDb)) return meanDb;
+            // Show first 500 chars of stderr for debugging
+            var stderrPreview = stderr.Length > 500 ? stderr.Substring(0, 500) + "..." : stderr;
+            Console.WriteLine($"[DEBUG] FFmpeg stderr preview: '{stderrPreview}'");
 
-        var mx = System.Text.RegularExpressions.Regex.Match(stderr, @"max_volume:\s*(-?\d+(?:\.\d+)?)\s*dB");
-        if (mx.Success && double.TryParse(mx.Groups[1].Value, out var maxDb)) return maxDb;
+            var mv = System.Text.RegularExpressions.Regex.Match(stderr, @"mean_volume:\s*(-?\d+(?:\.\d+)?)\s*dB");
+            Console.WriteLine($"[DEBUG] mean_volume regex match success: {mv.Success}");
+            if (mv.Success)
+            {
+                Console.WriteLine($"[DEBUG] mean_volume matched value: '{mv.Groups[1].Value}'");
+                if (double.TryParse(mv.Groups[1].Value, out var meanDb))
+                {
+                    Console.WriteLine($"[DEBUG] Successfully parsed mean_volume: {meanDb} dB");
+                    return meanDb;
+                }
+            }
 
-        return null;
+            var mx = System.Text.RegularExpressions.Regex.Match(stderr, @"max_volume:\s*(-?\d+(?:\.\d+)?)\s*dB");
+            Console.WriteLine($"[DEBUG] max_volume regex match success: {mx.Success}");
+            if (mx.Success)
+            {
+                Console.WriteLine($"[DEBUG] max_volume matched value: '{mx.Groups[1].Value}'");
+                if (double.TryParse(mx.Groups[1].Value, out var maxDb))
+                {
+                    Console.WriteLine($"[DEBUG] Successfully parsed max_volume: {maxDb} dB");
+                    return maxDb;
+                }
+            }
+
+            Console.WriteLine($"[DEBUG] No volume values found in FFmpeg output");
+            return null;
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[ERROR] Exception in GetBandRmsAsync: {ex.Message}");
+            Console.WriteLine($"[ERROR] Stack trace: {ex.StackTrace}");
+            return null;
+        }
     }
 
     private async Task<double?> GetFullbandRmsAsync(string audioPath, double start, double dur, CancellationToken ct)

@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using Ams.Core.Asr.Pipeline;
 using System.Text.Json.Serialization;
 
 namespace Ams.Core;
@@ -150,7 +151,15 @@ public sealed record AnchorsArtifact(
 );
 
 // ---- Windows (anchor windows; half-open book spans) ----
-public sealed record WindowsParams(double PrePadSec = 1.0, double PadSec = 0.6);
+public sealed record AnchorWindowParams(
+    double PrePadSec = 1.0,
+    double PadSec = 0.6,
+    double MinDurationSec = 25.0,
+    double TargetDurationSec = 45.0,
+    double MaxDurationSec = 70.0,
+    int MinWordCount = 40,
+    int MaxWordCount = 200
+);
 
 public sealed record AnchorWindow(
     string Id,
@@ -162,37 +171,11 @@ public sealed record AnchorWindow(
     int? NextAnchorBp
 );
 
-public sealed record WindowsArtifact(
+public sealed record AnchorWindowsArtifact(
     IReadOnlyList<AnchorWindow> Windows,
-    WindowsParams Params,
+    AnchorWindowParams Params,
     double Coverage,
     double LargestGapSec,
-    Dictionary<string, string> ToolVersions
-);
-
-// ---- Window Align ----
-public sealed record WindowAlignParams(
-    string Language = "eng",
-    int TimeoutSec = 600,
-    int BandWidthMs = 600,
-    string ServiceUrl = "http://localhost:8082"
-);
-
-public sealed record WindowAlignFragment(double Begin, double End);
-
-public sealed record WindowAlignEntry(
-    string WindowId,
-    double OffsetSec,
-    string TextDigest,
-    IReadOnlyList<WindowAlignFragment> Fragments,
-    Dictionary<string, string> ToolVersions,
-    DateTime GeneratedAt
-);
-
-public sealed record WindowAlignIndex(
-    IReadOnlyList<string> WindowIds,
-    Dictionary<string, string> WindowToJsonMap,
-    WindowAlignParams Params,
     Dictionary<string, string> ToolVersions
 );
 
@@ -256,7 +239,8 @@ public sealed record WindowPlanningParams(
 
 public sealed record ChunkingParams(
     string Format = "wav", // output format for chunks
-    int SampleRate = 44100
+    int SampleRate = 44100,
+    VolumeAnalysisParams? VolumeAnalysis = null
 );
 
 // Updated silence timeline for v2
@@ -315,7 +299,7 @@ public sealed record ChunkTranscript(
     DateTime GeneratedAt
 );
 
-public sealed record TranscriptIndex(
+public sealed record ChunkTranscriptIndex(
     List<string> ChunkIds,
     Dictionary<string, string> ChunkToJsonMap,
     TranscriptionParams Params,
@@ -344,20 +328,6 @@ public sealed record ChunkAlignment(
     DateTime GeneratedAt
 );
 
-// Refinement models  
-public sealed record RefinementParams(
-    double SilenceThresholdDb = -30.0,
-    double MinSilenceDurSec = 0.12
-);
-
-public sealed record RefinedSentence(
-    string Id,
-    double Start,
-    double End,
-    int? StartWordIdx,
-    int? EndWordIdx,
-    string Source = "aeneas+silence.start"
-);
 
 // Collation models
 public sealed record CollationParams(
@@ -385,7 +355,7 @@ public sealed record CollationReplacement(
 );
 
 public sealed record CollationSegments(
-    List<RefinedSentence> Sentences,
+    List<SentenceRefined> Sentences,
     List<CollationReplacement> Replacements
 );
 
