@@ -73,8 +73,8 @@ public class BookIndexer : IBookIndexer
             int paragraphStartWord = globalWord;
             int sentenceStartWord = globalWord;
 
-            int headingLevel = GetHeadingLevel(style);
-            if (string.Equals(kind, "Heading", StringComparison.OrdinalIgnoreCase) && headingLevel >= 1 && LooksLikeSectionHeading(pText))
+            var looksLikeSectionHeading = LooksLikeSectionHeading(pText);
+            if (looksLikeSectionHeading && !StyleIndicatesTableOfContents(style))
             {
                 CloseOpenSection(sections, currentSection, globalWord, pIndex - 1);
                 currentSection = new SectionOpen(sectionId++, pText.Trim(), ClassifySectionKind(pText), globalWord, pIndex);
@@ -179,7 +179,7 @@ public class BookIndexer : IBookIndexer
     {
         if (string.IsNullOrEmpty(style)) return 0;
         var s = style.Trim();
-        var idx = s.IndexOf("Heading", StringComparison.OrdinalIgnoreCase);
+        var idx = s.IndexOf("Heading", System.StringComparison.OrdinalIgnoreCase);
         if (idx < 0) return 0;
         for (int i = idx + 7; i < s.Length; i++)
         {
@@ -213,6 +213,17 @@ public class BookIndexer : IBookIndexer
     private static readonly Regex SectionTitleRegex = new(
         @"^\s*(chapter\b|prologue\b|epilogue\b|prelude\b|foreword\b|introduction\b|afterword\b|appendix\b|part\b|book\b)",
         RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
+    private static bool StyleIndicatesTableOfContents(string style)
+    {
+        if (string.IsNullOrWhiteSpace(style))
+        {
+            return false;
+        }
+
+        return style.IndexOf("TOC", System.StringComparison.OrdinalIgnoreCase) >= 0 ||
+               style.IndexOf("Table of Contents", System.StringComparison.OrdinalIgnoreCase) >= 0;
+    }
 
     private static bool LooksLikeSectionHeading(string text)
     {
