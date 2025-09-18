@@ -51,6 +51,12 @@ public class BookCache : IBookCache
             if (cachedIndex == null)
                 return null;
 
+            if (!HasCanonicalSchema(cachedIndex))
+            {
+                await RemoveAsync(sourceFile, cancellationToken);
+                return null;
+            }
+
             // Validate cache integrity
             if (await IsValidAsync(cachedIndex, cancellationToken))
             {
@@ -119,6 +125,30 @@ public class BookCache : IBookCache
         {
             throw new BookCacheException($"Failed to remove cached index for '{sourceFile}': {ex.Message}", ex);
         }
+    }
+
+    private static bool HasCanonicalSchema(BookIndex index)
+    {
+        if (index.Words == null || index.Words.Length == 0)
+            return false;
+        if (index.Sentences == null || index.Sentences.Length == 0)
+            return false;
+        if (index.Paragraphs == null || index.Paragraphs.Length == 0)
+            return false;
+        if (index.Sections == null)
+            return false;
+
+        var totals = index.Totals;
+        if (totals.Words != index.Words.Length)
+            return false;
+        if (totals.Sentences != index.Sentences.Length)
+            return false;
+        if (totals.Paragraphs != index.Paragraphs.Length)
+            return false;
+        if (index.Words.Length > 0 && totals.EstimatedDurationSec <= 0)
+            return false;
+
+        return true;
     }
 
     public async Task<bool> IsValidAsync(BookIndex bookIndex, CancellationToken cancellationToken = default)
