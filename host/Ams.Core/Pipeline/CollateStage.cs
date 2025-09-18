@@ -1,7 +1,7 @@
 using System.Text.Json;
-using Ams.Core.Models;
 using System.Text.RegularExpressions;
 using Ams.Core.Io;
+using Ams.Core.Services;
 
 namespace Ams.Core.Pipeline;
 
@@ -54,7 +54,7 @@ public class CollateStage : StageRunner
             throw new InvalidOperationException("Chunk index or plan not found. Run 'chunks' stage first.");
 
         var sentencesJson = await File.ReadAllTextAsync(sentencesPath, ct);
-        var sentences = JsonSerializer.Deserialize<List<RefinedSentence>>(sentencesJson) ??
+        var sentences = JsonSerializer.Deserialize<List<SentenceRefined>>(sentencesJson) ??
                         throw new InvalidOperationException("Invalid sentences");
 
         var chunkIndexJson = await File.ReadAllTextAsync(chunkIndexPath, ct);
@@ -101,10 +101,10 @@ public class CollateStage : StageRunner
                             if (File.Exists(refineParamsPath))
                             {
                                 var refineJson = await File.ReadAllTextAsync(refineParamsPath, ct);
-                                var refineParams = JsonSerializer.Deserialize<RefinementParams>(refineJson);
+                                var refineParams = JsonSerializer.Deserialize<SentenceRefinementParams>(refineJson);
                                 if (refineParams is not null)
                                 {
-                                    minSilSec = refineParams.MinSilenceDurSec;
+                                    minSilSec = refineParams.SilenceMinDurationSec;
                                 }
                             }
                         }
@@ -295,7 +295,7 @@ public class CollateStage : StageRunner
 
     // Build candidate interword gaps from silence timeline with safeguards
     private (List<(double from, double to)> approved, int totalCandidates) AnalyzeInterwordGaps(
-        List<RefinedSentence> sentences,
+        List<SentenceRefined> sentences,
         List<ChunkSpan> windows,
         List<SilenceEvent> events,
         double minSilSec,
@@ -445,7 +445,7 @@ public class CollateStage : StageRunner
         }
     }
 
-    private List<CollationReplacement> AnalyzeReplacements(List<RefinedSentence> sentences, List<ChunkSpan> windows,
+    private List<CollationReplacement> AnalyzeReplacements(List<SentenceRefined> sentences, List<ChunkSpan> windows,
         double originalDuration)
     {
         var replacements = new List<CollationReplacement>();
@@ -504,7 +504,7 @@ public class CollateStage : StageRunner
     }
 
     private async Task RenderCollatedAudioAsync(
-        List<RefinedSentence> sentences,
+        List<SentenceRefined> sentences,
         List<CollationReplacement> replacements,
         ChunkIndex chunkIndex,
         string roomtoneSource,

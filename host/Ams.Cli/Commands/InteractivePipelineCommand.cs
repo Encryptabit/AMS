@@ -217,7 +217,7 @@ public static class InteractivePipelineCommand
             var asrMerged = Path.Combine(wd, "transcripts", "merged.json");
             return new AnchorsStage(wd, bookIndexPath, asrMerged, new AnchorsParams(3, 50, 2, 50, "v1", "english+domain"));
         });
-        runner.RegisterStage("refine", wd => new RefineStage(wd, new RefinementParams(context.SilenceThresholdDb, context.SilenceMinDurationSec)));
+        runner.RegisterStage("refine", wd => new SentenceRefinementStage(wd, new SentenceRefinementParams("eng", true, context.SilenceThresholdDb, context.SilenceMinDurationSec)));
         runner.RegisterStage("collate", wd => new CollateStage(wd, new DefaultProcessRunner(), new CollationParams(
             context.RoomtoneFile is null ? "auto" : "file",
             -50.0,

@@ -2,7 +2,6 @@ using System;
 using System.Collections.Generic;
 using Ams.Core.Asr.Pipeline;
 using System.Text.Json.Serialization;
-using Ams.Core.Models;
 
 namespace Ams.Core;
 
@@ -329,11 +328,6 @@ public sealed record ChunkAlignment(
     DateTime GeneratedAt
 );
 
-// Refinement models  
-public sealed record RefinementParams(
-    double SilenceThresholdDb = -30.0,
-    double MinSilenceDurSec = 0.12
-);
 
 // Collation models
 public sealed record CollationParams(
@@ -361,7 +355,7 @@ public sealed record CollationReplacement(
 );
 
 public sealed record CollationSegments(
-    List<RefinedSentence> Sentences,
+    List<SentenceRefined> Sentences,
     List<CollationReplacement> Replacements
 );
 

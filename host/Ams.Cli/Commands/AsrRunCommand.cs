@@ -90,7 +90,7 @@ public static class AsrRunCommand
                 var asrMerged = Path.Combine(wd, "transcripts", "merged.json");
                 return new AnchorsStage(wd, bookIndexPath, asrMerged, new AnchorsParams(3, 50, 2, 50, "v1", "english+domain"));
             });
-            runner.RegisterStage("refine", wd => new RefineStage(wd, new RefinementParams(silenceThresholdDb, silenceMinDur)));
+            runner.RegisterStage("refine", wd => new SentenceRefinementStage(wd, new SentenceRefinementParams("eng", true, silenceThresholdDb, silenceMinDur)));
             runner.RegisterStage("collate", wd => new CollateStage(wd, new DefaultProcessRunner(), new CollationParams(
                 roomtoneFile != null ? "file" : "auto", 
                 -50.0,

@@ -33,7 +33,6 @@ internal static class Program
         
         // New staged-pipeline commands (top-level helpers)
         rootCommand.AddCommand(Ams.Cli.Commands.AlignChunksCommand.Create());
-        rootCommand.AddCommand(Ams.Cli.Commands.RefineCommand.Create());
         rootCommand.AddCommand(Ams.Cli.Commands.CollateCommand.Create());
         rootCommand.AddCommand(Ams.Cli.Commands.AnchorsCommand.Create());
         rootCommand.AddCommand(Ams.Cli.Commands.AnchorWindowsCommand.Create());
