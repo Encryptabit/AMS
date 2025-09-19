@@ -491,10 +491,28 @@ public sealed class RoomToneInsertionStage
             duration,
             previousId,
             nextId,
-            stats.MinRmsDb,
-            stats.MaxRmsDb,
-            stats.MeanRmsDb,
-            stats.SilenceFraction);
+            SanitizeDb(stats.MinRmsDb),
+            SanitizeDb(stats.MaxRmsDb),
+            SanitizeDb(stats.MeanRmsDb),
+            SanitizeFraction(stats.SilenceFraction));
+    }
+
+    private static double SanitizeDb(double value)
+    {
+        if (double.IsNaN(value) || double.IsInfinity(value))
+        {
+            return -120.0;
+        }
+        return value;
+    }
+
+    private static double SanitizeFraction(double value)
+    {
+        if (double.IsNaN(value) || double.IsInfinity(value))
+        {
+            return 1.0;
+        }
+        return Math.Clamp(value, 0.0, 1.0);
     }
 
     private static double ComputeToneGainLinear(double seedMeanRmsDb, double targetRmsDb)

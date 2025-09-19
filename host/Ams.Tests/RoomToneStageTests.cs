@@ -50,15 +50,22 @@ public class RoomToneStageTests
         int speechSample = 1000; // within first sentence (0-0.25s)
         Assert.InRange(rendered.Planar[0][speechSample], 0.49f, 0.51f);
 
-        int gapStart = (int)(0.25 * rendered.SampleRate);
-
         var seedPath = context.ExistingRoomtonePath ?? throw new InvalidOperationException("Expected roomtone seed");
         var seedBuffer = WavIo.ReadPcmOrFloat(seedPath);
         var planJson = await File.ReadAllTextAsync(planPath);
         using var plan = JsonDocument.Parse(planJson);
         Assert.Equal(RoomtonePlanVersion.Current, plan.RootElement.GetProperty("version").GetString());
         Assert.Equal(context.Manifest.AudioPath, plan.RootElement.GetProperty("audioPath").GetString());
-        Assert.True(plan.RootElement.GetProperty("gaps").GetArrayLength() > 0);
+
+        var gaps = plan.RootElement.GetProperty("gaps");
+        Assert.True(gaps.GetArrayLength() > 0);
+        var firstGap = gaps[0];
+        var gapStartSec = firstGap.GetProperty("startSec").GetDouble();
+        var gapEndSec = firstGap.GetProperty("endSec").GetDouble();
+        Assert.True(gapEndSec > gapStartSec);
+
+        var gapStartSample = Math.Clamp((int)Math.Round(gapStartSec * rendered.SampleRate), 0, rendered.Planar[0].Length - 1);
+        var gapNextSample = Math.Clamp(gapStartSample + 1, 0, rendered.Planar[0].Length - 1);
 
         var appliedGainDb = plan.RootElement.GetProperty("appliedGainDb").GetDouble();
         var targetRmsDb = plan.RootElement.GetProperty("targetRmsDb").GetDouble();
@@ -72,8 +79,8 @@ public class RoomToneStageTests
 
         float expected0 = SeedScaled(seedBuffer.Planar[0][0]);
         float expected1 = SeedScaled(seedBuffer.Planar[0][1]);
-        Assert.InRange(rendered.Planar[0][gapStart], expected0 - 0.01f, expected0 + 0.01f);
-        Assert.InRange(rendered.Planar[0][gapStart + 1], expected1 - 0.01f, expected1 + 0.01f);
+        Assert.InRange(rendered.Planar[0][gapStartSample], expected0 - 0.01f, expected0 + 0.01f);
+        Assert.InRange(rendered.Planar[0][gapNextSample], expected1 - 0.01f, expected1 + 0.01f);
 
         var metaJson = await File.ReadAllTextAsync(outputs["meta"]);
         using var meta = JsonDocument.Parse(metaJson);
@@ -87,6 +94,55 @@ public class RoomToneStageTests
         Assert.True(parameters.GetProperty("usedExistingRoomtone").GetBoolean());
         Assert.Equal(0, parameters.GetProperty("targetRmsDb").GetDouble());
         Assert.Equal(plan.RootElement.GetProperty("roomtoneSeedRmsDb").GetDouble(), parameters.GetProperty("roomtoneSeedRmsDb").GetDouble());
+    }
+
+    [Fact]
+    public void RenderWithSentenceMasks_RepairsSilentRegions()
+    {
+        var input = new AudioBuffer(channels: 1, sampleRate: 1000, length: 1000);
+        for (int i = 0; i < input.Length; i++)
+        {
+            input.Planar[0][i] = i < 400 ? 0.5f : -0.25f;
+        }
+
+        var tone = new AudioBuffer(channels: 1, sampleRate: 1000, length: 4);
+        tone.Planar[0][0] = 0.1f;
+        tone.Planar[0][1] = -0.1f;
+        tone.Planar[0][2] = 0.05f;
+        tone.Planar[0][3] = -0.05f;
+
+        var sentences = new[]
+        {
+            new SentenceAlign(
+                1,
+                new IntRange(0, 0),
+                new ScriptRange(0, 0),
+                new TimingRange(0.0, 0.4),
+                new SentenceMetrics(0, 0, 0, 0, 0),
+                "ok")
+        };
+
+        var output = RoomtoneRenderer.RenderWithSentenceMasks(
+            input,
+            tone,
+            Array.Empty<RoomtonePlanGap>(),
+            sentences,
+            targetSampleRate: 1000,
+            toneGainLinear: 1.0,
+            fadeMs: 0.0);
+
+        Assert.Equal(input.SampleRate, output.SampleRate);
+        Assert.Equal(input.Length, output.Length);
+
+        for (int i = 0; i < input.Length; i++)
+        {
+            float sourceSample = input.Planar[0][i];
+            if (Math.Abs(sourceSample) > 1e-6)
+            {
+                float renderedSample = output.Planar[0][i];
+                Assert.InRange(renderedSample, sourceSample - 1e-6f, sourceSample + 1e-6f);
+            }
+        }
     }
 
     [Fact]
