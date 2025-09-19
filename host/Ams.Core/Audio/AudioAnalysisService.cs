@@ -1,20 +1,30 @@
 using System;
+using System.Collections.Generic;
 using Ams.Core.Artifacts;
 
-namespace Ams.Core.Audio;
-
-public sealed record GapRmsStats(double MinRmsDb, double MaxRmsDb, double MeanRmsDb, double SilenceFraction);
-
-public sealed class AudioAnalysisService
+namespace Ams.Core.Audio
 {
-    private readonly AudioBuffer _buffer;
+    public sealed record GapRmsStats(double MinRmsDb, double MaxRmsDb, double MeanRmsDb, double SilenceFraction);
 
-    public AudioAnalysisService(AudioBuffer buffer)
+    public sealed class AudioAnalysisService
     {
-        _buffer = buffer ?? throw new ArgumentNullException(nameof(buffer));
-    }
+        private readonly AudioBuffer _buffer;
+        private const double Eps = 1e-20;
 
-    public TimingRange SnapToEnergy(TimingRange seed, double rmsThresholdDb = -35.0, double searchWindowSec = 0.5, double stepMs = 10)
+        public AudioAnalysisService(AudioBuffer buffer)
+        {
+            _buffer = buffer ?? throw new ArgumentNullException(nameof(buffer));
+        }
+
+        /// <summary>
+        /// Expands/shrinks a seed timing to the nearest energy boundaries using an RMS threshold.
+        /// Scans backward (pre-roll) while below threshold, then forward until it falls below threshold.
+        /// </summary>
+        public TimingRange SnapToEnergy(
+        TimingRange seed,
+        double rmsThresholdDb = -35.0,
+        double searchWindowSec = 0.5,
+        double stepMs = 10.0)
     {
         double thresholdLinear = Math.Pow(10.0, rmsThresholdDb / 20.0);
         int stepSamples = Math.Max(1, (int)Math.Round(stepMs * 0.001 * _buffer.SampleRate));
@@ -22,140 +32,180 @@ public sealed class AudioAnalysisService
 
         int startSample = ClampToBuffer(seed.StartSec);
         int endSample = ClampToBuffer(seed.EndSec);
+
         if (endSample <= startSample)
         {
             endSample = Math.Min(_buffer.Length, startSample + stepSamples);
         }
 
-        // Expand backwards until RMS exceeds threshold
-        int newStart = startSample;
-        for (int pos = startSample; pos >= Math.Max(0, startSample - searchSamples); pos -= stepSamples)
+        if (endSample <= startSample)
         {
-            int window = Math.Min(stepSamples, endSample - pos);
-            if (window <= 0) break;
-            double rms = CalculateRms(pos, window);
-            if (rms < thresholdLinear)
-            {
-                newStart = pos;
-            }
-            else
-            {
-                break;
-            }
+            double startFallback = Math.Max(0, (double)startSample / _buffer.SampleRate);
+            return new TimingRange(startFallback, startFallback);
         }
 
-        // Expand forwards until RMS falls below threshold
-        int newEnd = endSample;
-        for (int pos = endSample; pos <= Math.Min(_buffer.Length - 1, endSample + searchSamples); pos += stepSamples)
-        {
-            int start = Math.Max(newStart, pos - stepSamples);
-            int window = Math.Min(stepSamples, _buffer.Length - start);
-            if (window <= 0) break;
-            double rms = CalculateRms(start, window);
-            if (rms < thresholdLinear)
-            {
-                newEnd = start;
-                break;
-            }
-            newEnd = start + window;
-        }
+        int guardSamples = Math.Max(1, stepSamples / 2);
+
+        int newStart = ShrinkStart(startSample, endSample, thresholdLinear, stepSamples, searchSamples, guardSamples);
+        int newEnd = ShrinkEnd(newStart, endSample, thresholdLinear, stepSamples, searchSamples, guardSamples);
 
         double startSec = Math.Max(0, (double)newStart / _buffer.SampleRate);
         double endSec = Math.Max(startSec, (double)newEnd / _buffer.SampleRate);
         return new TimingRange(startSec, endSec);
     }
 
-    public double MeasureRms(double startSec, double endSec)
+    private int ShrinkStart(
+        int startSample,
+        int endSample,
+        double thresholdLinear,
+        int stepSamples,
+        int searchSamples,
+        int guardSamples)
     {
-        double lo = Math.Min(startSec, endSec);
-        double hi = Math.Max(startSec, endSec);
-        int startSample = ClampToBuffer(lo);
-        int endSample = ClampToBuffer(hi);
-        if (endSample <= startSample)
+        int newStart = startSample;
+        int maxSearch = Math.Min(_buffer.Length, startSample + searchSamples);
+        for (int pos = startSample; pos < maxSearch; pos += stepSamples)
         {
-            return double.NegativeInfinity;
-        }
+            int windowStart = pos;
+            int windowSize = Math.Min(stepSamples, endSample - windowStart);
+            if (windowSize <= 0) break;
 
-        double rms = CalculateRms(startSample, endSample - startSample);
-        return ToDb(rms);
-    }
-
-    public GapRmsStats AnalyzeGap(double startSec, double endSec, double stepMs = 10.0, double silenceThresholdDb = -45.0)
-    {
-        double gapStart = Math.Min(startSec, endSec);
-        double gapEnd = Math.Max(startSec, endSec);
-
-        int startSample = ClampToBuffer(gapStart);
-        int endSample = ClampToBuffer(gapEnd);
-        if (endSample <= startSample)
-        {
-            return new GapRmsStats(-120.0, -120.0, -120.0, 1.0);
-        }
-
-        int stepSamples = Math.Max(1, (int)Math.Round(stepMs * 0.001 * _buffer.SampleRate));
-        double silenceThresholdLinear = Math.Pow(10.0, silenceThresholdDb / 20.0);
-
-        double minLinear = double.MaxValue;
-        double maxLinear = 0.0;
-        double sumLinear = 0.0;
-        int windows = 0;
-        int silentWindows = 0;
-
-        for (int pos = startSample; pos < endSample; pos += stepSamples)
-        {
-            int window = Math.Min(stepSamples, endSample - pos);
-            if (window <= 0) continue;
-
-            double rms = CalculateRms(pos, window);
-            minLinear = Math.Min(minLinear, rms);
-            maxLinear = Math.Max(maxLinear, rms);
-            sumLinear += rms;
-            windows++;
-
-            if (rms <= silenceThresholdLinear)
+            double rms = CalculateRms(windowStart, windowSize);
+            if (rms >= thresholdLinear)
             {
-                silentWindows++;
+                newStart = Math.Max(startSample, windowStart - guardSamples);
+                return newStart;
             }
         }
 
-        if (windows == 0)
+        return newStart;
+    }
+
+    private int ShrinkEnd(
+        int startSample,
+        int endSample,
+        double thresholdLinear,
+        int stepSamples,
+        int searchSamples,
+        int guardSamples)
+    {
+        int newEnd = endSample;
+        int minSearch = Math.Max(startSample, endSample - searchSamples);
+        for (int windowEnd = endSample; windowEnd > minSearch; windowEnd -= stepSamples)
         {
-            return new GapRmsStats(-120.0, -120.0, -120.0, 1.0);
-        }
+            int windowStart = Math.Max(startSample, windowEnd - stepSamples);
+            int windowSize = Math.Max(1, windowEnd - windowStart);
+            if (windowSize <= 0) continue;
 
-        double meanLinear = sumLinear / windows;
-        return new GapRmsStats(ToDb(minLinear), ToDb(maxLinear), ToDb(meanLinear), silentWindows / (double)windows);
-    }
-
-    private static double ToDb(double linear)
-    {
-        return linear <= 0 ? -120.0 : 20.0 * Math.Log10(linear);
-    }
-
-    private int ClampToBuffer(double seconds)
-    {
-        var sample = (int)Math.Round(seconds * _buffer.SampleRate);
-        return Math.Clamp(sample, 0, _buffer.Length);
-    }
-
-    private double CalculateRms(int startSample, int length)
-    {
-        if (length <= 0) return 0.0;
-        double sum = 0.0;
-        int count = 0;
-        for (int ch = 0; ch < _buffer.Channels; ch++)
-        {
-            var span = _buffer.Planar[ch];
-            for (int i = 0; i < length; i++)
+            double rms = CalculateRms(windowStart, windowSize);
+            if (rms >= thresholdLinear)
             {
-                int idx = startSample + i;
-                if (idx >= span.Length) break;
-                double sample = span[idx];
-                sum += sample * sample;
-                count++;
+                newEnd = Math.Min(endSample, windowEnd + guardSamples);
+                return Math.Max(newEnd, startSample);
             }
         }
-        if (count == 0) return 0.0;
-        return Math.Sqrt(sum / count);
+
+        return Math.Max(newEnd, startSample);
+    }
+
+        /// <summary>
+        /// Returns RMS over [startSec, endSec) as dBFS. -Inf if the range is empty.
+        /// </summary>
+        public double MeasureRms(double startSec, double endSec)
+        {
+            double lo = Math.Min(startSec, endSec);
+            double hi = Math.Max(startSec, endSec);
+            int startSample = ClampToBuffer(lo);
+            int endSample = ClampToBuffer(hi);
+            if (endSample <= startSample) return double.NegativeInfinity;
+            double rms = CalculateRms(startSample, endSample - startSample);
+            return ToDb(rms);
+        }
+
+        /// <summary>
+        /// Slides a fixed window across the gap and summarizes RMS in dB.
+        /// SilenceFraction is % of windows below silenceThresholdDb.
+        /// </summary>
+        public GapRmsStats AnalyzeGap(
+            double startSec,
+            double endSec,
+            double stepMs = 10.0,
+            double silenceThresholdDb = -45.0)
+        {
+            double lo = Math.Min(startSec, endSec);
+            double hi = Math.Max(startSec, endSec);
+
+            int start = ClampToBuffer(lo);
+            int end = ClampToBuffer(hi);
+            if (end <= start)
+            {
+                return new GapRmsStats(double.NegativeInfinity, double.NegativeInfinity, double.NegativeInfinity, 1.0);
+            }
+
+            int step = Math.Max(1, (int)Math.Round(stepMs * 0.001 * _buffer.SampleRate));
+
+            var valuesDb = new List<double>();
+            for (int pos = start; pos < end; pos += step)
+            {
+                int len = Math.Min(step, end - pos);
+                if (len <= 0) break;
+                double rms = CalculateRms(pos, len);
+                valuesDb.Add(ToDb(rms));
+            }
+
+            if (valuesDb.Count == 0)
+            {
+                return new GapRmsStats(double.NegativeInfinity, double.NegativeInfinity, double.NegativeInfinity, 1.0);
+            }
+
+            double min = double.PositiveInfinity, max = double.NegativeInfinity, sum = 0;
+            int sil = 0;
+            foreach (var db in valuesDb)
+            {
+                if (db < min) min = db;
+                if (db > max) max = db;
+                sum += db;
+                if (db <= silenceThresholdDb) sil++;
+            }
+
+            double mean = sum / valuesDb.Count;
+            double silenceFraction = (double)sil / valuesDb.Count;
+            return new GapRmsStats(min, max, mean, silenceFraction);
+        }
+
+        /// <summary>
+        /// Per-window RMS over all channels (planar), equal-weighting channels and samples.
+        /// </summary>
+        private double CalculateRms(int startSample, int length)
+        {
+            if (length <= 0) return 0.0;
+
+            double sum = 0.0;
+            int count = 0;
+
+            for (int ch = 0; ch < _buffer.Channels; ch++)
+            {
+                var span = _buffer.Planar[ch];
+                int end = Math.Min(span.Length, startSample + length);
+                for (int i = startSample; i < end; i++)
+                {
+                    double s = span[i];
+                    sum += s * s;
+                    count++;
+                }
+            }
+
+            if (count == 0) return 0.0;
+            return Math.Sqrt(sum / count);
+        }
+
+        private static double ToDb(double linear) =>
+            linear <= 0 ? double.NegativeInfinity : 20.0 * Math.Log10(linear);
+
+        private int ClampToBuffer(double sec)
+        {
+            int s = (int)Math.Round(sec * _buffer.SampleRate);
+            return Math.Clamp(s, 0, _buffer.Length);
+        }
     }
 }
