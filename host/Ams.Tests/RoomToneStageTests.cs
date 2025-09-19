@@ -22,34 +22,43 @@ public class RoomToneStageTests
         using var temp = new TempDir();
         var context = await ArrangeAsync(temp, createExistingRoomtone: false);
 
-        var stage = new RoomToneInsertionStage(targetSampleRate: 8000, toneGainDb: -50, fadeMs: 5);
+        var stage = new RoomToneInsertionStage(targetSampleRate: 8000, toneGainDb: 0, fadeMs: 0);
         var ex = await Assert.ThrowsAsync<FileNotFoundException>(() => stage.RunAsync(context.Manifest, CancellationToken.None));
 
         Assert.Contains("roomtone.wav", ex.Message, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
-    public async Task RunAsync_UsesExistingRoomtoneWhenPresent()
+    public async Task RunAsync_ReplacesGapsWithLoopedRoomtone()
     {
         using var temp = new TempDir();
         var context = await ArrangeAsync(temp, createExistingRoomtone: true);
 
-        var stage = new RoomToneInsertionStage(targetSampleRate: 8000, toneGainDb: -50, fadeMs: 5);
+        var stage = new RoomToneInsertionStage(targetSampleRate: 8000, toneGainDb: 0, fadeMs: 0);
         var outputs = await stage.RunAsync(context.Manifest, CancellationToken.None);
 
         Assert.True(File.Exists(outputs["roomtoneWav"]));
 
-        var producedBytes = await File.ReadAllBytesAsync(outputs["roomtoneWav"]);
-        var expectedBytes = await File.ReadAllBytesAsync(context.ExistingRoomtonePath!);
-        Assert.True(producedBytes.SequenceEqual(expectedBytes));
+        var rendered = WavIo.ReadPcmOrFloat(outputs["roomtoneWav"]);
+        Assert.Equal(8000, rendered.SampleRate);
+        Assert.Equal(1, rendered.Channels);
+
+        int speechSample = 1000; // within first sentence (0-0.25s)
+        Assert.InRange(rendered.Planar[0][speechSample], 0.49f, 0.51f);
+
+        int gapStart = (int)(0.25 * rendered.SampleRate);
+        float expected0 = 0.1f;
+        float expected1 = -0.1f;
+        Assert.InRange(rendered.Planar[0][gapStart], expected0 - 0.01f, expected0 + 0.01f);
+        Assert.InRange(rendered.Planar[0][gapStart + 1], expected1 - 0.01f, expected1 + 0.01f);
 
         var metaJson = await File.ReadAllTextAsync(outputs["meta"]);
         using var meta = JsonDocument.Parse(metaJson);
-        Assert.Equal(context.ExistingRoomtonePath!, meta.RootElement.GetProperty("sourceRoomtone").GetString());
+        Assert.Equal(context.ExistingRoomtonePath, meta.RootElement.GetProperty("sourceRoomtone").GetString());
 
         var paramsJson = await File.ReadAllTextAsync(outputs["params"]);
-        using var parameters = JsonDocument.Parse(paramsJson);
-        Assert.True(parameters.RootElement.GetProperty("parameters").GetProperty("usedExistingRoomtone").GetBoolean());
+        using var parms = JsonDocument.Parse(paramsJson);
+        Assert.True(parms.RootElement.GetProperty("parameters").GetProperty("usedExistingRoomtone").GetBoolean());
     }
 
     private static async Task<TestContext> ArrangeAsync(TempDir temp, bool createExistingRoomtone)
@@ -61,17 +70,17 @@ public class RoomToneStageTests
         var audioPath = Path.Combine(audioDir, "chapter.wav");
         var asrPath = Path.Combine(audioDir, "chapter.asr.json");
 
-        var buffer = new AudioBuffer(channels: 1, sampleRate: 8000, length: 8000);
-        for (int i = 0; i < buffer.Length; i++)
+        var inputBuffer = new AudioBuffer(channels: 1, sampleRate: 8000, length: 8000);
+        for (int i = 0; i < inputBuffer.Length; i++)
         {
-            buffer.Planar[0][i] = i < 4000 ? 0.4f : 0.0f;
+            inputBuffer.Planar[0][i] = i < 2000 ? 0.5f : 0.0f;
         }
-        WavIo.WriteInt16Pcm(audioPath, buffer);
+        WavIo.WriteInt16Pcm(audioPath, inputBuffer);
 
         var asr = new AsrResponse("test-model", new[]
         {
-            new AsrToken(0.0, 0.5, "hello"),
-            new AsrToken(0.5, 0.5, "world")
+            new AsrToken(0.0, 0.25, "hello"),
+            new AsrToken(0.25, 0.05, "world")
         });
         await File.WriteAllTextAsync(asrPath, JsonSerializer.Serialize(asr, jsonOptions));
 
@@ -97,8 +106,7 @@ public class RoomToneStageTests
 
         var sentences = new[]
         {
-            new SentenceAlign(1, new IntRange(0, 0), new ScriptRange(0, 0), new TimingRange(0.0, 0.5), new SentenceMetrics(0, 0, 0, 0, 0), "ok"),
-            new SentenceAlign(2, new IntRange(1, 1), new ScriptRange(1, 1), new TimingRange(0.5, 1.0), new SentenceMetrics(0, 0, 0, 0, 0), "ok")
+            new SentenceAlign(1, new IntRange(0, 10), new ScriptRange(0, 1), new TimingRange(0.0, 0.25), new SentenceMetrics(0, 0, 0, 0, 0), "ok")
         };
         var tx = new TranscriptIndex(
             AudioPath: audioPath,
@@ -113,15 +121,20 @@ public class RoomToneStageTests
         var txPath = Path.Combine(temp.Path, "chapter.tx.json");
         await File.WriteAllTextAsync(txPath, JsonSerializer.Serialize(tx, jsonOptions));
 
-        string? existingRoomtonePath = null;
+        string? roomtonePath = null;
         if (createExistingRoomtone)
         {
-            existingRoomtonePath = Path.Combine(audioDir, "RoomTone.WaV");
-            await File.WriteAllBytesAsync(existingRoomtonePath, new byte[] { 0, 1, 2, 3, 4 });
+            roomtonePath = Path.Combine(audioDir, "roomtone.wav");
+            var toneBuffer = new AudioBuffer(1, 8000, 4);
+            toneBuffer.Planar[0][0] = 0.1f;
+            toneBuffer.Planar[0][1] = -0.1f;
+            toneBuffer.Planar[0][2] = 0.05f;
+            toneBuffer.Planar[0][3] = -0.05f;
+            WavIo.WriteInt16Pcm(roomtonePath, toneBuffer);
         }
 
         var manifest = new ManifestV2("chapter", temp.Path, audioPath, txPath);
-        return new TestContext(manifest, existingRoomtonePath);
+        return new TestContext(manifest, roomtonePath);
     }
 
     private sealed record TestContext(ManifestV2 Manifest, string? ExistingRoomtonePath);
