@@ -10,21 +10,69 @@ public static class RoomtoneRenderer
 {
     public static AudioBuffer RenderWithSentenceMasks(
         AudioBuffer input,
+        AudioBuffer roomtoneSeed,
         AsrResponse asr,
         IReadOnlyList<SentenceAlign> sentences,
         int targetSampleRate,
         double toneGainDb,
         double fadeMs)
     {
-        // 1) Optionally resample input to target SR (planar, float32)
         var src = input.SampleRate == targetSampleRate ? input : ResampleLinear(input, targetSampleRate);
+        var tone = roomtoneSeed.SampleRate == targetSampleRate ? roomtoneSeed : ResampleLinear(roomtoneSeed, targetSampleRate);
+        if (tone.Length == 0) throw new InvalidOperationException("Roomtone seed must contain samples.");
 
-        // 2) Build sentence time ranges from timing metadata (fallback to ScriptRange when unavailable)
-        var sentRanges = new List<(int startSample, int endSample)>();
+        var sentRanges = BuildSentenceRanges(sentences, asr, src.SampleRate, src.Length);
+        var gapRanges = BuildGapRanges(sentRanges, src.Length);
+
+        var outBuf = CloneBuffer(src);
+
+        double toneGain = Math.Pow(10.0, toneGainDb / 20.0);
+        long toneCursor = 0;
+        foreach (var (gapStart, gapEnd) in gapRanges)
+        {
+            FillGapWithRoomtone(outBuf, tone, gapStart, gapEnd, toneGain, ref toneCursor);
+        }
+
+        foreach (var (startSample, endSample) in sentRanges)
+        {
+            int len = endSample - startSample;
+            if (len <= 0) continue;
+            for (int ch = 0; ch < src.Channels; ch++)
+            {
+                Array.Copy(src.Planar[ch], startSample, outBuf.Planar[ch], startSample, len);
+            }
+        }
+
+        int fadeSamples = fadeMs <= 0 ? 0 : (int)Math.Round(fadeMs * 0.001 * src.SampleRate);
+        if (fadeSamples > 0)
+        {
+            foreach (var (s0, s1) in sentRanges)
+            {
+                int fiStart = Math.Max(0, s0 - fadeSamples);
+                int fiEnd = s0;
+                ApplyCrossfade(outBuf, src, fiStart, fiEnd, fadeSamples, directionIn: true);
+
+                int foStart = s1;
+                int foEnd = Math.Min(src.Length, s1 + fadeSamples);
+                ApplyCrossfade(outBuf, src, foStart, foEnd, fadeSamples, directionIn: false);
+            }
+        }
+
+        return outBuf;
+    }
+
+    private static List<(int Start, int End)> BuildSentenceRanges(
+        IReadOnlyList<SentenceAlign> sentences,
+        AsrResponse asr,
+        int sampleRate,
+        int totalSamples)
+    {
+        var ranges = new List<(int Start, int End)>(sentences.Count);
         foreach (var sentence in sentences)
         {
-            double startSec = sentence.Timing.StartSec;
-            double endSec = sentence.Timing.EndSec;
+            var timing = sentence.Timing;
+            double startSec = timing.StartSec;
+            double endSec = timing.EndSec;
 
             if (endSec <= startSec && sentence.ScriptRange is { Start: { } startIdx, End: { } endIdx })
             {
@@ -33,74 +81,77 @@ public static class RoomtoneRenderer
                 endSec = fallback.EndSec;
             }
 
-            if (endSec <= startSec)
-            {
-                continue;
-            }
+            if (endSec <= startSec) continue;
 
-            int startSample = Math.Clamp((int)Math.Round(startSec * src.SampleRate), 0, src.Length);
-            int endSample = Math.Clamp((int)Math.Round(endSec * src.SampleRate), 0, src.Length);
+            int startSample = Math.Clamp((int)Math.Round(startSec * sampleRate), 0, totalSamples);
+            int endSample = Math.Clamp((int)Math.Round(endSec * sampleRate), 0, totalSamples);
             if (endSample > startSample)
             {
-                sentRanges.Add((startSample, endSample));
+                ranges.Add((startSample, endSample));
             }
         }
-        sentRanges = MergeRanges(sentRanges);
 
-        // 3) Prepare output buffer and roomtone generator
-        var outBuf = new AudioBuffer(src.Channels, src.SampleRate, src.Length);
-        double toneAmp = Math.Pow(10.0, toneGainDb / 20.0); // dBFS -> linear
-        var rnd = new Random(0xC0FFEE);
-        Span<float> tmpNoise = stackalloc float[4096];
+        if (ranges.Count == 0) return ranges;
+        ranges.Sort((a, b) => a.Start != b.Start ? a.Start.CompareTo(b.Start) : a.End.CompareTo(b.End));
 
-        // 4) Fill entire output with room tone (TPDF noise)
-        int total = src.Length;
-        int idx = 0;
-        while (idx < total)
+        var merged = new List<(int Start, int End)> { ranges[0] };
+        for (int i = 1; i < ranges.Count; i++)
         {
-            int n = Math.Min(tmpNoise.Length, total - idx);
-            for (int i = 0; i < n; i++)
-            {
-                // TPDF noise in [-1,1] scaled by toneAmp
-                double u = rnd.NextDouble() - rnd.NextDouble();
-                tmpNoise[i] = (float)(u * toneAmp);
-            }
-            for (int ch = 0; ch < src.Channels; ch++)
-            {
-                var dst = outBuf.Planar[ch];
-                tmpNoise[..n].CopyTo(dst.AsSpan(idx, n));
-            }
-            idx += n;
+            var current = ranges[i];
+            var last = merged[^1];
+            if (current.Start <= last.End)
+                merged[^1] = (last.Start, Math.Max(last.End, current.End));
+            else
+                merged.Add(current);
         }
 
-        // 5) Overlay source audio on sentence ranges
-        foreach (var (s0, s1) in sentRanges)
+        return merged;
+    }
+
+    private static List<(int Start, int End)> BuildGapRanges(
+        List<(int Start, int End)> sentenceRanges,
+        int totalSamples)
+    {
+        var gaps = new List<(int Start, int End)>();
+        int cursor = 0;
+        foreach (var range in sentenceRanges)
         {
-            int len = s1 - s0;
-            for (int ch = 0; ch < src.Channels; ch++)
+            if (range.Start > cursor)
             {
-                Array.Copy(src.Planar[ch], s0, outBuf.Planar[ch], s0, len);
+                gaps.Add((cursor, range.Start));
+            }
+            cursor = Math.Max(cursor, range.End);
+        }
+        if (cursor < totalSamples)
+        {
+            gaps.Add((cursor, totalSamples));
+        }
+        return gaps;
+    }
+
+    private static void FillGapWithRoomtone(
+        AudioBuffer dest,
+        AudioBuffer tone,
+        int gapStart,
+        int gapEnd,
+        double gain,
+        ref long toneCursor)
+    {
+        int len = gapEnd - gapStart;
+        if (len <= 0) return;
+        int toneChannels = tone.Channels;
+        int toneLength = tone.Length;
+        if (toneLength == 0) return;
+
+        for (int offset = 0; offset < len; offset++, toneCursor++)
+        {
+            int toneIndex = (int)(toneCursor % toneLength);
+            for (int ch = 0; ch < dest.Channels; ch++)
+            {
+                int toneCh = toneChannels == 1 ? 0 : ch % toneChannels;
+                dest.Planar[ch][gapStart + offset] = (float)(gain * tone.Planar[toneCh][toneIndex]);
             }
         }
-
-        // 6) Crossfade at boundaries (speech<->roomtone) using linear 5 ms ramps
-        int fadeSamples = (int)Math.Round(fadeMs * 0.001 * src.SampleRate);
-        fadeSamples = Math.Max(1, fadeSamples);
-
-        foreach (var (s0, s1) in sentRanges)
-        {
-            // Fade-in at start (roomtone -> speech)
-            int fiStart = Math.Max(0, s0 - fadeSamples);
-            int fiEnd = s0;
-            ApplyCrossfade(outBuf, src, fiStart, fiEnd, fadeSamples, directionIn: true);
-
-            // Fade-out at end (speech -> roomtone)
-            int foStart = s1;
-            int foEnd = Math.Min(src.Length, s1 + fadeSamples);
-            ApplyCrossfade(outBuf, src, foStart, foEnd, fadeSamples, directionIn: false);
-        }
-
-        return outBuf;
     }
 
     private static TimingRange ComputeTimingFromTokens(AsrResponse asr, int startIdx, int endIdx)
@@ -115,11 +166,8 @@ public static class RoomtoneRenderer
 
     private static void ApplyCrossfade(AudioBuffer dstWithTone, AudioBuffer src, int aStart, int aEnd, int fadeSamples, bool directionIn)
     {
-        // Crossfade is implemented by mixing a linear ramp between the two layers across overlap window:
-        // directionIn=true: roomtone -> speech (gainTone: 1..0, gainSrc: 0..1)
-        // directionIn=false: speech -> roomtone (gainSrc: 1..0, gainTone: 0..1)
         int n = Math.Max(0, aEnd - aStart);
-        if (n == 0) return;
+        if (n == 0 || fadeSamples <= 0) return;
         for (int i = 0; i < n; i++)
         {
             double t = (double)i / Math.Max(1, fadeSamples);
@@ -127,36 +175,30 @@ public static class RoomtoneRenderer
             double gSrc = directionIn ? t : (1.0 - t);
             double gTone = 1.0 - gSrc;
             int si = aStart + i;
+            if (si < 0 || si >= dstWithTone.Length) continue;
             for (int ch = 0; ch < src.Channels; ch++)
             {
-                float s = (si >= 0 && si < src.Length) ? src.Planar[ch][si] : 0f;
-                float d = dstWithTone.Planar[ch][si]; // currently holds roomtone
-                dstWithTone.Planar[ch][si] = (float)(s * gSrc + d * gTone);
+                float speech = (si >= 0 && si < src.Length) ? src.Planar[ch][si] : 0f;
+                float tone = dstWithTone.Planar[ch][si];
+                dstWithTone.Planar[ch][si] = (float)(speech * gSrc + tone * gTone);
             }
         }
     }
 
-    private static List<(int, int)> MergeRanges(List<(int s0, int s1)> ranges)
+    private static AudioBuffer CloneBuffer(AudioBuffer source)
     {
-        if (ranges.Count == 0) return new();
-        ranges.Sort((a, b) => a.s0 != b.s0 ? a.s0.CompareTo(b.s0) : a.s1.CompareTo(b.s1));
-        var merged = new List<(int, int)> { ranges[0] };
-        for (int i = 1; i < ranges.Count; i++)
+        var clone = new AudioBuffer(source.Channels, source.SampleRate, source.Length);
+        for (int ch = 0; ch < source.Channels; ch++)
         {
-            var (s0, s1) = ranges[i];
-            var last = merged[^1];
-            if (s0 <= last.Item2)
-                merged[^1] = (last.Item1, Math.Max(last.Item2, s1));
-            else
-                merged.Add((s0, s1));
+            Array.Copy(source.Planar[ch], clone.Planar[ch], source.Length);
         }
-        return merged;
+        return clone;
     }
 
     private static AudioBuffer ResampleLinear(AudioBuffer src, int targetSampleRate)
     {
         double ratio = (double)targetSampleRate / src.SampleRate;
-        int outLen = (int)Math.Round(src.Length * ratio);
+        int outLen = Math.Max(1, (int)Math.Round(src.Length * ratio));
         var outBuf = new AudioBuffer(src.Channels, targetSampleRate, outLen);
         for (int ch = 0; ch < src.Channels; ch++)
         {
@@ -192,7 +234,3 @@ public sealed class AudioBuffer
         for (int ch = 0; ch < channels; ch++) Planar[ch] = new float[length];
     }
 }
-
-
-
-
