@@ -4,6 +4,7 @@ using Ams.Core.Artifacts;
 using Ams.Core.Audio;
 using Ams.Core.Alignment.Tx;
 using Ams.Core;
+using Ams.Core.Pipeline;
 
 namespace Ams.Cli.Commands;
 
@@ -69,32 +70,35 @@ public static class AudioCommand
         var tx = JsonSerializer.Deserialize<TranscriptIndex>(txJson, jsonOptions) ?? throw new InvalidOperationException("Failed to parse TranscriptIndex");
 
         string audioPath = NormalizePath(tx.AudioPath);
-        string asrPath = NormalizePath(tx.ScriptPath);
         if (!File.Exists(audioPath)) throw new FileNotFoundException($"Audio file not found: {audioPath}");
-        if (!File.Exists(asrPath)) throw new FileNotFoundException($"ASR file not found: {asrPath}");
-
-        var asrJson = await File.ReadAllTextAsync(asrPath);
-        var asr = JsonSerializer.Deserialize<AsrResponse>(asrJson, jsonOptions) ?? throw new InvalidOperationException("Failed to parse ASR JSON referenced by TranscriptIndex");
-
-        Console.WriteLine($"Reading WAV: {audioPath}");
-        var wav = WavIo.ReadPcmOrFloat(audioPath);
-
-        Console.WriteLine($"Rendering roomtone with sentence masks and {fadeMs} ms crossfades...");
-        var rendered = RoomtoneRenderer.RenderWithSentenceMasks(
-            input: wav,
-            asr: asr,
-            sentences: tx.Sentences,
-            targetSampleRate: sampleRate,
-            toneGainDb: toneDb,
-            fadeMs: fadeMs);
 
         if (bitDepth != 16)
             throw new NotSupportedException("Currently only 16-bit PCM output is supported in MVP.");
 
-        Console.WriteLine($"Writing 16-bit PCM WAV @ {sampleRate} Hz: {outWav.FullName}");
+        string workDir = outWav.DirectoryName ?? Directory.GetCurrentDirectory();
+        string chapterId = Path.GetFileNameWithoutExtension(txFile.Name);
+
+        var manifest = new ManifestV2(
+            ChapterId: string.IsNullOrWhiteSpace(chapterId) ? "chapter" : chapterId,
+            WorkDirectory: workDir,
+            AudioPath: audioPath,
+            TranscriptIndexPath: txFile.FullName);
+
+        var stage = new RoomToneInsertionStage(sampleRate, toneDb, fadeMs);
+        var outputs = await stage.RunAsync(manifest, CancellationToken.None);
+
+        var producedWav = outputs.TryGetValue("roomtoneWav", out var path) ? path : throw new InvalidOperationException("Stage did not produce roomtone WAV");
+
         EnsureDirectory(outWav.DirectoryName);
-        WavIo.WriteInt16Pcm(outWav.FullName, rendered);
-        Console.WriteLine("Done.");
+        if (!string.Equals(Path.GetFullPath(producedWav), Path.GetFullPath(outWav.FullName), StringComparison.OrdinalIgnoreCase))
+        {
+            File.Copy(producedWav, outWav.FullName, overwrite: true);
+        }
+
+        Console.WriteLine($"Roomtone WAV: {outWav.FullName}");
+        if (outputs.TryGetValue("timeline", out var timeline)) Console.WriteLine($"Timeline JSON: {timeline}");
+        if (outputs.TryGetValue("meta", out var meta)) Console.WriteLine($"Meta JSON: {meta}");
+        if (outputs.TryGetValue("params", out var snapshot)) Console.WriteLine($"Params Snapshot: {snapshot}");
     }
 
     private static void EnsureDirectory(string? dir)
@@ -116,5 +120,6 @@ public static class AudioCommand
         return path;
     }
 }
+
 
 

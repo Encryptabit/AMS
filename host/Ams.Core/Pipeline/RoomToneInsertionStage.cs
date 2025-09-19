@@ -3,6 +3,7 @@ using System.IO;
 using System.Linq;
 using System.Text.Json;
 using Ams.Core.Artifacts;
+using Ams.Core.Audio;
 using Ams.Core.Book;
 
 namespace Ams.Core.Pipeline;
@@ -31,6 +32,8 @@ public sealed class RoomToneInsertionStage
         var asr = await LoadAsrAsync(transcript.ScriptPath, jsonOptions, ct);
         var bookIndex = await LoadBookIndexAsync(transcript.BookIndexPath, jsonOptions, ct);
 
+        var roomtonePath = RequireRoomtone(manifest.AudioPath, bookIndex.SourceFile);
+
         if (!File.Exists(manifest.AudioPath))
             throw new FileNotFoundException("Audio file not found", manifest.AudioPath);
 
@@ -44,35 +47,17 @@ public sealed class RoomToneInsertionStage
             .ToList();
 
         var stageDir = manifest.ResolveStageDirectory("roomtone");
+        EnsureDirectory(stageDir);
         var wavPath = Path.Combine(stageDir, "roomtone.wav");
         var timelinePath = Path.Combine(stageDir, "timeline.json");
         var metaPath = Path.Combine(stageDir, "meta.json");
         var paramsPath = Path.Combine(stageDir, "params.snapshot.json");
 
-        var existingRoomtone = TryLocateRoomtone(manifest.AudioPath, bookIndex.SourceFile);
-        bool usedExisting = existingRoomtone is not null;
-
-        if (usedExisting)
-        {
-            EnsureDirectory(stageDir);
-            File.Copy(existingRoomtone!, wavPath, overwrite: true);
-        }
-        else
-        {
-            var rendered = RoomtoneRenderer.RenderWithSentenceMasks(
-                input: inputAudio,
-                asr: asr,
-                sentences: updatedSentences,
-                targetSampleRate: _targetSampleRate,
-                toneGainDb: _toneGainDb,
-                fadeMs: _fadeMs);
-
-            WavIo.WriteInt16Pcm(wavPath, rendered);
-        }
+        File.Copy(roomtonePath, wavPath, overwrite: true);
 
         await WriteTimelineAsync(timelineEntries, manifest, timelinePath, ct);
-        await WriteMetaAsync(manifest, wavPath, usedExisting ? existingRoomtone : null, metaPath, ct);
-        await WriteParamsAsync(paramsPath, _toneGainDb, _fadeMs, usedExisting, ct);
+        await WriteMetaAsync(manifest, wavPath, roomtonePath, metaPath, ct);
+        await WriteParamsAsync(paramsPath, _toneGainDb, _fadeMs, ct);
 
         return new Dictionary<string, string>
         {
@@ -83,28 +68,48 @@ public sealed class RoomToneInsertionStage
         };
     }
 
-    private static string? TryLocateRoomtone(string audioPath, string? docPath)
+    private static string RequireRoomtone(string audioPath, string? docPath)
     {
-        var candidates = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var directories = new List<string>();
 
-        AddCandidateDirectory(Path.GetDirectoryName(audioPath));
-        AddCandidateDirectory(Path.GetDirectoryName(docPath));
+        AddCandidate(Path.GetDirectoryName(audioPath));
+        AddCandidate(Path.GetDirectoryName(docPath));
 
-        foreach (var dir in candidates)
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var dir in directories)
         {
-            if (!Directory.Exists(dir)) continue;
-            var match = Directory.EnumerateFiles(dir, "roomtone.wav", SearchOption.TopDirectoryOnly)
+            if (string.IsNullOrWhiteSpace(dir)) continue;
+            var full = Path.GetFullPath(dir);
+            if (!seen.Add(full)) continue;
+            if (!Directory.Exists(full)) continue;
+
+            var match = Directory.EnumerateFiles(full, "roomtone.wav", SearchOption.TopDirectoryOnly)
                 .FirstOrDefault(f => string.Equals(Path.GetFileName(f), "roomtone.wav", StringComparison.OrdinalIgnoreCase));
-            if (match is not null) return match;
+            if (match is not null)
+            {
+                return match;
+            }
         }
 
-        return null;
+        var searched = directories
+            .Where(d => !string.IsNullOrWhiteSpace(d))
+            .Select(Path.GetFullPath)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
 
-        void AddCandidateDirectory(string? directory)
+        var message = "roomtone.wav not found in expected directories.";
+        if (searched.Length > 0)
         {
-            if (!string.IsNullOrWhiteSpace(directory))
+            message += $" Checked: {string.Join(", ", searched)}";
+        }
+
+        throw new FileNotFoundException(message, "roomtone.wav");
+
+        void AddCandidate(string? dir)
+        {
+            if (!string.IsNullOrWhiteSpace(dir))
             {
-                candidates.Add(Path.GetFullPath(directory));
+                directories.Add(dir);
             }
         }
     }
@@ -160,7 +165,7 @@ public sealed class RoomToneInsertionStage
         await File.WriteAllTextAsync(path, json, ct);
     }
 
-    private static async Task WriteMetaAsync(ManifestV2 manifest, string wavPath, string? sourceRoomtone, string path, CancellationToken ct)
+    private static async Task WriteMetaAsync(ManifestV2 manifest, string wavPath, string sourceRoomtone, string path, CancellationToken ct)
     {
         var meta = new
         {
@@ -175,11 +180,11 @@ public sealed class RoomToneInsertionStage
         await File.WriteAllTextAsync(path, json, ct);
     }
 
-    private static async Task WriteParamsAsync(string path, double toneGainDb, double fadeMs, bool usedExisting, CancellationToken ct)
+    private static async Task WriteParamsAsync(string path, double toneGainDb, double fadeMs, CancellationToken ct)
     {
         var snapshot = new
         {
-            parameters = new { toneGainDb, fadeMs, usedExistingRoomtone = usedExisting }
+            parameters = new { toneGainDb, fadeMs, usedExistingRoomtone = true }
         };
         var json = JsonSerializer.Serialize(snapshot, new JsonSerializerOptions { WriteIndented = true });
         await File.WriteAllTextAsync(path, json, ct);
