@@ -4,7 +4,7 @@ using Ams.Core.Artifacts;
 
 namespace Ams.Core.Audio;
 
-public sealed record SentenceTimelineEntry(int SentenceId, SentenceTiming Timing, bool HasTiming);
+public sealed record SentenceTimelineEntry(int SentenceId, SentenceTiming Timing, bool HasTiming, SentenceTiming Window);
 
 public static class SentenceTimelineBuilder
 {
@@ -23,19 +23,21 @@ public static class SentenceTimelineBuilder
 
         foreach (var sentence in sentences)
         {
+            var baseTiming = new SentenceTiming(sentence.Timing);
             var timingSource = fragments != null && fragments.TryGetValue(sentence.Id, out var fragment)
                 ? new SentenceTiming(fragment, fragmentBacked: true)
-                : new SentenceTiming(sentence.Timing);
+                : baseTiming;
 
             bool hasTiming = timingSource.Duration > 0;
 
+            SentenceTiming energyTiming = timingSource;
             if (hasTiming)
             {
                 var snapped = analyzer.SnapToEnergy(timingSource, rmsThresholdDb, searchWindowSec, stepMs);
-                timingSource = new SentenceTiming(snapped.StartSec, snapped.EndSec, timingSource.FragmentBacked, timingSource.Confidence);
+                energyTiming = new SentenceTiming(snapped.StartSec, snapped.EndSec, timingSource.FragmentBacked, timingSource.Confidence);
             }
 
-            entries.Add(new SentenceTimelineEntry(sentence.Id, timingSource, hasTiming));
+            entries.Add(new SentenceTimelineEntry(sentence.Id, energyTiming, hasTiming, baseTiming));
         }
 
         // Ensure monotonically increasing windows to avoid overlap downstream.
