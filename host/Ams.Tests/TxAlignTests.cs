@@ -17,7 +17,31 @@ public class TxAlignTests
             w => Assert.Equal((106, 112, 6, 14), w),
             w => Assert.Equal((113, 120, 15, 25), w));
     }
+    [Fact]
+    public void Rollup_IgnoresInsertionsOutsideGuardSpan()
+    {
+        var ops = new List<WordAlign>
+        {
+            new WordAlign(109, 1000, AlignOp.Match, "anchor", 1),
+            new WordAlign(null, 200, AlignOp.Ins, "extra", 0),
+            new WordAlign(110, 1100, AlignOp.Match, "equal_or_equiv", 1),
+            new WordAlign(111, 1101, AlignOp.Match, "equal_or_equiv", 1),
+            new WordAlign(112, 1102, AlignOp.Sub, "near_or_diff", 0),
+            new WordAlign(113, 1103, AlignOp.Match, "equal_or_equiv", 1),
+            new WordAlign(120, 1200, AlignOp.Match, "anchor", 1)
+        };
 
+        var (sentences, _) = TranscriptAligner.Rollup(
+            ops,
+            new List<(int Id, int Start, int End)> { (42, 110, 113) },
+            new List<(int Id, int Start, int End)> { (9, 110, 113) });
+
+        var metrics = Assert.Single(sentences).Metrics;
+
+        Assert.Equal(0, metrics.ExtraRuns);
+        Assert.Equal(0.25, metrics.Wer);
+        Assert.Equal(0, metrics.MissingRuns);
+    }
     [Fact]
     public void Align_SimpleNearMatch_YieldsSubNotDelIns()
     {
@@ -35,5 +59,3 @@ public class TxAlignTests
         Assert.Equal(0, ops.Count(o => o.op == AlignOp.Ins));
     }
 }
-
-
