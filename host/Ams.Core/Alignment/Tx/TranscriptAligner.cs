@@ -124,31 +124,67 @@ public static class TranscriptAligner
         IReadOnlyList<(int Id, int Start, int End)> bookSentences,
         IReadOnlyList<(int Id, int Start, int End)> bookParagraphs)
     {
+        var opsList = ops.ToList();
+
         // Sentences
         var sentsOut = new List<SentenceAlign>(bookSentences.Count);
         foreach (var s in bookSentences)
         {
             int start = s.Start, end = s.End, n = Math.Max(0, end - start + 1);
-            var inRange = ops.Where(o => o.BookIdx is int bi && bi >= start && bi <= end).ToList();
+
+            var candidateIndices = new List<int>();
+            for (int i = 0; i < opsList.Count; i++)
+            {
+                var op = opsList[i];
+                if (op.BookIdx is int bi && bi >= start && bi <= end)
+                {
+                    candidateIndices.Add(i);
+                }
+            }
+
+            if (candidateIndices.Count == 0)
+            {
+                var emptyMetrics = new SentenceMetrics(1.0, 0.0, 1.0, n, 0);
+                sentsOut.Add(new SentenceAlign(s.Id, new IntRange(start, end), null, TimingRange.Empty, emptyMetrics, "unreliable"));
+                continue;
+            }
+
+            int minIndex = candidateIndices.Min();
+            int maxIndex = candidateIndices.Max();
+
+            int left = minIndex - 1;
+            while (left >= 0)
+            {
+                var op = opsList[left];
+                if (op.BookIdx.HasValue) break;
+                if (op.AsrIdx is null) break;
+                minIndex = left;
+                left--;
+            }
+
+            int right = maxIndex + 1;
+            while (right < opsList.Count)
+            {
+                var op = opsList[right];
+                if (op.BookIdx.HasValue) break;
+                if (op.AsrIdx is null) break;
+                maxIndex = right;
+                right++;
+            }
+
+            var segment = opsList.GetRange(minIndex, maxIndex - minIndex + 1);
+            var inRange = segment.Where(o => o.BookIdx is int bi && bi >= start && bi <= end).ToList();
 
             int subs = inRange.Count(o => o.Op == AlignOp.Sub);
             int dels = inRange.Count(o => o.Op == AlignOp.Del);
-            // Limit insertions to those whose ASR positions fall within the ASR span
-            // covered by aligned tokens for this sentence (prevents global insertions inflating WER).
-            var asrIdxs = inRange.Where(o => o.AsrIdx is not null).Select(o => o.AsrIdx!.Value).ToList();
-            int ins = 0;
-            if (asrIdxs.Count > 0)
-            {
-                int aMin = asrIdxs.Min();
-                int aMax = asrIdxs.Max();
-                ins = ops.Count(o => o.Op == AlignOp.Ins && o.AsrIdx is int aj && aj >= aMin && aj <= aMax);
-            }
+            int ins = segment.Count(o => o.Op == AlignOp.Ins && o.AsrIdx is int);
 
             double wer = (subs + dels + ins) / Math.Max(1.0, n);
             double coverage = 1.0 - (double)dels / Math.Max(1.0, n);
             string status = wer <= 0.10 && dels < 3 ? "ok" : (wer <= 0.25 ? "attention" : "unreliable");
 
-            ScriptRange? aRange = asrIdxs.Count > 0 ? new ScriptRange(asrIdxs.Min(), asrIdxs.Max()) : null;
+            var segmentAsrIdxs = segment.Where(o => o.AsrIdx is int aj).Select(o => o.AsrIdx!.Value).ToList();
+            ScriptRange? aRange = segmentAsrIdxs.Count > 0 ? new ScriptRange(segmentAsrIdxs.Min(), segmentAsrIdxs.Max()) : null;
 
             var metrics = new SentenceMetrics(wer, 0.0, wer, 0, 0);
             sentsOut.Add(new SentenceAlign(s.Id, new IntRange(start, end), aRange, TimingRange.Empty, metrics, status));
@@ -169,6 +205,3 @@ public static class TranscriptAligner
         return (sentsOut, parasOut);
     }
 }
-
-
-

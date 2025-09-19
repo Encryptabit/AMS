@@ -1,4 +1,5 @@
 using System.CommandLine;
+using System.Linq;
 using System.Text.Json;
 using Ams.Core.Alignment.Tx;
 using Ams.Core.Artifacts;
@@ -311,12 +312,51 @@ public static class AlignCommand
 
         // Map back to original indices (5)
         var wordOps = new List<WordAlign>(opsNm.Count);
+        foreach (var anchor in pipe.Anchors)
+        {
+            for (int k = 0; k < policy.NGram; k++)
+            {
+                int bookFiltered = anchor.Bp + k;
+                if (bookFiltered < 0 || bookFiltered >= pipe.BookFilteredToOriginalWord.Count)
+                {
+                    continue;
+                }
+
+                int bookIdx = pipe.BookFilteredToOriginalWord[bookFiltered];
+                if (bookIdx < 0 || bookIdx >= book.Words.Length)
+                {
+                    continue;
+                }
+
+                if (wordOps.Any(w => w.BookIdx == bookIdx))
+                {
+                    continue;
+                }
+
+                int? asrIdx = null;
+                int asrFiltered = anchor.Ap + k;
+                if (asrFiltered >= 0 && asrFiltered < asrView.FilteredToOriginalToken.Count)
+                {
+                    asrIdx = asrView.FilteredToOriginalToken[asrFiltered];
+                }
+
+                wordOps.Add(new WordAlign(bookIdx, asrIdx, AlignOp.Match, "anchor", 1.0));
+            }
+        }
+
         foreach (var (bi, aj, op, reason, score) in opsNm)
         {
             int? bookIdx = bi.HasValue ? pipe.BookFilteredToOriginalWord[bi.Value] : (int?)null;
             int? asrIdx = aj.HasValue ? asrView.FilteredToOriginalToken[aj.Value] : (int?)null;
             wordOps.Add(new WordAlign(bookIdx, asrIdx, op, reason, score));
         }
+
+        wordOps = wordOps
+            .OrderBy(w => w.BookIdx ?? int.MinValue)
+            .ThenBy(w => w.AsrIdx ?? int.MinValue)
+            .GroupBy(w => (w.BookIdx, w.AsrIdx, w.Op, w.Reason, w.Score))
+            .Select(g => g.First())
+            .ToList();
 
         // Section range on original indices (6)
         int secStartWord = 0;
