@@ -65,6 +65,21 @@ public sealed class AudioAnalysisService
         return new TimingRange(startSec, endSec);
     }
 
+    public double MeasureRms(double startSec, double endSec)
+    {
+        double lo = Math.Min(startSec, endSec);
+        double hi = Math.Max(startSec, endSec);
+        int startSample = ClampToBuffer(lo);
+        int endSample = ClampToBuffer(hi);
+        if (endSample <= startSample)
+        {
+            return double.NegativeInfinity;
+        }
+
+        double rms = CalculateRms(startSample, endSample - startSample);
+        return ToDb(rms);
+    }
+
     public GapRmsStats AnalyzeGap(double startSec, double endSec, double stepMs = 10.0, double silenceThresholdDb = -45.0)
     {
         double gapStart = Math.Min(startSec, endSec);
