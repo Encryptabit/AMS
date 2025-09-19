@@ -14,7 +14,7 @@ public static class RoomtoneRenderer
         AsrResponse asr,
         IReadOnlyList<SentenceAlign> sentences,
         int targetSampleRate,
-        double toneGainDb,
+        double toneGainLinear,
         double fadeMs)
     {
         var src = input.SampleRate == targetSampleRate ? input : ResampleLinear(input, targetSampleRate);
@@ -26,7 +26,7 @@ public static class RoomtoneRenderer
 
         var outBuf = CloneBuffer(src);
 
-        double toneGain = Math.Pow(10.0, toneGainDb / 20.0);
+        double toneGain = toneGainLinear;
         long toneCursor = 0;
         foreach (var (gapStart, gapEnd) in gapRanges)
         {

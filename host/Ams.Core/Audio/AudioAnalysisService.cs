@@ -3,6 +3,8 @@ using Ams.Core.Artifacts;
 
 namespace Ams.Core.Audio;
 
+public sealed record GapRmsStats(double MinRmsDb, double MaxRmsDb, double MeanRmsDb, double SilenceFraction);
+
 public sealed class AudioAnalysisService
 {
     private readonly AudioBuffer _buffer;
@@ -61,6 +63,58 @@ public sealed class AudioAnalysisService
         double startSec = Math.Max(0, (double)newStart / _buffer.SampleRate);
         double endSec = Math.Max(startSec, (double)newEnd / _buffer.SampleRate);
         return new TimingRange(startSec, endSec);
+    }
+
+    public GapRmsStats AnalyzeGap(double startSec, double endSec, double stepMs = 10.0, double silenceThresholdDb = -45.0)
+    {
+        double gapStart = Math.Min(startSec, endSec);
+        double gapEnd = Math.Max(startSec, endSec);
+
+        int startSample = ClampToBuffer(gapStart);
+        int endSample = ClampToBuffer(gapEnd);
+        if (endSample <= startSample)
+        {
+            return new GapRmsStats(-120.0, -120.0, -120.0, 1.0);
+        }
+
+        int stepSamples = Math.Max(1, (int)Math.Round(stepMs * 0.001 * _buffer.SampleRate));
+        double silenceThresholdLinear = Math.Pow(10.0, silenceThresholdDb / 20.0);
+
+        double minLinear = double.MaxValue;
+        double maxLinear = 0.0;
+        double sumLinear = 0.0;
+        int windows = 0;
+        int silentWindows = 0;
+
+        for (int pos = startSample; pos < endSample; pos += stepSamples)
+        {
+            int window = Math.Min(stepSamples, endSample - pos);
+            if (window <= 0) continue;
+
+            double rms = CalculateRms(pos, window);
+            minLinear = Math.Min(minLinear, rms);
+            maxLinear = Math.Max(maxLinear, rms);
+            sumLinear += rms;
+            windows++;
+
+            if (rms <= silenceThresholdLinear)
+            {
+                silentWindows++;
+            }
+        }
+
+        if (windows == 0)
+        {
+            return new GapRmsStats(-120.0, -120.0, -120.0, 1.0);
+        }
+
+        double meanLinear = sumLinear / windows;
+        return new GapRmsStats(ToDb(minLinear), ToDb(maxLinear), ToDb(meanLinear), silentWindows / (double)windows);
+    }
+
+    private static double ToDb(double linear)
+    {
+        return linear <= 0 ? -120.0 : 20.0 * Math.Log10(linear);
     }
 
     private int ClampToBuffer(double seconds)
