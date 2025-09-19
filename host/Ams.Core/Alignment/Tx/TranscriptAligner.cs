@@ -179,14 +179,79 @@ public static class TranscriptAligner
             int dels = inRange.Count(o => o.Op == AlignOp.Del);
             int ins = segment.Count(o => o.Op == AlignOp.Ins && o.AsrIdx is int);
 
+            var anchorAsrIdxs = segment
+                .Where(o => string.Equals(o.Reason, "anchor", StringComparison.Ordinal) && o.AsrIdx is int aj && o.BookIdx is int bi && bi >= start && bi <= end)
+                .Select(o => o.AsrIdx!.Value)
+                .Distinct()
+                .OrderBy(x => x)
+                .ToList();
+
+            var sentenceAsrIdxs = inRange
+                .Where(o => o.AsrIdx is int)
+                .Select(o => o.AsrIdx!.Value)
+                .ToList();
+
+            int? baseStart = sentenceAsrIdxs.Count > 0 ? sentenceAsrIdxs.Min() : (anchorAsrIdxs.Count > 0 ? anchorAsrIdxs.First() : (int?)null);
+            int? baseEnd = sentenceAsrIdxs.Count > 0 ? sentenceAsrIdxs.Max() : (anchorAsrIdxs.Count > 0 ? anchorAsrIdxs.Last() : (int?)null);
+
+            ScriptRange? aRange = null;
+            if (baseStart.HasValue && baseEnd.HasValue)
+            {
+                int startAsr = baseStart.Value;
+                int endAsr = baseEnd.Value;
+
+                int prevAnchorAsr = opsList
+                    .Take(minIndex)
+                    .Where(o => string.Equals(o.Reason, "anchor", StringComparison.Ordinal) && o.AsrIdx is int)
+                    .Select(o => o.AsrIdx!.Value)
+                    .LastOrDefault(-1);
+                int nextAnchorAsr = opsList
+                    .Skip(maxIndex + 1)
+                    .Where(o => string.Equals(o.Reason, "anchor", StringComparison.Ordinal) && o.AsrIdx is int)
+                    .Select(o => o.AsrIdx!.Value)
+                    .FirstOrDefault(int.MaxValue);
+
+                int leftGuard = prevAnchorAsr + 1;
+                int rightGuard = nextAnchorAsr - 1;
+
+                int probe = minIndex - 1;
+                while (probe >= 0)
+                {
+                    var probeOp = opsList[probe];
+                    if (probeOp.AsrIdx is not int probeAsr) { probe--; continue; }
+                    if (probeOp.BookIdx is int bi && bi < start) break;
+                    if (probeOp.Op != AlignOp.Ins) break;
+                    if (probeAsr < leftGuard) break;
+                    startAsr = Math.Min(startAsr, probeAsr);
+                    probe--;
+                }
+
+                probe = maxIndex + 1;
+                while (probe < opsList.Count)
+                {
+                    var probeOp = opsList[probe];
+                    if (probeOp.AsrIdx is not int probeAsr) { probe++; continue; }
+                    if (probeOp.BookIdx is int bi && bi > end) break;
+                    if (probeOp.Op != AlignOp.Ins) break;
+                    if (probeAsr > rightGuard) break;
+                    endAsr = Math.Max(endAsr, probeAsr);
+                    probe++;
+                }
+
+                if (startAsr > endAsr)
+                {
+                    startAsr = baseStart.Value;
+                    endAsr = baseEnd.Value;
+                }
+
+                aRange = new ScriptRange(startAsr, endAsr);
+            }
+
             double wer = (subs + dels + ins) / Math.Max(1.0, n);
             double coverage = 1.0 - (double)dels / Math.Max(1.0, n);
             string status = wer <= 0.10 && dels < 3 ? "ok" : (wer <= 0.25 ? "attention" : "unreliable");
 
-            var segmentAsrIdxs = segment.Where(o => o.AsrIdx is int aj).Select(o => o.AsrIdx!.Value).ToList();
-            ScriptRange? aRange = segmentAsrIdxs.Count > 0 ? new ScriptRange(segmentAsrIdxs.Min(), segmentAsrIdxs.Max()) : null;
-
-            var metrics = new SentenceMetrics(wer, 0.0, wer, 0, 0);
+            var metrics = new SentenceMetrics(wer, 0.0, wer, dels, ins);
             sentsOut.Add(new SentenceAlign(s.Id, new IntRange(start, end), aRange, TimingRange.Empty, metrics, status));
         }
 
