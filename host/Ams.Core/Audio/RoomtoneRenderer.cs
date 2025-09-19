@@ -11,7 +11,7 @@ public static class RoomtoneRenderer
     public static AudioBuffer RenderWithSentenceMasks(
         AudioBuffer input,
         AudioBuffer roomtoneSeed,
-        AsrResponse asr,
+        IReadOnlyList<RoomtonePlanGap> gaps,
         IReadOnlyList<SentenceAlign> sentences,
         int targetSampleRate,
         double toneGainLinear,
@@ -21,8 +21,8 @@ public static class RoomtoneRenderer
         var tone = roomtoneSeed.SampleRate == targetSampleRate ? roomtoneSeed : ResampleLinear(roomtoneSeed, targetSampleRate);
         if (tone.Length == 0) throw new InvalidOperationException("Roomtone seed must contain samples.");
 
-        var sentRanges = BuildSentenceRanges(sentences, asr, src.SampleRate, src.Length);
-        var gapRanges = BuildGapRanges(sentRanges, src.Length);
+        var sentRanges = BuildSentenceRanges(sentences, src.SampleRate, src.Length);
+        var gapRanges = BuildGapRanges(gaps, src.SampleRate, src.Length);
 
         var outBuf = CloneBuffer(src);
 
@@ -63,7 +63,6 @@ public static class RoomtoneRenderer
 
     private static List<(int Start, int End)> BuildSentenceRanges(
         IReadOnlyList<SentenceAlign> sentences,
-        AsrResponse asr,
         int sampleRate,
         int totalSamples)
     {
@@ -73,13 +72,6 @@ public static class RoomtoneRenderer
             var timing = sentence.Timing;
             double startSec = timing.StartSec;
             double endSec = timing.EndSec;
-
-            if (endSec <= startSec && sentence.ScriptRange is { Start: { } startIdx, End: { } endIdx })
-            {
-                var fallback = ComputeTimingFromTokens(asr, startIdx, endIdx);
-                startSec = fallback.StartSec;
-                endSec = fallback.EndSec;
-            }
 
             if (endSec <= startSec) continue;
 
@@ -106,6 +98,24 @@ public static class RoomtoneRenderer
         }
 
         return merged;
+    }
+
+    private static List<(int Start, int End)> BuildGapRanges(
+        IReadOnlyList<RoomtonePlanGap> gaps,
+        int sampleRate,
+        int totalSamples)
+    {
+        var ranges = new List<(int Start, int End)>(gaps.Count);
+        foreach (var gap in gaps)
+        {
+            int startSample = Math.Clamp((int)Math.Round(gap.StartSec * sampleRate), 0, totalSamples);
+            int endSample = Math.Clamp((int)Math.Round(gap.EndSec * sampleRate), 0, totalSamples);
+            if (endSample > startSample)
+            {
+                ranges.Add((startSample, endSample));
+            }
+        }
+        return ranges;
     }
 
     private static List<(int Start, int End)> BuildGapRanges(

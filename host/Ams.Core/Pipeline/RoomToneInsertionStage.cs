@@ -43,8 +43,12 @@ public sealed class RoomToneInsertionStage
         var roomtoneSeedStats = seedAnalyzer.AnalyzeGap(0.0, roomtoneSeed.SampleRate > 0 ? roomtoneSeed.Length / (double)roomtoneSeed.SampleRate : 0.0);
         double toneGainLinear = ComputeToneGainLinear(roomtoneSeedStats.MeanRmsDb, _toneGainDb);
         double appliedGainDb = ToDb(toneGainLinear);
+        Console.WriteLine($"[Roomtone] Seed RMS {roomtoneSeedStats.MeanRmsDb:F2} dB, target {_toneGainDb:F2} dB, applied gain {appliedGainDb:F2} dB");
 
         var timelineEntries = SentenceTimelineBuilder.Build(transcript.Sentences, analyzer);
+        double audioDurationSec = inputAudio.SampleRate > 0 ? inputAudio.Length / (double)inputAudio.SampleRate : 0.0;
+        var gaps = BuildGaps(timelineEntries, analyzer, audioDurationSec);
+        Console.WriteLine($"[Roomtone] Gap segments retained: {gaps.Count}");
 
         var entryMap = timelineEntries.ToDictionary(e => e.SentenceId);
         var updatedSentences = transcript.Sentences
@@ -58,13 +62,15 @@ public sealed class RoomToneInsertionStage
         var metaPath = Path.Combine(stageDir, "meta.json");
         var paramsPath = Path.Combine(stageDir, "params.snapshot.json");
 
+        var plan = BuildPlan(manifest, inputAudio, roomtonePath, timelineEntries, gaps, roomtoneSeedStats.MeanRmsDb, appliedGainDb, _targetSampleRate, _toneGainDb, _fadeMs);
+
         string? wavPath = null;
         if (renderAudio)
         {
             var rendered = RoomtoneRenderer.RenderWithSentenceMasks(
                 input: inputAudio,
                 roomtoneSeed: roomtoneSeed,
-                asr: asr,
+                gaps: plan.Gaps,
                 sentences: updatedSentences,
                 targetSampleRate: _targetSampleRate,
                 toneGainLinear: toneGainLinear,
@@ -73,8 +79,6 @@ public sealed class RoomToneInsertionStage
             wavPath = Path.Combine(stageDir, "roomtone.wav");
             WavIo.WriteInt16Pcm(wavPath, rendered);
         }
-
-        var plan = BuildPlan(manifest, inputAudio, roomtonePath, timelineEntries, analyzer, roomtoneSeedStats.MeanRmsDb, appliedGainDb, _targetSampleRate, _toneGainDb, _fadeMs);
 
         await WriteTimelineAsync(timelineEntries, manifest, timelinePath, ct);
         await WritePlanAsync(plan, planPath, ct);
@@ -208,7 +212,7 @@ public sealed class RoomToneInsertionStage
         AudioBuffer audio,
         string roomtonePath,
         IReadOnlyList<SentenceTimelineEntry> entries,
-        AudioAnalysisService analyzer,
+        IReadOnlyList<RoomtonePlanGap> gaps,
         double roomtoneSeedRmsDb,
         double appliedGainDb,
         int targetSampleRate,
@@ -234,8 +238,6 @@ public sealed class RoomToneInsertionStage
                 e.Window.Confidence))
             .ToList();
 
-        var gaps = BuildGaps(orderedEntries, analyzer, durationSec);
-
         return new RoomtonePlan(
             RoomtonePlanVersion.Current,
             manifest.ChapterId,
@@ -259,47 +261,219 @@ public sealed class RoomToneInsertionStage
         double audioDurationSec)
     {
         const double epsilon = 1e-6;
-        var gaps = new List<RoomtonePlanGap>();
+        const double stepSec = 0.005;
+        const double backoffSec = 0.005;
+        const double speechThresholdDb = -40.0;
 
+        var gaps = new List<RoomtonePlanGap>();
         if (audioDurationSec <= epsilon)
         {
+            Console.WriteLine("[Roomtone] Audio too short for gap analysis.");
             return gaps;
         }
 
-        double cursor = 0.0;
-        int? previousId = null;
+        var orderedEntries = entries
+            .OrderBy(e => e.Timing.StartSec)
+            .ThenBy(e => e.Timing.EndSec)
+            .ToList();
 
-        if (entries.Count == 0)
+        if (orderedEntries.Count == 0)
         {
+            Console.WriteLine("[Roomtone] No sentence timings; treating entire chapter as a single gap.");
             var stats = analyzer.AnalyzeGap(0.0, audioDurationSec);
             gaps.Add(CreateGap(0.0, audioDurationSec, null, null, stats));
             return gaps;
         }
 
-        foreach (var entry in entries)
+        SentenceTimelineEntry? previous = null;
+        foreach (var current in orderedEntries)
         {
-            var window = entry.Window;
-            double start = Math.Clamp(window.StartSec, 0.0, audioDurationSec);
-            double end = Math.Clamp(window.EndSec, 0.0, audioDurationSec);
-
-            if (start - cursor > epsilon)
-            {
-                var stats = analyzer.AnalyzeGap(cursor, start);
-                gaps.Add(CreateGap(cursor, start, previousId, entry.SentenceId, stats));
-            }
-
-            cursor = Math.Max(cursor, Math.Max(end, start));
-            cursor = Math.Min(cursor, audioDurationSec);
-            previousId = entry.SentenceId;
+            gaps.AddRange(ProcessGap(previous, current));
+            previous = current;
         }
-
-        if (audioDurationSec - cursor > epsilon)
-        {
-            var stats = analyzer.AnalyzeGap(cursor, audioDurationSec);
-            gaps.Add(CreateGap(cursor, audioDurationSec, previousId, null, stats));
-        }
+        gaps.AddRange(ProcessGap(previous, null));
 
         return gaps;
+
+        IEnumerable<RoomtonePlanGap> ProcessGap(SentenceTimelineEntry? leftEntry, SentenceTimelineEntry? rightEntry)
+        {
+            double baseStart = leftEntry?.Timing.EndSec ?? 0.0;
+            double baseEnd = rightEntry?.Timing.StartSec ?? audioDurationSec;
+            baseStart = Math.Clamp(baseStart, 0.0, audioDurationSec);
+            baseEnd = Math.Clamp(baseEnd, 0.0, audioDurationSec);
+            if (baseEnd - baseStart <= epsilon)
+            {
+                yield break;
+            }
+
+            string label = $"prev={(leftEntry?.SentenceId.ToString() ?? "null")} next={(rightEntry?.SentenceId.ToString() ?? "null")}";
+            Console.WriteLine($"[Roomtone] Gap candidate {label} base=({baseStart:F3},{baseEnd:F3}) dur={(baseEnd - baseStart):F3}");
+
+            double midpoint = (baseStart + baseEnd) / 2.0;
+            midpoint = Math.Clamp(midpoint, baseStart + epsilon, baseEnd - epsilon);
+
+            if (midpoint <= baseStart + epsilon || baseEnd <= midpoint + epsilon)
+            {
+                Console.WriteLine("[Roomtone]   midpoint collapsed; skipping gap.");
+                yield break;
+            }
+
+            bool leftAccepted = TryCalibrateLeft(baseStart, midpoint, out double leftStart);
+            bool rightAccepted = TryCalibrateRight(midpoint, baseEnd, out double rightEnd);
+
+            if (leftAccepted && midpoint - leftStart > epsilon)
+            {
+                var stats = analyzer.AnalyzeGap(leftStart, midpoint);
+                Console.WriteLine($"[Roomtone]   left accepted [{leftStart:F3},{midpoint:F3}] meanRms={stats.MeanRmsDb:F2} dB");
+                yield return CreateGap(leftStart, midpoint, leftEntry?.SentenceId, rightEntry?.SentenceId, stats);
+            }
+            else
+            {
+                Console.WriteLine("[Roomtone]   left rejected or collapsed.");
+            }
+
+            if (rightAccepted && rightEnd - midpoint > epsilon)
+            {
+                var stats = analyzer.AnalyzeGap(midpoint, rightEnd);
+                Console.WriteLine($"[Roomtone]   right accepted [{midpoint:F3},{rightEnd:F3}] meanRms={stats.MeanRmsDb:F2} dB");
+                yield return CreateGap(midpoint, rightEnd, leftEntry?.SentenceId, rightEntry?.SentenceId, stats);
+            }
+            else
+            {
+                Console.WriteLine("[Roomtone]   right rejected or collapsed.");
+            }
+        }
+
+        bool TryCalibrateLeft(double initialStart, double end, out double result)
+        {
+            double boundary = initialStart;
+            result = double.NaN;
+            while (boundary + epsilon < end)
+            {
+                double rms = analyzer.MeasureRms(boundary, end);
+                Console.WriteLine($"[Roomtone]     test left [{boundary:F3},{end:F3}] rms={rms:F2} dB");
+                if (rms <= speechThresholdDb)
+                {
+                    double candidate = boundary;
+                    double backoff = Math.Max(initialStart, candidate - backoffSec);
+                    if (backoff < candidate)
+                    {
+                        double backoffRms = analyzer.MeasureRms(backoff, end);
+                        if (backoffRms <= speechThresholdDb)
+                        {
+                            candidate = backoff;
+                        }
+                    }
+                    result = candidate;
+                    return true;
+                }
+                boundary += stepSec;
+            }
+            return false;
+        }
+
+        bool TryCalibrateRight(double start, double initialEnd, out double result)
+        {
+            double boundary = initialEnd;
+            result = double.NaN;
+            while (boundary - epsilon > start)
+            {
+                double rms = analyzer.MeasureRms(start, boundary);
+                Console.WriteLine($"[Roomtone]     test right [{start:F3},{boundary:F3}] rms={rms:F2} dB");
+                if (rms <= speechThresholdDb)
+                {
+                    double candidate = boundary;
+                    double backoff = Math.Min(initialEnd, candidate + backoffSec);
+                    if (backoff > candidate)
+                    {
+                        double backoffRms = analyzer.MeasureRms(start, backoff);
+                        if (backoffRms <= speechThresholdDb)
+                        {
+                            candidate = backoff;
+                        }
+                    }
+                    result = candidate;
+                    return true;
+                }
+                boundary -= stepSec;
+            }
+            return false;
+        }
+    }
+
+    private static double ExpandLeft(
+        AudioAnalysisService analyzer,
+        double startSec,
+        double limitSec,
+        double stepSec,
+        double backoffSec,
+        double speechThresholdDb,
+        double maxExtendSec)
+    {
+        double current = startSec;
+        double best = startSec;
+        double maxDistance = Math.Min(maxExtendSec, startSec - limitSec);
+        double travelled = 0.0;
+
+        while (travelled + stepSec <= maxDistance)
+        {
+            current -= stepSec;
+            travelled += stepSec;
+            double windowStart = Math.Max(limitSec, current);
+            double windowEnd = windowStart + stepSec;
+            if (windowEnd <= windowStart) break;
+
+            double rmsDb = analyzer.MeasureRms(windowStart, windowEnd);
+            if (rmsDb <= speechThresholdDb)
+            {
+                best = windowStart;
+            }
+            else
+            {
+                best = Math.Min(startSec, windowStart + backoffSec);
+                break;
+            }
+        }
+
+        return Math.Max(limitSec, best);
+    }
+
+    private static double ExpandRight(
+        AudioAnalysisService analyzer,
+        double endSec,
+        double limitSec,
+        double stepSec,
+        double backoffSec,
+        double speechThresholdDb,
+        double maxExtendSec,
+        double audioDurationSec)
+    {
+        double current = endSec;
+        double best = endSec;
+        double maxDistance = Math.Min(maxExtendSec, limitSec - endSec);
+        double travelled = 0.0;
+
+        while (travelled + stepSec <= maxDistance)
+        {
+            double windowEnd = Math.Min(audioDurationSec, current + stepSec);
+            double windowStart = windowEnd - stepSec;
+            if (windowStart >= audioDurationSec) break;
+            travelled += stepSec;
+
+            double rmsDb = analyzer.MeasureRms(windowStart, windowEnd);
+            if (rmsDb <= speechThresholdDb)
+            {
+                best = windowEnd;
+                current = windowEnd;
+            }
+            else
+            {
+                best = Math.Max(endSec, windowEnd - backoffSec);
+                break;
+            }
+        }
+
+        return Math.Min(limitSec, best);
     }
 
     private static RoomtonePlanGap CreateGap(double startSec, double endSec, int? previousId, int? nextId, GapRmsStats stats)
