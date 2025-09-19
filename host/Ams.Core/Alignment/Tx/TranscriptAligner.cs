@@ -120,54 +120,163 @@ public static class TranscriptAligner
 
     // (3.3) Sentence/Paragraph rollups from word ops
     public static (List<SentenceAlign> sents, List<ParagraphAlign> paras) Rollup(
-        IReadOnlyList<WordAlign> ops,
-        IReadOnlyList<(int Id, int Start, int End)> bookSentences,
-        IReadOnlyList<(int Id, int Start, int End)> bookParagraphs)
-    {
-        // Sentences
-        var sentsOut = new List<SentenceAlign>(bookSentences.Count);
-        foreach (var s in bookSentences)
-        {
-            int start = s.Start, end = s.End, n = Math.Max(0, end - start + 1);
-            var inRange = ops.Where(o => o.BookIdx is int bi && bi >= start && bi <= end).ToList();
+    IReadOnlyList<WordAlign> ops,
+    IReadOnlyList<(int Id, int Start, int End)> bookSentences,
+    IReadOnlyList<(int Id, int Start, int End)> bookParagraphs)
+{
+    var opsList = ops.ToList();
 
-            int subs = inRange.Count(o => o.Op == AlignOp.Sub);
-            int dels = inRange.Count(o => o.Op == AlignOp.Del);
-            // Limit insertions to those whose ASR positions fall within the ASR span
-            // covered by aligned tokens for this sentence (prevents global insertions inflating WER).
-            var asrIdxs = inRange.Where(o => o.AsrIdx is not null).Select(o => o.AsrIdx!.Value).ToList();
-            int ins = 0;
-            if (asrIdxs.Count > 0)
+    // Sentences
+    var sentsOut = new List<SentenceAlign>(bookSentences.Count);
+    foreach (var s in bookSentences)
+    {
+        int start = s.Start, end = s.End, n = Math.Max(0, end - start + 1);
+
+        var candidateIndices = new List<int>();
+        for (int i = 0; i < opsList.Count; i++)
+        {
+            var op = opsList[i];
+            if (op.BookIdx is int bi && bi >= start && bi <= end)
             {
-                int aMin = asrIdxs.Min();
-                int aMax = asrIdxs.Max();
-                ins = ops.Count(o => o.Op == AlignOp.Ins && o.AsrIdx is int aj && aj >= aMin && aj <= aMax);
+                candidateIndices.Add(i);
+            }
+        }
+
+        if (candidateIndices.Count == 0)
+        {
+            var emptyMetrics = new SentenceMetrics(1.0, 0.0, 1.0, n, 0);
+            sentsOut.Add(new SentenceAlign(s.Id, new IntRange(start, end), null, TimingRange.Empty, emptyMetrics, "unreliable"));
+            continue;
+        }
+
+        int minIndex = candidateIndices.Min();
+        int maxIndex = candidateIndices.Max();
+
+        int left = minIndex - 1;
+        while (left >= 0)
+        {
+            var op = opsList[left];
+            if (op.BookIdx.HasValue) break;
+            if (op.AsrIdx is null) break;
+            minIndex = left;
+            left--;
+        }
+
+        int right = maxIndex + 1;
+        while (right < opsList.Count)
+        {
+            var op = opsList[right];
+            if (op.BookIdx.HasValue) break;
+            if (op.AsrIdx is null) break;
+            maxIndex = right;
+            right++;
+        }
+
+        var segment = opsList.GetRange(minIndex, maxIndex - minIndex + 1);
+        var inRange = segment.Where(o => o.BookIdx is int bi && bi >= start && bi <= end).ToList();
+
+        int subs = inRange.Count(o => o.Op == AlignOp.Sub);
+        int dels = inRange.Count(o => o.Op == AlignOp.Del);
+        int ins = segment.Count(o => o.Op == AlignOp.Ins && o.AsrIdx is int);
+
+        var anchorAsrIdxs = segment
+            .Where(o => string.Equals(o.Reason, "anchor", StringComparison.Ordinal) && o.AsrIdx is int aj && o.BookIdx is int bi && bi >= start && bi <= end)
+            .Select(o => o.AsrIdx!.Value)
+            .Distinct()
+            .OrderBy(x => x)
+            .ToList();
+
+        var sentenceAsrIdxs = inRange
+            .Where(o => o.AsrIdx is int)
+            .Select(o => o.AsrIdx!.Value)
+            .ToList();
+
+        int? baseStart = sentenceAsrIdxs.Count > 0 ? sentenceAsrIdxs.Min() : (anchorAsrIdxs.Count > 0 ? anchorAsrIdxs.First() : (int?)null);
+        int? baseEnd = sentenceAsrIdxs.Count > 0 ? sentenceAsrIdxs.Max() : (anchorAsrIdxs.Count > 0 ? anchorAsrIdxs.Last() : (int?)null);
+
+        ScriptRange? aRange = null;
+        if (baseStart.HasValue && baseEnd.HasValue)
+        {
+            int startAsr = baseStart.Value;
+            int endAsr = baseEnd.Value;
+
+            int prevAnchorAsr = opsList
+                .Take(minIndex)
+                .Where(o => string.Equals(o.Reason, "anchor", StringComparison.Ordinal) && o.AsrIdx is int)
+                .Select(o => o.AsrIdx!.Value)
+                .LastOrDefault(-1);
+            int nextAnchorAsr = opsList
+                .Skip(maxIndex + 1)
+                .Where(o => string.Equals(o.Reason, "anchor", StringComparison.Ordinal) && o.AsrIdx is int)
+                .Select(o => o.AsrIdx!.Value)
+                .FirstOrDefault(int.MaxValue);
+
+            int leftGuard = prevAnchorAsr + 1;
+            int rightGuard = nextAnchorAsr - 1;
+
+            int probe = minIndex - 1;
+            while (probe >= 0)
+            {
+                var probeOp = opsList[probe];
+                if (probeOp.AsrIdx is not int probeAsr)
+                {
+                    probe--;
+                    continue;
+                }
+                if (probeOp.BookIdx is int bi && bi < start) break;
+                if (probeOp.Op != AlignOp.Ins) break;
+                if (probeAsr < leftGuard) break;
+                startAsr = Math.Min(startAsr, probeAsr);
+                probe--;
             }
 
-            double wer = (subs + dels + ins) / Math.Max(1.0, n);
-            double coverage = 1.0 - (double)dels / Math.Max(1.0, n);
-            string status = wer <= 0.10 && dels < 3 ? "ok" : (wer <= 0.25 ? "attention" : "unreliable");
+            probe = maxIndex + 1;
+            while (probe < opsList.Count)
+            {
+                var probeOp = opsList[probe];
+                if (probeOp.AsrIdx is not int probeAsr)
+                {
+                    probe++;
+                    continue;
+                }
+                if (probeOp.BookIdx is int bi && bi > end) break;
+                if (probeOp.Op != AlignOp.Ins) break;
+                if (probeAsr > rightGuard) break;
+                endAsr = Math.Max(endAsr, probeAsr);
+                probe++;
+            }
 
-            ScriptRange? aRange = asrIdxs.Count > 0 ? new ScriptRange(asrIdxs.Min(), asrIdxs.Max()) : null;
+            if (startAsr > endAsr)
+            {
+                startAsr = baseStart.Value;
+                endAsr = baseEnd.Value;
+            }
 
-            var metrics = new SentenceMetrics(wer, 0.0, wer, 0, 0);
-            sentsOut.Add(new SentenceAlign(s.Id, new IntRange(start, end), aRange, TimingRange.Empty, metrics, status));
+            aRange = new ScriptRange(startAsr, endAsr);
         }
 
-        // Paragraphs
-        var parasOut = new List<ParagraphAlign>(bookParagraphs.Count);
-        foreach (var p in bookParagraphs)
-        {
-            var sIds = sentsOut.Where(x => x.BookRange.Start >= p.Start && x.BookRange.End <= p.End).Select(x => x.Id).ToList();
-            var sub = sentsOut.Where(x => sIds.Contains(x.Id)).ToList();
-            double werAvg = sub.Count > 0 ? sub.Average(x => x.Metrics.Wer) : 1.0;
-            double covAvg = sub.Count > 0 ? sub.Average(x => 1.0 - x.Metrics.MissingRuns / Math.Max(1.0, x.BookRange.End - x.BookRange.Start + 1)) : 0.0;
-            string status = werAvg <= 0.10 ? "ok" : (werAvg <= 0.25 ? "attention" : "unreliable");
+        double wer = (subs + dels + ins) / Math.Max(1.0, n);
+        double coverage = 1.0 - (double)dels / Math.Max(1.0, n);
+        string status = wer <= 0.10 && dels < 3 ? "ok" : (wer <= 0.25 ? "attention" : "unreliable");
 
-            parasOut.Add(new ParagraphAlign(p.Id, new IntRange(p.Start, p.End), sIds, new ParagraphMetrics(werAvg, 0.0, covAvg), status));
-        }
-        return (sentsOut, parasOut);
+        var metrics = new SentenceMetrics(wer, 0.0, wer, dels, ins);
+        sentsOut.Add(new SentenceAlign(s.Id, new IntRange(start, end), aRange, TimingRange.Empty, metrics, status));
     }
+
+    // Paragraphs
+    var parasOut = new List<ParagraphAlign>(bookParagraphs.Count);
+    foreach (var p in bookParagraphs)
+    {
+        var sIds = sentsOut.Where(x => x.BookRange.Start >= p.Start && x.BookRange.End <= p.End).Select(x => x.Id).ToList();
+        var sub = sentsOut.Where(x => sIds.Contains(x.Id)).ToList();
+        double werAvg = sub.Count > 0 ? sub.Average(x => x.Metrics.Wer) : 1.0;
+        double covAvg = sub.Count > 0 ? sub.Average(x => 1.0 - x.Metrics.MissingRuns / Math.Max(1.0, x.BookRange.End - x.BookRange.Start + 1)) : 0.0;
+        string status = werAvg <= 0.10 ? "ok" : (werAvg <= 0.25 ? "attention" : "unreliable");
+
+        parasOut.Add(new ParagraphAlign(p.Id, new IntRange(p.Start, p.End), sIds, new ParagraphMetrics(werAvg, 0.0, covAvg), status));
+    }
+    return (sentsOut, parasOut);
+}
 }
 
 
