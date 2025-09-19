@@ -1,6 +1,8 @@
 using System.CommandLine;
 using System.Text.Json;
-using Ams.Align.Tx;
+using Ams.Core.Artifacts;
+using Ams.Core.Audio;
+using Ams.Core.Alignment.Tx;
 using Ams.Core;
 
 namespace Ams.Cli.Commands;
@@ -114,4 +116,5 @@ public static class AudioCommand
         return path;
     }
 }
+
 

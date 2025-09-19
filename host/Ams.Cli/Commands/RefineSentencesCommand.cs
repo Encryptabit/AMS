@@ -1,6 +1,7 @@
 using System.CommandLine;
 using System.Text.Json;
-using Ams.Align.Tx;
+using Ams.Core.Alignment.Tx;
+using Ams.Core.Artifacts;
 using Ams.Core;
 
 namespace Ams.Cli.Commands;
@@ -75,3 +76,4 @@ public static class RefineSentencesCommand
         Console.WriteLine($"Refined sentences written: {outFile.FullName}");
     }
 }
+
