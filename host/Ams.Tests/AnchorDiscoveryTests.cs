@@ -1,5 +1,5 @@
 using System.Collections.Generic;
-using Ams.Align.Anchors;
+using Ams.Core.Alignment.Anchors;
 using Ams.Core;
 using Xunit;
 
@@ -134,3 +134,4 @@ public class SectionLocatorTests
         Assert.NotNull(res.Windows);
     }
 }
+

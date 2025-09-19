@@ -1,7 +1,8 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using Ams.Align.Tx;
+using Ams.Core.Artifacts;
+using Ams.Core.Alignment.Tx;
 using Xunit;
 
 public class TxAlignTests
@@ -34,4 +35,5 @@ public class TxAlignTests
         Assert.Equal(0, ops.Count(o => o.op == AlignOp.Ins));
     }
 }
+
 

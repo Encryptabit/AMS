@@ -1,0 +1,11 @@
+# Code Style & Conventions
+- **Languages**: Primarily C# 12 targeting .NET 9; tests with xUnit. Zig code follows Zig defaults within `dsp/`.
+- **C# style**:
+  - File-scoped namespaces and top-of-file `using` statements; prefer explicit namespace imports over global usings.
+  - Classes/records PascalCase; private fields camelCase with leading underscore (e.g., `_params`). Local variables often use `var` when obvious.
+  - Immutable data represented with `record` types; frequent use of `with` expressions for non-destructive mutation.
+  - Methods favour early-guard clauses, `async`/`await`, and `ConfigureAwait(false)` only when required (mostly default awaits).
+  - Logging/diagnostics handled via `Console.WriteLine` for pipeline traces.
+  - Tests use xUnit `[Fact]` attributes, `Assert.Equal(expected, actual, precision)` for numeric tolerances.
+- **JSON/Artifacts**: Serialization with `System.Text.Json` (indentation enabled for human-readable stage outputs). Option objects typically supply camelCase property names via `JsonPropertyName` attributes.
+- **General**: Maintain deterministic, idempotent pipeline state; respect stage directory layouts (`WorkDir/<stage>/...`). Follow existing pattern of concise comments only when clarifying non-obvious logic.
