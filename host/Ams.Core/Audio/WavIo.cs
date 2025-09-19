@@ -130,6 +130,49 @@ public static class WavIo
         return buf;
     }
 
+    public static void WriteFloat32(string path, AudioBuffer audio)
+    {
+        using var fs = File.Create(path);
+        using var bw = new BinaryWriter(fs, Encoding.ASCII, leaveOpen: false);
+
+        int channels = audio.Channels;
+        int sampleRate = audio.SampleRate;
+        int frames = audio.Length;
+        int bytesPerSample = 4;
+        int blockAlign = channels * bytesPerSample;
+        int byteRate = sampleRate * blockAlign;
+        uint dataBytes = (uint)(frames * blockAlign);
+
+        void WriteAscii(string s) => bw.Write(Encoding.ASCII.GetBytes(s));
+
+        WriteAscii("RIFF");
+        bw.Write(36u + dataBytes);
+        WriteAscii("WAVE");
+
+        WriteAscii("fmt ");
+        bw.Write(16u);
+        bw.Write((ushort)3); // IEEE float
+        bw.Write((ushort)channels);
+        bw.Write((uint)sampleRate);
+        bw.Write((uint)byteRate);
+        bw.Write((ushort)blockAlign);
+        bw.Write((ushort)(bytesPerSample * 8));
+
+        WriteAscii("data");
+        bw.Write(dataBytes);
+
+        for (int i = 0; i < frames; i++)
+        {
+            for (int ch = 0; ch < channels; ch++)
+            {
+                float sample = audio.Planar[ch][i];
+                if (float.IsNaN(sample) || float.IsInfinity(sample)) sample = 0f;
+                sample = Math.Clamp(sample, -1.0f, 1.0f);
+                bw.Write(sample);
+            }
+        }
+    }
+
     public static void WriteInt16Pcm(string path, AudioBuffer audio)
     {
         using var fs = File.Create(path);

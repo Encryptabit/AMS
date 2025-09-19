@@ -45,7 +45,7 @@ public sealed class RoomToneInsertionStage
         double appliedGainDb = ToDb(toneGainLinear);
         Console.WriteLine($"[Roomtone] Seed RMS {roomtoneSeedStats.MeanRmsDb:F2} dB, target {_toneGainDb:F2} dB, applied gain {appliedGainDb:F2} dB");
 
-        var timelineEntries = SentenceTimelineBuilder.Build(transcript.Sentences, analyzer);
+        var timelineEntries = SentenceTimelineBuilder.Build(transcript.Sentences, analyzer, asr);
         double audioDurationSec = inputAudio.SampleRate > 0 ? inputAudio.Length / (double)inputAudio.SampleRate : 0.0;
         var gaps = BuildGaps(timelineEntries, analyzer, audioDurationSec);
         Console.WriteLine($"[Roomtone] Gap segments retained: {gaps.Count}");
@@ -77,7 +77,7 @@ public sealed class RoomToneInsertionStage
                 fadeMs: _fadeMs);
 
             wavPath = Path.Combine(stageDir, "roomtone.wav");
-            WavIo.WriteInt16Pcm(wavPath, rendered);
+            WavIo.WriteFloat32(wavPath, rendered);
         }
 
         await WriteTimelineAsync(timelineEntries, manifest, timelinePath, ct);
@@ -297,29 +297,35 @@ public sealed class RoomToneInsertionStage
 
         IEnumerable<RoomtonePlanGap> ProcessGap(SentenceTimelineEntry? leftEntry, SentenceTimelineEntry? rightEntry)
         {
-            double baseStart = leftEntry?.Timing.EndSec ?? 0.0;
-            double baseEnd = rightEntry?.Timing.StartSec ?? audioDurationSec;
-            baseStart = Math.Clamp(baseStart, 0.0, audioDurationSec);
-            baseEnd = Math.Clamp(baseEnd, 0.0, audioDurationSec);
-            if (baseEnd - baseStart <= epsilon)
+            double timingStart = leftEntry?.Timing.EndSec ?? 0.0;
+            double windowStart = leftEntry?.Window.EndSec ?? 0.0;
+            double initialStart = Math.Min(timingStart, windowStart);
+
+            double timingEnd = rightEntry?.Timing.StartSec ?? audioDurationSec;
+            double windowEnd = rightEntry?.Window.StartSec ?? audioDurationSec;
+            double initialEnd = Math.Max(timingEnd, windowEnd);
+
+            initialStart = Math.Clamp(initialStart, 0.0, audioDurationSec);
+            initialEnd = Math.Clamp(initialEnd, 0.0, audioDurationSec);
+            if (initialEnd - initialStart <= epsilon)
             {
                 yield break;
             }
 
             string label = $"prev={(leftEntry?.SentenceId.ToString() ?? "null")} next={(rightEntry?.SentenceId.ToString() ?? "null")}";
-            Console.WriteLine($"[Roomtone] Gap candidate {label} base=({baseStart:F3},{baseEnd:F3}) dur={(baseEnd - baseStart):F3}");
+            Console.WriteLine($"[Roomtone] Gap candidate {label} base=({initialStart:F3},{initialEnd:F3}) dur={(initialEnd - initialStart):F3}");
 
-            double midpoint = (baseStart + baseEnd) / 2.0;
-            midpoint = Math.Clamp(midpoint, baseStart + epsilon, baseEnd - epsilon);
+            double midpoint = (initialStart + initialEnd) / 2.0;
+            midpoint = Math.Clamp(midpoint, initialStart + epsilon, initialEnd - epsilon);
 
-            if (midpoint <= baseStart + epsilon || baseEnd <= midpoint + epsilon)
+            if (midpoint <= initialStart + epsilon || initialEnd <= midpoint + epsilon)
             {
                 Console.WriteLine("[Roomtone]   midpoint collapsed; skipping gap.");
                 yield break;
             }
 
-            bool leftAccepted = TryCalibrateLeft(baseStart, midpoint, out double leftStart);
-            bool rightAccepted = TryCalibrateRight(midpoint, baseEnd, out double rightEnd);
+            bool leftAccepted = TryCalibrateLeft(initialStart, midpoint, out double leftStart);
+            bool rightAccepted = TryCalibrateRight(midpoint, initialEnd, out double rightEnd);
 
             if (leftAccepted && midpoint - leftStart > epsilon)
             {
