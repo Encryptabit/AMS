@@ -10,7 +10,7 @@ using Ams.Core.Util;
 
 namespace Ams.Core;
 
-public record SentenceRefined(double Start, double End, int StartWordIdx, int EndWordIdx);
+public record SentenceRefined(int SentenceId, double Start, double End, int StartWordIdx, int EndWordIdx, bool HasFragment);
 
 public record SilenceInfo(double Start, double End, double Duration, double Confidence);
 
@@ -83,7 +83,7 @@ public sealed class SentenceRefinementService
             start = Precision.RoundToMicroseconds(start);
             end = Precision.RoundToMicroseconds(end);
 
-            results.Add(new SentenceRefined(start, end, startIdx, endIdx));
+            results.Add(new SentenceRefined(sentence.Id, start, end, startIdx, endIdx, usedFragment));
 
             previousEnd = end;
             previousTokenEnd = endIdx;

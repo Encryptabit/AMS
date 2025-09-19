@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -16,7 +16,7 @@ namespace Ams.Tests.Pipeline;
 
 /// <summary>
 /// Comprehensive integration tests for the complete sentence refinement pipeline.
-/// Tests the full flow: TranscriptIndex + ASR → SentenceRefinementStage → ./CORRECT_RESULTS compatible output
+/// Tests the full flow: TranscriptIndex + ASR â†’ SentenceRefinementStage â†’ ./CORRECT_RESULTS compatible output
 /// </summary>
 public sealed class PipelineRefinementIntegrationTests : IAsyncLifetime
 {
@@ -229,8 +229,8 @@ public sealed class PipelineRefinementIntegrationTests : IAsyncLifetime
         var originalAsr = CreateRealisticAsrResponse();
         var refinedSentences = new List<SentenceRefined>
         {
-            new(0.0, 1.5, 0, 2),  // Covers first 3 tokens
-            new(1.5, 3.0, 3, 5)   // Covers remaining tokens
+            new SentenceRefined(1, 0.0, 1.5, 0, 2, true),  // Covers first 3 tokens
+            new SentenceRefined(2, 1.5, 3.0, 3, 5, true)   // Covers remaining tokens
         };
 
         // Act
@@ -538,3 +538,4 @@ public sealed class PipelineRefinementIntegrationTests : IAsyncLifetime
         }
     }
 }
+

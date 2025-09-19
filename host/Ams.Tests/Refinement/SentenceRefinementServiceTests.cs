@@ -34,6 +34,8 @@ public sealed class SentenceRefinementServiceTests
         var result = await _service.RefineAsync("audio.wav", transcript, asr, context, CancellationToken.None);
 
         var sentence = Assert.Single(result);
+        Assert.Equal(1, sentence.SentenceId);
+        Assert.True(sentence.HasFragment);
         Assert.Equal(0.1, sentence.Start, 6);
         Assert.Equal(1.1, sentence.End, 6);
         Assert.Equal(0, sentence.StartWordIdx);
@@ -64,6 +66,8 @@ public sealed class SentenceRefinementServiceTests
         var result = await _service.RefineAsync("audio.wav", transcript, asr, context, CancellationToken.None);
 
         var sentence = Assert.Single(result);
+        Assert.Equal(1, sentence.SentenceId);
+        Assert.False(sentence.HasFragment);
         Assert.Equal(0.0, sentence.Start, 6);
         Assert.Equal(1.6, sentence.End, 6);
     }
@@ -86,6 +90,8 @@ public sealed class SentenceRefinementServiceTests
         var result = await _service.RefineAsync("audio.wav", transcript, asr, context, CancellationToken.None);
 
         var sentence = Assert.Single(result);
+        Assert.Equal(1, sentence.SentenceId);
+        Assert.False(sentence.HasFragment);
         Assert.Equal(2.0, sentence.Start, 6);
         Assert.Equal(2.4, sentence.End, 6);
         Assert.Equal(0, sentence.StartWordIdx);
@@ -115,9 +121,13 @@ public sealed class SentenceRefinementServiceTests
         var result = await _service.RefineAsync("audio.wav", transcript, asr, context, CancellationToken.None);
 
         Assert.Equal(2, result.Count);
+        Assert.Equal(1, result[0].SentenceId);
+        Assert.True(result[0].HasFragment);
         Assert.Equal(0.0, result[0].Start, 6);
         Assert.Equal(0.6, result[0].End, 6);
-        Assert.Equal(0.6, result[1].Start, 6); // clamped to previous end
+        Assert.Equal(2, result[1].SentenceId);
+        Assert.True(result[1].HasFragment);
+        Assert.Equal(0.6, result[1].Start, 6);
         Assert.True(result[1].End >= result[1].Start);
     }
 

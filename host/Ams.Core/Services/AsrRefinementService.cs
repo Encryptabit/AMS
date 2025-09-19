@@ -23,18 +23,15 @@ public sealed class AsrRefinementService
 
         var refinedTokens = new List<AsrToken>();
 
-        // Sort sentences by start time to ensure proper processing order
         var sortedSentences = refinedSentences.OrderBy(s => s.Start).ToList();
 
         foreach (var sentence in sortedSentences)
         {
-            // Get tokens within this sentence's word index range
             var sentenceTokens = originalAsr.Tokens
                 .Skip(sentence.StartWordIdx)
                 .Take(sentence.EndWordIdx - sentence.StartWordIdx + 1)
                 .ToList();
 
-            // Apply boundary constraints and adjust timings
             var adjustedTokens = AdjustTokenTimingsWithinSentences(sentenceTokens, sentence.Start, sentence.End);
             refinedTokens.AddRange(adjustedTokens);
         }

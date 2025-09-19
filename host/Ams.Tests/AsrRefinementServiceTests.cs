@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
 using Ams.Core;
@@ -46,7 +46,7 @@ public sealed class AsrRefinementServiceTests
         
         var refinedSentences = new[]
         {
-            new SentenceRefined(0.000000, 1.000000, 0, 1)
+            new SentenceRefined(1, 0.000000, 1.000000, 0, 1, true)
         };
 
         // Act
@@ -69,7 +69,7 @@ public sealed class AsrRefinementServiceTests
         
         var refinedSentences = new[]
         {
-            new SentenceRefined(0.500000, 2.500000, 0, 1) // Sentence bounds contain all tokens
+            new SentenceRefined(1, 0.500000, 2.500000, 0, 1, true) // Sentence bounds contain all tokens
         };
 
         // Act
@@ -99,7 +99,7 @@ public sealed class AsrRefinementServiceTests
         
         var refinedSentences = new[]
         {
-            new SentenceRefined(0.500000, 2.500000, 1, 1) // Only middle token should be kept
+            new SentenceRefined(1, 0.500000, 2.500000, 1, 1, true) // Only middle token should be kept
         };
 
         // Act
@@ -122,7 +122,7 @@ public sealed class AsrRefinementServiceTests
         
         var refinedSentences = new[]
         {
-            new SentenceRefined(0.000000, 1.200000, 0, 0) // Sentence clips token at 1.2
+            new SentenceRefined(1, 0.000000, 1.200000, 0, 0, true) // Sentence clips token at 1.2
         };
 
         // Act
@@ -147,7 +147,7 @@ public sealed class AsrRefinementServiceTests
         
         var refinedSentences = new[]
         {
-            new SentenceRefined(0.000000, 1.000500, 0, 0) // Creates 0.5ms fragment, below 1ms threshold
+            new SentenceRefined(1, 0.000000, 1.000500, 0, 0, true) // Creates 0.5ms fragment, below 1ms threshold
         };
 
         // Act
@@ -172,8 +172,8 @@ public sealed class AsrRefinementServiceTests
         
         var refinedSentences = new[]
         {
-            new SentenceRefined(0.000000, 1.000000, 0, 1), // First sentence
-            new SentenceRefined(1.200000, 2.500000, 2, 3)  // Second sentence
+            new SentenceRefined(1, 0.000000, 1.000000, 0, 1, true), // First sentence
+            new SentenceRefined(2, 1.200000, 2.500000, 2, 3, true)  // Second sentence
         };
 
         // Act
