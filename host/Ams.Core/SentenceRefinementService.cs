@@ -1,6 +1,10 @@
-using System.Diagnostics;
-using System.Text;
-using System.Text.Json;
+using System;
+using System.Collections.Generic;
+using System.Globalization;
+using System.Linq;
+using System.Threading;
+using System.Threading.Tasks;
+using Ams.Core.Align;
 using Ams.Core.Align.Tx;
 using Ams.Core.Util;
 
@@ -10,183 +14,193 @@ public record SentenceRefined(double Start, double End, int StartWordIdx, int En
 
 public record SilenceInfo(double Start, double End, double Duration, double Confidence);
 
+public sealed record SentenceRefinementContext(
+    IReadOnlyDictionary<string, FragmentTiming> Fragments,
+    IReadOnlyList<SilenceEvent> Silences,
+    double MinTailSec,
+    double MaxSnapAheadSec)
+{
+    public bool TryGetFragment(int sentenceId, out FragmentTiming fragment)
+    {
+        if (Fragments.TryGetValue(sentenceId.ToString(CultureInfo.InvariantCulture), out var value))
+        {
+            fragment = value;
+            return true;
+        }
+
+        fragment = null!;
+        return false;
+    }
+}
+
 public sealed class SentenceRefinementService
 {
-    private readonly TimeSpan _timeout = TimeSpan.FromMinutes(10);
-
-    public async Task<IReadOnlyList<SentenceRefined>> RefineAsync(
+    public Task<IReadOnlyList<SentenceRefined>> RefineAsync(
         string audioPath,
-        Ams.Core.Align.Tx.TranscriptIndex tx,
+        TranscriptIndex tx,
         AsrResponse asr,
-        string language = "eng",
-        bool useSilence = true,
-        double silenceThresholdDb = -30.0,
-        double silenceMinDurationSec = 0.1)
+        SentenceRefinementContext context,
+        CancellationToken ct)
     {
-        if (!File.Exists(audioPath)) throw new FileNotFoundException(audioPath);
+        if (tx is null) throw new ArgumentNullException(nameof(tx));
+        if (asr is null) throw new ArgumentNullException(nameof(asr));
+        if (context is null) throw new ArgumentNullException(nameof(context));
 
-        // 1) Build per-sentence script text (from ASR tokens per ScriptRange)
-        var lines = new List<string>(tx.Sentences.Count);
-        var indexMap = new List<(int startIdx, int endIdx)>(tx.Sentences.Count);
-        foreach (var s in tx.Sentences)
+        var sentences = BuildSentences(tx, asr, context);
+        return Task.FromResult<IReadOnlyList<SentenceRefined>>(sentences);
+    }
+
+    private static List<SentenceRefined> BuildSentences(
+        TranscriptIndex tx,
+        AsrResponse asr,
+        SentenceRefinementContext context)
+    {
+        var orderedSentences = tx.Sentences.OrderBy(s => s.Id).ToList();
+        var results = new List<SentenceRefined>(orderedSentences.Count);
+
+        double previousEnd = 0.0;
+        int previousTokenEnd = -1;
+        int fragmentBacked = 0;
+        int fragmentFallback = 0;
+
+        foreach (var sentence in orderedSentences)
         {
-            if (s.ScriptRange is null || !s.ScriptRange.Start.HasValue || !s.ScriptRange.End.HasValue)
-            {
-                lines.Add(string.Empty);
-                indexMap.Add((-1, -1));
-                continue;
-            }
-            int si = Math.Clamp(s.ScriptRange.Start!.Value, 0, asr.Tokens.Length - 1);
-            int ei = Math.Clamp(s.ScriptRange.End!.Value, 0, asr.Tokens.Length - 1);
-            var text = string.Join(' ', asr.Tokens.Skip(si).Take(ei - si + 1).Select(t => t.Word));
-            lines.Add(text);
-            indexMap.Add((si, ei));
-        }
+            var (startIdx, endIdx) = ResolveTokenRange(sentence, asr.Tokens.Length, previousTokenEnd);
 
-        // 2) Call Aeneas with one line per sentence to get begin/end per sentence
-        var fragments = await RunAeneasAsync(audioPath, lines, language);
+            var start = DetermineStart(sentence.Id, asr, startIdx, context, previousEnd, out var usedFragment);
+            var end = DetermineEnd(sentence.Id, asr, endIdx, context, start);
 
-        // 3) Detect silences with FFmpeg once (optional)
-        var silences = useSilence ? await DetectSilencesAsync(audioPath, silenceThresholdDb, silenceMinDurationSec) : Array.Empty<SilenceInfo>();
+            if (start < previousEnd)
+            {
+                start = previousEnd;
+            }
 
-        // 4) Compose refined sentences: start from Aeneas begin; end from nearest silence_end after fragment end and before next begin
-        var results = new List<SentenceRefined>(tx.Sentences.Count);
-        for (int i = 0; i < tx.Sentences.Count; i++)
-        {
-            var (si, ei) = indexMap[i];
-            if (si < 0 || ei < 0 || i >= fragments.Count)
+            if (end < start + context.MinTailSec)
             {
-                results.Add(new SentenceRefined(0, 0, Math.Max(0, si), Math.Max(0, ei)));
-                continue;
+                end = start + context.MinTailSec;
             }
-            var frag = fragments[i];
-            double start = Precision.RoundToMicroseconds(Math.Max(0, frag.begin));
-            double nextBegin = i + 1 < fragments.Count ? fragments[i + 1].begin : double.MaxValue;
-            // Choose end: if using silence, prefer nearest silence_end after fragment; else use aeneas end
-            double end = Precision.RoundToMicroseconds(frag.end);
-            if (useSilence && silences.Length > 0)
-            {
-                foreach (var s in silences)
-                {
-                    if (s.End >= frag.end - 1e-6 && s.End <= nextBegin)
-                    {
-                        end = s.End; break;
-                    }
-                }
-            }
-            // Clamp end not earlier than start + 50 ms, and not beyond nextBegin
-            end = Math.Max(end, start + 0.05);
-            end = Math.Min(end, nextBegin);
+
+            start = Precision.RoundToMicroseconds(start);
             end = Precision.RoundToMicroseconds(end);
-            results.Add(new SentenceRefined(start, end, si, ei));
+
+            results.Add(new SentenceRefined(start, end, startIdx, endIdx));
+
+            previousEnd = end;
+            previousTokenEnd = endIdx;
+
+            if (usedFragment) fragmentBacked++;
+            else fragmentFallback++;
         }
 
-        // 5) Ensure monotonic non-overlap
-        for (int i = 1; i < results.Count; i++)
-        {
-            if (results[i].Start < results[i - 1].End)
-            {
-                var prev = results[i - 1];
-                results[i - 1] = prev with { End = Precision.RoundToMicroseconds(results[i].Start) };
-            }
-        }
-
+        Console.WriteLine($"[refine] mapped sentences: fragments-backed={fragmentBacked}, fallback={fragmentFallback}");
         return results;
     }
 
-    private async Task<List<(double begin, double end)>> RunAeneasAsync(string audioPath, List<string> lines, string language)
+    private static (int start, int end) ResolveTokenRange(SentenceAlign sentence, int tokenLength, int previousTokenEnd)
     {
-        var temp = Path.Combine(Path.GetTempPath(), $"aeneas_sent_{Guid.NewGuid():N}");
-        Directory.CreateDirectory(temp);
-        try
+        int start = sentence.ScriptRange?.Start ?? (previousTokenEnd + 1);
+        int end = sentence.ScriptRange?.End ?? start;
+
+        if (tokenLength == 0)
         {
-            var txt = Path.Combine(temp, "sentences.txt");
-            await File.WriteAllLinesAsync(txt, lines, new UTF8Encoding(false));
-            var outJson = Path.Combine(temp, "alignment.json");
-
-            var pythonExe = Environment.GetEnvironmentVariable("AENEAS_PYTHON");
-            if (string.IsNullOrWhiteSpace(pythonExe)) pythonExe = "python";
-
-            var psi = new ProcessStartInfo
-            {
-                FileName = pythonExe!,
-                Arguments = $"-m aeneas.tools.execute_task \"{audioPath}\" \"{txt}\" \"task_language={language}|is_text_type=plain|os_task_file_format=json\" \"{outJson}\"",
-                RedirectStandardError = true,
-                RedirectStandardOutput = true,
-                UseShellExecute = false,
-                CreateNoWindow = true
-            };
-
-            using var proc = Process.Start(psi) ?? throw new InvalidOperationException("Failed to start aeneas");
-            using var cts = new CancellationTokenSource(_timeout);
-            await proc.WaitForExitAsync(cts.Token);
-            var stderr = await proc.StandardError.ReadToEndAsync();
-            if (proc.ExitCode != 0) throw new InvalidOperationException($"aeneas failed: {stderr}");
-            var json = await File.ReadAllTextAsync(outJson);
-            using var doc = JsonDocument.Parse(json);
-            var arr = doc.RootElement.GetProperty("fragments").EnumerateArray();
-            var frags = new List<(double, double)>();
-            foreach (var f in arr)
-            {
-                double b = Precision.RoundToMicroseconds(ParseDouble(f.GetProperty("begin")));
-                double e = Precision.RoundToMicroseconds(ParseDouble(f.GetProperty("end")));
-                frags.Add((b, e));
-            }
-            return frags;
+            start = 0;
+            end = -1;
         }
-        finally
+        else
         {
-            try { Directory.Delete(temp, true); } catch { }
+            start = Math.Clamp(start, 0, tokenLength - 1);
+            end = Math.Clamp(end, start, tokenLength - 1);
         }
 
-        static double ParseDouble(JsonElement el) => el.ValueKind == JsonValueKind.String ? double.Parse(el.GetString()!) : el.GetDouble();
+        return (start, end);
     }
 
-    private async Task<SilenceInfo[]> DetectSilencesAsync(string audioPath, double thresholdDb, double minDurationSec)
+    private static double DetermineStart(
+        int sentenceId,
+        AsrResponse asr,
+        int tokenStart,
+        SentenceRefinementContext context,
+        double previousEnd,
+        out bool usedFragment)
     {
-        var ffmpegExe = Environment.GetEnvironmentVariable("FFMPEG_EXE");
-        if (string.IsNullOrWhiteSpace(ffmpegExe)) ffmpegExe = "ffmpeg";
-
-        var psi = new ProcessStartInfo
+        if (context.TryGetFragment(sentenceId, out var fragment))
         {
-            FileName = ffmpegExe!,
-            Arguments = $"-i \"{audioPath}\" -af silencedetect=noise={thresholdDb}dB:duration={minDurationSec} -f null -",
-            RedirectStandardError = true,
-            RedirectStandardOutput = true,
-            UseShellExecute = false,
-            CreateNoWindow = true
-        };
-        using var p = Process.Start(psi) ?? throw new InvalidOperationException("Failed to start ffmpeg");
-        using var cts = new CancellationTokenSource(_timeout);
-        await p.WaitForExitAsync(cts.Token);
-        var stderr = await p.StandardError.ReadToEndAsync();
-        return ParseSilenceOutput(stderr);
+            usedFragment = true;
+            return Math.Max(previousEnd, fragment.Start);
+        }
+
+        usedFragment = false;
+        return tokenStart >= 0 && tokenStart < asr.Tokens.Length
+            ? asr.Tokens[tokenStart].StartTime
+            : previousEnd;
     }
 
-    private SilenceInfo[] ParseSilenceOutput(string ffmpegOutput)
+    private static double DetermineEnd(
+        int sentenceId,
+        AsrResponse asr,
+        int tokenEnd,
+        SentenceRefinementContext context,
+        double start)
     {
-        var silences = new List<SilenceInfo>();
-        double? cur = null;
-        foreach (var line in ffmpegOutput.Split('\n'))
+        double candidate = start + context.MinTailSec;
+
+        if (context.TryGetFragment(sentenceId, out var fragment))
         {
-            if (line.Contains("silence_start:"))
-            {
-                var m = System.Text.RegularExpressions.Regex.Match(line, @"silence_start:\s*([\d.]+)");
-                if (m.Success) cur = double.Parse(m.Groups[1].Value);
-            }
-            else if (line.Contains("silence_end:") && cur.HasValue)
-            {
-                var m = System.Text.RegularExpressions.Regex.Match(line, @"silence_end:\s*([\d.]+)");
-                if (m.Success)
-                {
-                    var end = double.Parse(m.Groups[1].Value);
-                    var roundedStart = Precision.RoundToMicroseconds(cur.Value);
-                    var roundedEnd = Precision.RoundToMicroseconds(end);
-                    silences.Add(new SilenceInfo(roundedStart, roundedEnd, Precision.RoundToMicroseconds(roundedEnd - roundedStart), 1.0));
-                    cur = null;
-                }
-            }
+            candidate = Math.Max(candidate, fragment.End);
         }
-        return silences.ToArray();
+        else if (tokenEnd >= 0 && tokenEnd < asr.Tokens.Length)
+        {
+            candidate = Math.Max(candidate, GetTokenEnd(asr, tokenEnd));
+        }
+
+        var snapped = FindSilenceAfter(asr, tokenEnd, context, candidate);
+        if (snapped.HasValue)
+        {
+            candidate = Math.Max(candidate, snapped.Value);
+        }
+
+        return candidate;
+    }
+
+    private static double GetTokenEnd(AsrResponse asr, int tokenIndex)
+    {
+        if (tokenIndex < 0 || tokenIndex >= asr.Tokens.Length)
+            return 0.0;
+
+        var token = asr.Tokens[tokenIndex];
+        return token.StartTime + token.Duration;
+    }
+
+    private static double? FindSilenceAfter(
+        AsrResponse asr,
+        int tokenEnd,
+        SentenceRefinementContext context,
+        double fallbackEnd)
+    {
+        if (context.Silences.Count == 0 || context.MaxSnapAheadSec <= 0)
+            return null;
+
+        var lastTokenEnd = tokenEnd >= 0 && tokenEnd < asr.Tokens.Length
+            ? GetTokenEnd(asr, tokenEnd)
+            : fallbackEnd;
+
+        foreach (var silence in context.Silences)
+        {
+            if (silence.Start < lastTokenEnd - 1e-6)
+            {
+                continue;
+            }
+
+            var delta = silence.Start - lastTokenEnd;
+            if (delta <= context.MaxSnapAheadSec)
+            {
+                return Math.Max(lastTokenEnd, silence.Start);
+            }
+
+            break;
+        }
+
+        return null;
     }
 }
+

@@ -1,7 +1,11 @@
+using System;
+using System.Collections.Generic;
 using System.CommandLine;
 using System.Text.Json;
-using Ams.Core.Align.Tx;
+using System.Threading;
 using Ams.Core;
+using Ams.Core.Align;
+using Ams.Core.Align.Tx;
 
 namespace Ams.Cli.Commands;
 
@@ -63,13 +67,30 @@ public static class RefineSentencesCommand
     private static async Task RunAsync(FileInfo txFile, FileInfo asrFile, FileInfo audioFile, FileInfo outFile, string language, bool withSilence, double silenceDb, double silenceMin)
     {
         var jsonOptions = new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
-        var tx = JsonSerializer.Deserialize<Ams.Core.Align.Tx.TranscriptIndex>(await File.ReadAllTextAsync(txFile.FullName), jsonOptions)
+        var tx = JsonSerializer.Deserialize<TranscriptIndex>(await File.ReadAllTextAsync(txFile.FullName), jsonOptions)
                  ?? throw new InvalidOperationException("Failed to read TX");
         var asr = JsonSerializer.Deserialize<AsrResponse>(await File.ReadAllTextAsync(asrFile.FullName), jsonOptions)
                  ?? throw new InvalidOperationException("Failed to read ASR");
 
         var svc = new SentenceRefinementService();
-        var refined = await svc.RefineAsync(audioFile.FullName, tx, asr, language, withSilence, silenceDb, silenceMin);
+
+        var context = new SentenceRefinementContext(
+            Fragments: new Dictionary<string, FragmentTiming>(),
+            Silences: Array.Empty<SilenceEvent>(),
+            MinTailSec: Math.Max(0.05, silenceMin),
+            MaxSnapAheadSec: withSilence ? 1.0 : 0.0);
+
+        if (!withSilence)
+        {
+            Console.WriteLine("[refine-cli] silence snapping disabled; fragments will use ASR token bounds");
+        }
+
+        var refined = await svc.RefineAsync(
+            audioFile.FullName,
+            tx,
+            asr,
+            context,
+            CancellationToken.None);
 
         var outJson = JsonSerializer.Serialize(refined, new JsonSerializerOptions { WriteIndented = true });
         Directory.CreateDirectory(outFile.DirectoryName!);
@@ -77,3 +98,5 @@ public static class RefineSentencesCommand
         Console.WriteLine($"Refined sentences written: {outFile.FullName}");
     }
 }
+
+
