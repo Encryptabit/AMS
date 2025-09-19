@@ -6,9 +6,9 @@ using Ams.Core.Artifacts;
 
 namespace Ams.Core.Pipeline;
 
-public record SentenceRefined(double Start, double End, int StartWordIdx, int EndWordIdx);
+public sealed record SentenceRefined(int SentenceId, SentenceTiming Timing, int StartWordIdx, int EndWordIdx);
 
-public record SilenceInfo(double Start, double End, double Duration, double Confidence);
+public sealed record SilenceInfo(double Start, double End, double Duration, double Confidence);
 
 public sealed class SentenceRefinementService
 {
@@ -27,20 +27,21 @@ public sealed class SentenceRefinementService
 
         // 1) Build per-sentence script text (from ASR tokens per ScriptRange)
         var lines = new List<string>(tx.Sentences.Count);
-        var indexMap = new List<(int startIdx, int endIdx)>(tx.Sentences.Count);
+        var indexMap = new List<(int sentenceId, int startIdx, int endIdx)>(tx.Sentences.Count);
         foreach (var s in tx.Sentences)
         {
             if (s.ScriptRange is null || !s.ScriptRange.Start.HasValue || !s.ScriptRange.End.HasValue)
             {
                 lines.Add(string.Empty);
-                indexMap.Add((-1, -1));
+                indexMap.Add((s.Id, -1, -1));
                 continue;
             }
+
             int si = Math.Clamp(s.ScriptRange.Start!.Value, 0, asr.Tokens.Length - 1);
             int ei = Math.Clamp(s.ScriptRange.End!.Value, 0, asr.Tokens.Length - 1);
             var text = string.Join(' ', asr.Tokens.Skip(si).Take(ei - si + 1).Select(t => t.Word));
             lines.Add(text);
-            indexMap.Add((si, ei));
+            indexMap.Add((s.Id, si, ei));
         }
 
         // 2) Call Aeneas with one line per sentence to get begin/end per sentence
@@ -53,16 +54,20 @@ public sealed class SentenceRefinementService
         var results = new List<SentenceRefined>(tx.Sentences.Count);
         for (int i = 0; i < tx.Sentences.Count; i++)
         {
-            var (si, ei) = indexMap[i];
-            if (si < 0 || ei < 0 || i >= fragments.Count)
+            var (sentenceId, si, ei) = indexMap[i];
+            bool hasFragment = si >= 0 && ei >= 0 && i < fragments.Count;
+
+            if (!hasFragment)
             {
-                results.Add(new SentenceRefined(0, 0, Math.Max(0, si), Math.Max(0, ei)));
+                var emptyTiming = new SentenceTiming(0d, 0d, fragmentBacked: false);
+                results.Add(new SentenceRefined(sentenceId, emptyTiming, Math.Max(0, si), Math.Max(0, ei)));
                 continue;
             }
+
             var frag = fragments[i];
             double start = Math.Max(0, frag.begin);
             double nextBegin = i + 1 < fragments.Count ? fragments[i + 1].begin : double.MaxValue;
-            // Choose end: if using silence, prefer nearest silence_end after fragment; else use aeneas end
+
             double end = frag.end;
             if (useSilence && silences.Length > 0)
             {
@@ -70,23 +75,28 @@ public sealed class SentenceRefinementService
                 {
                     if (s.End >= frag.end - 1e-6 && s.End <= nextBegin)
                     {
-                        end = s.End; break;
+                        end = s.End;
+                        break;
                     }
                 }
             }
-            // Clamp end not earlier than start + 50 ms, and not beyond nextBegin
+
             end = Math.Max(end, start + 0.05);
             end = Math.Min(end, nextBegin);
-            results.Add(new SentenceRefined(start, end, si, ei));
+
+            var timing = new SentenceTiming(start, end, fragmentBacked: true);
+            results.Add(new SentenceRefined(sentenceId, timing, si, ei));
         }
 
         // 5) Ensure monotonic non-overlap
         for (int i = 1; i < results.Count; i++)
         {
-            if (results[i].Start < results[i - 1].End)
+            var prev = results[i - 1];
+            var curr = results[i];
+            if (curr.Timing.StartSec < prev.Timing.EndSec)
             {
-                var prev = results[i - 1];
-                results[i - 1] = prev with { End = results[i].Start };
+                var adjusted = prev.Timing.WithEnd(curr.Timing.StartSec);
+                results[i - 1] = prev with { Timing = adjusted };
             }
         }
 
@@ -187,5 +197,4 @@ public sealed class SentenceRefinementService
         return silences.ToArray();
     }
 }
-
 

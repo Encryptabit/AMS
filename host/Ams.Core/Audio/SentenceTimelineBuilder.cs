@@ -1,34 +1,56 @@
 using System.Collections.Generic;
+using System.Linq;
 using Ams.Core.Artifacts;
 
 namespace Ams.Core.Audio;
 
-public sealed record SentenceTimelineEntry(int SentenceId, TimingRange Timing, bool HasTiming, bool FragmentBacked);
+public sealed record SentenceTimelineEntry(int SentenceId, SentenceTiming Timing, bool HasTiming);
 
 public static class SentenceTimelineBuilder
 {
     public static IReadOnlyList<SentenceTimelineEntry> Build(
         IReadOnlyList<SentenceAlign> sentences,
-        IReadOnlyDictionary<int, FragmentTiming>? fragments = null)
+        AudioAnalysisService analyzer,
+        IReadOnlyDictionary<int, FragmentTiming>? fragments = null,
+        double rmsThresholdDb = -35.0,
+        double searchWindowSec = 0.5,
+        double stepMs = 10.0)
     {
-        var results = new List<SentenceTimelineEntry>(sentences.Count);
+        if (sentences is null) throw new ArgumentNullException(nameof(sentences));
+        if (analyzer is null) throw new ArgumentNullException(nameof(analyzer));
+
+        var entries = new List<SentenceTimelineEntry>(sentences.Count);
 
         foreach (var sentence in sentences)
         {
-            var timing = sentence.Timing;
-            bool hasTiming = timing.Duration > 0;
-            bool fragmentBacked = false;
+            var timingSource = fragments != null && fragments.TryGetValue(sentence.Id, out var fragment)
+                ? new SentenceTiming(fragment, fragmentBacked: true)
+                : new SentenceTiming(sentence.Timing);
 
-            if (fragments != null && fragments.TryGetValue(sentence.Id, out var fragment))
+            bool hasTiming = timingSource.Duration > 0;
+
+            if (hasTiming)
             {
-                timing = fragment;
-                fragmentBacked = true;
-                hasTiming = true;
+                var snapped = analyzer.SnapToEnergy(timingSource, rmsThresholdDb, searchWindowSec, stepMs);
+                timingSource = new SentenceTiming(snapped.StartSec, snapped.EndSec, timingSource.FragmentBacked, timingSource.Confidence);
             }
 
-            results.Add(new SentenceTimelineEntry(sentence.Id, timing, hasTiming, fragmentBacked));
+            entries.Add(new SentenceTimelineEntry(sentence.Id, timingSource, hasTiming));
         }
 
-        return results;
+        // Ensure monotonically increasing windows to avoid overlap downstream.
+        for (int i = 1; i < entries.Count; i++)
+        {
+            var prev = entries[i - 1];
+            var curr = entries[i];
+            if (curr.Timing.StartSec < prev.Timing.EndSec)
+            {
+                var adjusted = prev.Timing.WithEnd(curr.Timing.StartSec);
+                entries[i - 1] = prev with { Timing = adjusted };
+            }
+        }
+
+        return entries;
     }
 }
+
