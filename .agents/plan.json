@@ -1,0 +1,157 @@
+{
+  "goal": "Ensure transcript alignment retains all sentence-leading tokens and generates accurate timing windows for room-tone gap filling.",
+  "background": "Hydrated transcripts are dropping the first word(s) of sentences because anchor tokens never reach wordOps; downstream roomtone windows start late and clip narration.",
+  "scope": [
+    "Seed anchor (bookIdx, asrIdx) pairs into wordOps before DP results are merged",
+    "Adjust sentence scriptRange derivation to pad across adjacent insertions while respecting anchor bounds",
+    "Verify roomtone gap replacement uses updated sentence timings without trimming speech",
+    "Implement anchor-driven wordOps seeding and sentence padding modifications",
+    "Regenerate alignment and hydrate artifacts verifying leading word retention"
+  ],
+  "out_of_scope": [
+    "Rewriting anchor discovery heuristics",
+    "Changing CLI verb syntax or external artifacts beyond alignment/roomtone updates"
+  ],
+  "assumptions": [
+    "ASR tokens contain accurate start/duration values",
+    "Anchor pipeline continues to emit stable bp/ap pairs for sentence-leading n-grams",
+    "Roomtone seed WAV is present beside chapter audio or manuscript"
+  ],
+  "risks": [
+    "Improper deduplication of seeded anchors could inflate wordOps and mis-shape DP stats",
+    "Padding across insertions may produce overlapping timings if guard rails are misapplied",
+    "Roomtone gaps may still be too tight without additional silence calibration"
+  ],
+  "interfaces": [
+    {
+      "name": "AlignCommand",
+      "kind": "cli",
+      "signature": "Ams.Cli align tx",
+      "pre": [
+        "Anchor pipeline completed for chapter",
+        "ASR/Book JSON available"
+      ],
+      "post": [
+        "wordOps include anchors and DP results for every sentence",
+        "scriptRange.start <= first anchor asrIdx"
+      ],
+      "notes": "Inject anchor matches into wordOps before DP results; sort/dedup to keep stable alignment stream"
+    },
+    {
+      "name": "TranscriptAligner.Rollup",
+      "kind": "method",
+      "signature": "(List<SentenceAlign> sents, List<ParagraphAlign> paras) Rollup(IReadOnlyList<WordAlign> ops, ...)",
+      "pre": [
+        "wordOps sorted by asrIdx/bookIdx",
+        "Anchors present for sentence-leading tokens"
+      ],
+      "post": [
+        "ScriptRange spans include seeded anchors and padded insertions",
+        "TimingRange reflects ASR token times for entire sentence"
+      ],
+      "notes": "Extend sentence segments to include adjacent Ins ops without crossing neighboring anchor boundaries"
+    },
+    {
+      "name": "RoomtoneRenderer",
+      "kind": "class",
+      "signature": "RenderWithSentenceMasks(AudioBuffer input, AudioBuffer roomtoneSeed, AsrResponse asr, IReadOnlyList<SentenceAlign> sentences, int targetSampleRate, double toneGainDb, double fadeMs)",
+      "pre": [
+        "SentenceAlign.Timing accurately brackets speech",
+        "Roomtone seed wav loaded"
+      ],
+      "post": [
+        "Gaps filled with looped roomtone without clipping leading words"
+      ],
+      "notes": "Depends on corrected timings to avoid trimming speech when overwriting gaps"
+    }
+  ],
+  "data_models": [
+    {
+      "name": "WordAlign",
+      "fields": [
+        {
+          "name": "BookIdx",
+          "type": "int?",
+          "notes": "Original book word index"
+        },
+        {
+          "name": "AsrIdx",
+          "type": "int?",
+          "notes": "Original ASR token index"
+        },
+        {
+          "name": "Op",
+          "type": "AlignOp",
+          "notes": "Match/Sub/Ins/Del"
+        },
+        {
+          "name": "Reason",
+          "type": "string",
+          "notes": "equal_or_equiv, anchor, extra, etc."
+        }
+      ],
+      "notes": "Now contains seeded matches for every anchor n-gram"
+    }
+  ],
+  "files_touched": [
+    "host/Ams.Cli/Commands/AlignCommand.cs",
+    "host/Ams.Core/Alignment/Tx/TranscriptAligner.cs",
+    "host/Ams.Core/Audio/RoomtoneRenderer.cs",
+    "host/Ams.Core/Pipeline/RoomToneInsertionStage.cs",
+    "host/Ams.Tests/RoomToneStageTests.cs"
+  ],
+  "migrations": "",
+  "constraints": [
+    ".NET 9 (SDK 9.0.300)",
+    "Windows 10+/WSL supported"
+  ],
+  "non_functional": [
+    "Maintain deterministic alignment outputs",
+    "No measurable regression in CLI alignment runtime"
+  ],
+  "acceptance_tests": [
+    {
+      "name": "build",
+      "cmd": "dotnet build -c Release",
+      "from_dir": "."
+    },
+    {
+      "name": "unit",
+      "cmd": "dotnet test -c Release",
+      "from_dir": "."
+    },
+    {
+      "name": "cli_align",
+      "cmd": "C:/Projects/AMS/host/Ams.Cli/bin/Release/net9.0/Ams.Cli.exe align tx -i \"C:/Projects/AMS/analysis/book-index.json\" -j \"C:/Projects/AMS/analysis/Chapter 1.asr.json\" --out \"C:/Projects/AMS/analysis/Chapter 1.align.tx.json\" -a \"C:/Projects/AMS/analysis/Chapter 1.wav\"",
+      "from_dir": "."
+    },
+    {
+      "name": "cli_hydrate",
+      "cmd": "C:/Projects/AMS/host/Ams.Cli/bin/Release/net9.0/Ams.Cli.exe align hydrate -i \"C:/Projects/AMS/analysis/book-index.json\" -j \"C:/Projects/AMS/analysis/Chapter 1.asr.json\" -t \"C:/Projects/AMS/analysis/Chapter 1.align.tx.json\" -o \"C:/Projects/AMS/analysis/Chapter 1.align.hydrate.json\"",
+      "from_dir": "."
+    },
+    {
+      "name": "cli_roomtone",
+      "cmd": "C:/Projects/AMS/host/Ams.Cli/bin/Release/net9.0/Ams.Cli.exe audio roomtone -t \"C:/Projects/AMS/analysis/Chapter 1.align.tx.json\" -o \"C:/Projects/AMS/analysis/roomtone/chapter1.roomtone.wav\" --sample-rate 44100 --tone-gain-db -55 --fade-ms 5",
+      "from_dir": "."
+    }
+  ],
+  "test_fixtures": {
+    "sample_audio": "analysis/Chapter 1.wav",
+    "sample_book": "analysis/book-index.json",
+    "env": [
+      "FFMPEG=1"
+    ]
+  },
+  "manual_qa": [
+    "Inspect hydrate sentences to confirm scriptText includes leading words",
+    "Listen to roomtone render around sentence starts for clipping"
+  ],
+  "telemetry": [
+    "Log number of seeded anchor pairs per sentence",
+    "Emit debug trace when sentence padding extends across insertions"
+  ],
+  "rollout": "Feature branch -> PR -> QA validation",
+  "rollback": "Revert alignment seeding commit; restore prior plan",
+  "open_questions": []
+}
