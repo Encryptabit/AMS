@@ -66,19 +66,31 @@ public sealed class SentenceRefinementStage : StageRunner
 
         var audioPath = DetermineAudioPath(manifest);
 
-        var sectionRange = LoadSectionWordRange(bookIndex);
+        var sectionRange = SentenceRefinementPreparation.TryLoadSectionWordRange(WorkDir, bookIndex);
         if (sectionRange is { } range)
         {
             Console.WriteLine($"[refine] using section window words {range.Start}..{range.End}");
         }
 
-        var (transcriptIndex, mapping) = BuildTranscriptArtifacts(bookIndex, asr, audioPath, bookIndexPath, sectionRange);
+        var (transcriptIndex, mapping) = SentenceRefinementPreparation.BuildTranscriptArtifacts(
+            bookIndex,
+            asr,
+            audioPath,
+            bookIndexPath,
+            sectionRange);
 
-        var chunkAlignments = await LoadChunkAlignmentsAsync(ct);
+        var chunkAlignments = await SentenceRefinementPreparation.LoadChunkAlignmentsAsync(
+            Path.Combine(WorkDir, "align-chunks", "chunks"),
+            s_jsonOptions,
+            ct);
         var chapterAlignmentIndex = ChapterAlignmentIndex.Build(chunkAlignments, mapping);
 
-        var silences = await LoadSilenceTimelineAsync(ct);
-        var silenceEvents = _params.UseSilence ? silences : Array.Empty<SilenceEvent>();
+        var silenceEvents = _params.UseSilence
+            ? await SentenceRefinementPreparation.LoadSilencesAsync(
+                Path.Combine(WorkDir, "timeline", "silence.json"),
+                s_jsonOptions,
+                ct)
+            : Array.Empty<SilenceEvent>();
 
         Console.WriteLine($"[refine] sentences={transcriptIndex.Sentences.Count}, fragments={chapterAlignmentIndex.Fragments.Count}, silences={silenceEvents.Count}");
 

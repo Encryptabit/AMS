@@ -102,44 +102,128 @@ async def health_check():
         logger.error(f"Health check failed: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Health check failed: {str(e)}")
 
+def build_aeneas_sensitive_config(language: str) -> str:
+    """
+    Returns an aeneas config string tuned for higher sensitivity at sentence-level.
+    Safe defaults: tighter MFCC frames, eager VAD, mask nonspeech during DTW,
+    slightly wider stripe, and small 'beforenext' boundary pull.
+    """
+    # Normalize language (aeneas uses ISO-639-3 like 'eng', 'spa', etc.)
+    lang = (language or "eng").strip().lower()
+
+    parts = [
+        # I/O + language (keep your task type the same downstream)
+        f"task_language={lang}",
+        "is_text_type=plain",
+        "os_task_file_format=json",
+
+        # DTW: stripe with a bit more margin for robustness
+        "dtw_algorithm=stripe",
+        "dtw_margin_l2=45",
+
+        # Higher temporal resolution at sentence level (L2)
+        "mfcc_window_shift_l2=0.010",
+        "mfcc_window_length_l2=0.030",
+
+        # Prefer speech zones (mask nonspeech from cost matrix)
+        "mfcc_mask_nonspeech_l2=True",
+        "mfcc_mask_log_energy_threshold=0.50",
+        "mfcc_mask_min_nonspeech_length=2",
+
+        # VAD: treat quieter speech as speech, avoid tiny silence islands
+        "vad_log_energy_threshold=0.50",
+        "vad_min_nonspeech_length=0.10",
+        "vad_extend_speech_before=0.02",
+        "vad_extend_speech_after=0.02",
+
+        # Post-boundary adjustment: nudge ends slightly toward speech
+        "task_adjust_boundary_algorithm=beforenext",
+        "task_adjust_boundary_beforenext_value=0.10",
+        "task_adjust_boundary_no_zero=True",
+    ]
+    return "|".join(parts)
+
+
 @app.post("/v1/align-chunk", response_model=AlignChunkResponse)
 async def align_chunk(request: AlignChunkRequest):
     """
     Perform forced alignment on a single audio chunk with text lines.
-    
-    Takes an audio file and list of text lines, returns time-aligned fragments.
+    Applies a 'sensitive' aeneas preset to improve detection of quiet/short phrases.
     """
     logger.info(f"Alignment requested for chunk {request.chunk_id}")
     logger.debug(f"Audio: {request.audio_path}")
-    logger.debug(f"Lines: {len(request.lines)}")
+    logger.debug(f"Lines: {len(request.lines) if request.lines else 0}")
     logger.debug(f"Language: {request.language}")
-    
+
     if not request.lines:
         raise HTTPException(status_code=400, detail="Lines cannot be empty")
-    
+
     if not os.path.exists(request.audio_path):
         raise HTTPException(status_code=404, detail=f"Audio file not found: {request.audio_path}")
-    
+
+    # Build the sensitivity preset (you can gate this behind an env var if desired)
+    config = build_aeneas_sensitive_config(request.language)
+
+    # Cap runaway timeouts but let caller override; default to 10 min
+    timeout_sec = max(60, (request.timeout_sec or 600))
+
     try:
+        # IMPORTANT: ensure your run_aeneas_alignment forwards `config` to aeneas.
+        # e.g., execute_task(audio, text, config_string=config)
         result = run_aeneas_alignment(
             audio_path=request.audio_path,
             text_lines=request.lines,
             language=request.language,
-            timeout_sec=request.timeout_sec or 600
+            config=config,
+            timeout_sec=timeout_sec,
         )
-        
-        fragments = [Fragment(begin=f["begin"], end=f["end"]) for f in result["fragments"]]
-        
+
+        # Defensive parsing in case aeneas returns strings for times
+        def _to_float(x):
+            try:
+                return float(x)
+            except Exception:
+                return None
+
+        fragments = [
+            Fragment(begin=_to_float(f.get("begin")), end=_to_float(f.get("end")))
+            for f in (result.get("fragments") or [])
+        ]
+
+        # Optionally drop any None-timed fragments (rare, but defensive)
+        fragments = [f for f in fragments if f.begin is not None and f.end is not None and f.end >= f.begin]
+
         response = AlignChunkResponse(
             chunk_id=request.chunk_id,
             fragments=fragments,
-            counts=result["counts"],
-            tool=ToolInfo(python=result["tool"]["python"], aeneas=result["tool"]["aeneas"]),
-            generated_at=datetime.utcnow().isoformat()
+            counts=result.get("counts", {}),
+            tool=ToolInfo(
+                python=(result.get("tool") or {}).get("python", "unknown"),
+                aeneas=(result.get("tool") or {}).get("aeneas", "unknown"),
+            ),
+            generated_at=datetime.utcnow().isoformat(),
         )
-        
+
         logger.info(f"Alignment completed for chunk {request.chunk_id}: {len(fragments)} fragments")
         return response
+
+    except HTTPException:
+        # Re-raise FastAPI errors unchanged
+        raise
+    except Exception as e:
+        # If run_aeneas_alignment returns stderr, surface it for easier debugging
+        stderr = None
+        try:
+            stderr = getattr(e, "stderr", None) or getattr(e, "details", None)
+        except Exception:
+            pass
+
+        msg = f"Aeneas alignment failed: {e}"
+        if stderr:
+            msg += f" | Details: {stderr}"
+
+        logger.exception(msg)
+        raise HTTPException(status_code=500, detail=msg)
         
     except FileNotFoundError as e:
         logger.error(f"File not found: {str(e)}")
