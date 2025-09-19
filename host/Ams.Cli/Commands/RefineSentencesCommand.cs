@@ -70,7 +70,7 @@ public static class RefineSentencesCommand
         var svc = new SentenceRefinementService();
         var refined = await svc.RefineAsync(audioFile.FullName, tx, asr, language, withSilence, silenceDb, silenceMin);
 
-        var outJson = JsonSerializer.Serialize(refined, new JsonSerializerOptions { WriteIndented = true });
+        var outJson = JsonSerializer.Serialize(refined, new JsonSerializerOptions { WriteIndented = true, PropertyNamingPolicy = JsonNamingPolicy.CamelCase });
         Directory.CreateDirectory(outFile.DirectoryName!);
         await File.WriteAllTextAsync(outFile.FullName, outJson);
         Console.WriteLine($"Refined sentences written: {outFile.FullName}");

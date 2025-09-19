@@ -52,25 +52,68 @@ public static class WavIo
         if (numChannels < 1 || numChannels > 8) throw new NotSupportedException($"Unsupported channel count: {numChannels}");
 
         br.BaseStream.Position = dataPos;
+        if (bitsPerSample % 8 != 0) throw new NotSupportedException($"Bits per sample must be byte aligned. Got {bitsPerSample}.");
+
         int bytesPerSample = bitsPerSample / 8;
         int frameSize = bytesPerSample * numChannels;
         int frames = (int)(dataSize / (uint)frameSize);
         var buf = new AudioBuffer(numChannels, (int)sampleRate, frames);
 
-        if (audioFormat == 1 && bitsPerSample == 16)
+        if (audioFormat == 1)
         {
-            // PCM16 -> float
-            for (int i = 0; i < frames; i++)
+            switch (bitsPerSample)
             {
-                for (int ch = 0; ch < numChannels; ch++)
-                {
-                    short s = br.ReadInt16();
-                    buf.Planar[ch][i] = s / 32768f;
-                }
+                case 16:
+                    for (int i = 0; i < frames; i++)
+                    {
+                        for (int ch = 0; ch < numChannels; ch++)
+                        {
+                            short sample = br.ReadInt16();
+                            buf.Planar[ch][i] = sample / 32768f;
+                        }
+                    }
+                    break;
+
+                case 24:
+                    for (int i = 0; i < frames; i++)
+                    {
+                        for (int ch = 0; ch < numChannels; ch++)
+                        {
+                            int b0 = br.ReadByte();
+                            int b1 = br.ReadByte();
+                            int b2 = br.ReadByte();
+                            int sample = b0 | (b1 << 8) | (b2 << 16);
+                            if ((sample & 0x800000) != 0)
+                            {
+                                sample |= unchecked((int)0xFF000000);
+                            }
+                            buf.Planar[ch][i] = sample / 8388608f;
+                        }
+                    }
+                    break;
+
+                case 32:
+                    for (int i = 0; i < frames; i++)
+                    {
+                        for (int ch = 0; ch < numChannels; ch++)
+                        {
+                            int sample = br.ReadInt32();
+                            buf.Planar[ch][i] = sample / 2147483648f;
+                        }
+                    }
+                    break;
+
+                default:
+                    throw new NotSupportedException($"Unsupported PCM bit depth: {bitsPerSample}");
             }
         }
-        else if (audioFormat == 3 && bitsPerSample == 32)
+        else if (audioFormat == 3)
         {
+            if (bitsPerSample != 32)
+            {
+                throw new NotSupportedException($"Unsupported IEEE float bit depth: {bitsPerSample}");
+            }
+
             for (int i = 0; i < frames; i++)
             {
                 for (int ch = 0; ch < numChannels; ch++)
@@ -81,7 +124,7 @@ public static class WavIo
         }
         else
         {
-            throw new NotSupportedException($"Only PCM16 and IEEE float32 supported. Got format={audioFormat}, bits={bitsPerSample}");
+            throw new NotSupportedException($"Unsupported WAV format: {audioFormat}");
         }
 
         return buf;
