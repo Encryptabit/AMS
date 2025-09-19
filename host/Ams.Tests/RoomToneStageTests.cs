@@ -137,7 +137,7 @@ public class RoomToneStageTests
         {
             inputBuffer.Planar[0][i] = i < 2000 ? 0.5f : 0.0f;
         }
-        WavIo.WriteInt16Pcm(audioPath, inputBuffer);
+        WavIo.WriteFloat32(audioPath, inputBuffer);
 
         var asr = new AsrResponse("test-model", new[]
         {
@@ -192,7 +192,7 @@ public class RoomToneStageTests
             toneBuffer.Planar[0][1] = -0.1f;
             toneBuffer.Planar[0][2] = 0.05f;
             toneBuffer.Planar[0][3] = -0.05f;
-            WavIo.WriteInt16Pcm(roomtonePath, toneBuffer);
+            WavIo.WriteFloat32(roomtonePath, toneBuffer);
         }
 
         var manifest = new ManifestV2("chapter", temp.Path, audioPath, txPath);

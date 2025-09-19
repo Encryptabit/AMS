@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using System.Linq;
+using Ams.Core.Asr;
 using Ams.Core.Artifacts;
 
 namespace Ams.Core.Audio;
@@ -11,6 +12,7 @@ public static class SentenceTimelineBuilder
     public static IReadOnlyList<SentenceTimelineEntry> Build(
         IReadOnlyList<SentenceAlign> sentences,
         AudioAnalysisService analyzer,
+        AsrResponse asr,
         IReadOnlyDictionary<int, FragmentTiming>? fragments = null,
         double rmsThresholdDb = -35.0,
         double searchWindowSec = 0.5,
@@ -18,15 +20,16 @@ public static class SentenceTimelineBuilder
     {
         if (sentences is null) throw new ArgumentNullException(nameof(sentences));
         if (analyzer is null) throw new ArgumentNullException(nameof(analyzer));
+        if (asr is null) throw new ArgumentNullException(nameof(asr));
 
         var entries = new List<SentenceTimelineEntry>(sentences.Count);
 
         foreach (var sentence in sentences)
         {
-            var baseTiming = new SentenceTiming(sentence.Timing);
+            var windowTiming = ComputeWindowFromScript(sentence, asr);
             var timingSource = fragments != null && fragments.TryGetValue(sentence.Id, out var fragment)
                 ? new SentenceTiming(fragment, fragmentBacked: true)
-                : baseTiming;
+                : new SentenceTiming(sentence.Timing);
 
             bool hasTiming = timingSource.Duration > 0;
 
@@ -37,10 +40,10 @@ public static class SentenceTimelineBuilder
                 energyTiming = new SentenceTiming(snapped.StartSec, snapped.EndSec, timingSource.FragmentBacked, timingSource.Confidence);
             }
 
-            entries.Add(new SentenceTimelineEntry(sentence.Id, energyTiming, hasTiming, baseTiming));
+            entries.Add(new SentenceTimelineEntry(sentence.Id, energyTiming, hasTiming, windowTiming));
         }
 
-        // Ensure monotonically increasing windows to avoid overlap downstream.
+        // Ensure monotonically increasing energy windows to avoid overlap downstream.
         for (int i = 1; i < entries.Count; i++)
         {
             var prev = entries[i - 1];
@@ -54,5 +57,26 @@ public static class SentenceTimelineBuilder
 
         return entries;
     }
+
+    private static SentenceTiming ComputeWindowFromScript(SentenceAlign sentence, AsrResponse asr)
+    {
+        if (sentence.ScriptRange is { Start: { } startIdx, End: { } endIdx })
+        {
+            if (asr.Tokens.Length > 0)
+            {
+                var start = Math.Clamp(startIdx, 0, asr.Tokens.Length - 1);
+                var end = Math.Clamp(endIdx, start, asr.Tokens.Length - 1);
+                var startToken = asr.Tokens[start];
+                var endToken = asr.Tokens[end];
+                var range = new TimingRange(startToken.StartTime, endToken.StartTime + endToken.Duration);
+                if (range.Duration > 0)
+                {
+                    return new SentenceTiming(range);
+                }
+            }
+        }
+        return new SentenceTiming(sentence.Timing);
+    }
 }
+
 
