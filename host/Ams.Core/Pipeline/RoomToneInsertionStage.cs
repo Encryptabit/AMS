@@ -31,13 +31,13 @@ public sealed class RoomToneInsertionStage
         var transcript = await LoadTranscriptAsync(manifest.TranscriptIndexPath, jsonOptions, ct);
         var asr = await LoadAsrAsync(transcript.ScriptPath, jsonOptions, ct);
         var bookIndex = await LoadBookIndexAsync(transcript.BookIndexPath, jsonOptions, ct);
-
         var roomtonePath = RequireRoomtone(manifest.AudioPath, bookIndex.SourceFile);
 
         if (!File.Exists(manifest.AudioPath))
             throw new FileNotFoundException("Audio file not found", manifest.AudioPath);
 
         var inputAudio = WavIo.ReadPcmOrFloat(manifest.AudioPath);
+        var roomtoneSeed = WavIo.ReadPcmOrFloat(roomtonePath);
         var analyzer = new AudioAnalysisService(inputAudio);
         var timelineEntries = SentenceTimelineBuilder.Build(transcript.Sentences, analyzer);
 
@@ -53,7 +53,16 @@ public sealed class RoomToneInsertionStage
         var metaPath = Path.Combine(stageDir, "meta.json");
         var paramsPath = Path.Combine(stageDir, "params.snapshot.json");
 
-        File.Copy(roomtonePath, wavPath, overwrite: true);
+        var rendered = RoomtoneRenderer.RenderWithSentenceMasks(
+            input: inputAudio,
+            roomtoneSeed: roomtoneSeed,
+            asr: asr,
+            sentences: updatedSentences,
+            targetSampleRate: _targetSampleRate,
+            toneGainDb: _toneGainDb,
+            fadeMs: _fadeMs);
+
+        WavIo.WriteInt16Pcm(wavPath, rendered);
 
         await WriteTimelineAsync(timelineEntries, manifest, timelinePath, ct);
         await WriteMetaAsync(manifest, wavPath, roomtonePath, metaPath, ct);
