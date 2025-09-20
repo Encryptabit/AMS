@@ -1,4 +1,5 @@
 using System;
+using System.IO;
 using System.Collections.Generic;
 using System.Linq;
 using Ams.Core.Asr;
@@ -19,7 +20,8 @@ namespace Ams.Core.Audio
             IReadOnlyList<SentenceAlign> sentences,
             int targetSampleRate,
             double toneGainLinear,
-            double fadeMs)
+            double fadeMs,
+            string? debugDirectory = null)
         {
             if (input is null) throw new ArgumentNullException(nameof(input));
             if (roomtoneSeed is null) throw new ArgumentNullException(nameof(roomtoneSeed));
@@ -32,8 +34,13 @@ namespace Ams.Core.Audio
 
             if (tone.Length == 0) throw new InvalidOperationException("Roomtone seed must contain samples.");
 
+            WriteDebug(debugDirectory, "step0_source", src);
+            WriteDebug(debugDirectory, "step0_roomtone_seed", tone);
+
             var sentRanges = BuildSentenceRanges(sentences, src.SampleRate, src.Length);
-            var gapRanges = BuildGapRanges(gaps, src.SampleRate, src.Length);
+            var gapRanges = gaps != null && gaps.Count > 0
+                ? BuildGapRanges(gaps, src.SampleRate, src.Length)
+                : InvertToGaps(sentRanges, src.Length);
 
             var outBuf = new AudioBuffer(src.Channels, src.SampleRate, src.Length);
 
@@ -46,6 +53,8 @@ namespace Ams.Core.Audio
                 FillGapWithRoomtone(outBuf, tone, gapStart, gapEnd, toneGain, ref toneCursor);
             }
 
+            WriteDebug(debugDirectory, "step1_gap_fill", outBuf);
+
             foreach (var (startSample, endSample) in sentRanges)
             {
                 int len = endSample - startSample;
@@ -55,6 +64,8 @@ namespace Ams.Core.Audio
                     Array.Copy(src.Planar[ch], startSample, outBuf.Planar[ch], startSample, len);
                 }
             }
+
+            WriteDebug(debugDirectory, "step2_overlay", outBuf);
 
             int fadeSamples = fadeMs <= 0 ? 0 : (int)Math.Round(fadeMs * 0.001 * src.SampleRate);
             if (fadeSamples > 0)
@@ -71,12 +82,38 @@ namespace Ams.Core.Audio
                     int foEnd = Math.Min(src.Length, s1 + fadeSamples);
                     ApplyCrossfade(outBuf, src, foStart, foEnd, fadeSamples, directionIn: false);
                 }
+
+                WriteDebug(debugDirectory, "step3_crossfade", outBuf);
+            }
+            else
+            {
+                WriteDebug(debugDirectory, "step3_crossfade", outBuf);
             }
 
-            RepairSilentRegions(outBuf, src);
+            RepairSilentRegions(outBuf, src, sentRanges);
+            WriteDebug(debugDirectory, "step4_repair", outBuf);
 
             return outBuf;
         }
+
+
+        // helper:
+        private static List<(int Start, int End)> InvertToGaps(
+            List<(int Start, int End)> sentences, int totalSamples)
+        {
+            var gaps = new List<(int,int)>();
+            if (sentences.Count == 0) { gaps.Add((0, totalSamples)); return gaps; }
+
+            int cursor = 0;
+            foreach (var (s, e) in sentences)
+            {
+                if (s > cursor) gaps.Add((cursor, s));
+                cursor = Math.Max(cursor, e);
+            }
+            if (cursor < totalSamples) gaps.Add((cursor, totalSamples));
+            return gaps;
+        }
+        
 
         private static List<(int Start, int End)> BuildSentenceRanges(
             IReadOnlyList<SentenceAlign> sentences,
@@ -166,46 +203,82 @@ namespace Ams.Core.Audio
             toneCursor += len;
         }
 
-        private static void RepairSilentRegions(AudioBuffer mix, AudioBuffer src)
+private static void RepairSilentRegions(AudioBuffer mix, AudioBuffer src, IReadOnlyList<(int Start, int End)> sentenceRanges)
         {
             if (mix is null) throw new ArgumentNullException(nameof(mix));
             if (src is null) throw new ArgumentNullException(nameof(src));
+            if (sentenceRanges is null) throw new ArgumentNullException(nameof(sentenceRanges));
             if (mix.Length == 0) return;
 
-            const float epsilon = 1e-7f;
-            int segmentStart = -1;
+            const float sourcePresenceThreshold = 1e-3f;   // ~-60 dBFS
+            const float mixGapThreshold = 3e-4f;            // ~-70 dBFS
+            const float diffThreshold = 7e-4f;
+
             int length = Math.Min(mix.Length, src.Length);
-            int channels = mix.Channels;
+            int srcChannels = src.Channels;
 
-            for (int sample = 0; sample < length; sample++)
+            for (int i = 0; i < sentenceRanges.Count; i++)
             {
-                bool silent = true;
-                for (int ch = 0; ch < channels; ch++)
+                var (startSample, endSample) = sentenceRanges[i];
+                startSample = Math.Clamp(startSample, 0, length);
+                endSample = Math.Clamp(endSample, startSample, length);
+                if (endSample <= startSample)
                 {
-                    if (MathF.Abs(mix.Planar[ch][sample]) > epsilon)
+                    continue;
+                }
+
+                bool needsRepair = false;
+                for (int sample = startSample; sample < endSample && !needsRepair; sample++)
+                {
+                    float maxSrc = 0f;
+                    float maxMix = 0f;
+
+                    for (int ch = 0; ch < mix.Channels; ch++)
                     {
-                        silent = false;
-                        break;
+                        int srcCh = ch < srcChannels ? ch : srcChannels - 1;
+                        float srcVal = MathF.Abs(src.Planar[srcCh][sample]);
+                        float mixVal = MathF.Abs(mix.Planar[ch][sample]);
+
+                        if (srcVal > maxSrc) maxSrc = srcVal;
+                        if (mixVal > maxMix) maxMix = mixVal;
+                    }
+
+                    if (maxSrc > sourcePresenceThreshold && (maxMix < mixGapThreshold || (maxSrc - maxMix) > diffThreshold))
+                    {
+                        needsRepair = true;
                     }
                 }
 
-                if (silent)
+                if (needsRepair)
                 {
-                    if (segmentStart < 0)
-                    {
-                        segmentStart = sample;
-                    }
-                }
-                else if (segmentStart >= 0)
-                {
-                    CopySourceRange(mix, src, segmentStart, sample);
-                    segmentStart = -1;
+                    int repairStart = i > 0 ? sentenceRanges[i - 1].End : 0;
+                    int repairEnd = i + 1 < sentenceRanges.Count ? sentenceRanges[i + 1].Start : length;
+
+                    repairStart = Math.Clamp(repairStart, 0, length);
+                    repairEnd = Math.Clamp(repairEnd, repairStart, length);
+
+                    CopySourceRange(mix, src, repairStart, repairEnd);
+                    Console.WriteLine($"[Roomtone] Repair applied for sentence window index={i} samples=({repairStart}-{repairEnd})");
                 }
             }
-
-            if (segmentStart >= 0)
+        }
+        private static void WriteDebug(string? directory, string suffix, AudioBuffer buffer)
+        {
+            if (string.IsNullOrWhiteSpace(directory) || buffer is null)
             {
-                CopySourceRange(mix, src, segmentStart, length);
+                return;
+            }
+
+            try
+            {
+                Directory.CreateDirectory(directory);
+                var fileName = $"roomtone.{suffix}.wav";
+                var path = Path.Combine(directory, fileName);
+                WavIo.WriteFloat32(path, buffer);
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[Roomtone] Debug write failed for {suffix}: {ex.Message}");
             }
         }
 

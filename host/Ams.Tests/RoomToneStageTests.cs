@@ -134,10 +134,12 @@ public class RoomToneStageTests
         Assert.Equal(input.SampleRate, output.SampleRate);
         Assert.Equal(input.Length, output.Length);
 
+        int protectedSamples = (int)Math.Round(sentences[0].Timing.EndSec * output.SampleRate);
+
         for (int i = 0; i < input.Length; i++)
         {
             float sourceSample = input.Planar[0][i];
-            if (Math.Abs(sourceSample) > 1e-6)
+            if (i < protectedSamples && Math.Abs(sourceSample) > 1e-6)
             {
                 float renderedSample = output.Planar[0][i];
                 Assert.InRange(renderedSample, sourceSample - 1e-6f, sourceSample + 1e-6f);
