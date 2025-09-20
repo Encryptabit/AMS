@@ -45,45 +45,73 @@ public sealed class RoomToneInsertionStage
         if (!File.Exists(manifest.AudioPath))
             throw new FileNotFoundException("Audio file not found", manifest.AudioPath);
 
-        var inputAudio = WavIo.ReadPcmOrFloat(manifest.AudioPath);
+        var inputAudio   = WavIo.ReadPcmOrFloat(manifest.AudioPath);
         var roomtoneSeed = WavIo.ReadPcmOrFloat(roomtonePath);
-        var analyzer = new AudioAnalysisService(inputAudio);
+
         var seedAnalyzer = new AudioAnalysisService(roomtoneSeed);
-        var roomtoneSeedStats = seedAnalyzer.AnalyzeGap(0.0, roomtoneSeed.SampleRate > 0 ? roomtoneSeed.Length / (double)roomtoneSeed.SampleRate : 0.0);
+        var roomtoneSeedStats = seedAnalyzer.AnalyzeGap(
+            0.0,
+            roomtoneSeed.SampleRate > 0 ? roomtoneSeed.Length / (double)roomtoneSeed.SampleRate : 0.0);
 
         double toneGainLinear;
         double appliedGainDb;
         if (_useAdaptiveGain)
         {
             toneGainLinear = ComputeToneGainLinear(roomtoneSeedStats.MeanRmsDb, _toneGainDb);
-            appliedGainDb = ToDb(toneGainLinear);
+            appliedGainDb  = ToDb(toneGainLinear);
             Console.WriteLine($"[Roomtone] Seed RMS {roomtoneSeedStats.MeanRmsDb:F2} dB, target {_toneGainDb:F2} dB, applied gain {appliedGainDb:F2} dB");
         }
         else
         {
             toneGainLinear = 1.0;
-            appliedGainDb = 0.0;
+            appliedGainDb  = 0.0;
             Console.WriteLine($"[Roomtone] Seed RMS {roomtoneSeedStats.MeanRmsDb:F2} dB, adaptive gain disabled (unity gain)");
         }
 
-        var timelineEntries = SentenceTimelineBuilder.Build(transcript.Sentences, analyzer, asr);
+        // Build timeline on the original audio first
+        var analyzer0 = new AudioAnalysisService(inputAudio);
+        var entries0  = SentenceTimelineBuilder.Build(transcript.Sentences, analyzer0, asr);
+        Console.WriteLine($"[Roomtone] Timeline built on original audio: {entries0.Count} sentences.");  // :contentReference[oaicite:3]{index=3}
+
+        // Enforce exact structure (insert OR trim) and shift entries accordingly
+        var norm = RoomtoneRenderer.NormalizeStructureExact(
+            input: inputAudio,
+            roomtoneSeed: roomtoneSeed,
+            entries: entries0,
+            targetSampleRate: _targetSampleRate,
+            toneGainLinear: toneGainLinear,
+            preRollSec: 0.75,
+            postChapterPauseSec: 1.50,
+            tailSec: 3.00,
+            overlapMs: (int)Math.Round(_fadeMs),
+            debugDirectory: _emitDiagnostics ? manifest.ResolveStageDirectory("roomtone") : null);  // diagnostics optional  :contentReference[oaicite:4]{index=4}
+
+        inputAudio = norm.Audio;
+        var timelineEntries = norm.Entries;
+
+        // Now plan/fill against the normalized audio
+        var analyzer = new AudioAnalysisService(inputAudio);
         double audioDurationSec = inputAudio.SampleRate > 0 ? inputAudio.Length / (double)inputAudio.SampleRate : 0.0;
-        var gaps = BuildGaps(timelineEntries, analyzer, audioDurationSec);
+        var gaps = BuildGaps(timelineEntries, analyzer, audioDurationSec);                         // :contentReference[oaicite:5]{index=5}
         Console.WriteLine($"[Roomtone] Gap segments retained: {gaps.Count}");
 
+        // Update transcript timings from the (shifted) entries
         var entryMap = timelineEntries.ToDictionary(e => e.SentenceId);
         var updatedSentences = transcript.Sentences
-            .Select(s => entryMap.TryGetValue(s.Id, out var entry) ? s with { Timing = entry.Timing } : s)
+            .Select(s => entryMap.TryGetValue(s.Id, out var e) ? s with { Timing = e.Timing } : s)
             .ToList();
 
-        var stageDir = manifest.ResolveStageDirectory("roomtone");
+        // Plan/Render/Write
+        var stageDir   = manifest.ResolveStageDirectory("roomtone");
         EnsureDirectory(stageDir);
-        var planPath = Path.Combine(stageDir, "plan.json");
-        var timelinePath = Path.Combine(stageDir, "timeline.json");
-        var metaPath = Path.Combine(stageDir, "meta.json");
-        var paramsPath = Path.Combine(stageDir, "params.snapshot.json");
 
-        var plan = BuildPlan(manifest, inputAudio, roomtonePath, timelineEntries, gaps, roomtoneSeedStats.MeanRmsDb, appliedGainDb, _targetSampleRate, _toneGainDb, _fadeMs);
+        var planPath     = Path.Combine(stageDir, "plan.json");
+        var timelinePath = Path.Combine(stageDir, "timeline.json");
+        var metaPath     = Path.Combine(stageDir, "meta.json");
+        var paramsPath   = Path.Combine(stageDir, "params.snapshot.json");
+
+        var plan = BuildPlan(manifest, inputAudio, roomtonePath, timelineEntries, gaps,
+                             roomtoneSeedStats.MeanRmsDb, appliedGainDb, _targetSampleRate, _toneGainDb, _fadeMs); // :contentReference[oaicite:6]{index=6}
 
         string? wavPath = null;
         if (renderAudio)
@@ -96,7 +124,7 @@ public sealed class RoomToneInsertionStage
                 targetSampleRate: _targetSampleRate,
                 toneGainLinear: toneGainLinear,
                 fadeMs: _fadeMs,
-                debugDirectory: _emitDiagnostics ? stageDir : null);
+                debugDirectory: _emitDiagnostics ? stageDir : null);                                  // :contentReference[oaicite:7]{index=7}
 
             wavPath = Path.Combine(stageDir, "roomtone.wav");
             WavIo.WriteFloat32(wavPath, rendered);
@@ -114,12 +142,7 @@ public sealed class RoomToneInsertionStage
             ["meta"] = metaPath,
             ["params"] = paramsPath
         };
-
-        if (wavPath is not null)
-        {
-            outputs["roomtoneWav"] = wavPath;
-        }
-
+        if (wavPath is not null) outputs["roomtoneWav"] = wavPath;
         return outputs;
     }
 
