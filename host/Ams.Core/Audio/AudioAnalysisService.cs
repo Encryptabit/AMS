@@ -295,7 +295,7 @@ namespace Ams.Core.Audio
 
             if (dbs.Count == 0)
             {
-                return new SnapAutoTuneResult(-45, -57, -70, -50, -30, windowMs, stepMs, 35, 120, 80);
+                return new SnapAutoTuneResult(-45, -57, -70, -50, -30, windowMs, stepMs, 35, 80, 50);
             }
 
             dbs.Sort();
@@ -305,7 +305,7 @@ namespace Ams.Core.Audio
             if (!double.IsFinite(minDb) || !double.IsFinite(maxDb) || Math.Abs(maxDb - minDb) < 1e-6)
             {
                 double mid = double.IsFinite(minDb) ? minDb : -50.0;
-                return new SnapAutoTuneResult(mid + 6, mid - 2, mid - 10, mid - 4, mid + 12, windowMs, stepMs, 35, 120, 80);
+                return new SnapAutoTuneResult(mid + 6, mid - 2, mid - 10, mid - 4, mid + 12, windowMs, stepMs, 35, 80, 50);
             }
 
             double P(double q)

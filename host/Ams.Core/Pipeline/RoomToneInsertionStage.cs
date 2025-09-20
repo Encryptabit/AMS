@@ -13,13 +13,22 @@ public sealed class RoomToneInsertionStage
     private readonly int _targetSampleRate;
     private readonly double _toneGainDb;
     private readonly double _fadeMs;
+    private readonly bool _emitDiagnostics;
+    private readonly bool _useAdaptiveGain;
 
-    public RoomToneInsertionStage(int targetSampleRate = 44100, double toneGainDb = -60.0, double fadeMs = 5.0)
+    public RoomToneInsertionStage(
+        int targetSampleRate = 44100,
+        double toneGainDb = -60.0,
+        double fadeMs = 5.0,
+        bool emitDiagnostics = true,
+        bool useAdaptiveGain = true)
     {
         if (targetSampleRate <= 0) throw new ArgumentOutOfRangeException(nameof(targetSampleRate));
         _targetSampleRate = targetSampleRate;
         _toneGainDb = toneGainDb;
         _fadeMs = fadeMs;
+        _emitDiagnostics = emitDiagnostics;
+        _useAdaptiveGain = useAdaptiveGain;
     }
 
     public async Task<IDictionary<string, string>> RunAsync(ManifestV2 manifest, CancellationToken ct, bool renderAudio = true)
@@ -41,9 +50,21 @@ public sealed class RoomToneInsertionStage
         var analyzer = new AudioAnalysisService(inputAudio);
         var seedAnalyzer = new AudioAnalysisService(roomtoneSeed);
         var roomtoneSeedStats = seedAnalyzer.AnalyzeGap(0.0, roomtoneSeed.SampleRate > 0 ? roomtoneSeed.Length / (double)roomtoneSeed.SampleRate : 0.0);
-        double toneGainLinear = ComputeToneGainLinear(roomtoneSeedStats.MeanRmsDb, _toneGainDb);
-        double appliedGainDb = ToDb(toneGainLinear);
-        Console.WriteLine($"[Roomtone] Seed RMS {roomtoneSeedStats.MeanRmsDb:F2} dB, target {_toneGainDb:F2} dB, applied gain {appliedGainDb:F2} dB");
+
+        double toneGainLinear;
+        double appliedGainDb;
+        if (_useAdaptiveGain)
+        {
+            toneGainLinear = ComputeToneGainLinear(roomtoneSeedStats.MeanRmsDb, _toneGainDb);
+            appliedGainDb = ToDb(toneGainLinear);
+            Console.WriteLine($"[Roomtone] Seed RMS {roomtoneSeedStats.MeanRmsDb:F2} dB, target {_toneGainDb:F2} dB, applied gain {appliedGainDb:F2} dB");
+        }
+        else
+        {
+            toneGainLinear = 1.0;
+            appliedGainDb = 0.0;
+            Console.WriteLine($"[Roomtone] Seed RMS {roomtoneSeedStats.MeanRmsDb:F2} dB, adaptive gain disabled (unity gain)");
+        }
 
         var timelineEntries = SentenceTimelineBuilder.Build(transcript.Sentences, analyzer, asr);
         double audioDurationSec = inputAudio.SampleRate > 0 ? inputAudio.Length / (double)inputAudio.SampleRate : 0.0;
@@ -69,13 +90,13 @@ public sealed class RoomToneInsertionStage
         {
             var rendered = RoomtoneRenderer.RenderWithSentenceMasks(
                 input: inputAudio,
-                roomtoneSeed: roomtoneSeed, 
+                roomtoneSeed: roomtoneSeed,
                 gaps: plan.Gaps,
                 sentences: updatedSentences,
                 targetSampleRate: _targetSampleRate,
                 toneGainLinear: toneGainLinear,
                 fadeMs: _fadeMs,
-                debugDirectory: stageDir);
+                debugDirectory: _emitDiagnostics ? stageDir : null);
 
             wavPath = Path.Combine(stageDir, "roomtone.wav");
             WavIo.WriteFloat32(wavPath, rendered);
@@ -84,7 +105,7 @@ public sealed class RoomToneInsertionStage
         await WriteTimelineAsync(timelineEntries, manifest, timelinePath, ct);
         await WritePlanAsync(plan, planPath, ct);
         await WriteMetaAsync(manifest, wavPath, roomtonePath, planPath, metaPath, ct);
-        await WriteParamsAsync(paramsPath, _toneGainDb, roomtoneSeedStats.MeanRmsDb, appliedGainDb, _fadeMs, ct);
+        await WriteParamsAsync(paramsPath, _toneGainDb, roomtoneSeedStats.MeanRmsDb, appliedGainDb, _fadeMs, _useAdaptiveGain, _emitDiagnostics, ct);
 
         var outputs = new Dictionary<string, string>
         {
@@ -550,7 +571,7 @@ public sealed class RoomToneInsertionStage
         await File.WriteAllTextAsync(path, json, ct);
     }
 
-    private static async Task WriteParamsAsync(string path, double targetRmsDb, double roomtoneSeedRmsDb, double appliedGainDb, double fadeMs, CancellationToken ct)
+    private static async Task WriteParamsAsync(string path, double targetRmsDb, double roomtoneSeedRmsDb, double appliedGainDb, double fadeMs, bool adaptiveGainEnabled, bool diagnosticsEnabled, CancellationToken ct)
     {
         var snapshot = new
         {
@@ -560,6 +581,8 @@ public sealed class RoomToneInsertionStage
                 roomtoneSeedRmsDb,
                 appliedGainDb,
                 fadeMs,
+                adaptiveGainEnabled,
+                diagnosticsEnabled,
                 usedExistingRoomtone = true
             }
         };
