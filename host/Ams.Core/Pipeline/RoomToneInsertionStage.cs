@@ -74,7 +74,8 @@ public sealed class RoomToneInsertionStage
                 sentences: updatedSentences,
                 targetSampleRate: _targetSampleRate,
                 toneGainLinear: toneGainLinear,
-                fadeMs: _fadeMs);
+                fadeMs: _fadeMs,
+                debugDirectory: stageDir);
 
             wavPath = Path.Combine(stageDir, "roomtone.wav");
             WavIo.WriteFloat32(wavPath, rendered);
