@@ -28,9 +28,11 @@ public static class AudioCommand
         outOption.AddAlias("-o");
 
         var srOption = new Option<int>("--sample-rate", () => 44100, "Output sample rate (Hz)");
-        var bitOption = new Option<int>("--bit-depth", () => 16, "Output bit depth (currently 16 only)");
-        var fadeMsOption = new Option<double>("--fade-ms", () => 5.0, "Crossfade length at boundaries (ms)");
+        var bitOption = new Option<int>("--bit-depth", () => 32, "Output bit depth");
+        var fadeMsOption = new Option<double>("--fade-ms", () => 10.0, "Crossfade length at boundaries (ms)");
         var toneDbOption = new Option<double>("--tone-gain-db", () => -60.0, "Roomtone RMS level (dBFS)");
+        var diagnosticsOption = new Option<bool>("--emit-diagnostics", () => false, "Write intermediate diagnostic WAV snapshots");
+        var adaptiveGainOption = new Option<bool>("--adaptive-gain", () => false, "Scale roomtone seed to the target RMS");
 
         cmd.AddOption(txOption);
         cmd.AddOption(outOption);
@@ -38,6 +40,8 @@ public static class AudioCommand
         cmd.AddOption(bitOption);
         cmd.AddOption(fadeMsOption);
         cmd.AddOption(toneDbOption);
+        cmd.AddOption(diagnosticsOption);
+        cmd.AddOption(adaptiveGainOption);
 
         cmd.SetHandler(async (context) =>
         {
@@ -47,10 +51,12 @@ public static class AudioCommand
             var bit = context.ParseResult.GetValueForOption(bitOption);
             var fadeMs = context.ParseResult.GetValueForOption(fadeMsOption);
             var toneDb = context.ParseResult.GetValueForOption(toneDbOption);
+            var emitDiagnostics = context.ParseResult.GetValueForOption(diagnosticsOption);
+            var adaptiveGain = context.ParseResult.GetValueForOption(adaptiveGainOption);
 
             try
             {
-                await RunRenderAsync(txFile, outWav, sr, bit, fadeMs, toneDb);
+                await RunRenderAsync(txFile, outWav, sr, bit, fadeMs, toneDb, emitDiagnostics, adaptiveGain);
             }
             catch (Exception ex)
             {
@@ -74,12 +80,16 @@ public static class AudioCommand
         var srOption = new Option<int>("--sample-rate", () => 44100, "Target sample rate used when rendering");
         var fadeMsOption = new Option<double>("--fade-ms", () => 5.0, "Crossfade length at boundaries (ms)");
         var toneDbOption = new Option<double>("--tone-gain-db", () => -60.0, "Roomtone RMS level (dBFS)");
+        var diagnosticsOption = new Option<bool>("--emit-diagnostics", () => false, "Write intermediate diagnostic WAV snapshots when rendering");
+        var adaptiveGainOption = new Option<bool>("--adaptive-gain", () => false, "Scale roomtone seed to the target RMS");
 
         cmd.AddOption(txOption);
         cmd.AddOption(outOption);
         cmd.AddOption(srOption);
         cmd.AddOption(fadeMsOption);
         cmd.AddOption(toneDbOption);
+        cmd.AddOption(diagnosticsOption);
+        cmd.AddOption(adaptiveGainOption);
 
         cmd.SetHandler(async context =>
         {
@@ -88,12 +98,14 @@ public static class AudioCommand
             var sr = context.ParseResult.GetValueForOption(srOption);
             var fadeMs = context.ParseResult.GetValueForOption(fadeMsOption);
             var toneDb = context.ParseResult.GetValueForOption(toneDbOption);
+            var emitDiagnostics = context.ParseResult.GetValueForOption(diagnosticsOption);
+            var adaptiveGain = context.ParseResult.GetValueForOption(adaptiveGainOption);
 
             var outJson = outJsonOpt ?? new FileInfo(Path.Combine(txFile.DirectoryName ?? Directory.GetCurrentDirectory(), Path.GetFileNameWithoutExtension(txFile.Name) + ".roomtone.json"));
 
             try
             {
-                await RunPlanAsync(txFile, outJson, sr, fadeMs, toneDb);
+                await RunPlanAsync(txFile, outJson, sr, fadeMs, toneDb, emitDiagnostics, adaptiveGain);
             }
             catch (Exception ex)
             {
@@ -105,16 +117,16 @@ public static class AudioCommand
         return cmd;
     }
 
-    private static async Task RunRenderAsync(FileInfo txFile, FileInfo outWav, int sampleRate, int bitDepth, double fadeMs, double toneDb)
+    private static async Task RunRenderAsync(FileInfo txFile, FileInfo outWav, int sampleRate, int bitDepth, double fadeMs, double toneDb, bool emitDiagnostics, bool adaptiveGain)
     {
         if (!txFile.Exists) throw new FileNotFoundException($"TranscriptIndex not found: {txFile.FullName}");
 
-        if (bitDepth != 16)
-            throw new NotSupportedException("Currently only 16-bit PCM output is supported in MVP.");
+        // if (bitDepth != 16)
+        //     throw new NotSupportedException("Currently only 16-bit PCM output is supported in MVP.");
 
         var manifest = await PrepareManifestAsync(txFile, outWav.DirectoryName);
 
-        var stage = new RoomToneInsertionStage(sampleRate, toneDb, fadeMs);
+        var stage = new RoomToneInsertionStage(sampleRate, toneDb, fadeMs, emitDiagnostics, adaptiveGain);
         var outputs = await stage.RunAsync(manifest, CancellationToken.None);
 
         var producedWav = outputs.TryGetValue("roomtoneWav", out var path) ? path : throw new InvalidOperationException("Stage did not produce roomtone WAV");
@@ -132,13 +144,13 @@ public static class AudioCommand
         if (outputs.TryGetValue("params", out var snapshot)) Console.WriteLine($"Params Snapshot: {snapshot}");
     }
 
-    private static async Task RunPlanAsync(FileInfo txFile, FileInfo outJson, int sampleRate, double fadeMs, double toneDb)
+    private static async Task RunPlanAsync(FileInfo txFile, FileInfo outJson, int sampleRate, double fadeMs, double toneDb, bool emitDiagnostics, bool adaptiveGain)
     {
         if (!txFile.Exists) throw new FileNotFoundException($"TranscriptIndex not found: {txFile.FullName}");
 
         var manifest = await PrepareManifestAsync(txFile, outJson.DirectoryName);
 
-        var stage = new RoomToneInsertionStage(sampleRate, toneDb, fadeMs);
+        var stage = new RoomToneInsertionStage(sampleRate, toneDb, fadeMs, emitDiagnostics, adaptiveGain);
         var outputs = await stage.RunAsync(manifest, CancellationToken.None, renderAudio: false);
 
         var planPath = outputs.TryGetValue("plan", out var plan) ? plan : throw new InvalidOperationException("Stage did not produce roomtone plan");
