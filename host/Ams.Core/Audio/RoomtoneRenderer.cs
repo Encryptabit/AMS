@@ -55,7 +55,7 @@ namespace Ams.Core.Audio
                 windowMs: 25, stepMs: 2,
                 enterAboveFloorDb: 10, // enter ≈ global floor + 8 dB
                 exitBelowEnterDb: 4, // hysteresis
-                minKeepMs: 70, // ignore very short blips
+                minKeepMs: 30, // ignore very short blips
                 minHoleMs: 15, // close tiny holes
                 prePadMs: 8, // safety pads to protect onsets
                 postPadMs: 15,
