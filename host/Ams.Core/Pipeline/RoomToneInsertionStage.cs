@@ -69,7 +69,7 @@ public sealed class RoomToneInsertionStage
         {
             var rendered = RoomtoneRenderer.RenderWithSentenceMasks(
                 input: inputAudio,
-                roomtoneSeed: roomtoneSeed,
+                roomtoneSeed: roomtoneSeed, 
                 gaps: plan.Gaps,
                 sentences: updatedSentences,
                 targetSampleRate: _targetSampleRate,
