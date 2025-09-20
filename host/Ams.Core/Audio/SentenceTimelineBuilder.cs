@@ -71,7 +71,7 @@ namespace Ams.Core.Audio
                 return baseTiming;
             }
 
-            var snapped = analyzer.SnapToEnergy(seed, rmsThresholdDb, searchWindowSec, stepMs);
+            var snapped = analyzer.SnapToEnergy(seed, enterThresholdDb: rmsThresholdDb, exitThresholdDb: rmsThresholdDb, searchWindowSec: searchWindowSec, stepMs: stepMs, preRollMs: 30D, postRollMs: 80D);
             //var snapped = analyzer.SnapToEnergyAuto(seed);
             if (windowTiming.Duration > 0)
             {
