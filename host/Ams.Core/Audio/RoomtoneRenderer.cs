@@ -10,13 +10,19 @@ namespace Ams.Core.Audio
     public static class RoomtoneRenderer
     {
         /// <summary>
-        /// Renders output by filling detected gaps with looped roomtone and restoring sentence regions from the source.
-        /// Optional crossfades are applied at sentence boundaries to hide seams.
+        /// Fill non-speech regions with looped room tone while preserving speech AND non-ASR performative audio.
+        /// Strategy:
+        ///   1) Start with a full copy of the source (prevents accidental silence).
+        ///   2) Build a keep mask = Sentences ∪ EnergyKeeps (global, adaptive RMS + micro-guards).
+        ///   3) Final gaps:
+        ///        - pre-roll  [0, firstSentenceStart) and post-chapter (lastSentenceEnd, N) are ALWAYS filled;
+        ///        - interior gaps are the complement of the keep mask (optionally intersected with plan 'gaps').
+        ///   4) Replace each final gap with room tone, using crossfades inside the gap.
         /// </summary>
         public static AudioBuffer RenderWithSentenceMasks(
             AudioBuffer input,
             AudioBuffer roomtoneSeed,
-            IReadOnlyList<RoomtonePlanGap> gaps,
+            IReadOnlyList<RoomtonePlanGap> gaps,     // optional plan gaps
             IReadOnlyList<SentenceAlign> sentences,
             int targetSampleRate,
             double toneGainLinear,
@@ -25,256 +31,468 @@ namespace Ams.Core.Audio
         {
             if (input is null) throw new ArgumentNullException(nameof(input));
             if (roomtoneSeed is null) throw new ArgumentNullException(nameof(roomtoneSeed));
-            if (gaps is null) throw new ArgumentNullException(nameof(gaps));
             if (sentences is null) throw new ArgumentNullException(nameof(sentences));
             if (targetSampleRate <= 0) throw new ArgumentOutOfRangeException(nameof(targetSampleRate));
 
-            var src = input.SampleRate == targetSampleRate ? input : ResampleLinear(input, targetSampleRate);
+            // Resample to a common rate
+            var src  = input.SampleRate        == targetSampleRate ? input        : ResampleLinear(input, targetSampleRate);
             var tone = roomtoneSeed.SampleRate == targetSampleRate ? roomtoneSeed : ResampleLinear(roomtoneSeed, targetSampleRate);
-
             if (tone.Length == 0) throw new InvalidOperationException("Roomtone seed must contain samples.");
 
             WriteDebug(debugDirectory, "step0_source", src);
             WriteDebug(debugDirectory, "step0_roomtone_seed", tone);
 
+            // 1) Sentence keep ranges (coalesced)
             var sentRanges = BuildSentenceRanges(sentences, src.SampleRate, src.Length);
-            var gapRanges = gaps != null && gaps.Count > 0
+
+            // 2) Global energy keeps (adaptive + micro-guards to reduce false positives)
+            var energyKeeps = DetectEnergyKeepsGlobal(
+                src,
+                windowMs: 10, stepMs: 2,
+                enterAboveFloorDb: 20,   // enter ≈ global floor + 8 dB
+                exitBelowEnterDb:  4,   // hysteresis
+                minKeepMs: 70,          // ignore very short blips
+                minHoleMs: 15,          // close tiny holes
+                prePadMs:  10,          // safety pads to protect onsets
+                postPadMs: 35,
+                modulationDb: 0.8,      // micro-guard: require small energy modulation to enter
+                speechBandFloorDeltaDb: -12.0 // micro-guard: simple HF hint (first-difference vs total)
+            );
+
+            // 3) Keep mask = Sentences ∪ EnergyKeeps
+            var keepMask = Coalesce(sentRanges.Concat(energyKeeps).ToList());
+
+            // 4) Compute gaps with edge protection
+            var planGapRanges = (gaps != null && gaps.Count > 0)
                 ? BuildGapRanges(gaps, src.SampleRate, src.Length)
-                : InvertToGaps(sentRanges, src.Length);
+                : new List<(int, int)>();
 
-            var outBuf = new AudioBuffer(src.Channels, src.SampleRate, src.Length);
+            var (firstStart, lastEnd) = FirstLastSentenceBounds(sentRanges, src.Length);
 
-            // Start with silence in outBuf; fill gaps with roomtone, then overlay source in sentence regions.
-            double toneGain = toneGainLinear;
-            long toneCursor = 0;
+            // Force-fill edges no matter what the energy keep says.
+            var edgeGaps = new List<(int, int)>();
+            if (firstStart > 0) edgeGaps.Add((0, firstStart));
+            if (lastEnd < src.Length) edgeGaps.Add((lastEnd, src.Length));
+            edgeGaps = Coalesce(edgeGaps);
 
-            foreach (var (gapStart, gapEnd) in gapRanges)
-            {
-                FillGapWithRoomtone(outBuf, tone, gapStart, gapEnd, toneGain, ref toneCursor);
-            }
+            // Interior gaps = complement of keep mask inside [firstStart, lastEnd]
+            var interiorGaps = ComputeInteriorGaps(keepMask, firstStart, lastEnd);
 
-            WriteDebug(debugDirectory, "step1_gap_fill", outBuf);
+            // If caller provided plan gaps, limit interior fills to those planned spans.
+            if (planGapRanges.Count > 0)
+                interiorGaps = IntersectRanges(interiorGaps, planGapRanges);
 
-            foreach (var (startSample, endSample) in sentRanges)
-            {
-                int len = endSample - startSample;
-                if (len <= 0) continue;
-                for (int ch = 0; ch < src.Channels; ch++)
-                {
-                    Array.Copy(src.Planar[ch], startSample, outBuf.Planar[ch], startSample, len);
-                }
-            }
+            var finalGaps = Coalesce(edgeGaps.Concat(interiorGaps).ToList());
 
-            WriteDebug(debugDirectory, "step2_overlay", outBuf);
+            // Debug masks
+            WriteMaskDebug(debugDirectory, "step0b_keep_energy", energyKeeps, src);
+            WriteMaskDebug(debugDirectory, "step0c_sentences",   sentRanges,  src);
+            WriteMaskDebug(debugDirectory, "step0d_gaps_final",  finalGaps,   src);
 
+            // 5) Out starts as a full copy of source (prevents accidental silence)
+            var outBuf = CopyBuffer(src);
+
+            // 6) Replace gaps with room tone, with in-gap crossfades
             int fadeSamples = fadeMs <= 0 ? 0 : (int)Math.Round(fadeMs * 0.001 * src.SampleRate);
-            if (fadeSamples > 0)
-            {
-                foreach (var (s0, s1) in sentRanges)
-                {
-                    // Fade-in into sentence
-                    int fiStart = Math.Max(0, s0 - fadeSamples);
-                    int fiEnd = s0;
-                    ApplyCrossfade(outBuf, src, fiStart, fiEnd, fadeSamples, directionIn: true);
+            long toneCursor = 0;
+            foreach (var (g0, g1) in finalGaps)
+                ReplaceGapWithRoomtone(outBuf, src, tone, g0, g1, toneGainLinear, fadeSamples, ref toneCursor);
 
-                    // Fade-out out of sentence
-                    int foStart = s1;
-                    int foEnd = Math.Min(src.Length, s1 + fadeSamples);
-                    ApplyCrossfade(outBuf, src, foStart, foEnd, fadeSamples, directionIn: false);
-                }
-
-                WriteDebug(debugDirectory, "step3_crossfade", outBuf);
-            }
-            else
-            {
-                WriteDebug(debugDirectory, "step3_crossfade", outBuf);
-            }
-
-            RepairSilentRegions(outBuf, src, sentRanges);
-            WriteDebug(debugDirectory, "step4_repair", outBuf);
-
+            WriteDebug(debugDirectory, "step1_fill_gaps", outBuf);
             return outBuf;
         }
 
+        // ---------------------------------------------------------------------------------
+        // Core synthesis
+        // ---------------------------------------------------------------------------------
 
-        // helper:
-        private static List<(int Start, int End)> InvertToGaps(
-            List<(int Start, int End)> sentences, int totalSamples)
+        /// <summary>
+        /// Replace [g0,g1) with roomtone. If fadeSamples > 0, crossfade from src→tone at the head
+        /// and tone→src at the tail, both inside the gap. toneCursor advances continuously.
+        /// </summary>
+        private static void ReplaceGapWithRoomtone(
+            AudioBuffer dst, AudioBuffer src, AudioBuffer tone,
+            int g0, int g1, double gain, int fadeSamples, ref long toneCursor)
         {
-            var gaps = new List<(int,int)>();
-            if (sentences.Count == 0) { gaps.Add((0, totalSamples)); return gaps; }
+            int length = dst.Length;
+            g0 = Math.Clamp(g0, 0, length);
+            g1 = Math.Clamp(g1, g0, length);
+            int gapLen = g1 - g0;
+            if (gapLen <= 0) return;
 
-            int cursor = 0;
-            foreach (var (s, e) in sentences)
+            // Skip ultra-short gaps (avoid micro-edits)
+            if (gapLen < Math.Max(1, (int)(0.025 * dst.SampleRate))) return;
+
+            int fade = Math.Min(fadeSamples, gapLen / 2);
+            int coreStart = g0 + fade;
+            int coreEnd   = g1 - fade;
+
+            // Head: src -> tone (inside gap)
+            if (fade > 0)
+            {
+                for (int i = 0; i < fade; i++)
+                {
+                    int idx = g0 + i;
+                    // Equal-power fade (smoother than linear)
+                    double t = (double)(i + 1) / (fade + 1); // (0,1)
+                    double gainTone = Math.Sqrt(t);
+                    double gainSrc  = Math.Sqrt(1.0 - t);
+
+                    for (int ch = 0; ch < dst.Channels; ch++)
+                    {
+                        var d = dst.Planar[ch];
+                        var s = src.Planar[ch % src.Channels];
+                        var tt = tone.Planar[ch % tone.Channels];
+
+                        float toneSample = tt[(int)((toneCursor + i) % tt.Length)];
+                        d[idx] = (float)(gainSrc * s[idx] + gainTone * (gain * toneSample));
+                    }
+                }
+                toneCursor += fade;
+            }
+
+            // Core: pure tone
+            if (coreEnd > coreStart)
+            {
+                int len = coreEnd - coreStart;
+                for (int i = 0; i < len; i++)
+                {
+                    for (int ch = 0; ch < dst.Channels; ch++)
+                    {
+                        var d = dst.Planar[ch];
+                        var tt = tone.Planar[ch % tone.Channels];
+                        float toneSample = tt[(int)((toneCursor + i) % tt.Length)];
+                        d[coreStart + i] = (float)(gain * toneSample);
+                    }
+                }
+                toneCursor += len;
+            }
+
+            // Tail: tone -> src (inside gap)
+            if (fade > 0)
+            {
+                for (int i = 0; i < fade; i++)
+                {
+                    int idx = coreEnd + i;
+                    double t = (double)(i + 1) / (fade + 1); // (0,1)
+                    double gainSrc  = Math.Sqrt(t);
+                    double gainTone = Math.Sqrt(1.0 - t);
+
+                    for (int ch = 0; ch < dst.Channels; ch++)
+                    {
+                        var d = dst.Planar[ch];
+                        var s = src.Planar[ch % src.Channels];
+                        var tt = tone.Planar[ch % tone.Channels];
+
+                        float toneSample = tt[(int)((toneCursor + i) % tt.Length)];
+                        d[idx] = (float)(gainTone * (gain * toneSample) + gainSrc * s[idx]);
+                    }
+                }
+                toneCursor += fade;
+            }
+        }
+
+        // ---------------------------------------------------------------------------------
+        // Keep detection (global, adaptive) with micro-guards for false positives
+        // ---------------------------------------------------------------------------------
+
+        /// <summary>
+        /// Global (file-level) light VAD to preserve non-ASR energy:
+        ///   - global floor = 10th percentile of 25ms RMS
+        ///   - enter = floor + enterAboveFloorDb; exit = enter - exitBelowEnterDb (hysteresis)
+        ///   - optional guards:
+        ///       * modulationDb: require small step-to-step RMS change to ENTER (not to stay)
+        ///       * speechBandFloorDeltaDb: require simple HF presence (first-difference RMS vs total)
+        ///   - min duration & hole closing; pads at edges
+        /// </summary>
+        private static List<(int Start, int End)> DetectEnergyKeepsGlobal(
+            AudioBuffer src,
+            int windowMs, int stepMs,
+            double enterAboveFloorDb,
+            double exitBelowEnterDb,
+            int minKeepMs, int minHoleMs,
+            int prePadMs, int postPadMs,
+            double modulationDb,             // e.g., 0.8 dB
+            double speechBandFloorDeltaDb)   // e.g., -12 dB
+        {
+            int sr    = src.SampleRate;
+            int win   = Math.Max(1, (int)Math.Round(windowMs * 0.001 * sr));
+            int hop   = Math.Max(1, (int)Math.Round(stepMs   * 0.001 * sr));
+            int minKeep = Math.Max(hop, (int)Math.Round(minKeepMs * 0.001 * sr));
+            int minHole = Math.Max(hop, (int)Math.Round(minHoleMs * 0.001 * sr));
+            int pre   = Math.Max(0,   (int)Math.Round(prePadMs  * 0.001 * sr));
+            int post  = Math.Max(0,   (int)Math.Round(postPadMs * 0.001 * sr));
+
+            // Global floor from RMS dB distribution
+            var dbs = new List<double>(Math.Max(16, src.Length / Math.Max(1, hop)));
+            for (int p = 0; p < src.Length; p += hop)
+            {
+                int len = Math.Min(win, src.Length - p);
+                if (len <= 0) break;
+                dbs.Add(ToDb(RmsAllCh(src, p, len)));
+            }
+            if (dbs.Count == 0) return new List<(int,int)>();
+            dbs.Sort();
+            double floorDb = dbs[(int)Math.Floor(0.10 * (dbs.Count - 1))];
+
+            double enterDb = floorDb + enterAboveFloorDb;
+            double exitDb  = enterDb - exitBelowEnterDb;
+            double peakHatchDb = floorDb + 12.0; // strong peak escape hatch
+
+            var ranges = new List<(int,int)>();
+            bool inKeep = false;
+            int keepStart = 0;
+
+            double prevDb = double.NegativeInfinity;
+
+            for (int p = 0; p < src.Length; p += hop)
+            {
+                int len = Math.Min(win, src.Length - p);
+                if (len <= 0) break;
+
+                double rms   = RmsAllCh(src, p, len);
+                double rDb   = ToDb(rms);
+                double peak  = PeakAllCh(src, p, len);
+                double peakDb = ToDb(peak);
+
+                // Micro-guards
+                double dDb = double.IsNegativeInfinity(prevDb) ? 0.0 : Math.Abs(rDb - prevDb);
+                prevDb = rDb;
+
+                // simple HF hint via first-difference RMS (ch0 proxy)
+                double diff   = DiffRmsCh0(src, p, len);
+                double diffDb = ToDb(diff);
+                double hfRatioDb = diffDb - rDb; // HF-to-total (in dB)
+
+                bool baseEnter = (rDb >= enterDb);
+                bool baseStay  = (rDb >= exitDb);
+
+                bool enterGuards = (dDb >= modulationDb && hfRatioDb >= speechBandFloorDeltaDb) || (peakDb >= peakHatchDb);
+
+                bool active = (!inKeep && baseEnter && enterGuards) || (inKeep && baseStay);
+                if (!inKeep && active)
+                {
+                    inKeep = true;
+                    keepStart = p;
+                }
+                else if (inKeep && !active)
+                {
+                    int keepEnd = p;
+
+                    // close small holes by peeking ahead
+                    int holeProbe = Math.Min(p + minHole, src.Length);
+                    bool resumes = false;
+                    for (int q = p; q < holeProbe; q += hop)
+                    {
+                        int l2 = Math.Min(win, src.Length - q);
+                        if (l2 <= 0) break;
+                        double rq = ToDb(RmsAllCh(src, q, l2));
+                        double dq = ToDb(DiffRmsCh0(src, q, l2)) - rq;
+                        double dd = double.IsNegativeInfinity(prevDb) ? 0.0 : Math.Abs(rq - rDb);
+                        bool guards = (dd >= modulationDb && dq >= speechBandFloorDeltaDb) || (ToDb(PeakAllCh(src, q, l2)) >= peakHatchDb);
+                        if (rq >= enterDb && guards) { resumes = true; break; }
+                    }
+
+                    if (!resumes)
+                    {
+                        int s = Math.Max(0, keepStart - pre);
+                        int e = Math.Min(src.Length, keepEnd + post);
+                        if (e - s >= minKeep) ranges.Add((s, e));
+                        inKeep = false;
+                    }
+                }
+            }
+
+            if (inKeep)
+            {
+                int s = Math.Max(0, keepStart - pre);
+                int e = src.Length;
+                if (e - s >= minKeep) ranges.Add((s, e));
+            }
+
+            return Coalesce(ranges);
+        }
+
+        // ---------------------------------------------------------------------------------
+        // Gap construction helpers
+        // ---------------------------------------------------------------------------------
+
+        private static (int firstStart, int lastEnd) FirstLastSentenceBounds(List<(int Start, int End)> sentences, int total)
+        {
+            if (sentences.Count == 0) return (0, total); // no sentences → treat whole file as interior
+            int firstStart = sentences[0].Start;
+            int lastEnd    = sentences[sentences.Count - 1].End;
+            return (firstStart, lastEnd);
+        }
+
+        private static List<(int Start, int End)> ComputeInteriorGaps(List<(int Start, int End)> keepMask, int firstStart, int lastEnd)
+        {
+            var interiorMask = new List<(int,int)>();
+            foreach (var (s, e) in keepMask)
+            {
+                int cs = Math.Max(s, firstStart);
+                int ce = Math.Min(e, lastEnd);
+                if (ce > cs) interiorMask.Add((cs, ce));
+            }
+            interiorMask = Coalesce(interiorMask);
+
+            var gaps = new List<(int,int)>();
+            if (lastEnd <= firstStart) return gaps;
+
+            int cursor = firstStart;
+            foreach (var (s, e) in interiorMask)
             {
                 if (s > cursor) gaps.Add((cursor, s));
                 cursor = Math.Max(cursor, e);
             }
-            if (cursor < totalSamples) gaps.Add((cursor, totalSamples));
+            if (cursor < lastEnd) gaps.Add((cursor, lastEnd));
             return gaps;
         }
-        
+
+        private static List<(int Start, int End)> IntersectRanges(List<(int Start, int End)> a, List<(int Start, int End)> b)
+        {
+            var A = Coalesce(a);
+            var B = Coalesce(b);
+            var outL = new List<(int,int)>();
+            int i = 0, j = 0;
+            while (i < A.Count && j < B.Count)
+            {
+                var (as0, ae0) = A[i];
+                var (bs0, be0) = B[j];
+                int s = Math.Max(as0, bs0);
+                int e = Math.Min(ae0, be0);
+                if (e > s) outL.Add((s, e));
+                if (ae0 < be0) i++; else j++;
+            }
+            return outL;
+        }
+
+        // ---------------------------------------------------------------------------------
+        // Range utilities
+        // ---------------------------------------------------------------------------------
+
+        private static List<(int Start, int End)> Coalesce(List<(int Start, int End)> ranges)
+        {
+            if (ranges.Count == 0) return ranges;
+            ranges.Sort((x, y) => x.Start != y.Start ? x.Start.CompareTo(y.Start) : x.End.CompareTo(y.End));
+            var outL = new List<(int,int)>(ranges.Count);
+            var cur = ranges[0];
+            for (int k = 1; k < ranges.Count; k++)
+            {
+                var nx = ranges[k];
+                if (nx.Start < cur.End) cur = (cur.Start, Math.Max(cur.End, nx.End));
+                else { outL.Add(cur); cur = nx; }
+            }
+            outL.Add(cur);
+            return outL;
+        }
 
         private static List<(int Start, int End)> BuildSentenceRanges(
-            IReadOnlyList<SentenceAlign> sentences,
-            int sampleRate,
-            int totalSamples)
+            IReadOnlyList<SentenceAlign> sentences, int sampleRate, int totalSamples)
         {
             var ranges = new List<(int Start, int End)>(Math.Max(8, sentences.Count));
             foreach (var sentence in sentences)
             {
-                var timing = sentence.Timing;
-                double startSec = timing.StartSec;
-                double endSec = timing.EndSec;
-                if (endSec <= startSec) continue;
+                var t = sentence.Timing;
+                if (t.EndSec <= t.StartSec) continue;
 
-                int startSample = Math.Clamp((int)Math.Round(startSec * sampleRate), 0, totalSamples);
-                int endSample = Math.Clamp((int)Math.Round(endSec * sampleRate), 0, totalSamples);
-                if (endSample > startSample)
-                {
-                    ranges.Add((startSample, endSample));
-                }
+                int s = Math.Clamp((int)Math.Round(t.StartSec * sampleRate), 0, totalSamples);
+                int e = Math.Clamp((int)Math.Round(t.EndSec   * sampleRate), 0, totalSamples);
+                if (e > s) ranges.Add((s, e));
             }
-
-            if (ranges.Count == 0) return ranges;
-
-            // coalesce any overlaps/adjacents to simplify downstream fades
-            ranges.Sort((a, b) => a.Start != b.Start ? a.Start.CompareTo(b.Start) : a.End.CompareTo(b.End));
-            var coalesced = new List<(int, int)>(ranges.Count);
-            var cur = ranges[0];
-            for (int i = 1; i < ranges.Count; i++)
-            {
-                var next = ranges[i];
-                if (next.Start <= cur.End)
-                {
-                    cur = (cur.Start, Math.Max(cur.End, next.End));
-                }
-                else
-                {
-                    coalesced.Add(cur);
-                    cur = next;
-                }
-            }
-            coalesced.Add(cur);
-            return coalesced;
+            return Coalesce(ranges);
         }
 
         private static List<(int Start, int End)> BuildGapRanges(
-            IReadOnlyList<RoomtonePlanGap> gaps,
-            int sampleRate,
-            int totalSamples)
+            IReadOnlyList<RoomtonePlanGap> gaps, int sampleRate, int totalSamples)
         {
             var ranges = new List<(int, int)>(gaps.Count);
-            foreach (var gap in gaps)
+            foreach (var g in gaps)
             {
-                int s = Math.Clamp((int)Math.Round(gap.StartSec * sampleRate), 0, totalSamples);
-                int e = Math.Clamp((int)Math.Round(gap.EndSec * sampleRate), 0, totalSamples);
+                int s = Math.Clamp((int)Math.Round(g.StartSec * sampleRate), 0, totalSamples);
+                int e = Math.Clamp((int)Math.Round(g.EndSec   * sampleRate), 0, totalSamples);
                 if (e > s) ranges.Add((s, e));
             }
-            return ranges;
+            return Coalesce(ranges);
         }
 
-        private static void FillGapWithRoomtone(
-            AudioBuffer dst,
-            AudioBuffer tone,
-            int start,
-            int end,
-            double gain,
-            ref long toneCursor)
+        // ---------------------------------------------------------------------------------
+        // Math & analysis helpers
+        // ---------------------------------------------------------------------------------
+
+        private static AudioBuffer CopyBuffer(AudioBuffer src)
         {
-            int len = end - start;
-            if (len <= 0) return;
+            var dst = new AudioBuffer(src.Channels, src.SampleRate, src.Length);
+            for (int ch = 0; ch < src.Channels; ch++)
+                Array.Copy(src.Planar[ch], 0, dst.Planar[ch], 0, src.Length);
+            return dst;
+        }
 
-            for (int ch = 0; ch < dst.Channels; ch++)
+        private static double RmsAllCh(AudioBuffer buf, int start, int len)
+        {
+            double sum = 0.0; int count = 0;
+            int end = Math.Min(buf.Length, start + len);
+            for (int ch = 0; ch < buf.Channels; ch++)
             {
-                var d = dst.Planar[ch];
-                var t = tone.Planar[ch % tone.Channels];
-
-                long cursor = toneCursor;
-                int tl = t.Length;
-                for (int i = 0; i < len; i++)
+                var p = buf.Planar[ch];
+                for (int i = start; i < end; i++)
                 {
-                    float sample = t[(int)(cursor % tl)];
-                    d[start + i] = (float)(gain * sample);
-                    cursor++;
+                    double s = p[i];
+                    sum += s * s;
+                    count++;
                 }
             }
-
-            toneCursor += len;
+            return count == 0 ? 0.0 : Math.Sqrt(sum / count);
         }
 
-private static void RepairSilentRegions(AudioBuffer mix, AudioBuffer src, IReadOnlyList<(int Start, int End)> sentenceRanges)
+        private static double PeakAllCh(AudioBuffer buf, int start, int len)
         {
-            if (mix is null) throw new ArgumentNullException(nameof(mix));
-            if (src is null) throw new ArgumentNullException(nameof(src));
-            if (sentenceRanges is null) throw new ArgumentNullException(nameof(sentenceRanges));
-            if (mix.Length == 0) return;
-
-            const float sourcePresenceThreshold = 1e-3f;   // ~-60 dBFS
-            const float mixGapThreshold = 3e-4f;            // ~-70 dBFS
-            const float diffThreshold = 7e-4f;
-
-            int length = Math.Min(mix.Length, src.Length);
-            int srcChannels = src.Channels;
-
-            for (int i = 0; i < sentenceRanges.Count; i++)
+            int end = Math.Min(buf.Length, start + len);
+            float maxAbs = 0f;
+            for (int ch = 0; ch < buf.Channels; ch++)
             {
-                var (startSample, endSample) = sentenceRanges[i];
-                startSample = Math.Clamp(startSample, 0, length);
-                endSample = Math.Clamp(endSample, startSample, length);
-                if (endSample <= startSample)
+                var p = buf.Planar[ch];
+                for (int i = start; i < end; i++)
                 {
-                    continue;
-                }
-
-                bool needsRepair = false;
-                for (int sample = startSample; sample < endSample && !needsRepair; sample++)
-                {
-                    float maxSrc = 0f;
-                    float maxMix = 0f;
-
-                    for (int ch = 0; ch < mix.Channels; ch++)
-                    {
-                        int srcCh = ch < srcChannels ? ch : srcChannels - 1;
-                        float srcVal = MathF.Abs(src.Planar[srcCh][sample]);
-                        float mixVal = MathF.Abs(mix.Planar[ch][sample]);
-
-                        if (srcVal > maxSrc) maxSrc = srcVal;
-                        if (mixVal > maxMix) maxMix = mixVal;
-                    }
-
-                    if (maxSrc > sourcePresenceThreshold && (maxMix < mixGapThreshold || (maxSrc - maxMix) > diffThreshold))
-                    {
-                        needsRepair = true;
-                    }
-                }
-
-                if (needsRepair)
-                {
-                    int repairStart = i > 0 ? sentenceRanges[i - 1].End : 0;
-                    int repairEnd = i + 1 < sentenceRanges.Count ? sentenceRanges[i + 1].Start : length;
-
-                    repairStart = Math.Clamp(repairStart, 0, length);
-                    repairEnd = Math.Clamp(repairEnd, repairStart, length);
-
-                    CopySourceRange(mix, src, repairStart, repairEnd);
-                    Console.WriteLine($"[Roomtone] Repair applied for sentence window index={i} samples=({repairStart}-{repairEnd})");
+                    float a = MathF.Abs(p[i]);
+                    if (a > maxAbs) maxAbs = a;
                 }
             }
+            return maxAbs; // linear
         }
+
+        /// <summary>First-difference RMS (channel 0) as a cheap high-pass proxy.</summary>
+        private static double DiffRmsCh0(AudioBuffer buf, int start, int len)
+        {
+            int end = Math.Min(buf.Length, start + len);
+            if (end - start < 2) return 0.0;
+            double sum = 0.0;
+            var p = buf.Planar[0];
+            float prev = p[start];
+            for (int i = start + 1; i < end; i++)
+            {
+                float d = p[i] - prev;
+                sum += d * d;
+                prev = p[i];
+            }
+            return Math.Sqrt(sum / (end - start - 1));
+        }
+
+        private static double ToDb(double linear) =>
+            linear <= 0 ? double.NegativeInfinity : 20.0 * Math.Log10(linear);
+
+        // ---------------------------------------------------------------------------------
+        // Debug I/O helpers
+        // ---------------------------------------------------------------------------------
+
         private static void WriteDebug(string? directory, string suffix, AudioBuffer buffer)
         {
-            if (string.IsNullOrWhiteSpace(directory) || buffer is null)
-            {
-                return;
-            }
-
+            if (string.IsNullOrWhiteSpace(directory) || buffer is null) return;
             try
             {
                 Directory.CreateDirectory(directory);
-                var fileName = $"roomtone.{suffix}.wav";
-                var path = Path.Combine(directory, fileName);
-                WavIo.WriteFloat32(path, buffer);
+                var path = Path.Combine(directory, $"roomtone.{suffix}.wav");
+                WavIo.WriteFloat32(path, buffer); // assumes you have a 32f WAV writer
             }
             catch (Exception ex)
             {
@@ -282,50 +500,24 @@ private static void RepairSilentRegions(AudioBuffer mix, AudioBuffer src, IReadO
             }
         }
 
-        private static void CopySourceRange(AudioBuffer dst, AudioBuffer src, int startSample, int endSample)
+        private static void WriteMaskDebug(string? directory, string suffix, List<(int Start, int End)> ranges, AudioBuffer like)
         {
-            int safeStart = Math.Clamp(startSample, 0, Math.Min(dst.Length, src.Length));
-            int safeEnd = Math.Clamp(endSample, safeStart, Math.Min(dst.Length, src.Length));
-            int len = safeEnd - safeStart;
-            if (len <= 0) return;
-
-            for (int ch = 0; ch < dst.Channels; ch++)
+            if (string.IsNullOrWhiteSpace(directory)) return;
+            try
             {
-                var dstChannel = dst.Planar[ch];
-                var srcChannel = src.Planar[ch % src.Channels];
-                Array.Copy(srcChannel, safeStart, dstChannel, safeStart, len);
-            }
-        }
-
-        private static void ApplyCrossfade(
-            AudioBuffer mix,       // mix currently contains roomtone (outside sentences) and sentence audio in sentence regions.
-            AudioBuffer src,       // original source audio to blend with
-            int start, int end,
-            int fadeSamples,
-            bool directionIn)
-        {
-            int s = Math.Max(0, start);
-            int e = Math.Max(s, end);
-            int n = e - s;
-            if (n <= 0 || fadeSamples <= 0) return;
-
-            // Ensure ramp uses exactly n samples (not necessarily equal to fadeSamples at clip edges).
-            for (int ch = 0; ch < mix.Channels; ch++)
-            {
-                var m = mix.Planar[ch];
-                var a = src.Planar[ch % src.Channels];
-
-                for (int i = 0; i < n; i++)
+                var m = new AudioBuffer(like.Channels, like.SampleRate, like.Length);
+                foreach (var (s, e) in ranges)
                 {
-                    double t = (n == 1) ? 1.0 : (double)i / (n - 1);
-                    double srcGain = directionIn ? t : (1.0 - t);   // fade in or out for source
-                    double mixGain = 1.0 - srcGain;                 // complementary gain for roomtone
-
-                    int idx = s + i;
-                    double blended = mixGain * m[idx] + srcGain * a[idx];
-                    m[idx] = (float)blended;
+                    int len = e - s; if (len <= 0) continue;
+                    for (int ch = 0; ch < m.Channels; ch++)
+                    {
+                        var p = m.Planar[ch];
+                        for (int i = s; i < e; i++) p[i] = 0.25f; // simple marker
+                    }
                 }
+                WriteDebug(directory, suffix, m);
             }
+            catch { /* no-op */ }
         }
 
         /// <summary>Very simple per-channel linear resampler. Enough for roomtone and scratch output.</summary>

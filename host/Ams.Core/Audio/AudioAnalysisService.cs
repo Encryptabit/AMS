@@ -83,7 +83,7 @@ namespace Ams.Core.Audio
             double stepMs           = 5.0,
             double preRollMs        = 35.0,
             double postRollMs       = 120.0,
-            double hangoverMs       = 80.0)
+            double hangoverMs       = 20.0)
         {
             int sr    = _buffer.SampleRate;
             int step  = Math.Max(1, (int)Math.Round(stepMs * 0.001 * sr));
@@ -175,7 +175,7 @@ namespace Ams.Core.Audio
             // ---- TailGuard: extend slightly if boundary likely cut a tail
             // Look at the last ~60ms; if multiple windows are still above exit, do a short extension
             const double TailGuardLookbackMs = 60.0;
-            const double TailGuardExtendMs   = 40.0;
+            const double TailGuardExtendMs   = 20.0;
             const double TailGuardExitDeltaDb= 2.0;   // lower exit by 2 dB during guard
             int lookback = Math.Max(win, (int)Math.Round(TailGuardLookbackMs * 0.001 * sr));
             int extendMax= (int)Math.Round(TailGuardExtendMs   * 0.001 * sr);
