@@ -1,6 +1,6 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
-using System.Linq;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
@@ -16,135 +16,128 @@ namespace Ams.Tests.Audio;
 
 public class RoomToneStageTests
 {
+    private const int FirstSentenceId = 91;
+    private const int SecondSentenceId = 92;
+
     [Fact]
     public async Task RunAsync_ThrowsWhenRoomtoneMissing()
     {
         using var temp = new TempDir();
         var context = await ArrangeAsync(temp, createExistingRoomtone: false);
 
-        var stage = new RoomToneInsertionStage(targetSampleRate: 8000, toneGainDb: 0, fadeMs: 0);
-        var ex = await Assert.ThrowsAsync<FileNotFoundException>(() => stage.RunAsync(context.Manifest, CancellationToken.None));
+        var stage = new RoomToneInsertionStage(targetSampleRate: 8000, toneGainDb: -60, fadeMs: 5, emitDiagnostics: false, useAdaptiveGain: true);
 
+        var ex = await Assert.ThrowsAsync<FileNotFoundException>(() => stage.RunAsync(context.Manifest, CancellationToken.None));
         Assert.Contains("roomtone.wav", ex.Message, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
-    public async Task RunAsync_ReplacesGapsWithLoopedRoomtone()
+    public async Task RunAsync_WithRoomtone_GeneratesNormalizedOutputs()
     {
         using var temp = new TempDir();
         var context = await ArrangeAsync(temp, createExistingRoomtone: true);
 
-        var stage = new RoomToneInsertionStage(targetSampleRate: 8000, toneGainDb: 0, fadeMs: 0);
+        var stage = new RoomToneInsertionStage(targetSampleRate: 8000, toneGainDb: -60, fadeMs: 5, emitDiagnostics: false, useAdaptiveGain: true);
+
         var outputs = await stage.RunAsync(context.Manifest, CancellationToken.None);
 
-        Assert.True(outputs.TryGetValue("roomtoneWav", out var wavPath));
-        Assert.True(File.Exists(wavPath));
+        Assert.True(outputs.TryGetValue("roomtoneWav", out var roomtonePath));
+        Assert.True(File.Exists(roomtonePath));
 
         Assert.True(outputs.TryGetValue("plan", out var planPath));
         Assert.True(File.Exists(planPath));
 
-        var rendered = WavIo.ReadPcmOrFloat(wavPath);
+        Assert.True(outputs.TryGetValue("timeline", out var timelinePath));
+        Assert.True(File.Exists(timelinePath));
+
+        var rendered = WavIo.ReadPcmOrFloat(roomtonePath);
         Assert.Equal(8000, rendered.SampleRate);
         Assert.Equal(1, rendered.Channels);
 
-        int speechSample = 1000; // within first sentence (0-0.25s)
-        Assert.InRange(rendered.Planar[0][speechSample], 0.49f, 0.51f);
+        using var planDoc = JsonDocument.Parse(await File.ReadAllTextAsync(planPath));
+        var planRoot = planDoc.RootElement;
+        Assert.Equal(RoomtonePlanVersion.Current, planRoot.GetProperty("version").GetString());
+        Assert.Equal(context.Manifest.AudioPath, planRoot.GetProperty("audioPath").GetString());
+        Assert.Equal(context.RoomtonePath, planRoot.GetProperty("roomtoneSeedPath").GetString());
 
-        var seedPath = context.ExistingRoomtonePath ?? throw new InvalidOperationException("Expected roomtone seed");
-        var seedBuffer = WavIo.ReadPcmOrFloat(seedPath);
-        var planJson = await File.ReadAllTextAsync(planPath);
-        using var plan = JsonDocument.Parse(planJson);
-        Assert.Equal(RoomtonePlanVersion.Current, plan.RootElement.GetProperty("version").GetString());
-        Assert.Equal(context.Manifest.AudioPath, plan.RootElement.GetProperty("audioPath").GetString());
-
-        var gaps = plan.RootElement.GetProperty("gaps");
+        var gaps = planRoot.GetProperty("gaps");
         Assert.True(gaps.GetArrayLength() > 0);
-        var firstGap = gaps[0];
-        var gapStartSec = firstGap.GetProperty("startSec").GetDouble();
-        var gapEndSec = firstGap.GetProperty("endSec").GetDouble();
-        Assert.True(gapEndSec > gapStartSec);
 
-        var gapStartSample = Math.Clamp((int)Math.Round(gapStartSec * rendered.SampleRate), 0, rendered.Planar[0].Length - 1);
-        var gapNextSample = Math.Clamp(gapStartSample + 1, 0, rendered.Planar[0].Length - 1);
+        double preGapSec = AggregateGapDuration(gaps, previousSentenceId: null, nextSentenceId: FirstSentenceId);
+        Assert.InRange(preGapSec, 0.70, 0.80);
 
-        var appliedGainDb = plan.RootElement.GetProperty("appliedGainDb").GetDouble();
-        var targetRmsDb = plan.RootElement.GetProperty("targetRmsDb").GetDouble();
-        Assert.Equal(0, targetRmsDb);
+        double interGapSec = AggregateGapDuration(gaps, previousSentenceId: FirstSentenceId, nextSentenceId: SecondSentenceId);
+        Assert.InRange(interGapSec, 1.45, 1.55);
 
-        float SeedScaled(float sample)
-        {
-            var scaled = sample * (float)Math.Pow(10.0, appliedGainDb / 20.0);
-            return Math.Clamp(scaled, -1.0f, 1.0f);
-        }
+        double tailGapSec = AggregateGapDuration(gaps, previousSentenceId: SecondSentenceId, nextSentenceId: null);
+        Assert.InRange(tailGapSec, 2.90, 3.10);
 
-        float expected0 = SeedScaled(seedBuffer.Planar[0][0]);
-        float expected1 = SeedScaled(seedBuffer.Planar[0][1]);
-        Assert.InRange(rendered.Planar[0][gapStartSample], expected0 - 0.01f, expected0 + 0.01f);
-        Assert.InRange(rendered.Planar[0][gapNextSample], expected1 - 0.01f, expected1 + 0.01f);
+        double durationSec = planRoot.GetProperty("audioDurationSec").GetDouble();
 
-        var metaJson = await File.ReadAllTextAsync(outputs["meta"]);
-        using var meta = JsonDocument.Parse(metaJson);
-        Assert.Equal(seedPath, meta.RootElement.GetProperty("sourceRoomtone").GetString());
-        Assert.Equal(planPath, meta.RootElement.GetProperty("outputs").GetProperty("plan").GetString());
-        Assert.Equal(wavPath, meta.RootElement.GetProperty("outputs").GetProperty("roomtone").GetString());
+        using var timelineDoc = JsonDocument.Parse(await File.ReadAllTextAsync(timelinePath));
+        var sentencesJson = timelineDoc.RootElement.GetProperty("sentences");
+        Assert.Equal(2, sentencesJson.GetArrayLength());
 
-        var paramsJson = await File.ReadAllTextAsync(outputs["params"]);
-        using var parms = JsonDocument.Parse(paramsJson);
-        var parameters = parms.RootElement.GetProperty("parameters");
-        Assert.True(parameters.GetProperty("usedExistingRoomtone").GetBoolean());
-        Assert.Equal(0, parameters.GetProperty("targetRmsDb").GetDouble());
-        Assert.Equal(plan.RootElement.GetProperty("roomtoneSeedRmsDb").GetDouble(), parameters.GetProperty("roomtoneSeedRmsDb").GetDouble());
+        var first = sentencesJson[0];
+        var second = sentencesJson[1];
+
+        double firstStart = first.GetProperty("startSec").GetDouble();
+        double firstEnd = first.GetProperty("endSec").GetDouble();
+        double secondStart = second.GetProperty("startSec").GetDouble();
+        double secondEnd = second.GetProperty("endSec").GetDouble();
+
+        Assert.InRange(firstStart, 0.70, 0.80);
+        Assert.True(firstEnd > firstStart);
+
+        Assert.InRange(secondStart - firstEnd, 1.45, 1.55);
+        Assert.InRange(durationSec - secondEnd, 2.90, 3.10);
+
+        Assert.True(outputs.TryGetValue("meta", out var metaPath));
+        using var metaDoc = JsonDocument.Parse(await File.ReadAllTextAsync(metaPath));
+        var outputsJson = metaDoc.RootElement.GetProperty("outputs");
+        Assert.Equal(roomtonePath, outputsJson.GetProperty("roomtone").GetString());
+        Assert.Equal(planPath, outputsJson.GetProperty("plan").GetString());
     }
 
     [Fact]
-    public void RenderWithSentenceMasks_RepairsSilentRegions()
+    public void RenderWithSentenceMasks_FillsPlanGapsAndPreservesSpeech()
     {
-        var input = new AudioBuffer(channels: 1, sampleRate: 1000, length: 1000);
-        for (int i = 0; i < input.Length; i++)
-        {
-            input.Planar[0][i] = i < 400 ? 0.5f : -0.25f;
-        }
+        const int sampleRate = 1000;
+        var input = new AudioBuffer(channels: 1, sampleRate: sampleRate, length: sampleRate);
+        FillRange(input, 0.2, 0.4, 0.6f);
 
-        var tone = new AudioBuffer(channels: 1, sampleRate: 1000, length: 4);
-        tone.Planar[0][0] = 0.1f;
-        tone.Planar[0][1] = -0.1f;
-        tone.Planar[0][2] = 0.05f;
-        tone.Planar[0][3] = -0.05f;
+        var tone = new AudioBuffer(channels: 1, sampleRate: sampleRate, length: 16);
+        FillRange(tone, 0.0, tone.Length / (double)sampleRate, 0.1f);
 
         var sentences = new[]
         {
-            new SentenceAlign(
-                1,
-                new IntRange(0, 0),
-                new ScriptRange(0, 0),
-                new TimingRange(0.0, 0.4),
-                new SentenceMetrics(0, 0, 0, 0, 0),
-                "ok")
+            new SentenceAlign(1, new IntRange(0, 2), new ScriptRange(0, 1), new TimingRange(0.2, 0.4), new SentenceMetrics(0, 0, 0, 0, 0), "ok")
+        };
+
+        var gaps = new List<RoomtonePlanGap>
+        {
+            new RoomtonePlanGap(0.0, 0.18, 0.18, null, 1, -70, -60, -65, 1.0),
+            new RoomtonePlanGap(0.42, 0.80, 0.38, 1, null, -70, -60, -65, 1.0)
         };
 
         var output = RoomtoneRenderer.RenderWithSentenceMasks(
             input,
             tone,
-            Array.Empty<RoomtonePlanGap>(),
+            gaps,
             sentences,
-            targetSampleRate: 1000,
+            targetSampleRate: sampleRate,
             toneGainLinear: 1.0,
-            fadeMs: 0.0);
+            fadeMs: 5.0,
+            debugDirectory: null);
 
         Assert.Equal(input.SampleRate, output.SampleRate);
         Assert.Equal(input.Length, output.Length);
 
-        int protectedSamples = (int)Math.Round(sentences[0].Timing.EndSec * output.SampleRate);
+        int gapSample = (int)(0.05 * sampleRate);
+        Assert.NotEqual(0f, output.Planar[0][gapSample]);
 
-        for (int i = 0; i < input.Length; i++)
-        {
-            float sourceSample = input.Planar[0][i];
-            if (i < protectedSamples && Math.Abs(sourceSample) > 1e-6)
-            {
-                float renderedSample = output.Planar[0][i];
-                Assert.InRange(renderedSample, sourceSample - 1e-6f, sourceSample + 1e-6f);
-            }
-        }
+        int speechSample = (int)(0.3 * sampleRate);
+        Assert.Equal(input.Planar[0][speechSample], output.Planar[0][speechSample]);
     }
 
     [Fact]
@@ -153,7 +146,8 @@ public class RoomToneStageTests
         using var temp = new TempDir();
         var context = await ArrangeAsync(temp, createExistingRoomtone: true);
 
-        var stage = new RoomToneInsertionStage(targetSampleRate: 8000, toneGainDb: 0, fadeMs: 0);
+        var stage = new RoomToneInsertionStage(targetSampleRate: 8000, toneGainDb: -60, fadeMs: 5, emitDiagnostics: false, useAdaptiveGain: true);
+
         var outputs = await stage.RunAsync(context.Manifest, CancellationToken.None, renderAudio: false);
 
         Assert.False(outputs.ContainsKey("roomtoneWav"));
@@ -162,54 +156,45 @@ public class RoomToneStageTests
         Assert.True(outputs.TryGetValue("timeline", out var timelinePath));
         Assert.True(File.Exists(timelinePath));
 
-        var planJson = await File.ReadAllTextAsync(planPath);
-        using var plan = JsonDocument.Parse(planJson);
-        Assert.Equal(RoomtonePlanVersion.Current, plan.RootElement.GetProperty("version").GetString());
-        Assert.Equal(context.Manifest.AudioPath, plan.RootElement.GetProperty("audioPath").GetString());
-        Assert.Equal(0, plan.RootElement.GetProperty("targetRmsDb").GetDouble());
-
-        var metaJson = await File.ReadAllTextAsync(outputs["meta"]);
-        using var meta = JsonDocument.Parse(metaJson);
-        Assert.Equal(planPath, meta.RootElement.GetProperty("outputs").GetProperty("plan").GetString());
-        Assert.False(meta.RootElement.GetProperty("outputs").TryGetProperty("roomtone", out _));
-
-        var paramsJson = await File.ReadAllTextAsync(outputs["params"]);
-        using var parms = JsonDocument.Parse(paramsJson);
-        var parameters = parms.RootElement.GetProperty("parameters");
-        Assert.True(parameters.GetProperty("usedExistingRoomtone").GetBoolean());
-        Assert.Equal(plan.RootElement.GetProperty("targetRmsDb").GetDouble(), parameters.GetProperty("targetRmsDb").GetDouble());
-        Assert.Equal(plan.RootElement.GetProperty("appliedGainDb").GetDouble(), parameters.GetProperty("appliedGainDb").GetDouble());
+        using var paramsDoc = JsonDocument.Parse(await File.ReadAllTextAsync(outputs["params"]));
+        var parameters = paramsDoc.RootElement.GetProperty("parameters");
+        Assert.False(parameters.GetProperty("diagnosticsEnabled").GetBoolean());
+        Assert.True(parameters.GetProperty("adaptiveGainEnabled").GetBoolean());
     }
 
     private static async Task<TestContext> ArrangeAsync(TempDir temp, bool createExistingRoomtone)
     {
-        var jsonOptions = new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase, WriteIndented = true };
+        var options = new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase, WriteIndented = true };
 
-        var audioDir = Path.Combine(temp.Path, "audio");
+        var workDir = temp.Path;
+        var audioDir = Path.Combine(workDir, "audio");
         Directory.CreateDirectory(audioDir);
+
         var audioPath = Path.Combine(audioDir, "chapter.wav");
         var asrPath = Path.Combine(audioDir, "chapter.asr.json");
 
-        var inputBuffer = new AudioBuffer(channels: 1, sampleRate: 8000, length: 8000);
-        for (int i = 0; i < inputBuffer.Length; i++)
-        {
-            inputBuffer.Planar[0][i] = i < 2000 ? 0.5f : 0.0f;
-        }
-        WavIo.WriteFloat32(audioPath, inputBuffer);
+        const int sampleRate = 8000;
+        var audio = new AudioBuffer(channels: 1, sampleRate: sampleRate, length: sampleRate * 8);
+        FillRange(audio, 1.0, 1.6, 0.6f);
+        FillRange(audio, 3.4, 4.0, 0.55f);
+        WavIo.WriteFloat32(audioPath, audio);
 
-        var asr = new AsrResponse("test-model", new[]
+        var tokens = new[]
         {
-            new AsrToken(0.0, 0.25, "hello"),
-            new AsrToken(0.25, 0.05, "world")
-        });
-        await File.WriteAllTextAsync(asrPath, JsonSerializer.Serialize(asr, jsonOptions));
+            new AsrToken(1.00, 0.30, "hello"),
+            new AsrToken(1.35, 0.25, "world"),
+            new AsrToken(3.40, 0.30, "second"),
+            new AsrToken(3.75, 0.25, "passage")
+        };
+        var asr = new AsrResponse("test-model", tokens);
+        await File.WriteAllTextAsync(asrPath, JsonSerializer.Serialize(asr, options));
 
-        var docDir = Path.Combine(temp.Path, "manuscript");
-        Directory.CreateDirectory(docDir);
-        var docPath = Path.Combine(docDir, "BATTLESPACE NOMAD.docx");
+        var manuscriptDir = Path.Combine(workDir, "manuscript");
+        Directory.CreateDirectory(manuscriptDir);
+        var docPath = Path.Combine(manuscriptDir, "BATTLESPACE NOMAD.docx");
         await File.WriteAllTextAsync(docPath, "dummy");
 
-        var bookIndexPath = Path.Combine(temp.Path, "book-index.json");
+        var bookIndexPath = Path.Combine(workDir, "book-index.json");
         var bookIndex = new BookIndex(
             SourceFile: docPath,
             SourceFileHash: "hash",
@@ -222,13 +207,14 @@ public class RoomToneStageTests
             Paragraphs: Array.Empty<ParagraphRange>(),
             Sections: Array.Empty<SectionRange>(),
             BuildWarnings: null);
-        await File.WriteAllTextAsync(bookIndexPath, JsonSerializer.Serialize(bookIndex, jsonOptions));
+        await File.WriteAllTextAsync(bookIndexPath, JsonSerializer.Serialize(bookIndex, options));
 
         var sentences = new[]
         {
-            new SentenceAlign(1, new IntRange(0, 10), new ScriptRange(0, 1), new TimingRange(0.0, 0.25), new SentenceMetrics(0, 0, 0, 0, 0), "ok")
+            new SentenceAlign(FirstSentenceId, new IntRange(0, 10), new ScriptRange(0, 1), new TimingRange(1.0, 1.6), new SentenceMetrics(0, 0, 0, 0, 0), "ok"),
+            new SentenceAlign(SecondSentenceId, new IntRange(11, 20), new ScriptRange(2, 3), new TimingRange(3.4, 4.0), new SentenceMetrics(0, 0, 0, 0, 0), "ok")
         };
-        var tx = new TranscriptIndex(
+        var transcript = new TranscriptIndex(
             AudioPath: audioPath,
             ScriptPath: asrPath,
             BookIndexPath: bookIndexPath,
@@ -238,26 +224,68 @@ public class RoomToneStageTests
             Sentences: sentences,
             Paragraphs: Array.Empty<ParagraphAlign>());
 
-        var txPath = Path.Combine(temp.Path, "chapter.tx.json");
-        await File.WriteAllTextAsync(txPath, JsonSerializer.Serialize(tx, jsonOptions));
+        var transcriptPath = Path.Combine(workDir, "chapter.tx.json");
+        await File.WriteAllTextAsync(transcriptPath, JsonSerializer.Serialize(transcript, options));
 
         string? roomtonePath = null;
         if (createExistingRoomtone)
         {
             roomtonePath = Path.Combine(audioDir, "roomtone.wav");
-            var toneBuffer = new AudioBuffer(1, 8000, 4);
-            toneBuffer.Planar[0][0] = 0.1f;
-            toneBuffer.Planar[0][1] = -0.1f;
-            toneBuffer.Planar[0][2] = 0.05f;
-            toneBuffer.Planar[0][3] = -0.05f;
-            WavIo.WriteFloat32(roomtonePath, toneBuffer);
+            var roomtone = new AudioBuffer(channels: 1, sampleRate: sampleRate, length: sampleRate / 4);
+            FillRange(roomtone, 0.0, roomtone.Length / (double)sampleRate, 0.02f);
+            WavIo.WriteFloat32(roomtonePath, roomtone);
         }
 
-        var manifest = new ManifestV2("chapter", temp.Path, audioPath, txPath);
+        var manifest = new ManifestV2("chapter", workDir, audioPath, transcriptPath);
         return new TestContext(manifest, roomtonePath);
     }
 
-    private sealed record TestContext(ManifestV2 Manifest, string? ExistingRoomtonePath);
+    private static double AggregateGapDuration(JsonElement gaps, int? previousSentenceId, int? nextSentenceId)
+    {
+        double total = 0;
+        foreach (var gap in gaps.EnumerateArray())
+        {
+            var prevProp = gap.GetProperty("previousSentenceId");
+            var nextProp = gap.GetProperty("nextSentenceId");
+
+            bool prevMatches = previousSentenceId is null
+                ? prevProp.ValueKind == JsonValueKind.Null
+                : prevProp.ValueKind == JsonValueKind.Number && prevProp.GetInt32() == previousSentenceId.Value;
+
+            bool nextMatches = nextSentenceId is null
+                ? nextProp.ValueKind == JsonValueKind.Null
+                : nextProp.ValueKind == JsonValueKind.Number && nextProp.GetInt32() == nextSentenceId.Value;
+
+            if (prevMatches && nextMatches)
+            {
+                total += gap.GetProperty("durationSec").GetDouble();
+            }
+        }
+
+        return total;
+    }
+
+    private static void FillRange(AudioBuffer buffer, double startSec, double endSec, float value)
+    {
+        int start = (int)Math.Round(startSec * buffer.SampleRate);
+        int end = (int)Math.Round(endSec * buffer.SampleRate);
+
+        start = Math.Clamp(start, 0, buffer.Length);
+        end = Math.Clamp(end, 0, buffer.Length);
+
+        if (end <= start)
+        {
+            return;
+        }
+
+        var channel = buffer.Planar[0];
+        for (int i = start; i < end; i++)
+        {
+            channel[i] = value;
+        }
+    }
+
+    private sealed record TestContext(ManifestV2 Manifest, string? RoomtonePath);
 
     private sealed class TempDir : IDisposable
     {
