@@ -1,3 +1,4 @@
+using System.Linq;
 using System.Security.Cryptography;
 using System.Text.RegularExpressions;
 
@@ -169,6 +170,8 @@ public class BookIndexer : IBookIndexer
                 EndParagraph: endParagraph
             ));
         }
+
+        ApplyChapterDuplicateSuffixes(sections);
 
         var warnings = Array.Empty<string>();
 
@@ -351,6 +354,7 @@ public class BookIndexer : IBookIndexer
         return false;
     }
 
+    private static readonly Regex ChapterDuplicateRegex = new(@"^(?<prefix>\s*chapter)(?<ws>\s+)(?<number>\d+)(?<suffix>\s*[A-Za-z]*)?$", RegexOptions.IgnoreCase | RegexOptions.Compiled);
     private static readonly Regex SectionTitleRegex = new(
         @"^\s*(chapter\b|prologue\b|epilogue\b|prelude\b|foreword\b|introduction\b|afterword\b|appendix\b|part\b|book\b)",
         RegexOptions.IgnoreCase | RegexOptions.Compiled);
@@ -361,6 +365,59 @@ public class BookIndexer : IBookIndexer
         var t = text.Trim();
         if (SectionTitleRegex.IsMatch(t)) return true;
         return false;
+    }
+
+    private static void ApplyChapterDuplicateSuffixes(List<SectionRange> sections)
+    {
+        if (sections == null || sections.Count == 0)
+            return;
+
+        var candidates = new List<(int Index, SectionRange Section, string Prefix, string Ws, string Number, string BaseKey)>();
+
+        for (int i = 0; i < sections.Count; i++)
+        {
+            var section = sections[i];
+            if (!string.Equals(section.Kind, "chapter", StringComparison.OrdinalIgnoreCase))
+                continue;
+
+            var title = section.Title ?? string.Empty;
+            var match = ChapterDuplicateRegex.Match(title);
+            if (!match.Success)
+                continue;
+
+            if (!string.IsNullOrWhiteSpace(match.Groups["suffix"].Value))
+                continue;
+
+            var prefix = match.Groups["prefix"].Value;
+            var ws = match.Groups["ws"].Value;
+            var number = match.Groups["number"].Value;
+            var baseKey = (prefix + ws + number).Trim().ToUpperInvariant();
+
+            candidates.Add((i, section, prefix, ws, number, baseKey));
+        }
+
+        foreach (var group in candidates.GroupBy(c => (c.BaseKey, c.Section.Level)))
+        {
+            if (group.Count() <= 1)
+                continue;
+
+            var distinctTitles = group
+                .Select(c => (c.Section.Title ?? string.Empty).Trim())
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+
+            if (distinctTitles.Count > 1)
+                continue;
+
+            int offset = 0;
+            foreach (var item in group.OrderBy(c => c.Section.StartWord))
+            {
+                var suffixLetter = (char)('A' + offset);
+                var newTitle = string.Concat(item.Prefix, item.Ws, item.Number, suffixLetter);
+                sections[item.Index] = item.Section with { Title = newTitle };
+                offset++;
+            }
+        }
     }
 
     private record SectionOpen(int Id, string Title, string Kind, int Level, int StartWord, int StartParagraph);
@@ -409,3 +466,4 @@ public class BookIndexer : IBookIndexer
         }
     }
 }
+
