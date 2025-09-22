@@ -56,20 +56,20 @@ public static class AsrCommand
         return asrCommand;
     }
     
-    private static async Task RunAsrAsync(FileInfo audioFile, FileInfo outputFile, string serviceUrl, string? model, string language)
+    internal static async Task RunAsrAsync(FileInfo audioFile, FileInfo outputFile, string serviceUrl, string? model, string language)
     {
         if (!audioFile.Exists)
         {
             throw new FileNotFoundException($"Audio file not found: {audioFile.FullName}");
         }
-        
+
         Console.WriteLine($"Running ASR on: {audioFile.FullName}");
         Console.WriteLine($"Service URL: {serviceUrl}");
         Console.WriteLine($"Language: {language}");
         if (model != null) Console.WriteLine($"Model: {model}");
-        
+
         using var client = new AsrClient(serviceUrl);
-        
+
         // Check service health first
         Console.Write("Checking ASR service health... ");
         var isHealthy = await client.IsHealthyAsync();
@@ -78,21 +78,21 @@ public static class AsrCommand
             throw new InvalidOperationException($"ASR service at {serviceUrl} is not healthy or unreachable");
         }
         Console.WriteLine("OK");
-        
+
         // Run transcription
         Console.Write("Transcribing audio... ");
         var response = await client.TranscribeAsync(audioFile.FullName, model, language);
         Console.WriteLine("Done");
-        
+
         // Save result
-        var json = JsonSerializer.Serialize(response, new JsonSerializerOptions 
-        { 
+        var json = JsonSerializer.Serialize(response, new JsonSerializerOptions
+        {
             WriteIndented = true,
             PropertyNamingPolicy = JsonNamingPolicy.CamelCase
         });
-        
+
         await File.WriteAllTextAsync(outputFile.FullName, json);
-        
+
         Console.WriteLine($"Results saved to: {outputFile.FullName}");
         Console.WriteLine($"Model version: {response.ModelVersion}");
         Console.WriteLine($"Total words: {response.Tokens.Length}");

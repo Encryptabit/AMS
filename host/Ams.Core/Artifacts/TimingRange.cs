@@ -25,7 +25,9 @@ public record TimingRange
             throw new ArgumentException("Timing values cannot be infinite.");
 
         if (endSec + Precision < startSec)
-            throw new ArgumentOutOfRangeException(nameof(endSec), "EndSec must be greater than or equal to StartSec.");
+        {
+            endSec = startSec;
+        }
 
         StartSec = Round(startSec);
         EndSec = Round(Math.Max(startSec, endSec));

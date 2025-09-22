@@ -179,7 +179,7 @@ public static class AlignCommand
         return cmd;
     }
 
-    private static async Task RunHydrateTxAsync(FileInfo indexFile, FileInfo asrFile, FileInfo txFile, FileInfo outFile)
+    internal static async Task RunHydrateTxAsync(FileInfo indexFile, FileInfo asrFile, FileInfo txFile, FileInfo outFile)
     {
         var jsonOptions = new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
 
@@ -258,7 +258,7 @@ public static class AlignCommand
         Console.WriteLine($"Hydrated TranscriptIndex written to: {outFile.FullName}");
     }
 
-    private static async Task RunTranscriptIndexAsync(
+    internal static async Task RunTranscriptIndexAsync(
     FileInfo indexFile,
     FileInfo asrFile,
     FileInfo audioFile,
@@ -376,6 +376,42 @@ public static class AlignCommand
         secStartWord = Math.Max(0, pipe.Section.StartWord);
         secEndWord = Math.Min(book.Words.Length - 1, pipe.Section.EndWord);
     }
+    else
+    {
+        static bool IsAlignedWord(WordAlign op) => op.BookIdx.HasValue && op.AsrIdx.HasValue && op.Op != AlignOp.Del;
+
+        var matchedBookIdx = new List<int>();
+        matchedBookIdx.AddRange(wordOps.Where(IsAlignedWord).Select(o => o.BookIdx!.Value));
+        matchedBookIdx.AddRange(anchorOps.Where(a => a.BookIdx.HasValue).Select(a => a.BookIdx!.Value));
+        matchedBookIdx.Sort();
+
+        if (matchedBookIdx.Count > 0)
+        {
+            secStartWord = matchedBookIdx.First();
+            secEndWord = matchedBookIdx.Last();
+
+            var firstSentence = book.Sentences.FirstOrDefault(s => s.Start <= secStartWord && s.End >= secStartWord);
+            if (firstSentence != null)
+            {
+                secStartWord = firstSentence.Start;
+            }
+
+            var lastSentence = book.Sentences.LastOrDefault(s => s.Start <= secEndWord && s.End >= secEndWord);
+            if (lastSentence != null)
+            {
+                secEndWord = lastSentence.End;
+            }
+
+            secStartWord = Math.Max(0, secStartWord);
+            secEndWord = Math.Min(book.Words.Length - 1, Math.Max(secStartWord, secEndWord));
+
+            Console.WriteLine($"Section detection fallback: restricting to book words [{secStartWord}, {secEndWord}] (approx {matchedBookIdx.Count} aligned tokens).");
+        }
+        else
+        {
+            Console.WriteLine("Warning: no aligned book tokens found; falling back to full book range.");
+        }
+    }
 
     var sentTuples = book.Sentences
         .Where(s => s.Start <= secEndWord && s.End >= secStartWord)
@@ -428,7 +464,7 @@ public static class AlignCommand
         return new TimingRange(startSec, endSec);
     }
 
-    private static async Task RunAnchorsAsync(
+    internal static async Task RunAnchorsAsync(
         FileInfo indexFile,
         FileInfo asrFile,
         FileInfo? outFile,

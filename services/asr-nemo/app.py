@@ -2,7 +2,13 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from typing import List, Optional
 import os
+os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
 import gc
+import asyncio
+import numpy as np
+import soundfile as sf
+import librosa
+import tempfile
 import torch
 import traceback
 import sys
@@ -125,6 +131,10 @@ _model = None
 _model_name = None
 _hf_authenticated = False
 
+DEFAULT_GPU_BATCH_SIZE = int(os.getenv("ASR_GPU_BATCH_SIZE", "2"))
+FALLBACK_GPU_BATCH_SIZE = int(os.getenv("ASR_GPU_FALLBACK_BATCH_SIZE", "1"))
+_transcribe_semaphore = asyncio.Semaphore(int(os.getenv("ASR_MAX_CONCURRENT_JOBS", "1")))
+
 def _ensure_hf_auth():
     """Ensure Hugging Face authentication is set up."""
     global _hf_authenticated
@@ -182,6 +192,50 @@ def _normalize_segment_entry(entry: dict, index: int) -> dict:
     }
 
 
+def _load_model(device: str, nemo_asr_module):
+    """Load the ASR model on the requested device if needed."""
+    global _model, _model_name
+
+    if _model is not None:
+        try:
+            current_device = next(_model.parameters()).device.type
+        except Exception:
+            current_device = device
+        if current_device != device:
+            logging.info(f"Moving model from {current_device} to {device}")
+            _model = _model.to(device)
+        _model.eval()
+        return
+
+    logging.info("Loading ASR model...")
+    try:
+        _model_name = "nvidia/parakeet-tdt-0.6b-v3"
+        logging.info(f"Attempting to load model: {_model_name}")
+        _model = nemo_asr_module.models.ASRModel.from_pretrained(_model_name).to(device)
+        logging.info(f"Successfully loaded model: {_model_name} on {device}")
+    except Exception as e:
+        logging.warning(f"Failed to load Parakeet model: {e}")
+        try:
+            _model_name = "nvidia/stt_en_quartznet15x5"
+            logging.info(f"Attempting fallback to model: {_model_name}")
+            _model = nemo_asr_module.models.ASRModel.from_pretrained(_model_name).to(device)
+            logging.info(f"Successfully loaded fallback model: {_model_name} on {device}")
+        except Exception as e2:
+            logging.warning(f"Failed to load QuartzNet model: {e2}")
+            try:
+                _model_name = "nvidia/stt_en_conformer_ctc_small"
+                logging.info(f"Attempting final fallback to model: {_model_name}")
+                _model = nemo_asr_module.models.ASRModel.from_pretrained(_model_name).to(device)
+                logging.info(f"Successfully loaded final fallback model: {_model_name} on {device}")
+            except Exception as e3:
+                logging.error("Failed to load any compatible model. Parakeet: %s, QuartzNet: %s, Conformer: %s", e, e2, e3)
+                raise HTTPException(
+                    status_code=500,
+                    detail=f"Failed to load any compatible model. Errors: Parakeet: {str(e)}, QuartzNet: {str(e2)}, Conformer: {str(e3)}"
+                )
+    _model.eval()
+
+
 def _cleanup_model():
     """Cleanup model and free GPU memory"""
     global _model, _model_name
@@ -192,213 +246,293 @@ def _cleanup_model():
             _model_name = None
     except Exception:
         pass
-    
+
     gc.collect()
     if torch.cuda.is_available():
         torch.cuda.synchronize()
         torch.cuda.empty_cache()
         torch.cuda.ipc_collect()
+        try:
+            torch.cuda.reset_peak_memory_stats()
+        except Exception:
+            pass
+
+
+def _prepare_chunks(audio_path: str, min_chunk_sec: float = 60.0, max_chunk_sec: float = 90.0, silence_db: float = 35.0):
+    """Slice audio into manageable chunks aligned to low-energy regions."""
+    y, sr = librosa.load(audio_path, sr=None)
+    if y.ndim > 1:
+        y = librosa.to_mono(y)
+
+    total_samples = len(y)
+    if total_samples == 0:
+        return []
+
+    duration_sec = total_samples / sr
+    if duration_sec <= max_chunk_sec:
+        temp_file = tempfile.NamedTemporaryFile(suffix='_chunk0.wav', delete=False)
+        sf.write(temp_file.name, y, sr)
+        temp_file.close()
+        return [{"path": temp_file.name, "start_sec": 0.0, "end_sec": duration_sec}]
+
+    segments = _derive_chunk_segments(y, sr, min_chunk_sec, max_chunk_sec, silence_db)
+    chunk_infos = []
+    for idx, (start_sample, end_sample) in enumerate(segments):
+        temp_file = tempfile.NamedTemporaryFile(suffix=f'_chunk{idx}.wav', delete=False)
+        sf.write(temp_file.name, y[start_sample:end_sample], sr)
+        temp_file.close()
+        chunk_infos.append({
+            "path": temp_file.name,
+            "start_sec": start_sample / sr,
+            "end_sec": end_sample / sr
+        })
+    return chunk_infos
+
+
+def _derive_chunk_segments(y: np.ndarray, sr: int, min_chunk_sec: float, max_chunk_sec: float, silence_db: float):
+    total_samples = len(y)
+    duration_sec = total_samples / sr
+    if duration_sec <= max_chunk_sec:
+        return [(0, total_samples)]
+
+    try:
+        non_silent = librosa.effects.split(y, top_db=silence_db)
+    except Exception as exc:
+        logging.warning("librosa.effects.split failed (%s); using fixed segmentation", exc)
+        return _fallback_segments(total_samples, sr, max_chunk_sec)
+
+    silence_points = {0, total_samples}
+    for i in range(len(non_silent) - 1):
+        silence_start = non_silent[i][1]
+        silence_end = non_silent[i + 1][0]
+        if silence_end <= silence_start:
+            continue
+        silence_points.add(int((silence_start + silence_end) / 2))
+
+    silence_samples = sorted(silence_points)
+    silence_secs = [s / sr for s in silence_samples]
+
+    segments = []
+    chunk_start_sample = 0
+    chunk_start_sec = 0.0
+    target_len_sec = (min_chunk_sec + max_chunk_sec) / 2
+
+    while chunk_start_sample < total_samples:
+        remaining_sec = duration_sec - chunk_start_sec
+        if remaining_sec <= max_chunk_sec:
+            segments.append((chunk_start_sample, total_samples))
+            break
+
+        min_end_sec = chunk_start_sec + min_chunk_sec
+        max_end_sec = min(duration_sec, chunk_start_sec + max_chunk_sec)
+        candidate_secs = [s for s in silence_secs if min_end_sec <= s <= max_end_sec]
+
+        if candidate_secs:
+            target_sec = min(duration_sec, chunk_start_sec + target_len_sec)
+            chosen_sec = min(candidate_secs, key=lambda s: abs(s - target_sec))
+        else:
+            chosen_sec = max_end_sec
+
+        chosen_sample = int(round(chosen_sec * sr))
+        if chosen_sample <= chunk_start_sample:
+            chosen_sample = min(total_samples, chunk_start_sample + int(max_chunk_sec * sr))
+            chosen_sec = chosen_sample / sr
+
+        segments.append((chunk_start_sample, chosen_sample))
+        chunk_start_sample = chosen_sample
+        chunk_start_sec = chosen_sec
+
+    if segments and segments[-1][1] < total_samples:
+        segments[-1] = (segments[-1][0], total_samples)
+
+    return segments
+
+
+def _fallback_segments(total_samples: int, sr: int, max_chunk_sec: float):
+    step_samples = int(max_chunk_sec * sr)
+    segments = []
+    start = 0
+    while start < total_samples:
+        end = min(total_samples, start + step_samples)
+        segments.append((start, end))
+        start = end
+    return segments
 
 @app.post("/asr", response_model=AsrResponse)
 async def transcribe_audio(request: AsrRequest):
-    """
-    ASR endpoint using NeMo for real transcription with timestamps.
-    """
+    """Serialized entry point that keeps GPU usage predictable by allowing one transcription at a time."""
+    async with _transcribe_semaphore:
+        return await _transcribe_impl(request)
+
+
+
+async def _transcribe_impl(request: AsrRequest) -> AsrResponse:
+    """Core ASR implementation with improved memory handling and timestamp extraction."""
     global _model
-    
-    # Log the incoming request
+
     logging.info(f"ASR request received - Audio: {request.audio_path}, Model: {request.model}, Language: {request.language}")
-    
+
+    chunk_infos = []
     try:
-        # Check if audio file exists
         if not os.path.exists(request.audio_path):
             logging.error(f"Audio file not found: {request.audio_path}")
             raise HTTPException(status_code=404, detail=f"Audio file not found: {request.audio_path}")
-        
-        # Ensure Hugging Face authentication
+
         if not _ensure_hf_auth():
             raise HTTPException(status_code=401, detail="Hugging Face authentication required. Please set HUGGINGFACE_TOKEN environment variable.")
-        
-        # Import NeMo (lazy import to avoid startup delays)
+
         try:
             import nemo.collections.asr as nemo_asr
         except ImportError as e:
             raise HTTPException(status_code=500, detail=f"Failed to import NeMo: {str(e)}")
-        
-        # Determine device
+
         device = "cuda" if torch.cuda.is_available() else "cpu"
-        
-        # Load model if not already loaded
-        if _model is None:
-            global _model_name
-            logging.info("Loading ASR model...")
+        _load_model(device, nemo_asr)
+
+        chunk_infos = _prepare_chunks(request.audio_path)
+        if not chunk_infos:
+            logging.warning("No content detected in audio; returning empty transcript")
+            return AsrResponse(modelVersion=_model_name or "unknown", tokens=[])
+
+        logging.info(f"Split audio into {len(chunk_infos)} chunk(s) for transcription")
+
+        aggregated_tokens: List[WordToken] = []
+        overall_start = datetime.now()
+
+        for idx, chunk in enumerate(chunk_infos, start=1):
+            chunk_duration = chunk["end_sec"] - chunk["start_sec"]
+            logging.info(f"Chunk {idx}/{len(chunk_infos)}: offset={chunk['start_sec']:.2f}s length={chunk_duration:.2f}s on {device}")
+
+            transcribe_kwargs = {
+                "batch_size": DEFAULT_GPU_BATCH_SIZE,
+                "return_hypotheses": True,
+                "timestamps": True
+            }
+
+            def _run_transcribe():
+                with torch.inference_mode():
+                    return _model.transcribe([chunk["path"]], **transcribe_kwargs)
+
             try:
-                # Try the latest Parakeet TDT v3 model first - supports timestamps and multilingual
-                _model_name = "nvidia/parakeet-tdt-0.6b-v3"
-                logging.info(f"Attempting to load model: {_model_name}")
-                _model = nemo_asr.models.ASRModel.from_pretrained(_model_name).to(device)
-                logging.info(f"Successfully loaded model: {_model_name} on {device}")
-            except Exception as e:
-                logging.warning(f"Failed to load Parakeet model: {e}")
+                output = _run_transcribe()
+            except torch.cuda.OutOfMemoryError:
+                logging.warning("GPU OOM on chunk %s; retrying with batch size %s", idx, FALLBACK_GPU_BATCH_SIZE)
+                if torch.cuda.is_available():
+                    torch.cuda.synchronize()
+                    torch.cuda.empty_cache()
+                    torch.cuda.ipc_collect()
+
+                transcribe_kwargs["batch_size"] = FALLBACK_GPU_BATCH_SIZE
                 try:
-                    # Fallback to QuartzNet - more stable and compatible
-                    _model_name = "nvidia/stt_en_quartznet15x5"
-                    logging.info(f"Attempting fallback to model: {_model_name}")
-                    _model = nemo_asr.models.ASRModel.from_pretrained(_model_name).to(device)
-                    logging.info(f"Successfully loaded fallback model: {_model_name} on {device}")
-                except Exception as e2:
-                    logging.warning(f"Failed to load QuartzNet model: {e2}")
-                    try:
-                        # Last fallback to conformer small
-                        _model_name = "nvidia/stt_en_conformer_ctc_small"
-                        logging.info(f"Attempting final fallback to model: {_model_name}")
-                        _model = nemo_asr.models.ASRModel.from_pretrained(_model_name).to(device)
-                        logging.info(f"Successfully loaded final fallback model: {_model_name} on {device}")
-                    except Exception as e3:
-                        logging.error(f"Failed to load any compatible model. Parakeet: {e}, QuartzNet: {e2}, Conformer: {e3}")
-                        raise HTTPException(status_code=500, detail=f"Failed to load any compatible model. Errors: Parakeet: {str(e)}, QuartzNet: {str(e2)}, Conformer: {str(e3)}")
-        else:
-            # Ensure model is on correct device
-            if next(_model.parameters()).device.type != device:
-                _model = _model.to(device)
-        
-        # Sync CUDA if available
-        if device == "cuda":
-            torch.cuda.synchronize()
-        
-        # Perform transcription with timestamps
-        logging.info(f"Starting transcription for: {request.audio_path}")
-        start_time = datetime.now()
-        
-        output = _model.transcribe([request.audio_path], batch_size=16, return_hypotheses=True, timestamps=True)
-        
-        if device == "cuda":
-            torch.cuda.synchronize()
-        
-        transcription_time = (datetime.now() - start_time).total_seconds()
-        logging.info(f"Transcription completed in {transcription_time:.2f} seconds")
-        
-        hypo = output[0]
-        logging.info(f"Transcription text length: {len(hypo.text)} characters")
-        
-        # Log raw NeMo output for debugging timestamp logic
-        nemo_logger = logging.getLogger("nemo_raw")
-        nemo_logger.info("=" * 80)
-        nemo_logger.info(f"TRANSCRIPTION REQUEST: {request.audio_path}")
-        nemo_logger.info("=" * 80)
-        
-        # Log hypothesis text and score
-        nemo_logger.info(f"HYPOTHESIS TEXT: {hypo.text}")
-        nemo_logger.info(f"HYPOTHESIS SCORE: {hypo.score if hasattr(hypo, 'score') else 'N/A'} (type: {type(hypo.score) if hasattr(hypo, 'score') else 'N/A'})")
-        
-        # Log all available attributes
-        nemo_logger.info(f"HYPO ATTRIBUTES: {[attr for attr in dir(hypo) if not attr.startswith('_')]}")
-        
-        # Log timestamp data structure
-        if hasattr(hypo, 'timestamp') and hypo.timestamp:
-            nemo_logger.info(f"TIMESTAMP KEYS: {list(hypo.timestamp.keys())}")
-            
-            # Log word-level data
-            if 'word' in hypo.timestamp:
-                word_data = hypo.timestamp['word']
-                nemo_logger.info(f"WORD COUNT: {len(word_data)}")
-                nemo_logger.info("WORD DATA SAMPLE (first 5 entries):")
-                for i, word_entry in enumerate(word_data[:5]):
-                    nemo_logger.info(f"  Word {i}: {word_entry}")
-                    nemo_logger.info(f"    Keys: {list(word_entry.keys()) if word_entry else 'Empty'}")
-                
-                if len(word_data) > 5:
-                    nemo_logger.info(f"  ... and {len(word_data) - 5} more word entries")
-            
-            # Log segment-level data
-            if 'segment' in hypo.timestamp:
-                segment_data = hypo.timestamp['segment']
-                nemo_logger.info(f"SEGMENT COUNT: {len(segment_data)}")
-                nemo_logger.info("SEGMENT DATA SAMPLE (first 3 entries):")
-                for i, segment_entry in enumerate(segment_data[:3]):
-                    nemo_logger.info(f"  Segment {i}: {segment_entry}")
-                    nemo_logger.info(f"    Keys: {list(segment_entry.keys()) if segment_entry else 'Empty'}")
-                    
-                if len(segment_data) > 3:
-                    nemo_logger.info(f"  ... and {len(segment_data) - 3} more segment entries")
-            
-            # Log any other timestamp keys
-            other_keys = [k for k in hypo.timestamp.keys() if k not in ['word', 'segment']]
-            if other_keys:
-                nemo_logger.info(f"OTHER TIMESTAMP KEYS: {other_keys}")
-                for key in other_keys[:3]:  # Limit to first 3 to avoid spam
-                    data = hypo.timestamp[key]
-                    nemo_logger.info(f"  {key} ({len(data)} entries): {data[:2] if len(data) > 0 else 'Empty'}")
-        else:
-            nemo_logger.info("NO TIMESTAMP DATA AVAILABLE")
-        
-        nemo_logger.info("=" * 80)
-        
-        # Debug: Log NeMo output structure to understand available fields  
-        logging.debug(f"hypo attributes: {[attr for attr in dir(hypo) if not attr.startswith('_')]}")
-        if hasattr(hypo, 'timestamp') and hypo.timestamp:
-            logging.debug(f"timestamp keys: {hypo.timestamp.keys()}")
-            if 'word' in hypo.timestamp and hypo.timestamp['word']:
-                sample_word = hypo.timestamp['word'][0] if hypo.timestamp['word'] else {}
-                logging.debug(f"Sample word entry: {sample_word}")
-                logging.debug(f"Word entry keys: {list(sample_word.keys()) if sample_word else 'No words'}")
-        
-        # Process NeMo output into word tokens directly
-        tokens = []
-        
-        # Check if timestamps are available
-        if hasattr(hypo, 'timestamp') and hypo.timestamp is not None and hypo.timestamp.get("word", []):
-            # Use word-level timestamp information directly
-            word_entries = hypo.timestamp.get("word", [])
-            
-            for word_entry in word_entries:
-                word_start = float(word_entry.get("start", 0.0))
-                word_end = float(word_entry.get("end", 0.0))
-                        
-                tokens.append(WordToken(
-                    t=round(word_start, 2),
-                    d=round(word_end - word_start, 2),
-                    w="".join(word_entry.get("word", []))
-                ))
-        
-        # Fallback: create basic tokens without detailed timestamps
-        elif hypo.text:
-            words = hypo.text.split()
-            
-            # Create mock tokens with estimated timing
-            for i, word in enumerate(words):
-                tokens.append(WordToken(
-                    t=round(i * 0.5, 2),  # Estimate 0.5s per word
-                    d=0.4,  # Estimate 0.4s duration per word
-                    w=word
-                ))
-        
-        # Cleanup
-        gc.collect()
-        if device == "cuda":
-            torch.cuda.empty_cache()
-        
+                    output = _run_transcribe()
+                except torch.cuda.OutOfMemoryError:
+                    logging.error("GPU still OOM; moving model to CPU for chunk %s", idx)
+                    if torch.cuda.is_available():
+                        try:
+                            _model = _model.to("cpu")
+                            _model.eval()
+                            device = "cpu"
+                        except Exception as move_err:
+                            logging.error("Failed to move model to CPU: %s", move_err)
+                            raise HTTPException(status_code=500, detail="GPU out of memory and failed to move model to CPU.")
+                    transcribe_kwargs["batch_size"] = 1
+                    output = _run_transcribe()
+
+            if device == "cuda":
+                torch.cuda.synchronize()
+
+            hypo = output[0]
+
+            nemo_logger = logging.getLogger("nemo_raw")
+            nemo_logger.info("=" * 80)
+            nemo_logger.info(f"TRANSCRIPTION REQUEST CHUNK {idx}/{len(chunk_infos)}: offset={chunk['start_sec']:.2f}s path={chunk['path']}")
+            nemo_logger.info("=" * 80)
+            nemo_logger.info(f"HYPOTHESIS TEXT: {hypo.text}")
+            nemo_logger.info(f"HYPOTHESIS SCORE: {hypo.score if hasattr(hypo, 'score') else 'N/A'} (type: {type(hypo.score) if hasattr(hypo, 'score') else 'N/A'})")
+            nemo_logger.info(f"HYPO ATTRIBUTES: {[attr for attr in dir(hypo) if not attr.startswith('_')]}")
+
+            if hasattr(hypo, 'timestamp') and hypo.timestamp:
+                nemo_logger.info(f"TIMESTAMP KEYS: {list(hypo.timestamp.keys())}")
+                if 'word' in hypo.timestamp:
+                    word_data = hypo.timestamp['word']
+                    nemo_logger.info(f"WORD COUNT: {len(word_data)}")
+                    nemo_logger.info("WORD DATA SAMPLE (first 5 entries):")
+                    for j, word_entry in enumerate(word_data[:5]):
+                        nemo_logger.info(f"  Word {j}: {word_entry}")
+                        nemo_logger.info(f"    Keys: {list(word_entry.keys()) if word_entry else 'Empty'}")
+                    if len(word_data) > 5:
+                        nemo_logger.info(f"  ... and {len(word_data) - 5} more word entries")
+                if 'segment' in hypo.timestamp:
+                    segment_data = hypo.timestamp['segment']
+                    nemo_logger.info(f"SEGMENT COUNT: {len(segment_data)}")
+                    nemo_logger.info("SEGMENT DATA SAMPLE (first 3 entries):")
+                    for j, segment_entry in enumerate(segment_data[:3]):
+                        nemo_logger.info(f"  Segment {j}: {segment_entry}")
+                        nemo_logger.info(f"    Keys: {list(segment_entry.keys()) if segment_entry else 'Empty'}")
+                other_keys = [k for k in hypo.timestamp.keys() if k not in ('word', 'segment')]
+                if other_keys:
+                    nemo_logger.info(f"OTHER TIMESTAMP KEYS: {other_keys}")
+                    for key in other_keys[:3]:
+                        data = hypo.timestamp[key]
+                        nemo_logger.info(f"  {key} ({len(data)} entries): {data[:2] if len(data) > 0 else 'Empty'}")
+            else:
+                nemo_logger.info("NO TIMESTAMP DATA AVAILABLE")
+
+            time_offset = chunk["start_sec"]
+            if hasattr(hypo, 'timestamp') and hypo.timestamp is not None and hypo.timestamp.get("word", []):
+                for word_entry in hypo.timestamp.get("word", []):
+                    word_start = float(word_entry.get("start", 0.0))
+                    word_end = float(word_entry.get("end", 0.0))
+                    aggregated_tokens.append(WordToken(
+                        t=round(time_offset + word_start, 2),
+                        d=round(word_end - word_start, 2),
+                        w="".join(word_entry.get("word", []))
+                    ))
+            elif hypo.text:
+                for j, word in enumerate(hypo.text.split()):
+                    aggregated_tokens.append(WordToken(
+                        t=round(time_offset + j * 0.5, 2),
+                        d=0.4,
+                        w=word
+                    ))
+
+            gc.collect()
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+
+        total_time = (datetime.now() - overall_start).total_seconds()
+        logging.info(f"Transcription completed in {total_time:.2f} seconds across {len(chunk_infos)} chunk(s) on {device}")
+
         response = AsrResponse(
             modelVersion=_model_name or "unknown",
-            tokens=tokens
+            tokens=aggregated_tokens
         )
-        
-        logging.info(f"ASR processing completed - {len(tokens)} word tokens generated")
+
+        logging.info(f"ASR processing completed - {len(response.tokens)} word tokens generated")
         return response
-        
-    except Exception as e:
-        # Log the error with full traceback
-        logging.error(f"Error processing audio {request.audio_path}: {str(e)}")
-        logging.error(f"Full traceback:\n{traceback.format_exc()}")
-        
-        # Cleanup on error
+
+    except HTTPException:
+        raise
+    except torch.cuda.OutOfMemoryError as oom:
+        logging.error(f"Unrecoverable CUDA OOM: {oom}")
         gc.collect()
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
-        
-        error_detail = f"Error processing audio: {str(e)}\n{traceback.format_exc()}"
+        raise HTTPException(status_code=500, detail="CUDA out of memory during transcription. Please retry later.")
+    except Exception as e:
+        logging.error(f"Error processing audio {request.audio_path}: {str(e)}")
+        logging.error("Full traceback: %s", traceback.format_exc())
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+        error_detail = f"Error processing audio: {str(e)} | {traceback.format_exc()}"
         raise HTTPException(status_code=500, detail=error_detail)
-
+    finally:
+        for chunk in chunk_infos:
+            try:
+                os.remove(chunk["path"])
+            except Exception as cleanup_err:
+                logging.warning(f"Failed to remove temp chunk {chunk.get('path')}: {cleanup_err}")
 @app.get("/health")
 async def health_check():
     model_info = _model_name or "No model loaded"
