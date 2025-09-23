@@ -33,9 +33,6 @@ public static class PipelineCommand
         asrServiceOption.AddAlias("-s");
         var asrModelOption = new Option<string?>("--asr-model", () => null, "Optional ASR model identifier");
         asrModelOption.AddAlias("-m");
-        var asrLanguageOption = new Option<string>("--language", () => "en", "ASR language code");
-        asrLanguageOption.AddAlias("-l");
-
         var sampleRateOption = new Option<int>("--sample-rate", () => 44100, "Roomtone output sample rate (Hz)");
         var bitDepthOption = new Option<int>("--bit-depth", () => 32, "Roomtone output bit depth");
         var fadeMsOption = new Option<double>("--fade-ms", () => 10.0, "Crossfade length for roomtone boundaries (ms)");
@@ -52,7 +49,6 @@ public static class PipelineCommand
         cmd.AddOption(avgWpmOption);
         cmd.AddOption(asrServiceOption);
         cmd.AddOption(asrModelOption);
-        cmd.AddOption(asrLanguageOption);
         cmd.AddOption(sampleRateOption);
         cmd.AddOption(bitDepthOption);
         cmd.AddOption(fadeMsOption);
@@ -71,7 +67,6 @@ public static class PipelineCommand
             var avgWpm = context.ParseResult.GetValueForOption(avgWpmOption);
             var asrService = context.ParseResult.GetValueForOption(asrServiceOption) ?? "http://localhost:8000";
             var asrModel = context.ParseResult.GetValueForOption(asrModelOption);
-            var asrLanguage = context.ParseResult.GetValueForOption(asrLanguageOption) ?? "en";
             var sampleRate = context.ParseResult.GetValueForOption(sampleRateOption);
             var bitDepth = context.ParseResult.GetValueForOption(bitDepthOption);
             var fadeMs = context.ParseResult.GetValueForOption(fadeMsOption);
@@ -91,7 +86,6 @@ public static class PipelineCommand
                     avgWpm,
                     asrService,
                     asrModel,
-                    asrLanguage,
                     sampleRate,
                     bitDepth,
                     fadeMs,
@@ -119,7 +113,6 @@ public static class PipelineCommand
         double avgWpm,
         string asrService,
         string? asrModel,
-        string asrLanguage,
         int sampleRate,
         int bitDepth,
         double fadeMs,
@@ -185,7 +178,7 @@ public static class PipelineCommand
 
         Console.WriteLine("\nRunning ASR...");
         EnsureDirectory(asrFile.DirectoryName);
-        await AsrCommand.RunAsrAsync(audioFile, asrFile, asrService, asrModel, asrLanguage);
+        await AsrCommand.RunAsrAsync(audioFile, asrFile, asrService, asrModel);
 
         Console.WriteLine("Computing anchors...");
         await AlignCommand.RunAnchorsAsync(

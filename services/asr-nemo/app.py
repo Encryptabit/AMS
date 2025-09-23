@@ -1,607 +1,709 @@
+# app.py
+from __future__ import annotations
+
+import os
+import sys
+import gc
+import json
+import time
+import shlex
+import logging
+import tempfile
+import traceback
+import subprocess
+from pathlib import Path
+from typing import Optional, List, Dict, Tuple
+
+# Make CUDA allocations less spiky on long decodes
+os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
+
+import numpy as np
+import librosa
+import soundfile as sf
+import torch
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
-from typing import List, Optional
-import os
-os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
-import gc
-import asyncio
-import numpy as np
-import soundfile as sf
-import librosa
-import tempfile
-import torch
-import traceback
-import sys
-import logging
-import logging.handlers
-from pathlib import Path
-from datetime import datetime
 from huggingface_hub import login
 
-# Set up logging configuration
-def setup_logging():
-    """Configure logging to write to both console and file with rotation."""
-    # Create logs directory if it doesn't exist
-    log_dir = Path("logs")
-    log_dir.mkdir(exist_ok=True)
-    
-    # Configure root logger
+# =============================================================================
+# Configuration (via env vars)
+# =============================================================================
+
+# --- ASR (Step 1) ---
+ASR_MODEL_NAME = os.getenv("ASR_MODEL", "nvidia/parakeet-tdt-0.6b-v3")
+ASR_BEAM_SIZE = int(os.getenv("ASR_BEAM_SIZE", "12"))  # accuracy knob
+ASR_BATCH = int(os.getenv("ASR_GPU_BATCH_SIZE", "8"))
+ASR_FALLBACK_BATCH = int(os.getenv("ASR_GPU_FALLBACK_BATCH_SIZE", "1"))
+
+# chunking for Step 1 ONLY (to avoid OOM)
+ASR_PRECHUNK = os.getenv("ASR_PRECHUNK", "1").lower() not in ("0", "false", "no")
+ASR_MIN_CHUNK_SEC = float(os.getenv("ASR_MIN_CHUNK_SEC", "60"))
+ASR_MAX_CHUNK_SEC = float(os.getenv("ASR_MAX_CHUNK_SEC", "90"))
+ASR_SILENCE_DB = float(os.getenv("ASR_SILENCE_DB", "35"))  # larger -> fewer segments
+
+# --- NFA (Step 2) ---
+# Use a *CTC* or *Hybrid-in-CTC-mode* model. To avoid stride/encoder pitfalls, default to pure CTC.
+NFA_MODEL_NAME = os.getenv("NFA_MODEL", "stt_en_fastconformer_ctc_large")
+# optional fallbacks if first is unavailable
+NFA_MODEL_FALLBACKS = [
+    "stt_en_conformer_ctc_large",
+    "stt_en_fastconformer_ctc_small",
+]
+# Long-audio, streaming-ish alignment (keeps GPU memory reasonable)
+NFA_USE_STREAMING = os.getenv("NFA_USE_STREAMING", "1").lower() not in ("0", "false", "no")
+NFA_CHUNK_LEN = float(os.getenv("NFA_CHUNK_LEN", "1.6"))
+NFA_TOTAL_BUFFER = float(os.getenv("NFA_TOTAL_BUFFER", "4.0"))
+NFA_CHUNK_BATCH = int(os.getenv("NFA_CHUNK_BATCH", "32"))
+NFA_BATCH = int(os.getenv("NFA_BATCH", "1"))
+NFA_FEATURE_STRIDE = float(os.getenv("NFA_FEATURE_STRIDE", "0.01"))
+NFA_MODEL_DOWNSAMPLE = int(os.getenv("NFA_MODEL_DOWNSAMPLE", "8"))
+NFA_OUTPUT_TIMESTEP_DURATION = float(os.getenv("NFA_OUTPUT_TIMESTEP_DURATION", "0.08"))
+
+# Force devices (leave None to auto)
+NFA_TRANSCRIBE_DEVICE = os.getenv("NFA_TRANSCRIBE_DEVICE")  # "cuda" | "cpu" | None
+NFA_VITERBI_DEVICE = os.getenv("NFA_VITERBI_DEVICE")        # "cuda" | "cpu" | None
+
+# Optional: where your local NeMo repo lives (so we can import tools/nemo_forced_aligner programmatically)
+NEMO_DIR = os.getenv("NEMO_DIR")  # e.g. "C:/tools/NeMo"
+
+# Hugging Face token (for ASR download)
+HF_TOKEN = os.getenv("HUGGINGFACE_TOKEN") or os.getenv("HF_TOKEN")
+
+# =============================================================================
+# Logging
+# =============================================================================
+
+def setup_logging() -> logging.Logger:
     logger = logging.getLogger()
     logger.setLevel(logging.INFO)
-    
-    # Clear existing handlers to avoid duplicates
     logger.handlers.clear()
-    
-    # Console handler with color-friendly formatting
-    console_handler = logging.StreamHandler(sys.stdout)
-    console_handler.setLevel(logging.INFO)
-    console_format = logging.Formatter(
-        '%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-        datefmt='%Y-%m-%d %H:%M:%S'
-    )
-    console_handler.setFormatter(console_format)
-    
-    # File handler with rotation (10MB max, keep 5 files)
-    log_file = log_dir / "asr_service.log"
-    file_handler = logging.handlers.RotatingFileHandler(
-        log_file,
-        maxBytes=10*1024*1024,  # 10MB
-        backupCount=5,
-        encoding='utf-8'
-    )
-    file_handler.setLevel(logging.DEBUG)
-    file_format = logging.Formatter(
-        '%(asctime)s - %(name)s - %(levelname)s - %(funcName)s:%(lineno)d - %(message)s',
-        datefmt='%Y-%m-%d %H:%M:%S'
-    )
-    file_handler.setFormatter(file_format)
-    
-    # Add handlers to root logger
-    logger.addHandler(console_handler)
-    logger.addHandler(file_handler)
-    
-    # Set up dedicated NeMo raw output logger
-    nemo_logger = logging.getLogger("nemo_raw")
-    nemo_logger.setLevel(logging.DEBUG)
-    nemo_logger.handlers.clear()
-    
-    # NeMo raw output file handler (separate file for debugging)
-    nemo_log_file = log_dir / "nemo-output.log"
-    nemo_file_handler = logging.handlers.RotatingFileHandler(
-        nemo_log_file,
-        maxBytes=50*1024*1024,  # 50MB for raw data
-        backupCount=3,
-        encoding='utf-8'
-    )
-    nemo_file_handler.setLevel(logging.DEBUG)
-    nemo_format = logging.Formatter(
-        '%(asctime)s - NeMo Raw Output - %(message)s',
-        datefmt='%Y-%m-%d %H:%M:%S'
-    )
-    nemo_file_handler.setFormatter(nemo_format)
-    nemo_logger.addHandler(nemo_file_handler)
-    
-    # Set uvicorn logger to use our configuration
-    uvicorn_logger = logging.getLogger("uvicorn")
-    uvicorn_logger.handlers.clear()
-    uvicorn_logger.addHandler(console_handler)
-    uvicorn_logger.addHandler(file_handler)
-    
-    # Set fastapi logger
-    fastapi_logger = logging.getLogger("fastapi")
-    fastapi_logger.handlers.clear() 
-    fastapi_logger.addHandler(file_handler)
-    
+    ch = logging.StreamHandler(sys.stdout)
+    ch.setLevel(logging.INFO)
+    ch.setFormatter(logging.Formatter("%(asctime)s - %(levelname)s - %(message)s"))
+    logger.addHandler(ch)
     return logger
 
-# Check Python version on startup
-def check_python_version():
-    """Check if we're running Python 3.10+ for better NeMo compatibility."""
-    version_info = sys.version_info
-    if version_info.major < 3 or (version_info.major == 3 and version_info.minor < 10):
-        logging.warning(f"Running Python {version_info.major}.{version_info.minor}.{version_info.micro}")
-        logging.warning("For best compatibility with modern NeMo models, Python 3.10+ is recommended.")
-        logging.warning("Consider using the start_service.bat script to run with Python 3.12.")
-    else:
-        logging.info(f"Running Python {version_info.major}.{version_info.minor}.{version_info.micro} ✓")
-
-# Initialize logging first
 logger = setup_logging()
 
-# Run version check
-check_python_version()
+# =============================================================================
+# FastAPI
+# =============================================================================
 
-app = FastAPI(title="ASR-NeMo Service", version="0.1.0")
+app = FastAPI(title="Hybrid Chunked ASR + Single-pass NFA", version="0.4.0")
 
+class AlignRequest(BaseModel):
+    audio_path: str
+    beam_size: Optional[int] = None       # optional override for ASR beam
+    nfa_model: Optional[str] = None       # optional override for NFA model (CTC strongly recommended)
+    save_ass: bool = False                # also write ASS files (word-level)
+
+class Token(BaseModel):
+    w: str  # word/segment text
+    t: float  # start sec
+    d: float  # duration sec
+
+class AlignResponse(BaseModel):
+    transcript: str
+    asr_model: str
+    nfa_model: str
+    words: List[Token]
+    segments: List[Token]
+    files: Dict[str, str]  # key -> path to generated files (ctm/ass/manifest)
+
+# Back-compat legacy /asr endpoint types
 class AsrRequest(BaseModel):
     audio_path: str
     model: Optional[str] = None
     language: str = "en"
 
-class WordToken(BaseModel):
-    t: float  # start time
-    d: float  # duration
-    w: str    # word
+class AsrToken(BaseModel):
+    t: float
+    d: float
+    w: str
 
-class AsrResponse(BaseModel):
+class LegacyAsrResponse(BaseModel):
     modelVersion: str
-    tokens: List[WordToken]
+    tokens: List[AsrToken]
 
-_model = None
-_model_name = None
-_hf_authenticated = False
+# =============================================================================
+# Globals
+# =============================================================================
 
-DEFAULT_GPU_BATCH_SIZE = int(os.getenv("ASR_GPU_BATCH_SIZE", "2"))
-FALLBACK_GPU_BATCH_SIZE = int(os.getenv("ASR_GPU_FALLBACK_BATCH_SIZE", "1"))
-_transcribe_semaphore = asyncio.Semaphore(int(os.getenv("ASR_MAX_CONCURRENT_JOBS", "1")))
+_asr_model = None
+_hf_ok = False
 
-def _ensure_hf_auth():
-    """Ensure Hugging Face authentication is set up."""
-    global _hf_authenticated
-    
-    if _hf_authenticated:
-        return True
-    
-    # Try to get HF token from environment variable
-    hf_token = os.getenv("HUGGINGFACE_TOKEN") or os.getenv("HF_TOKEN")
-    
-    if hf_token:
-        try:
-            login(token=hf_token, add_to_git_credential=True)
-            _hf_authenticated = True
-            logging.info("Successfully authenticated with Hugging Face")
-            return True
-        except Exception as e:
-            logging.error(f"Failed to authenticate with Hugging Face: {e}")
-            return False
-    else:
-        # Try to use existing token if already logged in
-        try:
-            from huggingface_hub import HfFolder
-            token = HfFolder.get_token()
-            if token:
-                _hf_authenticated = True
-                logging.info("Using existing Hugging Face authentication")
-                return True
-        except Exception:
-            pass
-        
-        logging.warning("No Hugging Face token found. Please set HUGGINGFACE_TOKEN environment variable.")
-        return False
+# =============================================================================
+# Helpers / runtime utilities
+# =============================================================================
 
-def _normalize_word_entry(entry: dict, index: int) -> dict:
-    """Normalize word entry from NeMo to our Token format"""
-    return {
-        "id": index,
-        "text": "".join(entry.get("word", [])),
-        "start": float(entry.get("start", 0.0)),
-        "end": float(entry.get("end", 0.0)),
-        "start_offset": int(entry.get("start_offset", 0)),
-        "end_offset": int(entry.get("end_offset", 0)),
-    }
-
-def _normalize_segment_entry(entry: dict, index: int) -> dict:
-    """Normalize segment entry from NeMo"""
-    return {
-        "id": index,
-        "text": "".join(entry.get("segment", [])),
-        "start": float(entry.get("start", 0.0)),
-        "end": float(entry.get("end", 0.0)),
-        "start_offset": int(entry.get("start_offset", 0)),
-        "end_offset": int(entry.get("end_offset", 0)),
-    }
-
-
-def _load_model(device: str, nemo_asr_module):
-    """Load the ASR model on the requested device if needed."""
-    global _model, _model_name
-
-    if _model is not None:
-        try:
-            current_device = next(_model.parameters()).device.type
-        except Exception:
-            current_device = device
-        if current_device != device:
-            logging.info(f"Moving model from {current_device} to {device}")
-            _model = _model.to(device)
-        _model.eval()
+def _hf_auth():
+    """Hugging Face auth to allow downloading gated/pretrained weights."""
+    global _hf_ok
+    if _hf_ok:
         return
-
-    logging.info("Loading ASR model...")
-    try:
-        _model_name = "nvidia/parakeet-tdt-0.6b-v3"
-        logging.info(f"Attempting to load model: {_model_name}")
-        _model = nemo_asr_module.models.ASRModel.from_pretrained(_model_name).to(device)
-        logging.info(f"Successfully loaded model: {_model_name} on {device}")
-    except Exception as e:
-        logging.warning(f"Failed to load Parakeet model: {e}")
+    if HF_TOKEN:
         try:
-            _model_name = "nvidia/stt_en_quartznet15x5"
-            logging.info(f"Attempting fallback to model: {_model_name}")
-            _model = nemo_asr_module.models.ASRModel.from_pretrained(_model_name).to(device)
-            logging.info(f"Successfully loaded fallback model: {_model_name} on {device}")
-        except Exception as e2:
-            logging.warning(f"Failed to load QuartzNet model: {e2}")
-            try:
-                _model_name = "nvidia/stt_en_conformer_ctc_small"
-                logging.info(f"Attempting final fallback to model: {_model_name}")
-                _model = nemo_asr_module.models.ASRModel.from_pretrained(_model_name).to(device)
-                logging.info(f"Successfully loaded final fallback model: {_model_name} on {device}")
-            except Exception as e3:
-                logging.error("Failed to load any compatible model. Parakeet: %s, QuartzNet: %s, Conformer: %s", e, e2, e3)
-                raise HTTPException(
-                    status_code=500,
-                    detail=f"Failed to load any compatible model. Errors: Parakeet: {str(e)}, QuartzNet: {str(e2)}, Conformer: {str(e3)}"
-                )
-    _model.eval()
+            login(token=HF_TOKEN, add_to_git_credential=True)
+            _hf_ok = True
+            logger.info("Hugging Face authentication OK")
+        except Exception as e:
+            logger.warning(f"HF auth failed: {e}")
 
+def _absolute_path(p: str) -> str:
+    return str(Path(p).expanduser().resolve())
 
-def _cleanup_model():
-    """Cleanup model and free GPU memory"""
-    global _model, _model_name
-    try:
-        if _model is not None:
-            del _model
-            _model = None
-            _model_name = None
-    except Exception:
-        pass
-
-    gc.collect()
-    if torch.cuda.is_available():
-        torch.cuda.synchronize()
-        torch.cuda.empty_cache()
-        torch.cuda.ipc_collect()
-        try:
-            torch.cuda.reset_peak_memory_stats()
-        except Exception:
-            pass
-
-
-def _prepare_chunks(audio_path: str, min_chunk_sec: float = 60.0, max_chunk_sec: float = 90.0, silence_db: float = 35.0):
-    """Slice audio into manageable chunks aligned to low-energy regions."""
+def _prepare_chunks(audio_path: str,
+                    min_chunk_sec: float,
+                    max_chunk_sec: float,
+                    silence_db: float) -> List[Dict[str, float]]:
+    """
+    Silence-aware chunking of the source audio for ASR ONLY.
+    """
     y, sr = librosa.load(audio_path, sr=None)
     if y.ndim > 1:
         y = librosa.to_mono(y)
 
     total_samples = len(y)
+    duration_sec = total_samples / sr if total_samples else 0.0
     if total_samples == 0:
         return []
 
-    duration_sec = total_samples / sr
+    def _write_segment(arr, s, e, idx) -> Dict[str, float]:
+        tmp = tempfile.NamedTemporaryFile(suffix=f"_chunk{idx}.wav", delete=False)
+        sf.write(tmp.name, arr[s:e], sr)
+        tmp.close()
+        return {"path": tmp.name, "start_sec": s / sr, "end_sec": e / sr}
+
     if duration_sec <= max_chunk_sec:
-        temp_file = tempfile.NamedTemporaryFile(suffix='_chunk0.wav', delete=False)
-        sf.write(temp_file.name, y, sr)
-        temp_file.close()
-        return [{"path": temp_file.name, "start_sec": 0.0, "end_sec": duration_sec}]
-
-    segments = _derive_chunk_segments(y, sr, min_chunk_sec, max_chunk_sec, silence_db)
-    chunk_infos = []
-    for idx, (start_sample, end_sample) in enumerate(segments):
-        temp_file = tempfile.NamedTemporaryFile(suffix=f'_chunk{idx}.wav', delete=False)
-        sf.write(temp_file.name, y[start_sample:end_sample], sr)
-        temp_file.close()
-        chunk_infos.append({
-            "path": temp_file.name,
-            "start_sec": start_sample / sr,
-            "end_sec": end_sample / sr
-        })
-    return chunk_infos
-
-
-def _derive_chunk_segments(y: np.ndarray, sr: int, min_chunk_sec: float, max_chunk_sec: float, silence_db: float):
-    total_samples = len(y)
-    duration_sec = total_samples / sr
-    if duration_sec <= max_chunk_sec:
-        return [(0, total_samples)]
+        return [_write_segment(y, 0, total_samples, 0)]
 
     try:
+        # Non-silent intervals [start, end] in samples
         non_silent = librosa.effects.split(y, top_db=silence_db)
     except Exception as exc:
-        logging.warning("librosa.effects.split failed (%s); using fixed segmentation", exc)
-        return _fallback_segments(total_samples, sr, max_chunk_sec)
+        logger.warning(f"librosa.effects.split failed ({exc}); using fixed windows")
+        step = int(max_chunk_sec * sr)
+        out = []
+        s = 0
+        idx = 0
+        while s < total_samples:
+            e = min(total_samples, s + step)
+            out.append(_write_segment(y, s, e, idx)); idx += 1
+            s = e
+        return out
 
-    silence_points = {0, total_samples}
+    # candidate silence points between non-silent intervals
+    silence_pts = {0, total_samples}
     for i in range(len(non_silent) - 1):
-        silence_start = non_silent[i][1]
-        silence_end = non_silent[i + 1][0]
-        if silence_end <= silence_start:
-            continue
-        silence_points.add(int((silence_start + silence_end) / 2))
+        s_end = non_silent[i][1]
+        n_start = non_silent[i + 1][0]
+        if n_start > s_end:
+            silence_pts.add(int((s_end + n_start) / 2))
 
-    silence_samples = sorted(silence_points)
-    silence_secs = [s / sr for s in silence_samples]
+    silence_idx = sorted(silence_pts)
+    silence_secs = [s / sr for s in silence_idx]
 
-    segments = []
-    chunk_start_sample = 0
-    chunk_start_sec = 0.0
-    target_len_sec = (min_chunk_sec + max_chunk_sec) / 2
+    segments: List[Tuple[int, int]] = []
+    cur_start = 0
+    cur_start_sec = 0.0
+    target_len = (min_chunk_sec + max_chunk_sec) / 2.0
 
-    while chunk_start_sample < total_samples:
-        remaining_sec = duration_sec - chunk_start_sec
-        if remaining_sec <= max_chunk_sec:
-            segments.append((chunk_start_sample, total_samples))
+    while cur_start < total_samples:
+        remain = duration_sec - cur_start_sec
+        if remain <= max_chunk_sec:
+            segments.append((cur_start, total_samples))
             break
 
-        min_end_sec = chunk_start_sec + min_chunk_sec
-        max_end_sec = min(duration_sec, chunk_start_sec + max_chunk_sec)
-        candidate_secs = [s for s in silence_secs if min_end_sec <= s <= max_end_sec]
+        min_end_sec = cur_start_sec + min_chunk_sec
+        max_end_sec = min(duration_sec, cur_start_sec + max_chunk_sec)
+        candidates = [s for s in silence_secs if min_end_sec <= s <= max_end_sec]
 
-        if candidate_secs:
-            target_sec = min(duration_sec, chunk_start_sec + target_len_sec)
-            chosen_sec = min(candidate_secs, key=lambda s: abs(s - target_sec))
+        if candidates:
+            target_sec = min(duration_sec, cur_start_sec + target_len)
+            chosen_sec = min(candidates, key=lambda s: abs(s - target_sec))
         else:
             chosen_sec = max_end_sec
 
-        chosen_sample = int(round(chosen_sec * sr))
-        if chosen_sample <= chunk_start_sample:
-            chosen_sample = min(total_samples, chunk_start_sample + int(max_chunk_sec * sr))
-            chosen_sec = chosen_sample / sr
+        chosen = int(round(chosen_sec * sr))
+        if chosen <= cur_start:
+            chosen = min(total_samples, cur_start + int(max_chunk_sec * sr))
+            chosen_sec = chosen / sr
 
-        segments.append((chunk_start_sample, chosen_sample))
-        chunk_start_sample = chosen_sample
-        chunk_start_sec = chosen_sec
+        segments.append((cur_start, chosen))
+        cur_start = chosen
+        cur_start_sec = chosen_sec
 
-    if segments and segments[-1][1] < total_samples:
-        segments[-1] = (segments[-1][0], total_samples)
+    out = []
+    for idx, (s, e) in enumerate(segments):
+        out.append(_write_segment(y, s, e, idx))
+    return out
 
-    return segments
+def _load_asr_model():
+    """
+    Load Parakeet-TDT ASR and set BEAM (timestamps OFF) with optional batched beam decoder.
+    """
+    global _asr_model
+    if _asr_model is not None:
+        _asr_model.eval()
+        return _asr_model
 
+    import nemo.collections.asr as nemo_asr
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    logger.info(f"Loading ASR model: {ASR_MODEL_NAME} on {device}")
+    _asr_model = nemo_asr.models.ASRModel.from_pretrained(ASR_MODEL_NAME).to(device)
+    _asr_model.eval()
 
-def _fallback_segments(total_samples: int, sr: int, max_chunk_sec: float):
-    step_samples = int(max_chunk_sec * sr)
-    segments = []
-    start = 0
-    while start < total_samples:
-        end = min(total_samples, start + step_samples)
-        segments.append((start, end))
-        start = end
-    return segments
-
-@app.post("/asr", response_model=AsrResponse)
-async def transcribe_audio(request: AsrRequest):
-    """Serialized entry point that keeps GPU usage predictable by allowing one transcription at a time."""
-    async with _transcribe_semaphore:
-        return await _transcribe_impl(request)
-
-
-
-async def _transcribe_impl(request: AsrRequest) -> AsrResponse:
-    """Core ASR implementation with improved memory handling and timestamp extraction."""
-    global _model
-
-    logging.info(f"ASR request received - Audio: {request.audio_path}, Model: {request.model}, Language: {request.language}")
-
-    chunk_infos = []
+    # Configure BEAM decoding with no alignment preservation
     try:
-        if not os.path.exists(request.audio_path):
-            logging.error(f"Audio file not found: {request.audio_path}")
-            raise HTTPException(status_code=404, detail=f"Audio file not found: {request.audio_path}")
+        import copy
+        from omegaconf import OmegaConf, DictConfig
 
-        if not _ensure_hf_auth():
-            raise HTTPException(status_code=401, detail="Hugging Face authentication required. Please set HUGGINGFACE_TOKEN environment variable.")
+        decoding_cfg = copy.deepcopy(_asr_model.cfg.decoding)
+        if isinstance(decoding_cfg, DictConfig):
+            OmegaConf.set_struct(decoding_cfg, False)
+
+        # MUST be "beam" for any RNNT beam variant
+        decoding_cfg.strategy = "beam"
+
+        # never ask alignments / timestamps during ASR
+        if hasattr(decoding_cfg, "preserve_alignments"):
+            decoding_cfg.preserve_alignments = False
+        if hasattr(decoding_cfg, "compute_timestamps"):
+            decoding_cfg.compute_timestamps = False
+
+        beam_cfg = getattr(decoding_cfg, "beam", None)
+        if beam_cfg is not None:
+            if isinstance(beam_cfg, DictConfig):
+                OmegaConf.set_struct(beam_cfg, False)
+
+            # Pick the batched RNNT decoder HERE (NOT in strategy)
+            # e.g. "malsd_batch" | "alsd" | "maes"
+            beam_cfg.search_type = os.getenv("ASR_BEAM_SEARCH", "malsd_batch")
+
+            # Width + core knobs
+            beam_cfg.beam_size = int(os.getenv("ASR_BEAM_SIZE", "10"))
+            beam_cfg.score_norm = True
+            beam_cfg.return_best_hypothesis = True
+
+            # Allow CUDA Graphs when supported
+            if hasattr(beam_cfg, "allow_cuda_graphs"):
+                beam_cfg.allow_cuda_graphs = True
+
+            # (safety) never preserve alignments at beam level either
+            if hasattr(beam_cfg, "preserve_alignments"):
+                beam_cfg.preserve_alignments = False
+
+        # Let NeMo fuse work across items for batched beam
+        if hasattr(decoding_cfg, "fused_batch_size"):
+            decoding_cfg.fused_batch_size = int(os.getenv("ASR_FUSED_BATCH_SIZE", "8"))
+
+        _asr_model.change_decoding_strategy(decoding_cfg=decoding_cfg)
+        try:
+            _asr_model.cfg.decoding = decoding_cfg  # ensure transcribe() uses it
+        except Exception:
+            pass
+
+        logger.info(
+            "ASR set to beam_size=%s, search_type=%s, timestamps OFF",
+            os.getenv("ASR_BEAM_SIZE", "10"), os.getenv("ASR_BEAM_SEARCH", "malsd_batch")
+        )
+    except Exception as e:
+        logger.warning(f"Beam config failed; using defaults: {e}")
+
+    return _asr_model
+
+
+def _transcribe_chunked(audio_path: str, override_beam: Optional[int] = None) -> str:
+    """
+    Chunk the audio (if enabled) and transcribe chunks with timestamps OFF, then concatenate text.
+    """
+    _hf_auth()
+    asr = _load_asr_model()
+
+    # Optional request-time override for beam size
+    if override_beam and override_beam != ASR_BEAM_SIZE:
+        try:
+            import copy
+            from omegaconf import OmegaConf, DictConfig
+            decoding_cfg = copy.deepcopy(asr.cfg.decoding)
+            if isinstance(decoding_cfg, DictConfig):
+                OmegaConf.set_struct(decoding_cfg, False)
+            decoding_cfg.strategy = "batch"
+            beam_cfg = getattr(decoding_cfg, "beam", None)
+            if beam_cfg is not None:
+                # pick a batched decoder here
+                beam_cfg.search_type = os.getenv("ASR_BEAM_SEARCH", "malsd_batch")  # "malsd_batch" | "alsd" | "maes"
+                beam_cfg.beam_size   = int(os.getenv("ASR_BEAM_SIZE", "10"))
+                beam_cfg.score_norm  = True
+                beam_cfg.return_best_hypothesis = True
+                # graphs help a lot with batched decoders
+                if hasattr(beam_cfg, "allow_cuda_graphs"):
+                    beam_cfg.allow_cuda_graphs = True
+            # never request alignments
+            if hasattr(decoding_cfg, "compute_timestamps"):
+                decoding_cfg.compute_timestamps = False
+            if hasattr(decoding_cfg, "preserve_alignments"):
+                decoding_cfg.preserve_alignments = False
+
+            asr.change_decoding_strategy(decoding_cfg=decoding_cfg)
+            try:
+                asr.cfg.decoding = decoding_cfg
+            except Exception:
+                pass
+            logger.info(f"Overrode beam_size to {override_beam}")
+        except Exception as e:
+            logger.warning(f"Failed to override beam size: {e}")
+
+    # Prepare chunks for ASR
+    if ASR_PRECHUNK:
+        chunks = _prepare_chunks(audio_path, ASR_MIN_CHUNK_SEC, ASR_MAX_CHUNK_SEC, ASR_SILENCE_DB)
+    else:
+        chunks = [{"path": _absolute_path(audio_path), "start_sec": 0.0, "end_sec": 0.0}]
+
+    if not chunks:
+        return ""
+
+    texts: List[str] = []
+    for idx, ck in enumerate(chunks, 1):
+        path = ck["path"]
+        logger.info(f"ASR chunk {idx}/{len(chunks)}: {path}")
+
+        kwargs = dict(return_hypotheses=True, timestamps=False, batch_size=ASR_BATCH)
+
+        def _call():
+            with torch.inference_mode():
+                return asr.transcribe([path], **kwargs)
 
         try:
-            import nemo.collections.asr as nemo_asr
-        except ImportError as e:
-            raise HTTPException(status_code=500, detail=f"Failed to import NeMo: {str(e)}")
+            hyps = _call()
+        except torch.cuda.OutOfMemoryError:
+            logger.warning("CUDA OOM during chunk ASR; retrying with smaller batch")
+            kwargs["batch_size"] = ASR_FALLBACK_BATCH
+            hyps = _call()
 
-        device = "cuda" if torch.cuda.is_available() else "cpu"
-        _load_model(device, nemo_asr)
+        hyp = hyps[0]
+        if isinstance(hyp, list):
+            hyp = hyp[0]
+        text = (hyp.text or "").strip()
+        texts.append(text)
 
-        chunk_infos = _prepare_chunks(request.audio_path)
-        if not chunk_infos:
-            logging.warning("No content detected in audio; returning empty transcript")
-            return AsrResponse(modelVersion=_model_name or "unknown", tokens=[])
-
-        logging.info(f"Split audio into {len(chunk_infos)} chunk(s) for transcription")
-
-        aggregated_tokens: List[WordToken] = []
-        overall_start = datetime.now()
-
-        for idx, chunk in enumerate(chunk_infos, start=1):
-            chunk_duration = chunk["end_sec"] - chunk["start_sec"]
-            logging.info(f"Chunk {idx}/{len(chunk_infos)}: offset={chunk['start_sec']:.2f}s length={chunk_duration:.2f}s on {device}")
-
-            transcribe_kwargs = {
-                "batch_size": DEFAULT_GPU_BATCH_SIZE,
-                "return_hypotheses": True,
-                "timestamps": True
-            }
-
-            def _run_transcribe():
-                with torch.inference_mode():
-                    return _model.transcribe([chunk["path"]], **transcribe_kwargs)
-
+        # Cleanup temp chunk
+        if ASR_PRECHUNK and os.path.exists(path):
             try:
-                output = _run_transcribe()
-            except torch.cuda.OutOfMemoryError:
-                logging.warning("GPU OOM on chunk %s; retrying with batch size %s", idx, FALLBACK_GPU_BATCH_SIZE)
-                if torch.cuda.is_available():
-                    torch.cuda.synchronize()
-                    torch.cuda.empty_cache()
-                    torch.cuda.ipc_collect()
+                os.remove(path)
+            except Exception:
+                pass
 
-                transcribe_kwargs["batch_size"] = FALLBACK_GPU_BATCH_SIZE
-                try:
-                    output = _run_transcribe()
-                except torch.cuda.OutOfMemoryError:
-                    logging.error("GPU still OOM; moving model to CPU for chunk %s", idx)
-                    if torch.cuda.is_available():
-                        try:
-                            _model = _model.to("cpu")
-                            _model.eval()
-                            device = "cpu"
-                        except Exception as move_err:
-                            logging.error("Failed to move model to CPU: %s", move_err)
-                            raise HTTPException(status_code=500, detail="GPU out of memory and failed to move model to CPU.")
-                    transcribe_kwargs["batch_size"] = 1
-                    output = _run_transcribe()
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
 
-            if device == "cuda":
-                torch.cuda.synchronize()
+    # Concatenate with simple sentence separators to help aligner
+    full_text = ". ".join(t for t in texts if t)
+    if full_text and not full_text.endswith((".", "!", "?")):
+        full_text += "."
+    return full_text
 
-            hypo = output[0]
+# ---------- NFA helpers ----------
 
-            nemo_logger = logging.getLogger("nemo_raw")
-            nemo_logger.info("=" * 80)
-            nemo_logger.info(f"TRANSCRIPTION REQUEST CHUNK {idx}/{len(chunk_infos)}: offset={chunk['start_sec']:.2f}s path={chunk['path']}")
-            nemo_logger.info("=" * 80)
-            nemo_logger.info(f"HYPOTHESIS TEXT: {hypo.text}")
-            nemo_logger.info(f"HYPOTHESIS SCORE: {hypo.score if hasattr(hypo, 'score') else 'N/A'} (type: {type(hypo.score) if hasattr(hypo, 'score') else 'N/A'})")
-            nemo_logger.info(f"HYPO ATTRIBUTES: {[attr for attr in dir(hypo) if not attr.startswith('_')]}")
+def _find_align_py() -> Optional[Path]:
+    """
+    Locate NeMo's tools/nemo_forced_aligner/align.py with preference for the vendored copy.
+    Search order:
+      1) services/asr-nemo/vendor_nfa/align.py
+      2) NEMO_DIR env (if given)
+      3) installed nemo package path
+    """
+    vendored = Path(__file__).resolve().parent / "vendor_nfa" / "align.py"
+    if vendored.exists():
+        return vendored
 
-            if hasattr(hypo, 'timestamp') and hypo.timestamp:
-                nemo_logger.info(f"TIMESTAMP KEYS: {list(hypo.timestamp.keys())}")
-                if 'word' in hypo.timestamp:
-                    word_data = hypo.timestamp['word']
-                    nemo_logger.info(f"WORD COUNT: {len(word_data)}")
-                    nemo_logger.info("WORD DATA SAMPLE (first 5 entries):")
-                    for j, word_entry in enumerate(word_data[:5]):
-                        nemo_logger.info(f"  Word {j}: {word_entry}")
-                        nemo_logger.info(f"    Keys: {list(word_entry.keys()) if word_entry else 'Empty'}")
-                    if len(word_data) > 5:
-                        nemo_logger.info(f"  ... and {len(word_data) - 5} more word entries")
-                if 'segment' in hypo.timestamp:
-                    segment_data = hypo.timestamp['segment']
-                    nemo_logger.info(f"SEGMENT COUNT: {len(segment_data)}")
-                    nemo_logger.info("SEGMENT DATA SAMPLE (first 3 entries):")
-                    for j, segment_entry in enumerate(segment_data[:3]):
-                        nemo_logger.info(f"  Segment {j}: {segment_entry}")
-                        nemo_logger.info(f"    Keys: {list(segment_entry.keys()) if segment_entry else 'Empty'}")
-                other_keys = [k for k in hypo.timestamp.keys() if k not in ('word', 'segment')]
-                if other_keys:
-                    nemo_logger.info(f"OTHER TIMESTAMP KEYS: {other_keys}")
-                    for key in other_keys[:3]:
-                        data = hypo.timestamp[key]
-                        nemo_logger.info(f"  {key} ({len(data)} entries): {data[:2] if len(data) > 0 else 'Empty'}")
-            else:
-                nemo_logger.info("NO TIMESTAMP DATA AVAILABLE")
+    if NEMO_DIR:
+        cand = Path(NEMO_DIR).expanduser().resolve() / "tools" / "nemo_forced_aligner" / "align.py"
+        if cand.exists():
+            return cand
 
-            time_offset = chunk["start_sec"]
-            if hasattr(hypo, 'timestamp') and hypo.timestamp is not None and hypo.timestamp.get("word", []):
-                for word_entry in hypo.timestamp.get("word", []):
-                    word_start = float(word_entry.get("start", 0.0))
-                    word_end = float(word_entry.get("end", 0.0))
-                    aggregated_tokens.append(WordToken(
-                        t=round(time_offset + word_start, 2),
-                        d=round(word_end - word_start, 2),
-                        w="".join(word_entry.get("word", []))
-                    ))
-            elif hypo.text:
-                for j, word in enumerate(hypo.text.split()):
-                    aggregated_tokens.append(WordToken(
-                        t=round(time_offset + j * 0.5, 2),
-                        d=0.4,
-                        w=word
-                    ))
+    try:
+        import nemo
+        base = Path(nemo.__file__).resolve().parent
+        candidates = [
+            base / "tools" / "nemo_forced_aligner" / "align.py",
+            base.parent / "nemo" / "tools" / "nemo_forced_aligner" / "align.py",  # when nested
+        ]
+        for c in candidates:
+            if c.exists():
+                return c
+    except Exception:
+        pass
 
-            gc.collect()
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
+    return None
 
-        total_time = (datetime.now() - overall_start).total_seconds()
-        logging.info(f"Transcription completed in {total_time:.2f} seconds across {len(chunk_infos)} chunk(s) on {device}")
+def _import_nfa_programmatically():
+    """
+    Import AlignmentConfig and main() so we can call aligner in-process.
+    We *prepend* the directory containing align.py to sys.path to satisfy its
+    'from utils ...' absolute imports.
+    """
+    align_py = _find_align_py()
+    if align_py is None:
+        raise ImportError("NFA align.py not found in installed package or NEMO_DIR")
 
-        response = AsrResponse(
-            modelVersion=_model_name or "unknown",
-            tokens=aggregated_tokens
+    nfadir = align_py.parent
+    if str(nfadir) not in sys.path:
+        sys.path.insert(0, str(nfadir))
+
+    # Avoid package-relative import path issues ('from utils ...')
+    from align import AlignmentConfig, main  # type: ignore
+    return AlignmentConfig, main
+
+def _compute_devices() -> Tuple[str, str]:
+    if NFA_TRANSCRIBE_DEVICE in ("cuda", "cpu"):
+        transcribe_dev = NFA_TRANSCRIBE_DEVICE
+    else:
+        transcribe_dev = "cuda" if torch.cuda.is_available() else "cpu"
+
+    if NFA_VITERBI_DEVICE in ("cuda", "cpu"):
+        viterbi_dev = NFA_VITERBI_DEVICE
+    else:
+        viterbi_dev = "cuda" if torch.cuda.is_available() else "cpu"
+
+    return transcribe_dev, viterbi_dev
+
+def _try_ctc_model(name: str) -> Optional[str]:
+    """
+    Return a CTC-capable model name if usable; otherwise None.
+    """
+    try:
+        # quick sanity: name present; actual download is done by aligner
+        return name
+    except Exception:
+        return None
+
+def _select_nfa_model(request_name: Optional[str]) -> str:
+    """
+    Choose a CTC model for NFA: request override, else default, else fallbacks.
+    """
+    candidates: List[str] = []
+    if request_name:
+        candidates.append(request_name)
+    candidates.append(NFA_MODEL_NAME)
+    candidates.extend(NFA_MODEL_FALLBACKS)
+
+    for nm in candidates:
+        if not nm:
+            continue
+        if "ctc" in nm.lower():
+            ok = _try_ctc_model(nm)
+            if ok:
+                if nm != candidates[0]:
+                    logger.info(f"NFA using model: {nm}")
+                return nm
+
+    # If everything else fails, still return something (let aligner raise later)
+    chosen = candidates[0]
+    logger.warning(f"NFA model '{chosen}' may not be pure CTC; alignment may require extra overrides.")
+    return chosen
+
+def _write_manifest(audio_path: str, text: str, work_dir: Path) -> Path:
+    mani = work_dir / "manifest.json"
+    data = {"audio_filepath": _absolute_path(audio_path), "text": text}
+    mani.write_text(json.dumps(data, ensure_ascii=False) + "\n", encoding="utf-8")
+    return mani
+
+def _run_nfa_inproc(manifest_path: Path, out_dir: Path, nfa_model: str, save_ass: bool) -> None:
+    """
+    Programmatic aligner call (preferred; avoids brittle CLI overrides).
+    """
+    AlignmentConfig, nfa_main = _import_nfa_programmatically()
+
+    transcribe_dev, viterbi_dev = _compute_devices()
+    # Keep config minimal and robust (NFA computes stride automatically for CTC models)
+    cfg = AlignmentConfig(
+        pretrained_name=nfa_model,
+        model_path=None,
+        manifest_filepath=str(manifest_path),
+        output_dir=str(out_dir),
+        align_using_pred_text=False,
+        transcribe_device=transcribe_dev,
+        viterbi_device=viterbi_dev,
+        batch_size=NFA_BATCH,
+        use_local_attention=True,
+        audio_filepath_parts_in_utt_id=1,
+        # Long audio knobs
+        use_buffered_chunked_streaming=bool(NFA_USE_STREAMING),
+        chunk_len_in_secs=float(NFA_CHUNK_LEN),
+        total_buffer_in_secs=float(NFA_TOTAL_BUFFER),
+        chunk_batch_size=int(NFA_CHUNK_BATCH),
+        save_output_file_formats=(["ctm", "ass"] if save_ass else ["ctm"]),
+        # ASS appearance knobs (only used if save_ass=True)
+        # ass_file_config can be left default; service doesn't emit videos
+    )
+    cfg.feature_stride = float(NFA_FEATURE_STRIDE)
+    cfg.model_downsample_factor = int(NFA_MODEL_DOWNSAMPLE)
+    cfg.output_timestep_duration = float(NFA_OUTPUT_TIMESTEP_DURATION)
+    nfa_main(cfg)
+
+def _run_nfa_cli(manifest_path: Path, out_dir: Path, nfa_model: str, save_ass: bool) -> None:
+    """
+    Fallback: run align.py via subprocess (Hydra) mirroring the working PowerShell invocation.
+    """
+    align_py = _find_align_py()
+    if not align_py:
+        raise RuntimeError("Cannot locate NeMo NFA align.py for CLI fallback.")
+
+    transcribe_dev, viterbi_dev = _compute_devices()
+    save_formats = json.dumps(["ctm", "ass"] if save_ass else ["ctm"], separators=(",", ":"))
+
+    hydra_overrides = [
+        f'+feature_stride={NFA_FEATURE_STRIDE:g}',
+        f'+model_downsample_factor={NFA_MODEL_DOWNSAMPLE}',
+        f'+output_timestep_duration={NFA_OUTPUT_TIMESTEP_DURATION:g}',
+        f'use_buffered_chunked_streaming={"true" if NFA_USE_STREAMING else "false"}',
+        f'chunk_len_in_secs={NFA_CHUNK_LEN:g}',
+        f'total_buffer_in_secs={NFA_TOTAL_BUFFER:g}',
+        f'chunk_batch_size={NFA_CHUNK_BATCH}',
+        f'batch_size={NFA_BATCH}',
+        f'transcribe_device={transcribe_dev}',
+        f'viterbi_device={viterbi_dev}',
+        'use_local_attention=true',
+        'audio_filepath_parts_in_utt_id=1',
+        f'save_output_file_formats={save_formats}',
+    ]
+
+    cmd = [
+        sys.executable, '-X', 'utf8', str(align_py),
+        f'pretrained_name="{nfa_model}"',
+        f'manifest_filepath="{str(manifest_path)}"',
+        f'output_dir="{str(out_dir)}"',
+        *hydra_overrides,
+    ]
+
+    env = os.environ.copy()
+    env.setdefault("HYDRA_FULL_ERROR", "1")
+    env.setdefault("PYTHONUTF8", "1")
+    logger.info("Running NFA via subprocess: %s", " ".join(shlex.quote(c) for c in cmd))
+
+    proc = subprocess.run(cmd, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    if proc.returncode != 0:
+        logger.error("NFA subprocess failed:\n%s", proc.stdout)
+        raise RuntimeError(f"NFA subprocess failed with code {proc.returncode}")
+    else:
+        logger.debug("NFA output:\n%s", proc.stdout)
+
+
+def _run_nfa(audio_path: str, transcript: str, request_model: Optional[str], save_ass: bool) -> Dict[str, Path]:
+    """
+    Build a 1-line manifest and run NFA (programmatic if possible, else CLI).
+    """
+    work_dir = Path(tempfile.mkdtemp(prefix="nfa_out_")).resolve()
+    out_dir = work_dir / "out"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    manifest = _write_manifest(audio_path, transcript, work_dir)
+
+    nfa_model = _select_nfa_model(request_model)
+    try:
+        _run_nfa_inproc(manifest, out_dir, nfa_model, save_ass)
+    except Exception as e_prog:
+        logger.warning(f"NFA programmatic run failed ({e_prog}); trying subprocess.")
+        _run_nfa_cli(manifest, out_dir, nfa_model, save_ass)
+
+    # Expected outputs
+    utt_id = Path(_absolute_path(audio_path)).stem.replace(" ", "-")
+    files = {
+        "root": out_dir,
+        "ctm_tokens": out_dir / "ctm" / "tokens" / f"{utt_id}.ctm",
+        "ctm_words": out_dir / "ctm" / "words" / f"{utt_id}.ctm",
+        "ctm_segments": out_dir / "ctm" / "segments" / f"{utt_id}.ctm",
+        "manifest_with_ctm_paths": out_dir / f"{manifest.stem}_with_ctm_paths.json",
+    }
+    if save_ass:
+        files["ass_words"] = out_dir / "ass" / "words" / f"{utt_id}.ass"
+        files["ass_segments"] = out_dir / "ass" / "segments" / f"{utt_id}.ass"
+
+    return files
+
+def _parse_ctm(ctm_path: Path) -> List[Token]:
+    """
+    Parse CTM lines: <utt_id> 1 <start> <dur> <text...>
+    """
+    toks: List[Token] = []
+    if not ctm_path.exists():
+        return toks
+    with ctm_path.open("r", encoding="utf-8", errors="ignore") as f:
+        for line in f:
+            parts = line.strip().split()
+            if len(parts) < 5:
+                continue
+            # ignore channel field (index 1)
+            _, _, start, dur, *text_parts = parts
+            try:
+                t = float(start); d = float(dur)
+            except ValueError:
+                continue
+            w = " ".join(text_parts)
+            toks.append(Token(w=w, t=round(t, 3), d=round(d, 3)))
+    return toks
+
+# =============================================================================
+# Routes
+# =============================================================================
+
+@app.get("/health")
+def health():
+    return {
+        "status": "ok",
+        "cuda": torch.cuda.is_available(),
+        "device_count": torch.cuda.device_count() if torch.cuda.is_available() else 0,
+        "asr_model": ASR_MODEL_NAME,
+        "nfa_model_default": NFA_MODEL_NAME,
+        "chunking": ASR_PRECHUNK,
+        "ts": time.time(),
+    }
+
+@app.post("/align", response_model=AlignResponse)
+def align(req: AlignRequest) -> AlignResponse:
+    audio_path = _absolute_path(req.audio_path)
+    if not Path(audio_path).exists():
+        raise HTTPException(status_code=404, detail=f"Audio not found: {audio_path}")
+
+    try:
+        # Step 1: Chunked ASR with beam, timestamps OFF
+        transcript = _transcribe_chunked(audio_path, override_beam=req.beam_size)
+        logger.info("ASR transcript chars: %d", len(transcript))
+
+        # Step 2: Single-pass NFA on FULL audio + full transcript
+        files = _run_nfa(audio_path, transcript, req.nfa_model, save_ass=req.save_ass)
+
+        # Parse CTMs (if present)
+        words = _parse_ctm(files.get("ctm_words", Path()))
+        segments = _parse_ctm(files.get("ctm_segments", Path()))
+
+        return AlignResponse(
+            transcript=transcript,
+            asr_model=ASR_MODEL_NAME,
+            nfa_model=req.nfa_model or NFA_MODEL_NAME,
+            words=words,
+            segments=segments,
+            files={k: str(v) for k, v in files.items()},
         )
-
-        logging.info(f"ASR processing completed - {len(response.tokens)} word tokens generated")
-        return response
-
     except HTTPException:
         raise
-    except torch.cuda.OutOfMemoryError as oom:
-        logging.error(f"Unrecoverable CUDA OOM: {oom}")
-        gc.collect()
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
-        raise HTTPException(status_code=500, detail="CUDA out of memory during transcription. Please retry later.")
     except Exception as e:
-        logging.error(f"Error processing audio {request.audio_path}: {str(e)}")
-        logging.error("Full traceback: %s", traceback.format_exc())
-        gc.collect()
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
-        error_detail = f"Error processing audio: {str(e)} | {traceback.format_exc()}"
-        raise HTTPException(status_code=500, detail=error_detail)
-    finally:
-        for chunk in chunk_infos:
-            try:
-                os.remove(chunk["path"])
-            except Exception as cleanup_err:
-                logging.warning(f"Failed to remove temp chunk {chunk.get('path')}: {cleanup_err}")
-@app.get("/health")
-async def health_check():
-    model_info = _model_name or "No model loaded"
-    if _model is not None:
-        device = next(_model.parameters()).device.type
-        model_info += f" ({device})"
-    
-    cuda_info = {
-        "available": torch.cuda.is_available(),
-        "device_count": torch.cuda.device_count() if torch.cuda.is_available() else 0,
-        "current_device": torch.cuda.current_device() if torch.cuda.is_available() else None,
-        "device_name": torch.cuda.get_device_name() if torch.cuda.is_available() else None,
-        "torch_version": torch.__version__
-    }
-    
-    return {
-        "status": "healthy", 
-        "model": model_info, 
-        "cuda": cuda_info,
-        "hf_authenticated": _hf_authenticated
-    }
+        logger.error("Alignment error: %s", traceback.format_exc())
+        raise HTTPException(status_code=500, detail=str(e))
 
-@app.post("/auth/hf")
-async def authenticate_hf():
-    """Test Hugging Face authentication."""
-    if _ensure_hf_auth():
-        return {"status": "authenticated", "message": "Hugging Face authentication successful"}
-    else:
-        raise HTTPException(status_code=401, detail="Hugging Face authentication failed. Please set HUGGINGFACE_TOKEN environment variable.")
+@app.post("/asr", response_model=LegacyAsrResponse)
+def legacy_asr(req: AsrRequest) -> LegacyAsrResponse:
+    """
+    Back-compat endpoint that returns word tokens. Internally runs full pipeline and maps words -> tokens.
+    """
+    ar = align(AlignRequest(audio_path=req.audio_path))
+    toks = [AsrToken(t=w.t, d=w.d, w=w.w) for w in ar.words]
+    return LegacyAsrResponse(modelVersion=ar.asr_model, tokens=toks)
 
-@app.post("/cleanup")
-async def cleanup_model():
-    """Cleanup the loaded model and free memory."""
-    _cleanup_model()
-    return {"status": "cleanup_complete", "message": "Model cleaned up and memory freed"}
-
-@app.get("/memory")
-async def memory_status():
-    """Get current memory status."""
-    result = {"cpu_memory": "N/A"}
-    
-    if torch.cuda.is_available():
-        result["cuda_memory"] = {
-            "allocated_gb": round(torch.cuda.memory_allocated() / 1024**3, 2),
-            "reserved_gb": round(torch.cuda.memory_reserved() / 1024**3, 2),
-            "device_count": torch.cuda.device_count()
-        }
-    else:
-        result["cuda_memory"] = "CUDA not available"
-    
-    return result
+# -----------------------------------------------------------------------------
 
 if __name__ == "__main__":
     import uvicorn
-    
-    # Log service startup information
-    logging.info("=" * 50)
-    logging.info("ASR-NeMo Service Starting")
-    logging.info("=" * 50)
-    logging.info(f"Python version: {sys.version}")
-    logging.info(f"PyTorch version: {torch.__version__}")
-    logging.info(f"CUDA available: {torch.cuda.is_available()}")
-    if torch.cuda.is_available():
-        logging.info(f"CUDA device count: {torch.cuda.device_count()}")
-        logging.info(f"CUDA device name: {torch.cuda.get_device_name()}")
-    logging.info(f"Service log file: {Path('logs/asr_service.log').absolute()}")
-    logging.info(f"NeMo debug log file: {Path('logs/nemo-output.log').absolute()}")
-    logging.info("Server starting on http://0.0.0.0:8000")
-    logging.info("Health check endpoint: http://0.0.0.0:8000/health")
-    logging.info("=" * 50)
-    
+    logger.info("Starting Hybrid Chunked ASR + Single-pass NFA on http://0.0.0.0:8000")
     uvicorn.run(app, host="0.0.0.0", port=8000)

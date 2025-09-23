@@ -9,6 +9,8 @@ public static class TextNormalizer
     private static readonly Regex WhitespaceRegex = new(@"\s+", RegexOptions.Compiled);
     private static readonly Regex PunctuationRegex = new(@"[^\w\s]", RegexOptions.Compiled);
     private static readonly Regex NumbersRegex = new(@"\b\d+\b", RegexOptions.Compiled);
+    private static readonly Regex DigitLetterBoundary = new(@"(?<=\d)(?=[A-Za-z])", RegexOptions.Compiled);
+    private static readonly Regex LetterDigitBoundary = new(@"(?<=[A-Za-z])(?=\d)", RegexOptions.Compiled);
     
     private static readonly Dictionary<string, string> CommonContractions = new(StringComparer.OrdinalIgnoreCase)
     {
@@ -61,6 +63,10 @@ public static class TextNormalizer
             return string.Empty;
 
         var normalized = text.Trim();
+
+        // Insert explicit boundaries between digits and letters so numbers like "28A" can be processed.
+        normalized = DigitLetterBoundary.Replace(normalized, " ");
+        normalized = LetterDigitBoundary.Replace(normalized, " ");
 
         // Convert to lowercase
         normalized = normalized.ToLowerInvariant();

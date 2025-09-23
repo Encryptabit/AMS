@@ -425,7 +425,9 @@ public static class AlignCommand
     var (sentAlign, paraAlign) = TranscriptAligner.Rollup(
         wordOps,
         sentTuples.Select(t => (t.Index, t.Item2, t.Item3)).ToList(),
-        paraTuples.Select(t => (t.Index, t.Item2, t.Item3)).ToList());
+        paraTuples.Select(t => (t.Index, t.Item2, t.Item3)).ToList(),
+        book.Words,
+        asr.Tokens);
 
     var timedSentences = sentAlign
         .Select(s => s with { Timing = ComputeTiming(s.ScriptRange, asr) })

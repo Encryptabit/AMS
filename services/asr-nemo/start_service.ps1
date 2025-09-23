@@ -1,150 +1,183 @@
-# ASR-NeMo Service Startup Script (PowerShell)
+
+# ASR‑NeMo Service Startup Script (PowerShell)
+# - Tunables live at the top
+# - Installs only what's missing (idempotent)
+# - Uses CUDA 12.8 PyTorch wheels by default
+# - Sets env vars for THIS process only (won't touch your global machine state)
+
 param(
-    [string]$PythonPath = "C:\Users\Jacar\AppData\Local\Programs\Python\Python312\python.exe",
-    [string]$VenvDir = "venv312",
-    [int]$Port = 8000,
-    [switch]$ForceReinstall = $false
+  # --- Launch / venv ---
+  [string]$SeedPython    = "venv312\Scripts\python.exe", # If venv missing, this interpreter will create it
+  [string]$VenvDir       = "venv312",
+  [string]$ListenHost    = "0.0.0.0",
+  [int]   $Port          = 8000,
+  [switch]$ForceReinstall = $false,
+
+  # --- PyTorch wheel channel (change to cu121/cu118/etc if desired) ---
+  [string]$TorchIndexUrl = "https://download.pytorch.org/whl/cu128"
 )
 
-Write-Host "ASR-NeMo Service Startup Script" -ForegroundColor Cyan
-Write-Host "================================" -ForegroundColor Cyan
-Write-Host ""
+# =========================
+# Tunables (service env vars)
+# =========================
+# NOTE: these are applied ONLY to this PowerShell process and the spawned uvicorn
+#       (they do NOT persist or modify system/user env).
+$ENV_VARS = [ordered]@{
+  # Runtime niceties & memory behavior
+  "PYTHONUTF8"                = "1"                # force UTF-8 mode for stdout/stderr and file writes
+  "PYTORCH_CUDA_ALLOC_CONF"   = "expandable_segments:True"  # helps reduce allocator fragmentation on long runs
 
-# Check if Python 3.12 exists
-if (-not (Test-Path $PythonPath)) {
-    Write-Host "Error: Python 3.12 not found at $PythonPath" -ForegroundColor Red
-    Write-Host "Please install Python 3.12 or update the -PythonPath parameter." -ForegroundColor Red
-    Read-Host "Press Enter to exit"
+  # Hugging Face auth (optional): leave blank to inherit from your shell
+  # "HUGGINGFACE_TOKEN"       = ""
+
+  # ASR step (chunked Parakeet RNNT, timestamps OFF)
+  "ASR_MODEL"                 = "nvidia/parakeet-tdt-0.6b-v3"
+  "ASR_BEAM_SIZE"             = "12"
+  "ASR_GPU_BATCH_SIZE"        = "1"
+  "ASR_FUSED_BATCH_SIZE"      = "8"
+  "ASR_GPU_FALLBACK_BATCH_SIZE" = "1"
+  "ASR_PRECHUNK"              = "1"      # keep chunking for throughput
+  "ASR_MIN_CHUNK_SEC"         = "160"
+  "ASR_MAX_CHUNK_SEC"         = "3000"
+  "ASR_SILENCE_DB"            = "35"     # higher => fewer segments
+  
+
+  # NFA step (single pass forced alignment over FULL audio + concatenated transcript)
+  "NFA_MODEL"                 = "stt_en_fastconformer_hybrid_large_pc"
+  "NFA_BATCH"                 = "1"
+  "NFA_USE_STREAMING"         = "1"
+  "NFA_CHUNK_LEN"             = "1.6"
+  "NFA_TOTAL_BUFFER"          = "4.0"
+  "NFA_CHUNK_BATCH"           = "32"
+
+  # If you keep a vendor copy of align.py (fastest/most stable path)
+  # Point NEMO_DIR at folder containing tools/nemo_forced_aligner/align.py
+  "NEMO_DIR"                  = "C:\Projects\AMS\services\asr-nemo\vendor_nfa"
+}
+
+function PyExec {
+  param([Parameter(Mandatory=$true, ValueFromPipeline=$true)][string]$Code)
+  $Code | & $VenvPython -   # send here-string to python stdin
+}
+
+
+# =========================
+# Script starts
+# =========================
+$ErrorActionPreference = "Stop"
+
+Write-Host "ASR-NeMo Service Startup" -ForegroundColor Cyan
+Write-Host "=========================" -ForegroundColor Cyan
+
+# Work from repo root (where this script lives)
+$ScriptRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
+Set-Location $ScriptRoot
+
+# venv paths
+$VenvPython = Join-Path $VenvDir "Scripts\python.exe"
+$VenvPip    = Join-Path $VenvDir "Scripts\pip.exe"
+
+# Create venv if missing
+if (-not (Test-Path $VenvPython)) {
+  if (-not (Test-Path $SeedPython)) {
+    Write-Host "Seed Python not found: $SeedPython" -ForegroundColor Red
+    Write-Host "Adjust -SeedPython or create the venv manually." -ForegroundColor Red
     exit 1
-}
-
-# Get Python version
-$pythonVersion = & $PythonPath --version
-Write-Host "Found Python: $pythonVersion" -ForegroundColor Green
-
-# Create virtual environment if it doesn't exist
-if (-not (Test-Path $VenvDir)) {
-    Write-Host "Creating Python 3.12 virtual environment..." -ForegroundColor Yellow
-    & $PythonPath -m venv $VenvDir
-    if ($LASTEXITCODE -ne 0) {
-        Write-Host "Error: Failed to create virtual environment" -ForegroundColor Red
-        Read-Host "Press Enter to exit"
-        exit 1
-    }
-    Write-Host "Virtual environment created successfully." -ForegroundColor Green
+  }
+  Write-Host "Creating virtual environment: $VenvDir" -ForegroundColor Yellow
+  & $SeedPython -m venv $VenvDir
 } else {
-    Write-Host "Virtual environment already exists." -ForegroundColor Green
+  Write-Host "Using existing virtual environment: $VenvDir" -ForegroundColor Green
 }
 
-# Activate virtual environment
-Write-Host "Activating virtual environment..." -ForegroundColor Yellow
-$venvPython = Join-Path $VenvDir "Scripts\python.exe"
-$venvPip = Join-Path $VenvDir "Scripts\pip.exe"
+# Show interpreter version
+$venvPyVer = & $VenvPython --version
+Write-Host "Venv Python: $venvPyVer ($VenvPython)" -ForegroundColor Green
 
-# Verify virtual environment Python version
-$venvPythonVersion = & $venvPython --version 2>$null
-if ($venvPythonVersion -match "3\.1[2-9]") {
-    Write-Host "Successfully using virtual environment: $venvPythonVersion" -ForegroundColor Green
+# Helper: install only when missing
+function Ensure-Pkg {
+  param(
+    [Parameter(Mandatory=$true)][string]$Name,
+    [string[]]$InstallArgs = @()
+  )
+  & $VenvPip show $Name *> $null
+  if ($LASTEXITCODE -ne 0 -or $ForceReinstall) {
+    Write-Host "Installing $Name $($InstallArgs -join ' ')" -ForegroundColor Cyan
+    & $VenvPip install $Name @InstallArgs
+  } else {
+    Write-Host "$Name already present" -ForegroundColor DarkGray
+  }
+}
+
+Write-Host "Upgrading pip/setuptools/wheel..." -ForegroundColor Magenta
+& $VenvPip install --upgrade pip setuptools wheel *> $null
+
+# Core deps (idempotent)
+Ensure-Pkg -Name "fastapi>=0.104.0"
+Ensure-Pkg -Name "uvicorn[standard]>=0.24.0"
+Ensure-Pkg -Name "omegaconf"
+Ensure-Pkg -Name "hydra-core>=1.3.0"
+Ensure-Pkg -Name "soundfile>=0.12.0"
+Ensure-Pkg -Name "librosa>=0.10.0"
+Ensure-Pkg -Name "huggingface-hub>=0.19.0"
+Ensure-Pkg -Name "transformers>=4.35.0"
+Ensure-Pkg -Name "pytorch-lightning>=2.0.0,<3.0.0"
+
+# CUDA-enabled PyTorch (uses selected index)
+# If you already installed torch with CU12.8 in this venv, this is a no-op.
+& $VenvPip show torch *> $null
+if ($LASTEXITCODE -ne 0 -or $ForceReinstall) {
+  Write-Host "Installing CUDA PyTorch wheels from $TorchIndexUrl" -ForegroundColor Cyan
+  & $VenvPip install --index-url $TorchIndexUrl torch torchvision torchaudio
 } else {
-    Write-Host "Warning: Virtual environment may not be using Python 3.12+" -ForegroundColor Yellow
-    Write-Host "Virtual environment Python: $venvPythonVersion" -ForegroundColor Yellow
+  Write-Host "torch already present" -ForegroundColor DarkGray
 }
 
-# Package installation logic
-if ($ForceReinstall) {
-    Write-Host "Force reinstall requested - installing/updating packages..." -ForegroundColor Yellow
-    $ShouldInstall = $true
+# CUDA Python bindings (enables NeMo's CUDA-graphs decoder paths)
+Ensure-Pkg -Name "cuda-python>=12.3"
+
+# NeMo (prefer using your cloned repo for NFA, but ensure wheel exists for ASR models)
+& $VenvPip show nemo-toolkit *> $null
+if ($LASTEXITCODE -ne 0 -or $ForceReinstall) {
+  Write-Host "Installing NeMo toolkit (binary wheel)..." -ForegroundColor Cyan
+  & $VenvPip install "nemo-toolkit[asr]>=2.6.0rc0"
 } else {
-    # Check if essential packages are already installed
-    Write-Host "Checking if packages are already installed..." -ForegroundColor Cyan
-    
-    $packagesToCheck = @("fastapi", "uvicorn", "torch", "nemo-toolkit")
-    $missingPackages = @()
-    
-    foreach ($package in $packagesToCheck) {
-        $result = & $venvPip show $package 2>$null
-        if ($LASTEXITCODE -ne 0) {
-            $missingPackages += $package
-        }
-    }
-    
-    if ($missingPackages.Count -gt 0) {
-        Write-Host "Missing packages detected: $($missingPackages -join ', ')" -ForegroundColor Yellow
-        Write-Host "Installing missing packages..." -ForegroundColor Yellow
-        $ShouldInstall = $true
-    } else {
-        Write-Host "All essential packages already installed. Skipping installation." -ForegroundColor Green
-        Write-Host "Use -ForceReinstall to force package installation." -ForegroundColor Cyan
-        $ShouldInstall = $false
-    }
+  Write-Host "nemo-toolkit already present" -ForegroundColor DarkGray
 }
 
-if ($ShouldInstall) {
+# Quick, non-invasive preflight (does not change your machine)
+Write-Host "Preflight (non-invasive): checking torch & CUDA..." -ForegroundColor Yellow
+PyExec @'
+import torch, sys
+print("torch:", torch.__version__)
+print("CUDA available:", torch.cuda.is_available())
+if torch.cuda.is_available():
+    print("GPU:", torch.cuda.get_device_name(0))
+'@
 
-# FIRST PRIORITY: Always upgrade pip before anything else
-Write-Host "Stage 0: Upgrading pip..." -ForegroundColor Magenta
-& $venvPip install --upgrade pip
-Write-Host "pip upgrade completed." -ForegroundColor Green
+# Apply per-process env vars (safe for dynamic names)
+foreach ($kv in $ENV_VARS.GetEnumerator()) {
+  $name = $kv.Key
+  $val  = $kv.Value
 
-# First: Install essential build tools
-Write-Host "Stage 1: Installing build essentials..." -ForegroundColor Cyan
-& $venvPip install --upgrade setuptools wheel
-
-# Second: Install core packages that other packages depend on
-Write-Host "Stage 2: Installing core dependencies..." -ForegroundColor Cyan
-& $venvPip install "numpy>=1.24.0,<2.0.0" omegaconf "hydra-core>=1.3.0"
-
-Write-Host "Stage 2b: Installing CUDA-enabled PyTorch..." -ForegroundColor Cyan
-& $venvPip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
-
-# Third: Install web framework
-Write-Host "Stage 3: Installing web framework..." -ForegroundColor Cyan
-& $venvPip install "fastapi>=0.104.0" "uvicorn[standard]>=0.24.0"
-
-# Fourth: Install audio processing
-Write-Host "Stage 4: Installing audio processing..." -ForegroundColor Cyan
-& $venvPip install "soundfile>=0.12.0" "librosa>=0.10.0"
-
-# Fifth: Install Hugging Face packages
-Write-Host "Stage 5: Installing Hugging Face packages..." -ForegroundColor Cyan
-& $venvPip install "huggingface-hub>=0.19.0" "transformers>=4.35.0"
-
-# Sixth: Install PyTorch Lightning (needed by NeMo)
-Write-Host "Stage 6: Installing PyTorch Lightning..." -ForegroundColor Cyan
-& $venvPip install "pytorch-lightning>=2.0.0,<3.0.0"
-
-# Final: Install NeMo (most complex dependency)
-Write-Host "Stage 7: Installing NeMo toolkit..." -ForegroundColor Cyan
-& $venvPip install "nemo-toolkit[asr]>=1.20.0,<2.0.0" --no-deps --force-reinstall
-& $venvPip install "nemo-toolkit[asr]>=1.20.0,<2.0.0"
-
-if ($LASTEXITCODE -ne 0) {
-    Write-Host "Warning: NeMo installation may have failed. Trying alternative approach..." -ForegroundColor Yellow
-    # Try without version constraints as fallback
-    & $venvPip install nemo-toolkit[asr] --no-deps
-    & $venvPip install nemo-toolkit[asr]
+  if ($null -ne $val -and $val -ne "") {
+    # Use Env: provider for process-scoped variables
+    Set-Item -Path ("Env:{0}" -f $name) -Value $val    # e.g. Env:PYTHONUTF8
+  }
+  # Pretty print (show <inherit> when we didn't set a value here)
+  $display = if ([string]::IsNullOrEmpty($val)) { '<inherit>' } else { $val }
+  Write-Host ("  {0}={1}" -f $name, $display) -ForegroundColor DarkGray
 }
 
-# End of installation block
-}
-
-# Start the service
-Write-Host "" 
+# Launch service
+Write-Host ""
 Write-Host "Starting ASR service..." -ForegroundColor Cyan
-Write-Host "Service will be available at: http://localhost:$Port" -ForegroundColor Green
-Write-Host "Health check: http://localhost:$Port/health" -ForegroundColor Green
-Write-Host "Service logs: logs/asr_service.log" -ForegroundColor Cyan
-Write-Host "NeMo debug logs: logs/nemo-output.log" -ForegroundColor Cyan
-Write-Host "Press Ctrl+C to stop the service" -ForegroundColor Yellow
+Write-Host "URL:        http://$($ListenHost):$Port" -ForegroundColor Green
+Write-Host "Health:     http://$($ListenHost):$Port/health" -ForegroundColor Green
+Write-Host "Press Ctrl+C to stop." -ForegroundColor Yellow
 Write-Host ""
 
-try {
-    & $venvPython app.py
-} catch {
-    Write-Host "Error starting service: $_" -ForegroundColor Red
-    Read-Host "Press Enter to exit"
-    exit 1
-}
+# Run uvicorn via the venv interpreter
+& $VenvPython -m uvicorn app:app --host $ListenHost --port $Port --log-level info
 
-# If we get here, the service stopped normally
 Write-Host "Service stopped." -ForegroundColor Yellow

@@ -1,0 +1,11 @@
+{
+    "include": ["."],
+    "venvPath": "C:/Projects/AMS/services/asr-nemo",
+    "venv": "venv312",
+    "executionEnvironments": [
+      { "root": ".", "venv": "venv312", "extraPaths": ["."] }
+    ],
+    "typeCheckingMode": "basic",
+    "reportMissingImports": true
+  }
+  

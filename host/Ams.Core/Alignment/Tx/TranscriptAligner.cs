@@ -1,7 +1,10 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Text;
 using Ams.Core.Artifacts;
+using Ams.Core.Asr;
+using Ams.Core.Book;
 
 namespace Ams.Core.Alignment.Tx;
 
@@ -167,7 +170,9 @@ public static class TranscriptAligner
     public static (List<SentenceAlign> sents, List<ParagraphAlign> paras) Rollup(
         IReadOnlyList<WordAlign> ops,
         IReadOnlyList<(int Id, int Start, int End)> bookSentences,
-        IReadOnlyList<(int Id, int Start, int End)> bookParagraphs)
+        IReadOnlyList<(int Id, int Start, int End)> bookParagraphs,
+        IReadOnlyList<BookWord> bookWords,
+        IReadOnlyList<AsrToken> asrTokens)
     {
         var opsList = ops.ToList();
 
@@ -325,11 +330,29 @@ public static class TranscriptAligner
                 ins = segment.Count(o => o.Op == AlignOp.Ins && o.AsrIdx is int);
             }
 
-            double wer = (subs + dels + ins) / Math.Max(1.0, n);
-            double coverage = 1.0 - (double)dels / Math.Max(1.0, n);
-            string status = wer <= 0.10 && dels < 3 ? "ok" : (wer <= 0.25 ? "attention" : "unreliable");
+            bool normalizedEqual = false;
+            if (guardStart.HasValue && guardEnd.HasValue &&
+                TryNormalizeBookSentence(bookWords, start, end, out var normalizedBook) &&
+                TryNormalizeAsrSpan(asrTokens, guardStart.Value, guardEnd.Value, out var normalizedAsr) &&
+                normalizedBook.Length > 0 && normalizedBook == normalizedAsr)
+            {
+                normalizedEqual = true;
+                subs = 0;
+                dels = 0;
+                ins = 0;
+            }
 
-            var metrics = new SentenceMetrics(wer, 0.0, wer, dels, ins);
+            double wer = normalizedEqual
+                ? 0.0
+                : (subs + dels + ins) / Math.Max(1.0, n);
+            string status = normalizedEqual
+                ? "ok"
+                : (wer <= 0.10 && dels < 3 ? "ok" : (wer <= 0.25 ? "attention" : "unreliable"));
+
+            var metrics = normalizedEqual
+                ? new SentenceMetrics(0.0, 0.0, 0.0, 0, 0)
+                : new SentenceMetrics(wer, 0.0, wer, dels, ins);
+
             sentsOut.Add(new SentenceAlign(s.Id, new IntRange(start, end), aRange, TimingRange.Empty, metrics, status));
         }
 
@@ -351,5 +374,53 @@ public static class TranscriptAligner
         }
 
         return (sentsOut, parasOut);
+    }
+
+    private static bool TryNormalizeBookSentence(IReadOnlyList<BookWord> words, int start, int end, out string normalized)
+    {
+        normalized = string.Empty;
+        if (words == null || words.Count == 0) return false;
+        start = Math.Max(0, start);
+        end = Math.Min(words.Count - 1, end);
+        if (start > end) return false;
+
+        var sb = new StringBuilder();
+        for (int i = start; i <= end; i++)
+        {
+            AppendNormalized(sb, words[i].Text);
+        }
+
+        normalized = sb.ToString();
+        return normalized.Length > 0;
+    }
+
+    private static bool TryNormalizeAsrSpan(IReadOnlyList<AsrToken> tokens, int startIdx, int endIdx, out string normalized)
+    {
+        normalized = string.Empty;
+        if (tokens == null || tokens.Count == 0) return false;
+        startIdx = Math.Max(0, startIdx);
+        endIdx = Math.Min(tokens.Count - 1, endIdx);
+        if (startIdx > endIdx) return false;
+
+        var sb = new StringBuilder();
+        for (int i = startIdx; i <= endIdx; i++)
+        {
+            AppendNormalized(sb, tokens[i].Word);
+        }
+
+        normalized = sb.ToString();
+        return normalized.Length > 0;
+    }
+
+    private static void AppendNormalized(StringBuilder sb, string? text)
+    {
+        if (string.IsNullOrEmpty(text)) return;
+        foreach (char c in text)
+        {
+            if (char.IsLetterOrDigit(c))
+            {
+                sb.Append(char.ToLowerInvariant(c));
+            }
+        }
     }
 }

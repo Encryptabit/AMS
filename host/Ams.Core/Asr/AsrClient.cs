@@ -14,11 +14,11 @@ public class AsrClient : IDisposable
         _baseUrl = baseUrl.TrimEnd('/');
         _httpClient = new HttpClient
         {
-            Timeout = TimeSpan.FromMinutes(5)
+            Timeout = System.Threading.Timeout.InfiniteTimeSpan
         };
     }
 
-    public async Task<AsrResponse> TranscribeAsync(string audioPath, string? model = null, string language = "en", CancellationToken cancellationToken = default)
+    public async Task<AsrResponse> TranscribeAsync(string audioPath, string? nfaModel = null, CancellationToken cancellationToken = default)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
 
@@ -27,17 +27,18 @@ public class AsrClient : IDisposable
 
         var request = new AsrRequest(
             AudioPath: Path.GetFullPath(audioPath),
-            Model: model,
-            Language: language
+            BeamSize: null,
+            NfaModel: nfaModel,
+            SaveAss: false
         );
 
         var json = JsonSerializer.Serialize(request, JsonSerializerOptions.Default);
-        var content = new StringContent(json, Encoding.UTF8, "application/json");
+        using var content = new StringContent(json, Encoding.UTF8, "application/json");
 
         try
         {
-            var response = await _httpClient.PostAsync($"{_baseUrl}/asr", content, cancellationToken);
-            
+            using var response = await _httpClient.PostAsync($"{_baseUrl}/align", content, cancellationToken);
+
             if (!response.IsSuccessStatusCode)
             {
                 var error = await response.Content.ReadAsStringAsync(cancellationToken);
@@ -45,11 +46,17 @@ public class AsrClient : IDisposable
             }
 
             var responseJson = await response.Content.ReadAsStringAsync(cancellationToken);
-            var result = JsonSerializer.Deserialize<AsrResponse>(responseJson);
-            
-            return result ?? throw new InvalidOperationException("Failed to deserialize ASR response");
+            var align = JsonSerializer.Deserialize<AlignResponseDto>(responseJson);
+
+            if (align is null)
+                throw new InvalidOperationException("Failed to deserialize align response");
+
+            var tokens = align.Words ?? Array.Empty<AsrToken>();
+            var modelVersion = string.IsNullOrWhiteSpace(align.AsrModel) ? align.NfaModel : align.AsrModel;
+
+            return new AsrResponse(modelVersion, tokens);
         }
-        catch (TaskCanceledException ex) when (ex.InnerException is TimeoutException)
+        catch (TaskCanceledException ex) when (!cancellationToken.IsCancellationRequested)
         {
             throw new TimeoutException("ASR service request timed out", ex);
         }
