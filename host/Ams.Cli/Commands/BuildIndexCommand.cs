@@ -64,36 +64,36 @@ public static class BuildIndexCommand
         return buildIndexCommand;
     }
     
-    private static async Task BuildBookIndexAsync(
+    internal static async Task BuildBookIndexAsync(
         FileInfo bookFile, 
         FileInfo outputFile,
         bool forceRefresh,
         BookIndexOptions options,
         bool noCache)
     {
-        Console.WriteLine($"Building book index...");
+        Console.WriteLine("Building book index...");
         Console.WriteLine($"Book file: {bookFile.FullName}");
         Console.WriteLine($"Output file: {outputFile.FullName}");
-        
+
         // Validate input files
         if (!bookFile.Exists)
             throw new FileNotFoundException($"Book file not found: {bookFile.FullName}");
-        
-        
-        
+
+
+
         // Initialize services
         var parser = new BookParser();
         var indexer = new BookIndexer();
         var cache = noCache ? null : new BookCache();
-        
+
         if (!parser.CanParse(bookFile.FullName))
         {
             var supportedExts = string.Join(", ", parser.SupportedExtensions);
             throw new InvalidOperationException($"Unsupported file format. Supported formats: {supportedExts}");
         }
-        
+
         BookIndex bookIndex;
-        
+
         // Try to load from cache if not forcing refresh and cache is enabled
         if (!forceRefresh && cache != null)
         {
@@ -116,22 +116,22 @@ public static class BuildIndexCommand
                 Console.WriteLine("Force refresh enabled, ignoring cache");
             else if (noCache)
                 Console.WriteLine("Cache disabled");
-            
+
             bookIndex = await ProcessBookFromScratch(parser, indexer, cache, bookFile.FullName, options);
         }
-        
+
         // Save the final index
         Console.Write("Saving book index... ");
-        var jsonOptions = new JsonSerializerOptions 
-        { 
+        var jsonOptions = new JsonSerializerOptions
+        {
             WriteIndented = true,
             PropertyNamingPolicy = JsonNamingPolicy.CamelCase
         };
-        
+
         var json = JsonSerializer.Serialize(bookIndex, jsonOptions);
         await File.WriteAllTextAsync(outputFile.FullName, json);
         Console.WriteLine("Done");
-        
+
         // Print summary
         Console.WriteLine("\n=== Book Index Summary ===");
         Console.WriteLine($"Title: {bookIndex.Title ?? "(not available)"}");
@@ -144,7 +144,7 @@ public static class BuildIndexCommand
         Console.WriteLine($"Total paragraphs: {bookIndex.Totals.Paragraphs:n0}");
         Console.WriteLine($"Estimated duration: {FormatDuration(bookIndex.Totals.EstimatedDurationSec)}");
         Console.WriteLine($"Sections (Heading 1): {bookIndex.Sections.Length}");
-        
+
         Console.WriteLine($"\nBook index saved to: {outputFile.FullName}");
     }
     

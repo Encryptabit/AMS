@@ -23,6 +23,12 @@ out/
 # IDE
 .vscode/
 .claude/
+.agents/
+.serena/
+**.ps1
+**temp**
+**/__pycache__
+logs
 agents.md
 .venv**
 analysis/
