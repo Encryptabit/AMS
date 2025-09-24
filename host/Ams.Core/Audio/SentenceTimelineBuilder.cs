@@ -72,18 +72,25 @@ namespace Ams.Core.Audio
             }
 
             var snapped = analyzer.SnapToEnergy(seed, enterThresholdDb: rmsThresholdDb, exitThresholdDb: rmsThresholdDb, searchWindowSec: searchWindowSec, stepMs: stepMs, preRollMs: 30D, postRollMs: 80D);
-            //var snapped = analyzer.SnapToEnergyAuto(seed);
             if (windowTiming.Duration > 0)
             {
                 snapped = ClampToWindow(snapped, windowTiming);
             }
 
-            if (snapped.Duration <= 0)
+            double start = snapped.StartSec;
+            double end = snapped.EndSec;
+            if (end < start)
             {
-                snapped = new TimingRange(seed.StartSec, seed.EndSec);
+                end = start;
             }
 
-            return new SentenceTiming(snapped.StartSec, snapped.EndSec, baseTiming.FragmentBacked, baseTiming.Confidence);
+            if (end - start <= 0)
+            {
+                start = seed.StartSec;
+                end = Math.Max(start, seed.EndSec);
+            }
+
+            return new SentenceTiming(start, end, baseTiming.FragmentBacked, baseTiming.Confidence);
         }
 
         private static TimingRange ClampToWindow(TimingRange range, SentenceTiming window)

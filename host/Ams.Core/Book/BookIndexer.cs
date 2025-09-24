@@ -1,3 +1,4 @@
+using System.Linq;
 using System.Security.Cryptography;
 using System.Text.RegularExpressions;
 
@@ -70,25 +71,31 @@ public class BookIndexer : IBookIndexer
                 continue;
             }
 
-            int paragraphStartWord = globalWord;
-            int sentenceStartWord = globalWord;
-
-            // On a Heading paragraph, consider starting a new section before consuming tokens
-            int headingLevel = GetHeadingLevel(style);
-            // Some documents use Heading 2/3 for chapters; treat any Heading level >= 1 as a section start
-            // but only when the text looks like a real section title (e.g., "Chapter 3", "Prologue").
-            if (string.Equals(kind, "Heading", StringComparison.OrdinalIgnoreCase) && headingLevel >= 1 && LooksLikeSectionHeading(pText))
+            var trimmedParagraph = pText.Trim();
+            if (ShouldStartSection(trimmedParagraph, style, kind))
             {
-                // Close previous open section
+                int sectionLevel = GetHeadingLevel(style);
+                if (sectionLevel <= 0 && LooksLikeHeadingStyle(style, kind))
+                {
+                    sectionLevel = 1;
+                }
+                if (sectionLevel <= 0 && LooksLikeSectionHeading(trimmedParagraph))
+                {
+                    sectionLevel = 1;
+                }
+                if (sectionLevel <= 0)
+                {
+                    sectionLevel = 1;
+                }
+
                 if (currentSection != null)
                 {
-                    // End at the last word of the previous paragraph (globalWord - 1)
-                    int endWord = Math.Max(currentSection.StartWord - 1, globalWord - 1);
+                    int endWord = Math.Max(currentSection.StartWord, globalWord) - 1;
                     int endParagraph = Math.Max(currentSection.StartParagraph, pIndex - 1);
                     sections.Add(new SectionRange(
                         Id: currentSection.Id,
                         Title: currentSection.Title,
-                        Level: 1,
+                        Level: currentSection.Level,
                         Kind: currentSection.Kind,
                         StartWord: currentSection.StartWord,
                         EndWord: endWord,
@@ -99,12 +106,16 @@ public class BookIndexer : IBookIndexer
 
                 currentSection = new SectionOpen(
                     Id: sectionId++,
-                    Title: pText.Trim(),
-                    Kind: ClassifySectionKind(pText),
+                    Title: trimmedParagraph,
+                    Kind: ClassifySectionKind(trimmedParagraph),
+                    Level: sectionLevel,
                     StartWord: globalWord,
                     StartParagraph: pIndex
                 );
             }
+
+            int paragraphStartWord = globalWord;
+            int sentenceStartWord = globalWord;
 
             foreach (var token in TokenizeByWhitespace(pText))
             {
@@ -146,12 +157,12 @@ public class BookIndexer : IBookIndexer
         // Close last open section if any
         if (currentSection != null)
         {
-            int endWord = Math.Max(currentSection.StartWord - 1, globalWord - 1);
+            int endWord = Math.Max(currentSection.StartWord, globalWord) - 1;
             int endParagraph = Math.Max(currentSection.StartParagraph, paragraphTexts.Count - 1);
             sections.Add(new SectionRange(
                 Id: currentSection.Id,
                 Title: currentSection.Title,
-                Level: 1,
+                Level: currentSection.Level,
                 Kind: currentSection.Kind,
                 StartWord: currentSection.StartWord,
                 EndWord: endWord,
@@ -159,6 +170,8 @@ public class BookIndexer : IBookIndexer
                 EndParagraph: endParagraph
             ));
         }
+
+        ApplyChapterDuplicateSuffixes(sections);
 
         var warnings = Array.Empty<string>();
 
@@ -215,6 +228,133 @@ public class BookIndexer : IBookIndexer
         return "chapter";
     }
 
+    private static bool ShouldStartSection(string text, string style, string kind)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+            return false;
+
+        if (IsNonSectionParagraphStyle(style))
+            return false;
+
+        var trimmed = text.Trim();
+        bool textHasKeyword = LooksLikeSectionHeading(trimmed);
+        bool styleSuggestsHeading = LooksLikeHeadingStyle(style, kind);
+        bool standaloneCandidate = LooksLikeStandaloneTitle(trimmed);
+
+        if (textHasKeyword)
+        {
+            if (LooksLikeTableOfContentsEntry(trimmed))
+                return false;
+
+            return true;
+        }
+
+        if (styleSuggestsHeading && standaloneCandidate)
+            return true;
+
+        return false;
+    }
+
+    private static bool LooksLikeHeadingStyle(string? style, string? kind)
+    {
+        if (!string.IsNullOrEmpty(kind) && kind.Equals("Heading", StringComparison.OrdinalIgnoreCase))
+            return true;
+
+        if (string.IsNullOrWhiteSpace(style))
+            return false;
+
+        if (IsNonSectionParagraphStyle(style))
+            return false;
+
+        return style.Contains("heading", StringComparison.OrdinalIgnoreCase)
+            || style.Contains("title", StringComparison.OrdinalIgnoreCase)
+            || style.Contains("chapter", StringComparison.OrdinalIgnoreCase)
+            || style.Contains("section", StringComparison.OrdinalIgnoreCase)
+            || style.Contains("part", StringComparison.OrdinalIgnoreCase)
+            || style.Contains("book", StringComparison.OrdinalIgnoreCase)
+            || style.Contains("prologue", StringComparison.OrdinalIgnoreCase)
+            || style.Contains("epilogue", StringComparison.OrdinalIgnoreCase)
+            || style.Contains("foreword", StringComparison.OrdinalIgnoreCase)
+            || style.Contains("afterword", StringComparison.OrdinalIgnoreCase)
+            || style.Contains("preface", StringComparison.OrdinalIgnoreCase)
+            || style.Contains("acknowledg", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsNonSectionParagraphStyle(string? style)
+    {
+        if (string.IsNullOrWhiteSpace(style))
+            return false;
+
+        return style.Contains("toc", StringComparison.OrdinalIgnoreCase)
+            || style.Contains("tableofcontents", StringComparison.OrdinalIgnoreCase)
+            || style.Contains("table of contents", StringComparison.OrdinalIgnoreCase)
+            || style.Contains("caption", StringComparison.OrdinalIgnoreCase)
+            || style.Contains("footer", StringComparison.OrdinalIgnoreCase)
+            || style.Contains("header", StringComparison.OrdinalIgnoreCase)
+            || style.Contains("page number", StringComparison.OrdinalIgnoreCase)
+            || style.Contains("pagenumber", StringComparison.OrdinalIgnoreCase)
+            || style.Contains("index", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool LooksLikeStandaloneTitle(string text)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+            return false;
+
+        var trimmed = text.Trim();
+        if (trimmed.Length == 0 || trimmed.Length > 120)
+            return false;
+
+        if (LooksLikeTableOfContentsEntry(trimmed))
+            return false;
+
+        if (trimmed.IndexOfAny(new[] { '.', '?', '!', ';' }) >= 0)
+            return false;
+
+        int letterCount = 0;
+        int upperCount = 0;
+        foreach (var ch in trimmed)
+        {
+            if (char.IsLetter(ch))
+            {
+                letterCount++;
+                if (char.IsUpper(ch))
+                    upperCount++;
+            }
+        }
+
+        if (letterCount > 0)
+        {
+            double upperRatio = (double)upperCount / letterCount;
+            if (upperRatio >= 0.6)
+                return true;
+        }
+
+        var words = trimmed.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        if (words.Length > 0 && words.Length <= 8 && words.All(w => char.IsLetter(w[0]) && char.IsUpper(w[0])))
+            return true;
+
+        return false;
+    }
+
+    private static bool LooksLikeTableOfContentsEntry(string text)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+            return false;
+
+        if (text.Contains("....", StringComparison.Ordinal))
+            return true;
+
+        if (Regex.IsMatch(text, @"\.{2,}\s*\d+$"))
+            return true;
+
+        if (Regex.IsMatch(text, @"[ \t]{2,}\d+$"))
+            return true;
+
+        return false;
+    }
+
+    private static readonly Regex ChapterDuplicateRegex = new(@"^(?<prefix>\s*chapter)(?<ws>\s+)(?<number>\d+)(?<suffix>\s*[A-Za-z]*)?$", RegexOptions.IgnoreCase | RegexOptions.Compiled);
     private static readonly Regex SectionTitleRegex = new(
         @"^\s*(chapter\b|prologue\b|epilogue\b|prelude\b|foreword\b|introduction\b|afterword\b|appendix\b|part\b|book\b)",
         RegexOptions.IgnoreCase | RegexOptions.Compiled);
@@ -227,7 +367,60 @@ public class BookIndexer : IBookIndexer
         return false;
     }
 
-    private record SectionOpen(int Id, string Title, string Kind, int StartWord, int StartParagraph);
+    private static void ApplyChapterDuplicateSuffixes(List<SectionRange> sections)
+    {
+        if (sections == null || sections.Count == 0)
+            return;
+
+        var candidates = new List<(int Index, SectionRange Section, string Prefix, string Ws, string Number, string BaseKey)>();
+
+        for (int i = 0; i < sections.Count; i++)
+        {
+            var section = sections[i];
+            if (!string.Equals(section.Kind, "chapter", StringComparison.OrdinalIgnoreCase))
+                continue;
+
+            var title = section.Title ?? string.Empty;
+            var match = ChapterDuplicateRegex.Match(title);
+            if (!match.Success)
+                continue;
+
+            if (!string.IsNullOrWhiteSpace(match.Groups["suffix"].Value))
+                continue;
+
+            var prefix = match.Groups["prefix"].Value;
+            var ws = match.Groups["ws"].Value;
+            var number = match.Groups["number"].Value;
+            var baseKey = (prefix + ws + number).Trim().ToUpperInvariant();
+
+            candidates.Add((i, section, prefix, ws, number, baseKey));
+        }
+
+        foreach (var group in candidates.GroupBy(c => (c.BaseKey, c.Section.Level)))
+        {
+            if (group.Count() <= 1)
+                continue;
+
+            var distinctTitles = group
+                .Select(c => (c.Section.Title ?? string.Empty).Trim())
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+
+            if (distinctTitles.Count > 1)
+                continue;
+
+            int offset = 0;
+            foreach (var item in group.OrderBy(c => c.Section.StartWord))
+            {
+                var suffixLetter = (char)('A' + offset);
+                var newTitle = string.Concat(item.Prefix, item.Ws, item.Number, suffixLetter);
+                sections[item.Index] = item.Section with { Title = newTitle };
+                offset++;
+            }
+        }
+    }
+
+    private record SectionOpen(int Id, string Title, string Kind, int Level, int StartWord, int StartParagraph);
 
     private static IEnumerable<string> TokenizeByWhitespace(string text)
     {
