@@ -113,6 +113,24 @@ check_python_version()
 
 app = FastAPI(title="ASR-NeMo Service", version="0.1.0")
 
+ENABLE_TIMING_REFINEMENT = os.getenv("ASR_ENABLE_TIMING_REFINEMENT", "1").strip().lower() not in {"0", "false", "no", "off"}
+
+
+def _get_env_float(key: str, default: float) -> float:
+    raw = os.getenv(key)
+    if raw is None:
+        return default
+    try:
+        return float(raw)
+    except (TypeError, ValueError):
+        logging.warning("Invalid float for %s: %s; falling back to %s", key, raw, default)
+        return default
+
+
+TIMING_REFINEMENT_MAX_SHIFT = _get_env_float("ASR_TIMING_REFINEMENT_MAX_SHIFT", 0.06)
+TIMING_REFINEMENT_WINDOW = _get_env_float("ASR_TIMING_REFINEMENT_WINDOW", 0.05)
+MIN_TOKEN_DURATION = max(_get_env_float("ASR_MIN_TOKEN_DURATION", 0.01), 0.001)
+
 class AsrRequest(BaseModel):
     audio_path: str
     model: Optional[str] = None
@@ -358,6 +376,103 @@ def _fallback_segments(total_samples: int, sr: int, max_chunk_sec: float):
         start = end
     return segments
 
+
+def _compute_energy_profile(audio_path: str):
+    if not ENABLE_TIMING_REFINEMENT:
+        return None
+    try:
+        audio, sr = sf.read(audio_path, dtype='float32')
+    except Exception as exc:
+        logging.debug("Failed to load chunk %s for energy profiling: %s", audio_path, exc)
+        return None
+
+    if isinstance(audio, np.ndarray):
+        if audio.ndim > 1:
+            audio = audio.mean(axis=1)
+        audio = audio.astype(np.float32, copy=False)
+    else:
+        audio = np.asarray(audio, dtype=np.float32)
+
+    if audio.size == 0:
+        return None
+
+    hop_length = max(1, int(sr * 0.005))
+    frame_length = max(hop_length * 4, int(sr * 0.02))
+
+    try:
+        rms = librosa.feature.rms(y=audio, frame_length=frame_length, hop_length=hop_length, center=True)[0]
+        times = librosa.frames_to_time(np.arange(len(rms)), sr=sr, hop_length=hop_length)
+    except Exception as exc:
+        logging.debug("Failed to compute energy profile for %s: %s", audio_path, exc)
+        return None
+
+    if rms.size == 0:
+        return None
+
+    return {
+        "times": times,
+        "rms": rms,
+        "global_max": float(np.max(rms)),
+        "duration": len(audio) / sr,
+        "hop_sec": hop_length / sr,
+    }
+
+
+def _refine_timestamp(profile, coarse_start: float, coarse_end: float):
+    if (not ENABLE_TIMING_REFINEMENT) or profile is None or coarse_end <= coarse_start:
+        return coarse_start, coarse_end
+
+    times = profile["times"]
+    rms = profile["rms"]
+    duration = profile["duration"]
+    global_max = max(profile["global_max"], 1e-6)
+    hop = max(profile["hop_sec"], 1e-6)
+    window = max(TIMING_REFINEMENT_WINDOW, hop)
+    max_shift = max(TIMING_REFINEMENT_MAX_SHIFT, hop)
+
+    start_lo = max(0.0, coarse_start - window)
+    start_hi = min(duration, coarse_start + window)
+    start_mask = (times >= start_lo) & (times <= start_hi)
+    refined_start = coarse_start
+    if np.any(start_mask):
+        local_rms = rms[start_mask]
+        local_times = times[start_mask]
+        local_max = float(np.max(local_rms)) if local_rms.size else 0.0
+        if local_max > 0.0:
+            threshold = max(0.05 * global_max, 0.35 * local_max)
+            indices = np.where(local_rms >= threshold)[0]
+            if indices.size:
+                candidate = float(local_times[int(indices[0])])
+                candidate = max(start_lo, candidate - hop)
+                delta = np.clip(candidate - coarse_start, -max_shift, max_shift)
+                refined_start = coarse_start + delta
+
+    end_lo = max(0.0, coarse_end - window)
+    end_hi = min(duration, coarse_end + window)
+    end_mask = (times >= end_lo) & (times <= end_hi)
+    refined_end = coarse_end
+    if np.any(end_mask):
+        local_rms = rms[end_mask]
+        local_times = times[end_mask]
+        local_max = float(np.max(local_rms)) if local_rms.size else 0.0
+        if local_max > 0.0:
+            threshold = max(0.05 * global_max, 0.35 * local_max)
+            indices = np.where(local_rms >= threshold)[0]
+            if indices.size:
+                candidate = float(local_times[int(indices[-1])])
+                candidate = min(end_hi, candidate + hop)
+                delta = np.clip(candidate - coarse_end, -max_shift, max_shift)
+                refined_end = coarse_end + delta
+
+    if refined_end - refined_start < MIN_TOKEN_DURATION:
+        return coarse_start, coarse_end
+
+    refined_start = max(0.0, min(refined_start, duration))
+    refined_end = max(refined_start + MIN_TOKEN_DURATION, min(refined_end, duration))
+    return refined_start, refined_end
+
+
+
 @app.post("/asr", response_model=AsrResponse)
 async def transcribe_audio(request: AsrRequest):
     """Serialized entry point that keeps GPU usage predictable by allowing one transcription at a time."""
@@ -443,6 +558,8 @@ async def _transcribe_impl(request: AsrRequest) -> AsrResponse:
 
             hypo = output[0]
 
+            energy_profile = _compute_energy_profile(chunk["path"])
+
             nemo_logger = logging.getLogger("nemo_raw")
             nemo_logger.info("=" * 80)
             nemo_logger.info(f"TRANSCRIPTION REQUEST CHUNK {idx}/{len(chunk_infos)}: offset={chunk['start_sec']:.2f}s path={chunk['path']}")
@@ -480,19 +597,42 @@ async def _transcribe_impl(request: AsrRequest) -> AsrResponse:
 
             time_offset = chunk["start_sec"]
             if hasattr(hypo, 'timestamp') and hypo.timestamp is not None and hypo.timestamp.get("word", []):
-                for word_entry in hypo.timestamp.get("word", []):
-                    word_start = float(word_entry.get("start", 0.0))
-                    word_end = float(word_entry.get("end", 0.0))
+                word_entries = hypo.timestamp.get("word", [])
+                for word_entry in word_entries:
+                    word_text = "".join(word_entry.get("word", []))
+                    if not word_text:
+                        continue
+
+                    coarse_start = float(word_entry.get("start", 0.0))
+                    coarse_end = float(word_entry.get("end", 0.0))
+                    if coarse_end <= coarse_start:
+                        coarse_end = coarse_start + MIN_TOKEN_DURATION
+
+                    refined_start, refined_end = _refine_timestamp(energy_profile, coarse_start, coarse_end)
+
+                    abs_start = time_offset + refined_start
+                    abs_end = time_offset + refined_end
+
+                    if aggregated_tokens:
+                        prev_end = aggregated_tokens[-1].t + aggregated_tokens[-1].d
+                        if abs_start < prev_end:
+                            abs_start = prev_end
+                        if abs_end <= abs_start:
+                            abs_end = max(abs_start + max(MIN_TOKEN_DURATION, refined_end - refined_start), time_offset + coarse_end)
+
+                    duration = max(abs_end - abs_start, MIN_TOKEN_DURATION)
+
                     aggregated_tokens.append(WordToken(
-                        t=round(time_offset + word_start, 2),
-                        d=round(word_end - word_start, 2),
-                        w="".join(word_entry.get("word", []))
+                        t=round(abs_start, 3),
+                        d=round(duration, 3),
+                        w=word_text
                     ))
             elif hypo.text:
+                base_duration = max(0.4, MIN_TOKEN_DURATION)
                 for j, word in enumerate(hypo.text.split()):
                     aggregated_tokens.append(WordToken(
-                        t=round(time_offset + j * 0.5, 2),
-                        d=0.4,
+                        t=round(time_offset + j * base_duration, 3),
+                        d=round(base_duration, 3),
                         w=word
                     ))
 
