@@ -379,16 +379,43 @@ public static class AlignCommand
     else
     {
         static bool IsAlignedWord(WordAlign op) => op.BookIdx.HasValue && op.AsrIdx.HasValue && op.Op != AlignOp.Del;
+        static bool IsReliableMatch(WordAlign op) => op.BookIdx.HasValue && op.AsrIdx.HasValue && op.Op == AlignOp.Match && op.Score >= 0.2;
 
         var matchedBookIdx = new List<int>();
         matchedBookIdx.AddRange(wordOps.Where(IsAlignedWord).Select(o => o.BookIdx!.Value));
         matchedBookIdx.AddRange(anchorOps.Where(a => a.BookIdx.HasValue).Select(a => a.BookIdx!.Value));
         matchedBookIdx.Sort();
 
-        if (matchedBookIdx.Count > 0)
+        var reliableBookIdx = new List<int>();
+        reliableBookIdx.AddRange(wordOps.Where(IsReliableMatch).Select(o => o.BookIdx!.Value));
+        reliableBookIdx.AddRange(anchorOps.Where(a => a.BookIdx.HasValue).Select(a => a.BookIdx!.Value));
+        reliableBookIdx.Sort();
+
+        List<int> rangeSource;
+        bool usingReliable;
+        if (reliableBookIdx.Count >= Math.Min(24, matchedBookIdx.Count))
         {
-            secStartWord = matchedBookIdx.First();
-            secEndWord = matchedBookIdx.Last();
+            rangeSource = reliableBookIdx;
+            usingReliable = true;
+        }
+        else
+        {
+            rangeSource = matchedBookIdx;
+            usingReliable = false;
+        }
+
+        if (rangeSource.Count > 0)
+        {
+            int maxWords = Math.Max(1, book.Words.Length);
+            int lowerBound = Math.Min(80, maxWords);
+            int approxWordsEstimate = Math.Max(asr.Tokens.Length, pipe.AsrFilteredCount);
+            int approxWords = (int)Math.Round(approxWordsEstimate * 1.2, MidpointRounding.AwayFromZero);
+            approxWords = Math.Clamp(approxWords, lowerBound, maxWords);
+
+            var (candidateStart, candidateEnd) = SelectDenseBookRange(rangeSource, approxWords, maxWords);
+
+            secStartWord = candidateStart;
+            secEndWord = candidateEnd;
 
             var firstSentence = book.Sentences.FirstOrDefault(s => s.Start <= secStartWord && s.End >= secStartWord);
             if (firstSentence != null)
@@ -405,7 +432,10 @@ public static class AlignCommand
             secStartWord = Math.Max(0, secStartWord);
             secEndWord = Math.Min(book.Words.Length - 1, Math.Max(secStartWord, secEndWord));
 
-            Console.WriteLine($"Section detection fallback: restricting to book words [{secStartWord}, {secEndWord}] (approx {matchedBookIdx.Count} aligned tokens).");
+            int matchesInRange = rangeSource.Count(idx => idx >= secStartWord && idx <= secEndWord);
+            int trimmedOutliers = matchedBookIdx.Count(idx => idx < secStartWord || idx > secEndWord);
+            string sourceLabel = usingReliable ? "reliable" : "aligned";
+            Console.WriteLine($"Section detection fallback: restricting to book words [{secStartWord}, {secEndWord}] (retained {matchesInRange}/{rangeSource.Count} {sourceLabel} matches; trimmed {trimmedOutliers} outliers).");
         }
         else
         {
@@ -444,6 +474,59 @@ public static class AlignCommand
     var outJson = JsonSerializer.Serialize(tx, new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase, WriteIndented = true });
     await File.WriteAllTextAsync(outFile.FullName, outJson);
     Console.WriteLine($"TranscriptIndex written to: {outFile.FullName}");
+
+    static (int Start, int End) SelectDenseBookRange(IReadOnlyList<int> sortedIndices, int approxSpan, int totalBookWords)
+    {
+        if (sortedIndices.Count == 0)
+        {
+            return (0, Math.Max(0, totalBookWords - 1));
+        }
+
+        int maxIndex = Math.Max(0, totalBookWords - 1);
+        int minSpan = Math.Min(120, Math.Max(1, maxIndex));
+        int baseSpan = Math.Max(minSpan, approxSpan);
+        int targetSpan = Math.Min(maxIndex, (int)(baseSpan * 1.7));
+        int bestStartIdx = 0;
+        int bestEndIdx = 0;
+        int bestCount = 0;
+        int j = 0;
+
+        for (int i = 0; i < sortedIndices.Count; i++)
+        {
+            while (j < sortedIndices.Count && sortedIndices[j] - sortedIndices[i] <= targetSpan)
+            {
+                j++;
+            }
+
+            int count = j - i;
+            if (count > bestCount ||
+                (count == bestCount && (sortedIndices[j - 1] - sortedIndices[i]) < (sortedIndices[bestEndIdx] - sortedIndices[bestStartIdx])))
+            {
+                bestCount = count;
+                bestStartIdx = i;
+                bestEndIdx = j - 1;
+            }
+
+            if (j == i)
+            {
+                j++;
+            }
+        }
+
+        int start = sortedIndices[bestStartIdx];
+        int end = sortedIndices[bestEndIdx];
+
+        int margin = Math.Min(Math.Max(targetSpan / 8, 40), 400);
+        start = Math.Max(0, start - margin);
+        end = Math.Min(maxIndex, end + margin);
+
+        if (end < start)
+        {
+            end = start;
+        }
+
+        return (start, end);
+    }
 }
 
     private static TimingRange ComputeTiming(ScriptRange? scriptRange, AsrResponse asr)
