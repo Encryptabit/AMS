@@ -9,11 +9,9 @@ using Ams.Core.Validation;
 namespace Ams.Core.Alignment.Anchors;
 
 /// <summary>
-/// Detects the most likely book section from the first few ASR tokens by
-/// (1) fast path: recognizing explicit section heading tags (e.g., "Chapter 1", "Chapter 28A", "Prologue")
-/// (2) fallback: matching against normalized section headings (either precomputed sections
-///     or heading-style paragraphs) using similarity + coverage
+/// Detects likely sections by combining explicit heading heuristics with fuzzy matching of normalized script text.
 /// </summary>
+
 public static class SectionLocator
 {
     private static readonly HashSet<string> HeadingKeywords = new(StringComparer.Ordinal)
@@ -35,9 +33,91 @@ public static class SectionLocator
     private sealed record HeadingCandidate(SectionRange Range, string[] Tokens, string Normalized, bool IsStructured);
 
     /// <summary>
-    /// Attempts to detect a section using the first few ASR tokens.
-    /// Returns the best matching SectionRange or null if no confident match.
     /// </summary>
+    private static readonly Regex ChapterWordTag = new(@"(?i)\bchapter\s+([a-z][a-z\s-]*?)(?:\s+([a-z]))?\b", RegexOptions.Compiled);
+
+    private static readonly HashSet<string> LeadingNoiseTokens = new(StringComparer.Ordinal)
+    {
+        "model", "version", "nvidia", "parakeet", "tdt", "total", "words", "computing", "anchors",
+        "anchor", "rendering", "timeline", "built", "original", "audio", "hydrated", "hydrating",
+        "transcript", "index", "generating", "roomtone", "written", "fallback", "restricting",
+        "diagnostics", "emitting", "section", "detection", "gap", "candidate", "final", "meanrms",
+        "prefix", "tokens"
+    };
+
+    private static readonly Dictionary<string, int> CardinalNumbers = new(StringComparer.Ordinal)
+    {
+        ["zero"] = 0,
+        ["one"] = 1,
+        ["two"] = 2,
+        ["three"] = 3,
+        ["four"] = 4,
+        ["five"] = 5,
+        ["six"] = 6,
+        ["seven"] = 7,
+        ["eight"] = 8,
+        ["nine"] = 9,
+        ["ten"] = 10,
+        ["eleven"] = 11,
+        ["twelve"] = 12,
+        ["thirteen"] = 13,
+        ["fourteen"] = 14,
+        ["fifteen"] = 15,
+        ["sixteen"] = 16,
+        ["seventeen"] = 17,
+        ["eighteen"] = 18,
+        ["nineteen"] = 19
+    };
+
+    private static readonly Dictionary<string, int> TensNumbers = new(StringComparer.Ordinal)
+    {
+        ["twenty"] = 20,
+        ["thirty"] = 30,
+        ["forty"] = 40,
+        ["fifty"] = 50,
+        ["sixty"] = 60,
+        ["seventy"] = 70,
+        ["eighty"] = 80,
+        ["ninety"] = 90
+    };
+
+    private static readonly Dictionary<string, int> OrdinalNumbers = new(StringComparer.Ordinal)
+    {
+        ["first"] = 1,
+        ["second"] = 2,
+        ["third"] = 3,
+        ["fourth"] = 4,
+        ["fifth"] = 5,
+        ["sixth"] = 6,
+        ["seventh"] = 7,
+        ["eighth"] = 8,
+        ["ninth"] = 9,
+        ["tenth"] = 10,
+        ["eleventh"] = 11,
+        ["twelfth"] = 12,
+        ["thirteenth"] = 13,
+        ["fourteenth"] = 14,
+        ["fifteenth"] = 15,
+        ["sixteenth"] = 16,
+        ["seventeenth"] = 17,
+        ["eighteenth"] = 18,
+        ["nineteenth"] = 19,
+        ["twentieth"] = 20,
+        ["thirtieth"] = 30,
+        ["fortieth"] = 40,
+        ["fiftieth"] = 50,
+        ["sixtieth"] = 60,
+        ["seventieth"] = 70,
+        ["eightieth"] = 80,
+        ["ninetieth"] = 90,
+        ["hundredth"] = 100
+    };
+
+    /// <summary>
+    /// Attempts to detect the most likely book section from the first few ASR tokens.
+    /// Returns the best matching SectionRange or null if no confident match is found.
+    /// </summary>
+
     public static SectionRange? DetectSection(BookIndex book, IReadOnlyList<string> asrTokens, int prefixTokenCount = 12)
     {
         if (book is null) return null;
@@ -45,7 +125,13 @@ public static class SectionLocator
 
         // Extract a short prefix from ASR and normalize to a heading-friendly form
         var asrHeadingTokens = ExtractAsrHeadingTokens(asrTokens, prefixTokenCount);
-        if (asrHeadingTokens.Length == 0) return null;
+        if (asrHeadingTokens.Length == 0)
+        {
+            Console.WriteLine($"[SectionDetect] prefix (requested {prefixTokenCount}) produced no normalized heading tokens.");
+            return null;
+        }
+
+        Console.WriteLine($"[SectionDetect] prefix (requested {prefixTokenCount}) -> {asrHeadingTokens.Length} tokens: {string.Join(' ', asrHeadingTokens.Take(16))}");
 
         // ---- NEW: explicit tag fast-path (handles "Chapter 1", "Chapter 28A", "Prologue", etc.) ----
         if (TryResolveByExplicitTag(book, asrHeadingTokens, out var explicitMatch))
@@ -133,6 +219,32 @@ public static class SectionLocator
                 return true;
             }
         }
+        else
+        {
+            // (a2) Spelled-out ordinals/cardinals ("chapter twenty one", "chapter first", etc.)
+            var wordsMatch = ChapterWordTag.Match(normalized);
+            if (wordsMatch.Success)
+            {
+                var numberPhrase = wordsMatch.Groups[1].Value.Trim();
+                if (TryParseNumberWords(numberPhrase, out var parsed))
+                {
+                    char? suffix = wordsMatch.Groups[2].Success ? char.ToUpperInvariant(wordsMatch.Groups[2].Value[0]) : (char?)null;
+                    var sec = FindByChapterIndex(book, parsed, suffix);
+                    if (sec is not null)
+                    {
+                        range = sec;
+                        return true;
+                    }
+
+                    sec = FindByChapterIndex(book, parsed, letter: null);
+                    if (sec is not null)
+                    {
+                        range = sec;
+                        return true;
+                    }
+                }
+            }
+        }
 
         // (b) Single-word headings like "Prologue", "Epilogue", etc.
         var m2 = SingleWordHeadTag.Match(normalized);
@@ -149,6 +261,170 @@ public static class SectionLocator
 
         range = null;
         return false;
+    }
+
+    private static string[] TrimHeadingNoiseTokens(IReadOnlyList<string> tokens)
+    {
+        if (tokens.Count == 0)
+        {
+            return Array.Empty<string>();
+        }
+
+        int start = 0;
+        if (tokens.Count >= 3 && tokens[0] == "section" && tokens[1] == "detection" && tokens[2] == "fallback")
+        {
+            start = 3;
+        }
+
+        if (tokens.Count >= 2 && tokens[0] == "timeline" && tokens[1] == "built")
+        {
+            start = Math.Max(start, 2);
+        }
+
+        while (start < tokens.Count && ShouldDropLeadingToken(tokens[start]))
+        {
+            start++;
+        }
+
+        if (start >= tokens.Count)
+        {
+            return Array.Empty<string>();
+        }
+
+        if (start == 0 && tokens is string[] direct)
+        {
+            return direct;
+        }
+
+        var result = new string[tokens.Count - start];
+        for (int i = start; i < tokens.Count; i++)
+        {
+            result[i - start] = tokens[i];
+        }
+
+        return result;
+    }
+
+    private static bool ShouldDropLeadingToken(string token)
+    {
+        if (string.IsNullOrWhiteSpace(token))
+        {
+            return true;
+        }
+
+        if (HeadingKeywords.Contains(token))
+        {
+            return false;
+        }
+
+        if (LeadingNoiseTokens.Contains(token))
+        {
+            return true;
+        }
+
+        if (token.All(ch => !char.IsLetterOrDigit(ch)))
+        {
+            return true;
+        }
+
+        if (token.All(char.IsDigit))
+        {
+            return true;
+        }
+
+        if (token.Any(char.IsDigit) && token.Length <= 4)
+        {
+            return true;
+        }
+
+        if (token.Length == 1)
+        {
+            return true;
+        }
+
+        return false;
+    }
+
+    private static bool TryParseNumberWords(string phrase, out int value)
+    {
+        value = 0;
+        if (string.IsNullOrWhiteSpace(phrase))
+        {
+            return false;
+        }
+
+        var sanitized = phrase.Replace('-', ' ');
+        var tokens = sanitized.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        if (tokens.Length == 0)
+        {
+            return false;
+        }
+
+        int total = 0;
+        int current = 0;
+        bool seenAny = false;
+
+        foreach (var token in tokens)
+        {
+            if (token == "and")
+            {
+                continue;
+            }
+
+            if (OrdinalNumbers.TryGetValue(token, out var ordinal))
+            {
+                current += ordinal;
+                seenAny = true;
+                break; // ordinals typically terminate the phrase
+            }
+
+            if (CardinalNumbers.TryGetValue(token, out var cardinal))
+            {
+                current += cardinal;
+                seenAny = true;
+                continue;
+            }
+
+            if (TensNumbers.TryGetValue(token, out var tens))
+            {
+                current += tens;
+                seenAny = true;
+                continue;
+            }
+
+            if (token == "hundred")
+            {
+                if (current == 0)
+                {
+                    current = 1;
+                }
+                current *= 100;
+                seenAny = true;
+                continue;
+            }
+
+            if (token == "thousand")
+            {
+                if (current == 0)
+                {
+                    current = 1;
+                }
+                total += current * 1000;
+                current = 0;
+                seenAny = true;
+                continue;
+            }
+
+            if (seenAny)
+            {
+                break;
+            }
+
+            return false;
+        }
+
+        value = total + current;
+        return seenAny && value > 0;
     }
 
     private static SectionRange? FindByChapterIndex(BookIndex book, int chapterNumber, char? letter)
@@ -277,15 +553,31 @@ public static class SectionLocator
     private static string[] ExtractAsrHeadingTokens(IReadOnlyList<string> asrTokens, int prefixTokenCount)
     {
         int count = Math.Max(1, Math.Min(prefixTokenCount, asrTokens.Count));
-        var sb = new StringBuilder();
+        var builder = new StringBuilder();
         for (int i = 0; i < count; i++)
         {
-            if (i > 0) sb.Append(' ');
-            sb.Append(asrTokens[i]);
+            if (i > 0) builder.Append(' ');
+            builder.Append(asrTokens[i]);
         }
 
-        var normalized = NormalizeHeadingLine(sb.ToString());
-        return TextNormalizer.TokenizeWords(normalized);
+        string normalized = NormalizeHeadingLine(builder.ToString());
+        var tokens = TextNormalizer.TokenizeWords(normalized);
+        var trimmed = TrimHeadingNoiseTokens(tokens);
+
+        int next = count;
+        int maxTokens = Math.Min(asrTokens.Count, count + 12);
+        while (trimmed.Length == 0 && next < maxTokens)
+        {
+            if (builder.Length > 0) builder.Append(' ');
+            builder.Append(asrTokens[next]);
+            next++;
+
+            normalized = NormalizeHeadingLine(builder.ToString());
+            tokens = TextNormalizer.TokenizeWords(normalized);
+            trimmed = TrimHeadingNoiseTokens(tokens);
+        }
+
+        return trimmed;
     }
 
     private static string NormalizeHeadingLine(string? text)
