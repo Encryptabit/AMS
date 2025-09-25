@@ -37,7 +37,7 @@ public static class AlignCommand
         var crossSentencesOption = new Option<bool>("--cross-sentences", () => false, "Allow anchors to cross sentence boundaries");
         var domainStopwordsOption = new Option<bool>("--domain-stopwords", () => true, "Use English/domain stopwords");
 
-        var asrPrefixTokensOption = new Option<int>("--asr-prefix", () => 8, "ASR tokens to consider for section detection");
+        var asrPrefixTokensOption = new Option<int>("--asr-prefix", () => 4, "ASR tokens to consider for section detection");
         var emitWindowsOption = new Option<bool>("--emit-windows", () => false, "Also emit search windows between anchors");
 
         cmd.AddOption(indexOption);
@@ -94,7 +94,7 @@ public static class AlignCommand
         outOption.AddAlias("-o");
 
         var detectSectionOption = new Option<bool>("--detect-section", () => true, "Detect section from ASR prefix and restrict window");
-        var asrPrefixTokensOption = new Option<int>("--asr-prefix", () => 8, "ASR tokens to consider for section detection");
+        var asrPrefixTokensOption = new Option<int>("--asr-prefix", () => 4, "ASR tokens to consider for section detection");
         var ngramOption = new Option<int>("--ngram", () => 3, "Anchor n-gram size");
         var targetPerTokensOption = new Option<int>("--target-per-tokens", () => 50, "Approx. 1 anchor per N book tokens");
         var minSeparationOption = new Option<int>("--min-separation", () => 100, "Min token separation when duplicates allowed during relaxation");

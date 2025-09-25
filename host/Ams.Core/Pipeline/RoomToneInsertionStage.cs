@@ -309,6 +309,9 @@ public sealed class RoomToneInsertionStage
         const double stepSec = 0.005;
         const double backoffSec = 0.005;
         const double speechThresholdDb = -40.0;
+        const double preRollTargetSec = 0.75;
+        const double postChapterTargetSec = 1.50;
+        const double tailTargetSec = 3.00;
 
         var gaps = new List<RoomtonePlanGap>();
         if (audioDurationSec <= epsilon)
@@ -317,18 +320,23 @@ public sealed class RoomToneInsertionStage
             return gaps;
         }
 
+        static bool HasPositiveTiming(SentenceTimelineEntry e) => e.HasTiming && (e.Timing.EndSec - e.Timing.StartSec) > epsilon;
+
         var orderedEntries = entries
+            .Where(HasPositiveTiming)
             .OrderBy(e => e.Timing.StartSec)
             .ThenBy(e => e.Timing.EndSec)
             .ToList();
 
         if (orderedEntries.Count == 0)
         {
-            Console.WriteLine("[Roomtone] No sentence timings; treating entire chapter as a single gap.");
+            Console.WriteLine("[Roomtone] No usable sentence timings; treating entire chapter as a single gap.");
             var stats = analyzer.AnalyzeGap(0.0, audioDurationSec);
             gaps.Add(CreateGap(0.0, audioDurationSec, null, null, stats));
             return gaps;
         }
+
+        var firstUsable = orderedEntries[0];
 
         SentenceTimelineEntry? previous = null;
         foreach (var current in orderedEntries)
@@ -352,6 +360,22 @@ public sealed class RoomToneInsertionStage
 
             initialStart = Math.Clamp(initialStart, 0.0, audioDurationSec);
             initialEnd = Math.Clamp(initialEnd, 0.0, audioDurationSec);
+
+            if (leftEntry is null)
+            {
+                initialStart = 0.0;
+                initialEnd = Math.Min(initialEnd, preRollTargetSec);
+            }
+            else if (firstUsable is not null && leftEntry.SentenceId == firstUsable.SentenceId)
+            {
+                initialStart = leftEntry.Timing.EndSec;
+                initialEnd = Math.Min(initialEnd, initialStart + postChapterTargetSec);
+            }
+            else if (rightEntry is null)
+            {
+                initialEnd = Math.Min(initialEnd, initialStart + tailTargetSec);
+            }
+
             if (initialEnd - initialStart <= epsilon)
             {
                 yield break;
@@ -372,27 +396,43 @@ public sealed class RoomToneInsertionStage
             bool leftAccepted = TryCalibrateLeft(initialStart, midpoint, out double leftStart);
             bool rightAccepted = TryCalibrateRight(midpoint, initialEnd, out double rightEnd);
 
+            double finalStart = initialStart;
+            double finalEnd = initialEnd;
+
             if (leftAccepted && midpoint - leftStart > epsilon)
             {
                 var stats = analyzer.AnalyzeGap(leftStart, midpoint);
                 Console.WriteLine($"[Roomtone]   left accepted [{leftStart:F3},{midpoint:F3}] meanRms={stats.MeanRmsDb:F2} dB");
-                yield return CreateGap(leftStart, midpoint, leftEntry?.SentenceId, rightEntry?.SentenceId, stats);
+                finalStart = leftStart;
             }
             else
             {
-                Console.WriteLine("[Roomtone]   left rejected or collapsed.");
+                Console.WriteLine("[Roomtone]   left rejected or collapsed; using structural start.");
             }
 
             if (rightAccepted && rightEnd - midpoint > epsilon)
             {
                 var stats = analyzer.AnalyzeGap(midpoint, rightEnd);
                 Console.WriteLine($"[Roomtone]   right accepted [{midpoint:F3},{rightEnd:F3}] meanRms={stats.MeanRmsDb:F2} dB");
-                yield return CreateGap(midpoint, rightEnd, leftEntry?.SentenceId, rightEntry?.SentenceId, stats);
+                finalEnd = rightEnd;
             }
             else
             {
-                Console.WriteLine("[Roomtone]   right rejected or collapsed.");
+                Console.WriteLine("[Roomtone]   right rejected or collapsed; using structural end.");
             }
+
+            finalStart = Math.Clamp(finalStart, 0.0, audioDurationSec);
+            finalEnd = Math.Clamp(finalEnd, finalStart + epsilon, audioDurationSec);
+
+            if (finalEnd - finalStart <= epsilon)
+            {
+                Console.WriteLine("[Roomtone]   collapsed span after calibration; skipping gap.");
+                yield break;
+            }
+
+            var mergedStats = analyzer.AnalyzeGap(finalStart, finalEnd);
+            Console.WriteLine($"[Roomtone]   final gap [{finalStart:F3},{finalEnd:F3}] meanRms={mergedStats.MeanRmsDb:F2} dB");
+            yield return CreateGap(finalStart, finalEnd, leftEntry?.SentenceId, rightEntry?.SentenceId, mergedStats);
         }
 
         bool TryCalibrateLeft(double initialStart, double end, out double result)

@@ -33,7 +33,6 @@ namespace Ams.Core.Audio
             if (roomtoneSeed is null) throw new ArgumentNullException(nameof(roomtoneSeed));
             if (entries is null) throw new ArgumentNullException(nameof(entries));
 
-            // Work at the target rate the rest of the pipeline uses
             var src  = input.SampleRate == targetSampleRate ? input : ResampleLinear(input, targetSampleRate);
             var tone = roomtoneSeed.SampleRate == targetSampleRate ? roomtoneSeed : ResampleLinear(roomtoneSeed, targetSampleRate);
             if (tone.Length == 0) throw new InvalidOperationException("Roomtone seed must contain samples.");
@@ -42,19 +41,32 @@ namespace Ams.Core.Audio
             int sr = targetSampleRate;
             int N  = Math.Max(1, (int)Math.Round(overlapMs * 0.001 * sr));
 
+            static bool HasPositiveTiming(SentenceTimelineEntry e) => e.HasTiming && (e.Timing.EndSec - e.Timing.StartSec) > 1e-6;
+            static double EffectiveStart(SentenceTimelineEntry e) => HasPositiveTiming(e) ? e.Timing.StartSec : e.Window.StartSec;
+            static double EffectiveEnd(SentenceTimelineEntry e) => HasPositiveTiming(e) ? e.Timing.EndSec : e.Window.EndSec;
+
+            var timedEntries = entries.Where(HasPositiveTiming).ToList();
+
             if (entries.Count == 0)
             {
-                // No sentences: enforce exact tail only
                 int tailTarget0 = (int)Math.Round(tailSec * sr);
-                long cursor = 0;
+                long cursor0 = 0;
                 var only = new AudioBuffer(src.Channels, sr, src.Length + tailTarget0);
                 for (int ch = 0; ch < src.Channels; ch++) Array.Copy(src.Planar[ch], 0, only.Planar[ch], 0, src.Length);
                 if (tailTarget0 > 0)
-                    ReplaceGapWithRoomtoneClassic(only, only, tone, src.Length, src.Length + tailTarget0, toneGainLinear, overlapMs, ref cursor);
+                    ReplaceGapWithRoomtoneClassic(only, only, tone, src.Length, src.Length + tailTarget0, toneGainLinear, overlapMs, ref cursor0);
                 return new NormalizeEntriesResult(only, new List<SentenceTimelineEntry>());
             }
 
-            // Helpers to shift timeline entries
+            SentenceTimelineEntry ResolveFirst() => timedEntries.Count > 0 ? timedEntries[0] : entries[0];
+            SentenceTimelineEntry? ResolveSecond(SentenceTimelineEntry first) => timedEntries.FirstOrDefault(e => e.SentenceId != first.SentenceId)
+                ?? entries.SkipWhile(e => e.SentenceId == first.SentenceId).FirstOrDefault(e => e.SentenceId != first.SentenceId);
+            SentenceTimelineEntry ResolveLast() => timedEntries.Count > 0 ? timedEntries[^1] : entries[^1];
+
+            var firstTimed = ResolveFirst();
+            var secondTimed = ResolveSecond(firstTimed);
+            var lastTimed = ResolveLast();
+
             static SentenceTimelineEntry ShiftEntry(SentenceTimelineEntry e, double shift, double maxTime)
             {
                 var t = e.Timing;
@@ -74,153 +86,89 @@ namespace Ams.Core.Audio
                     new SentenceTiming(ws, we, w.FragmentBacked, w.Confidence));
             }
 
-            // Current working audio
             var cur = CopyBuffer(src);
             long toneCursor = 0;
 
-            // Original markers (seconds)
-            var first  = entries[0];
-            var last   = entries[^1];
-            var second = entries.Count > 1 ? entries[1] : null;
+            double firstStartSec = EffectiveStart(firstTimed);
+            double firstEndSec = EffectiveEnd(firstTimed);
+            double secondStartSec = secondTimed is not null ? EffectiveStart(secondTimed) : double.PositiveInfinity;
+            double secondStartOriginal = secondStartSec;
+            double lastEndSec = EffectiveEnd(lastTimed);
 
-            double firstStartSec  = first.Timing.StartSec;
-            double firstEndSec    = first.Timing.EndSec;
-            double secondStartSec = second?.Timing.StartSec ?? firstEndSec;
-            double lastEndSec     = last.Timing.EndSec;
+            int preTargetSamples = (int)Math.Round(preRollSec * sr);
+            int postTargetSamples = (int)Math.Round(postChapterPauseSec * sr);
+            int tailTargetSamples = (int)Math.Round(tailSec * sr);
 
-            // Targets (samples)
-            int preTarget    = (int)Math.Round(preRollSec          * sr);
-            int postTarget   = (int)Math.Round(postChapterPauseSec * sr);
-            int tailTarget   = (int)Math.Round(tailSec             * sr);
-
-            // Existing (samples)
-            int preExisting  = (int)Math.Round(firstStartSec * sr);
-            int postExisting = (int)Math.Round((secondStartSec - firstEndSec) * sr);
-            int tailExisting = src.Length - (int)Math.Round(lastEndSec * sr);
-
-            // Deltas we want to apply (samples) (+ insert, − trim)
-            int dPre   = preTarget  - preExisting;
-            int dPost  = postTarget - postExisting;
-            int dTail  = tailTarget - tailExisting;
-
-            // ------------------ PRE-ROLL ------------------
-            if (dPre > 0)
+            int firstStartSamples = (int)Math.Round(firstStartSec * sr);
+            int deltaPreSamples = preTargetSamples - firstStartSamples;
+            if (deltaPreSamples > 0)
             {
-                // Insert roomtone at the very start; crossfade into original
-                var dst = new AudioBuffer(cur.Channels, sr, cur.Length + dPre);
-                for (int ch = 0; ch < cur.Channels; ch++)
-                    Array.Copy(cur.Planar[ch], 0, dst.Planar[ch], dPre, cur.Length);
-
-                ReplaceGapWithRoomtoneClassic(dst, dst, tone, 0, dPre, toneGainLinear, overlapMs, ref toneCursor);
-                cur = dst;
+                cur = InsertSilence(cur, 0, deltaPreSamples);
             }
-            else if (dPre < 0)
+            else if (deltaPreSamples < 0)
             {
-                // Trim, but keep 'ov' samples for a clean equal-power crossfade at the new boundary.
-                int trim = -dPre;
-                int ov   = Math.Min(N, preTarget);
-                int core = Math.Min(preExisting, trim + ov);
-
-                var dst = new AudioBuffer(cur.Channels, sr, cur.Length - core);
-                for (int ch = 0; ch < cur.Channels; ch++)
-                    Array.Copy(cur.Planar[ch], core, dst.Planar[ch], 0, cur.Length - core);
-
-                ReplaceGapWithRoomtoneClassic(dst, dst, tone, 0, ov, toneGainLinear, overlapMs, ref toneCursor);
-                cur = dst;
+                cur = RemoveSamples(cur, 0, -deltaPreSamples);
             }
+            ReplaceGapWithRoomtoneClassic(cur, cur, tone, 0, preTargetSamples, toneGainLinear, overlapMs, ref toneCursor);
 
-            // All times shift by dPre/sr from here forward
-            double shiftPreSec = dPre / (double)sr;
-
-            // ---------------- POST-CHAPTER (gap between 1st & 2nd) ----------------
-            if (second is not null)
+            double shiftPreSec = deltaPreSamples / (double)sr;
+            firstStartSec = preRollSec;
+            firstEndSec += shiftPreSec;
+            if (!double.IsPositiveInfinity(secondStartSec))
             {
-                // Position of the join after pre-roll step
-                int firstEndAfter  = (int)Math.Round((firstEndSec + shiftPreSec) * sr);
+                secondStartSec += shiftPreSec;
+            }
+            lastEndSec += shiftPreSec;
 
-                if (dPost > 0)
+            double shiftAfterChapterSec = shiftPreSec;
+            if (!double.IsPositiveInfinity(secondStartSec))
+            {
+                int firstEndSamples = (int)Math.Round(firstEndSec * sr);
+                int currentSecondStartSamples = (int)Math.Round(secondStartSec * sr);
+                int currentGapSamples = currentSecondStartSamples - firstEndSamples;
+                int deltaGapSamples = postTargetSamples - currentGapSamples;
+                if (deltaGapSamples > 0)
                 {
-                    // Insert roomtone between first end and second start
-                    int insertPos = firstEndAfter;
-                    var dst = new AudioBuffer(cur.Channels, sr, cur.Length + dPost);
-
-                    // Left
-                    for (int ch = 0; ch < cur.Channels; ch++)
-                        Array.Copy(cur.Planar[ch], 0, dst.Planar[ch], 0, insertPos);
-                    // Right (shifted)
-                    for (int ch = 0; ch < cur.Channels; ch++)
-                        Array.Copy(cur.Planar[ch], insertPos, dst.Planar[ch], insertPos + dPost, cur.Length - insertPos);
-
-                    ReplaceGapWithRoomtoneClassic(dst, dst, tone, insertPos, insertPos + dPost, toneGainLinear, overlapMs, ref toneCursor);
-                    cur = dst;
+                    cur = InsertSilence(cur, firstEndSamples, deltaGapSamples);
                 }
-                else if (dPost < 0)
+                else if (deltaGapSamples < 0)
                 {
-                    // Trim down the gap; reserve 'ov' to crossfade tone between the halves.
-                    int trim = -dPost;
-                    int ov   = Math.Min(N, postTarget);
-                    int core = Math.Min(postExisting, trim + ov);
-
-                    int joinL = firstEndAfter;          // left join index in current audio
-                    var dst = new AudioBuffer(cur.Channels, sr, cur.Length - core);
-
-                    // Left part unchanged
-                    for (int ch = 0; ch < cur.Channels; ch++)
-                        Array.Copy(cur.Planar[ch], 0, dst.Planar[ch], 0, joinL);
-
-                    // Right part jumps ahead by 'core'; we leave 'ov' samples as the crossfade gap
-                    for (int ch = 0; ch < cur.Channels; ch++)
-                        Array.Copy(cur.Planar[ch], joinL + core, dst.Planar[ch], joinL, cur.Length - (joinL + core));
-
-                    // Crossfade 'ov' samples of tone between halves (keeps total duration exact)
-                    ReplaceGapWithRoomtoneClassic(dst, dst, tone, joinL, joinL + ov, toneGainLinear, overlapMs, ref toneCursor);
-                    cur = dst;
+                    cur = RemoveSamples(cur, firstEndSamples, -deltaGapSamples);
                 }
+
+                ReplaceGapWithRoomtoneClassic(cur, cur, tone, firstEndSamples, firstEndSamples + postTargetSamples, toneGainLinear, overlapMs, ref toneCursor);
+
+                double gapShiftSec = deltaGapSamples / (double)sr;
+                if (!double.IsPositiveInfinity(secondStartSec))
+                {
+                    secondStartSec += gapShiftSec;
+                }
+                lastEndSec += gapShiftSec;
+                shiftAfterChapterSec = shiftPreSec + gapShiftSec;
             }
 
-            // Sentences at or after the 2nd get this additional shift
-            double shiftAfterChapterSec = shiftPreSec + (dPost / (double)sr);
-
-            // ------------------ TAIL ------------------
-            // Recompute last end after previous steps
-            int lastEndAfter = (int)Math.Round((lastEndSec + shiftAfterChapterSec) * sr);
-            int tailAfter    = cur.Length - lastEndAfter;
-            int dTailNow     = tailTarget - tailAfter;
-
-            if (dTailNow > 0)
+            int lastEndSamples = (int)Math.Round(lastEndSec * sr);
+            int desiredTotalSamples = lastEndSamples + tailTargetSamples;
+            int deltaTailSamples = desiredTotalSamples - cur.Length;
+            if (deltaTailSamples > 0)
             {
-                int add = dTailNow;
-                var dst = new AudioBuffer(cur.Channels, sr, cur.Length + add);
-                for (int ch = 0; ch < cur.Channels; ch++)
-                    Array.Copy(cur.Planar[ch], 0, dst.Planar[ch], 0, cur.Length);
-
-                ReplaceGapWithRoomtoneClassic(dst, dst, tone, cur.Length, cur.Length + add, toneGainLinear, overlapMs, ref toneCursor);
-                cur = dst;
+                cur = InsertSilence(cur, cur.Length, deltaTailSamples);
             }
-            else if (dTailNow < 0)
+            else if (deltaTailSamples < 0)
             {
-                int trim = -dTailNow;
-                int ov   = Math.Min(N, tailTarget);
-                int core = trim + ov; // always safe; we're trimming from the very end
-                var dst = new AudioBuffer(cur.Channels, sr, cur.Length - core);
-
-                // Copy everything but the 'core' from end
-                for (int ch = 0; ch < cur.Channels; ch++)
-                    Array.Copy(cur.Planar[ch], 0, dst.Planar[ch], 0, dst.Length);
-
-                // Equal-power fade of 'ov' at the new tail
-                ReplaceGapWithRoomtoneClassic(dst, dst, tone, lastEndAfter, lastEndAfter + ov, toneGainLinear, overlapMs, ref toneCursor);
-                cur = dst;
+                cur = RemoveSamples(cur, desiredTotalSamples, -deltaTailSamples);
             }
 
-            // ---- Shift all entries so they match the normalized audio ----
+            ReplaceGapWithRoomtoneClassic(cur, cur, tone, desiredTotalSamples - tailTargetSamples, desiredTotalSamples, toneGainLinear, overlapMs, ref toneCursor);
+
             double newDurationSec = cur.Length / (double)sr;
-            var shifted = new List<SentenceTimelineEntry>(entries.Count);
-            double secondStart0 = second?.Timing.StartSec ?? double.PositiveInfinity;
+            double secondBoundary = secondStartOriginal;
 
+            var shifted = new List<SentenceTimelineEntry>(entries.Count);
             foreach (var e in entries)
             {
-                double shift = (e.Timing.StartSec >= secondStart0) ? shiftAfterChapterSec : shiftPreSec;
+                double probe = EffectiveStart(e);
+                double shift = probe >= secondBoundary ? shiftAfterChapterSec : shiftPreSec;
                 shifted.Add(ShiftEntry(e, shift, newDurationSec));
             }
 
@@ -233,10 +181,9 @@ namespace Ams.Core.Audio
         /// Strategy:
         ///   1) Start with a full copy of the source (prevents accidental silence).
         ///   2) Build a keep mask = Sentences ∪ EnergyKeeps (global, adaptive RMS + micro-guards).
-        ///   3) Final gaps:
-        ///        - pre-roll  [0, firstSentenceStart) and post-chapter (lastSentenceEnd, N) are ALWAYS filled;
-        ///        - interior gaps are the complement of the keep mask (optionally intersected with plan 'gaps').
-        ///   4) Replace each final gap with room tone, using crossfades inside the gap.
+        ///   3) Apply structural fills (pre-roll, first inter-sentence pause, tail) regardless of the keep mask.
+        ///   4) Interior gaps are the complement of the keep mask (optionally intersected with plan 'gaps').
+        ///   5) Replace each interior gap with room tone using in-gap crossfades.
         /// </summary>
         public static AudioBuffer RenderWithSentenceMasks(
             AudioBuffer input,
@@ -272,44 +219,33 @@ namespace Ams.Core.Audio
             var energyKeeps = DetectEnergyKeepsGlobal(
                 src,
                 windowMs: 25, stepMs: 2,
-                enterAboveFloorDb: 10, // enter ≈ global floor + 8 dB
-                exitBelowEnterDb: 4,   // hysteresis
-                minKeepMs: 30,         // ignore very short blips
-                minHoleMs: 15,         // close tiny holes
-                prePadMs: 8,           // safety pads to protect onsets
+                enterAboveFloorDb: 10,
+                exitBelowEnterDb: 4,
+                minKeepMs: 30,
+                minHoleMs: 15,
+                prePadMs: 8,
                 postPadMs: 15,
-                modulationDb: 0.8,     // micro-guard: require small energy modulation to enter
-                speechBandFloorDeltaDb: -12.0 // micro-guard: simple HF hint (first-difference vs total)
+                modulationDb: 0.8,
+                speechBandFloorDeltaDb: -12.0
             );
 
             // 3) Keep mask = Sentences ∪ EnergyKeeps
             var keepMask = Coalesce(sentRanges.Concat(energyKeeps).ToList());
 
-            // 4) Compute gaps with edge protection
+            // 4) Plan ranges (optional) and interior gaps
             var planGapRanges = (gaps != null && gaps.Count > 0)
                 ? BuildGapRanges(gaps, src.SampleRate, src.Length)
                 : new List<(int, int)>();
 
             var (firstStart, lastEnd) = FirstLastSentenceBounds(sentRanges, src.Length);
 
-            // Force-fill edges no matter what the energy keep says.
-            var edgeGaps = new List<(int, int)>();
-            if (firstStart > 0) edgeGaps.Add((0, firstStart));
-            if (lastEnd < src.Length) edgeGaps.Add((lastEnd, src.Length));
-            edgeGaps = Coalesce(edgeGaps);
+            var interiorGaps = ComputeInteriorGaps(keepMask, firstStart, lastEnd);
             if (planGapRanges.Count > 0)
             {
-                edgeGaps = IntersectRanges(edgeGaps, planGapRanges);
+                interiorGaps = IntersectRanges(interiorGaps, planGapRanges);
             }
 
-            // Interior gaps = complement of keep mask inside [firstStart, lastEnd]
-            var interiorGaps = ComputeInteriorGaps(keepMask, firstStart, lastEnd);
-
-            // If caller provided plan gaps, limit interior fills to those planned spans.
-            if (planGapRanges.Count > 0)
-                interiorGaps = IntersectRanges(interiorGaps, planGapRanges);
-
-            var finalGaps = Coalesce(edgeGaps.Concat(interiorGaps).ToList());
+            var finalGaps = Coalesce(interiorGaps);
 
             // Debug masks
             WriteMaskDebug(debugDirectory, "step0b_keep_energy", energyKeeps, src);
@@ -319,9 +255,13 @@ namespace Ams.Core.Audio
             // 5) Out starts as a full copy of source (prevents accidental silence)
             var outBuf = CopyBuffer(src);
 
-            // 6) Replace gaps with room tone, with in-gap crossfades
             int fadeSamples = fadeMs <= 0 ? 0 : (int)Math.Round(fadeMs * 0.001 * src.SampleRate);
             long toneCursor = 0;
+
+            // 6) Fill structural gaps explicitly
+            ApplyStructuralGaps(outBuf, src, tone, sentences, toneGainLinear, fadeSamples, ref toneCursor);
+
+            // 7) Replace interior gaps with room tone
             foreach (var (g0, g1) in finalGaps)
             {
                 ReplaceGapWithRoomtone(outBuf, src, tone, g0, g1, toneGainLinear, fadeSamples, ref toneCursor);
@@ -466,6 +406,32 @@ namespace Ams.Core.Audio
                 }
             }
             toneCursor += rightOv;
+        }
+
+        private static AudioBuffer InsertSilence(AudioBuffer source, int position, int samples)
+        {
+            if (samples <= 0) return source;
+            position = Math.Clamp(position, 0, source.Length);
+            var dst = new AudioBuffer(source.Channels, source.SampleRate, source.Length + samples);
+            for (int ch = 0; ch < source.Channels; ch++)
+            {
+                Array.Copy(source.Planar[ch], 0, dst.Planar[ch], 0, position);
+                Array.Copy(source.Planar[ch], position, dst.Planar[ch], position + samples, source.Length - position);
+            }
+            return dst;
+        }
+
+        private static AudioBuffer RemoveSamples(AudioBuffer source, int position, int samples)
+        {
+            if (samples <= 0) return source;
+            position = Math.Clamp(position, 0, Math.Max(0, source.Length - samples));
+            var dst = new AudioBuffer(source.Channels, source.SampleRate, source.Length - samples);
+            for (int ch = 0; ch < source.Channels; ch++)
+            {
+                Array.Copy(source.Planar[ch], 0, dst.Planar[ch], 0, position);
+                Array.Copy(source.Planar[ch], position + samples, dst.Planar[ch], position, source.Length - (position + samples));
+            }
+            return dst;
         }
 
         private static void ApplyStructuralGaps(

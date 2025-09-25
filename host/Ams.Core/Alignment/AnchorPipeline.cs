@@ -6,7 +6,7 @@ using Ams.Core;
 
 namespace Ams.Core.Alignment.Anchors;
 
-public sealed record SectionDetectOptions(bool Detect = true, int AsrPrefixTokens = 12);
+public sealed record SectionDetectOptions(bool Detect = true, int AsrPrefixTokens = 4);
 
 public sealed record AnchorPipelineResult(
     bool SectionDetected,

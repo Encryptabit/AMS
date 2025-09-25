@@ -136,8 +136,10 @@ public static class SectionLocator
         // ---- NEW: explicit tag fast-path (handles "Chapter 1", "Chapter 28A", "Prologue", etc.) ----
         if (TryResolveByExplicitTag(book, asrHeadingTokens, out var explicitMatch))
         {
+            Console.WriteLine($"[SectionDetect] explicit match -> {explicitMatch.Title} [{explicitMatch.StartWord}, {explicitMatch.EndWord}]");
             return explicitMatch;
         }
+        Console.WriteLine("[SectionDetect] explicit match not found; falling back to fuzzy heading match.");
 
         // ---- Original approach: fuzzy heading match as a fallback ----
         var candidates = BuildHeadingCandidates(book);
@@ -169,14 +171,23 @@ public static class SectionLocator
             }
         }
 
-        if (best is null) return null;
+        if (best is null)
+        {
+            Console.WriteLine("[SectionDetect] fuzzy fallback found no candidate.");
+            return null;
+        }
 
         double bestSimilarity = TextNormalizer.CalculateSimilarity(asrHeadingText, best.Normalized);
         double bestCoverage = (double)bestLcp / best.Tokens.Length;
 
         // Keep the permissive original gate: accept if either similarity is decent OR we cover most of the heading.
-        if (bestSimilarity < 0.55 && bestCoverage < 0.6) return null;
+        if (bestSimilarity < 0.55 && bestCoverage < 0.6)
+        {
+            Console.WriteLine($"[SectionDetect] fuzzy candidate rejected: similarity={bestSimilarity:F2}, coverage={bestCoverage:F2}.");
+            return null;
+        }
 
+        Console.WriteLine($"[SectionDetect] fuzzy candidate -> {best.Range.Title} [{best.Range.StartWord}, {best.Range.EndWord}] (similarity={bestSimilarity:F2}, coverage={bestCoverage:F2}).");
         return best.Range;
     }
 
@@ -428,36 +439,87 @@ public static class SectionLocator
     }
 
     private static SectionRange? FindByChapterIndex(BookIndex book, int chapterNumber, char? letter)
+{
+    if (book.Sections is not { Length: > 0 }) return null;
+
+    SectionRange? fallback = null;
+
+    foreach (var sec in book.Sections)
     {
-        if (book.Sections is not { Length: > 0 }) return null;
+        if (string.IsNullOrWhiteSpace(sec.Title)) continue;
 
-        // Canonical "CHAPTER <N>[A|B]" formats in source sections
-        foreach (var sec in book.Sections)
+        var titleNorm = NormalizeHeadingLine(sec.Title);
+        if (!TryExtractChapterNumber(titleNorm, out var number, out var suffix))
         {
-            if (string.IsNullOrWhiteSpace(sec.Title)) continue;
-            var titleNorm = NormalizeHeadingLine(sec.Title);
+            continue;
+        }
 
-            var match = ChapterTag.Match(titleNorm);
-            if (!match.Success) continue;
+        if (number != chapterNumber)
+        {
+            continue;
+        }
 
-            int n = int.Parse(match.Groups[1].Value);
-            char? ltr = match.Groups[2].Success ? char.ToUpperInvariant(match.Groups[2].Value[0]) : (char?)null;
-
-            if (n != chapterNumber) continue;
-
-            // If caller supplied a suffix, require it; otherwise prefer exact suffix but allow bare-number match.
-            if (letter.HasValue)
+        if (letter.HasValue)
+        {
+            if (suffix.HasValue && suffix.Value == letter.Value)
             {
-                if (ltr.HasValue && ltr.Value == letter.Value) return sec;
-            }
-            else
-            {
-                // Prefer exact bare-number match, but accept lettered if that's what we have in the index.
                 return sec;
+            }
+
+            if (fallback is null && !suffix.HasValue)
+            {
+                fallback = sec;
+            }
+
+            continue;
+        }
+
+        if (!suffix.HasValue)
+        {
+            return sec;
+        }
+
+        fallback ??= sec;
+    }
+
+    return fallback;
+}
+
+    private static bool TryExtractChapterNumber(string titleNorm, out int number, out char? suffix)
+    {
+        number = 0;
+        suffix = null;
+
+        if (string.IsNullOrWhiteSpace(titleNorm))
+        {
+            return false;
+        }
+
+        var numericMatch = ChapterTag.Match(titleNorm);
+        if (numericMatch.Success)
+        {
+            number = int.Parse(numericMatch.Groups[1].Value);
+            suffix = numericMatch.Groups[2].Success
+                ? char.ToUpperInvariant(numericMatch.Groups[2].Value[0])
+                : (char?)null;
+            return true;
+        }
+
+        var wordsMatch = ChapterWordTag.Match(titleNorm);
+        if (wordsMatch.Success)
+        {
+            var phrase = wordsMatch.Groups[1].Value.Trim();
+            if (TryParseNumberWords(phrase, out var parsed) && parsed > 0)
+            {
+                number = parsed;
+                suffix = wordsMatch.Groups[2].Success
+                    ? char.ToUpperInvariant(wordsMatch.Groups[2].Value[0])
+                    : (char?)null;
+                return true;
             }
         }
 
-        return null;
+        return false;
     }
 
     private static SectionRange? FindSingleWordHeading(BookIndex book, string keyLower)
