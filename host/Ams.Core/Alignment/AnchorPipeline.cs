@@ -39,15 +39,25 @@ public static class AnchorPipeline
         var asrRawTokens = asr.Tokens.Select(t => t.Word).ToList();
         SectionRange? section = null;
         (int bStart, int bEnd) bookWindowFiltered;
+
         if (sectionOptions.Detect)
         {
+            // Try with configured prefix first (default 12). The updated SectionLocator has a fast-path for "Chapter N".
             section = SectionLocator.DetectSection(book, asrRawTokens, sectionOptions.AsrPrefixTokens);
+
+            // If still not detected, give it a slightly longer prefix (helps when punctuation expansion increases tokens)
+            if (section is null && sectionOptions.AsrPrefixTokens < 24)
+            {
+                section = SectionLocator.DetectSection(book, asrRawTokens, 24);
+            }
+
             if (section != null && AnchorPreprocessor.TryMapSectionWindow(bookView, (section.StartWord, section.EndWord), out var mapped))
             {
                 bookWindowFiltered = mapped;
             }
             else
             {
+                // Fall back to the entire book (unchanged behavior)
                 bookWindowFiltered = (0, bookView.Tokens.Count - 1);
             }
         }
@@ -68,7 +78,13 @@ public static class AnchorPipeline
         IReadOnlyList<(int bLo, int bHi, int aLo, int aHi)>? windows = null;
         if (includeWindows)
         {
-            windows = AnchorDiscovery.BuildWindows(anchors, bookWindowFiltered.bStart, bookWindowFiltered.bEnd, 0, asrView.Tokens.Count - 1);
+            windows = AnchorDiscovery.BuildWindows(
+                anchors,
+                bookWindowFiltered.bStart,
+                bookWindowFiltered.bEnd,
+                0,
+                asrView.Tokens.Count - 1
+            );
         }
 
         return new AnchorPipelineResult(
@@ -85,6 +101,3 @@ public static class AnchorPipeline
         );
     }
 }
-
-
-
