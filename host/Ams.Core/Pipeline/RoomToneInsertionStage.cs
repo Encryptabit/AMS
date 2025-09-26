@@ -373,11 +373,14 @@ public sealed class RoomToneInsertionStage
             bool leftAccepted = TryCalibrateLeft(initialStart, midpoint, out double leftStart);
             bool rightAccepted = TryCalibrateRight(midpoint, initialEnd, out double rightEnd);
 
+            RoomtonePlanGap? leftGap = null;
+            RoomtonePlanGap? rightGap = null;
+
             if (leftAccepted && midpoint - leftStart > epsilon)
             {
                 var stats = analyzer.AnalyzeGap(leftStart, midpoint);
                 Log.Info($"[Roomtone]   left accepted [{leftStart:F3},{midpoint:F3}] meanRms={stats.MeanRmsDb:F2} dB");
-                yield return CreateGap(leftStart, midpoint, leftEntry?.SentenceId, rightEntry?.SentenceId, stats);
+                leftGap = CreateGap(leftStart, midpoint, leftEntry?.SentenceId, rightEntry?.SentenceId, stats);
             }
             else
             {
@@ -388,11 +391,30 @@ public sealed class RoomToneInsertionStage
             {
                 var stats = analyzer.AnalyzeGap(midpoint, rightEnd);
                 Log.Info($"[Roomtone]   right accepted [{midpoint:F3},{rightEnd:F3}] meanRms={stats.MeanRmsDb:F2} dB");
-                yield return CreateGap(midpoint, rightEnd, leftEntry?.SentenceId, rightEntry?.SentenceId, stats);
+                rightGap = CreateGap(midpoint, rightEnd, leftEntry?.SentenceId, rightEntry?.SentenceId, stats);
             }
             else
             {
                 Log.Info("[Roomtone]   right rejected or collapsed.");
+            }
+
+            if (leftGap is not null && rightGap is not null)
+            {
+                var stats = analyzer.AnalyzeGap(leftGap.StartSec, rightGap.EndSec);
+                Log.Info($"[Roomtone]   final gap [{leftGap.StartSec:F3},{rightGap.EndSec:F3}] meanRms={stats.MeanRmsDb:F2} dB");
+                yield return CreateGap(leftGap.StartSec, rightGap.EndSec, leftEntry?.SentenceId, rightEntry?.SentenceId, stats);
+            }
+            else
+            {
+                if (leftGap is not null)
+                {
+                    yield return leftGap;
+                }
+
+                if (rightGap is not null)
+                {
+                    yield return rightGap;
+                }
             }
         }
 
