@@ -72,7 +72,7 @@ public static class AlignCommand
             }
             catch (Exception ex)
             {
-                Console.Error.WriteLine($"Error: {ex.Message}");
+                Log.Error(ex, "align anchors command failed");
                 Environment.Exit(1);
             }
         });
@@ -133,7 +133,7 @@ public static class AlignCommand
             }
             catch (Exception ex)
             {
-                Console.Error.WriteLine($"Error: {ex.Message}");
+                Log.Error(ex, "align tx command failed");
                 Environment.Exit(1);
             }
         });
@@ -171,7 +171,7 @@ public static class AlignCommand
             }
             catch (Exception ex)
             {
-                Console.Error.WriteLine($"Error: {ex.Message}");
+                Log.Error(ex, "align hydrate command failed");
                 Environment.Exit(1);
             }
         });
@@ -255,7 +255,7 @@ public static class AlignCommand
 
         var outJson = JsonSerializer.Serialize(hydrated, new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase, WriteIndented = true });
         await File.WriteAllTextAsync(outFile.FullName, outJson);
-        Console.WriteLine($"Hydrated TranscriptIndex written to: {outFile.FullName}");
+        Log.Info("Hydrated TranscriptIndex written to: {OutputFile}", outFile.FullName);
     }
 
     internal static async Task RunTranscriptIndexAsync(
@@ -405,11 +405,11 @@ public static class AlignCommand
             secStartWord = Math.Max(0, secStartWord);
             secEndWord = Math.Min(book.Words.Length - 1, Math.Max(secStartWord, secEndWord));
 
-            Console.WriteLine($"Section detection fallback: restricting to book words [{secStartWord}, {secEndWord}] (approx {matchedBookIdx.Count} aligned tokens).");
+            Log.Warn("Section detection fallback: restricting to book words [{StartWord}, {EndWord}] (approx {TokenCount} aligned tokens).", secStartWord, secEndWord, matchedBookIdx.Count);
         }
         else
         {
-            Console.WriteLine("Warning: no aligned book tokens found; falling back to full book range.");
+            Log.Warn("No aligned book tokens found; falling back to full book range.");
         }
     }
 
@@ -443,7 +443,7 @@ public static class AlignCommand
 
     var outJson = JsonSerializer.Serialize(tx, new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase, WriteIndented = true });
     await File.WriteAllTextAsync(outFile.FullName, outJson);
-    Console.WriteLine($"TranscriptIndex written to: {outFile.FullName}");
+    Log.Info("TranscriptIndex written to: {OutputFile}", outFile.FullName);
 }
 
     private static TimingRange ComputeTiming(ScriptRange? scriptRange, AsrResponse asr)
@@ -523,12 +523,12 @@ public static class AlignCommand
         var outputJson = JsonSerializer.Serialize(payload, new JsonSerializerOptions { WriteIndented = true });
         if (outFile == null)
         {
-            Console.WriteLine(outputJson);
+            Log.Info("{AnchorSummary}", outputJson);
         }
         else
         {
             await File.WriteAllTextAsync(outFile.FullName, outputJson);
-            Console.WriteLine($"Anchors written to: {outFile.FullName}");
+            Log.Info("Anchors written to: {OutputFile}", outFile.FullName);
         }
     }
 }

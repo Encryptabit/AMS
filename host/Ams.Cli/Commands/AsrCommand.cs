@@ -1,6 +1,7 @@
 using System.CommandLine;
 using System.Text.Json;
 using Ams.Core;
+using Ams.Core.Common;
 
 namespace Ams.Cli.Commands;
 
@@ -47,7 +48,7 @@ public static class AsrCommand
             }
             catch (Exception ex)
             {
-                Console.Error.WriteLine($"Error: {ex.Message}");
+                Log.Error(ex, "asr run command failed");
                 Environment.Exit(1);
             }
         }, audioOption, outputOption, serviceUrlOption, modelOption, languageOption);
@@ -63,28 +64,23 @@ public static class AsrCommand
             throw new FileNotFoundException($"Audio file not found: {audioFile.FullName}");
         }
 
-        Console.WriteLine($"Running ASR on: {audioFile.FullName}");
-        Console.WriteLine($"Service URL: {serviceUrl}");
-        Console.WriteLine($"Language: {language}");
-        if (model != null) Console.WriteLine($"Model: {model}");
+        Log.Info("Running ASR for {AudioFile} -> {OutputFile} via {ServiceUrl}", audioFile.FullName, outputFile.FullName, serviceUrl);
+        Log.Debug("ASR parameters: Language={Language}, Model={Model}", language, model ?? "(default)");
 
         using var client = new AsrClient(serviceUrl);
 
-        // Check service health first
-        Console.Write("Checking ASR service health... ");
+        Log.Info("Checking ASR service health at {ServiceUrl}", serviceUrl);
         var isHealthy = await client.IsHealthyAsync();
         if (!isHealthy)
         {
             throw new InvalidOperationException($"ASR service at {serviceUrl} is not healthy or unreachable");
         }
-        Console.WriteLine("OK");
+        Log.Info("ASR service responded healthy");
 
-        // Run transcription
-        Console.Write("Transcribing audio... ");
+        Log.Info("Submitting audio for transcription");
         var response = await client.TranscribeAsync(audioFile.FullName, model, language);
-        Console.WriteLine("Done");
+        Log.Info("Transcription complete");
 
-        // Save result
         var json = JsonSerializer.Serialize(response, new JsonSerializerOptions
         {
             WriteIndented = true,
@@ -93,8 +89,7 @@ public static class AsrCommand
 
         await File.WriteAllTextAsync(outputFile.FullName, json);
 
-        Console.WriteLine($"Results saved to: {outputFile.FullName}");
-        Console.WriteLine($"Model version: {response.ModelVersion}");
-        Console.WriteLine($"Total words: {response.Tokens.Length}");
+        Log.Info("ASR results written to {OutputFile}", outputFile.FullName);
+        Log.Info("ASR summary: ModelVersion={ModelVersion}, Tokens={TokenCount}", response.ModelVersion, response.Tokens.Length);
     }
 }

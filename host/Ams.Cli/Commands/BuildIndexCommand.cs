@@ -1,6 +1,7 @@
 using System.CommandLine;
 using System.Text.Json;
 using Ams.Core;
+using Ams.Core.Common;
 
 namespace Ams.Cli.Commands;
 
@@ -34,7 +35,7 @@ public static class BuildIndexCommand
         buildIndexCommand.AddOption(averageWpmOption);
         buildIndexCommand.AddOption(noCacheOption);
         
-        buildIndexCommand.SetHandler(async (context) =>
+        buildIndexCommand.SetHandler(async context =>
         {
             try
             {
@@ -45,8 +46,8 @@ public static class BuildIndexCommand
                 var noCache = context.ParseResult.GetValueForOption(noCacheOption);
                 
                 await BuildBookIndexAsync(
-                    bookFile, 
-                    outputFile, 
+                    bookFile,
+                    outputFile,
                     forceRefresh,
                     new BookIndexOptions
                     {
@@ -56,7 +57,7 @@ public static class BuildIndexCommand
             }
             catch (Exception ex)
             {
-                Console.Error.WriteLine($"Error: {ex.Message}");
+                Log.Error(ex, "build-index command failed");
                 Environment.Exit(1);
             }
         });
@@ -65,23 +66,19 @@ public static class BuildIndexCommand
     }
     
     internal static async Task BuildBookIndexAsync(
-        FileInfo bookFile, 
+        FileInfo bookFile,
         FileInfo outputFile,
         bool forceRefresh,
         BookIndexOptions options,
         bool noCache)
     {
-        Console.WriteLine("Building book index...");
-        Console.WriteLine($"Book file: {bookFile.FullName}");
-        Console.WriteLine($"Output file: {outputFile.FullName}");
+        Log.Info("Building book index for {BookFile} -> {OutputFile}", bookFile.FullName, outputFile.FullName);
 
-        // Validate input files
         if (!bookFile.Exists)
+        {
             throw new FileNotFoundException($"Book file not found: {bookFile.FullName}");
+        }
 
-
-
-        // Initialize services
         var parser = new BookParser();
         var indexer = new BookIndexer();
         var cache = noCache ? null : new BookCache();
@@ -94,34 +91,35 @@ public static class BuildIndexCommand
 
         BookIndex bookIndex;
 
-        // Try to load from cache if not forcing refresh and cache is enabled
         if (!forceRefresh && cache != null)
         {
-            Console.Write("Checking cache... ");
+            Log.Debug("Checking cache for {BookFile}", bookFile.FullName);
             var cachedIndex = await cache.GetAsync(bookFile.FullName);
             if (cachedIndex != null)
             {
-                Console.WriteLine("Found valid cache");
+                Log.Info("Cache hit for {BookFile}", bookFile.FullName);
                 bookIndex = cachedIndex;
             }
             else
             {
-                Console.WriteLine("No valid cache found");
+                Log.Info("Cache miss for {BookFile}; rebuilding", bookFile.FullName);
                 bookIndex = await ProcessBookFromScratch(parser, indexer, cache, bookFile.FullName, options);
             }
         }
         else
         {
             if (forceRefresh)
-                Console.WriteLine("Force refresh enabled, ignoring cache");
+            {
+                Log.Info("Force refresh requested for {BookFile}", bookFile.FullName);
+            }
             else if (noCache)
-                Console.WriteLine("Cache disabled");
+            {
+                Log.Info("Cache disabled for {BookFile}", bookFile.FullName);
+            }
 
             bookIndex = await ProcessBookFromScratch(parser, indexer, cache, bookFile.FullName, options);
         }
 
-        // Save the final index
-        Console.Write("Saving book index... ");
         var jsonOptions = new JsonSerializerOptions
         {
             WriteIndented = true,
@@ -130,22 +128,17 @@ public static class BuildIndexCommand
 
         var json = JsonSerializer.Serialize(bookIndex, jsonOptions);
         await File.WriteAllTextAsync(outputFile.FullName, json);
-        Console.WriteLine("Done");
 
-        // Print summary
-        Console.WriteLine("\n=== Book Index Summary ===");
-        Console.WriteLine($"Title: {bookIndex.Title ?? "(not available)"}");
-        Console.WriteLine($"Author: {bookIndex.Author ?? "(not available)"}");
-        Console.WriteLine($"Source file: {bookIndex.SourceFile}");
-        Console.WriteLine($"Source file hash: {bookIndex.SourceFileHash[..16]}...");
-        Console.WriteLine($"Indexed at: {bookIndex.IndexedAt:yyyy-MM-dd HH:mm:ss} UTC");
-        Console.WriteLine($"Total words: {bookIndex.Totals.Words:n0}");
-        Console.WriteLine($"Total sentences: {bookIndex.Totals.Sentences:n0}");
-        Console.WriteLine($"Total paragraphs: {bookIndex.Totals.Paragraphs:n0}");
-        Console.WriteLine($"Estimated duration: {FormatDuration(bookIndex.Totals.EstimatedDurationSec)}");
-        Console.WriteLine($"Sections (Heading 1): {bookIndex.Sections.Length}");
+        Log.Info(
+            "Book indexed: {SourceFile} (Words={WordCount:n0}, Sentences={SentenceCount:n0}, Paragraphs={ParagraphCount:n0}, Sections={SectionCount}, EstimatedDuration={EstimatedDuration})",
+            bookIndex.SourceFile,
+            bookIndex.Totals.Words,
+            bookIndex.Totals.Sentences,
+            bookIndex.Totals.Paragraphs,
+            bookIndex.Sections.Length,
+            FormatDuration(bookIndex.Totals.EstimatedDurationSec));
 
-        Console.WriteLine($"\nBook index saved to: {outputFile.FullName}");
+        Log.Info("Book index saved to {OutputFile}", outputFile.FullName);
     }
     
     private static async Task<BookIndex> ProcessBookFromScratch(
@@ -155,20 +148,19 @@ public static class BuildIndexCommand
         string bookFilePath,
         BookIndexOptions options)
     {
-        Console.Write("Parsing book file... ");
+        Log.Info("Parsing book file {BookFile}", bookFilePath);
         var parseResult = await parser.ParseAsync(bookFilePath);
-        Console.WriteLine($"Done ({parseResult.Text.Length:n0} characters)");
+        Log.Debug("Parsed {CharacterCount:n0} characters from {BookFile}", parseResult.Text.Length, bookFilePath);
         
-        Console.Write("Building index... ");
+        Log.Info("Building index for {BookFile}", bookFilePath);
         var bookIndex = await indexer.CreateIndexAsync(parseResult, bookFilePath, options);
-        Console.WriteLine("Done");
+        Log.Debug("Index build complete for {BookFile}", bookFilePath);
         
-        // Cache the result if cache is enabled
         if (cache != null)
         {
-            Console.Write("Caching result... ");
+            Log.Debug("Caching index for {BookFile}", bookFilePath);
             await cache.SetAsync(bookIndex);
-            Console.WriteLine("Done");
+            Log.Debug("Cache updated for {BookFile}", bookFilePath);
         }
         
         return bookIndex;

@@ -3,6 +3,7 @@ using System.IO;
 using System.Linq;
 using System.Text.Json;
 using Ams.Core.Artifacts;
+using Ams.Core.Common;
 using Ams.Core.Audio;
 using Ams.Core.Book;
 
@@ -59,19 +60,19 @@ public sealed class RoomToneInsertionStage
         {
             toneGainLinear = ComputeToneGainLinear(roomtoneSeedStats.MeanRmsDb, _toneGainDb);
             appliedGainDb  = ToDb(toneGainLinear);
-            Console.WriteLine($"[Roomtone] Seed RMS {roomtoneSeedStats.MeanRmsDb:F2} dB, target {_toneGainDb:F2} dB, applied gain {appliedGainDb:F2} dB");
+            Log.Info($"[Roomtone] Seed RMS {roomtoneSeedStats.MeanRmsDb:F2} dB, target {_toneGainDb:F2} dB, applied gain {appliedGainDb:F2} dB");
         }
         else
         {
             toneGainLinear = 1.0;
             appliedGainDb  = 0.0;
-            Console.WriteLine($"[Roomtone] Seed RMS {roomtoneSeedStats.MeanRmsDb:F2} dB, adaptive gain disabled (unity gain)");
+            Log.Info($"[Roomtone] Seed RMS {roomtoneSeedStats.MeanRmsDb:F2} dB, adaptive gain disabled (unity gain)");
         }
 
         // Build timeline on the original audio first
         var analyzer0 = new AudioAnalysisService(inputAudio);
         var entries0  = SentenceTimelineBuilder.Build(transcript.Sentences, analyzer0, asr);
-        Console.WriteLine($"[Roomtone] Timeline built on original audio: {entries0.Count} sentences.");  // :contentReference[oaicite:3]{index=3}
+        Log.Info($"[Roomtone] Timeline built on original audio: {entries0.Count} sentences.");  // :contentReference[oaicite:3]{index=3}
 
         // Enforce exact structure (insert OR trim) and shift entries accordingly
         var norm = RoomtoneRenderer.NormalizeStructureExact(
@@ -93,7 +94,7 @@ public sealed class RoomToneInsertionStage
         var analyzer = new AudioAnalysisService(inputAudio);
         double audioDurationSec = inputAudio.SampleRate > 0 ? inputAudio.Length / (double)inputAudio.SampleRate : 0.0;
         var gaps = BuildGaps(timelineEntries, analyzer, audioDurationSec);                         // :contentReference[oaicite:5]{index=5}
-        Console.WriteLine($"[Roomtone] Gap segments retained: {gaps.Count}");
+        Log.Info($"[Roomtone] Gap segments retained: {gaps.Count}");
 
         // Update transcript timings from the (shifted) entries
         var entryMap = timelineEntries.ToDictionary(e => e.SentenceId);
@@ -313,7 +314,7 @@ public sealed class RoomToneInsertionStage
         var gaps = new List<RoomtonePlanGap>();
         if (audioDurationSec <= epsilon)
         {
-            Console.WriteLine("[Roomtone] Audio too short for gap analysis.");
+            Log.Warn("[Roomtone] Audio too short for gap analysis.");
             return gaps;
         }
 
@@ -324,7 +325,7 @@ public sealed class RoomToneInsertionStage
 
         if (orderedEntries.Count == 0)
         {
-            Console.WriteLine("[Roomtone] No sentence timings; treating entire chapter as a single gap.");
+            Log.Warn("[Roomtone] No sentence timings; treating entire chapter as a single gap.");
             var stats = analyzer.AnalyzeGap(0.0, audioDurationSec);
             gaps.Add(CreateGap(0.0, audioDurationSec, null, null, stats));
             return gaps;
@@ -358,14 +359,14 @@ public sealed class RoomToneInsertionStage
             }
 
             string label = $"prev={(leftEntry?.SentenceId.ToString() ?? "null")} next={(rightEntry?.SentenceId.ToString() ?? "null")}";
-            Console.WriteLine($"[Roomtone] Gap candidate {label} base=({initialStart:F3},{initialEnd:F3}) dur={(initialEnd - initialStart):F3}");
+            Log.Info($"[Roomtone] Gap candidate {label} base=({initialStart:F3},{initialEnd:F3}) dur={(initialEnd - initialStart):F3}");
 
             double midpoint = (initialStart + initialEnd) / 2.0;
             midpoint = Math.Clamp(midpoint, initialStart + epsilon, initialEnd - epsilon);
 
             if (midpoint <= initialStart + epsilon || initialEnd <= midpoint + epsilon)
             {
-                Console.WriteLine("[Roomtone]   midpoint collapsed; skipping gap.");
+                Log.Info("[Roomtone]   midpoint collapsed; skipping gap.");
                 yield break;
             }
 
@@ -375,23 +376,23 @@ public sealed class RoomToneInsertionStage
             if (leftAccepted && midpoint - leftStart > epsilon)
             {
                 var stats = analyzer.AnalyzeGap(leftStart, midpoint);
-                Console.WriteLine($"[Roomtone]   left accepted [{leftStart:F3},{midpoint:F3}] meanRms={stats.MeanRmsDb:F2} dB");
+                Log.Info($"[Roomtone]   left accepted [{leftStart:F3},{midpoint:F3}] meanRms={stats.MeanRmsDb:F2} dB");
                 yield return CreateGap(leftStart, midpoint, leftEntry?.SentenceId, rightEntry?.SentenceId, stats);
             }
             else
             {
-                Console.WriteLine("[Roomtone]   left rejected or collapsed.");
+                Log.Info("[Roomtone]   left rejected or collapsed.");
             }
 
             if (rightAccepted && rightEnd - midpoint > epsilon)
             {
                 var stats = analyzer.AnalyzeGap(midpoint, rightEnd);
-                Console.WriteLine($"[Roomtone]   right accepted [{midpoint:F3},{rightEnd:F3}] meanRms={stats.MeanRmsDb:F2} dB");
+                Log.Info($"[Roomtone]   right accepted [{midpoint:F3},{rightEnd:F3}] meanRms={stats.MeanRmsDb:F2} dB");
                 yield return CreateGap(midpoint, rightEnd, leftEntry?.SentenceId, rightEntry?.SentenceId, stats);
             }
             else
             {
-                Console.WriteLine("[Roomtone]   right rejected or collapsed.");
+                Log.Info("[Roomtone]   right rejected or collapsed.");
             }
         }
 
@@ -402,7 +403,7 @@ public sealed class RoomToneInsertionStage
             while (boundary + epsilon < end)
             {
                 double rms = analyzer.MeasureRms(boundary, end);
-                Console.WriteLine($"[Roomtone]     test left [{boundary:F3},{end:F3}] rms={rms:F2} dB");
+                Log.Info($"[Roomtone]     test left [{boundary:F3},{end:F3}] rms={rms:F2} dB");
                 if (rms <= speechThresholdDb)
                 {
                     double candidate = boundary;
@@ -430,7 +431,7 @@ public sealed class RoomToneInsertionStage
             while (boundary - epsilon > start)
             {
                 double rms = analyzer.MeasureRms(start, boundary);
-                Console.WriteLine($"[Roomtone]     test right [{start:F3},{boundary:F3}] rms={rms:F2} dB");
+                Log.Info($"[Roomtone]     test right [{start:F3},{boundary:F3}] rms={rms:F2} dB");
                 if (rms <= speechThresholdDb)
                 {
                     double candidate = boundary;

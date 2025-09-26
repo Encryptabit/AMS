@@ -1,6 +1,7 @@
 using System.CommandLine;
 using System.Text.Json;
 using Ams.Core;
+using Ams.Core.Common;
 
 namespace Ams.Cli.Commands;
 
@@ -70,7 +71,7 @@ public static class ValidateCommand
             }
             catch (Exception ex)
             {
-                Console.Error.WriteLine($"Error: {ex.Message}");
+                Log.Error(ex, "validate script command failed");
                 Environment.Exit(1);
             }
         });
@@ -80,21 +81,22 @@ public static class ValidateCommand
     }
     
     private static async Task ValidateScriptAsync(
-        FileInfo audioFile, 
-        FileInfo scriptFile, 
-        FileInfo asrJsonFile, 
+        FileInfo audioFile,
+        FileInfo scriptFile,
+        FileInfo asrJsonFile,
         FileInfo outputFile,
         double substitutionCost,
-        double insertionCost, 
+        double insertionCost,
         double deletionCost,
         bool expandContractions,
         bool removeNumbers)
     {
-        Console.WriteLine($"Validating transcript against script...");
-        Console.WriteLine($"Audio file: {audioFile.FullName}");
-        Console.WriteLine($"Script file: {scriptFile.FullName}");
-        Console.WriteLine($"ASR JSON file: {asrJsonFile.FullName}");
-        Console.WriteLine($"Output file: {outputFile.FullName}");
+        Log.Info(
+            "Validating transcript using audio {AudioFile}, script {ScriptFile}, asr {AsrJsonFile}, output {OutputFile}",
+            audioFile.FullName,
+            scriptFile.FullName,
+            asrJsonFile.FullName,
+            outputFile.FullName);
         
         var options = new ValidationOptions
         {
@@ -107,56 +109,49 @@ public static class ValidateCommand
         
         var validator = new ScriptValidator(options);
         
-        Console.Write("Running validation... ");
+        Log.Info("Running validation alignment");
         var report = await validator.ValidateAsync(audioFile.FullName, scriptFile.FullName, asrJsonFile.FullName);
-        Console.WriteLine("Done");
+        Log.Info("Validation complete");
         
-        // Save report
-        var json = JsonSerializer.Serialize(report, new JsonSerializerOptions 
-        { 
+        var json = JsonSerializer.Serialize(report, new JsonSerializerOptions
+        {
             WriteIndented = true,
             PropertyNamingPolicy = JsonNamingPolicy.CamelCase
         });
         
         await File.WriteAllTextAsync(outputFile.FullName, json);
         
-        // Print summary
-        Console.WriteLine("\n=== Validation Results ===");
-        Console.WriteLine($"Word Error Rate: {report.WordErrorRate:P2}");
-        Console.WriteLine($"Character Error Rate: {report.CharacterErrorRate:P2}");
-        Console.WriteLine($"Total words: {report.TotalWords}");
-        Console.WriteLine($"Correct words: {report.CorrectWords}");
-        Console.WriteLine($"Substitutions: {report.Substitutions}");
-        Console.WriteLine($"Insertions: {report.Insertions}");
-        Console.WriteLine($"Deletions: {report.Deletions}");
-        Console.WriteLine($"Total findings: {report.Findings.Length}");
+        Log.Info(
+            "Validation summary: WER {WordErrorRate:P2}, CER {CharacterErrorRate:P2}, TotalWords {TotalWords}, Correct {CorrectWords}, Substitutions {Substitutions}, Insertions {Insertions}, Deletions {Deletions}, Findings {FindingsCount}",
+            report.WordErrorRate,
+            report.CharacterErrorRate,
+            report.TotalWords,
+            report.CorrectWords,
+            report.Substitutions,
+            report.Insertions,
+            report.Deletions,
+            report.Findings.Length);
         
-        // Print findings summary by type
         var findingsByType = report.Findings.GroupBy(f => f.Type).ToList();
         if (findingsByType.Count > 0)
         {
-            Console.WriteLine("\nFindings by type:");
             foreach (var group in findingsByType)
             {
-                Console.WriteLine($"  {group.Key}: {group.Count()}");
+                Log.Info("Finding type {FindingType}: {FindingCount}", group.Key, group.Count());
             }
         }
         
-        // Print segment stats summary
         if (report.SegmentStats.Length > 0)
         {
             var avgSegmentWer = report.SegmentStats.Average(s => s.WordErrorRate);
-            var avgConfidence = report.SegmentStats.Where(s => s.Confidence.HasValue).Average(s => s.Confidence!.Value);
-            
-            Console.WriteLine($"\nSegment analysis:");
-            Console.WriteLine($"  Total segments: {report.SegmentStats.Length}");
-            Console.WriteLine($"  Average segment WER: {avgSegmentWer:P2}");
-            if (report.SegmentStats.Any(s => s.Confidence.HasValue))
+            var confidences = report.SegmentStats.Where(s => s.Confidence.HasValue).Select(s => s.Confidence!.Value).ToList();
+            Log.Info("Segment analysis: Count {SegmentCount}, AvgWER {AverageWer:P2}", report.SegmentStats.Length, avgSegmentWer);
+            if (confidences.Count > 0)
             {
-                Console.WriteLine($"  Average confidence: {avgConfidence:F3}");
+                Log.Info("Segment confidence average {AverageConfidence:F3}", confidences.Average());
             }
         }
         
-        Console.WriteLine($"\nDetailed report saved to: {outputFile.FullName}");
+        Log.Info("Detailed validation report saved to {OutputFile}", outputFile.FullName);
     }
 }
