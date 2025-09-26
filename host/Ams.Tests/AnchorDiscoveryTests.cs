@@ -116,6 +116,41 @@ public class SectionLocatorTests
     }
 
     [Fact]
+    public void Detects_Spelled_Out_Chapter_With_Trailing_Noise()
+    {
+        var words = new List<BookWord>();
+        for (int i = 0; i < 120; i++)
+        {
+            words.Add(new BookWord($"w{i}", i, i / 6, i / 12, -1));
+        }
+
+        var sections = new[]
+        {
+            new SectionRange(0, "Chapter Forty Seven - We Fight", 1, "Heading", 30, 119, 0, 4)
+        };
+
+        var book = new BookIndex(
+            SourceFile: "fake.docx",
+            SourceFileHash: "hash",
+            IndexedAt: System.DateTime.UtcNow,
+            Title: "Test",
+            Author: "Author",
+            Totals: new BookTotals(words.Count, 12, 6, 40.0),
+            Words: words.ToArray(),
+            Sentences: new[] { new SentenceRange(0, 30, 50) },
+            Paragraphs: new[] { new ParagraphRange(0, 30, 60, "", "Heading 1") },
+            Sections: sections,
+            BuildWarnings: null
+        );
+
+        var asr = new List<string> { "chapter", "forty", "seven", "we", "fight" };
+
+        var sec = SectionLocator.DetectSection(book, asr, prefixTokenCount: 5);
+        Assert.NotNull(sec);
+        Assert.Equal(0, sec!.Id);
+    }
+
+    [Fact]
     public void AnchorSelection_Respects_Book_Window()
     {
         // Book tokens contain a unique bigram only in the second window

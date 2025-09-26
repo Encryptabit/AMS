@@ -330,11 +330,61 @@ public class BookIndexer : IBookIndexer
                 return true;
         }
 
-        var words = trimmed.Split(' ', StringSplitOptions.RemoveEmptyEntries);
-        if (words.Length > 0 && words.Length <= 8 && words.All(w => char.IsLetter(w[0]) && char.IsUpper(w[0])))
+        var rawTokens = trimmed.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        if (rawTokens.Length == 0 || rawTokens.Length > 12)
+            return false;
+
+        var letterTokens = new List<string>(rawTokens.Length);
+        foreach (var token in rawTokens)
+        {
+            var cleaned = TrimTitleToken(token);
+            if (string.IsNullOrEmpty(cleaned))
+            {
+                continue;
+            }
+
+            if (cleaned.Any(char.IsLetter))
+            {
+                letterTokens.Add(cleaned);
+            }
+        }
+
+        if (letterTokens.Count == 0)
+            return false;
+
+        if (letterTokens.All(IsRomanNumeral))
+            return true;
+
+        if (letterTokens.All(t => char.IsUpper(t[0]) || HeadingConnectorWords.Contains(t)))
             return true;
 
         return false;
+    }
+
+    private static string TrimTitleToken(string token)
+    {
+        return token.Trim(TitleTrimChars);
+    }
+
+    private static bool IsRomanNumeral(string token)
+    {
+        if (string.IsNullOrEmpty(token))
+            return false;
+
+        bool hasLetter = false;
+        foreach (var ch in token)
+        {
+            if (!char.IsLetter(ch))
+                return false;
+
+            var upper = char.ToUpperInvariant(ch);
+            if (upper is not ('I' or 'V' or 'X' or 'L' or 'C' or 'D' or 'M'))
+                return false;
+
+            hasLetter = true;
+        }
+
+        return hasLetter;
     }
 
     private static bool LooksLikeTableOfContentsEntry(string text)
@@ -358,6 +408,17 @@ public class BookIndexer : IBookIndexer
     private static readonly Regex SectionTitleRegex = new(
         @"^\s*(chapter\b|prologue\b|epilogue\b|prelude\b|foreword\b|introduction\b|afterword\b|appendix\b|part\b|book\b)",
         RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
+    private static readonly char[] TitleTrimChars =
+    {
+        '"', '\'', '“', '”', '‘', '’', '(', ')', '[', ']', '{', '}', '<', '>',
+        '*', '_', '-', '–', '—', '.', ',', ';', ':', '!', '?', '…'
+    };
+
+    private static readonly HashSet<string> HeadingConnectorWords = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "a", "an", "and", "the", "of", "in", "on", "to", "for", "with", "or", "at", "from", "by", "into", "onto", "over"
+    };
 
     private static bool LooksLikeSectionHeading(string text)
     {

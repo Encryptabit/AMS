@@ -208,52 +208,14 @@ public static class SectionLocator
         var asrLine = string.Join(' ', asrHeadingTokens);
         var normalized = NormalizeHeadingLine(asrLine);
 
-        // (a) Chapter N [A|B]?
-        var m = ChapterTag.Match(normalized);
-        if (m.Success)
+        if (TryExtractChapterNumber(normalized, out var number, out var suffix))
         {
-            int num = int.Parse(m.Groups[1].Value);
-            char? suffix = m.Groups[2].Success ? char.ToUpperInvariant(m.Groups[2].Value[0]) : (char?)null;
-
-            var sec = FindByChapterIndex(book, num, suffix);
-            if (sec is not null)
+            Console.WriteLine($"Normalized: {normalized}");
+            var section = FindByChapterIndex(book, number, suffix);
+            if (section is not null)
             {
-                range = sec;
+                range = section;
                 return true;
-            }
-
-            // If exact suffix didn't match, try without the suffix (some docs may omit it in titles)
-            sec = FindByChapterIndex(book, num, letter: null);
-            if (sec is not null)
-            {
-                range = sec;
-                return true;
-            }
-        }
-        else
-        {
-            // (a2) Spelled-out ordinals/cardinals ("chapter twenty one", "chapter first", etc.)
-            var wordsMatch = ChapterWordTag.Match(normalized);
-            if (wordsMatch.Success)
-            {
-                var numberPhrase = wordsMatch.Groups[1].Value.Trim();
-                if (TryParseNumberWords(numberPhrase, out var parsed))
-                {
-                    char? suffix = wordsMatch.Groups[2].Success ? char.ToUpperInvariant(wordsMatch.Groups[2].Value[0]) : (char?)null;
-                    var sec = FindByChapterIndex(book, parsed, suffix);
-                    if (sec is not null)
-                    {
-                        range = sec;
-                        return true;
-                    }
-
-                    sec = FindByChapterIndex(book, parsed, letter: null);
-                    if (sec is not null)
-                    {
-                        range = sec;
-                        return true;
-                    }
-                }
             }
         }
 
@@ -351,6 +313,41 @@ public static class SectionLocator
         if (token.Length == 1)
         {
             return true;
+        }
+
+        return false;
+    }
+
+    private static bool IsNumberWordToken(string token)
+    {
+        if (string.IsNullOrEmpty(token))
+        {
+            return false;
+        }
+
+        if (CardinalNumbers.ContainsKey(token) || TensNumbers.ContainsKey(token) || OrdinalNumbers.ContainsKey(token))
+        {
+            return true;
+        }
+
+        if (token is "and" or "hundred" or "hundredth" or "thousand" or "thousandth")
+        {
+            return true;
+        }
+
+        if (token.Contains('-'))
+        {
+            var parts = token.Split('-', StringSplitOptions.RemoveEmptyEntries);
+            if (parts.Length > 1 && parts.All(IsNumberWordToken))
+            {
+                return true;
+            }
+
+            var sanitized = token.Replace('-', ' ');
+            if (TryParseNumberWords(sanitized, out var parsed) && parsed > 0)
+            {
+                return true;
+            }
         }
 
         return false;
@@ -486,41 +483,74 @@ public static class SectionLocator
 }
 
     private static bool TryExtractChapterNumber(string titleNorm, out int number, out char? suffix)
+{
+    number = 0;
+    suffix = null;
+
+    if (string.IsNullOrWhiteSpace(titleNorm))
     {
-        number = 0;
-        suffix = null;
+        return false;
+    }
 
-        if (string.IsNullOrWhiteSpace(titleNorm))
+    var numericMatch = ChapterTag.Match(titleNorm);
+    if (numericMatch.Success)
+    {
+        number = int.Parse(numericMatch.Groups[1].Value);
+        suffix = numericMatch.Groups[2].Success
+            ? char.ToUpperInvariant(numericMatch.Groups[2].Value[0])
+            : (char?)null;
+        return true;
+    }
+
+    var tokens = TextNormalizer.TokenizeWords(titleNorm);
+    if (tokens.Length >= 2 && tokens[0] == "chapter")
+    {
+        int idx = 1;
+        var numberTokens = new List<string>();
+        for (; idx < tokens.Length; idx++)
         {
-            return false;
+            var token = tokens[idx];
+            if (IsNumberWordToken(token))
+            {
+                numberTokens.Add(token);
+                continue;
+            }
+
+            break;
         }
 
-        var numericMatch = ChapterTag.Match(titleNorm);
-        if (numericMatch.Success)
+        if (numberTokens.Count > 0)
         {
-            number = int.Parse(numericMatch.Groups[1].Value);
-            suffix = numericMatch.Groups[2].Success
-                ? char.ToUpperInvariant(numericMatch.Groups[2].Value[0])
-                : (char?)null;
-            return true;
-        }
-
-        var wordsMatch = ChapterWordTag.Match(titleNorm);
-        if (wordsMatch.Success)
-        {
-            var phrase = wordsMatch.Groups[1].Value.Trim();
+            var phrase = string.Join(' ', numberTokens);
             if (TryParseNumberWords(phrase, out var parsed) && parsed > 0)
             {
                 number = parsed;
-                suffix = wordsMatch.Groups[2].Success
-                    ? char.ToUpperInvariant(wordsMatch.Groups[2].Value[0])
-                    : (char?)null;
+                if (idx < tokens.Length && tokens[idx].Length == 1 && char.IsLetter(tokens[idx][0]))
+                {
+                    suffix = char.ToUpperInvariant(tokens[idx][0]);
+                }
+
                 return true;
             }
         }
-
-        return false;
     }
+
+    var wordsMatch = ChapterWordTag.Match(titleNorm);
+    if (wordsMatch.Success)
+    {
+        var phrase = wordsMatch.Groups[1].Value.Trim();
+        if (TryParseNumberWords(phrase, out var parsed) && parsed > 0)
+        {
+            number = parsed;
+            suffix = wordsMatch.Groups[2].Success
+                ? char.ToUpperInvariant(wordsMatch.Groups[2].Value[0])
+                : (char?)null;
+            return true;
+        }
+    }
+
+    return false;
+}
 
     private static SectionRange? FindSingleWordHeading(BookIndex book, string keyLower)
     {

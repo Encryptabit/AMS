@@ -198,7 +198,7 @@ public static class PipelineCommand
             minSeparation: 100,
             crossSentences: false,
             domainStopwords: true,
-            asrPrefixTokens: 3,
+            asrPrefixTokens: 4,
             emitWindows: false);
 
         Console.WriteLine("Generating transcript index...");
@@ -208,7 +208,7 @@ public static class PipelineCommand
             audioFile,
             txFile,
             detectSection: true,
-            asrPrefixTokens: 3,
+            asrPrefixTokens: 4,
             ngram: 3,
             targetPerTokens: 50,
             minSeparation: 100,

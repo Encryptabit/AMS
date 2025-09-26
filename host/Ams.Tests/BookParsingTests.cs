@@ -132,6 +132,40 @@ public class BookIndexAcceptanceTests
     }
 
     [Fact]
+    public async Task NumberedHeadingStyles_ProduceSections()
+    {
+        var paragraphs = new List<ParsedParagraph>
+        {
+            new("1 – Secrets", "Heading1", "Heading"),
+            new("Ward kicked his boots through the ash.", "NoSpacing", "Body"),
+            new("Second paragraph content.", "NoSpacing", "Body"),
+            new("2 – Trogs", "Heading1", "Heading"),
+            new("Haley peered up at the beams.", "NoSpacing", "Body"),
+        };
+
+        var text = string.Join(Environment.NewLine + Environment.NewLine, paragraphs.Select(p => p.Text));
+        var source = Path.GetTempFileName();
+        await File.WriteAllTextAsync(source, text);
+
+        try
+        {
+            var parsed = new BookParseResult(text, Paragraphs: paragraphs);
+            var indexer = new BookIndexer();
+            var index = await indexer.CreateIndexAsync(parsed, source);
+
+            var titles = index.Sections.Select(s => s.Title).ToArray();
+            Assert.Equal(new[] { "1 – Secrets", "2 – Trogs" }, titles);
+        }
+        finally
+        {
+            if (File.Exists(source))
+            {
+                File.Delete(source);
+            }
+        }
+    }
+
+    [Fact]
     public async Task StructureRanges_CoverAllWords_NoGaps()
     {
         var parser = new BookParser();
