@@ -3,6 +3,7 @@ using System.Text.Json;
 using Ams.Core.Alignment.Tx;
 using Ams.Core.Artifacts;
 using Ams.Core;
+using Ams.Core.Common;
 
 namespace Ams.Cli.Commands;
 
@@ -51,7 +52,7 @@ public static class RefineSentencesCommand
             }
             catch (Exception ex)
             {
-                Console.Error.WriteLine($"Error: {ex.Message}");
+                Log.Error(ex, "refine-sentences command failed");
                 Environment.Exit(1);
             }
         });
@@ -61,6 +62,8 @@ public static class RefineSentencesCommand
 
     private static async Task RunAsync(FileInfo txFile, FileInfo asrFile, FileInfo audioFile, FileInfo outFile, string language, bool withSilence, double silenceDb, double silenceMin)
     {
+        Log.Info("Refining sentences for {TranscriptIndex} using audio {AudioFile}", txFile.FullName, audioFile.FullName);
+
         var jsonOptions = new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
         var tx = JsonSerializer.Deserialize<TranscriptIndex>(await File.ReadAllTextAsync(txFile.FullName), jsonOptions)
                  ?? throw new InvalidOperationException("Failed to read TX");
@@ -73,7 +76,7 @@ public static class RefineSentencesCommand
         var outJson = JsonSerializer.Serialize(refined, new JsonSerializerOptions { WriteIndented = true, PropertyNamingPolicy = JsonNamingPolicy.CamelCase });
         Directory.CreateDirectory(outFile.DirectoryName!);
         await File.WriteAllTextAsync(outFile.FullName, outJson);
-        Console.WriteLine($"Refined sentences written: {outFile.FullName}");
+        Log.Info("Refined sentences written to {OutputFile}", outFile.FullName);
     }
 }
 

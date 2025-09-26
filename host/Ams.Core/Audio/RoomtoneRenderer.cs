@@ -3,6 +3,7 @@ using System.IO;
 using System.Collections.Generic;
 using System.Linq;
 using Ams.Core.Asr;
+using Ams.Core.Common;
 using Ams.Core.Artifacts;
 
 namespace Ams.Core.Audio
@@ -792,7 +793,7 @@ namespace Ams.Core.Audio
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"[Roomtone] Debug write failed for {suffix}: {ex.Message}");
+                Log.Warn("[Roomtone] Debug write failed for {Suffix}: {Message}", suffix, ex.Message);
             }
         }
 

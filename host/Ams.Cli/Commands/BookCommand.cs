@@ -32,7 +32,7 @@ public static class BookCommand
             }
             catch (Exception ex)
             {
-                Console.Error.WriteLine($"Error: {ex.Message}");
+                Log.Error(ex, "book verify command failed");
                 Environment.Exit(1);
             }
         });
@@ -42,7 +42,7 @@ public static class BookCommand
 
     private static async Task RunVerifyAsync(FileInfo indexFile)
     {
-        Console.WriteLine("Verifying BookIndex (non-mutating)...");
+        Log.Info("Verifying BookIndex (non-mutating)...");
         if (!indexFile.Exists)
             throw new FileNotFoundException($"Index file not found: {indexFile.FullName}");
 
@@ -241,33 +241,33 @@ public static class BookCommand
         var stableHash = Sha256Hex(Encoding.UTF8.GetBytes(canonical));
 
         // Emit results
-        Console.WriteLine("\n=== Book Verify Results ===");
-        Console.WriteLine($"Source file: {idx.SourceFile}");
-        Console.WriteLine($"Words/Sentences/Paragraphs: {wordsCount}/{sentencesCount}/{paragraphsCount}");
-        Console.WriteLine($"Counts parity: {(failures.Any(f => f.Contains("Totals")) ? "FAIL" : "OK")}");
-        Console.WriteLine($"Ordering/coverage: {(failures.Except(failures.Where(f=>f.Contains("Totals"))).Any() ? "FAIL" : "OK")}");
-        Console.WriteLine($"Warnings: {(warnings.Count == 0 ? "none" : warnings.Count.ToString())}");
-        Console.WriteLine($"Determinism hash (canonical JSON): {stableHash}");
+        Log.Info("=== Book Verify Results ===");
+        Log.Info("Source file: {SourceFile}", idx.SourceFile);
+        Log.Info("Words/Sentences/Paragraphs: {WordCount}/{SentenceCount}/{ParagraphCount}", wordsCount, sentencesCount, paragraphsCount);
+        Log.Info("Counts parity: {Status}", failures.Any(f => f.Contains("Totals")) ? "FAIL" : "OK");
+        Log.Info("Ordering/coverage: {Status}", failures.Except(failures.Where(f=>f.Contains("Totals"))).Any() ? "FAIL" : "OK");
+        Log.Info("Warnings: {WarningCount}", warnings.Count == 0 ? "none" : warnings.Count.ToString());
+        Log.Info("Determinism hash (canonical JSON): {StableHash}", stableHash);
 
         if (warnings.Count > 0)
         {
-            Console.WriteLine("\n- Warning details:");
+            Log.Warn("Warning details:");
             foreach (var w in warnings)
-                Console.WriteLine($"  - {w}");
+                Log.Warn("  - {Warning}", w);
         }
 
         if (failures.Count > 0)
         {
-            Console.WriteLine("\n- Failures:");
+            Log.Warn("Failures:");
             foreach (var f in failures)
-                Console.WriteLine($"  - {f}");
-            Console.WriteLine("\nKeep BookIndex canonical — do not normalize to fix.");
-            Console.WriteLine("Adjust decoder tokenization and paragraph style classification (DocX) instead.");
+                Log.Warn("  - {Failure}", f);
+            Log.Warn("Keep BookIndex canonical — do not normalize to fix.");
+            Log.Warn("Adjust decoder tokenization and paragraph style classification (DocX) instead.");
             Environment.ExitCode = 2; // Non-zero for CI
         }
         else
         {
-            Console.WriteLine("\nOK: BookIndex is consistent and canonical.");
+            Log.Info("OK: BookIndex is consistent and canonical.");
         }
     }
 

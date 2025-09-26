@@ -1,6 +1,7 @@
 ﻿using System.CommandLine;
 using System.Text;
 using Ams.Core.Book;
+using Ams.Core.Common;
 
 namespace Ams.Cli.Commands;
 
@@ -101,7 +102,7 @@ public static class PipelineCommand
             }
             catch (Exception ex)
             {
-                Console.Error.WriteLine($"Error: {ex.Message}");
+                Log.Error(ex, "pipeline run command failed");
                 Environment.Exit(1);
             }
         });
@@ -155,17 +156,16 @@ public static class PipelineCommand
         var hydrateFile = new FileInfo(Path.Combine(chapterDir, $"{chapterStem}.align.hydrate.json"));
         var treatedWav = new FileInfo(Path.Combine(chapterDir, $"{chapterStem}.treated.wav"));
 
-        Console.WriteLine("=== AMS Pipeline ===");
-        Console.WriteLine($"Book:    {bookFile.FullName}");
-        Console.WriteLine($"Audio:   {audioFile.FullName}");
-        Console.WriteLine($"WorkDir: {workDirPath}");
-        Console.WriteLine($"Chapter: {chapterStem}");
-        Console.WriteLine($"ChapterDir: {chapterDir}");
-        Console.WriteLine();
+        Log.Info("=== AMS Pipeline ===");
+        Log.Info("Book={BookFile}", bookFile.FullName);
+        Log.Info("Audio={AudioFile}", audioFile.FullName);
+        Log.Info("WorkDir={WorkDir}", workDirPath);
+        Log.Info("Chapter={Chapter}", chapterStem);
+        Log.Info("ChapterDir={ChapterDir}", chapterDir);
 
         if (forceIndex || !bookIndexFile.Exists)
         {
-            Console.WriteLine(forceIndex ? "Rebuilding book index..." : "Building book index...");
+            Log.Info(forceIndex ? "Rebuilding book index at {BookIndexFile}" : "Building book index at {BookIndexFile}", bookIndexFile.FullName);
             await BuildIndexCommand.BuildBookIndexAsync(
                 bookFile,
                 bookIndexFile,
@@ -175,7 +175,7 @@ public static class PipelineCommand
         }
         else
         {
-            Console.WriteLine($"Book index already present at {bookIndexFile.FullName}; skipping (use --force-index to rebuild).");
+            Log.Info("Using cached book index at {BookIndexFile}", bookIndexFile.FullName);
         }
 
         if (!bookIndexFile.Exists)
@@ -183,11 +183,11 @@ public static class PipelineCommand
             throw new InvalidOperationException($"Book index file missing after build: {bookIndexFile.FullName}");
         }
 
-        Console.WriteLine("\nRunning ASR...");
+        Log.Info("Running ASR stage");
         EnsureDirectory(asrFile.DirectoryName);
         await AsrCommand.RunAsrAsync(audioFile, asrFile, asrService, asrModel, asrLanguage);
 
-        Console.WriteLine("Computing anchors...");
+        Log.Info("Selecting anchors");
         await AlignCommand.RunAnchorsAsync(
             bookIndexFile,
             asrFile,
@@ -201,7 +201,7 @@ public static class PipelineCommand
             asrPrefixTokens: 8,
             emitWindows: false);
 
-        Console.WriteLine("Generating transcript index...");
+        Log.Info("Generating transcript index");
         await AlignCommand.RunTranscriptIndexAsync(
             bookIndexFile,
             asrFile,
@@ -215,20 +215,19 @@ public static class PipelineCommand
             crossSentences: false,
             domainStopwords: true);
 
-        Console.WriteLine("Hydrating transcript...");
+        Log.Info("Hydrating transcript");
         await AlignCommand.RunHydrateTxAsync(bookIndexFile, asrFile, txFile, hydrateFile);
 
-        Console.WriteLine("Rendering roomtone...");
+        Log.Info("Rendering roomtone");
         await AudioCommand.RunRenderAsync(txFile, treatedWav, sampleRate, bitDepth, fadeMs, toneDb, emitDiagnostics, adaptiveGain);
 
-        Console.WriteLine();
-        Console.WriteLine("=== Outputs ===");
-        Console.WriteLine($"Book index : {bookIndexFile.FullName}");
-        Console.WriteLine($"ASR JSON   : {asrFile.FullName}");
-        Console.WriteLine($"Anchors    : {anchorsFile.FullName}");
-        Console.WriteLine($"Transcript : {txFile.FullName}");
-        Console.WriteLine($"Hydrated   : {hydrateFile.FullName}");
-        Console.WriteLine($"Roomtone   : {treatedWav.FullName}");
+        Log.Info("=== Outputs ===");
+        Log.Info("Book index : {BookIndex}", bookIndexFile.FullName);
+        Log.Info("ASR JSON   : {AsrFile}", asrFile.FullName);
+        Log.Info("Anchors    : {AnchorsFile}", anchorsFile.FullName);
+        Log.Info("Transcript : {TranscriptFile}", txFile.FullName);
+        Log.Info("Hydrated   : {HydratedFile}", hydrateFile.FullName);
+        Log.Info("Roomtone   : {RoomtoneFile}", treatedWav.FullName);
     }
 
     private static void EnsureDirectory(string? dir)
