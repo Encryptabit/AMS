@@ -14,6 +14,12 @@
     <PackageReference Include="Serilog.Sinks.File" Version="5.0.0" />
     <PackageReference Include="System.Text.Json" Version="9.0.0" />
   </ItemGroup>
+  <ItemGroup>
+    <None Remove="ExtTools\Plugalyzer.exe" />
+    <CopyLocalFilesOutputGroupOutput Include="ExtTools\Plugalyzer.exe">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </CopyLocalFilesOutputGroupOutput>
+  </ItemGroup>
 
   <PropertyGroup>
     <TargetFramework>net9.0</TargetFramework>

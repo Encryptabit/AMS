@@ -16,7 +16,7 @@ namespace Ams.Core.Audio
             IReadOnlyDictionary<int, FragmentTiming>? fragments = null,
             double rmsThresholdDb = -35.0,
             double searchWindowSec = 0.5,
-            double stepMs = 10.0)
+            double stepMs = 5.0)
         {
             if (sentences is null) throw new ArgumentNullException(nameof(sentences));
             if (analyzer is null) throw new ArgumentNullException(nameof(analyzer));
@@ -72,6 +72,7 @@ namespace Ams.Core.Audio
             }
 
             var snapped = analyzer.SnapToEnergy(seed, enterThresholdDb: rmsThresholdDb, exitThresholdDb: rmsThresholdDb, searchWindowSec: searchWindowSec, stepMs: stepMs, preRollMs: 30D, postRollMs: 80D);
+          //var snapped = analyzer.SnapToEnergyAuto(seed: seed, AutoTuneStyle.Tight);
             if (windowTiming.Duration > 0)
             {
                 snapped = ClampToWindow(snapped, windowTiming);

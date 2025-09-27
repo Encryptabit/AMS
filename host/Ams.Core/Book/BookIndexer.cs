@@ -351,6 +351,19 @@ public class BookIndexer : IBookIndexer
         if (Regex.IsMatch(text, @"[ \t]{2,}\d+$"))
             return true;
 
+        if (text.Contains('	'))
+        {
+            var parts = text.Split('	', StringSplitOptions.RemoveEmptyEntries);
+            if (parts.Length >= 2)
+            {
+                var tail = parts[^1].Trim();
+                if (tail.Length > 0 && tail.All(char.IsDigit))
+                {
+                    return true;
+                }
+            }
+        }
+
         return false;
     }
 

@@ -45,8 +45,8 @@ namespace Ams.Core.Audio
             TimingRange seed,
             AutoTuneStyle style = AutoTuneStyle.Tight,
             double searchWindowSec = 0.8,
-            double windowMs = 25.0,
-            double stepMs = 5.0,
+            double windowMs = 50.0,
+            double stepMs = 2.0,
             double? preRollMs = null,
             double? postRollMs = null,
             double? hangoverMs = null)
@@ -82,7 +82,7 @@ namespace Ams.Core.Audio
             double windowMs         = 25.0,
             double stepMs           = 5.0,
             double preRollMs        = 35.0,
-            double postRollMs       = 120.0,
+            double postRollMs       = 30.0,
             double hangoverMs       = 20.0)
         {
             int sr    = _buffer.SampleRate;
