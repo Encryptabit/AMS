@@ -15,12 +15,17 @@
     <PackageReference Include="System.Text.Json" Version="9.0.0" />
   </ItemGroup>
   <ItemGroup>
-    <None Remove="ExtTools\Plugalyzer.exe" />
-    <CopyLocalFilesOutputGroupOutput Include="ExtTools\Plugalyzer.exe">
+    <None Include="ExtTools\Plugalyzer.exe">
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
-    </CopyLocalFilesOutputGroupOutput>
+    </None>
   </ItemGroup>
-
+  <Target Name="VerifyPlugalyzerCopy" AfterTargets="CopyFilesOutputgroupOutput">
+    <Message Text="Checking for Plugalyzer.exe in output..." Importance="high" />
+    <Message Text="File exists: $(OutputPath)ExtTools\Plugalyzer.exe" Importance="high"
+             Condition="Exists('$(OutputPath)ExtTools\Plugalyzer.exe')" />
+    <Warning Text="Plugalyzer.exe was not copied to output directory!"
+             Condition="!Exists('$(OutputPath)ExtTools\Plugalyzer.exe')" />
+  </Target>
   <PropertyGroup>
     <TargetFramework>net9.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
