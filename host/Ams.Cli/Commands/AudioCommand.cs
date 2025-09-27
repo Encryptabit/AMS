@@ -5,6 +5,7 @@ using Ams.Core.Audio;
 using Ams.Core.Alignment.Tx;
 using Ams.Core;
 using Ams.Core.Pipeline;
+using Ams.Core.Common;
 
 namespace Ams.Cli.Commands;
 
@@ -60,7 +61,7 @@ public static class AudioCommand
             }
             catch (Exception ex)
             {
-                Console.Error.WriteLine($"Error: {ex.Message}");
+                Log.Error(ex, "audio roomtone command failed");
                 Environment.Exit(1);
             }
         });
@@ -109,7 +110,7 @@ public static class AudioCommand
             }
             catch (Exception ex)
             {
-                Console.Error.WriteLine($"Error: {ex.Message}");
+                Log.Error(ex, "audio roomtone-plan command failed");
                 Environment.Exit(1);
             }
         });
@@ -121,8 +122,7 @@ public static class AudioCommand
     {
         if (!txFile.Exists) throw new FileNotFoundException($"TranscriptIndex not found: {txFile.FullName}");
 
-        // if (bitDepth != 16)
-        //     throw new NotSupportedException("Currently only 16-bit PCM output is supported in MVP.");
+        Log.Info("Rendering roomtone for {TranscriptIndex} -> {OutputWav}", txFile.FullName, outWav.FullName);
 
         var manifest = await PrepareManifestAsync(txFile, outWav.DirectoryName);
 
@@ -137,16 +137,18 @@ public static class AudioCommand
             File.Copy(producedWav, outWav.FullName, overwrite: true);
         }
 
-        Console.WriteLine($"Roomtone WAV: {outWav.FullName}");
-        if (outputs.TryGetValue("plan", out var plan)) Console.WriteLine($"Plan JSON: {plan}");
-        if (outputs.TryGetValue("timeline", out var timeline)) Console.WriteLine($"Timeline JSON: {timeline}");
-        if (outputs.TryGetValue("meta", out var meta)) Console.WriteLine($"Meta JSON: {meta}");
-        if (outputs.TryGetValue("params", out var snapshot)) Console.WriteLine($"Params Snapshot: {snapshot}");
+        Log.Info("Roomtone WAV saved to {OutputWav}", outWav.FullName);
+        if (outputs.TryGetValue("plan", out var plan)) Log.Info("Roomtone plan saved to {PlanPath}", plan);
+        if (outputs.TryGetValue("timeline", out var timeline)) Log.Info("Roomtone timeline saved to {TimelinePath}", timeline);
+        if (outputs.TryGetValue("meta", out var meta)) Log.Info("Roomtone metadata saved to {MetaPath}", meta);
+        if (outputs.TryGetValue("params", out var snapshot)) Log.Info("Roomtone params snapshot saved to {ParamsPath}", snapshot);
     }
 
     private static async Task RunPlanAsync(FileInfo txFile, FileInfo outJson, int sampleRate, double fadeMs, double toneDb, bool emitDiagnostics, bool adaptiveGain)
     {
         if (!txFile.Exists) throw new FileNotFoundException($"TranscriptIndex not found: {txFile.FullName}");
+
+        Log.Info("Generating roomtone plan for {TranscriptIndex} -> {OutputJson}", txFile.FullName, outJson.FullName);
 
         var manifest = await PrepareManifestAsync(txFile, outJson.DirectoryName);
 
@@ -161,10 +163,10 @@ public static class AudioCommand
             File.Copy(planPath, outJson.FullName, overwrite: true);
         }
 
-        Console.WriteLine($"Roomtone plan: {outJson.FullName}");
-        if (outputs.TryGetValue("timeline", out var timeline)) Console.WriteLine($"Timeline JSON: {timeline}");
-        if (outputs.TryGetValue("meta", out var meta)) Console.WriteLine($"Meta JSON: {meta}");
-        if (outputs.TryGetValue("params", out var snapshot)) Console.WriteLine($"Params Snapshot: {snapshot}");
+        Log.Info("Roomtone plan saved to {OutputJson}", outJson.FullName);
+        if (outputs.TryGetValue("timeline", out var timeline)) Log.Info("Roomtone timeline saved to {TimelinePath}", timeline);
+        if (outputs.TryGetValue("meta", out var meta)) Log.Info("Roomtone metadata saved to {MetaPath}", meta);
+        if (outputs.TryGetValue("params", out var snapshot)) Log.Info("Roomtone params snapshot saved to {ParamsPath}", snapshot);
     }
 
     private static async Task<ManifestV2> PrepareManifestAsync(FileInfo txFile, string? workDirectory)
