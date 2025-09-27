@@ -1,5 +1,6 @@
 using System.CommandLine;
 using Ams.Core.Validation;
+using Ams.Core.Common;
 
 namespace Ams.Cli.Commands;
 
@@ -23,7 +24,7 @@ public static class TextCommand
         normalizeCommand.SetHandler((text, expandContractions, removeNumbers) =>
         {
             var result = TextNormalizer.Normalize(text, expandContractions, removeNumbers);
-            Console.WriteLine(result);
+            Log.Info("Normalized text: {NormalizedText}", result);
         }, textArgument, expandContractionsOption, removeNumbersOption);
         
         textCommand.AddCommand(normalizeCommand);
