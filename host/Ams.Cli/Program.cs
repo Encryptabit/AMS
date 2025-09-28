@@ -28,6 +28,7 @@ internal static class Program
         rootCommand.AddCommand(AudioCommand.Create());
         rootCommand.AddCommand(RefineSentencesCommand.Create());
         rootCommand.AddCommand(PipelineCommand.Create());
+        rootCommand.AddCommand(DspCommand.Create());
         
         var replCommand = new Command("repl", "Start interactive REPL");
         replCommand.SetHandler(async () => await StartRepl(rootCommand));
