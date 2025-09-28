@@ -2,6 +2,7 @@ using System.CommandLine;
 using System.Text.Json;
 using Ams.Core;
 using Ams.Core.Common;
+using Ams.Cli.Utilities;
 
 namespace Ams.Cli.Commands;
 
@@ -11,16 +12,10 @@ public static class BuildIndexCommand
     {
         var buildIndexCommand = new Command("build-index", "Build book index from document files");
         
-        var bookFileOption = new Option<FileInfo>("--book", "Path to the book file (DOCX, TXT, MD, RTF)")
-        {
-            IsRequired = true
-        };
+        var bookFileOption = new Option<FileInfo?>("--book", "Path to the book file (DOCX, TXT, MD, RTF)");
         bookFileOption.AddAlias("-b");
-        
-        var outputOption = new Option<FileInfo>("--out", "Output book index JSON file")
-        {
-            IsRequired = true
-        };
+
+        var outputOption = new Option<FileInfo?>("--out", "Output book index JSON file");
         outputOption.AddAlias("-o");
         
         var forceCacheRefreshOption = new Option<bool>("--force-refresh", () => false, "Force cache refresh even if cached version exists");
@@ -39,8 +34,8 @@ public static class BuildIndexCommand
         {
             try
             {
-                var bookFile = context.ParseResult.GetValueForOption(bookFileOption)!;
-                var outputFile = context.ParseResult.GetValueForOption(outputOption)!;
+                var bookFile = CommandInputResolver.ResolveBookSource(context.ParseResult.GetValueForOption(bookFileOption));
+                var outputFile = CommandInputResolver.ResolveBookIndex(context.ParseResult.GetValueForOption(outputOption), mustExist: false);
                 var forceRefresh = context.ParseResult.GetValueForOption(forceCacheRefreshOption);
                 var averageWpm = context.ParseResult.GetValueForOption(averageWpmOption);
                 var noCache = context.ParseResult.GetValueForOption(noCacheOption);

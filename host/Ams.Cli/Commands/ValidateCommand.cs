@@ -4,6 +4,7 @@ using System.Text;
 using System.Text.Json;
 using Ams.Core.Artifacts;
 using Ams.Core.Common;
+using Ams.Cli.Utilities;
 
 namespace Ams.Cli.Commands;
 
@@ -30,7 +31,7 @@ public static class ValidateCommand
             description: "Path to hydrated transcript JSON (e.g., *.align.hydrate.json)");
         hydrateOption.AddAlias("-h");
 
-        var outOption = new Option<FileInfo?>("--out", () => null, "Optional output file. If omitted, prints to console.");
+        var outOption = new Option<FileInfo?>("--out", () => null, "Optional output file. If omitted, prints to console or is derived from chapter.");
         outOption.AddAlias("-o");
 
         var allErrorsOption = new Option<bool>("--show-all", () => true, "Flag to determine whether to display all errors or not");
@@ -48,9 +49,9 @@ public static class ValidateCommand
 
         cmd.SetHandler(async context =>
         {
-            var txFile = context.ParseResult.GetValueForOption(txOption);
-            var hydrateFile = context.ParseResult.GetValueForOption(hydrateOption);
-            var outputFile = context.ParseResult.GetValueForOption(outOption);
+            var txFile = CommandInputResolver.TryResolveChapterArtifact(context.ParseResult.GetValueForOption(txOption), "align.tx.json", mustExist: true);
+            var hydrateFile = CommandInputResolver.TryResolveChapterArtifact(context.ParseResult.GetValueForOption(hydrateOption), "align.hydrate.json", mustExist: true);
+            var outputFile = CommandInputResolver.TryResolveChapterArtifact(context.ParseResult.GetValueForOption(outOption), "validate.report.txt", mustExist: false);
             var allErrors = context.ParseResult.GetValueForOption(allErrorsOption);
             var topSentences = context.ParseResult.GetValueForOption(topSentencesOption);
             var topParagraphs = context.ParseResult.GetValueForOption(topParagraphsOption);
