@@ -1,11 +1,10 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Text;
 using Ams.Core.Artifacts;
 using Ams.Core.Book;
 using Ams.Core.Asr;
-using Ams.Core.Asr;
-using Ams.Core.Book;
 
 namespace Ams.Core.Alignment.Tx;
 
@@ -375,6 +374,32 @@ public static class TranscriptAligner
 
             double cer = ComputeCer(book, asr, start, end, sentenceStartAsr, sentenceEndAsr);
 
+            bool normalizedMatch = false;
+            if (book is not null && asr is not null)
+            {
+                var normalizedReference = BuildNormalizedWordString(book, start, end);
+                var normalizedHypothesis = BuildNormalizedWordString(asr, sentenceStartAsr, sentenceEndAsr);
+
+                if (normalizedReference.Length == 0 && normalizedHypothesis.Length == 0)
+                {
+                    normalizedMatch = true;
+                }
+                else if (normalizedReference.Length > 0 && string.Equals(normalizedReference, normalizedHypothesis, StringComparison.Ordinal))
+                {
+                    normalizedMatch = true;
+                }
+            }
+
+            if (normalizedMatch)
+            {
+                weightedWer = 0.0;
+                legacyWer = 0.0;
+                coverage = 1.0;
+                cer = 0.0;
+                dels = 0;
+                insCount = 0;
+            }
+
             string status = weightedWer <= 0.10 && dels < 3 ? "ok" : (weightedWer <= 0.25 ? "attention" : "unreliable");
 
             var metrics = new SentenceMetrics(weightedWer, cer, legacyWer, dels, insCount);
@@ -402,49 +427,71 @@ public static class TranscriptAligner
         return (sentsOut, parasOut);
     }
 
-    private static double ComputeCer(BookIndex book, AsrResponse asr, int bookStart, int bookEnd, int? asrStart, int? asrEnd)
+    private static double ComputeCer(BookIndex? book, AsrResponse? asr, int bookStart, int bookEnd, int? asrStart, int? asrEnd)
     {
-        var reference = BuildSentenceText(book, bookStart, bookEnd);
-        var hypothesis = BuildAsrText(asr, asrStart, asrEnd);
+        var reference = BuildNormalizedWordString(book, bookStart, bookEnd);
+        var hypothesis = BuildNormalizedWordString(asr, asrStart, asrEnd);
 
-        if (string.IsNullOrWhiteSpace(reference))
+        if (reference.Length == 0)
         {
-            return string.IsNullOrWhiteSpace(hypothesis) ? 0.0 : 1.0;
+            return hypothesis.Length == 0 ? 0.0 : 1.0;
         }
 
-        var referenceChars = reference.Replace(" ", string.Empty);
-        var hypothesisChars = hypothesis.Replace(" ", string.Empty);
-
-        if (referenceChars.Length == 0)
-        {
-            return hypothesisChars.Length == 0 ? 0.0 : 1.0;
-        }
-
-        int distance = LevenshteinDistance(referenceChars.AsSpan(), hypothesisChars.AsSpan());
-        return distance / Math.Max(1.0, referenceChars.Length);
+        int distance = LevenshteinDistance(reference.AsSpan(), hypothesis.AsSpan());
+        return distance / Math.Max(1.0, reference.Length);
     }
 
-    private static string BuildSentenceText(BookIndex book, int start, int end)
+    private static string BuildNormalizedWordString(BookIndex? book, int start, int end)
     {
-        if (start < 0 || end < start || end >= book.Words.Length)
+        if (book is null || start < 0 || end < start || book.Words.Length == 0)
         {
             return string.Empty;
         }
 
-        return string.Join(' ', book.Words.Skip(start).Take(end - start + 1).Select(w => w.Text));
+        int safeEnd = Math.Min(end, book.Words.Length - 1);
+        var builder = new StringBuilder();
+
+        for (int i = Math.Max(0, start); i <= safeEnd; i++)
+        {
+            AppendNormalized(builder, book.Words[i].Text);
+        }
+
+        return builder.ToString();
     }
 
-    private static string BuildAsrText(AsrResponse asr, int? start, int? end)
+    private static string BuildNormalizedWordString(AsrResponse? asr, int? start, int? end)
     {
-        if (!start.HasValue || !end.HasValue || asr.Tokens.Length == 0)
+        if (asr is null || !start.HasValue || !end.HasValue || asr.Tokens.Length == 0)
         {
             return string.Empty;
         }
 
         int s = Math.Clamp(start.Value, 0, asr.Tokens.Length - 1);
         int e = Math.Clamp(end.Value, s, asr.Tokens.Length - 1);
+        var builder = new StringBuilder();
 
-        return string.Join(' ', asr.Tokens.Skip(s).Take(e - s + 1).Select(t => t.Word));
+        for (int i = s; i <= e; i++)
+        {
+            AppendNormalized(builder, asr.Tokens[i].Word);
+        }
+
+        return builder.ToString();
+    }
+
+    private static void AppendNormalized(StringBuilder builder, string? text)
+    {
+        if (string.IsNullOrEmpty(text))
+        {
+            return;
+        }
+
+        foreach (var c in text)
+        {
+            if (char.IsLetterOrDigit(c))
+            {
+                builder.Append(char.ToLowerInvariant(c));
+            }
+        }
     }
 
     private static int LevenshteinDistance(ReadOnlySpan<char> a, ReadOnlySpan<char> b)

@@ -107,6 +107,94 @@ public class TxAlignTests
         Assert.InRange(metrics.Cer, 0.19, 0.21); // character distance 1/5
         Assert.InRange(metrics.SpanWer, 0.99, 1.01); // legacy WER remains 1.0
     }
+
+    [Fact]
+    public void Rollup_IgnoresPurePunctuationDifferences()
+    {
+        var ops = new List<WordAlign>
+        {
+            new WordAlign(null, 0, AlignOp.Ins, "extra", 0),
+            new WordAlign(0, 1, AlignOp.Sub, "near_or_diff", 1)
+        };
+
+        var bookWords = new[] { new BookWord("saddle—no", 0, 0, 0) };
+        var sentences = new[] { new SentenceRange(0, 0, 0) };
+        var paragraphs = new[] { new ParagraphRange(0, 0, 0, "Body", "Style") };
+        var book = new BookIndex(
+            SourceFile: "book",
+            SourceFileHash: "hash",
+            IndexedAt: DateTime.UtcNow,
+            Title: null,
+            Author: null,
+            Totals: new BookTotals(bookWords.Length, sentences.Length, paragraphs.Length, 0),
+            Words: bookWords,
+            Sentences: sentences,
+            Paragraphs: paragraphs,
+            Sections: Array.Empty<SectionRange>());
+
+        var tokens = new[]
+        {
+            new AsrToken(0, 0.1, "saddle."),
+            new AsrToken(0.1, 0.1, "No")
+        };
+        var asr = new AsrResponse("model", tokens);
+
+        var (sentAlign, _) = TranscriptAligner.Rollup(
+            ops,
+            new List<(int Id, int Start, int End)> { (0, 0, 0) },
+            new List<(int Id, int Start, int End)> { (0, 0, 0) },
+            book,
+            asr);
+
+        var sentence = Assert.Single(sentAlign);
+        Assert.Equal(0, sentence.Metrics.Wer);
+        Assert.Equal(0, sentence.Metrics.Cer);
+        Assert.Equal("ok", sentence.Status);
+    }
+
+    [Fact]
+    public void Rollup_TreatsWhitespaceOnlyDifferencesAsMatches()
+    {
+        var ops = new List<WordAlign>
+        {
+            new WordAlign(null, 0, AlignOp.Ins, "extra", 0),
+            new WordAlign(0, 1, AlignOp.Sub, "near_or_diff", 1)
+        };
+
+        var bookWords = new[] { new BookWord("spellbook!", 0, 0, 0) };
+        var sentences = new[] { new SentenceRange(0, 0, 0) };
+        var paragraphs = new[] { new ParagraphRange(0, 0, 0, "Body", "Style") };
+        var book = new BookIndex(
+            SourceFile: "book",
+            SourceFileHash: "hash",
+            IndexedAt: DateTime.UtcNow,
+            Title: null,
+            Author: null,
+            Totals: new BookTotals(bookWords.Length, sentences.Length, paragraphs.Length, 0),
+            Words: bookWords,
+            Sentences: sentences,
+            Paragraphs: paragraphs,
+            Sections: Array.Empty<SectionRange>());
+
+        var tokens = new[]
+        {
+            new AsrToken(0, 0.1, "spell"),
+            new AsrToken(0.1, 0.1, "book")
+        };
+        var asr = new AsrResponse("model", tokens);
+
+        var (sentAlign, _) = TranscriptAligner.Rollup(
+            ops,
+            new List<(int Id, int Start, int End)> { (0, 0, 0) },
+            new List<(int Id, int Start, int End)> { (0, 0, 0) },
+            book,
+            asr);
+
+        var sentence = Assert.Single(sentAlign);
+        Assert.Equal(0, sentence.Metrics.Wer);
+        Assert.Equal(0, sentence.Metrics.Cer);
+        Assert.Equal("ok", sentence.Status);
+    }
     [Fact]
     public void Align_SimpleNearMatch_YieldsSubNotDelIns()
     {
