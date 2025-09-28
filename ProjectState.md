@@ -35,7 +35,7 @@ What's Implemented
     - `AnchorPipeline` (section detect → window map → anchors → windows)
 - DSP
   - Zig gain with smoothed parameter and C ABI; .NET P/Invoke wrapper `Ams.Dsp.Native.AmsDsp`.
-  - CLI `dsp` demo writes `ams_out.wav`.
+  - CLI `dsp` command orchestrates Plugalyzer chains (`dsp run`), manages plugin directories (`dsp set-dir`), and caches parameter metadata (`dsp init`).
 - Book Parser & Indexer (canonical)
   - `BookParser`: Multi-format reader (DOCX/TXT/MD/RTF) that extracts paragraphs without normalization; derives paragraph `style` (DocX `StyleId`) and best-effort `kind` (Heading/Body). Title/author read when available.
   - `BookIndexer`: Canonical tokenizer (whitespace split; punctuation preserved), builds `words[]` and structure ranges: `sentences[]`, `paragraphs[]`. No timing/confidence in BookIndex.
@@ -49,7 +49,10 @@ How To Run
 - Book indexing: `dotnet run --project host/Ams.Cli -- build-index -b <book.docx> -o <index.json>`
 - Book doctor (read-only): `dotnet run --project host/Ams.Cli -- book verify --index <index.json>`
 - Text normalization: `dotnet run --project host/Ams.Cli -- text normalize "your text here"`
-- DSP demo: `dotnet run --project host/Ams.Cli -- dsp`
+- DSP processing:
+  - Configure plugin directories: `dotnet run --project host/Ams.Cli -- dsp set-dir add <path>`
+  - Cache plugin metadata: `dotnet run --project host/Ams.Cli -- dsp init`
+  - Run a chain: `dotnet run --project host/Ams.Cli -- dsp run -i <in.wav> [--chain dsp.chain.json | --plugin <plugin.vst3>]`
  - Anchors (n‑grams): `dotnet run --project host/Ams.Cli -- align anchors -i out\book.index.json -j out\asr.json [--detect-section true] [--ngram 3] [--emit-windows] [--out anchors.json]`
 
 Sentence-Only Refinement & Roomtone
