@@ -220,7 +220,7 @@ public static class PipelineCommand
         await AlignCommand.RunHydrateTxAsync(bookIndexFile, asrFile, txFile, hydrateFile);
 
         Log.Info("Rendering roomtone");
-        await AudioCommand.RunRenderAsync(txFile, treatedWav, sampleRate, bitDepth, fadeMs, toneDb, emitDiagnostics, adaptiveGain);
+        await AudioCommand.RunRenderAsync(txFile, treatedWav, sampleRate, bitDepth, fadeMs, toneDb, emitDiagnostics, adaptiveGain, verbose: false);
 
         Log.Info("=== Outputs ===");
         Log.Info("Book index : {BookIndex}", bookIndexFile.FullName);
