@@ -4,6 +4,7 @@ using System.CommandLine;
 using System.IO;
 using System.Linq;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using Ams.Cli.Utilities;
 
 namespace Ams.Cli.Commands;
@@ -18,6 +19,8 @@ public static class DspCommand
 
         dsp.AddCommand(CreateRunCommand());
         dsp.AddCommand(CreateListParamsCommand());
+        dsp.AddCommand(CreateSetDirCommand());
+        dsp.AddCommand(CreateInitCommand());
 
         return dsp;
     }
@@ -180,6 +183,319 @@ public static class DspCommand
             catch (Exception ex)
             {
                 Log.Error(ex, "dsp list-params failed");
+                context.ExitCode = 1;
+            }
+        });
+
+        return cmd;
+    }
+
+    private static Command CreateSetDirCommand()
+    {
+        var root = new Command("set-dir", "Manage directories containing plugins");
+
+        root.AddCommand(CreateSetDirListCommand());
+        root.AddCommand(CreateSetDirAddCommand());
+        root.AddCommand(CreateSetDirRemoveCommand());
+        root.AddCommand(CreateSetDirClearCommand());
+
+        return root;
+    }
+
+    private static Command CreateSetDirListCommand()
+    {
+        var cmd = new Command("list", "Show configured plugin directories");
+
+        cmd.SetHandler(async context =>
+        {
+            var token = context.GetCancellationToken();
+            var config = await DspConfigService.LoadAsync(token).ConfigureAwait(false);
+
+            if (config.PluginDirectories.Count == 0)
+            {
+                Console.WriteLine("No plugin directories configured. Use 'dsp set-dir add <path>' to add one.");
+                return;
+            }
+
+            Console.WriteLine("Configured plugin directories:");
+            foreach (var dir in config.PluginDirectories)
+            {
+                Console.WriteLine($" - {dir}");
+            }
+        });
+
+        return cmd;
+    }
+
+    private static Command CreateSetDirAddCommand()
+    {
+        var cmd = new Command("add", "Add one or more plugin directories");
+        var pathsArgument = new Argument<List<string>>("paths")
+        {
+            Arity = ArgumentArity.OneOrMore,
+            Description = "Directory paths to add"
+        };
+        cmd.AddArgument(pathsArgument);
+
+        cmd.SetHandler(async context =>
+        {
+            var token = context.GetCancellationToken();
+            var paths = context.ParseResult.GetValueForArgument(pathsArgument);
+
+            var config = await DspConfigService.LoadAsync(token).ConfigureAwait(false);
+            var added = new List<string>();
+
+            foreach (var path in paths)
+            {
+                var full = Path.GetFullPath(path);
+                if (!Directory.Exists(full))
+                {
+                    Log.Error("Directory not found: {Directory}", full);
+                    context.ExitCode = 1;
+                    return;
+                }
+
+                if (!config.PluginDirectories.Contains(full, StringComparer.OrdinalIgnoreCase))
+                {
+                    config.PluginDirectories.Add(full);
+                    added.Add(full);
+                }
+            }
+
+            if (added.Count == 0)
+            {
+                Log.Info("[dsp] No new directories added (duplicates ignored)");
+                return;
+            }
+
+            await DspConfigService.SaveAsync(config, token).ConfigureAwait(false);
+            foreach (var dir in added.OrderBy(d => d, StringComparer.OrdinalIgnoreCase))
+            {
+                Log.Info("[dsp] Added plugin directory {Directory}", dir);
+            }
+        });
+
+        return cmd;
+    }
+
+    private static Command CreateSetDirRemoveCommand()
+    {
+        var cmd = new Command("remove", "Remove one or more plugin directories");
+        var pathsArgument = new Argument<List<string>>("paths")
+        {
+            Arity = ArgumentArity.OneOrMore,
+            Description = "Directory paths to remove"
+        };
+        cmd.AddArgument(pathsArgument);
+
+        cmd.SetHandler(async context =>
+        {
+            var token = context.GetCancellationToken();
+            var paths = context.ParseResult.GetValueForArgument(pathsArgument);
+
+            var config = await DspConfigService.LoadAsync(token).ConfigureAwait(false);
+            var removed = new List<string>();
+
+            foreach (var path in paths)
+            {
+                var full = Path.GetFullPath(path);
+                if (config.PluginDirectories.RemoveAll(d => string.Equals(d, full, StringComparison.OrdinalIgnoreCase)) > 0)
+                {
+                    removed.Add(full);
+                }
+            }
+
+            if (removed.Count == 0)
+            {
+                Log.Info("[dsp] No directories removed");
+                return;
+            }
+
+            await DspConfigService.SaveAsync(config, token).ConfigureAwait(false);
+            foreach (var dir in removed.OrderBy(d => d, StringComparer.OrdinalIgnoreCase))
+            {
+                Log.Info("[dsp] Removed plugin directory {Directory}", dir);
+            }
+        });
+
+        return cmd;
+    }
+
+    private static Command CreateSetDirClearCommand()
+    {
+        var cmd = new Command("clear", "Remove all configured plugin directories");
+        var confirmOption = new Option<bool>("--yes", "Confirm clearing directories") { Arity = ArgumentArity.ZeroOrOne };
+        cmd.AddOption(confirmOption);
+
+        cmd.SetHandler(async context =>
+        {
+            var token = context.GetCancellationToken();
+            var confirm = context.ParseResult.GetValueForOption(confirmOption);
+
+            if (!confirm)
+            {
+                Log.Warn("Use --yes to confirm clearing all directories");
+                context.ExitCode = 1;
+                return;
+            }
+
+            var config = await DspConfigService.LoadAsync(token).ConfigureAwait(false);
+            if (config.PluginDirectories.Count == 0)
+            {
+                Log.Info("[dsp] No directories to clear");
+                return;
+            }
+
+            config.PluginDirectories.Clear();
+            await DspConfigService.SaveAsync(config, token).ConfigureAwait(false);
+            Log.Info("[dsp] Cleared all plugin directories");
+        });
+
+        return cmd;
+    }
+
+    private static Command CreateInitCommand()
+    {
+        var cmd = new Command("init", "Scan plugin directories and cache parameter metadata");
+
+        var pluginOption = new Option<FileInfo?>("--plugin", "Scan a single plugin file (overrides configured directories)");
+        var forceOption = new Option<bool>("--force", () => false, "Re-scan plugins even if metadata is up to date");
+
+        cmd.AddOption(pluginOption);
+        cmd.AddOption(forceOption);
+
+        cmd.SetHandler(async context =>
+        {
+            var token = context.GetCancellationToken();
+            var pluginFile = context.ParseResult.GetValueForOption(pluginOption);
+            var force = context.ParseResult.GetValueForOption(forceOption);
+
+            try
+            {
+                var config = await DspConfigService.LoadAsync(token).ConfigureAwait(false);
+
+                var targets = new List<string>();
+                var discovered = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+                if (pluginFile is not null)
+                {
+                    if (!pluginFile.Exists)
+                    {
+                        throw new FileNotFoundException($"Plugin file not found: {pluginFile.FullName}");
+                    }
+
+                    targets.Add(Path.GetFullPath(pluginFile.FullName));
+                }
+                else
+                {
+                    if (config.PluginDirectories.Count == 0)
+                    {
+                        throw new InvalidOperationException("No plugin directories configured. Use 'dsp set-dir add <path>' first.");
+                    }
+
+                    foreach (var directory in config.PluginDirectories)
+                    {
+                        if (!Directory.Exists(directory))
+                        {
+                            Log.Warn("[dsp] Directory missing, skipping: {Directory}", directory);
+                            continue;
+                        }
+
+                        foreach (var file in Directory.EnumerateFiles(directory, "*.vst3", SearchOption.AllDirectories))
+                        {
+                            var full = Path.GetFullPath(file);
+                            discovered.Add(full);
+                            if (!targets.Contains(full))
+                            {
+                                targets.Add(full);
+                            }
+                        }
+                    }
+
+                    // prune removed plugins
+                    var missing = config.Plugins.Keys
+                        .Where(path => !discovered.Contains(path))
+                        .ToList();
+                    if (missing.Count > 0)
+                    {
+                        foreach (var path in missing)
+                        {
+                            config.Plugins.Remove(path);
+                        }
+                        if (missing.Count > 0)
+                        {
+                            Log.Info("[dsp] Removed {Count} cached plugin entries that no longer exist", missing.Count);
+                        }
+                    }
+                }
+
+                if (targets.Count == 0)
+                {
+                    Log.Warn("[dsp] No plugins found to scan");
+                    await DspConfigService.SaveAsync(config, token).ConfigureAwait(false);
+                    return;
+                }
+
+                var scanned = 0;
+                var skipped = 0;
+                var failed = 0;
+
+                foreach (var pluginPath in targets.OrderBy(p => p, StringComparer.OrdinalIgnoreCase))
+                {
+                    token.ThrowIfCancellationRequested();
+
+                    var lastWrite = File.GetLastWriteTimeUtc(pluginPath);
+                    if (!force && config.Plugins.TryGetValue(pluginPath, out var existing) && existing.PluginModifiedUtc >= lastWrite)
+                    {
+                        skipped++;
+                        continue;
+                    }
+
+                    var stdout = new List<string>();
+                    var stderr = new List<string>();
+
+                    var args = new List<string> { "listParameters", $"--plugin={pluginPath}" };
+                    var exitCode = await PlugalyzerService.RunAsync(args, Path.GetDirectoryName(pluginPath), token,
+                        line => stdout.Add(line),
+                        line => stderr.Add(line)).ConfigureAwait(false);
+
+                    if (exitCode != 0)
+                    {
+                        failed++;
+                        Log.Error("[dsp] Plugalyzer exited with code {Code} for plugin {Plugin}", exitCode, pluginPath);
+                        if (stderr.Count > 0)
+                        {
+                            foreach (var line in stderr)
+                            {
+                                Log.Error("[dsp] {Line}", line);
+                            }
+                        }
+                        continue;
+                    }
+
+                    var raw = string.Join(Environment.NewLine, stdout);
+                    var pluginName = ExtractPluginName(stdout);
+                    var parameters = ParseParameterLines(stdout);
+                    var metadata = new DspPluginMetadata(
+                        Path: pluginPath,
+                        PluginName: pluginName,
+                        RawParameters: raw,
+                        Parameters: parameters,
+                        ScannedAtUtc: DateTimeOffset.UtcNow,
+                        PluginModifiedUtc: lastWrite);
+
+                    config.Plugins[pluginPath] = metadata;
+                    scanned++;
+
+                    Log.Info("[dsp] Cached metadata for {Plugin}", pluginName ?? pluginPath);
+                }
+
+                await DspConfigService.SaveAsync(config, token).ConfigureAwait(false);
+                Log.Info("[dsp] Scan complete. Scanned {Scanned}, skipped {Skipped}, failed {Failed}", scanned, skipped, failed);
+            }
+            catch (Exception ex)
+            {
+                Log.Error(ex, "dsp init failed");
                 context.ExitCode = 1;
             }
         });
@@ -519,6 +835,119 @@ public static class DspCommand
             value = value.Replace(c, '_');
         }
         return value;
+    }
+
+    private static string? ExtractPluginName(IReadOnlyList<string> lines)
+    {
+        foreach (var raw in lines)
+        {
+            if (string.IsNullOrWhiteSpace(raw))
+            {
+                continue;
+            }
+
+            if (raw.Contains("Loaded plugin", StringComparison.OrdinalIgnoreCase))
+            {
+                var match = Regex.Match(raw, "Loaded plugin\\s+\"(?<name>.+?)\"", RegexOptions.IgnoreCase);
+                if (match.Success)
+                {
+                    return match.Groups["name"].Value.Trim();
+                }
+
+                var parts = raw.Split('"');
+                if (parts.Length >= 2)
+                {
+                    return parts[1].Trim();
+                }
+
+                return raw.Trim();
+            }
+        }
+
+        return null;
+    }
+
+    private static IReadOnlyList<DspPluginParameter>? ParseParameterLines(IReadOnlyList<string> lines)
+    {
+        var parameters = new List<DspPluginParameter>();
+
+        foreach (var raw in lines)
+        {
+            if (string.IsNullOrWhiteSpace(raw))
+            {
+                continue;
+            }
+
+            var line = raw.Trim();
+            if (!char.IsDigit(line[0]))
+            {
+                continue;
+            }
+
+            var colonIndex = line.IndexOf(':');
+            if (colonIndex <= 0)
+            {
+                continue;
+            }
+
+            if (!int.TryParse(line[..colonIndex], out var index))
+            {
+                continue;
+            }
+
+            var remainder = line[(colonIndex + 1)..].Trim();
+            if (string.IsNullOrWhiteSpace(remainder))
+            {
+                continue;
+            }
+
+            var tokens = Regex.Split(remainder, @"\s{2,}")
+                .Where(token => !string.IsNullOrWhiteSpace(token))
+                .Select(token => token.Trim())
+                .ToArray();
+
+            if (tokens.Length == 0)
+            {
+                continue;
+            }
+
+            var name = tokens[0];
+            string? values = null;
+            string? defaultValue = null;
+            bool? supportsText = null;
+
+            foreach (var token in tokens.Skip(1))
+            {
+                var parts = token.Split(':', 2, StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
+                if (parts.Length != 2)
+                {
+                    continue;
+                }
+
+                var label = parts[0].ToLowerInvariant();
+                var value = parts[1];
+
+                switch (label)
+                {
+                    case "values":
+                        values = value;
+                        break;
+                    case "default":
+                        defaultValue = value;
+                        break;
+                    case "supports text values":
+                        if (bool.TryParse(value, out var parsed))
+                        {
+                            supportsText = parsed;
+                        }
+                        break;
+                }
+            }
+
+            parameters.Add(new DspPluginParameter(index, name, values, defaultValue, supportsText));
+        }
+
+        return parameters.Count > 0 ? parameters : null;
     }
 
     private static void TryDeleteDirectory(string path)
