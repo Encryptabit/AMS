@@ -153,6 +153,11 @@ internal sealed class ReplState
         {
             Console.WriteLine("Mode              : NONE (no WAV files detected)");
         }
+        Console.WriteLine($"ASR Service      : {AsrProcessSupervisor.StatusDescription}");
+        if (!string.IsNullOrWhiteSpace(AsrProcessSupervisor.BaseUrl))
+        {
+            Console.WriteLine($"ASR Endpoint     : {AsrProcessSupervisor.BaseUrl}");
+        }
     }
 
     public void UseAllChapters()

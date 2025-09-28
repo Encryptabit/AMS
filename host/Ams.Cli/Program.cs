@@ -13,6 +13,10 @@ internal static class Program
         using var loggerFactory = Log.ConfigureDefaults(logFileName: "ams-log.txt");
         Log.Info("Structured logging initialized. Console + file at {LogFile}", Log.LogFilePath ?? "(unknown)");
 
+        AsrProcessSupervisor.RegisterForShutdown();
+        var defaultAsrUrl = ResolveDefaultAsrUrl();
+        AsrProcessSupervisor.TriggerBackgroundWarmup(defaultAsrUrl);
+
         var rootCommand = new RootCommand("AMS - Audio Management System CLI");
 
         rootCommand.AddCommand(AsrCommand.Create());
@@ -126,7 +130,8 @@ internal static class Program
     {
         var dirLabel = state.WorkingDirectoryLabel;
         var scopeLabel = state.ScopeLabel;
-        return $"[AMS|{dirLabel}|{scopeLabel}]> ";
+        var asrLabel = AsrProcessSupervisor.StatusLabel;
+        return $"[AMS|{dirLabel}|{scopeLabel}|{asrLabel}]> ";
     }
 
     private static bool IsExit(string input)
@@ -134,6 +139,11 @@ internal static class Program
         return input.Equals("exit", StringComparison.OrdinalIgnoreCase)
                || input.Equals("quit", StringComparison.OrdinalIgnoreCase)
                || input.Equals("q", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string ResolveDefaultAsrUrl()
+    {
+        return Environment.GetEnvironmentVariable("AMS_ASR_SERVICE_URL") ?? AsrCommand.DefaultServiceUrl;
     }
 
     private static async Task<bool> TryHandleBuiltInAsync(string input, ReplState state, RootCommand rootCommand)
