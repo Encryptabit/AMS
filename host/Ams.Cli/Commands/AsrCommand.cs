@@ -8,6 +8,8 @@ namespace Ams.Cli.Commands;
 
 public static class AsrCommand
 {
+    internal const string DefaultServiceUrl = "http://localhost:8000";
+
     public static Command Create()
     {
         var asrCommand = new Command("asr", "ASR (Automatic Speech Recognition) operations");
@@ -20,7 +22,7 @@ public static class AsrCommand
         var outputOption = new Option<FileInfo?>("--out", "Output ASR JSON file");
         outputOption.AddAlias("-o");
         
-        var serviceUrlOption = new Option<string>("--service", () => "http://localhost:8000", "ASR service URL");
+        var serviceUrlOption = new Option<string>("--service", () => DefaultServiceUrl, "ASR service URL");
         serviceUrlOption.AddAlias("-s");
         
         var modelOption = new Option<string>("--model", "ASR model to use (optional)");
@@ -63,6 +65,8 @@ public static class AsrCommand
 
         Log.Info("Running ASR for {AudioFile} -> {OutputFile} via {ServiceUrl}", audioFile.FullName, outputFile.FullName, serviceUrl);
         Log.Debug("ASR parameters: Language={Language}, Model={Model}", language, model ?? "(default)");
+
+        await AsrProcessSupervisor.EnsureServiceReadyAsync(serviceUrl, CancellationToken.None);
 
         using var client = new AsrClient(serviceUrl);
 
