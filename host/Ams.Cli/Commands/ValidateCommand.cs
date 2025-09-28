@@ -33,6 +33,7 @@ public static class ValidateCommand
         var outOption = new Option<FileInfo?>("--out", () => null, "Optional output file. If omitted, prints to console.");
         outOption.AddAlias("-o");
 
+        var allErrorsOption = new Option<bool>("--show-all", () => true, "Flag to determine whether to display all errors or not");
         var topSentencesOption = new Option<int>("--top-sentences", () => 10, "Number of highest-WER sentences to display (0 to disable).");
         var topParagraphsOption = new Option<int>("--top-paragraphs", () => 5, "Number of highest-WER paragraphs to display (0 to disable).");
         var includeWordsOption = new Option<bool>("--include-words", () => false, "Include word-level alignment tallies when TranscriptIndex is provided.");
@@ -40,6 +41,7 @@ public static class ValidateCommand
         cmd.AddOption(txOption);
         cmd.AddOption(hydrateOption);
         cmd.AddOption(outOption);
+        cmd.AddOption(allErrorsOption);
         cmd.AddOption(topSentencesOption);
         cmd.AddOption(topParagraphsOption);
         cmd.AddOption(includeWordsOption);
@@ -49,6 +51,7 @@ public static class ValidateCommand
             var txFile = context.ParseResult.GetValueForOption(txOption);
             var hydrateFile = context.ParseResult.GetValueForOption(hydrateOption);
             var outputFile = context.ParseResult.GetValueForOption(outOption);
+            var allErrors = context.ParseResult.GetValueForOption(allErrorsOption);
             var topSentences = context.ParseResult.GetValueForOption(topSentencesOption);
             var topParagraphs = context.ParseResult.GetValueForOption(topParagraphsOption);
             var includeWords = context.ParseResult.GetValueForOption(includeWordsOption);
@@ -62,7 +65,7 @@ public static class ValidateCommand
 
             try
             {
-                var report = await GenerateReportAsync(txFile, hydrateFile, topSentences, topParagraphs, includeWords);
+                var report = await GenerateReportAsync(txFile, hydrateFile, allErrors, topSentences, topParagraphs, includeWords);
 
                 if (outputFile is not null)
                 {
@@ -85,9 +88,9 @@ public static class ValidateCommand
         return cmd;
     }
 
-    private static async Task<string> GenerateReportAsync(
-        FileInfo? txFile,
+    private static async Task<string> GenerateReportAsync(FileInfo? txFile,
         FileInfo? hydrateFile,
+        bool allErrors,
         int topSentences,
         int topParagraphs,
         bool includeWordTallies)
@@ -134,7 +137,7 @@ public static class ValidateCommand
         var paragraphViews = BuildParagraphViews(tx, hydrated);
         var wordTallies = includeWordTallies ? BuildWordTallies(tx) : null;
 
-        return BuildTextReport(info, sentenceViews, paragraphViews, wordTallies, topSentences, topParagraphs);
+        return BuildTextReport(info, sentenceViews, paragraphViews, wordTallies,allErrors, topSentences, topParagraphs);
     }
 
     private static SourceInfo ExtractSourceInfo(TranscriptIndex? tx, HydratedTranscript? hydrated)
@@ -239,6 +242,7 @@ public static class ValidateCommand
         IReadOnlyList<SentenceView> sentences,
         IReadOnlyList<ParagraphView> paragraphs,
         WordTallies? wordTallies,
+        bool allErrors,
         int topSentences,
         int topParagraphs)
     {
@@ -282,14 +286,18 @@ public static class ValidateCommand
 
         builder.AppendLine();
 
-        if (topSentences > 0 && sentences.Count > 0)
+        if ( topSentences > 0 && sentences.Count > 0)
         {
-            builder.AppendLine($"Top {Math.Min(topSentences, sentences.Count)} sentences by WER:");
+            if (allErrors) builder.AppendLine("All sentences by WER:");
+            else builder.AppendLine($"Top {Math.Min(topSentences, sentences.Count)} sentences by WER:");
 
-            foreach (var sentence in sentences
-                         .OrderByDescending(s => s.Metrics.Wer)
-                         .ThenByDescending(s => s.Metrics.Cer)
-                         .Take(topSentences))
+            var sentencesOrdered = sentences
+                .OrderByDescending(s => s.Metrics.Wer)
+                .ThenByDescending(s => s.Metrics.Cer);
+            
+            var sentenceBucket = allErrors ? sentencesOrdered.Where(s => !s.Status.Equals("ok", StringComparison.OrdinalIgnoreCase)) : sentencesOrdered.Take(topSentences);
+
+            foreach (var sentence in sentenceBucket)
             {
                 builder.AppendLine($"  #{sentence.Id} | WER {sentence.Metrics.Wer:P1} | CER {sentence.Metrics.Cer:P1} | Status {sentence.Status}");
                 builder.AppendLine($"    Book range: {sentence.BookRange.Start}-{sentence.BookRange.End}");
@@ -313,14 +321,18 @@ public static class ValidateCommand
             }
         }
 
+        var paragraphOrdered = paragraphs
+            .OrderByDescending(p => p.Metrics.Wer)
+            .ThenByDescending(p => p.Metrics.Coverage);
+        
+        var paragraphBucket = allErrors ? paragraphOrdered.Where(p => !p.Status.Equals("ok", StringComparison.OrdinalIgnoreCase)) : paragraphOrdered.Take(topParagraphs);
+
         if (topParagraphs > 0 && paragraphs.Count > 0)
         {
-            builder.AppendLine($"Top {Math.Min(topParagraphs, paragraphs.Count)} paragraphs by WER:");
+            if (allErrors) builder.AppendLine("All paragraphs by WER:");
+            else builder.AppendLine($"Top {Math.Min(topParagraphs, paragraphs.Count)} paragraphs by WER:");
 
-            foreach (var paragraph in paragraphs
-                         .OrderByDescending(p => p.Metrics.Wer)
-                         .ThenByDescending(p => p.Metrics.Coverage)
-                         .Take(topParagraphs))
+            foreach (var paragraph in paragraphBucket)
             {
                 builder.AppendLine($"  #{paragraph.Id} | WER {paragraph.Metrics.Wer:P1} | Coverage {paragraph.Metrics.Coverage:P1} | Status {paragraph.Status}");
                 builder.AppendLine($"    Book range: {paragraph.BookRange.Start}-{paragraph.BookRange.End}");
