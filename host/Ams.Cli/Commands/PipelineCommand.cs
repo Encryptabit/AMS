@@ -2,6 +2,7 @@
 using System.Text;
 using Ams.Core.Book;
 using Ams.Core.Common;
+using Ams.Cli.Utilities;
 
 namespace Ams.Cli.Commands;
 
@@ -18,10 +19,10 @@ public static class PipelineCommand
     {
         var cmd = new Command("run", "Build index, run ASR, align, hydrate, and apply roomtone in one pass");
 
-        var bookOption = new Option<FileInfo>("--book", "Path to the book manuscript (DOCX/TXT/etc.)") { IsRequired = true };
+        var bookOption = new Option<FileInfo?>("--book", "Path to the book manuscript (DOCX/TXT/etc.)");
         bookOption.AddAlias("-b");
 
-        var audioOption = new Option<FileInfo>("--audio", "Path to the chapter audio WAV") { IsRequired = true };
+        var audioOption = new Option<FileInfo?>("--audio", "Path to the chapter audio WAV");
         audioOption.AddAlias("-a");
 
         var workDirOption = new Option<DirectoryInfo?>("--work-dir", () => null, "Working directory for generated artifacts");
@@ -63,11 +64,11 @@ public static class PipelineCommand
 
         cmd.SetHandler(async context =>
         {
-            var bookFile = context.ParseResult.GetValueForOption(bookOption)!;
-            var audioFile = context.ParseResult.GetValueForOption(audioOption)!;
+            var bookFile = CommandInputResolver.ResolveBookSource(context.ParseResult.GetValueForOption(bookOption));
+            var audioFile = CommandInputResolver.RequireAudio(context.ParseResult.GetValueForOption(audioOption));
             var workDir = context.ParseResult.GetValueForOption(workDirOption);
-            var bookIndex = context.ParseResult.GetValueForOption(bookIndexOption);
-            var chapterId = context.ParseResult.GetValueForOption(chapterIdOption);
+            var bookIndex = context.ParseResult.GetValueForOption(bookIndexOption) ?? CommandInputResolver.ResolveBookIndex(null, mustExist: false);
+            var chapterId = context.ParseResult.GetValueForOption(chapterIdOption) ?? Path.GetFileNameWithoutExtension(audioFile.Name);
             var forceIndex = context.ParseResult.GetValueForOption(forceIndexOption);
             var avgWpm = context.ParseResult.GetValueForOption(avgWpmOption);
             var asrService = context.ParseResult.GetValueForOption(asrServiceOption) ?? "http://localhost:8000";
@@ -219,7 +220,7 @@ public static class PipelineCommand
         await AlignCommand.RunHydrateTxAsync(bookIndexFile, asrFile, txFile, hydrateFile);
 
         Log.Info("Rendering roomtone");
-        await AudioCommand.RunRenderAsync(txFile, treatedWav, sampleRate, bitDepth, fadeMs, toneDb, emitDiagnostics, adaptiveGain);
+        await AudioCommand.RunRenderAsync(txFile, treatedWav, sampleRate, bitDepth, fadeMs, toneDb, emitDiagnostics, adaptiveGain, verbose: false);
 
         Log.Info("=== Outputs ===");
         Log.Info("Book index : {BookIndex}", bookIndexFile.FullName);

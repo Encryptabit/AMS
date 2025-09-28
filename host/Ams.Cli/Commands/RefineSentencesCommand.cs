@@ -4,6 +4,7 @@ using Ams.Core.Alignment.Tx;
 using Ams.Core.Artifacts;
 using Ams.Core;
 using Ams.Core.Common;
+using Ams.Cli.Utilities;
 
 namespace Ams.Cli.Commands;
 
@@ -13,13 +14,13 @@ public static class RefineSentencesCommand
     {
         var cmd = new Command("refine-sentences", "Refine sentence start/end times: start from Aeneas, end from FFmpeg silence");
 
-        var txOption = new Option<FileInfo>("--tx-json", description: "TranscriptIndex JSON") { IsRequired = true };
+        var txOption = new Option<FileInfo?>("--tx-json", description: "TranscriptIndex JSON");
         txOption.AddAlias("-t");
-        var asrOption = new Option<FileInfo>("--asr-json", description: "ASR JSON used by TX") { IsRequired = true };
+        var asrOption = new Option<FileInfo?>("--asr-json", description: "ASR JSON used by TX");
         asrOption.AddAlias("-j");
-        var audioOption = new Option<FileInfo>("--audio", description: "Audio WAV") { IsRequired = true };
+        var audioOption = new Option<FileInfo?>("--audio", description: "Audio WAV");
         audioOption.AddAlias("-a");
-        var outOption = new Option<FileInfo>("--out", description: "Output refined sentence JSON") { IsRequired = true };
+        var outOption = new Option<FileInfo?>("--out", description: "Output refined sentence JSON");
         outOption.AddAlias("-o");
         var langOption = new Option<string>("--language", () => "eng", "Aeneas language code");
         var useSilenceOption = new Option<bool>("--with-silence", () => true, "Use FFmpeg silencedetect to refine sentence ends");
@@ -37,10 +38,10 @@ public static class RefineSentencesCommand
 
         cmd.SetHandler(async (context) =>
         {
-            var txFile = context.ParseResult.GetValueForOption(txOption)!;
-            var asrFile = context.ParseResult.GetValueForOption(asrOption)!;
-            var audioFile = context.ParseResult.GetValueForOption(audioOption)!;
-            var outFile = context.ParseResult.GetValueForOption(outOption)!;
+            var txFile = CommandInputResolver.ResolveChapterArtifact(context.ParseResult.GetValueForOption(txOption), "align.tx.json");
+            var asrFile = CommandInputResolver.ResolveChapterArtifact(context.ParseResult.GetValueForOption(asrOption), "asr.json");
+            var audioFile = CommandInputResolver.RequireAudio(context.ParseResult.GetValueForOption(audioOption));
+            var outFile = CommandInputResolver.ResolveChapterArtifact(context.ParseResult.GetValueForOption(outOption), "sentences.refined.json", mustExist: false);
             var lang = context.ParseResult.GetValueForOption(langOption)!;
             var withSilence = context.ParseResult.GetValueForOption(useSilenceOption);
             var silenceDb = context.ParseResult.GetValueForOption(silenceThreshOption);
