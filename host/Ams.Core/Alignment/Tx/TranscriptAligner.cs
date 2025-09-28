@@ -1,7 +1,10 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Text;
 using Ams.Core.Artifacts;
+using Ams.Core.Book;
+using Ams.Core.Asr;
 
 namespace Ams.Core.Alignment.Tx;
 
@@ -120,11 +123,10 @@ public static class TranscriptAligner
                     {
                         int bi = bLo + ii - 1;
                         int aj = aLo + jj - 1;
-                        var c = SubCost(bookNorm[bi], asrNorm[aj], equiv);
-                        var isMatch = c == 0.0;
-                        winOps.Add(isMatch
-                            ? (bi, aj, AlignOp.Match, "equal_or_equiv", 1.0)
-                            : (bi, aj, AlignOp.Sub, "near_or_diff", Math.Max(0.0, 1.0 - c)));
+                        var cost = SubCost(bookNorm[bi], asrNorm[aj], equiv);
+                        var isMatch = cost == 0.0;
+                        var reason = isMatch ? "equal_or_equiv" : "near_or_diff";
+                        winOps.Add((bi, aj, isMatch ? AlignOp.Match : AlignOp.Sub, reason, cost));
                         ii--;
                         jj--;
                         run = 0;
@@ -134,22 +136,21 @@ public static class TranscriptAligner
                     case 1:
                     {
                         int bi = bLo + ii - 1;
-                        var c = DelCost(bookNorm[bi]);
+                        var cost = DelCost(bookNorm[bi]);
                         run++;
-                        sum += c;
-                        // Note: run/avg can be surfaced to window status by caller if needed
-                        winOps.Add((bi, null, AlignOp.Del, "missing_book", 0.0));
+                        sum += cost;
+                        winOps.Add((bi, null, AlignOp.Del, "missing_book", cost));
                         ii--;
                         break;
                     }
                     default:
                     {
                         int aj = aLo + jj - 1;
-                        var c = InsCost(asrNorm[aj], fillers);
+                        var cost = InsCost(asrNorm[aj], fillers);
                         run++;
-                        sum += c;
-                        winOps.Add((null, aj, AlignOp.Ins, (fillers.Contains(asrNorm[aj]) ? "filler" : "extra"),
-                            Math.Max(0.0, 1.0 - c)));
+                        sum += cost;
+                        var reason = fillers.Contains(asrNorm[aj]) ? "filler" : "extra";
+                        winOps.Add((null, aj, AlignOp.Ins, reason, cost));
                         jj--;
                         break;
                     }
@@ -167,7 +168,15 @@ public static class TranscriptAligner
     public static (List<SentenceAlign> sents, List<ParagraphAlign> paras) Rollup(
         IReadOnlyList<WordAlign> ops,
         IReadOnlyList<(int Id, int Start, int End)> bookSentences,
-        IReadOnlyList<(int Id, int Start, int End)> bookParagraphs)
+        IReadOnlyList<(int Id, int Start, int End)> bookParagraphs) =>
+        Rollup(ops, bookSentences, bookParagraphs, null, null);
+
+    public static (List<SentenceAlign> sents, List<ParagraphAlign> paras) Rollup(
+        IReadOnlyList<WordAlign> ops,
+        IReadOnlyList<(int Id, int Start, int End)> bookSentences,
+        IReadOnlyList<(int Id, int Start, int End)> bookParagraphs,
+        BookIndex? book,
+        AsrResponse? asr)
     {
         var opsList = ops.ToList();
 
@@ -219,24 +228,33 @@ public static class TranscriptAligner
             }
 
             var segment = opsList.GetRange(minIndex, maxIndex - minIndex + 1);
-            var inRange = segment.Where(o => o.BookIdx is int bi && bi >= start && bi <= end).ToList();
+            var inRange = segment.Where(o => o.BookIdx is { } bi && bi >= start && bi <= end).ToList();
 
-            int subs = inRange.Count(o => o.Op == AlignOp.Sub);
-            int dels = inRange.Count(o => o.Op == AlignOp.Del);
+            int subs = 0;
+            int dels = 0;
+            double costSum = 0.0;
+
+            foreach (var op in inRange)
+            {
+                costSum += Math.Max(0.0, op.Score);
+                if (op.Op == AlignOp.Sub) subs++;
+                if (op.Op == AlignOp.Del) dels++;
+            }
 
             int? guardStart = null;
             int? guardEnd = null;
+            int? sentenceStartAsr = null;
+            int? sentenceEndAsr = null;
 
             var anchorAsrIdxs = segment
-                .Where(o => string.Equals(o.Reason, "anchor", StringComparison.Ordinal) && o.AsrIdx is int aj &&
-                            o.BookIdx is int bi && bi >= start && bi <= end)
+                .Where(o => string.Equals(o.Reason, "anchor", StringComparison.Ordinal) && o is { AsrIdx: { } aj, BookIdx: { } bi } && bi >= start && bi <= end)
                 .Select(o => o.AsrIdx!.Value)
                 .Distinct()
                 .OrderBy(x => x)
                 .ToList();
 
             var sentenceAsrIdxs = inRange
-                .Where(o => o.AsrIdx is int)
+                .Where(o => o.AsrIdx != null)
                 .Select(o => o.AsrIdx!.Value)
                 .ToList();
 
@@ -255,12 +273,12 @@ public static class TranscriptAligner
 
                 int prevAnchorAsr = opsList
                     .Take(minIndex)
-                    .Where(o => string.Equals(o.Reason, "anchor", StringComparison.Ordinal) && o.AsrIdx is int)
+                    .Where(o => string.Equals(o.Reason, "anchor", StringComparison.Ordinal) && o.AsrIdx != null)
                     .Select(o => o.AsrIdx!.Value)
                     .LastOrDefault(-1);
                 int nextAnchorAsr = opsList
                     .Skip(maxIndex + 1)
-                    .Where(o => string.Equals(o.Reason, "anchor", StringComparison.Ordinal) && o.AsrIdx is int)
+                    .Where(o => string.Equals(o.Reason, "anchor", StringComparison.Ordinal) && o.AsrIdx != null)
                     .Select(o => o.AsrIdx!.Value)
                     .FirstOrDefault(int.MaxValue);
 
@@ -271,13 +289,13 @@ public static class TranscriptAligner
                 while (probe >= 0)
                 {
                     var probeOp = opsList[probe];
-                    if (probeOp.AsrIdx is not int probeAsr)
+                    if (probeOp.AsrIdx is not { } probeAsr)
                     {
                         probe--;
                         continue;
                     }
 
-                    if (probeOp.BookIdx is int bi && bi < start) break;
+                    if (probeOp.BookIdx is { } bi && bi < start) break;
                     if (probeOp.Op != AlignOp.Ins) break;
                     if (probeAsr < leftGuard) break;
                     startAsr = Math.Min(startAsr, probeAsr);
@@ -310,26 +328,81 @@ public static class TranscriptAligner
                 guardStart = startAsr;
                 guardEnd = endAsr;
                 aRange = new ScriptRange(startAsr, endAsr);
+                sentenceStartAsr = startAsr;
+                sentenceEndAsr = endAsr;
             }
 
-            int ins;
+            int insCount = 0;
+            double insCost = 0.0;
             if (guardStart.HasValue && guardEnd.HasValue)
             {
                 int startGuard = guardStart.Value;
                 int endGuard = guardEnd.Value;
-                ins = segment.Count(o =>
-                    o.Op == AlignOp.Ins && o.AsrIdx is int aj && aj >= startGuard && aj <= endGuard);
+                foreach (var op in segment)
+                {
+                    if (op is { Op: AlignOp.Ins, AsrIdx: { } aj } && aj >= startGuard && aj <= endGuard)
+                    {
+                        insCount++;
+                        insCost += Math.Max(0.0, op.Score);
+                    }
+                }
             }
             else
             {
-                ins = segment.Count(o => o.Op == AlignOp.Ins && o.AsrIdx is int);
+                foreach (var op in segment)
+                {
+                    if (op is { Op: AlignOp.Ins, AsrIdx: not null })
+                    {
+                        insCount++;
+                        insCost += Math.Max(0.0, op.Score);
+                    }
+                }
             }
 
-            double wer = (subs + dels + ins) / Math.Max(1.0, n);
-            double coverage = 1.0 - (double)dels / Math.Max(1.0, n);
-            string status = wer <= 0.10 && dels < 3 ? "ok" : (wer <= 0.25 ? "attention" : "unreliable");
+            costSum += insCost;
 
-            var metrics = new SentenceMetrics(wer, 0.0, wer, dels, ins);
+            double tokenCount = Math.Max(1.0, n);
+            double weightedWer = Math.Min(1.0, costSum / tokenCount);
+            double legacyWer = Math.Min(1.0, (subs + dels + insCount) / tokenCount);
+            double coverage = 1.0 - dels / tokenCount;
+
+            if ((!sentenceStartAsr.HasValue || !sentenceEndAsr.HasValue) && sentenceAsrIdxs.Count > 0)
+            {
+                sentenceStartAsr = sentenceAsrIdxs.Min();
+                sentenceEndAsr = sentenceAsrIdxs.Max();
+            }
+
+            double cer = ComputeCer(book, asr, start, end, sentenceStartAsr, sentenceEndAsr);
+
+            bool normalizedMatch = false;
+            if (book is not null && asr is not null)
+            {
+                var normalizedReference = BuildNormalizedWordString(book, start, end);
+                var normalizedHypothesis = BuildNormalizedWordString(asr, sentenceStartAsr, sentenceEndAsr);
+
+                if (normalizedReference.Length == 0 && normalizedHypothesis.Length == 0)
+                {
+                    normalizedMatch = true;
+                }
+                else if (normalizedReference.Length > 0 && string.Equals(normalizedReference, normalizedHypothesis, StringComparison.Ordinal))
+                {
+                    normalizedMatch = true;
+                }
+            }
+
+            if (normalizedMatch)
+            {
+                weightedWer = 0.0;
+                legacyWer = 0.0;
+                coverage = 1.0;
+                cer = 0.0;
+                dels = 0;
+                insCount = 0;
+            }
+
+            string status = weightedWer <= 0.10 && dels < 3 ? "ok" : (weightedWer <= 0.25 ? "attention" : "unreliable");
+
+            var metrics = new SentenceMetrics(weightedWer, cer, legacyWer, dels, insCount);
             sentsOut.Add(new SentenceAlign(s.Id, new IntRange(start, end), aRange, TimingRange.Empty, metrics, status));
         }
 
@@ -341,15 +414,105 @@ public static class TranscriptAligner
                 .ToList();
             var sub = sentsOut.Where(x => sIds.Contains(x.Id)).ToList();
             double werAvg = sub.Count > 0 ? sub.Average(x => x.Metrics.Wer) : 1.0;
+            double cerAvg = sub.Count > 0 ? sub.Average(x => x.Metrics.Cer) : 1.0;
             double covAvg = sub.Count > 0
                 ? sub.Average(x => 1.0 - x.Metrics.MissingRuns / Math.Max(1.0, x.BookRange.End - x.BookRange.Start + 1))
                 : 0.0;
             string status = werAvg <= 0.10 ? "ok" : (werAvg <= 0.25 ? "attention" : "unreliable");
 
             parasOut.Add(new ParagraphAlign(p.Id, new IntRange(p.Start, p.End), sIds,
-                new ParagraphMetrics(werAvg, 0.0, covAvg), status));
+                new ParagraphMetrics(werAvg, cerAvg, covAvg), status));
         }
 
         return (sentsOut, parasOut);
+    }
+
+    private static double ComputeCer(BookIndex? book, AsrResponse? asr, int bookStart, int bookEnd, int? asrStart, int? asrEnd)
+    {
+        var reference = BuildNormalizedWordString(book, bookStart, bookEnd);
+        var hypothesis = BuildNormalizedWordString(asr, asrStart, asrEnd);
+
+        if (reference.Length == 0)
+        {
+            return hypothesis.Length == 0 ? 0.0 : 1.0;
+        }
+
+        int distance = LevenshteinDistance(reference.AsSpan(), hypothesis.AsSpan());
+        return distance / Math.Max(1.0, reference.Length);
+    }
+
+    private static string BuildNormalizedWordString(BookIndex? book, int start, int end)
+    {
+        if (book is null || start < 0 || end < start || book.Words.Length == 0)
+        {
+            return string.Empty;
+        }
+
+        int safeEnd = Math.Min(end, book.Words.Length - 1);
+        var builder = new StringBuilder();
+
+        for (int i = Math.Max(0, start); i <= safeEnd; i++)
+        {
+            AppendNormalized(builder, book.Words[i].Text);
+        }
+
+        return builder.ToString();
+    }
+
+    private static string BuildNormalizedWordString(AsrResponse? asr, int? start, int? end)
+    {
+        if (asr is null || !start.HasValue || !end.HasValue || asr.Tokens.Length == 0)
+        {
+            return string.Empty;
+        }
+
+        int s = Math.Clamp(start.Value, 0, asr.Tokens.Length - 1);
+        int e = Math.Clamp(end.Value, s, asr.Tokens.Length - 1);
+        var builder = new StringBuilder();
+
+        for (int i = s; i <= e; i++)
+        {
+            AppendNormalized(builder, asr.Tokens[i].Word);
+        }
+
+        return builder.ToString();
+    }
+
+    private static void AppendNormalized(StringBuilder builder, string? text)
+    {
+        if (string.IsNullOrEmpty(text))
+        {
+            return;
+        }
+
+        foreach (var c in text)
+        {
+            if (char.IsLetterOrDigit(c))
+            {
+                builder.Append(char.ToLowerInvariant(c));
+            }
+        }
+    }
+
+    private static int LevenshteinDistance(ReadOnlySpan<char> a, ReadOnlySpan<char> b)
+    {
+        var dp = new int[a.Length + 1, b.Length + 1];
+
+        for (int i = 0; i <= a.Length; i++) dp[i, 0] = i;
+        for (int j = 0; j <= b.Length; j++) dp[0, j] = j;
+
+        for (int i = 1; i <= a.Length; i++)
+        {
+            for (int j = 1; j <= b.Length; j++)
+            {
+                int cost = a[i - 1] == b[j - 1] ? 0 : 1;
+                int delete = dp[i - 1, j] + 1;
+                int insert = dp[i, j - 1] + 1;
+                int substitute = dp[i - 1, j - 1] + cost;
+                dp[i, j] = Math.Min(Math.Min(delete, insert), substitute);
+            }
+        }
+
+        return dp[a.Length, b.Length];
     }
 }

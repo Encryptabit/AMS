@@ -2,6 +2,7 @@ using System.CommandLine;
 using System.Text.Json;
 using Ams.Core;
 using Ams.Core.Common;
+using Ams.Cli.Utilities;
 
 namespace Ams.Cli.Commands;
 
@@ -13,16 +14,10 @@ public static class AsrCommand
         
         var runCommand = new Command("run", "Run ASR on an audio file");
         
-        var audioOption = new Option<FileInfo>("--audio", "Path to the audio file (WAV format)")
-        {
-            IsRequired = true
-        };
+        var audioOption = new Option<FileInfo?>("--audio", "Path to the audio file (WAV format)");
         audioOption.AddAlias("-a");
-        
-        var outputOption = new Option<FileInfo>("--out", "Output ASR JSON file")
-        {
-            IsRequired = true
-        };
+
+        var outputOption = new Option<FileInfo?>("--out", "Output ASR JSON file");
         outputOption.AddAlias("-o");
         
         var serviceUrlOption = new Option<string>("--service", () => "http://localhost:8000", "ASR service URL");
@@ -44,7 +39,9 @@ public static class AsrCommand
         {
             try
             {
-                await RunAsrAsync(audio, output, serviceUrl, model, language);
+                var audioFile = CommandInputResolver.RequireAudio(audio);
+                var outputFile = CommandInputResolver.ResolveOutput(output, "asr.json");
+                await RunAsrAsync(audioFile, outputFile, serviceUrl, model, language);
             }
             catch (Exception ex)
             {

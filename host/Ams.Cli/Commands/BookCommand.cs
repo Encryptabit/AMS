@@ -3,6 +3,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using Ams.Core;
+using Ams.Cli.Utilities;
 
 namespace Ams.Cli.Commands;
 
@@ -19,13 +20,13 @@ public static class BookCommand
     {
         var verify = new Command("verify", "Verify a canonical BookIndex JSON (read-only)");
 
-        var indexOption = new Option<FileInfo>("--index", "Path to BookIndex JSON") { IsRequired = true };
+        var indexOption = new Option<FileInfo?>("--index", "Path to BookIndex JSON");
         indexOption.AddAlias("-i");
         verify.AddOption(indexOption);
 
         verify.SetHandler(async context =>
         {
-            var indexFile = context.ParseResult.GetValueForOption(indexOption)!;
+            var indexFile = CommandInputResolver.ResolveBookIndex(context.ParseResult.GetValueForOption(indexOption));
             try
             {
                 await RunVerifyAsync(indexFile);
