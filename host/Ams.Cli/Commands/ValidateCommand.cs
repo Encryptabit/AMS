@@ -1,6 +1,8 @@
 using System.CommandLine;
+using System.Linq;
+using System.Text;
 using System.Text.Json;
-using Ams.Core;
+using Ams.Core.Artifacts;
 using Ams.Core.Common;
 
 namespace Ams.Cli.Commands;
@@ -9,149 +11,393 @@ public static class ValidateCommand
 {
     public static Command Create()
     {
-        var validateCommand = new Command("validate", "Validation operations");
-        
-        var scriptCommand = new Command("script", "Validate transcript against script");
-        
-        var audioOption = new Option<FileInfo>("--audio", "Path to the audio file")
+        var validate = new Command("validate", "Validation utilities");
+        validate.AddCommand(CreateReportCommand());
+        return validate;
+    }
+
+    private static Command CreateReportCommand()
+    {
+        var cmd = new Command("report", "Render a human-friendly view of transcript validation metrics");
+
+        var txOption = new Option<FileInfo?>(
+            name: "--tx",
+            description: "Path to TranscriptIndex JSON (e.g., *.align.tx.json)");
+        txOption.AddAlias("-t");
+
+        var hydrateOption = new Option<FileInfo?>(
+            name: "--hydrate",
+            description: "Path to hydrated transcript JSON (e.g., *.align.hydrate.json)");
+        hydrateOption.AddAlias("-h");
+
+        var outOption = new Option<FileInfo?>("--out", () => null, "Optional output file. If omitted, prints to console.");
+        outOption.AddAlias("-o");
+
+        var topSentencesOption = new Option<int>("--top-sentences", () => 10, "Number of highest-WER sentences to display (0 to disable).");
+        var topParagraphsOption = new Option<int>("--top-paragraphs", () => 5, "Number of highest-WER paragraphs to display (0 to disable).");
+        var includeWordsOption = new Option<bool>("--include-words", () => false, "Include word-level alignment tallies when TranscriptIndex is provided.");
+
+        cmd.AddOption(txOption);
+        cmd.AddOption(hydrateOption);
+        cmd.AddOption(outOption);
+        cmd.AddOption(topSentencesOption);
+        cmd.AddOption(topParagraphsOption);
+        cmd.AddOption(includeWordsOption);
+
+        cmd.SetHandler(async context =>
         {
-            IsRequired = true
-        };
-        audioOption.AddAlias("-a");
-        
-        var scriptOption = new Option<FileInfo>("--script", "Path to the script text file")
-        {
-            IsRequired = true
-        };
-        scriptOption.AddAlias("-s");
-        
-        var asrJsonOption = new Option<FileInfo>("--asr-json", "Path to the ASR JSON file")
-        {
-            IsRequired = true
-        };
-        asrJsonOption.AddAlias("-j");
-        
-        var outputOption = new Option<FileInfo>("--out", "Output validation report JSON file")
-        {
-            IsRequired = true
-        };
-        outputOption.AddAlias("-o");
-        
-        var substitutionCostOption = new Option<double>("--sub-cost", () => 1.0, "Substitution cost for alignment");
-        var insertionCostOption = new Option<double>("--ins-cost", () => 1.0, "Insertion cost for alignment");
-        var deletionCostOption = new Option<double>("--del-cost", () => 1.0, "Deletion cost for alignment");
-        var expandContractionsOption = new Option<bool>("--expand-contractions", () => true, "Expand contractions during normalization");
-        var removeNumbersOption = new Option<bool>("--remove-numbers", () => false, "Remove numbers during normalization");
-        
-        scriptCommand.AddOption(audioOption);
-        scriptCommand.AddOption(scriptOption);
-        scriptCommand.AddOption(asrJsonOption);
-        scriptCommand.AddOption(outputOption);
-        scriptCommand.AddOption(substitutionCostOption);
-        scriptCommand.AddOption(insertionCostOption);
-        scriptCommand.AddOption(deletionCostOption);
-        scriptCommand.AddOption(expandContractionsOption);
-        scriptCommand.AddOption(removeNumbersOption);
-        
-        scriptCommand.SetHandler(async (context) =>
-        {
+            var txFile = context.ParseResult.GetValueForOption(txOption);
+            var hydrateFile = context.ParseResult.GetValueForOption(hydrateOption);
+            var outputFile = context.ParseResult.GetValueForOption(outOption);
+            var topSentences = context.ParseResult.GetValueForOption(topSentencesOption);
+            var topParagraphs = context.ParseResult.GetValueForOption(topParagraphsOption);
+            var includeWords = context.ParseResult.GetValueForOption(includeWordsOption);
+
+            if (txFile is null && hydrateFile is null)
+            {
+                Log.Error("validate report requires --tx, --hydrate, or both");
+                context.ExitCode = 1;
+                return;
+            }
+
             try
             {
-                var audio = context.ParseResult.GetValueForOption(audioOption)!;
-                var script = context.ParseResult.GetValueForOption(scriptOption)!;
-                var asrJson = context.ParseResult.GetValueForOption(asrJsonOption)!;
-                var output = context.ParseResult.GetValueForOption(outputOption)!;
-                var subCost = context.ParseResult.GetValueForOption(substitutionCostOption);
-                var insCost = context.ParseResult.GetValueForOption(insertionCostOption);
-                var delCost = context.ParseResult.GetValueForOption(deletionCostOption);
-                var expandContractions = context.ParseResult.GetValueForOption(expandContractionsOption);
-                var removeNumbers = context.ParseResult.GetValueForOption(removeNumbersOption);
-                
-                await ValidateScriptAsync(audio, script, asrJson, output, subCost, insCost, delCost, expandContractions, removeNumbers);
+                var report = await GenerateReportAsync(txFile, hydrateFile, topSentences, topParagraphs, includeWords);
+
+                if (outputFile is not null)
+                {
+                    Directory.CreateDirectory(outputFile.DirectoryName ?? Directory.GetCurrentDirectory());
+                    await File.WriteAllTextAsync(outputFile.FullName, report, Encoding.UTF8);
+                    Log.Info("Validation report written to {Output}", outputFile.FullName);
+                }
+                else
+                {
+                    Console.WriteLine(report);
+                }
             }
             catch (Exception ex)
             {
-                Log.Error(ex, "validate script command failed");
-                Environment.Exit(1);
+                Log.Error(ex, "validate report failed");
+                context.ExitCode = 1;
             }
         });
-        
-        validateCommand.AddCommand(scriptCommand);
-        return validateCommand;
+
+        return cmd;
     }
-    
-    private static async Task ValidateScriptAsync(
-        FileInfo audioFile,
-        FileInfo scriptFile,
-        FileInfo asrJsonFile,
-        FileInfo outputFile,
-        double substitutionCost,
-        double insertionCost,
-        double deletionCost,
-        bool expandContractions,
-        bool removeNumbers)
+
+    private static async Task<string> GenerateReportAsync(
+        FileInfo? txFile,
+        FileInfo? hydrateFile,
+        int topSentences,
+        int topParagraphs,
+        bool includeWordTallies)
     {
-        Log.Info(
-            "Validating transcript using audio {AudioFile}, script {ScriptFile}, asr {AsrJsonFile}, output {OutputFile}",
-            audioFile.FullName,
-            scriptFile.FullName,
-            asrJsonFile.FullName,
-            outputFile.FullName);
-        
-        var options = new ValidationOptions
+        TranscriptIndex? tx = null;
+        HydratedTranscript? hydrated = null;
+
+        var jsonOptions = new JsonSerializerOptions
         {
-            SubstitutionCost = substitutionCost,
-            InsertionCost = insertionCost,
-            DeletionCost = deletionCost,
-            ExpandContractions = expandContractions,
-            RemoveNumbers = removeNumbers
+            PropertyNameCaseInsensitive = true
         };
-        
-        var validator = new ScriptValidator(options);
-        
-        Log.Info("Running validation alignment");
-        var report = await validator.ValidateAsync(audioFile.FullName, scriptFile.FullName, asrJsonFile.FullName);
-        Log.Info("Validation complete");
-        
-        var json = JsonSerializer.Serialize(report, new JsonSerializerOptions
+
+        if (txFile is not null)
         {
-            WriteIndented = true,
-            PropertyNamingPolicy = JsonNamingPolicy.CamelCase
-        });
-        
-        await File.WriteAllTextAsync(outputFile.FullName, json);
-        
-        Log.Info(
-            "Validation summary: WER {WordErrorRate:P2}, CER {CharacterErrorRate:P2}, TotalWords {TotalWords}, Correct {CorrectWords}, Substitutions {Substitutions}, Insertions {Insertions}, Deletions {Deletions}, Findings {FindingsCount}",
-            report.WordErrorRate,
-            report.CharacterErrorRate,
-            report.TotalWords,
-            report.CorrectWords,
-            report.Substitutions,
-            report.Insertions,
-            report.Deletions,
-            report.Findings.Length);
-        
-        var findingsByType = report.Findings.GroupBy(f => f.Type).ToList();
-        if (findingsByType.Count > 0)
-        {
-            foreach (var group in findingsByType)
+            if (!txFile.Exists)
             {
-                Log.Info("Finding type {FindingType}: {FindingCount}", group.Key, group.Count());
+                throw new FileNotFoundException($"TranscriptIndex file not found: {txFile.FullName}");
             }
+
+            var txJson = await File.ReadAllTextAsync(txFile.FullName);
+            tx = JsonSerializer.Deserialize<TranscriptIndex>(txJson, jsonOptions)
+                 ?? throw new InvalidOperationException("Failed to deserialize TranscriptIndex JSON");
         }
-        
-        if (report.SegmentStats.Length > 0)
+
+        if (hydrateFile is not null)
         {
-            var avgSegmentWer = report.SegmentStats.Average(s => s.WordErrorRate);
-            var confidences = report.SegmentStats.Where(s => s.Confidence.HasValue).Select(s => s.Confidence!.Value).ToList();
-            Log.Info("Segment analysis: Count {SegmentCount}, AvgWER {AverageWer:P2}", report.SegmentStats.Length, avgSegmentWer);
-            if (confidences.Count > 0)
+            if (!hydrateFile.Exists)
             {
-                Log.Info("Segment confidence average {AverageConfidence:F3}", confidences.Average());
+                throw new FileNotFoundException($"Hydrated transcript file not found: {hydrateFile.FullName}");
             }
+
+            var hydrateJson = await File.ReadAllTextAsync(hydrateFile.FullName);
+            hydrated = JsonSerializer.Deserialize<HydratedTranscript>(hydrateJson, jsonOptions)
+                        ?? throw new InvalidOperationException("Failed to deserialize hydrated transcript JSON");
         }
-        
-        Log.Info("Detailed validation report saved to {OutputFile}", outputFile.FullName);
+
+        if (tx is null && hydrated is null)
+        {
+            throw new InvalidOperationException("No transcript artifacts could be loaded");
+        }
+
+        var info = ExtractSourceInfo(tx, hydrated);
+        var sentenceViews = BuildSentenceViews(tx, hydrated);
+        var paragraphViews = BuildParagraphViews(tx, hydrated);
+        var wordTallies = includeWordTallies ? BuildWordTallies(tx) : null;
+
+        return BuildTextReport(info, sentenceViews, paragraphViews, wordTallies, topSentences, topParagraphs);
     }
+
+    private static SourceInfo ExtractSourceInfo(TranscriptIndex? tx, HydratedTranscript? hydrated)
+    {
+        return tx is not null
+            ? new SourceInfo(tx.AudioPath, tx.ScriptPath, tx.BookIndexPath, tx.CreatedAtUtc)
+            : new SourceInfo(
+                hydrated!.AudioPath,
+                hydrated.ScriptPath,
+                hydrated.BookIndexPath,
+                hydrated.CreatedAtUtc);
+    }
+
+    private static IReadOnlyList<SentenceView> BuildSentenceViews(TranscriptIndex? tx, HydratedTranscript? hydrated)
+    {
+        if (tx is null && hydrated is null)
+        {
+            return Array.Empty<SentenceView>();
+        }
+
+        var sentences = hydrated?.Sentences ?? tx!.Sentences.Select(s => new HydratedSentence(
+            s.Id,
+            new HydratedRange(s.BookRange.Start, s.BookRange.End),
+            s.ScriptRange is null ? null : new HydratedScriptRange(s.ScriptRange.Start, s.ScriptRange.End),
+            BookText: string.Empty,
+            ScriptText: string.Empty,
+            s.Metrics,
+            s.Status)).ToList();
+
+        return sentences!
+            .Select(s => new SentenceView(
+                s.Id,
+                (s.BookRange.Start, s.BookRange.End),
+                s.ScriptRange is null ? null : (s.ScriptRange.Start, s.ScriptRange.End),
+                s.Metrics,
+                s.Status,
+                string.IsNullOrWhiteSpace(s.BookText) ? null : s.BookText,
+                string.IsNullOrWhiteSpace(s.ScriptText) ? null : s.ScriptText))
+            .OrderBy(s => s.Id)
+            .ToList();
+    }
+
+    private static IReadOnlyList<ParagraphView> BuildParagraphViews(TranscriptIndex? tx, HydratedTranscript? hydrated)
+    {
+        if (tx is null && hydrated is null)
+        {
+            return Array.Empty<ParagraphView>();
+        }
+
+        var paragraphs = hydrated?.Paragraphs ?? tx!.Paragraphs.Select(p => new HydratedParagraph(
+            p.Id,
+            new HydratedRange(p.BookRange.Start, p.BookRange.End),
+            p.SentenceIds,
+            BookText: string.Empty,
+            p.Metrics,
+            p.Status)).ToList();
+
+        return paragraphs!
+            .Select(p => new ParagraphView(
+                p.Id,
+                (p.BookRange.Start, p.BookRange.End),
+                p.Metrics,
+                p.Status,
+                string.IsNullOrWhiteSpace(p.BookText) ? null : p.BookText))
+            .OrderBy(p => p.Id)
+            .ToList();
+    }
+
+    private static WordTallies? BuildWordTallies(TranscriptIndex? tx)
+    {
+        if (tx is null)
+        {
+            return null;
+        }
+
+        int match = 0, substitution = 0, insertion = 0, deletion = 0;
+
+        foreach (var word in tx.Words)
+        {
+            switch (word.Op)
+            {
+                case AlignOp.Match:
+                    match++;
+                    break;
+                case AlignOp.Sub:
+                    substitution++;
+                    break;
+                case AlignOp.Ins:
+                    insertion++;
+                    break;
+                case AlignOp.Del:
+                    deletion++;
+                    break;
+            }
+        }
+
+        return new WordTallies(match, substitution, insertion, deletion, tx.Words.Count);
+    }
+
+    private static string BuildTextReport(
+        SourceInfo info,
+        IReadOnlyList<SentenceView> sentences,
+        IReadOnlyList<ParagraphView> paragraphs,
+        WordTallies? wordTallies,
+        int topSentences,
+        int topParagraphs)
+    {
+        var builder = new StringBuilder();
+
+        builder.AppendLine("=== Validation Report ===");
+        builder.AppendLine($"Audio     : {info.AudioPath}");
+        builder.AppendLine($"Script    : {info.ScriptPath}");
+        builder.AppendLine($"Book Index: {info.BookIndexPath}");
+        builder.AppendLine($"Created   : {info.CreatedAtUtc:O}");
+        builder.AppendLine();
+
+        if (sentences.Count > 0)
+        {
+            var avgWer = sentences.Average(s => s.Metrics.Wer);
+            var maxWer = sentences.Max(s => s.Metrics.Wer);
+            var flagged = sentences.Count(s => !string.Equals(s.Status, "ok", StringComparison.OrdinalIgnoreCase));
+
+            builder.AppendLine($"Sentences : {sentences.Count} (Avg WER {avgWer:P2}, Max WER {maxWer:P2}, Flagged {flagged})");
+        }
+        else
+        {
+            builder.AppendLine("Sentences : 0");
+        }
+
+        if (paragraphs.Count > 0)
+        {
+            var avgWer = paragraphs.Average(p => p.Metrics.Wer);
+            var avgCoverage = paragraphs.Average(p => p.Metrics.Coverage);
+            builder.AppendLine($"Paragraphs: {paragraphs.Count} (Avg WER {avgWer:P2}, Avg Coverage {avgCoverage:P2})");
+        }
+        else
+        {
+            builder.AppendLine("Paragraphs: 0");
+        }
+
+        if (wordTallies is not null)
+        {
+            builder.AppendLine($"Words     : {wordTallies.Total} (Match {wordTallies.Match}, Sub {wordTallies.Substitution}, Ins {wordTallies.Insertion}, Del {wordTallies.Deletion})");
+        }
+
+        builder.AppendLine();
+
+        if (topSentences > 0 && sentences.Count > 0)
+        {
+            builder.AppendLine($"Top {Math.Min(topSentences, sentences.Count)} sentences by WER:");
+
+            foreach (var sentence in sentences
+                         .OrderByDescending(s => s.Metrics.Wer)
+                         .ThenByDescending(s => s.Metrics.Cer)
+                         .Take(topSentences))
+            {
+                builder.AppendLine($"  #{sentence.Id} | WER {sentence.Metrics.Wer:P1} | CER {sentence.Metrics.Cer:P1} | Status {sentence.Status}");
+                builder.AppendLine($"    Book range: {sentence.BookRange.Start}-{sentence.BookRange.End}");
+
+                if (sentence.ScriptRange is not null)
+                {
+                    builder.AppendLine($"    Script range: {sentence.ScriptRange.Value.Start}-{sentence.ScriptRange.Value.End}");
+                }
+
+                if (!string.IsNullOrWhiteSpace(sentence.BookText))
+                {
+                    builder.AppendLine($"    Book   : {TrimText(sentence.BookText)}");
+                }
+
+                if (!string.IsNullOrWhiteSpace(sentence.ScriptText))
+                {
+                    builder.AppendLine($"    Script : {TrimText(sentence.ScriptText)}");
+                }
+
+                builder.AppendLine();
+            }
+        }
+
+        if (topParagraphs > 0 && paragraphs.Count > 0)
+        {
+            builder.AppendLine($"Top {Math.Min(topParagraphs, paragraphs.Count)} paragraphs by WER:");
+
+            foreach (var paragraph in paragraphs
+                         .OrderByDescending(p => p.Metrics.Wer)
+                         .ThenByDescending(p => p.Metrics.Coverage)
+                         .Take(topParagraphs))
+            {
+                builder.AppendLine($"  #{paragraph.Id} | WER {paragraph.Metrics.Wer:P1} | Coverage {paragraph.Metrics.Coverage:P1} | Status {paragraph.Status}");
+                builder.AppendLine($"    Book range: {paragraph.BookRange.Start}-{paragraph.BookRange.End}");
+
+                if (!string.IsNullOrWhiteSpace(paragraph.BookText))
+                {
+                    builder.AppendLine($"    Book   : {TrimText(paragraph.BookText)}");
+                }
+
+                builder.AppendLine();
+            }
+        }
+
+        return builder.ToString().TrimEnd();
+    }
+
+    private static string TrimText(string text, int maxLength = 160)
+    {
+        var normalized = text.Replace('\n', ' ').Replace('\r', ' ').Trim();
+        if (normalized.Length <= maxLength)
+        {
+            return normalized;
+        }
+
+        return normalized[..maxLength].TrimEnd() + "…";
+    }
+
+    private sealed record SourceInfo(string AudioPath, string ScriptPath, string BookIndexPath, DateTime CreatedAtUtc);
+
+    private sealed record SentenceView(
+        int Id,
+        (int Start, int End) BookRange,
+        (int? Start, int? End)? ScriptRange,
+        SentenceMetrics Metrics,
+        string Status,
+        string? BookText,
+        string? ScriptText);
+
+    private sealed record ParagraphView(
+        int Id,
+        (int Start, int End) BookRange,
+        ParagraphMetrics Metrics,
+        string Status,
+        string? BookText);
+
+    private sealed record WordTallies(int Match, int Substitution, int Insertion, int Deletion, int Total);
+
+    private sealed record HydratedTranscript(
+        string AudioPath,
+        string ScriptPath,
+        string BookIndexPath,
+        DateTime CreatedAtUtc,
+        string? NormalizationVersion,
+        IReadOnlyList<HydratedWord> Words,
+        IReadOnlyList<HydratedSentence> Sentences,
+        IReadOnlyList<HydratedParagraph> Paragraphs);
+
+    private sealed record HydratedWord(int? BookIdx, int? AsrIdx, string? BookWord, string? AsrWord, string Op, string Reason, double Score);
+
+    private sealed record HydratedSentence(
+        int Id,
+        HydratedRange BookRange,
+        HydratedScriptRange? ScriptRange,
+        string BookText,
+        string ScriptText,
+        SentenceMetrics Metrics,
+        string Status);
+
+    private sealed record HydratedParagraph(
+        int Id,
+        HydratedRange BookRange,
+        IReadOnlyList<int> SentenceIds,
+        string BookText,
+        ParagraphMetrics Metrics,
+        string Status);
+
+    private sealed record HydratedRange(int Start, int End);
+
+    private sealed record HydratedScriptRange(int? Start, int? End);
 }
