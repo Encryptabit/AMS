@@ -66,18 +66,25 @@ public static class ValidateCommand
 
             try
             {
-                var report = await GenerateReportAsync(txFile, hydrateFile, allErrors, topSentences, topParagraphs, includeWords);
+                var result = await GenerateReportAsync(txFile, hydrateFile, allErrors, topSentences, topParagraphs, includeWords);
 
-                if (outputFile is not null)
-                {
-                    Directory.CreateDirectory(outputFile.DirectoryName ?? Directory.GetCurrentDirectory());
-                    await File.WriteAllTextAsync(outputFile.FullName, report, Encoding.UTF8);
-                    Log.Info("Validation report written to {Output}", outputFile.FullName);
-                }
-                else
-                {
-                    Console.WriteLine(report);
-                }
+                var summarySentences = result.Sentences.Count;
+                var summarySentencesFlagged = result.Sentences.Count(s => !string.Equals(s.Status, "ok", StringComparison.OrdinalIgnoreCase));
+                var summaryParagraphs = result.Paragraphs.Count;
+                var summaryParagraphsFlagged = result.Paragraphs.Count(p => !string.Equals(p.Status, "ok", StringComparison.OrdinalIgnoreCase));
+
+                Console.WriteLine("=== Validation Summary ===");
+                Console.WriteLine($"Sentences : {summarySentences} (flagged {summarySentencesFlagged})");
+                Console.WriteLine($"Paragraphs: {summaryParagraphs} (flagged {summaryParagraphsFlagged})");
+                Console.WriteLine();
+
+                var targetFile = outputFile
+                    ?? CommandInputResolver.TryResolveChapterArtifact(null, "validate.report.txt", mustExist: false)
+                    ?? new FileInfo(Path.Combine(Directory.GetCurrentDirectory(), "validate.report.txt"));
+
+                Directory.CreateDirectory(targetFile.DirectoryName ?? Directory.GetCurrentDirectory());
+                await File.WriteAllTextAsync(targetFile.FullName, result.Report, Encoding.UTF8);
+                Log.Info("Validation report written to {Output}", targetFile.FullName);
             }
             catch (Exception ex)
             {
@@ -89,7 +96,7 @@ public static class ValidateCommand
         return cmd;
     }
 
-    private static async Task<string> GenerateReportAsync(FileInfo? txFile,
+    private static async Task<ReportResult> GenerateReportAsync(FileInfo? txFile,
         FileInfo? hydrateFile,
         bool allErrors,
         int topSentences,
@@ -138,7 +145,8 @@ public static class ValidateCommand
         var paragraphViews = BuildParagraphViews(tx, hydrated);
         var wordTallies = includeWordTallies ? BuildWordTallies(tx) : null;
 
-        return BuildTextReport(info, sentenceViews, paragraphViews, wordTallies,allErrors, topSentences, topParagraphs);
+        var fullReport = BuildTextReport(info, sentenceViews, paragraphViews, wordTallies, allErrors, topSentences, topParagraphs);
+        return new ReportResult(fullReport, sentenceViews, paragraphViews, wordTallies);
     }
 
     private static SourceInfo ExtractSourceInfo(TranscriptIndex? tx, HydratedTranscript? hydrated)
@@ -159,26 +167,64 @@ public static class ValidateCommand
             return Array.Empty<SentenceView>();
         }
 
-        var sentences = hydrated?.Sentences ?? tx!.Sentences.Select(s => new HydratedSentence(
-            s.Id,
-            new HydratedRange(s.BookRange.Start, s.BookRange.End),
-            s.ScriptRange is null ? null : new HydratedScriptRange(s.ScriptRange.Start, s.ScriptRange.End),
-            BookText: string.Empty,
-            ScriptText: string.Empty,
-            s.Metrics,
-            s.Status)).ToList();
+        var txMap = tx?.Sentences.ToDictionary(s => s.Id);
+        var hydratedMap = hydrated?.Sentences.ToDictionary(s => s.Id);
 
-        return sentences!
-            .Select(s => new SentenceView(
-                s.Id,
-                (s.BookRange.Start, s.BookRange.End),
-                s.ScriptRange is null ? null : (s.ScriptRange.Start, s.ScriptRange.End),
-                s.Metrics,
-                s.Status,
-                string.IsNullOrWhiteSpace(s.BookText) ? null : s.BookText,
-                string.IsNullOrWhiteSpace(s.ScriptText) ? null : s.ScriptText))
-            .OrderBy(s => s.Id)
-            .ToList();
+        var ids = new SortedSet<int>();
+        if (txMap is not null)
+        {
+            foreach (var id in txMap.Keys)
+            {
+                ids.Add(id);
+            }
+        }
+        if (hydratedMap is not null)
+        {
+            foreach (var id in hydratedMap.Keys)
+            {
+                ids.Add(id);
+            }
+        }
+
+        var views = new List<SentenceView>(ids.Count);
+        foreach (var id in ids)
+        {
+            SentenceAlign? txSentence = null;
+            HydratedSentence? hydSentence = null;
+            txMap?.TryGetValue(id, out txSentence);
+            hydratedMap?.TryGetValue(id, out hydSentence);
+
+            var bookRange = hydSentence is not null
+                ? (hydSentence.BookRange.Start, hydSentence.BookRange.End)
+                : txSentence is not null
+                    ? (txSentence.BookRange.Start, txSentence.BookRange.End)
+                    : (0, 0);
+
+            var scriptRange = hydSentence?.ScriptRange is not null
+                ? (hydSentence.ScriptRange.Start, hydSentence.ScriptRange.End)
+                : txSentence?.ScriptRange is not null
+                    ? (txSentence.ScriptRange.Start, txSentence.ScriptRange.End)
+                    : (null, null);
+
+            var metrics = txSentence?.Metrics ?? hydSentence?.Metrics
+                ?? new SentenceMetrics(0, 0, 0, 0, 0);
+            var status = hydSentence?.Status ?? txSentence?.Status ?? "unknown";
+            string? bookText = hydSentence?.BookText;
+            string? scriptText = hydSentence?.ScriptText;
+            var timing = txSentence?.Timing;
+
+            views.Add(new SentenceView(
+                id,
+                bookRange,
+                scriptRange,
+                metrics,
+                status,
+                string.IsNullOrWhiteSpace(bookText) ? null : bookText,
+                string.IsNullOrWhiteSpace(scriptText) ? null : scriptText,
+                timing));
+        }
+
+        return views.OrderBy(s => s.Id).ToList();
     }
 
     private static IReadOnlyList<ParagraphView> BuildParagraphViews(TranscriptIndex? tx, HydratedTranscript? hydrated)
@@ -308,6 +354,12 @@ public static class ValidateCommand
                     builder.AppendLine($"    Script range: {sentence.ScriptRange.Value.Start}-{sentence.ScriptRange.Value.End}");
                 }
 
+                if (sentence.Timing is not null)
+                {
+                    var timing = sentence.Timing;
+                    builder.AppendLine($"    Timing: {timing.StartSec:F3}s → {timing.EndSec:F3}s (Δ {timing.Duration:F3}s)");
+                }
+
                 if (!string.IsNullOrWhiteSpace(sentence.BookText))
                 {
                     builder.AppendLine($"    Book   : {TrimText(sentence.BookText)}");
@@ -370,7 +422,8 @@ public static class ValidateCommand
         SentenceMetrics Metrics,
         string Status,
         string? BookText,
-        string? ScriptText);
+        string? ScriptText,
+        TimingRange? Timing);
 
     private sealed record ParagraphView(
         int Id,
@@ -380,6 +433,12 @@ public static class ValidateCommand
         string? BookText);
 
     private sealed record WordTallies(int Match, int Substitution, int Insertion, int Deletion, int Total);
+
+    private sealed record ReportResult(
+        string Report,
+        IReadOnlyList<SentenceView> Sentences,
+        IReadOnlyList<ParagraphView> Paragraphs,
+        WordTallies? WordTallies);
 
     private sealed record HydratedTranscript(
         string AudioPath,

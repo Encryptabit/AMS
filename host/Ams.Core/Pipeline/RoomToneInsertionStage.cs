@@ -16,13 +16,15 @@ public sealed class RoomToneInsertionStage
     private readonly double _fadeMs;
     private readonly bool _emitDiagnostics;
     private readonly bool _useAdaptiveGain;
+    private readonly bool _verbose;
 
     public RoomToneInsertionStage(
         int targetSampleRate = 44100,
         double toneGainDb = -60.0,
         double fadeMs = 5.0,
         bool emitDiagnostics = true,
-        bool useAdaptiveGain = true)
+        bool useAdaptiveGain = true,
+        bool verbose = false)
     {
         if (targetSampleRate <= 0) throw new ArgumentOutOfRangeException(nameof(targetSampleRate));
         _targetSampleRate = targetSampleRate;
@@ -30,6 +32,7 @@ public sealed class RoomToneInsertionStage
         _fadeMs = fadeMs;
         _emitDiagnostics = emitDiagnostics;
         _useAdaptiveGain = useAdaptiveGain;
+        _verbose = verbose;
     }
 
     public async Task<IDictionary<string, string>> RunAsync(ManifestV2 manifest, CancellationToken ct, bool renderAudio = true)
@@ -60,19 +63,28 @@ public sealed class RoomToneInsertionStage
         {
             toneGainLinear = ComputeToneGainLinear(roomtoneSeedStats.MeanRmsDb, _toneGainDb);
             appliedGainDb  = ToDb(toneGainLinear);
-            Log.Info($"[Roomtone] Seed RMS {roomtoneSeedStats.MeanRmsDb:F2} dB, target {_toneGainDb:F2} dB, applied gain {appliedGainDb:F2} dB");
+            if (_verbose)
+            {
+                Log.Info($"[Roomtone] Seed RMS {roomtoneSeedStats.MeanRmsDb:F2} dB, target {_toneGainDb:F2} dB, applied gain {appliedGainDb:F2} dB");
+            }
         }
         else
         {
             toneGainLinear = 1.0;
             appliedGainDb  = 0.0;
-            Log.Info($"[Roomtone] Seed RMS {roomtoneSeedStats.MeanRmsDb:F2} dB, adaptive gain disabled (unity gain)");
+            if (_verbose)
+            {
+                Log.Info($"[Roomtone] Seed RMS {roomtoneSeedStats.MeanRmsDb:F2} dB, adaptive gain disabled (unity gain)");
+            }
         }
 
         // Build timeline on the original audio first
         var analyzer0 = new AudioAnalysisService(inputAudio);
         var entries0  = SentenceTimelineBuilder.Build(transcript.Sentences, analyzer0, asr);
-        Log.Info($"[Roomtone] Timeline built on original audio: {entries0.Count} sentences.");  // :contentReference[oaicite:3]{index=3}
+        if (_verbose)
+        {
+            Log.Info($"[Roomtone] Timeline built on original audio: {entries0.Count} sentences.");
+        }
 
         // Enforce exact structure (insert OR trim) and shift entries accordingly
         var norm = RoomtoneRenderer.NormalizeStructureExact(
@@ -93,8 +105,8 @@ public sealed class RoomToneInsertionStage
         // Now plan/fill against the normalized audio
         var analyzer = new AudioAnalysisService(inputAudio);
         double audioDurationSec = inputAudio.SampleRate > 0 ? inputAudio.Length / (double)inputAudio.SampleRate : 0.0;
-        var gaps = BuildGaps(timelineEntries, analyzer, audioDurationSec);                         // :contentReference[oaicite:5]{index=5}
-        Log.Info($"[Roomtone] Gap segments retained: {gaps.Count}");
+        var gaps = BuildGaps(timelineEntries, analyzer, audioDurationSec, _verbose, out var gapSummary);
+        Log.Info($"[Roomtone] Gap candidates: {gapSummary.Candidates}, retained: {gapSummary.Retained}, collapsed: {gapSummary.Collapsed}");
 
         // Update transcript timings from the (shifted) entries
         var entryMap = timelineEntries.ToDictionary(e => e.SentenceId);
@@ -304,7 +316,9 @@ public sealed class RoomToneInsertionStage
     private static IReadOnlyList<RoomtonePlanGap> BuildGaps(
         IReadOnlyList<SentenceTimelineEntry> entries,
         AudioAnalysisService analyzer,
-        double audioDurationSec)
+        double audioDurationSec,
+        bool verbose,
+        out GapSummary summary)
     {
         const double epsilon = 1e-6;
         const double stepSec = 0.005;
@@ -312,9 +326,13 @@ public sealed class RoomToneInsertionStage
         const double speechThresholdDb = -40.0;
 
         var gaps = new List<RoomtonePlanGap>();
+        int candidates = 0;
+        int collapsed = 0;
+
         if (audioDurationSec <= epsilon)
         {
             Log.Warn("[Roomtone] Audio too short for gap analysis.");
+            summary = new GapSummary(0, 0, 0);
             return gaps;
         }
 
@@ -328,21 +346,44 @@ public sealed class RoomToneInsertionStage
             Log.Warn("[Roomtone] No sentence timings; treating entire chapter as a single gap.");
             var stats = analyzer.AnalyzeGap(0.0, audioDurationSec);
             gaps.Add(CreateGap(0.0, audioDurationSec, null, null, stats));
+            summary = new GapSummary(1, gaps.Count, 0);
             return gaps;
         }
 
         SentenceTimelineEntry? previous = null;
         foreach (var current in orderedEntries)
         {
-            gaps.AddRange(ProcessGap(previous, current));
+            candidates++;
+            var produced = ProcessGap(previous, current);
+            if (produced.Count == 0)
+            {
+                collapsed++;
+            }
+            else
+            {
+                gaps.AddRange(produced);
+            }
             previous = current;
         }
-        gaps.AddRange(ProcessGap(previous, null));
 
+        candidates++;
+        var tailProduced = ProcessGap(previous, null);
+        if (tailProduced.Count == 0)
+        {
+            collapsed++;
+        }
+        else
+        {
+            gaps.AddRange(tailProduced);
+        }
+
+        summary = new GapSummary(candidates, gaps.Count, collapsed);
         return gaps;
 
-        IEnumerable<RoomtonePlanGap> ProcessGap(SentenceTimelineEntry? leftEntry, SentenceTimelineEntry? rightEntry)
+        List<RoomtonePlanGap> ProcessGap(SentenceTimelineEntry? leftEntry, SentenceTimelineEntry? rightEntry)
         {
+            var produced = new List<RoomtonePlanGap>();
+
             double timingStart = leftEntry?.Timing.EndSec ?? 0.0;
             double windowStart = leftEntry?.Window.EndSec ?? 0.0;
             double initialStart = Math.Min(timingStart, windowStart);
@@ -355,19 +396,25 @@ public sealed class RoomToneInsertionStage
             initialEnd = Math.Clamp(initialEnd, 0.0, audioDurationSec);
             if (initialEnd - initialStart <= epsilon)
             {
-                yield break;
+                return produced;
             }
 
-            string label = $"prev={(leftEntry?.SentenceId.ToString() ?? "null")} next={(rightEntry?.SentenceId.ToString() ?? "null")}";
-            Log.Info($"[Roomtone] Gap candidate {label} base=({initialStart:F3},{initialEnd:F3}) dur={(initialEnd - initialStart):F3}");
+            if (verbose)
+            {
+                string label = $"prev={(leftEntry?.SentenceId.ToString() ?? "null")} next={(rightEntry?.SentenceId.ToString() ?? "null")}";
+                Log.Info($"[Roomtone] Gap candidate {label} base=({initialStart:F3},{initialEnd:F3}) dur={(initialEnd - initialStart):F3}");
+            }
 
             double midpoint = (initialStart + initialEnd) / 2.0;
             midpoint = Math.Clamp(midpoint, initialStart + epsilon, initialEnd - epsilon);
 
             if (midpoint <= initialStart + epsilon || initialEnd <= midpoint + epsilon)
             {
-                Log.Info("[Roomtone]   midpoint collapsed; skipping gap.");
-                yield break;
+                if (verbose)
+                {
+                    Log.Info("[Roomtone]   midpoint collapsed; skipping gap.");
+                }
+                return produced;
             }
 
             bool leftAccepted = TryCalibrateLeft(initialStart, midpoint, out double leftStart);
@@ -379,10 +426,13 @@ public sealed class RoomToneInsertionStage
             if (leftAccepted && midpoint - leftStart > epsilon)
             {
                 var stats = analyzer.AnalyzeGap(leftStart, midpoint);
-                Log.Info($"[Roomtone]   left accepted [{leftStart:F3},{midpoint:F3}] meanRms={stats.MeanRmsDb:F2} dB");
+                if (verbose)
+                {
+                    Log.Info($"[Roomtone]   left accepted [{leftStart:F3},{midpoint:F3}] meanRms={stats.MeanRmsDb:F2} dB");
+                }
                 leftGap = CreateGap(leftStart, midpoint, leftEntry?.SentenceId, rightEntry?.SentenceId, stats);
             }
-            else
+            else if (verbose)
             {
                 Log.Info("[Roomtone]   left rejected or collapsed.");
             }
@@ -390,10 +440,13 @@ public sealed class RoomToneInsertionStage
             if (rightAccepted && rightEnd - midpoint > epsilon)
             {
                 var stats = analyzer.AnalyzeGap(midpoint, rightEnd);
-                Log.Info($"[Roomtone]   right accepted [{midpoint:F3},{rightEnd:F3}] meanRms={stats.MeanRmsDb:F2} dB");
+                if (verbose)
+                {
+                    Log.Info($"[Roomtone]   right accepted [{midpoint:F3},{rightEnd:F3}] meanRms={stats.MeanRmsDb:F2} dB");
+                }
                 rightGap = CreateGap(midpoint, rightEnd, leftEntry?.SentenceId, rightEntry?.SentenceId, stats);
             }
-            else
+            else if (verbose)
             {
                 Log.Info("[Roomtone]   right rejected or collapsed.");
             }
@@ -401,21 +454,26 @@ public sealed class RoomToneInsertionStage
             if (leftGap is not null && rightGap is not null)
             {
                 var stats = analyzer.AnalyzeGap(leftGap.StartSec, rightGap.EndSec);
-                Log.Info($"[Roomtone]   final gap [{leftGap.StartSec:F3},{rightGap.EndSec:F3}] meanRms={stats.MeanRmsDb:F2} dB");
-                yield return CreateGap(leftGap.StartSec, rightGap.EndSec, leftEntry?.SentenceId, rightEntry?.SentenceId, stats);
+                if (verbose)
+                {
+                    Log.Info($"[Roomtone]   final gap [{leftGap.StartSec:F3},{rightGap.EndSec:F3}] meanRms={stats.MeanRmsDb:F2} dB");
+                }
+                produced.Add(CreateGap(leftGap.StartSec, rightGap.EndSec, leftEntry?.SentenceId, rightEntry?.SentenceId, stats));
             }
             else
             {
                 if (leftGap is not null)
                 {
-                    yield return leftGap;
+                    produced.Add(leftGap);
                 }
 
                 if (rightGap is not null)
                 {
-                    yield return rightGap;
+                    produced.Add(rightGap);
                 }
             }
+
+            return produced;
         }
 
         bool TryCalibrateLeft(double initialStart, double end, out double result)
@@ -425,7 +483,10 @@ public sealed class RoomToneInsertionStage
             while (boundary + epsilon < end)
             {
                 double rms = analyzer.MeasureRms(boundary, end);
-                Log.Info($"[Roomtone]     test left [{boundary:F3},{end:F3}] rms={rms:F2} dB");
+                if (verbose)
+                {
+                    Log.Info($"[Roomtone]     test left [{boundary:F3},{end:F3}] rms={rms:F2} dB");
+                }
                 if (rms <= speechThresholdDb)
                 {
                     double candidate = boundary;
@@ -453,7 +514,10 @@ public sealed class RoomToneInsertionStage
             while (boundary - epsilon > start)
             {
                 double rms = analyzer.MeasureRms(start, boundary);
-                Log.Info($"[Roomtone]     test right [{start:F3},{boundary:F3}] rms={rms:F2} dB");
+                if (verbose)
+                {
+                    Log.Info($"[Roomtone]     test right [{start:F3},{boundary:F3}] rms={rms:F2} dB");
+                }
                 if (rms <= speechThresholdDb)
                 {
                     double candidate = boundary;
@@ -581,6 +645,20 @@ public sealed class RoomToneInsertionStage
             return 1.0;
         }
         return Math.Clamp(value, 0.0, 1.0);
+    }
+
+    private readonly struct GapSummary
+    {
+        public GapSummary(int candidates, int retained, int collapsed)
+        {
+            Candidates = candidates;
+            Retained = retained;
+            Collapsed = collapsed;
+        }
+
+        public int Candidates { get; }
+        public int Retained { get; }
+        public int Collapsed { get; }
     }
 
     private static double ComputeToneGainLinear(double seedMeanRmsDb, double targetRmsDb)
