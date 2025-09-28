@@ -6,6 +6,7 @@ using Ams.Core.Artifacts;
 using Ams.Core.Alignment.Anchors;
 using Ams.Core;
 using Ams.Core.Validation;
+using Ams.Cli.Utilities;
 
 namespace Ams.Cli.Commands;
 
@@ -24,11 +25,11 @@ public static class AlignCommand
     {
         var cmd = new Command("anchors", "Compute n-gram anchors between BookIndex and ASR");
 
-        var indexOption = new Option<FileInfo>("--index", "Path to BookIndex JSON") { IsRequired = true };
+        var indexOption = new Option<FileInfo?>("--index", "Path to BookIndex JSON");
         indexOption.AddAlias("-i");
-        var asrOption = new Option<FileInfo>("--asr-json", "Path to ASR JSON") { IsRequired = true };
+        var asrOption = new Option<FileInfo?>("--asr-json", "Path to ASR JSON");
         asrOption.AddAlias("-j");
-        var outOption = new Option<FileInfo?>("--out", () => null, "Output JSON file (default: stdout)");
+        var outOption = new Option<FileInfo?>("--out", () => null, "Output JSON file (default: derived from chapter)");
 
         var detectSectionOption = new Option<bool>("--detect-section", () => true, "Detect section from ASR prefix and restrict window");
         var ngramOption = new Option<int>("--ngram", () => 3, "Anchor n-gram size");
@@ -54,9 +55,9 @@ public static class AlignCommand
 
         cmd.SetHandler(async (context) =>
         {
-            var indexFile = context.ParseResult.GetValueForOption(indexOption)!;
-            var asrFile = context.ParseResult.GetValueForOption(asrOption)!;
-            var outFile = context.ParseResult.GetValueForOption(outOption);
+            var indexFile = CommandInputResolver.ResolveBookIndex(context.ParseResult.GetValueForOption(indexOption));
+            var asrFile = CommandInputResolver.ResolveChapterArtifact(context.ParseResult.GetValueForOption(asrOption), "asr.json");
+            var outFile = CommandInputResolver.ResolveChapterArtifact(context.ParseResult.GetValueForOption(outOption), "align.anchors.json", mustExist: false);
             var detectSection = context.ParseResult.GetValueForOption(detectSectionOption);
             var ngram = context.ParseResult.GetValueForOption(ngramOption);
             var targetPerTokens = context.ParseResult.GetValueForOption(targetPerTokensOption);
@@ -84,13 +85,13 @@ public static class AlignCommand
     {
         var cmd = new Command("tx", "Validate & compare Book vs ASR using anchors; emit TranscriptIndex (*.tx.json)");
 
-        var indexOption = new Option<FileInfo>("--index", "Path to BookIndex JSON") { IsRequired = true };
+        var indexOption = new Option<FileInfo?>("--index", "Path to BookIndex JSON");
         indexOption.AddAlias("-i");
-        var asrOption = new Option<FileInfo>("--asr-json", "Path to ASR JSON") { IsRequired = true };
+        var asrOption = new Option<FileInfo?>("--asr-json", "Path to ASR JSON");
         asrOption.AddAlias("-j");
-        var audioOption = new Option<FileInfo>("--audio", "Path to audio file for reference") { IsRequired = true };
+        var audioOption = new Option<FileInfo?>("--audio", "Path to audio file for reference");
         audioOption.AddAlias("-a");
-        var outOption = new Option<FileInfo>("--out", "Output TranscriptIndex JSON (*.tx.json)") { IsRequired = true };
+        var outOption = new Option<FileInfo?>("--out", "Output TranscriptIndex JSON (*.tx.json)");
         outOption.AddAlias("-o");
 
         var detectSectionOption = new Option<bool>("--detect-section", () => true, "Detect section from ASR prefix and restrict window");
@@ -115,10 +116,10 @@ public static class AlignCommand
 
         cmd.SetHandler(async (context) =>
         {
-            var indexFile = context.ParseResult.GetValueForOption(indexOption)!;
-            var asrFile = context.ParseResult.GetValueForOption(asrOption)!;
-            var audioFile = context.ParseResult.GetValueForOption(audioOption)!;
-            var outFile = context.ParseResult.GetValueForOption(outOption)!;
+            var indexFile = CommandInputResolver.ResolveBookIndex(context.ParseResult.GetValueForOption(indexOption));
+            var asrFile = CommandInputResolver.ResolveChapterArtifact(context.ParseResult.GetValueForOption(asrOption), "asr.json");
+            var audioFile = CommandInputResolver.RequireAudio(context.ParseResult.GetValueForOption(audioOption));
+            var outFile = CommandInputResolver.ResolveChapterArtifact(context.ParseResult.GetValueForOption(outOption), "align.tx.json", mustExist: false);
             var detectSection = context.ParseResult.GetValueForOption(detectSectionOption);
             var asrPrefix = context.ParseResult.GetValueForOption(asrPrefixTokensOption);
             var ngram = context.ParseResult.GetValueForOption(ngramOption);
@@ -145,13 +146,13 @@ public static class AlignCommand
     {
         var cmd = new Command("hydrate", "Hydrate a TranscriptIndex with token values from BookIndex and ASR (for debugging)");
 
-        var indexOption = new Option<FileInfo>("--index", "Path to BookIndex JSON") { IsRequired = true };
+        var indexOption = new Option<FileInfo?>("--index", "Path to BookIndex JSON");
         indexOption.AddAlias("-i");
-        var asrOption = new Option<FileInfo>("--asr-json", "Path to ASR JSON") { IsRequired = true };
+        var asrOption = new Option<FileInfo?>("--asr-json", "Path to ASR JSON");
         asrOption.AddAlias("-j");
-        var txOption = new Option<FileInfo>("--tx-json", "Path to TranscriptIndex JSON") { IsRequired = true };
+        var txOption = new Option<FileInfo?>("--tx-json", "Path to TranscriptIndex JSON");
         txOption.AddAlias("-t");
-        var outOption = new Option<FileInfo>("--out", "Output hydrated JSON file") { IsRequired = true };
+        var outOption = new Option<FileInfo?>("--out", "Output hydrated JSON file");
         outOption.AddAlias("-o");
 
         cmd.AddOption(indexOption);
@@ -161,10 +162,10 @@ public static class AlignCommand
 
         cmd.SetHandler(async (context) =>
         {
-            var indexFile = context.ParseResult.GetValueForOption(indexOption)!;
-            var asrFile = context.ParseResult.GetValueForOption(asrOption)!;
-            var txFile = context.ParseResult.GetValueForOption(txOption)!;
-            var outFile = context.ParseResult.GetValueForOption(outOption)!;
+            var indexFile = CommandInputResolver.ResolveBookIndex(context.ParseResult.GetValueForOption(indexOption));
+            var asrFile = CommandInputResolver.ResolveChapterArtifact(context.ParseResult.GetValueForOption(asrOption), "asr.json");
+            var txFile = CommandInputResolver.ResolveChapterArtifact(context.ParseResult.GetValueForOption(txOption), "align.tx.json");
+            var outFile = CommandInputResolver.ResolveChapterArtifact(context.ParseResult.GetValueForOption(outOption), "align.hydrate.json", mustExist: false);
             try
             {
                 await RunHydrateTxAsync(indexFile, asrFile, txFile, outFile);

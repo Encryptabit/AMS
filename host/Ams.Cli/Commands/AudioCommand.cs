@@ -6,6 +6,7 @@ using Ams.Core.Alignment.Tx;
 using Ams.Core;
 using Ams.Core.Pipeline;
 using Ams.Core.Common;
+using Ams.Cli.Utilities;
 
 namespace Ams.Cli.Commands;
 
@@ -23,9 +24,9 @@ public static class AudioCommand
     {
         var cmd = new Command("roomtone", "Render WAV with roomtone-filled gaps (sentence-level) and 5 ms crossfades");
 
-        var txOption = new Option<FileInfo>("--tx-json", description: "Path to TranscriptIndex (*.tx.json)") { IsRequired = true };
+        var txOption = new Option<FileInfo?>("--tx-json", description: "Path to TranscriptIndex (*.tx.json)");
         txOption.AddAlias("-t");
-        var outOption = new Option<FileInfo>("--out-wav", description: "Output WAV path") { IsRequired = true };
+        var outOption = new Option<FileInfo?>("--out-wav", description: "Output WAV path (defaults to chapter.treated.wav)");
         outOption.AddAlias("-o");
 
         var srOption = new Option<int>("--sample-rate", () => 44100, "Output sample rate (Hz)");
@@ -46,8 +47,8 @@ public static class AudioCommand
 
         cmd.SetHandler(async (context) =>
         {
-            var txFile = context.ParseResult.GetValueForOption(txOption)!;
-            var outWav = context.ParseResult.GetValueForOption(outOption)!;
+            var txFile = CommandInputResolver.ResolveChapterArtifact(context.ParseResult.GetValueForOption(txOption), "align.tx.json");
+            var outWav = CommandInputResolver.ResolveOutput(context.ParseResult.GetValueForOption(outOption), "treated.wav");
             var sr = context.ParseResult.GetValueForOption(srOption);
             var bit = context.ParseResult.GetValueForOption(bitOption);
             var fadeMs = context.ParseResult.GetValueForOption(fadeMsOption);
@@ -73,7 +74,7 @@ public static class AudioCommand
     {
         var cmd = new Command("roomtone-plan", "Generate roomtone plan metadata without rendering audio");
 
-        var txOption = new Option<FileInfo>("--tx-json", description: "Path to TranscriptIndex (*.tx.json)") { IsRequired = true };
+        var txOption = new Option<FileInfo?>("--tx-json", description: "Path to TranscriptIndex (*.tx.json)");
         txOption.AddAlias("-t");
         var outOption = new Option<FileInfo?>("--out-json", () => null, "Output roomtone plan path (defaults to tx.roomtone.json)");
         outOption.AddAlias("-o");
@@ -94,7 +95,7 @@ public static class AudioCommand
 
         cmd.SetHandler(async context =>
         {
-            var txFile = context.ParseResult.GetValueForOption(txOption)!;
+            var txFile = CommandInputResolver.ResolveChapterArtifact(context.ParseResult.GetValueForOption(txOption), "align.tx.json");
             var outJsonOpt = context.ParseResult.GetValueForOption(outOption);
             var sr = context.ParseResult.GetValueForOption(srOption);
             var fadeMs = context.ParseResult.GetValueForOption(fadeMsOption);
