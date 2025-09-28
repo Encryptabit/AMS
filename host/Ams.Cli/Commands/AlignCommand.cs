@@ -338,9 +338,9 @@ public static class AlignCommand
                 asrIdx = asrView.FilteredToOriginalToken[asrFiltered];
             }
 
-            if (anchorSeen.Add((bookIdx, asrIdx)))
-            {
-                anchorOps.Add(new WordAlign(bookIdx, asrIdx, AlignOp.Match, "anchor", 1.0));
+           if (anchorSeen.Add((bookIdx, asrIdx)))
+           {
+                anchorOps.Add(new WordAlign(bookIdx, asrIdx, AlignOp.Match, "anchor", 0.0));
             }
         }
     }
@@ -426,7 +426,9 @@ public static class AlignCommand
     var (sentAlign, paraAlign) = TranscriptAligner.Rollup(
         wordOps,
         sentTuples.Select(t => (t.Index, t.Item2, t.Item3)).ToList(),
-        paraTuples.Select(t => (t.Index, t.Item2, t.Item3)).ToList());
+        paraTuples.Select(t => (t.Index, t.Item2, t.Item3)).ToList(),
+        book,
+        asr);
 
     var timedSentences = sentAlign
         .Select(s => s with { Timing = ComputeTiming(s.ScriptRange, asr) })
