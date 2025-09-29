@@ -207,6 +207,8 @@ internal static class Program
 
     private static async Task HandleDirectoryCommandAsync(IReadOnlyList<string> tokens, ReplState state)
     {
+        await Task.CompletedTask;
+
         if (tokens.Count == 1 || (tokens.Count == 2 && tokens[1].Equals("show", StringComparison.OrdinalIgnoreCase)))
         {
             state.PrintState();
