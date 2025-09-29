@@ -14,7 +14,83 @@ public static class ValidateCommand
     {
         var validate = new Command("validate", "Validation utilities");
         validate.AddCommand(CreateReportCommand());
+        validate.AddCommand(CreateTimingCommand());
         return validate;
+    }
+
+    private static Command CreateTimingCommand()
+    {
+        var cmd = new Command("timing", "Interactively review and adjust sentence spacing gaps");
+
+        var txOption = new Option<FileInfo?>(
+            name: "--tx",
+            description: "Path to TranscriptIndex JSON (defaults to active chapter's *.align.tx.json)");
+        txOption.AddAlias("-t");
+
+        var hydrateOption = new Option<FileInfo?>(
+            name: "--hydrate",
+            description: "Optional hydrated transcript JSON (defaults to active chapter's *.align.hydrate.json if present)");
+        hydrateOption.AddAlias("-h");
+
+        var bookIndexOption = new Option<FileInfo?>(
+            name: "--book-index",
+            description: "Path to book-index.json (defaults to working directory)");
+
+        cmd.AddOption(txOption);
+        cmd.AddOption(hydrateOption);
+        cmd.AddOption(bookIndexOption);
+
+        cmd.SetHandler(async context =>
+        {
+            var tx = CommandInputResolver.TryResolveChapterArtifact(
+                context.ParseResult.GetValueForOption(txOption),
+                suffix: "align.tx.json",
+                mustExist: true);
+
+            if (tx is null)
+            {
+                Log.Error("validate timing requires --tx or an active chapter with TranscriptIndex JSON");
+                context.ExitCode = 1;
+                return;
+            }
+
+            try
+            {
+                var hydrate = CommandInputResolver.TryResolveChapterArtifact(
+                    context.ParseResult.GetValueForOption(hydrateOption),
+                    suffix: "align.hydrate.json",
+                    mustExist: false);
+
+                FileInfo bookIndex;
+                try
+                {
+                    bookIndex = CommandInputResolver.ResolveBookIndex(
+                        context.ParseResult.GetValueForOption(bookIndexOption),
+                        mustExist: true);
+                }
+                catch (Exception ex)
+                {
+                    Log.Error(ex, "validate timing failed to locate book-index.json");
+                    context.ExitCode = 1;
+                    return;
+                }
+
+                var session = new ValidateTimingSession(tx, bookIndex, hydrate);
+                await session.RunAsync(context.GetCancellationToken());
+            }
+            catch (OperationCanceledException)
+            {
+                Log.Warn("validate timing cancelled");
+                context.ExitCode = 1;
+            }
+            catch (Exception ex)
+            {
+                Log.Error(ex, "validate timing failed");
+                context.ExitCode = 1;
+            }
+        });
+
+        return cmd;
     }
 
     private static Command CreateReportCommand()
