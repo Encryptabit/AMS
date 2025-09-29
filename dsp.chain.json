@@ -1,0 +1,58 @@
+{
+  "name": null,
+  "description": null,
+  "sampleRate": null,
+  "blockSize": null,
+  "outChannels": null,
+  "bitDepth": null,
+  "nodes": [
+    {
+      "name": "RX 11 Breath Control",
+      "plugin": "C:\\Program Files\\Common Files\\VST3\\iZotope\\RX 11 Breath Control.vst3",
+      "description": null,
+      "params": null,
+      "paramFile": null,
+      "preset": "C:\\Users\\Jacar\\OneDrive\\Documents\\Ableton\\User Library\\VainBreath.vstpreset",
+      "sampleRate": null,
+      "blockSize": null,
+      "outChannels": null,
+      "bitDepth": null,
+      "inputs": null,
+      "midiInput": null,
+      "additionalArgs": null,
+      "outputFile": null
+    },
+    {
+      "name": "Fresh Air",
+      "plugin": "C:\\Plugins\\VST3\\Slate Digital\\Fresh Air.vst3",
+      "description": null,
+      "params": null,
+      "paramFile": null,
+      "preset": "C:\\Users\\Jacar\\OneDrive\\Documents\\Ableton\\User Library\\VainAir.vstpreset",
+      "sampleRate": null,
+      "blockSize": null,
+      "outChannels": null,
+      "bitDepth": null,
+      "inputs": null,
+      "midiInput": null,
+      "additionalArgs": null,
+      "outputFile": null
+    },
+    {
+      "name": "StandardCLIP",
+      "plugin": "C:\\Plugins\\VST3\\SIR Audio Tools\\StandardCLIP.vst3",
+      "description": null,
+      "params": null,
+      "paramFile": null,
+      "preset": "C:\\Users\\Jacar\\OneDrive\\Documents\\Ableton\\User Library\\VainClip.vstpreset",
+      "sampleRate": null,
+      "blockSize": null,
+      "outChannels": null,
+      "bitDepth": null,
+      "inputs": null,
+      "midiInput": null,
+      "additionalArgs": null,
+      "outputFile": null
+    }
+  ]
+}
