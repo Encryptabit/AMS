@@ -80,6 +80,19 @@ public class SectionLocatorTests
         Assert.Equal(1, sec!.Id);
     }
 
+    [Theory]
+    [InlineData("Chapter 14 - Storm", 1)]
+    [InlineData("chapter fourteen storm", 1)]
+    [InlineData("chapter xiv storm", 1)]
+    [InlineData("Prologue", 0)]
+    public void ResolveSectionByTitle_NormalizesNumbers(string label, int expectedId)
+    {
+        var book = MakeBookIndex();
+        var resolved = SectionLocator.ResolveSectionByTitle(book, label);
+        Assert.NotNull(resolved);
+        Assert.Equal(expectedId, resolved!.Id);
+    }
+
     [Fact]
     public void AnchorSelection_Respects_Book_Window()
     {
