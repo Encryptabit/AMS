@@ -1,8 +1,10 @@
 using System;
 using System.Collections.Generic;
 using System.CommandLine;
+using System.CommandLine.Invocation;
 using System.IO;
 using System.Linq;
+using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using Ams.Cli.Utilities;
@@ -19,8 +21,12 @@ public static class DspCommand
 
         dsp.AddCommand(CreateRunCommand());
         dsp.AddCommand(CreateListParamsCommand());
+        dsp.AddCommand(CreateListPluginsCommand());
+        dsp.AddCommand(CreateOutputModeCommand());
+        dsp.AddCommand(CreateOverwriteCommand());
         dsp.AddCommand(CreateSetDirCommand());
         dsp.AddCommand(CreateInitCommand());
+        dsp.AddCommand(CreateChainCommand());
 
         return dsp;
     }
@@ -47,7 +53,7 @@ public static class DspCommand
         };
         chainOption.AddAlias("-c");
 
-        var pluginOption = new Option<string?>("--plugin", "Quick single-node run with the specified plugin");
+        var pluginOption = new Option<string?>("--plugin", "Quick single-node run with the specified plugin (path or friendly name)");
         pluginOption.AddAlias("-p");
 
         var paramOption = new Option<string[]>("--param", () => Array.Empty<string>(), "Parameter override in Plugalyzer syntax (repeatable)");
@@ -87,7 +93,7 @@ public static class DspCommand
                 var inputFile = CommandInputResolver.RequireAudio(context.ParseResult.GetValueForOption(inputOption));
                 var outputFile = ResolveOutputFile(context.ParseResult.GetValueForOption(outputOption), inputFile);
 
-                var chainFile = context.ParseResult.GetValueForOption(chainOption);
+                var chainOptionValue = context.ParseResult.GetValueForOption(chainOption);
                 var pluginPath = context.ParseResult.GetValueForOption(pluginOption);
                 var paramValues = context.ParseResult.GetValueForOption(paramOption);
                 var presetPath = context.ParseResult.GetValueForOption(presetOption);
@@ -100,14 +106,22 @@ public static class DspCommand
 
                 var workDir = context.ParseResult.GetValueForOption(workDirOption);
                 var keepTemp = context.ParseResult.GetValueForOption(keepTempOption);
-                var overwrite = context.ParseResult.GetValueForOption(overwriteOption);
+                var overwriteResult = context.ParseResult.FindResultFor(overwriteOption);
+                var overwrite = overwriteResult is not null
+                    ? context.ParseResult.GetValueForOption(overwriteOption)
+                    : DspSessionState.OverwriteOutputs;
 
-                if (chainFile is null && string.IsNullOrWhiteSpace(pluginPath))
+                FileInfo? chainFile = null;
+                if (chainOptionValue is not null)
                 {
-                    var defaultChainPath = Path.Combine(inputFile.DirectoryName ?? Directory.GetCurrentDirectory(), DefaultChainFileName);
-                    if (File.Exists(defaultChainPath))
+                    chainFile = ResolveChainFile(chainOptionValue);
+                }
+                else
+                {
+                    var defaultChain = ResolveChainFile(null, inputFile.DirectoryName);
+                    if (defaultChain.Exists)
                     {
-                        chainFile = new FileInfo(defaultChainPath);
+                        chainFile = defaultChain;
                         Log.Info("[dsp] Using default chain file {File}", chainFile.FullName);
                     }
                 }
@@ -117,11 +131,24 @@ public static class DspCommand
                     throw new InvalidOperationException("Specify either --chain or --plugin");
                 }
 
-                var chain = chainFile is not null
-                    ? await LoadChainAsync(chainFile, cancellationToken)
-                    : BuildSingleNodeChain(pluginPath!, paramValues, presetPath, paramFile);
+                TreatmentChain chain;
+                var chainBaseDirectory = chainFile?.DirectoryName
+                    ?? inputFile.DirectoryName
+                    ?? Directory.GetCurrentDirectory();
 
-                var chainBaseDirectory = chainFile?.DirectoryName ?? Directory.GetCurrentDirectory();
+                if (chainFile is not null)
+                {
+                    chain = await LoadChainAsync(chainFile, cancellationToken).ConfigureAwait(false);
+                    if (chain.Nodes.Count == 0)
+                    {
+                        throw new InvalidOperationException($"Chain file '{chainFile.FullName}' does not contain any nodes.");
+                    }
+                }
+                else
+                {
+                    var config = await DspConfigService.LoadAsync(cancellationToken).ConfigureAwait(false);
+                    chain = BuildSingleNodeChain(pluginPath!, paramValues, presetPath, paramFile, chainBaseDirectory, config);
+                }
 
                 await RunChainAsync(chain, inputFile.FullName, outputFile.FullName, chainBaseDirectory,
                     sampleRate, blockSize, outChannels, bitDepth, workDir, keepTemp, overwrite,
@@ -132,6 +159,230 @@ public static class DspCommand
                 Log.Error(ex, "dsp run failed");
                 context.ExitCode = 1;
             }
+        });
+
+        return cmd;
+    }
+
+    private static Command CreateChainCommand()
+    {
+        var root = new Command("chain", "Interactively manage DSP chain files");
+
+        root.AddCommand(CreateChainListCommand());
+        root.AddCommand(CreateChainAddCommand());
+        root.AddCommand(CreateChainPrependCommand());
+        root.AddCommand(CreateChainInsertCommand());
+        root.AddCommand(CreateChainRemoveCommand());
+
+        return root;
+    }
+
+    private static Command CreateChainListCommand()
+    {
+        var cmd = new Command("list", "Show nodes in a chain");
+        var chainOption = new Option<FileInfo?>("--chain", "Chain file path (defaults to dsp.chain.json)");
+        cmd.AddOption(chainOption);
+
+        cmd.SetHandler(async context =>
+        {
+            var token = context.GetCancellationToken();
+            var chainFile = ResolveChainFile(context.ParseResult.GetValueForOption(chainOption));
+            var chain = await LoadChainAsync(chainFile, token, createIfMissing: true).ConfigureAwait(false);
+            var config = await DspConfigService.LoadAsync(token).ConfigureAwait(false);
+
+            if (chain.Nodes.Count == 0)
+            {
+                Console.WriteLine("Chain is empty. Use 'dsp chain add --plugin <path>' to add nodes.");
+                return;
+            }
+
+            Console.WriteLine($"Chain file: {chainFile.FullName}");
+            var baseDirectory = chainFile.DirectoryName ?? Directory.GetCurrentDirectory();
+            for (int i = 0; i < chain.Nodes.Count; i++)
+            {
+                var node = chain.Nodes[i];
+                var pluginPath = ResolvePath(node.Plugin, baseDirectory);
+                var friendly = TryGetFriendlyName(config, pluginPath);
+                var name = !string.IsNullOrWhiteSpace(node.Name)
+                    ? node.Name!
+                    : friendly ?? Path.GetFileNameWithoutExtension(pluginPath);
+                Console.WriteLine($"[{i,3}] {name}");
+                Console.WriteLine($"      Plugin: {pluginPath}");
+                if (!string.IsNullOrWhiteSpace(node.Description))
+                {
+                    Console.WriteLine($"      Notes : {node.Description}");
+                }
+                if (node.Parameters is { Count: > 0 })
+                {
+                    Console.WriteLine($"      Params: {string.Join(", ", node.Parameters)}");
+                }
+            }
+        });
+
+        return cmd;
+    }
+
+    private static Command CreateChainAddCommand()
+    {
+        var cmd = new Command("add", "Append a node to the chain");
+        cmd.AddAlias("append");
+
+        var options = new NodeOptionBundle(cmd);
+        var chainOption = new Option<FileInfo?>("--chain", "Chain file path (defaults to dsp.chain.json)");
+        cmd.AddOption(chainOption);
+
+        cmd.SetHandler(async context =>
+        {
+            var token = context.GetCancellationToken();
+            var chainFile = ResolveChainFile(context.ParseResult.GetValueForOption(chainOption));
+            var chain = await LoadChainAsync(chainFile, token, createIfMissing: true).ConfigureAwait(false);
+            var config = await DspConfigService.LoadAsync(token).ConfigureAwait(false);
+
+            var baseDirectory = chainFile.DirectoryName ?? Directory.GetCurrentDirectory();
+            var node = CreateNodeFromOptions(context, options, baseDirectory, config);
+
+            var nodes = chain.Nodes.ToList();
+            nodes.Add(node);
+            var updated = chain with { Nodes = nodes };
+
+            await SaveChainAsync(chainFile, updated, token).ConfigureAwait(false);
+            Log.Info("[dsp] Appended node '{Name}'", node.Name ?? Path.GetFileNameWithoutExtension(node.Plugin));
+        });
+
+        return cmd;
+    }
+
+    private static Command CreateChainPrependCommand()
+    {
+        var cmd = new Command("prepend", "Insert a node at the beginning of the chain");
+
+        var options = new NodeOptionBundle(cmd);
+        var chainOption = new Option<FileInfo?>("--chain", "Chain file path (defaults to dsp.chain.json)");
+        cmd.AddOption(chainOption);
+
+        cmd.SetHandler(async context =>
+        {
+            var token = context.GetCancellationToken();
+            var chainFile = ResolveChainFile(context.ParseResult.GetValueForOption(chainOption));
+            var chain = await LoadChainAsync(chainFile, token, createIfMissing: true).ConfigureAwait(false);
+            var config = await DspConfigService.LoadAsync(token).ConfigureAwait(false);
+
+            var baseDirectory = chainFile.DirectoryName ?? Directory.GetCurrentDirectory();
+            var node = CreateNodeFromOptions(context, options, baseDirectory, config);
+
+            var nodes = chain.Nodes.ToList();
+            nodes.Insert(0, node);
+            var updated = chain with { Nodes = nodes };
+
+            await SaveChainAsync(chainFile, updated, token).ConfigureAwait(false);
+            Log.Info("[dsp] Prepended node '{Name}'", node.Name ?? Path.GetFileNameWithoutExtension(node.Plugin));
+        });
+
+        return cmd;
+    }
+
+    private static Command CreateChainInsertCommand()
+    {
+        var cmd = new Command("insert", "Insert a node at a specific index");
+
+        var indexArgument = new Argument<int>("index", description: "Zero-based index to insert at");
+        cmd.AddArgument(indexArgument);
+
+        var options = new NodeOptionBundle(cmd);
+        var chainOption = new Option<FileInfo?>("--chain", "Chain file path (defaults to dsp.chain.json)");
+        cmd.AddOption(chainOption);
+
+        cmd.SetHandler(async context =>
+        {
+            var token = context.GetCancellationToken();
+            var index = context.ParseResult.GetValueForArgument(indexArgument);
+            var chainFile = ResolveChainFile(context.ParseResult.GetValueForOption(chainOption));
+            var chain = await LoadChainAsync(chainFile, token, createIfMissing: true).ConfigureAwait(false);
+            var config = await DspConfigService.LoadAsync(token).ConfigureAwait(false);
+
+            var nodes = chain.Nodes.ToList();
+            if (index < 0 || index > nodes.Count)
+            {
+                throw new ArgumentOutOfRangeException(nameof(index), index, $"Index must be between 0 and {nodes.Count}");
+            }
+
+            var baseDirectory = chainFile.DirectoryName ?? Directory.GetCurrentDirectory();
+            var node = CreateNodeFromOptions(context, options, baseDirectory, config);
+
+            nodes.Insert(index, node);
+            var updated = chain with { Nodes = nodes };
+
+            await SaveChainAsync(chainFile, updated, token).ConfigureAwait(false);
+            Log.Info("[dsp] Inserted node '{Name}' at index {Index}", node.Name ?? Path.GetFileNameWithoutExtension(node.Plugin), index);
+        });
+
+        return cmd;
+    }
+
+    private static Command CreateChainRemoveCommand()
+    {
+        var cmd = new Command("remove", "Remove a node by index or name");
+
+        var chainOption = new Option<FileInfo?>("--chain", "Chain file path (defaults to dsp.chain.json)");
+        var indexOption = new Option<int?>("--index", description: "Zero-based index to remove");
+        var nameOption = new Option<string?>("--name", description: "Name of the node to remove");
+
+        cmd.AddOption(chainOption);
+        cmd.AddOption(indexOption);
+        cmd.AddOption(nameOption);
+
+        cmd.SetHandler(async context =>
+        {
+            var token = context.GetCancellationToken();
+            var chainFile = ResolveChainFile(context.ParseResult.GetValueForOption(chainOption));
+            var chain = await LoadChainAsync(chainFile, token, createIfMissing: true).ConfigureAwait(false);
+
+            if (chain.Nodes.Count == 0)
+            {
+                Log.Warn("[dsp] Chain is already empty");
+                return;
+            }
+
+            var index = context.ParseResult.GetValueForOption(indexOption);
+            var name = context.ParseResult.GetValueForOption(nameOption);
+
+            if (index is null && string.IsNullOrWhiteSpace(name))
+            {
+                throw new InvalidOperationException("Specify either --index or --name to remove a node");
+            }
+
+            var nodes = chain.Nodes.ToList();
+            TreatmentNode removedNode;
+
+            if (index is not null)
+            {
+                if (index.Value < 0 || index.Value >= nodes.Count)
+                {
+                    throw new ArgumentOutOfRangeException(nameof(index), index.Value, $"Index must be between 0 and {nodes.Count - 1}");
+                }
+
+                removedNode = nodes[index.Value];
+                nodes.RemoveAt(index.Value);
+            }
+            else
+            {
+                var targetName = name!.Trim();
+                var matchIndex = nodes.FindIndex(node =>
+                    string.Equals(node.Name, targetName, StringComparison.OrdinalIgnoreCase) ||
+                    string.Equals(Path.GetFileNameWithoutExtension(node.Plugin), targetName, StringComparison.OrdinalIgnoreCase));
+
+                if (matchIndex < 0)
+                {
+                    throw new InvalidOperationException($"No node named '{targetName}' found");
+                }
+
+                removedNode = nodes[matchIndex];
+                nodes.RemoveAt(matchIndex);
+            }
+
+            var updated = chain with { Nodes = nodes };
+            await SaveChainAsync(chainFile, updated, token).ConfigureAwait(false);
+            Log.Info("[dsp] Removed node '{Name}'", removedNode.Name ?? Path.GetFileNameWithoutExtension(removedNode.Plugin));
         });
 
         return cmd;
@@ -184,6 +435,139 @@ public static class DspCommand
             {
                 Log.Error(ex, "dsp list-params failed");
                 context.ExitCode = 1;
+            }
+        });
+
+        return cmd;
+    }
+
+    private static Command CreateListPluginsCommand()
+    {
+        var cmd = new Command("list", "List cached plugins available for chains");
+
+        var filterOption = new Option<string?>("--filter", () => null, "Filter plugins by substring in name or path");
+        var detailedOption = new Option<bool>("--detailed", () => false, "Show scan timestamps and parameter counts");
+
+        cmd.AddOption(filterOption);
+        cmd.AddOption(detailedOption);
+
+        cmd.SetHandler(async context =>
+        {
+            var token = context.GetCancellationToken();
+            var filter = context.ParseResult.GetValueForOption(filterOption);
+            var detailed = context.ParseResult.GetValueForOption(detailedOption);
+
+            var config = await DspConfigService.LoadAsync(token).ConfigureAwait(false);
+
+            if (config.Plugins.Count == 0)
+            {
+                Console.WriteLine("No cached plugins. Use 'dsp set-dir add <path>' and 'dsp init' first.");
+                return;
+            }
+
+            IEnumerable<KeyValuePair<string, DspPluginMetadata>> items = config.Plugins;
+            if (!string.IsNullOrWhiteSpace(filter))
+            {
+                items = items.Where(p =>
+                    (!string.IsNullOrWhiteSpace(p.Value.PluginName) && p.Value.PluginName.Contains(filter, StringComparison.OrdinalIgnoreCase)) ||
+                    p.Key.Contains(filter, StringComparison.OrdinalIgnoreCase));
+            }
+
+            var ordered = items
+                .OrderBy(p => p.Value.PluginName ?? Path.GetFileName(p.Key), StringComparer.OrdinalIgnoreCase)
+                .ThenBy(p => p.Key, StringComparer.OrdinalIgnoreCase)
+                .ToList();
+
+            if (ordered.Count == 0)
+            {
+                Console.WriteLine("No plugins matched the filter.");
+                return;
+            }
+
+            Console.WriteLine("Cached plugins:");
+            for (int i = 0; i < ordered.Count; i++)
+            {
+                var metadata = ordered[i].Value;
+                var displayName = metadata.PluginName ?? Path.GetFileName(metadata.Path);
+                Console.WriteLine($"[{i,3}] {displayName}");
+                Console.WriteLine($"      Path     : {metadata.Path}");
+                if (detailed)
+                {
+                    Console.WriteLine($"      Scanned   : {metadata.ScannedAtUtc:O}");
+                    Console.WriteLine($"      Modified  : {metadata.PluginModifiedUtc:O}");
+                    Console.WriteLine($"      Parameters: {metadata.Parameters?.Count ?? 0}");
+                }
+            }
+        });
+
+        return cmd;
+    }
+
+    private static Command CreateOutputModeCommand()
+    {
+        var cmd = new Command("output-mode", "Get or set the DSP output mode (source or post)");
+        var modeArgument = new Argument<string?>("mode", () => null, "Specify 'source' or 'post' to change mode");
+        cmd.AddArgument(modeArgument);
+
+        cmd.SetHandler(context =>
+        {
+            var token = context.ParseResult.GetValueForArgument(modeArgument);
+            if (string.IsNullOrWhiteSpace(token))
+            {
+                Console.WriteLine($"Output mode: {DspSessionState.OutputMode.ToString().ToLowerInvariant()}");
+                return;
+            }
+
+            var normalized = token.Trim().ToLowerInvariant();
+            switch (normalized)
+            {
+                case "source":
+                    DspSessionState.OutputMode = DspOutputMode.Source;
+                    Console.WriteLine("Output mode set to source (processed files written next to input source).");
+                    break;
+                case "post":
+                    DspSessionState.OutputMode = DspOutputMode.Post;
+                    Console.WriteLine("Output mode set to post (processed files written to chapter artefact directory).");
+                    break;
+                default:
+                    throw new InvalidOperationException("Mode must be 'source' or 'post'.");
+            }
+        });
+
+        return cmd;
+    }
+
+    private static Command CreateOverwriteCommand()
+    {
+        var cmd = new Command("overwrite", "Get or set the default overwrite behaviour");
+        var stateArgument = new Argument<string?>("state", () => null, "Specify 'on' or 'off' to change overwrite behaviour");
+        cmd.AddArgument(stateArgument);
+
+        cmd.SetHandler(context =>
+        {
+            var value = context.ParseResult.GetValueForArgument(stateArgument);
+            if (string.IsNullOrWhiteSpace(value))
+            {
+                Console.WriteLine($"Overwrite outputs: {(DspSessionState.OverwriteOutputs ? "on" : "off")}");
+                return;
+            }
+
+            switch (value.Trim().ToLowerInvariant())
+            {
+                case "on":
+                case "true":
+                case "yes":
+                    DspSessionState.OverwriteOutputs = true;
+                    Console.WriteLine("Overwrite outputs set to on.");
+                    break;
+                case "off":
+                case "false":
+                case "no":
+                    DspSessionState.OverwriteOutputs = false;
+                    Console.WriteLine("Overwrite outputs set to off.");
+                    break;
+                default:
+                    throw new InvalidOperationException("State must be 'on' or 'off'.");
             }
         });
 
@@ -505,28 +889,50 @@ public static class DspCommand
 
     private static FileInfo ResolveOutputFile(FileInfo? provided, FileInfo inputFile)
     {
-        try
+        if (provided is not null)
         {
-            return CommandInputResolver.ResolveOutput(provided, "treated.wav");
+            return provided;
         }
-        catch
-        {
-            if (provided is not null)
-            {
-                return provided;
-            }
 
-            var stem = Path.GetFileNameWithoutExtension(inputFile.Name);
-            var fallback = Path.Combine(inputFile.DirectoryName ?? Directory.GetCurrentDirectory(), $"{stem}.treated.wav");
-            return new FileInfo(fallback);
+        if (DspSessionState.OutputMode == DspOutputMode.Post)
+        {
+            try
+            {
+                return CommandInputResolver.ResolveOutput(null, "dsp.wav");
+            }
+            catch (Exception ex)
+            {
+                Log.Debug("[dsp] Falling back to source directory for output resolution: {0}", ex.Message);
+            }
         }
+
+        var stem = Path.GetFileNameWithoutExtension(inputFile.Name);
+        var directory = inputFile.DirectoryName ?? Directory.GetCurrentDirectory();
+        var suffix = DspSessionState.OutputMode == DspOutputMode.Source ? "treated" : "dsp";
+        return new FileInfo(Path.Combine(directory, $"{stem}.{suffix}.wav"));
     }
 
-    private static async Task<TreatmentChain> LoadChainAsync(FileInfo chainFile, CancellationToken cancellationToken)
+    private static FileInfo ResolveChainFile(FileInfo? provided, string? baseDirectory = null)
+    {
+        if (provided is not null)
+        {
+            return new FileInfo(Path.GetFullPath(provided.FullName));
+        }
+
+        var root = baseDirectory ?? Directory.GetCurrentDirectory();
+        return new FileInfo(Path.Combine(root, DefaultChainFileName));
+    }
+
+    private static async Task<TreatmentChain> LoadChainAsync(FileInfo chainFile, CancellationToken cancellationToken, bool createIfMissing = false)
     {
         if (!chainFile.Exists)
         {
-            throw new FileNotFoundException($"Chain file not found: {chainFile.FullName}");
+            if (!createIfMissing)
+            {
+                throw new FileNotFoundException($"Chain file not found: {chainFile.FullName}");
+            }
+
+            return new TreatmentChain();
         }
 
         await using var stream = chainFile.OpenRead();
@@ -536,19 +942,44 @@ public static class DspCommand
             ReadCommentHandling = JsonCommentHandling.Skip
         }, cancellationToken).ConfigureAwait(false);
 
-        if (chain is null || chain.Nodes.Count == 0)
+        if (chain is null)
         {
-            throw new InvalidOperationException("Treatment chain must define at least one node");
+            return new TreatmentChain();
         }
 
         return chain;
     }
 
-    private static TreatmentChain BuildSingleNodeChain(string plugin, IReadOnlyList<string> parameters, string? preset, FileInfo? paramFile)
+    private static async Task SaveChainAsync(FileInfo chainFile, TreatmentChain chain, CancellationToken cancellationToken)
     {
+        var options = new JsonSerializerOptions
+        {
+            WriteIndented = true,
+            PropertyNamingPolicy = JsonNamingPolicy.CamelCase
+        };
+
+        Directory.CreateDirectory(chainFile.DirectoryName ?? Directory.GetCurrentDirectory());
+        await using var stream = new FileStream(chainFile.FullName, FileMode.Create, FileAccess.Write, FileShare.None);
+        await JsonSerializer.SerializeAsync(stream, chain, options, cancellationToken).ConfigureAwait(false);
+    }
+
+    private static TreatmentChain BuildSingleNodeChain(
+        string plugin,
+        IReadOnlyList<string> parameters,
+        string? preset,
+        FileInfo? paramFile,
+        string baseDirectory,
+        DspConfig? config = null)
+    {
+        var pluginPath = config is not null
+            ? ResolvePluginPath(plugin, baseDirectory, config)
+            : ResolvePath(plugin, baseDirectory);
+
+        var friendlyName = config is not null ? TryGetFriendlyName(config, pluginPath) : null;
+
         var node = new TreatmentNode(
-            name: Path.GetFileNameWithoutExtension(plugin),
-            plugin: plugin,
+            name: friendlyName ?? Path.GetFileNameWithoutExtension(pluginPath),
+            plugin: pluginPath,
             description: null,
             parameters: parameters,
             parameterFile: paramFile?.FullName,
@@ -775,13 +1206,13 @@ public static class DspCommand
 
         if (!string.IsNullOrWhiteSpace(node.ParameterFile))
         {
-            var paramFilePath = ResolvePath(node.ParameterFile!, baseDirectory);
+            var paramFilePath = ResolvePath(node.ParameterFile!, baseDirectory ?? Directory.GetCurrentDirectory());
             args.Add($"--paramFile={paramFilePath}");
         }
 
         if (!string.IsNullOrWhiteSpace(node.Preset))
         {
-            var presetPath = ResolvePath(node.Preset!, baseDirectory);
+            var presetPath = ResolvePath(node.Preset!, baseDirectory ?? Directory.GetCurrentDirectory());
             args.Add($"--preset={presetPath}");
         }
 
@@ -871,8 +1302,9 @@ public static class DspCommand
     {
         var parameters = new List<DspPluginParameter>();
 
-        foreach (var raw in lines)
+        for (int i = 0; i < lines.Count; i++)
         {
+            var raw = lines[i];
             if (string.IsNullOrWhiteSpace(raw))
             {
                 continue;
@@ -901,31 +1333,58 @@ public static class DspCommand
                 continue;
             }
 
-            var tokens = Regex.Split(remainder, @"\s{2,}")
-                .Where(token => !string.IsNullOrWhiteSpace(token))
-                .Select(token => token.Trim())
-                .ToArray();
+            var builder = new StringBuilder(remainder);
 
-            if (tokens.Length == 0)
+            // include indented continuation lines
+            int j = i + 1;
+            while (j < lines.Count)
+            {
+                var next = lines[j];
+                if (string.IsNullOrWhiteSpace(next) || !char.IsWhiteSpace(next[0]))
+                {
+                    break;
+                }
+
+                builder.Append(' ');
+                builder.Append(next.Trim());
+                j++;
+            }
+
+            i = j - 1;
+
+            var aggregate = builder.ToString();
+            var metaMatches = Regex.Matches(
+                aggregate,
+                @"(?<label>Values|Default|Supports text values):\s*(?<value>.*?)(?=(?:\s+(?:Values|Default|Supports text values):)|$)",
+                RegexOptions.IgnoreCase);
+
+            string name;
+            if (metaMatches.Count > 0)
+            {
+                name = aggregate[..metaMatches[0].Index].Trim();
+            }
+            else
+            {
+                name = aggregate.Trim();
+            }
+
+            if (string.IsNullOrWhiteSpace(name))
             {
                 continue;
             }
 
-            var name = tokens[0];
             string? values = null;
             string? defaultValue = null;
             bool? supportsText = null;
 
-            foreach (var token in tokens.Skip(1))
+            foreach (Match match in metaMatches)
             {
-                var parts = token.Split(':', 2, StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
-                if (parts.Length != 2)
+                var label = match.Groups["label"].Value.Trim().ToLowerInvariant();
+                var value = match.Groups["value"].Value.Trim();
+                if (value.Length == 0)
                 {
                     continue;
                 }
-
-                var label = parts[0].ToLowerInvariant();
-                var value = parts[1];
 
                 switch (label)
                 {
@@ -936,9 +1395,9 @@ public static class DspCommand
                         defaultValue = value;
                         break;
                     case "supports text values":
-                        if (bool.TryParse(value, out var parsed))
+                        if (value.Equals("true", StringComparison.OrdinalIgnoreCase) || value.Equals("false", StringComparison.OrdinalIgnoreCase))
                         {
-                            supportsText = parsed;
+                            supportsText = bool.Parse(value);
                         }
                         break;
                 }
@@ -948,6 +1407,165 @@ public static class DspCommand
         }
 
         return parameters.Count > 0 ? parameters : null;
+    }
+
+    private static string? TryGetFriendlyName(DspConfig config, string pluginPath)
+    {
+        pluginPath = Path.GetFullPath(pluginPath);
+        if (config.Plugins.TryGetValue(pluginPath, out var metadata))
+        {
+            return metadata.PluginName;
+        }
+
+        return null;
+    }
+
+    private static string ResolvePluginPath(string token, string baseDirectory, DspConfig config)
+    {
+        if (string.IsNullOrWhiteSpace(token))
+        {
+            throw new ArgumentException("Plugin token cannot be empty", nameof(token));
+        }
+
+        string candidate;
+        try
+        {
+            candidate = ResolvePath(token, baseDirectory);
+            if (File.Exists(candidate))
+            {
+                return candidate;
+            }
+        }
+        catch
+        {
+            candidate = token;
+        }
+
+        // Attempt to match friendly name or file name from cache
+        var matches = config.Plugins.Values
+            .Where(meta => string.Equals(meta.PluginName, token, StringComparison.OrdinalIgnoreCase)
+                           || string.Equals(Path.GetFileNameWithoutExtension(meta.Path), token, StringComparison.OrdinalIgnoreCase)
+                           || string.Equals(meta.Path, token, StringComparison.OrdinalIgnoreCase))
+            .Select(meta => meta.Path)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        if (matches.Count == 1)
+        {
+            return matches[0];
+        }
+
+        if (matches.Count > 1)
+        {
+            throw new InvalidOperationException($"Ambiguous plugin token '{token}'. Matches: {string.Join(", ", matches)}");
+        }
+
+        throw new FileNotFoundException($"Unable to resolve plugin '{token}'. Provide a full path or run 'dsp init' to cache it.");
+    }
+
+    private static TreatmentNode CreateNodeFromOptions(InvocationContext context, NodeOptionBundle options, string baseDirectory, DspConfig config)
+    {
+        var pluginToken = context.ParseResult.GetValueForOption(options.Plugin);
+        if (string.IsNullOrWhiteSpace(pluginToken))
+        {
+            throw new InvalidOperationException("Plugin path or name is required.");
+        }
+
+        var pluginPath = ResolvePluginPath(pluginToken!, baseDirectory, config);
+        if (!File.Exists(pluginPath))
+        {
+            throw new FileNotFoundException($"Plugin file not found: {pluginPath}");
+        }
+
+        var friendly = TryGetFriendlyName(config, pluginPath);
+
+        var name = context.ParseResult.GetValueForOption(options.Name);
+        var description = context.ParseResult.GetValueForOption(options.Description);
+        var parameters = context.ParseResult.GetValueForOption(options.Parameters) ?? Array.Empty<string>();
+        var paramFile = context.ParseResult.GetValueForOption(options.ParameterFile);
+        var preset = context.ParseResult.GetValueForOption(options.Preset);
+        var sampleRate = context.ParseResult.GetValueForOption(options.SampleRate);
+        var blockSize = context.ParseResult.GetValueForOption(options.BlockSize);
+        var outChannels = context.ParseResult.GetValueForOption(options.OutChannels);
+        var bitDepth = context.ParseResult.GetValueForOption(options.BitDepth);
+        var inputs = context.ParseResult.GetValueForOption(options.Inputs);
+        var midiInput = context.ParseResult.GetValueForOption(options.MidiInput);
+        var additional = context.ParseResult.GetValueForOption(options.AdditionalArguments);
+        var outputFile = context.ParseResult.GetValueForOption(options.OutputFile);
+
+        var resolvedName = !string.IsNullOrWhiteSpace(name)
+            ? name
+            : friendly ?? Path.GetFileNameWithoutExtension(pluginPath);
+
+        return new TreatmentNode(
+            name: resolvedName,
+            plugin: pluginPath,
+            description: string.IsNullOrWhiteSpace(description) ? null : description,
+            parameters: parameters.Length > 0 ? parameters : null,
+            parameterFile: paramFile?.FullName,
+            preset: string.IsNullOrWhiteSpace(preset) ? null : ResolvePath(preset!, baseDirectory),
+            sampleRate: sampleRate,
+            blockSize: blockSize,
+            outChannels: outChannels,
+            bitDepth: bitDepth,
+            inputs: inputs is { Length: > 0 } ? inputs : null,
+            midiInput: string.IsNullOrWhiteSpace(midiInput) ? null : midiInput,
+            additionalArguments: additional is { Length: > 0 } ? additional : null,
+            outputFile: string.IsNullOrWhiteSpace(outputFile) ? null : outputFile);
+    }
+
+    private sealed class NodeOptionBundle
+    {
+        public Option<string> Plugin { get; }
+        public Option<string?> Name { get; }
+        public Option<string?> Description { get; }
+        public Option<string[]> Parameters { get; }
+        public Option<FileInfo?> ParameterFile { get; }
+        public Option<string?> Preset { get; }
+        public Option<int?> SampleRate { get; }
+        public Option<int?> BlockSize { get; }
+        public Option<int?> OutChannels { get; }
+        public Option<int?> BitDepth { get; }
+        public Option<string[]> Inputs { get; }
+        public Option<string?> MidiInput { get; }
+        public Option<string[]> AdditionalArguments { get; }
+        public Option<string?> OutputFile { get; }
+
+        public NodeOptionBundle(Command command)
+        {
+            Plugin = new Option<string>("--plugin", description: "Plugin path or friendly name")
+            {
+                IsRequired = true
+            };
+            Name = new Option<string?>("--name", "Optional logical name for the node");
+            Description = new Option<string?>("--description", "Optional notes for the node");
+            Parameters = new Option<string[]>("--param", () => Array.Empty<string>(), "Parameter override in Plugalyzer syntax (repeatable)");
+            ParameterFile = new Option<FileInfo?>("--param-file", "JSON automation file for parameters");
+            Preset = new Option<string?>("--preset", "Optional preset file relative to chain");
+            SampleRate = new Option<int?>("--sample-rate", "Node sample rate override");
+            BlockSize = new Option<int?>("--block-size", "Node block size override");
+            OutChannels = new Option<int?>("--out-channels", "Node output channel override");
+            BitDepth = new Option<int?>("--bit-depth", "Node output bit depth override");
+            Inputs = new Option<string[]>("--input", () => Array.Empty<string>(), "Explicit inputs (default uses previous output)");
+            MidiInput = new Option<string?>("--midi-input", "Optional MIDI file token or path");
+            AdditionalArguments = new Option<string[]>("--arg", () => Array.Empty<string>(), "Additional Plugalyzer arguments (repeatable)");
+            OutputFile = new Option<string?>("--output-file", "Explicit output file name inside working directory");
+
+            command.AddOption(Plugin);
+            command.AddOption(Name);
+            command.AddOption(Description);
+            command.AddOption(Parameters);
+            command.AddOption(ParameterFile);
+            command.AddOption(Preset);
+            command.AddOption(SampleRate);
+            command.AddOption(BlockSize);
+            command.AddOption(OutChannels);
+            command.AddOption(BitDepth);
+            command.AddOption(Inputs);
+            command.AddOption(MidiInput);
+            command.AddOption(AdditionalArguments);
+            command.AddOption(OutputFile);
+        }
     }
 
     private static void TryDeleteDirectory(string path)
