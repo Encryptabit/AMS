@@ -105,6 +105,7 @@ internal sealed class ReplState
         try
         {
             Chapters = Directory.EnumerateFiles(WorkingDirectory, "*.wav", SearchOption.TopDirectoryOnly)
+                .Where(path => !string.Equals(Path.GetFileName(path), "roomtone.wav", StringComparison.OrdinalIgnoreCase))
                 .Select(path => new FileInfo(path))
                 .OrderBy(file => file.Name, StringComparer.OrdinalIgnoreCase)
                 .ToList();
@@ -152,6 +153,11 @@ internal sealed class ReplState
         else
         {
             Console.WriteLine("Mode              : NONE (no WAV files detected)");
+        }
+        Console.WriteLine($"ASR Service      : {AsrProcessSupervisor.StatusDescription}");
+        if (!string.IsNullOrWhiteSpace(AsrProcessSupervisor.BaseUrl))
+        {
+            Console.WriteLine($"ASR Endpoint     : {AsrProcessSupervisor.BaseUrl}");
         }
     }
 
