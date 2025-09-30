@@ -2,6 +2,7 @@
 using System.Text;
 using System.Threading;
 using Ams.Cli.Services;
+using Ams.Core.Alignment.Mfa;
 using Ams.Core.Book;
 using Ams.Core.Common;
 using Ams.Cli.Utilities;
@@ -229,6 +230,17 @@ public static class PipelineCommand
 
         Log.Info("Running MFA alignment workflow");
         await MfaWorkflow.RunChapterAsync(audioFile, hydrateFile, chapterStem, chapterDirInfo, cancellationToken);
+
+        var textGridPath = Path.Combine(chapterDir, "alignment", "mfa", $"{chapterStem}.TextGrid");
+        var textGridFile = new FileInfo(textGridPath);
+        try
+        {
+            MfaTimingMerger.MergeTimings(hydrateFile, asrFile, textGridFile);
+        }
+        catch (Exception ex)
+        {
+            Log.Warn("Failed to merge MFA timings: {0}", ex);
+        }
 
         Log.Info("Rendering roomtone");
         await AudioCommand.RunRenderAsync(txFile, treatedWav, sampleRate, bitDepth, fadeMs, toneDb, emitDiagnostics, adaptiveGain, verbose: false);

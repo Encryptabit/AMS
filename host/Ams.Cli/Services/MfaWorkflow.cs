@@ -20,6 +20,8 @@ internal static class MfaWorkflow
         DirectoryInfo chapterDirectory,
         CancellationToken cancellationToken)
     {
+        await MfaProcessSupervisor.EnsureReadyAsync(cancellationToken).ConfigureAwait(false);
+
         if (!audioFile.Exists)
         {
             throw new FileNotFoundException("Audio file not found", audioFile.FullName);
@@ -67,64 +69,71 @@ internal static class MfaWorkflow
 
         var service = MfaService.Default;
 
-        Log.Info("Running MFA validate on corpus {CorpusDir}", corpusDir);
-        var validateResult = await service.ValidateAsync(baseContext, cancellationToken).ConfigureAwait(false);
-        var validateSucceeded = EnsureSuccess("mfa validate", validateResult, allowFailure: true);
-
-        if (!validateSucceeded)
+        try
         {
-            if (IsZeroDivision(validateResult))
+            Log.Info("Running MFA validate on corpus {CorpusDir}", corpusDir);
+            var validateResult = await service.ValidateAsync(baseContext, cancellationToken).ConfigureAwait(false);
+            var validateSucceeded = EnsureSuccess("mfa validate", validateResult, allowFailure: true);
+
+            if (!validateSucceeded)
             {
-                Log.Warn("mfa validate reported a ZeroDivisionError (likely due to very small corpora); continuing with generated artifacts");
+                if (IsZeroDivision(validateResult))
+                {
+                    Log.Warn("mfa validate reported a ZeroDivisionError (likely due to very small corpora); continuing with generated artifacts");
+                }
+                else
+                {
+                    throw new InvalidOperationException("mfa validate failed");
+                }
+            }
+
+            var oovListPath = FindOovListFile(mfaDir);
+            var sanitizedOovPath = oovListPath is not null
+                ? CreateSanitizedOovList(mfaDir, chapterStem, oovListPath)
+                : null;
+
+            var hasRealOovs = sanitizedOovPath is not null;
+
+            bool customDictionaryAvailable = false;
+
+            if (hasRealOovs)
+            {
+                Log.Info("Generating pronunciations for OOV terms ({OovFile})", sanitizedOovPath);
+                var g2pContext = baseContext with { OovListPath = sanitizedOovPath };
+                var g2pResult = await service.GeneratePronunciationsAsync(g2pContext, cancellationToken).ConfigureAwait(false);
+                EnsureSuccess("mfa g2p", g2pResult);
+
+                if (!File.Exists(g2pOutputPath) || new FileInfo(g2pOutputPath).Length == 0)
+                {
+                    Log.Warn("G2P output missing or empty ({Path}); skipping custom dictionary stage", g2pOutputPath);
+                }
+                else
+                {
+                    Log.Info("Adding pronunciations to dictionary ({DictionaryOutput})", customDictionaryPath);
+                    var addWordsContext = baseContext with { OovListPath = sanitizedOovPath };
+                    var addWordsResult = await service.AddWordsAsync(addWordsContext, cancellationToken).ConfigureAwait(false);
+                    EnsureSuccess("mfa model add_words", addWordsResult);
+
+                    customDictionaryAvailable = File.Exists(customDictionaryPath);
+                }
             }
             else
             {
-                throw new InvalidOperationException("mfa validate failed");
+                Log.Info("No substantive OOV entries detected; skipping G2P/add_words");
             }
+
+            var alignContext = customDictionaryAvailable
+                ? baseContext
+                : baseContext with { CustomDictionaryPath = null };
+
+            Log.Info("Running MFA align for chapter {Chapter}", chapterStem);
+            var alignResult = await service.AlignAsync(alignContext, cancellationToken).ConfigureAwait(false);
+            EnsureSuccess("mfa align", alignResult);
         }
-
-        var oovListPath = FindOovListFile(mfaDir);
-        var sanitizedOovPath = oovListPath is not null
-            ? CreateSanitizedOovList(mfaDir, chapterStem, oovListPath)
-            : null;
-
-        var hasRealOovs = sanitizedOovPath is not null;
-
-        bool customDictionaryAvailable = false;
-
-        if (hasRealOovs)
+        finally
         {
-            Log.Info("Generating pronunciations for OOV terms ({OovFile})", sanitizedOovPath);
-            var g2pContext = baseContext with { OovListPath = sanitizedOovPath };
-            var g2pResult = await service.GeneratePronunciationsAsync(g2pContext, cancellationToken).ConfigureAwait(false);
-            EnsureSuccess("mfa g2p", g2pResult);
-
-            if (!File.Exists(g2pOutputPath) || new FileInfo(g2pOutputPath).Length == 0)
-            {
-                Log.Warn("G2P output missing or empty ({Path}); skipping custom dictionary stage", g2pOutputPath);
-            }
-            else
-            {
-                Log.Info("Adding pronunciations to dictionary ({DictionaryOutput})", customDictionaryPath);
-                var addWordsContext = baseContext with { OovListPath = sanitizedOovPath };
-                var addWordsResult = await service.AddWordsAsync(addWordsContext, cancellationToken).ConfigureAwait(false);
-                EnsureSuccess("mfa model add_words", addWordsResult);
-
-                customDictionaryAvailable = File.Exists(customDictionaryPath);
-            }
+            MfaProcessSupervisor.Shutdown();
         }
-        else
-        {
-            Log.Info("No substantive OOV entries detected; skipping G2P/add_words");
-        }
-
-        var alignContext = customDictionaryAvailable
-            ? baseContext
-            : baseContext with { CustomDictionaryPath = null };
-
-        Log.Info("Running MFA align for chapter {Chapter}", chapterStem);
-        var alignResult = await service.AlignAsync(alignContext, cancellationToken).ConfigureAwait(false);
-        EnsureSuccess("mfa align", alignResult);
     }
 
     private static string EnsureDirectory(string path)
