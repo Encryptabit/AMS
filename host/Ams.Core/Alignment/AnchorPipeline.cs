@@ -28,7 +28,8 @@ public static class AnchorPipeline
         AsrResponse asr,
         AnchorPolicy policy,
         SectionDetectOptions? sectionOptions = null,
-        bool includeWindows = false)
+        bool includeWindows = false,
+        SectionRange? overrideSection = null)
     {
         sectionOptions ??= new SectionDetectOptions();
 
@@ -38,22 +39,23 @@ public static class AnchorPipeline
         // Section detection on raw ASR words (not normalized) to allow number-to-words
         var asrRawTokens = asr.Tokens.Select(t => t.Word).ToList();
         SectionRange? section = null;
-        (int bStart, int bEnd) bookWindowFiltered;
-        if (sectionOptions.Detect)
+        (int bStart, int bEnd) bookWindowFiltered = (0, bookView.Tokens.Count - 1);
+
+        if (overrideSection is not null)
+        {
+            section = overrideSection;
+            if (AnchorPreprocessor.TryMapSectionWindow(bookView, (section.StartWord, section.EndWord), out var mapped))
+            {
+                bookWindowFiltered = mapped;
+            }
+        }
+        else if (sectionOptions.Detect)
         {
             section = SectionLocator.DetectSection(book, asrRawTokens, sectionOptions.AsrPrefixTokens);
             if (section != null && AnchorPreprocessor.TryMapSectionWindow(bookView, (section.StartWord, section.EndWord), out var mapped))
             {
                 bookWindowFiltered = mapped;
             }
-            else
-            {
-                bookWindowFiltered = (0, bookView.Tokens.Count - 1);
-            }
-        }
-        else
-        {
-            bookWindowFiltered = (0, bookView.Tokens.Count - 1);
         }
 
         var anchors = AnchorDiscovery.SelectAnchors(
@@ -64,6 +66,26 @@ public static class AnchorPipeline
             bookWindowFiltered.bStart,
             bookWindowFiltered.bEnd
         ).ToList();
+
+        if (anchors.Count > 0)
+        {
+            int minBp = anchors.Min(a => a.Bp);
+            int maxBp = anchors.Max(a => a.Bp + policy.NGram - 1);
+            int span = Math.Max(0, maxBp - minBp + 1);
+
+            // Expand around anchor span to keep some context while avoiding full book fallback.
+            int pad = Math.Max(64, Math.Min(8192, Math.Max(policy.NGram * 2, span / 5)));
+            int refinedStart = Math.Max(0, minBp - pad);
+            int refinedEnd = Math.Min(bookView.Tokens.Count - 1, maxBp + pad);
+
+            // Only shrink when anchors provide a materially smaller window.
+            if (refinedStart > bookWindowFiltered.bStart || refinedEnd < bookWindowFiltered.bEnd)
+            {
+                refinedStart = Math.Max(bookWindowFiltered.bStart, refinedStart);
+                refinedEnd = Math.Min(bookWindowFiltered.bEnd, refinedEnd);
+                bookWindowFiltered = (refinedStart, refinedEnd);
+            }
+        }
 
         IReadOnlyList<(int bLo, int bHi, int aLo, int aHi)>? windows = null;
         if (includeWindows)

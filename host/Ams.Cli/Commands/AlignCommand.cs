@@ -1,4 +1,6 @@
+using System.Collections.Generic;
 using System.CommandLine;
+using System.IO;
 using System.Linq;
 using System.Text.Json;
 using Ams.Core.Alignment.Tx;
@@ -293,13 +295,56 @@ public static class AlignCommand
         Stopwords: stop,
         DisallowBoundaryCross: !crossSentences
     );
-    var secOpts = new SectionDetectOptions(Detect: detectSection, AsrPrefixTokens: asrPrefixTokens);
-    var pipe = AnchorPipeline.ComputeAnchors(book, asr, policy, secOpts, includeWindows: true);
+    SectionRange? sectionOverride = null;
+    var labelCandidates = new List<string>();
 
-    var windows = pipe.Windows ?? new List<(int bLo, int bHi, int aLo, int aHi)>
+    var audioStem = Path.GetFileNameWithoutExtension(audioFile.Name);
+    if (!string.IsNullOrWhiteSpace(audioStem)) labelCandidates.Add(audioStem);
+
+    var folderName = audioFile.Directory?.Name;
+    if (!string.IsNullOrWhiteSpace(folderName)) labelCandidates.Add(folderName);
+
+    var asrStem = Path.GetFileNameWithoutExtension(asrFile.Name);
+    if (!string.IsNullOrWhiteSpace(asrStem))
     {
-        (pipe.BookWindowFiltered.bStart, pipe.BookWindowFiltered.bEnd + 1, 0, asrView.Tokens.Count)
-    };
+        if (asrStem.EndsWith(".asr", StringComparison.OrdinalIgnoreCase))
+        {
+            asrStem = asrStem[..^4];
+        }
+        labelCandidates.Add(asrStem);
+    }
+
+    foreach (var candidate in labelCandidates)
+    {
+        sectionOverride = SectionLocator.ResolveSectionByTitle(book, candidate);
+        if (sectionOverride is not null)
+        {
+            Log.Info("Resolved chapter '{Chapter}' to section {SectionId}: {SectionTitle}",
+                candidate,
+                sectionOverride.Id,
+                sectionOverride.Title);
+            break;
+        }
+    }
+
+    var secOpts = new SectionDetectOptions(Detect: sectionOverride is null && detectSection, AsrPrefixTokens: asrPrefixTokens);
+    var pipe = AnchorPipeline.ComputeAnchors(book, asr, policy, secOpts, includeWindows: true, overrideSection: sectionOverride);
+
+    if (sectionOverride is not null && detectSection)
+    {
+        var prefixTokens = asr.Tokens.Select(t => t.Word).Take(Math.Max(1, asrPrefixTokens)).ToList();
+        var detected = SectionLocator.DetectSection(book, prefixTokens, asrPrefixTokens);
+        if (detected is not null && detected.Id != sectionOverride.Id)
+        {
+            Log.Warn("ASR prefix suggests section {Detected} ({DetectedTitle}) but filename resolved to {Resolved} ({ResolvedTitle}).", detected.Id, detected.Title, sectionOverride.Id, sectionOverride.Title);
+        }
+    }
+
+    var windows = pipe.Windows;
+    if (windows is null || windows.Count == 0)
+    {
+        windows = BuildFallbackWindows(pipe, asrView.Tokens.Count, policy);
+    }
 
     // Equivalences and fillers (3)
     var equiv = new Dictionary<string, string>(StringComparer.Ordinal) { };
@@ -465,6 +510,49 @@ public static class AlignCommand
         var endSec = endToken.StartTime + endToken.Duration;
 
         return new TimingRange(startSec, endSec);
+    }
+
+    private static IReadOnlyList<(int bLo, int bHi, int aLo, int aHi)> BuildFallbackWindows(
+        AnchorPipelineResult pipe,
+        int asrTokenCount,
+        AnchorPolicy policy)
+    {
+        if (pipe.Anchors.Count == 0)
+        {
+            return new List<(int, int, int, int)>
+            {
+                (pipe.BookWindowFiltered.bStart, pipe.BookWindowFiltered.bEnd + 1, 0, asrTokenCount)
+            };
+        }
+
+        int minBp = pipe.Anchors.Min(a => a.Bp);
+        int maxBp = pipe.Anchors.Max(a => a.Bp + policy.NGram - 1);
+        int bookSpan = Math.Max(0, maxBp - minBp + 1);
+        int bookPad = Math.Max(64, Math.Min(8192, Math.Max(policy.NGram * 2, bookSpan / 5)));
+        int bookStart = Math.Max(pipe.BookWindowFiltered.bStart, minBp - bookPad);
+        int bookEndExclusive = Math.Min(pipe.BookWindowFiltered.bEnd + 1, maxBp + bookPad + 1);
+
+        int minAp = pipe.Anchors.Min(a => a.Ap);
+        int maxAp = pipe.Anchors.Max(a => a.Ap);
+        int asrSpan = Math.Max(0, maxAp - minAp + 1);
+        int asrPad = Math.Max(32, Math.Min(4096, Math.Max(policy.NGram * 2, asrSpan / 5)));
+        int asrStart = Math.Max(0, minAp - asrPad);
+        int asrEndExclusive = Math.Min(asrTokenCount, maxAp + asrPad + 1);
+
+        if (bookEndExclusive <= bookStart)
+        {
+            bookEndExclusive = Math.Min(pipe.BookWindowFiltered.bEnd + 1, bookStart + Math.Max(1, bookSpan + bookPad));
+        }
+
+        if (asrEndExclusive <= asrStart)
+        {
+            asrEndExclusive = Math.Min(asrTokenCount, asrStart + Math.Max(1, asrSpan + asrPad));
+        }
+
+        return new List<(int, int, int, int)>
+        {
+            (bookStart, bookEndExclusive, asrStart, asrEndExclusive)
+        };
     }
 
     internal static async Task RunAnchorsAsync(
