@@ -1,5 +1,7 @@
 ﻿using System.CommandLine;
 using System.Text;
+using System.Threading;
+using Ams.Cli.Services;
 using Ams.Core.Book;
 using Ams.Core.Common;
 using Ams.Cli.Utilities;
@@ -64,6 +66,7 @@ public static class PipelineCommand
 
         cmd.SetHandler(async context =>
         {
+            var cancellationToken = context.GetCancellationToken();
             var bookFile = CommandInputResolver.ResolveBookSource(context.ParseResult.GetValueForOption(bookOption));
             var audioFile = CommandInputResolver.RequireAudio(context.ParseResult.GetValueForOption(audioOption));
             var workDir = context.ParseResult.GetValueForOption(workDirOption);
@@ -99,7 +102,8 @@ public static class PipelineCommand
                     fadeMs,
                     toneDb,
                     emitDiagnostics,
-                    adaptiveGain);
+                    adaptiveGain,
+                    cancellationToken);
             }
             catch (Exception ex)
             {
@@ -127,7 +131,8 @@ public static class PipelineCommand
         double fadeMs,
         double toneDb,
         bool emitDiagnostics,
-        bool adaptiveGain)
+        bool adaptiveGain,
+        CancellationToken cancellationToken)
     {
         if (!bookFile.Exists)
         {
@@ -147,6 +152,7 @@ public static class PipelineCommand
             : chapterIdOverride!);
         var chapterDir = Path.Combine(workDirPath, chapterStem);
         EnsureDirectory(chapterDir);
+        var chapterDirInfo = new DirectoryInfo(chapterDir);
 
         var bookIndexFile = bookIndexOverride ?? new FileInfo(Path.Combine(workDirPath, "book-index.json"));
         EnsureDirectory(bookIndexFile.DirectoryName);
@@ -218,6 +224,11 @@ public static class PipelineCommand
 
         Log.Info("Hydrating transcript");
         await AlignCommand.RunHydrateTxAsync(bookIndexFile, asrFile, txFile, hydrateFile);
+
+        cancellationToken.ThrowIfCancellationRequested();
+
+        Log.Info("Running MFA alignment workflow");
+        await MfaWorkflow.RunChapterAsync(audioFile, hydrateFile, chapterStem, chapterDirInfo, cancellationToken);
 
         Log.Info("Rendering roomtone");
         await AudioCommand.RunRenderAsync(txFile, treatedWav, sampleRate, bitDepth, fadeMs, toneDb, emitDiagnostics, adaptiveGain, verbose: false);

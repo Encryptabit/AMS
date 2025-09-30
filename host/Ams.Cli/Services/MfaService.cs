@@ -22,6 +22,12 @@ internal sealed class MfaService : IMfaService
     internal const string DefaultAcousticModel = "english_mfa";
     internal const string DefaultG2pModel = "english_us_mfa";
 
+    internal static IMfaService Default { get; } = new MfaService();
+
+    private MfaService()
+    {
+    }
+
     private static readonly string ValidateCommand = "validate";
     private static readonly string G2pCommand = "g2p";
     private static readonly string AddWordsCommand = "model add_words";
@@ -50,6 +56,11 @@ internal sealed class MfaService : IMfaService
         if (!string.IsNullOrWhiteSpace(context.OutputDirectory))
         {
             args.Append(' ').Append("--output_directory ").Append(QuoteRequired(context.OutputDirectory));
+        }
+
+        if (context.SingleSpeaker == true)
+        {
+            args.Append(" --single_speaker");
         }
 
         return MfaProcessSupervisor.RunAsync(
@@ -104,11 +115,6 @@ internal sealed class MfaService : IMfaService
             throw new ArgumentException("G2P output path must be provided for add_words", nameof(context));
         }
 
-        if (string.IsNullOrWhiteSpace(context.CustomDictionaryPath))
-        {
-            throw new ArgumentException("Custom dictionary path must be provided for add_words", nameof(context));
-        }
-
         var baseDictionary = string.IsNullOrWhiteSpace(context.DictionaryModel)
             ? DefaultDictionaryModel
             : context.DictionaryModel!;
@@ -116,7 +122,6 @@ internal sealed class MfaService : IMfaService
         var args = new StringBuilder();
         args.Append(Quote(baseDictionary));
         args.Append(' ').Append(QuoteRequired(context.G2pOutputPath));
-        args.Append(' ').Append("--output_path ").Append(QuoteRequired(context.CustomDictionaryPath));
 
         return MfaProcessSupervisor.RunAsync(
             AddWordsCommand,
@@ -145,6 +150,26 @@ internal sealed class MfaService : IMfaService
         args.Append(' ').Append(dictionary);
         args.Append(' ').Append(acoustic);
         args.Append(' ').Append(QuoteRequired(context.OutputDirectory));
+
+        if (context.Beam.HasValue)
+        {
+            args.Append(' ').Append("--beam ").Append(context.Beam.Value);
+        }
+
+        if (context.RetryBeam.HasValue)
+        {
+            args.Append(' ').Append("--retry_beam ").Append(context.RetryBeam.Value);
+        }
+
+        if (context.SingleSpeaker == true)
+        {
+            args.Append(" --single_speaker");
+        }
+
+        if (context.CleanOutput == true)
+        {
+            args.Append(" --clean");
+        }
 
         return MfaProcessSupervisor.RunAsync(
             AlignCommandName,

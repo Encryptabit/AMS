@@ -11,4 +11,8 @@ public sealed record class MfaChapterContext
     public string? OovListPath { get; init; }
     public string? G2pOutputPath { get; init; }
     public string? CustomDictionaryPath { get; init; }
+    public int? Beam { get; init; }
+    public int? RetryBeam { get; init; }
+    public bool? SingleSpeaker { get; init; }
+    public bool? CleanOutput { get; init; }
 }

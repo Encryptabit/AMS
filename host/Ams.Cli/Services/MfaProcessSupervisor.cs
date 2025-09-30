@@ -8,6 +8,7 @@ using System.Text.Json;
 using System.Threading;
 using System.Threading.Channels;
 using System.Threading.Tasks;
+using Ams.Core.Alignment.Mfa;
 using Ams.Core.Common;
 
 namespace Ams.Cli.Services;
@@ -106,7 +107,7 @@ internal static class MfaProcessSupervisor
             var exitCode = await WaitForCommandCompletionAsync(stdout, stderr, cancellationToken)
                 .ConfigureAwait(false);
 
-            return new MfaCommandResult(exitCode, stdout, stderr);
+            return new MfaCommandResult(command, exitCode, stdout, stderr);
         }
         finally
         {
@@ -458,5 +459,3 @@ internal static class MfaProcessSupervisor
         return builder.ToString();
     }
 }
-
-internal sealed record MfaCommandResult(int ExitCode, IReadOnlyList<string> StdOut, IReadOnlyList<string> StdErr);
