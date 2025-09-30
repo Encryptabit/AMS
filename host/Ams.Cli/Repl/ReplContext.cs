@@ -171,6 +171,7 @@ internal sealed class ReplState
 
         RunAllChapters = true;
         SelectedChapterIndex = null;
+        _chapterOverride = null;
     }
 
     public bool UseChapterByIndex(int index)
@@ -182,6 +183,7 @@ internal sealed class ReplState
 
         RunAllChapters = false;
         SelectedChapterIndex = index;
+        _chapterOverride = null;
         return true;
     }
 
@@ -194,6 +196,7 @@ internal sealed class ReplState
             {
                 RunAllChapters = false;
                 SelectedChapterIndex = i;
+                _chapterOverride = null;
                 return true;
             }
         }
