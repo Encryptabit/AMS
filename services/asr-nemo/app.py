@@ -14,9 +14,18 @@ import traceback
 import sys
 import logging
 import logging.handlers
+import io
 from pathlib import Path
 from datetime import datetime
 from huggingface_hub import login
+
+# Ensure stdout/stderr emit UTF-8 so logging can safely print diagnostic glyphs on Windows consoles
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+else:
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
+    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="replace")
 
 # Set up logging configuration
 def setup_logging():

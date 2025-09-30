@@ -138,8 +138,12 @@ Write-Host "NeMo debug logs: logs/nemo-output.log" -ForegroundColor Cyan
 Write-Host "Press Ctrl+C to stop the service" -ForegroundColor Yellow
 Write-Host ""
 
+# Ensure Python streams emit UTF-8 so logging can handle non-ASCII text on Windows consoles
+Set-Item -Path Env:PYTHONIOENCODING -Value "utf-8"
+Set-Item -Path Env:PYTHONUTF8 -Value "1"
+
 try {
-    & $venvPython app.py
+    & $venvPython -X utf8 app.py
 } catch {
     Write-Host "Error starting service: $_" -ForegroundColor Red
     Read-Host "Press Enter to exit"

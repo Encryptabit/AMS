@@ -3,6 +3,7 @@ using System.Text;
 using Ams.Core.Common;
 using Ams.Cli.Repl;
 using Ams.Cli.Commands;
+using Ams.Cli.Services;
 
 namespace Ams.Cli;
 
@@ -16,6 +17,9 @@ internal static class Program
         AsrProcessSupervisor.RegisterForShutdown();
         var defaultAsrUrl = ResolveDefaultAsrUrl();
         AsrProcessSupervisor.TriggerBackgroundWarmup(defaultAsrUrl);
+
+        MfaProcessSupervisor.RegisterForShutdown();
+        MfaProcessSupervisor.TriggerBackgroundWarmup();
 
         var rootCommand = new RootCommand("AMS - Audio Management System CLI");
 
