@@ -229,6 +229,7 @@ public static class AlignCommand
             scriptRange = s.ScriptRange != null ? new { start = s.ScriptRange.Start, end = s.ScriptRange.End } : null,
             bookText = JoinBook(book, s.BookRange.Start, s.BookRange.End),
             scriptText = s.ScriptRange != null ? JoinAsr(asr, s.ScriptRange.Start, s.ScriptRange.End) : string.Empty,
+            timing = s.Timing,
             metrics = s.Metrics,
             status = s.Status
         }).ToList();

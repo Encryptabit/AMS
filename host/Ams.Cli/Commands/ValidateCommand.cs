@@ -287,7 +287,7 @@ public static class ValidateCommand
             var status = hydSentence?.Status ?? txSentence?.Status ?? "unknown";
             string? bookText = hydSentence?.BookText;
             string? scriptText = hydSentence?.ScriptText;
-            var timing = txSentence?.Timing;
+            var timing = hydSentence?.Timing ?? txSentence?.Timing;
 
             views.Add(new SentenceView(
                 id,
@@ -535,7 +535,8 @@ public static class ValidateCommand
         string BookText,
         string ScriptText,
         SentenceMetrics Metrics,
-        string Status);
+        string Status,
+        TimingRange? Timing);
 
     private sealed record HydratedParagraph(
         int Id,
