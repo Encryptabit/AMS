@@ -14,6 +14,7 @@ namespace Ams.Cli.Commands;
 public static class DspCommand
 {
     private const string DefaultChainFileName = "dsp.chain.json";
+    private const int DefaultBitDepth = 32;
 
     public static Command Create()
     {
@@ -1198,11 +1199,8 @@ public static class DspCommand
             args.Add($"--outChannels={outChannels.Value}");
         }
 
-        var bitDepth = overrideBitDepth ?? node.BitDepth ?? chain.BitDepth;
-        if (bitDepth.HasValue)
-        {
-            args.Add($"--bitDepth={bitDepth.Value}");
-        }
+        var bitDepth = overrideBitDepth ?? node.BitDepth ?? chain.BitDepth ?? DefaultBitDepth;
+        args.Add($"--bitDepth={bitDepth}");
 
         if (!string.IsNullOrWhiteSpace(node.ParameterFile))
         {
