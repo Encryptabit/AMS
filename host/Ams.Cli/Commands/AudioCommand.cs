@@ -1,4 +1,5 @@
 using System.CommandLine;
+using System.Linq;
 using System.Text.Json;
 using Ams.Core.Artifacts;
 using Ams.Core.Audio;
@@ -189,7 +190,53 @@ public static class AudioCommand
         string chapterId = Path.GetFileNameWithoutExtension(txFile.Name);
         if (string.IsNullOrWhiteSpace(chapterId)) chapterId = "chapter";
 
-        return new ManifestV2(chapterId, workDir, audioPath, txFile.FullName);
+        string? textGridPath = ResolveTextGridPath(txFile.DirectoryName, audioPath, chapterId);
+
+        return new ManifestV2(chapterId, workDir, audioPath, txFile.FullName, textGridPath);
+    }
+
+    private static string? ResolveTextGridPath(string? txDirectory, string audioPath, string chapterId)
+    {
+        if (string.IsNullOrWhiteSpace(txDirectory))
+        {
+            return null;
+        }
+
+        string alignmentDir = Path.Combine(txDirectory, "alignment", "mfa");
+        if (!Directory.Exists(alignmentDir))
+        {
+            return null;
+        }
+
+        var candidates = new List<string>();
+
+        void TryAdd(string path)
+        {
+            if (!string.IsNullOrWhiteSpace(path) && File.Exists(path))
+            {
+                candidates.Add(Path.GetFullPath(path));
+            }
+        }
+
+        var audioStem = Path.GetFileNameWithoutExtension(audioPath);
+        TryAdd(Path.Combine(alignmentDir, audioStem + ".TextGrid"));
+
+        var normalizedChapter = chapterId.Replace(".align", string.Empty, StringComparison.OrdinalIgnoreCase)
+                                        .Replace(".tx", string.Empty, StringComparison.OrdinalIgnoreCase);
+        TryAdd(Path.Combine(alignmentDir, normalizedChapter + ".TextGrid"));
+
+        if (candidates.Count == 0)
+        {
+            candidates.AddRange(Directory.GetFiles(alignmentDir, "*.TextGrid"));
+        }
+
+        if (candidates.Count == 0)
+        {
+            return null;
+        }
+
+        var distinct = candidates.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+        return distinct.Count > 0 ? distinct[0] : null;
     }
     private static void EnsureDirectory(string? dir)
     {

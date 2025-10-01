@@ -10,6 +10,10 @@ namespace Ams.Core.Audio
 {
     public static class RoomtoneRenderer
     {
+        internal const double DefaultPreRollSec = 0.75;
+        internal const double DefaultPostChapterPauseSec = 1.50;
+        internal const double DefaultTailSec = 3.00;
+
         // Return type for structural normalization (entries come back time-shifted)
         public sealed record NormalizeEntriesResult(AudioBuffer Audio, List<SentenceTimelineEntry> Entries);
 
@@ -24,9 +28,9 @@ namespace Ams.Core.Audio
             IReadOnlyList<SentenceTimelineEntry> entries,
             int targetSampleRate,
             double toneGainLinear,
-            double preRollSec = 0.75,
-            double postChapterPauseSec = 1.50,
-            double tailSec = 3.00,
+            double preRollSec = DefaultPreRollSec,
+            double postChapterPauseSec = DefaultPostChapterPauseSec,
+            double tailSec = DefaultTailSec,
             int overlapMs = 35,
             string? debugDirectory = null)
         {
@@ -298,21 +302,20 @@ namespace Ams.Core.Audio
             if (firstStart > 0) edgeGaps.Add((0, firstStart));
             if (lastEnd < src.Length) edgeGaps.Add((lastEnd, src.Length));
             edgeGaps = Coalesce(edgeGaps);
-            if (planGapRanges.Count > 0)
-            {
-                edgeGaps = IntersectRanges(edgeGaps, planGapRanges);
-            }
 
             // Interior gaps = complement of keep mask inside [firstStart, lastEnd]
+            var interiorGaps = ComputeInteriorGaps(keepMask, firstStart, lastEnd);
+            var autoGaps = Coalesce(edgeGaps.Concat(interiorGaps).ToList());
+
             List<(int, int)> finalGaps;
             if (planGapRanges.Count > 0)
             {
-                finalGaps = Coalesce(edgeGaps.Concat(planGapRanges).ToList());
+                // When explicit gaps are provided (TextGrid/plan), honor them directly.
+                finalGaps = Coalesce(planGapRanges);
             }
             else
             {
-                var interiorGaps = ComputeInteriorGaps(keepMask, firstStart, lastEnd);
-                finalGaps = Coalesce(edgeGaps.Concat(interiorGaps).ToList());
+                finalGaps = autoGaps;
             }
 
             // Debug masks
@@ -483,10 +486,6 @@ namespace Ams.Core.Audio
         {
             if (sentences.Count == 0) return;
 
-            const double preRollSec = 0.75;
-            const double postChapterPauseSec = 1.5;
-            const double tailSec = 3.0;
-
             int sampleRate = dst.SampleRate;
             int totalSamples = dst.Length;
             double audioDurationSec = totalSamples / (double)sampleRate;
@@ -495,7 +494,7 @@ namespace Ams.Core.Audio
 
             var first = sentences[0];
             double firstStartSec = Math.Clamp(first.Timing.StartSec, 0.0, audioDurationSec);
-            double firstPreStartSec = Math.Clamp(firstStartSec - preRollSec, 0.0, audioDurationSec);
+            double firstPreStartSec = Math.Clamp(firstStartSec - DefaultPreRollSec, 0.0, audioDurationSec);
             if (firstStartSec > firstPreStartSec)
             {
                 int startSample = ToSample(firstPreStartSec);
@@ -508,7 +507,7 @@ namespace Ams.Core.Audio
             {
                 var second = sentences[1];
                 double gapStartSec = Math.Clamp(first.Timing.EndSec, 0.0, audioDurationSec);
-                double gapEndSec = Math.Min(Math.Clamp(second.Timing.StartSec, 0.0, audioDurationSec), gapStartSec + postChapterPauseSec);
+                double gapEndSec = Math.Min(Math.Clamp(second.Timing.StartSec, 0.0, audioDurationSec), gapStartSec + DefaultPostChapterPauseSec);
                 if (gapEndSec > gapStartSec)
                 {
                     int startSample = ToSample(gapStartSec);
@@ -520,7 +519,7 @@ namespace Ams.Core.Audio
 
             var last = sentences[^1];
             double tailStartSec = Math.Clamp(last.Timing.EndSec, 0.0, audioDurationSec);
-            double tailEndSec = Math.Min(audioDurationSec, tailStartSec + tailSec);
+            double tailEndSec = Math.Min(audioDurationSec, tailStartSec + DefaultTailSec);
             if (tailEndSec > tailStartSec)
             {
                 int startSample = ToSample(tailStartSec);
