@@ -236,6 +236,7 @@ public static class PipelineCommand
         try
         {
             MfaTimingMerger.MergeTimings(hydrateFile, asrFile, textGridFile);
+            MfaTimingMerger.MergeTimings(txFile, asrFile, textGridFile);
         }
         catch (Exception ex)
         {

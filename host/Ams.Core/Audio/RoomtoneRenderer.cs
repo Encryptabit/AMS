@@ -304,13 +304,16 @@ namespace Ams.Core.Audio
             }
 
             // Interior gaps = complement of keep mask inside [firstStart, lastEnd]
-            var interiorGaps = ComputeInteriorGaps(keepMask, firstStart, lastEnd);
-
-            // If caller provided plan gaps, limit interior fills to those planned spans.
+            List<(int, int)> finalGaps;
             if (planGapRanges.Count > 0)
-                interiorGaps = IntersectRanges(interiorGaps, planGapRanges);
-
-            var finalGaps = Coalesce(edgeGaps.Concat(interiorGaps).ToList());
+            {
+                finalGaps = Coalesce(edgeGaps.Concat(planGapRanges).ToList());
+            }
+            else
+            {
+                var interiorGaps = ComputeInteriorGaps(keepMask, firstStart, lastEnd);
+                finalGaps = Coalesce(edgeGaps.Concat(interiorGaps).ToList());
+            }
 
             // Debug masks
             WriteMaskDebug(debugDirectory, "step0b_keep_energy", energyKeeps, src);

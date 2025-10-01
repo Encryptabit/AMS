@@ -415,7 +415,8 @@ async def _transcribe_impl(request: AsrRequest) -> AsrResponse:
             transcribe_kwargs = {
                 "batch_size": DEFAULT_GPU_BATCH_SIZE,
                 "return_hypotheses": True,
-                "timestamps": True
+                "timestamps": True,
+                "verbose": False
             }
 
             def _run_transcribe():

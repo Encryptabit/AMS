@@ -300,12 +300,13 @@ internal static class MfaProcessSupervisor
             {
                 try
                 {
+                    Log.Info("Stopping MFA process...");
                     _stdin.WriteLine(QuitToken);
                     _stdin.Flush();
                 }
-                catch
+                catch (Exception ex)
                 {
-                    // ignore
+                    Log.Warn("Failed to signal MFA shutdown: {0}", ex.Message);
                 }
             }
 
@@ -345,10 +346,48 @@ internal static class MfaProcessSupervisor
             }
         }
 
-        _process?.Dispose();
-        _process = null;
+        if (_process is not null)
+        {
+            try
+            {
+                if (!_process.HasExited)
+                {
+                    _process.WaitForExit(2000);
+                }
+            }
+            catch (Exception ex)
+            {
+                Log.Warn("Error while waiting for MFA process exit: {0}", ex.Message);
+            }
+            finally
+            {
+                Log.Info("MFA process terminated.");
+                _process.Dispose();
+                _process = null;
+            }
+        }
+
         _stdin = null;
         _isReady = false;
+
+        if (_scriptPath is not null)
+        {
+            try
+            {
+                if (File.Exists(_scriptPath))
+                {
+                    File.Delete(_scriptPath);
+                }
+            }
+            catch (Exception ex)
+            {
+                Log.Warn("Failed to delete MFA bootstrap script {Path}: {Message}", _scriptPath, ex.Message);
+            }
+            finally
+            {
+                _scriptPath = null;
+            }
+        }
     }
 
     private static string BuildCommand(string subcommand, string? args)

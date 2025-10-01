@@ -22,9 +22,7 @@ internal sealed class MfaService : IMfaService
     internal const string DefaultAcousticModel = "english_mfa";
     internal const string DefaultG2pModel = "english_us_mfa";
 
-    internal static IMfaService Default { get; } = new MfaService();
-
-    private MfaService()
+    internal MfaService()
     {
     }
 
@@ -53,15 +51,13 @@ internal sealed class MfaService : IMfaService
         args.Append(' ').Append(Quote(dictionary));
         args.Append(' ').Append(Quote(acoustic));
 
-        if (!string.IsNullOrWhiteSpace(context.OutputDirectory))
-        {
-            args.Append(' ').Append("--output_directory ").Append(QuoteRequired(context.OutputDirectory));
-        }
-
         if (context.SingleSpeaker == true)
         {
             args.Append(" --single_speaker");
         }
+
+        // Avoid monophone training during validation (can fail on very small corpora)
+        args.Append(" --no_train");
 
         return MfaProcessSupervisor.RunAsync(
             ValidateCommand,
