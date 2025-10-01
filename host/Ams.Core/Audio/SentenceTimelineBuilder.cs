@@ -16,7 +16,7 @@ namespace Ams.Core.Audio
             IReadOnlyDictionary<int, FragmentTiming>? fragments = null,
             double rmsThresholdDb = -35.0,
             double searchWindowSec = 0.5,
-            double stepMs = 5.0)
+            double stepMs = 10.0)
         {
             if (sentences is null) throw new ArgumentNullException(nameof(sentences));
             if (analyzer is null) throw new ArgumentNullException(nameof(analyzer));

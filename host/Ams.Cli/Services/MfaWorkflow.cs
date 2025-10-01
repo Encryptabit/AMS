@@ -34,9 +34,23 @@ internal static class MfaWorkflow
 
         var alignmentDir = EnsureDirectory(Path.Combine(chapterDirectory.FullName, "alignment"));
         var corpusDir = EnsureDirectory(Path.Combine(alignmentDir, "corpus"));
-        var mfaDir = EnsureDirectory(Path.Combine(alignmentDir, "mfa"));
+        var mfaCopyDir = EnsureDirectory(Path.Combine(alignmentDir, "mfa"));
 
-        CleanupMfaArtifacts(mfaDir, chapterStem);
+        var mfaRoot = ResolveMfaRoot();
+        CleanupMfaArtifacts(mfaRoot, chapterStem);
+
+        var textGridCopyPath = Path.Combine(mfaCopyDir, chapterStem + ".TextGrid");
+        if (File.Exists(textGridCopyPath))
+        {
+            try
+            {
+                File.Delete(textGridCopyPath);
+            }
+            catch (Exception ex)
+            {
+                Log.Warn("Failed to delete existing TextGrid copy {Path}: {Message}", textGridCopyPath, ex.Message);
+            }
+        }
 
         var stagedAudioPath = Path.Combine(corpusDir, chapterStem + ".wav");
         StageAudio(audioFile, stagedAudioPath);
@@ -48,13 +62,14 @@ internal static class MfaWorkflow
         var acousticModel = MfaService.DefaultAcousticModel;
         var g2pModel = MfaService.DefaultG2pModel;
 
-        var g2pOutputPath = Path.Combine(mfaDir, chapterStem + ".g2p.txt");
-        var customDictionaryPath = Path.Combine(mfaDir, chapterStem + ".dictionary.zip");
+        var g2pOutputPath = Path.Combine(mfaRoot, chapterStem + ".g2p.txt");
+        var customDictionaryPath = Path.Combine(mfaRoot, chapterStem + ".dictionary.zip");
+        var alignOutputDir = Path.Combine(mfaRoot, chapterStem + ".align");
 
         var baseContext = new MfaChapterContext
         {
             CorpusDirectory = corpusDir,
-            OutputDirectory = mfaDir,
+            OutputDirectory = alignOutputDir,
             WorkingDirectory = alignmentDir,
             DictionaryModel = dictionaryModel,
             AcousticModel = acousticModel,
@@ -67,7 +82,7 @@ internal static class MfaWorkflow
             CleanOutput = true
         };
 
-        var service = MfaService.Default;
+        var service = new MfaService();
 
         try
         {
@@ -87,9 +102,9 @@ internal static class MfaWorkflow
                 }
             }
 
-            var oovListPath = FindOovListFile(mfaDir);
+            var oovListPath = FindOovListFile(mfaRoot);
             var sanitizedOovPath = oovListPath is not null
-                ? CreateSanitizedOovList(mfaDir, chapterStem, oovListPath)
+                ? CreateSanitizedOovList(mfaRoot, chapterStem, oovListPath)
                 : null;
 
             var hasRealOovs = sanitizedOovPath is not null;
@@ -129,6 +144,27 @@ internal static class MfaWorkflow
             Log.Info("Running MFA align for chapter {Chapter}", chapterStem);
             var alignResult = await service.AlignAsync(alignContext, cancellationToken).ConfigureAwait(false);
             EnsureSuccess("mfa align", alignResult);
+
+            CopyIfExists(Path.Combine(mfaRoot, chapterStem + ".g2p.txt"), Path.Combine(mfaCopyDir, chapterStem + ".g2p.txt"));
+            CopyIfExists(Path.Combine(mfaRoot, chapterStem + ".oov.cleaned.txt"), Path.Combine(mfaCopyDir, chapterStem + ".oov.cleaned.txt"));
+            CopyIfExists(Path.Combine(mfaRoot, chapterStem + ".dictionary.zip"), Path.Combine(mfaCopyDir, chapterStem + ".dictionary.zip"));
+
+            var textGridCandidates = new[]
+            {
+                Path.Combine(alignOutputDir, "alignment", "mfa", chapterStem + ".TextGrid"),
+                Path.Combine(alignOutputDir, chapterStem + ".TextGrid")
+            };
+            foreach (var candidate in textGridCandidates)
+            {
+                if (File.Exists(candidate))
+                {
+                    CopyIfExists(candidate, textGridCopyPath);
+                    break;
+                }
+            }
+
+            CopyIfExists(Path.Combine(alignOutputDir, "alignment", "mfa", "alignment_analysis.csv"),
+                Path.Combine(mfaCopyDir, "alignment_analysis.csv"));
         }
         finally
         {
@@ -227,7 +263,7 @@ internal static class MfaWorkflow
     {
         try
         {
-            return Directory.EnumerateFiles(directory, "oovs_found*.txt", SearchOption.TopDirectoryOnly)
+            return Directory.EnumerateFiles(directory, "oovs_found*.txt", SearchOption.AllDirectories)
                 .OrderByDescending(File.GetLastWriteTimeUtc)
                 .FirstOrDefault();
         }
@@ -238,9 +274,9 @@ internal static class MfaWorkflow
         }
     }
 
-    private static string? CreateSanitizedOovList(string mfaDir, string chapterStem, string rawOovPath)
+    private static string? CreateSanitizedOovList(string mfaRoot, string chapterStem, string rawOovPath)
     {
-        var cleanedPath = Path.Combine(mfaDir, $"{chapterStem}.oov.cleaned.txt");
+        var cleanedPath = Path.Combine(mfaRoot, $"{chapterStem}.oov.cleaned.txt");
 
         try
         {
@@ -280,8 +316,13 @@ internal static class MfaWorkflow
         }
     }
 
-    private static void CleanupMfaArtifacts(string mfaDir, string chapterStem)
+    private static void CleanupMfaArtifacts(string mfaRoot, string chapterStem)
     {
+        if (!Directory.Exists(mfaRoot))
+        {
+            return;
+        }
+
         static void TryDelete(string path)
         {
             try
@@ -297,16 +338,68 @@ internal static class MfaWorkflow
             }
         }
 
-        TryDelete(Path.Combine(mfaDir, $"{chapterStem}.g2p.txt"));
-        TryDelete(Path.Combine(mfaDir, $"{chapterStem}.dictionary.zip"));
-        TryDelete(Path.Combine(mfaDir, $"{chapterStem}.oov.cleaned.txt"));
+        TryDelete(Path.Combine(mfaRoot, $"{chapterStem}.g2p.txt"));
+        TryDelete(Path.Combine(mfaRoot, $"{chapterStem}.dictionary.zip"));
+        TryDelete(Path.Combine(mfaRoot, $"{chapterStem}.oov.cleaned.txt"));
 
-        foreach (var file in Directory.EnumerateFiles(mfaDir, "oovs_found*.txt", SearchOption.TopDirectoryOnly))
+        TryDeleteDirectory(Path.Combine(mfaRoot, $"{chapterStem}.align"));
+        TryDeleteDirectory(Path.Combine(mfaRoot, $"{chapterStem}.g2p"));
+        TryDeleteDirectory(Path.Combine(mfaRoot, $"{chapterStem}.oov.cleaned"));
+        TryDeleteDirectory(Path.Combine(mfaRoot, "corpus"));
+
+        TryDelete(Path.Combine(mfaRoot, "oov_counts_english_mfa.txt"));
+        TryDelete(Path.Combine(mfaRoot, "utterance_oovs.txt"));
+    }
+
+    private static void TryDeleteDirectory(string path)
+    {
+        try
         {
-            TryDelete(file);
+            if (Directory.Exists(path))
+            {
+                Directory.Delete(path, recursive: true);
+            }
+        }
+        catch (Exception ex)
+        {
+            Log.Warn("Failed to delete stale MFA directory {Path}: {Message}", path, ex.Message);
+        }
+    }
+
+    private static string ResolveMfaRoot()
+    {
+        var documents = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
+
+        if (string.IsNullOrWhiteSpace(documents))
+        {
+            throw new InvalidOperationException("Unable to resolve My Documents folder for MFA root.");
         }
 
-        TryDelete(Path.Combine(mfaDir, "oov_counts_english_mfa.txt"));
-        TryDelete(Path.Combine(mfaDir, "utterance_oovs.txt"));
+        var mfaRoot = Path.Combine(documents, "MFA");
+        Directory.CreateDirectory(mfaRoot);
+        return mfaRoot;
+    }
+
+    private static void CopyIfExists(string sourcePath, string destinationPath)
+    {
+        try
+        {
+            if (!File.Exists(sourcePath))
+            {
+                return;
+            }
+
+            var destDir = Path.GetDirectoryName(destinationPath);
+            if (!string.IsNullOrWhiteSpace(destDir))
+            {
+                Directory.CreateDirectory(destDir);
+            }
+
+            File.Copy(sourcePath, destinationPath, overwrite: true);
+        }
+        catch (Exception ex)
+        {
+            Log.Warn("Failed to copy MFA artifact from {Source} to {Destination}: {Message}", sourcePath, destinationPath, ex.Message);
+        }
     }
 }
