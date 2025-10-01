@@ -1,7 +1,9 @@
+using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Text.Json;
+using Ams.Core.Alignment.Mfa;
 using Ams.Core.Artifacts;
 using Ams.Core.Common;
 using Ams.Core.Audio;
@@ -17,6 +19,12 @@ public sealed class RoomToneInsertionStage
     private readonly bool _emitDiagnostics;
     private readonly bool _useAdaptiveGain;
     private readonly bool _verbose;
+
+    private const double PeakRmsSilenceCeilingDb = -30.0;
+    private const double TextGridGapToleranceSec = 0.02;
+    private const double TextGridMinGapLengthSec = 0.10;
+
+    private sealed record TextGridGapHint(double StartSec, double EndSec, int? PreviousSentenceId, int? NextSentenceId, string Text);
 
     public RoomToneInsertionStage(
         int targetSampleRate = 44100,
@@ -93,9 +101,9 @@ public sealed class RoomToneInsertionStage
             entries: entries0,
             targetSampleRate: _targetSampleRate,
             toneGainLinear: toneGainLinear,
-            preRollSec: 0.75,
-            postChapterPauseSec: 1.50,
-            tailSec: 3.00,
+            preRollSec: RoomtoneRenderer.DefaultPreRollSec,
+            postChapterPauseSec: RoomtoneRenderer.DefaultPostChapterPauseSec,
+            tailSec: RoomtoneRenderer.DefaultTailSec,
             overlapMs: (int)Math.Round(_fadeMs),
             debugDirectory: _emitDiagnostics ? manifest.ResolveStageDirectory("roomtone") : null);  // diagnostics optional  :contentReference[oaicite:4]{index=4}
 
@@ -105,7 +113,35 @@ public sealed class RoomToneInsertionStage
         // Now plan/fill against the normalized audio
         var analyzer = new AudioAnalysisService(inputAudio);
         double audioDurationSec = inputAudio.SampleRate > 0 ? inputAudio.Length / (double)inputAudio.SampleRate : 0.0;
-        var gaps = BuildGaps(timelineEntries, analyzer, audioDurationSec, _verbose, out var gapSummary);
+
+        Dictionary<(int? Prev, int? Next), List<TextGridGapHint>>? textGridHints = null;
+        List<TextGridGapHint> textGridHintList = new();
+
+        if (!string.IsNullOrWhiteSpace(manifest.TextGridPath))
+        {
+            if (File.Exists(manifest.TextGridPath))
+            {
+                try
+                {
+                    textGridHints = BuildTextGridHintMap(manifest.TextGridPath, timelineEntries, audioDurationSec, textGridHintList);
+                    textGridHintList.Sort((a, b) => a.StartSec.CompareTo(b.StartSec));
+                    if (_verbose)
+                    {
+                        Log.Info("[Roomtone] Loaded {Count} TextGrid gap hints from {Path}", textGridHintList.Count, manifest.TextGridPath);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Log.Warn("[Roomtone] Failed to parse TextGrid {Path}: {Message}", manifest.TextGridPath, ex.Message);
+                }
+            }
+            else if (_verbose)
+            {
+                Log.Warn("[Roomtone] TextGrid not found at {Path}", manifest.TextGridPath);
+            }
+        }
+
+        var gaps = BuildGaps(timelineEntries, analyzer, audioDurationSec, _verbose, out var gapSummary, textGridHints: textGridHints);
         Log.Info($"[Roomtone] Gap candidates: {gapSummary.Candidates}, retained: {gapSummary.Retained}, collapsed: {gapSummary.Collapsed}");
 
         // Update transcript timings from the (shifted) entries
@@ -148,6 +184,14 @@ public sealed class RoomToneInsertionStage
         await WriteMetaAsync(manifest, wavPath, roomtonePath, planPath, metaPath, ct);
         await WriteParamsAsync(paramsPath, _toneGainDb, roomtoneSeedStats.MeanRmsDb, appliedGainDb, _fadeMs, _useAdaptiveGain, _emitDiagnostics, ct);
 
+        string? textGridGapsPath = null;
+        if (textGridHintList.Count > 0)
+        {
+            textGridGapsPath = Path.Combine(stageDir, "textgrid.gaps.json");
+            var hintJson = JsonSerializer.Serialize(textGridHintList, new JsonSerializerOptions { WriteIndented = true });
+            await File.WriteAllTextAsync(textGridGapsPath, hintJson, ct);
+        }
+
         var outputs = new Dictionary<string, string>
         {
             ["plan"] = planPath,
@@ -156,6 +200,7 @@ public sealed class RoomToneInsertionStage
             ["params"] = paramsPath
         };
         if (wavPath is not null) outputs["roomtoneWav"] = wavPath;
+        if (!string.IsNullOrWhiteSpace(textGridGapsPath)) outputs["textgridGaps"] = textGridGapsPath;
         return outputs;
     }
 
@@ -313,17 +358,160 @@ public sealed class RoomToneInsertionStage
             gaps);
     }
 
+    private static Dictionary<(int? Prev, int? Next), List<TextGridGapHint>> BuildTextGridHintMap(
+        string textGridPath,
+        IReadOnlyList<SentenceTimelineEntry> sentences,
+        double audioDurationSec,
+        List<TextGridGapHint> collected)
+    {
+        var map = new Dictionary<(int? Prev, int? Next), List<TextGridGapHint>>();
+
+        if (!File.Exists(textGridPath))
+        {
+            return map;
+        }
+
+        IReadOnlyList<TextGridInterval> intervals;
+        try
+        {
+            intervals = TextGridParser.ParseWordIntervals(textGridPath);
+        }
+        catch
+        {
+            throw;
+        }
+
+        if (intervals.Count == 0 || sentences.Count == 0)
+        {
+            return map;
+        }
+
+        foreach (var interval in intervals)
+        {
+            var label = (interval.Text ?? string.Empty).Trim();
+            if (!IsSilenceLabel(label))
+            {
+                continue;
+            }
+
+            double start = Math.Clamp(interval.Start, 0.0, audioDurationSec);
+            double end = Math.Clamp(interval.End, 0.0, audioDurationSec);
+            if (end - start <= TextGridMinGapLengthSec)
+            {
+                continue;
+            }
+
+            var containing = FindContainingSentence(sentences, start, end);
+            if (containing is not null)
+            {
+                continue;
+            }
+
+            var previous = FindPreviousSentence(sentences, start);
+            var next = FindNextSentence(sentences, end);
+
+            if (previous is null && next is null)
+            {
+                continue;
+            }
+
+            if (previous?.SentenceId == next?.SentenceId)
+            {
+                continue;
+            }
+
+            var hint = new TextGridGapHint(start, end, previous?.SentenceId, next?.SentenceId, label);
+            collected.Add(hint);
+
+            var key = (hint.PreviousSentenceId, hint.NextSentenceId);
+            if (!map.TryGetValue(key, out var list))
+            {
+                list = new List<TextGridGapHint>();
+                map[key] = list;
+            }
+
+            list.Add(hint);
+        }
+
+        return map;
+    }
+
+    private static bool IsSilenceLabel(string label)
+    {
+        if (string.IsNullOrWhiteSpace(label))
+        {
+            return true;
+        }
+
+        label = label.Trim();
+        if (label.Length <= 3)
+        {
+            return label.Equals("sp", StringComparison.OrdinalIgnoreCase)
+                || label.Equals("sil", StringComparison.OrdinalIgnoreCase);
+        }
+
+        return label.Equals("<sil>", StringComparison.OrdinalIgnoreCase)
+            || label.Equals("<s>", StringComparison.OrdinalIgnoreCase)
+            || label.Equals("</s>", StringComparison.OrdinalIgnoreCase)
+            || label.Equals("silence", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static SentenceTimelineEntry? FindPreviousSentence(IReadOnlyList<SentenceTimelineEntry> sentences, double start)
+    {
+        for (int i = sentences.Count - 1; i >= 0; i--)
+        {
+            var entry = sentences[i];
+            if (entry.Timing.EndSec <= start + TextGridGapToleranceSec)
+            {
+                return entry;
+            }
+        }
+
+        return null;
+    }
+
+    private static SentenceTimelineEntry? FindNextSentence(IReadOnlyList<SentenceTimelineEntry> sentences, double end)
+    {
+        for (int i = 0; i < sentences.Count; i++)
+        {
+            var entry = sentences[i];
+            if (entry.Timing.StartSec >= end - TextGridGapToleranceSec)
+            {
+                return entry;
+            }
+        }
+
+        return null;
+    }
+
+    private static SentenceTimelineEntry? FindContainingSentence(IReadOnlyList<SentenceTimelineEntry> sentences, double start, double end)
+    {
+        foreach (var entry in sentences)
+        {
+            if (start >= entry.Timing.StartSec - TextGridGapToleranceSec &&
+                end   <= entry.Timing.EndSec   + TextGridGapToleranceSec)
+            {
+                return entry;
+            }
+        }
+
+        return null;
+    }
+
     private static IReadOnlyList<RoomtonePlanGap> BuildGaps(
         IReadOnlyList<SentenceTimelineEntry> entries,
         AudioAnalysisService analyzer,
         double audioDurationSec,
         bool verbose,
-        out GapSummary summary)
+        out GapSummary summary,
+        double speechThresholdDb = PeakRmsSilenceCeilingDb,
+        Dictionary<(int? Prev, int? Next), List<TextGridGapHint>>? textGridHints = null)
     {
         const double epsilon = 1e-6;
         const double stepSec = 0.005;
         const double backoffSec = 0.005;
-        const double speechThresholdDb = -40.0;
+
+        speechThresholdDb = PeakRmsSilenceCeilingDb;
 
         var gaps = new List<RoomtonePlanGap>();
         int candidates = 0;
@@ -399,6 +587,17 @@ public sealed class RoomToneInsertionStage
                 return produced;
             }
 
+            var hintKey = (leftEntry?.SentenceId, rightEntry?.SentenceId);
+            if (textGridHints is not null && textGridHints.TryGetValue(hintKey, out var hintRanges) && hintRanges.Count > 0)
+            {
+                foreach (var hint in hintRanges)
+                {
+                    AddHintRange(hint);
+                }
+                textGridHints.Remove(hintKey);
+                return produced;
+            }
+
             if (verbose)
             {
                 string label = $"prev={(leftEntry?.SentenceId.ToString() ?? "null")} next={(rightEntry?.SentenceId.ToString() ?? "null")}";
@@ -425,12 +624,32 @@ public sealed class RoomToneInsertionStage
 
             if (leftAccepted && midpoint - leftStart > epsilon)
             {
-                var stats = analyzer.AnalyzeGap(leftStart, midpoint);
-                if (verbose)
+                double minLeft = leftEntry?.Timing.EndSec ?? leftStart;
+                double safeLeftStart = Math.Max(leftStart, minLeft);
+
+                if (midpoint - safeLeftStart > epsilon)
                 {
-                    Log.Info($"[Roomtone]   left accepted [{leftStart:F3},{midpoint:F3}] meanRms={stats.MeanRmsDb:F2} dB");
+                    var stats = analyzer.AnalyzeGap(safeLeftStart, midpoint);
+                    if (stats.MaxRmsDb > speechThresholdDb)
+                    {
+                        if (verbose)
+                        {
+                            Log.Info($"[Roomtone]   left rejected [{safeLeftStart:F3},{midpoint:F3}] maxRms={stats.MaxRmsDb:F2} dB > threshold {speechThresholdDb:F2} dB");
+                        }
+                    }
+                    else
+                    {
+                        leftGap = CreateGap(safeLeftStart, midpoint, leftEntry?.SentenceId, rightEntry?.SentenceId, stats);
+                        if (verbose)
+                        {
+                            Log.Info($"[Roomtone]   left accepted [{safeLeftStart:F3},{midpoint:F3}] meanRms={stats.MeanRmsDb:F2} dB");
+                        }
+                    }
                 }
-                leftGap = CreateGap(leftStart, midpoint, leftEntry?.SentenceId, rightEntry?.SentenceId, stats);
+                else if (verbose)
+                {
+                    Log.Info("[Roomtone]   left collapsed after safety clamp.");
+                }
             }
             else if (verbose)
             {
@@ -439,12 +658,29 @@ public sealed class RoomToneInsertionStage
 
             if (rightAccepted && rightEnd - midpoint > epsilon)
             {
-                var stats = analyzer.AnalyzeGap(midpoint, rightEnd);
-                if (verbose)
+                double maxRight = rightEntry?.Timing.StartSec ?? rightEnd;
+                double safeRightEnd = Math.Min(rightEnd, maxRight);
+
+                if (safeRightEnd - midpoint > epsilon)
                 {
-                    Log.Info($"[Roomtone]   right accepted [{midpoint:F3},{rightEnd:F3}] meanRms={stats.MeanRmsDb:F2} dB");
+                    var stats = analyzer.AnalyzeGap(midpoint, safeRightEnd);
+                    if (stats.MaxRmsDb > speechThresholdDb)
+                    {
+                        if (verbose)
+                        {
+                            Log.Info($"[Roomtone]   right rejected [{midpoint:F3},{safeRightEnd:F3}] maxRms={stats.MaxRmsDb:F2} dB > threshold {speechThresholdDb:F2} dB");
+                        }
+                    }
+                    else
+                    {
+                        Log.Info($"[Roomtone]   right accepted [{midpoint:F3},{safeRightEnd:F3}] meanRms={stats.MeanRmsDb:F2} dB");
+                        rightGap = CreateGap(midpoint, safeRightEnd, leftEntry?.SentenceId, rightEntry?.SentenceId, stats);
+                    }
                 }
-                rightGap = CreateGap(midpoint, rightEnd, leftEntry?.SentenceId, rightEntry?.SentenceId, stats);
+                else if (verbose)
+                {
+                    Log.Info("[Roomtone]   right collapsed after safety clamp.");
+                }
             }
             else if (verbose)
             {
@@ -454,26 +690,65 @@ public sealed class RoomToneInsertionStage
             if (leftGap is not null && rightGap is not null)
             {
                 var stats = analyzer.AnalyzeGap(leftGap.StartSec, rightGap.EndSec);
-                if (verbose)
+                if (stats.MaxRmsDb > speechThresholdDb)
                 {
-                    Log.Info($"[Roomtone]   final gap [{leftGap.StartSec:F3},{rightGap.EndSec:F3}] meanRms={stats.MeanRmsDb:F2} dB");
+                    if (verbose)
+                    {
+                        Log.Info($"[Roomtone]   final rejected [{leftGap.StartSec:F3},{rightGap.EndSec:F3}] maxRms={stats.MaxRmsDb:F2} dB > threshold {speechThresholdDb:F2} dB");
+                    }
                 }
-                produced.Add(CreateGap(leftGap.StartSec, rightGap.EndSec, leftEntry?.SentenceId, rightEntry?.SentenceId, stats));
+                else
+                {
+                    if (verbose)
+                    {
+                        Log.Info($"[Roomtone]   final gap [{leftGap.StartSec:F3},{rightGap.EndSec:F3}] meanRms={stats.MeanRmsDb:F2} dB");
+                    }
+                    produced.Add(CreateGap(leftGap.StartSec, rightGap.EndSec, leftEntry?.SentenceId, rightEntry?.SentenceId, stats));
+                }
             }
             else
             {
-                if (leftGap is not null)
-                {
-                    produced.Add(leftGap);
-                }
-
-                if (rightGap is not null)
-                {
-                    produced.Add(rightGap);
-                }
+                if (leftGap is not null) produced.Add(leftGap);
+                if (rightGap is not null) produced.Add(rightGap);
             }
 
             return produced;
+
+            void AddHintRange(TextGridGapHint hint)
+            {
+                double start = Math.Clamp(hint.StartSec, initialStart, initialEnd);
+                double end = Math.Clamp(hint.EndSec, initialStart, initialEnd);
+                if (leftEntry is not null)
+                {
+                    start = Math.Max(start, leftEntry.Timing.EndSec);
+                }
+                if (rightEntry is not null)
+                {
+                    end = Math.Min(end, rightEntry.Timing.StartSec);
+                }
+                if (end - start <= epsilon)
+                {
+                    if (verbose)
+                    {
+                        Log.Info("[Roomtone]   hint collapsed after clamping; skipping.");
+                    }
+                    return;
+                }
+
+                var stats = analyzer.AnalyzeGap(start, end);
+                if (stats.MaxRmsDb > speechThresholdDb)
+                {
+                    if (verbose)
+                    {
+                        Log.Info($"[Roomtone]   hint rejected [{start:F3},{end:F3}] maxRms={stats.MaxRmsDb:F2} dB > threshold {speechThresholdDb:F2} dB");
+                    }
+                    return;
+                }
+
+                var prevId = hint.PreviousSentenceId ?? leftEntry?.SentenceId;
+                var nextId = hint.NextSentenceId ?? rightEntry?.SentenceId;
+                produced.Add(CreateGap(start, end, prevId, nextId, stats));
+            }
         }
 
         bool TryCalibrateLeft(double initialStart, double end, out double result)
