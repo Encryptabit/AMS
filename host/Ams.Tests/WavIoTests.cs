@@ -88,6 +88,32 @@ public class WavIoTests
         }
     }
 
+
+    [Fact]
+    public void ReadPcm16_SucceedsWithOddSizedMetadataChunk()
+    {
+        var samples = new short[] { short.MinValue, 0, short.MaxValue };
+        var data = new byte[samples.Length * sizeof(short)];
+        Buffer.BlockCopy(samples, 0, data, 0, data.Length);
+
+        var path = WriteTempWavWithOddSizedJunkChunk(data);
+        try
+        {
+            var buffer = WavIo.ReadPcmOrFloat(path);
+            Assert.Equal(1, buffer.Channels);
+            Assert.Equal(44100, buffer.SampleRate);
+            Assert.Equal(samples.Length, buffer.Length);
+
+            Assert.InRange(buffer.Planar[0][0], -1.0f, -0.9999f);
+            Assert.Equal(0f, buffer.Planar[0][1], 6);
+            Assert.InRange(buffer.Planar[0][2], 0.9999f, 1.0f);
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
     private static string WriteTempWav(ushort audioFormat, ushort bitsPerSample, int sampleRate, byte[] data)
     {
         const ushort channels = 1;
@@ -119,6 +145,56 @@ public class WavIoTests
         }
 
         var path = Path.Combine(Path.GetTempPath(), $"wav-io-{Guid.NewGuid():N}.wav");
+        File.WriteAllBytes(path, ms.ToArray());
+        return path;
+    }
+
+    private static string WriteTempWavWithOddSizedJunkChunk(byte[] data)
+    {
+        const ushort audioFormat = 1;
+        const ushort bitsPerSample = 16;
+        const ushort channels = 1;
+        const int sampleRate = 44100;
+        int bytesPerSample = bitsPerSample / 8;
+        int blockAlign = channels * bytesPerSample;
+        int byteRate = sampleRate * blockAlign;
+
+        const uint junkSize = 5;
+        uint junkSizeAligned = junkSize + (junkSize % 2);
+
+        using var ms = new MemoryStream();
+        using (var bw = new BinaryWriter(ms, Encoding.ASCII, leaveOpen: true))
+        {
+            void WriteAscii(string s) => bw.Write(Encoding.ASCII.GetBytes(s));
+
+            WriteAscii("RIFF");
+            var riffSize = (uint)(4 + (8 + 16) + (8 + junkSizeAligned) + (8 + data.Length));
+            bw.Write(riffSize);
+            WriteAscii("WAVE");
+
+            WriteAscii("fmt ");
+            bw.Write(16u);
+            bw.Write(audioFormat);
+            bw.Write(channels);
+            bw.Write((uint)sampleRate);
+            bw.Write((uint)byteRate);
+            bw.Write((ushort)blockAlign);
+            bw.Write(bitsPerSample);
+
+            WriteAscii("JUNK");
+            bw.Write(junkSize);
+            bw.Write(new byte[] { 0, 1, 2, 3, 4 });
+            if ((junkSize & 1) == 1)
+            {
+                bw.Write((byte)0);
+            }
+
+            WriteAscii("data");
+            bw.Write((uint)data.Length);
+            bw.Write(data);
+        }
+
+        var path = Path.Combine(Path.GetTempPath(), $"wav-io-junk-{Guid.NewGuid():N}.wav");
         File.WriteAllBytes(path, ms.ToArray());
         return path;
     }

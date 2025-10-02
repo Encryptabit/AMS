@@ -1,4 +1,6 @@
 using System.CommandLine;
+using System.CommandLine.Invocation;
+using System.Diagnostics;
 using System.Linq;
 using System.Text;
 using System.Text.Json;
@@ -15,6 +17,7 @@ public static class ValidateCommand
         var validate = new Command("validate", "Validation utilities");
         validate.AddCommand(CreateReportCommand());
         validate.AddCommand(CreateTimingCommand());
+        validate.AddCommand(CreateServeCommand());
         return validate;
     }
 
@@ -91,6 +94,95 @@ public static class ValidateCommand
         });
 
         return cmd;
+    }
+
+    private static Command CreateServeCommand()
+    {
+        var serve = new Command("serve", "Start web viewer for validation reports");
+        
+        var workDirOption = new Option<DirectoryInfo?>(
+            "--work-dir",
+            "Directory containing chapter folders with validation reports (defaults to REPL working directory or current directory)");
+        
+        var portOption = new Option<int>(
+            "--port",
+            () => 8081,
+            "Port to run the web server on");
+        
+        serve.AddOption(workDirOption);
+        serve.AddOption(portOption);
+        
+        serve.SetHandler(async (InvocationContext context) =>
+        {
+            var workDirProvided = context.ParseResult.GetValueForOption(workDirOption);
+            var port = context.ParseResult.GetValueForOption(portOption);
+            var cancellationToken = context.GetCancellationToken();
+            
+            var workDir = CommandInputResolver.ResolveDirectory(workDirProvided);
+            var baseDir = workDir.FullName;
+            
+            if (!Directory.Exists(baseDir))
+            {
+                Log.Error("Work directory not found: {WorkDir}", baseDir);
+                context.ExitCode = 1;
+                return;
+            }
+            
+            Log.Info("Starting validation report viewer...");
+            Log.Info("Base directory: {BaseDir}", baseDir);
+            Log.Info("Server will run at: http://localhost:{Port}", port);
+            
+            var pythonScript = Path.Combine(
+                AppContext.BaseDirectory, 
+                "..", "..", "..", "..", "..",
+                "tools", "validation-viewer", "server.py");
+            
+            if (!File.Exists(pythonScript))
+            {
+                Log.Error("Validation viewer script not found at: {Path}", pythonScript);
+                Log.Info("Expected location: {Path}", pythonScript);
+                context.ExitCode = 1;
+                return;
+            }
+            
+            var psi = new ProcessStartInfo
+            {
+                FileName = "python",
+                UseShellExecute = false,
+                CreateNoWindow = false
+            };
+            
+            psi.ArgumentList.Add(pythonScript);
+            psi.ArgumentList.Add(baseDir);
+            psi.ArgumentList.Add(port.ToString());
+            
+            using var process = Process.Start(psi);
+            if (process == null)
+            {
+                Log.Error("Failed to start validation viewer");
+                context.ExitCode = 1;
+                return;
+            }
+            
+            Log.Info("Validation viewer started. Press Ctrl+C to stop.");
+            
+            try
+            {
+                await process.WaitForExitAsync(cancellationToken);
+                context.ExitCode = process.ExitCode;
+            }
+            catch (OperationCanceledException)
+            {
+                Log.Info("Shutting down validation viewer...");
+                if (!process.HasExited)
+                {
+                    process.Kill(entireProcessTree: true);
+                }
+                context.ExitCode = 0;
+            }
+        });
+        
+        return serve;
     }
 
     private static Command CreateReportCommand()
