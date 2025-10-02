@@ -587,6 +587,16 @@ public sealed class RoomToneInsertionStage
                 return produced;
             }
 
+            double leftClamp = leftEntry?.Timing.EndSec ?? initialStart;
+            double rightClamp = rightEntry?.Timing.StartSec ?? initialEnd;
+
+            initialStart = Math.Max(initialStart, Math.Min(leftClamp, rightClamp));
+            initialEnd = Math.Min(initialEnd, rightClamp);
+            if (initialEnd - initialStart <= epsilon)
+            {
+                return produced;
+            }
+
             var hintKey = (leftEntry?.SentenceId, rightEntry?.SentenceId);
             if (textGridHints is not null && textGridHints.TryGetValue(hintKey, out var hintRanges) && hintRanges.Count > 0)
             {
@@ -624,8 +634,7 @@ public sealed class RoomToneInsertionStage
 
             if (leftAccepted && midpoint - leftStart > epsilon)
             {
-                double minLeft = leftEntry?.Timing.EndSec ?? leftStart;
-                double safeLeftStart = Math.Max(leftStart, minLeft);
+                double safeLeftStart = Math.Clamp(Math.Max(leftStart, leftClamp), initialStart, rightClamp);
 
                 if (midpoint - safeLeftStart > epsilon)
                 {
@@ -658,8 +667,7 @@ public sealed class RoomToneInsertionStage
 
             if (rightAccepted && rightEnd - midpoint > epsilon)
             {
-                double maxRight = rightEntry?.Timing.StartSec ?? rightEnd;
-                double safeRightEnd = Math.Min(rightEnd, maxRight);
+                double safeRightEnd = Math.Clamp(Math.Min(rightEnd, rightClamp), initialStart, rightClamp);
 
                 if (safeRightEnd - midpoint > epsilon)
                 {
@@ -687,29 +695,58 @@ public sealed class RoomToneInsertionStage
                 Log.Info("[Roomtone]   right rejected or collapsed.");
             }
 
-            if (leftGap is not null && rightGap is not null)
-            {
-                var stats = analyzer.AnalyzeGap(leftGap.StartSec, rightGap.EndSec);
+           if (leftGap is not null && rightGap is not null)
+           {
+                double finalStart = Math.Max(leftGap.StartSec, leftClamp);
+                double finalEnd = Math.Min(rightGap.EndSec, rightClamp);
+                if (finalEnd - finalStart <= epsilon)
+                {
+                    if (verbose)
+                    {
+                        Log.Info("[Roomtone]   final collapsed after clamps.");
+                    }
+                    return produced;
+                }
+
+                var stats = analyzer.AnalyzeGap(finalStart, finalEnd);
                 if (stats.MaxRmsDb > speechThresholdDb)
                 {
                     if (verbose)
                     {
-                        Log.Info($"[Roomtone]   final rejected [{leftGap.StartSec:F3},{rightGap.EndSec:F3}] maxRms={stats.MaxRmsDb:F2} dB > threshold {speechThresholdDb:F2} dB");
+                        Log.Info($"[Roomtone]   final rejected [{finalStart:F3},{finalEnd:F3}] maxRms={stats.MaxRmsDb:F2} dB > threshold {speechThresholdDb:F2} dB");
                     }
                 }
                 else
                 {
                     if (verbose)
                     {
-                        Log.Info($"[Roomtone]   final gap [{leftGap.StartSec:F3},{rightGap.EndSec:F3}] meanRms={stats.MeanRmsDb:F2} dB");
+                        Log.Info($"[Roomtone]   final gap [{finalStart:F3},{finalEnd:F3}] meanRms={stats.MeanRmsDb:F2} dB");
                     }
-                    produced.Add(CreateGap(leftGap.StartSec, rightGap.EndSec, leftEntry?.SentenceId, rightEntry?.SentenceId, stats));
+                    produced.Add(CreateGap(finalStart, finalEnd, leftEntry?.SentenceId, rightEntry?.SentenceId, stats));
                 }
             }
             else
             {
-                if (leftGap is not null) produced.Add(leftGap);
-                if (rightGap is not null) produced.Add(rightGap);
+                if (leftGap is not null)
+                {
+                    double start = Math.Max(leftGap.StartSec, leftClamp);
+                    double end = Math.Min(leftGap.EndSec, rightClamp);
+                    if (end - start > epsilon)
+                    {
+                        var stats = analyzer.AnalyzeGap(start, end);
+                        produced.Add(CreateGap(start, end, leftEntry?.SentenceId, rightEntry?.SentenceId, stats));
+                    }
+                }
+                if (rightGap is not null)
+                {
+                    double start = Math.Max(rightGap.StartSec, leftClamp);
+                    double end = Math.Min(rightGap.EndSec, rightClamp);
+                    if (end - start > epsilon)
+                    {
+                        var stats = analyzer.AnalyzeGap(start, end);
+                        produced.Add(CreateGap(start, end, leftEntry?.SentenceId, rightEntry?.SentenceId, stats));
+                    }
+                }
             }
 
             return produced;
@@ -726,6 +763,8 @@ public sealed class RoomToneInsertionStage
                 {
                     end = Math.Min(end, rightEntry.Timing.StartSec);
                 }
+                start = Math.Max(start, leftClamp);
+                end = Math.Min(end, rightClamp);
                 if (end - start <= epsilon)
                 {
                     if (verbose)

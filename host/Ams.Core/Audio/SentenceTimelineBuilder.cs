@@ -28,10 +28,21 @@ namespace Ams.Core.Audio
         {
             bool isUnreliable = string.Equals(sentence.Status, "unreliable", StringComparison.OrdinalIgnoreCase);
 
-            var windowTiming = isUnreliable ? new SentenceTiming(TimingRange.Empty) : ComputeWindowFromScript(sentence, asr);
             var baseTiming = fragments != null && fragments.TryGetValue(sentence.Id, out var fragment)
                 ? new SentenceTiming(fragment, fragmentBacked: true)
                 : new SentenceTiming(sentence.Timing);
+
+            var windowTiming = isUnreliable
+                ? new SentenceTiming(TimingRange.Empty)
+                : ComputeWindowFromScript(sentence, asr);
+
+            if (!isUnreliable && windowTiming.Duration > 0)
+            {
+                const double ReliableWindowPad = 0.08; // add small buffer around scripted window
+                double start = Math.Min(windowTiming.StartSec, baseTiming.StartSec) - ReliableWindowPad;
+                double end = Math.Max(windowTiming.EndSec, baseTiming.EndSec) + ReliableWindowPad;
+                windowTiming = new SentenceTiming(Math.Max(0.0, start), end);
+            }
 
             double effectiveRms = isUnreliable ? rmsThresholdDb + 2.0 : rmsThresholdDb;
             double effectiveSearch = isUnreliable ? Math.Max(searchWindowSec, 0.8) : searchWindowSec;
