@@ -47,6 +47,10 @@ public static class PipelineCommand
         var toneDbOption = new Option<double>("--tone-gain-db", () => -60.0, "Target RMS level for roomtone (dBFS)");
         var diagnosticsOption = new Option<bool>("--emit-diagnostics", () => false, "Emit diagnostic WAVs during roomtone rendering");
         var adaptiveGainOption = new Option<bool>("--adaptive-gain", () => false, "Scale roomtone seed to match target RMS");
+        var gapLeftThresholdOption = new Option<double>("--gap-left-threshold-db", () => -30.0, "RMS threshold (dBFS) used to detect silence on the left side of gaps");
+        var gapRightThresholdOption = new Option<double>("--gap-right-threshold-db", () => -30.0, "RMS threshold (dBFS) used to detect silence on the right side of gaps");
+        var gapStepOption = new Option<double>("--gap-step-ms", () => 5.0, "Step size (ms) when probing gap boundaries");
+        var gapBackoffOption = new Option<double>("--gap-backoff-ms", () => 5.0, "Backoff amount (ms) applied after a silent window is detected");
 
         cmd.AddOption(bookOption);
         cmd.AddOption(audioOption);
@@ -64,6 +68,10 @@ public static class PipelineCommand
         cmd.AddOption(toneDbOption);
         cmd.AddOption(diagnosticsOption);
         cmd.AddOption(adaptiveGainOption);
+        cmd.AddOption(gapLeftThresholdOption);
+        cmd.AddOption(gapRightThresholdOption);
+        cmd.AddOption(gapStepOption);
+        cmd.AddOption(gapBackoffOption);
 
         cmd.SetHandler(async context =>
         {
@@ -84,6 +92,10 @@ public static class PipelineCommand
             var toneDb = context.ParseResult.GetValueForOption(toneDbOption);
             var emitDiagnostics = context.ParseResult.GetValueForOption(diagnosticsOption);
             var adaptiveGain = context.ParseResult.GetValueForOption(adaptiveGainOption);
+            var gapLeftThreshold = context.ParseResult.GetValueForOption(gapLeftThresholdOption);
+            var gapRightThreshold = context.ParseResult.GetValueForOption(gapRightThresholdOption);
+            var gapStep = context.ParseResult.GetValueForOption(gapStepOption);
+            var gapBackoff = context.ParseResult.GetValueForOption(gapBackoffOption);
 
             try
             {
@@ -104,6 +116,10 @@ public static class PipelineCommand
                     toneDb,
                     emitDiagnostics,
                     adaptiveGain,
+                    gapLeftThreshold,
+                    gapRightThreshold,
+                    gapStep,
+                    gapBackoff,
                     cancellationToken);
             }
             catch (Exception ex)
@@ -133,6 +149,10 @@ public static class PipelineCommand
         double toneDb,
         bool emitDiagnostics,
         bool adaptiveGain,
+        double gapLeftThresholdDb,
+        double gapRightThresholdDb,
+        double gapStepMs,
+        double gapBackoffMs,
         CancellationToken cancellationToken)
     {
         if (!bookFile.Exists)
@@ -244,7 +264,7 @@ public static class PipelineCommand
         }
 
         Log.Info("Rendering roomtone");
-        await AudioCommand.RunRenderAsync(txFile, treatedWav, sampleRate, bitDepth, fadeMs, toneDb, emitDiagnostics, adaptiveGain, verbose: false);
+        await AudioCommand.RunRenderAsync(txFile, treatedWav, sampleRate, bitDepth, fadeMs, toneDb, emitDiagnostics, adaptiveGain, verbose: false, gapLeftThresholdDb, gapRightThresholdDb, gapStepMs, gapBackoffMs);
 
         Log.Info("=== Outputs ===");
         Log.Info("Book index : {BookIndex}", bookIndexFile.FullName);
