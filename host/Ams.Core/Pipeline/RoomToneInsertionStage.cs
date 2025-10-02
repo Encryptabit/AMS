@@ -19,8 +19,14 @@ public sealed class RoomToneInsertionStage
     private readonly bool _emitDiagnostics;
     private readonly bool _useAdaptiveGain;
     private readonly bool _verbose;
+    private readonly double _gapLeftThresholdDb;
+    private readonly double _gapRightThresholdDb;
+    private readonly double _gapStepSec;
+    private readonly double _gapBackoffSec;
 
-    private const double PeakRmsSilenceCeilingDb = -30.0;
+    private const double DefaultGapThresholdDb = -30.0;
+    private const double DefaultGapStepMs = 5.0;
+    private const double DefaultGapBackoffMs = 5.0;
     private const double TextGridGapToleranceSec = 0.02;
     private const double TextGridMinGapLengthSec = 0.10;
 
@@ -32,15 +38,25 @@ public sealed class RoomToneInsertionStage
         double fadeMs = 5.0,
         bool emitDiagnostics = true,
         bool useAdaptiveGain = true,
-        bool verbose = false)
+        bool verbose = false,
+        double gapLeftThresholdDb = DefaultGapThresholdDb,
+        double gapRightThresholdDb = DefaultGapThresholdDb,
+        double gapStepMs = DefaultGapStepMs,
+        double gapBackoffMs = DefaultGapBackoffMs)
     {
         if (targetSampleRate <= 0) throw new ArgumentOutOfRangeException(nameof(targetSampleRate));
+        if (gapStepMs <= 0) throw new ArgumentOutOfRangeException(nameof(gapStepMs));
+        if (gapBackoffMs <= 0) throw new ArgumentOutOfRangeException(nameof(gapBackoffMs));
         _targetSampleRate = targetSampleRate;
         _toneGainDb = toneGainDb;
         _fadeMs = fadeMs;
         _emitDiagnostics = emitDiagnostics;
         _useAdaptiveGain = useAdaptiveGain;
         _verbose = verbose;
+        _gapLeftThresholdDb = gapLeftThresholdDb;
+        _gapRightThresholdDb = gapRightThresholdDb;
+        _gapStepSec = gapStepMs / 1000.0;
+        _gapBackoffSec = gapBackoffMs / 1000.0;
     }
 
     public async Task<IDictionary<string, string>> RunAsync(ManifestV2 manifest, CancellationToken ct, bool renderAudio = true)
@@ -141,7 +157,7 @@ public sealed class RoomToneInsertionStage
             }
         }
 
-        var gaps = BuildGaps(timelineEntries, analyzer, audioDurationSec, _verbose, out var gapSummary, textGridHints: textGridHints);
+        var gaps = BuildGaps(timelineEntries, analyzer, audioDurationSec, _verbose, out var gapSummary, _gapLeftThresholdDb, _gapRightThresholdDb, _gapStepSec, _gapBackoffSec, textGridHints);
         Log.Info($"[Roomtone] Gap candidates: {gapSummary.Candidates}, retained: {gapSummary.Retained}, collapsed: {gapSummary.Collapsed}");
 
         // Update transcript timings from the (shifted) entries
@@ -182,7 +198,7 @@ public sealed class RoomToneInsertionStage
         await WriteTimelineAsync(timelineEntries, manifest, timelinePath, ct);
         await WritePlanAsync(plan, planPath, ct);
         await WriteMetaAsync(manifest, wavPath, roomtonePath, planPath, metaPath, ct);
-        await WriteParamsAsync(paramsPath, _toneGainDb, roomtoneSeedStats.MeanRmsDb, appliedGainDb, _fadeMs, _useAdaptiveGain, _emitDiagnostics, ct);
+        await WriteParamsAsync(paramsPath, _toneGainDb, roomtoneSeedStats.MeanRmsDb, appliedGainDb, _fadeMs, _useAdaptiveGain, _emitDiagnostics, _gapLeftThresholdDb, _gapRightThresholdDb, _gapStepSec, _gapBackoffSec, ct);
 
         string? textGridGapsPath = null;
         if (textGridHintList.Count > 0)
@@ -504,14 +520,13 @@ public sealed class RoomToneInsertionStage
         double audioDurationSec,
         bool verbose,
         out GapSummary summary,
-        double speechThresholdDb = PeakRmsSilenceCeilingDb,
+        double leftThresholdDb,
+        double rightThresholdDb,
+        double stepSec,
+        double backoffSec,
         Dictionary<(int? Prev, int? Next), List<TextGridGapHint>>? textGridHints = null)
     {
         const double epsilon = 1e-6;
-        const double stepSec = 0.005;
-        const double backoffSec = 0.005;
-
-        speechThresholdDb = PeakRmsSilenceCeilingDb;
 
         var gaps = new List<RoomtonePlanGap>();
         int candidates = 0;
@@ -626,8 +641,8 @@ public sealed class RoomToneInsertionStage
                 return produced;
             }
 
-            bool leftAccepted = TryCalibrateLeft(initialStart, midpoint, out double leftStart);
-            bool rightAccepted = TryCalibrateRight(midpoint, initialEnd, out double rightEnd);
+            bool leftAccepted = TryCalibrateLeft(initialStart, midpoint, leftThresholdDb, out double leftStart);
+            bool rightAccepted = TryCalibrateRight(midpoint, initialEnd, rightThresholdDb, out double rightEnd);
 
             RoomtonePlanGap? leftGap = null;
             RoomtonePlanGap? rightGap = null;
@@ -639,11 +654,11 @@ public sealed class RoomToneInsertionStage
                 if (midpoint - safeLeftStart > epsilon)
                 {
                     var stats = analyzer.AnalyzeGap(safeLeftStart, midpoint);
-                    if (stats.MaxRmsDb > speechThresholdDb)
+                    if (stats.MaxRmsDb > leftThresholdDb)
                     {
                         if (verbose)
                         {
-                            Log.Info($"[Roomtone]   left rejected [{safeLeftStart:F3},{midpoint:F3}] maxRms={stats.MaxRmsDb:F2} dB > threshold {speechThresholdDb:F2} dB");
+                            Log.Info($"[Roomtone]   left rejected [{safeLeftStart:F3},{midpoint:F3}] maxRms={stats.MaxRmsDb:F2} dB > threshold {leftThresholdDb:F2} dB");
                         }
                     }
                     else
@@ -672,11 +687,11 @@ public sealed class RoomToneInsertionStage
                 if (safeRightEnd - midpoint > epsilon)
                 {
                     var stats = analyzer.AnalyzeGap(midpoint, safeRightEnd);
-                    if (stats.MaxRmsDb > speechThresholdDb)
+                    if (stats.MaxRmsDb > rightThresholdDb)
                     {
                         if (verbose)
                         {
-                            Log.Info($"[Roomtone]   right rejected [{midpoint:F3},{safeRightEnd:F3}] maxRms={stats.MaxRmsDb:F2} dB > threshold {speechThresholdDb:F2} dB");
+                        Log.Info($"[Roomtone]   right rejected [{midpoint:F3},{safeRightEnd:F3}] maxRms={stats.MaxRmsDb:F2} dB > threshold {rightThresholdDb:F2} dB");
                         }
                     }
                     else
@@ -695,8 +710,8 @@ public sealed class RoomToneInsertionStage
                 Log.Info("[Roomtone]   right rejected or collapsed.");
             }
 
-           if (leftGap is not null && rightGap is not null)
-           {
+            if (leftGap is not null && rightGap is not null)
+            {
                 double finalStart = Math.Max(leftGap.StartSec, leftClamp);
                 double finalEnd = Math.Min(rightGap.EndSec, rightClamp);
                 if (finalEnd - finalStart <= epsilon)
@@ -709,11 +724,12 @@ public sealed class RoomToneInsertionStage
                 }
 
                 var stats = analyzer.AnalyzeGap(finalStart, finalEnd);
-                if (stats.MaxRmsDb > speechThresholdDb)
+                double combinedThreshold = Math.Min(leftThresholdDb, rightThresholdDb);
+                if (stats.MaxRmsDb > combinedThreshold)
                 {
                     if (verbose)
                     {
-                        Log.Info($"[Roomtone]   final rejected [{finalStart:F3},{finalEnd:F3}] maxRms={stats.MaxRmsDb:F2} dB > threshold {speechThresholdDb:F2} dB");
+                        Log.Info($"[Roomtone]   final rejected [{finalStart:F3},{finalEnd:F3}] maxRms={stats.MaxRmsDb:F2} dB > threshold {combinedThreshold:F2} dB");
                     }
                 }
                 else
@@ -734,7 +750,17 @@ public sealed class RoomToneInsertionStage
                     if (end - start > epsilon)
                     {
                         var stats = analyzer.AnalyzeGap(start, end);
+                        if (stats.MaxRmsDb > leftThresholdDb)
+                        {
+                            if (verbose)
+                            {
+                                Log.Info($"[Roomtone]   left-only rejected [{start:F3},{end:F3}] maxRms={stats.MaxRmsDb:F2} dB > threshold {leftThresholdDb:F2} dB");
+                            }
+                        }
+                        else
+                        {
                         produced.Add(CreateGap(start, end, leftEntry?.SentenceId, rightEntry?.SentenceId, stats));
+                        }
                     }
                 }
                 if (rightGap is not null)
@@ -744,7 +770,17 @@ public sealed class RoomToneInsertionStage
                     if (end - start > epsilon)
                     {
                         var stats = analyzer.AnalyzeGap(start, end);
-                        produced.Add(CreateGap(start, end, leftEntry?.SentenceId, rightEntry?.SentenceId, stats));
+                        if (stats.MaxRmsDb > rightThresholdDb)
+                        {
+                            if (verbose)
+                            {
+                                Log.Info($"[Roomtone]   right-only rejected [{start:F3},{end:F3}] maxRms={stats.MaxRmsDb:F2} dB > threshold {rightThresholdDb:F2} dB");
+                            }
+                        }
+                        else
+                        {
+                            produced.Add(CreateGap(start, end, leftEntry?.SentenceId, rightEntry?.SentenceId, stats));
+                        }
                     }
                 }
             }
@@ -775,11 +811,12 @@ public sealed class RoomToneInsertionStage
                 }
 
                 var stats = analyzer.AnalyzeGap(start, end);
-                if (stats.MaxRmsDb > speechThresholdDb)
+                double hintThreshold = Math.Min(leftThresholdDb, rightThresholdDb);
+                if (stats.MaxRmsDb > hintThreshold)
                 {
                     if (verbose)
                     {
-                        Log.Info($"[Roomtone]   hint rejected [{start:F3},{end:F3}] maxRms={stats.MaxRmsDb:F2} dB > threshold {speechThresholdDb:F2} dB");
+                        Log.Info($"[Roomtone]   hint rejected [{start:F3},{end:F3}] maxRms={stats.MaxRmsDb:F2} dB > threshold {hintThreshold:F2} dB");
                     }
                     return;
                 }
@@ -790,7 +827,7 @@ public sealed class RoomToneInsertionStage
             }
         }
 
-        bool TryCalibrateLeft(double initialStart, double end, out double result)
+        bool TryCalibrateLeft(double initialStart, double end, double thresholdDb, out double result)
         {
             double boundary = initialStart;
             result = double.NaN;
@@ -801,14 +838,14 @@ public sealed class RoomToneInsertionStage
                 {
                     Log.Info($"[Roomtone]     test left [{boundary:F3},{end:F3}] rms={rms:F2} dB");
                 }
-                if (rms <= speechThresholdDb)
+                if (rms <= thresholdDb)
                 {
                     double candidate = boundary;
                     double backoff = Math.Max(initialStart, candidate - backoffSec);
                     if (backoff < candidate)
                     {
                         double backoffRms = analyzer.MeasureRms(backoff, end);
-                        if (backoffRms <= speechThresholdDb)
+                        if (backoffRms <= thresholdDb)
                         {
                             candidate = backoff;
                         }
@@ -821,7 +858,7 @@ public sealed class RoomToneInsertionStage
             return false;
         }
 
-        bool TryCalibrateRight(double start, double initialEnd, out double result)
+        bool TryCalibrateRight(double start, double initialEnd, double thresholdDb, out double result)
         {
             double boundary = initialEnd;
             result = double.NaN;
@@ -832,14 +869,14 @@ public sealed class RoomToneInsertionStage
                 {
                     Log.Info($"[Roomtone]     test right [{start:F3},{boundary:F3}] rms={rms:F2} dB");
                 }
-                if (rms <= speechThresholdDb)
+                if (rms <= thresholdDb)
                 {
                     double candidate = boundary;
                     double backoff = Math.Min(initialEnd, candidate + backoffSec);
                     if (backoff > candidate)
                     {
                         double backoffRms = analyzer.MeasureRms(start, backoff);
-                        if (backoffRms <= speechThresholdDb)
+                        if (backoffRms <= thresholdDb)
                         {
                             candidate = backoff;
                         }
@@ -1009,7 +1046,19 @@ public sealed class RoomToneInsertionStage
         await File.WriteAllTextAsync(path, json, ct);
     }
 
-    private static async Task WriteParamsAsync(string path, double targetRmsDb, double roomtoneSeedRmsDb, double appliedGainDb, double fadeMs, bool adaptiveGainEnabled, bool diagnosticsEnabled, CancellationToken ct)
+    private static async Task WriteParamsAsync(
+        string path,
+        double targetRmsDb,
+        double roomtoneSeedRmsDb,
+        double appliedGainDb,
+        double fadeMs,
+        bool adaptiveGainEnabled,
+        bool diagnosticsEnabled,
+        double gapLeftThresholdDb,
+        double gapRightThresholdDb,
+        double gapStepSec,
+        double gapBackoffSec,
+        CancellationToken ct)
     {
         var snapshot = new
         {
@@ -1021,6 +1070,10 @@ public sealed class RoomToneInsertionStage
                 fadeMs,
                 adaptiveGainEnabled,
                 diagnosticsEnabled,
+                gapLeftThresholdDb,
+                gapRightThresholdDb,
+                gapStepMs = gapStepSec * 1000.0,
+                gapBackoffMs = gapBackoffSec * 1000.0,
                 usedExistingRoomtone = true
             }
         };

@@ -37,6 +37,10 @@ public static class AudioCommand
         var diagnosticsOption = new Option<bool>("--emit-diagnostics", () => false, "Write intermediate diagnostic WAV snapshots");
         var adaptiveGainOption = new Option<bool>("--adaptive-gain", () => false, "Scale roomtone seed to the target RMS");
         var verboseOption = new Option<bool>("--verbose", () => false, "Enable verbose roomtone gap logging");
+        var gapLeftThresholdOption = new Option<double>("--gap-left-threshold-db", () => -30.0, "RMS threshold (dBFS) used to detect silence on the left side of gaps");
+        var gapRightThresholdOption = new Option<double>("--gap-right-threshold-db", () => -30.0, "RMS threshold (dBFS) used to detect silence on the right side of gaps");
+        var gapStepOption = new Option<double>("--gap-step-ms", () => 5.0, "Step size (ms) when probing gap boundaries");
+        var gapBackoffOption = new Option<double>("--gap-backoff-ms", () => 5.0, "Backoff amount (ms) applied after a silent window is detected");
 
         cmd.AddOption(txOption);
         cmd.AddOption(outOption);
@@ -47,6 +51,10 @@ public static class AudioCommand
         cmd.AddOption(diagnosticsOption);
         cmd.AddOption(adaptiveGainOption);
         cmd.AddOption(verboseOption);
+        cmd.AddOption(gapLeftThresholdOption);
+        cmd.AddOption(gapRightThresholdOption);
+        cmd.AddOption(gapStepOption);
+        cmd.AddOption(gapBackoffOption);
 
         cmd.SetHandler(async (context) =>
         {
@@ -59,10 +67,14 @@ public static class AudioCommand
             var emitDiagnostics = context.ParseResult.GetValueForOption(diagnosticsOption);
             var adaptiveGain = context.ParseResult.GetValueForOption(adaptiveGainOption);
             var verbose = context.ParseResult.GetValueForOption(verboseOption);
+            var gapLeftThreshold = context.ParseResult.GetValueForOption(gapLeftThresholdOption);
+            var gapRightThreshold = context.ParseResult.GetValueForOption(gapRightThresholdOption);
+            var gapStep = context.ParseResult.GetValueForOption(gapStepOption);
+            var gapBackoff = context.ParseResult.GetValueForOption(gapBackoffOption);
 
             try
             {
-                await RunRenderAsync(txFile, outWav, sr, bit, fadeMs, toneDb, emitDiagnostics, adaptiveGain, verbose);
+                await RunRenderAsync(txFile, outWav, sr, bit, fadeMs, toneDb, emitDiagnostics, adaptiveGain, verbose, gapLeftThreshold, gapRightThreshold, gapStep, gapBackoff);
             }
             catch (Exception ex)
             {
@@ -89,6 +101,10 @@ public static class AudioCommand
         var diagnosticsOption = new Option<bool>("--emit-diagnostics", () => false, "Write intermediate diagnostic WAV snapshots when rendering");
         var adaptiveGainOption = new Option<bool>("--adaptive-gain", () => false, "Scale roomtone seed to the target RMS");
         var verboseOption = new Option<bool>("--verbose", () => false, "Enable verbose roomtone gap logging");
+        var gapLeftThresholdOption = new Option<double>("--gap-left-threshold-db", () => -30.0, "RMS threshold (dBFS) used to detect silence on the left side of gaps");
+        var gapRightThresholdOption = new Option<double>("--gap-right-threshold-db", () => -30.0, "RMS threshold (dBFS) used to detect silence on the right side of gaps");
+        var gapStepOption = new Option<double>("--gap-step-ms", () => 5.0, "Step size (ms) when probing gap boundaries");
+        var gapBackoffOption = new Option<double>("--gap-backoff-ms", () => 5.0, "Backoff amount (ms) applied after a silent window is detected");
 
         cmd.AddOption(txOption);
         cmd.AddOption(outOption);
@@ -98,6 +114,10 @@ public static class AudioCommand
         cmd.AddOption(diagnosticsOption);
         cmd.AddOption(adaptiveGainOption);
         cmd.AddOption(verboseOption);
+        cmd.AddOption(gapLeftThresholdOption);
+        cmd.AddOption(gapRightThresholdOption);
+        cmd.AddOption(gapStepOption);
+        cmd.AddOption(gapBackoffOption);
 
         cmd.SetHandler(async context =>
         {
@@ -109,12 +129,16 @@ public static class AudioCommand
             var emitDiagnostics = context.ParseResult.GetValueForOption(diagnosticsOption);
             var adaptiveGain = context.ParseResult.GetValueForOption(adaptiveGainOption);
             var verbose = context.ParseResult.GetValueForOption(verboseOption);
+            var gapLeftThreshold = context.ParseResult.GetValueForOption(gapLeftThresholdOption);
+            var gapRightThreshold = context.ParseResult.GetValueForOption(gapRightThresholdOption);
+            var gapStep = context.ParseResult.GetValueForOption(gapStepOption);
+            var gapBackoff = context.ParseResult.GetValueForOption(gapBackoffOption);
 
             var outJson = outJsonOpt ?? new FileInfo(Path.Combine(txFile.DirectoryName ?? Directory.GetCurrentDirectory(), Path.GetFileNameWithoutExtension(txFile.Name) + ".roomtone.json"));
 
             try
             {
-                await RunPlanAsync(txFile, outJson, sr, fadeMs, toneDb, emitDiagnostics, adaptiveGain, verbose);
+                await RunPlanAsync(txFile, outJson, sr, fadeMs, toneDb, emitDiagnostics, adaptiveGain, verbose, gapLeftThreshold, gapRightThreshold, gapStep, gapBackoff);
             }
             catch (Exception ex)
             {
@@ -126,7 +150,20 @@ public static class AudioCommand
         return cmd;
     }
 
-    internal static async Task RunRenderAsync(FileInfo txFile, FileInfo outWav, int sampleRate, int bitDepth, double fadeMs, double toneDb, bool emitDiagnostics, bool adaptiveGain, bool verbose)
+    internal static async Task RunRenderAsync(
+        FileInfo txFile,
+        FileInfo outWav,
+        int sampleRate,
+        int bitDepth,
+        double fadeMs,
+        double toneDb,
+        bool emitDiagnostics,
+        bool adaptiveGain,
+        bool verbose,
+        double gapLeftThresholdDb,
+        double gapRightThresholdDb,
+        double gapStepMs,
+        double gapBackoffMs)
     {
         if (!txFile.Exists) throw new FileNotFoundException($"TranscriptIndex not found: {txFile.FullName}");
 
@@ -134,7 +171,7 @@ public static class AudioCommand
 
         var manifest = await PrepareManifestAsync(txFile, outWav.DirectoryName);
 
-        var stage = new RoomToneInsertionStage(sampleRate, toneDb, fadeMs, emitDiagnostics, adaptiveGain, verbose);
+        var stage = new RoomToneInsertionStage(sampleRate, toneDb, fadeMs, emitDiagnostics, adaptiveGain, verbose, gapLeftThresholdDb, gapRightThresholdDb, gapStepMs, gapBackoffMs);
         var outputs = await stage.RunAsync(manifest, CancellationToken.None);
 
         var producedWav = outputs.TryGetValue("roomtoneWav", out var path) ? path : throw new InvalidOperationException("Stage did not produce roomtone WAV");
@@ -152,7 +189,19 @@ public static class AudioCommand
         if (outputs.TryGetValue("params", out var snapshot)) Log.Info("Roomtone params snapshot saved to {ParamsPath}", snapshot);
     }
 
-    private static async Task RunPlanAsync(FileInfo txFile, FileInfo outJson, int sampleRate, double fadeMs, double toneDb, bool emitDiagnostics, bool adaptiveGain, bool verbose)
+    private static async Task RunPlanAsync(
+        FileInfo txFile,
+        FileInfo outJson,
+        int sampleRate,
+        double fadeMs,
+        double toneDb,
+        bool emitDiagnostics,
+        bool adaptiveGain,
+        bool verbose,
+        double gapLeftThresholdDb,
+        double gapRightThresholdDb,
+        double gapStepMs,
+        double gapBackoffMs)
     {
         if (!txFile.Exists) throw new FileNotFoundException($"TranscriptIndex not found: {txFile.FullName}");
 
@@ -160,7 +209,7 @@ public static class AudioCommand
 
         var manifest = await PrepareManifestAsync(txFile, outJson.DirectoryName);
 
-        var stage = new RoomToneInsertionStage(sampleRate, toneDb, fadeMs, emitDiagnostics, adaptiveGain, verbose);
+        var stage = new RoomToneInsertionStage(sampleRate, toneDb, fadeMs, emitDiagnostics, adaptiveGain, verbose, gapLeftThresholdDb, gapRightThresholdDb, gapStepMs, gapBackoffMs);
         var outputs = await stage.RunAsync(manifest, CancellationToken.None, renderAudio: false);
 
         var planPath = outputs.TryGetValue("plan", out var plan) ? plan : throw new InvalidOperationException("Stage did not produce roomtone plan");
