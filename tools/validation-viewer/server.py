@@ -602,6 +602,18 @@ class ValidationReportHandler(BaseHTTPRequestHandler):
                         'path': str(item.relative_to(BASE_DIR))
                     })
 
+        def natural_sort_key(chapter):
+            name = chapter['name']
+            number_groups = [int(match.group()) for match in re.finditer(r"\d+", name)]
+            if number_groups:
+                # Prefer the first number block (chapters typically lead with it)
+                primary = number_groups[0]
+                # Secondary key ensures ties keep lexicographic order
+                return (0, primary, name.lower())
+            return (1, name.lower())
+
+        chapters.sort(key=natural_sort_key)
+
         self.send_response(200)
         self.send_header('Content-type', 'application/json')
         self.end_headers()
