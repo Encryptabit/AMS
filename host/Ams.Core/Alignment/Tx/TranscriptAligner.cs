@@ -406,6 +406,8 @@ public static class TranscriptAligner
             sentsOut.Add(new SentenceAlign(s.Id, new IntRange(start, end), aRange, TimingRange.Empty, metrics, status));
         }
 
+        SynthesizeMissingScriptRanges(sentsOut, asr?.Tokens.Length ?? 0);
+
         // Paragraphs
         var parasOut = new List<ParagraphAlign>(bookParagraphs.Count);
         foreach (var p in bookParagraphs)
@@ -425,6 +427,154 @@ public static class TranscriptAligner
         }
 
         return (sentsOut, parasOut);
+    }
+
+    private static void SynthesizeMissingScriptRanges(List<SentenceAlign> sentences, int asrTokenCount)
+    {
+        if (sentences.Count == 0 || asrTokenCount <= 0)
+        {
+            return;
+        }
+
+        var missing = new List<int>();
+        for (int i = 0; i < sentences.Count; i++)
+        {
+            if (!TryGetConcreteRange(sentences[i], out _, out _))
+            {
+                missing.Add(i);
+            }
+        }
+
+        if (missing.Count == 0)
+        {
+            return;
+        }
+
+        int maxToken = asrTokenCount - 1;
+        int cursor = 0;
+
+        while (cursor < missing.Count)
+        {
+            int blockStartIndex = missing[cursor];
+            int blockEndIndex = blockStartIndex;
+
+            while (cursor + 1 < missing.Count && missing[cursor + 1] == blockEndIndex + 1)
+            {
+                cursor++;
+                blockEndIndex = missing[cursor];
+            }
+
+            cursor++;
+
+            var prevRange = FindPreviousRange(sentences, blockStartIndex - 1);
+            var nextRange = FindNextRange(sentences, blockEndIndex + 1);
+
+            int lower = prevRange?.End + 1 ?? 0;
+            int upper = nextRange?.Start - 1 ?? maxToken;
+
+            lower = Math.Clamp(lower, 0, maxToken);
+            upper = Math.Clamp(upper, 0, maxToken);
+
+            if (upper < lower)
+            {
+                int anchor = prevRange?.End ?? nextRange?.Start ?? 0;
+                anchor = Math.Clamp(anchor, 0, maxToken);
+                lower = anchor;
+                upper = anchor;
+            }
+
+            int blockSize = blockEndIndex - blockStartIndex + 1;
+            int span = Math.Max(0, upper - lower + 1);
+
+            for (int offset = 0; offset < blockSize; offset++)
+            {
+                int sentenceIndex = blockStartIndex + offset;
+                int startIdx;
+                int endIdx;
+
+                if (span == 0)
+                {
+                    startIdx = lower;
+                    endIdx = lower;
+                }
+                else
+                {
+                    double portionStart = (double)offset / blockSize;
+                    double portionEnd = (double)(offset + 1) / blockSize;
+                    startIdx = lower + (int)Math.Floor(span * portionStart);
+                    endIdx = lower + (int)Math.Floor(span * portionEnd) - 1;
+                    startIdx = Math.Clamp(startIdx, lower, upper);
+                    endIdx = Math.Clamp(endIdx, startIdx, upper);
+                }
+
+                if (sentenceIndex > 0 && TryGetConcreteRange(sentences[sentenceIndex - 1], out _, out var prevEnd))
+                {
+                    if (startIdx <= prevEnd)
+                    {
+                        startIdx = Math.Min(upper, prevEnd + 1);
+                        if (startIdx > upper)
+                        {
+                            startIdx = upper;
+                        }
+                        if (endIdx < startIdx)
+                        {
+                            endIdx = startIdx;
+                        }
+                    }
+                }
+
+                if (sentenceIndex < sentences.Count - 1 && TryGetConcreteRange(sentences[sentenceIndex + 1], out var nextStart, out _))
+                {
+                    if (endIdx >= nextStart)
+                    {
+                        endIdx = Math.Max(startIdx, Math.Clamp(nextStart - 1, startIdx, upper));
+                    }
+                }
+
+                var synthesized = new ScriptRange(startIdx, endIdx);
+                sentences[sentenceIndex] = sentences[sentenceIndex] with { ScriptRange = synthesized };
+            }
+        }
+    }
+
+    private static bool TryGetConcreteRange(SentenceAlign sentence, out int start, out int end)
+    {
+        if (sentence.ScriptRange is { Start: int s, End: int e })
+        {
+            start = s;
+            end = e;
+            return true;
+        }
+
+        start = default;
+        end = default;
+        return false;
+    }
+
+    private static (int Start, int End)? FindPreviousRange(IReadOnlyList<SentenceAlign> sentences, int index)
+    {
+        for (int i = index; i >= 0; i--)
+        {
+            if (TryGetConcreteRange(sentences[i], out var start, out var end))
+            {
+                return (start, end);
+            }
+        }
+
+        return null;
+    }
+
+    private static (int Start, int End)? FindNextRange(IReadOnlyList<SentenceAlign> sentences, int index)
+    {
+        for (int i = index; i < sentences.Count; i++)
+        {
+            if (TryGetConcreteRange(sentences[i], out var start, out var end))
+            {
+                return (start, end);
+            }
+        }
+
+        return null;
     }
 
     private static double ComputeCer(BookIndex? book, AsrResponse? asr, int bookStart, int bookEnd, int? asrStart, int? asrEnd)

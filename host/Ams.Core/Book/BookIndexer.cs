@@ -308,8 +308,12 @@ public class BookIndexer : IBookIndexer
         if (LooksLikeTableOfContentsEntry(trimmed))
             return false;
 
-        if (trimmed.IndexOfAny(new[] { '.', '?', '!', ';' }) >= 0)
+        if (trimmed.IndexOfAny(new[] { '?', '!', ';' }) >= 0)
             return false;
+
+        // Allow typical "1 - Title" or "III. Title" patterns often used for chapters
+        if (NumberedHeadingRegex.IsMatch(trimmed))
+            return true;
 
         int letterCount = 0;
         int upperCount = 0;
@@ -370,6 +374,10 @@ public class BookIndexer : IBookIndexer
     private static readonly Regex ChapterDuplicateRegex = new(@"^(?<prefix>\s*chapter)(?<ws>\s+)(?<number>\d+)(?<suffix>\s*[A-Za-z]*)?$", RegexOptions.IgnoreCase | RegexOptions.Compiled);
     private static readonly Regex SectionTitleRegex = new(
         @"^\s*(chapter\b|prologue\b|epilogue\b|prelude\b|foreword\b|introduction\b|afterword\b|appendix\b|part\b|book\b)",
+        RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
+    private static readonly Regex NumberedHeadingRegex = new(
+        @"^\s*((\d+|[ivxlcdm]+)\s*[-–.:]\s*[a-zA-Z])",
         RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
     private static bool LooksLikeSectionHeading(string text)
