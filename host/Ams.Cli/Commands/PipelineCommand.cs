@@ -31,6 +31,8 @@ public static class PipelineCommand
         var workDirOption = new Option<DirectoryInfo?>("--work-dir", () => null, "Working directory for generated artifacts");
         var bookIndexOption = new Option<FileInfo?>("--book-index", () => null, "Existing/target BookIndex JSON path (defaults to work-dir/book-index.json)");
         var chapterIdOption = new Option<string?>("--chapter-id", () => null, "Override output stem (defaults to audio file name)");
+        var forceOption = new Option<bool>("--force", () => false, "Re-run all stages even if outputs are already present");
+        forceOption.AddAlias("-f");
         var forceIndexOption = new Option<bool>("--force-index", () => false, "Rebuild book index even if it already exists");
         var avgWpmOption = new Option<double>("--avg-wpm", () => 200.0, "Average WPM used for duration estimation when indexing");
 
@@ -57,6 +59,7 @@ public static class PipelineCommand
         cmd.AddOption(workDirOption);
         cmd.AddOption(bookIndexOption);
         cmd.AddOption(chapterIdOption);
+        cmd.AddOption(forceOption);
         cmd.AddOption(forceIndexOption);
         cmd.AddOption(avgWpmOption);
         cmd.AddOption(asrServiceOption);
@@ -81,6 +84,7 @@ public static class PipelineCommand
             var workDir = context.ParseResult.GetValueForOption(workDirOption);
             var bookIndex = context.ParseResult.GetValueForOption(bookIndexOption) ?? CommandInputResolver.ResolveBookIndex(null, mustExist: false);
             var chapterId = context.ParseResult.GetValueForOption(chapterIdOption) ?? Path.GetFileNameWithoutExtension(audioFile.Name);
+            var forceAll = context.ParseResult.GetValueForOption(forceOption);
             var forceIndex = context.ParseResult.GetValueForOption(forceIndexOption);
             var avgWpm = context.ParseResult.GetValueForOption(avgWpmOption);
             var asrService = context.ParseResult.GetValueForOption(asrServiceOption) ?? "http://localhost:8000";
@@ -106,6 +110,7 @@ public static class PipelineCommand
                     bookIndex,
                     chapterId,
                     forceIndex,
+                    forceAll,
                     avgWpm,
                     asrService,
                     asrModel,
@@ -139,6 +144,7 @@ public static class PipelineCommand
         FileInfo? bookIndexOverride,
         string? chapterIdOverride,
         bool forceIndex,
+        bool force,
         double avgWpm,
         string asrService,
         string? asrModel,
@@ -183,6 +189,9 @@ public static class PipelineCommand
         var txFile = new FileInfo(Path.Combine(chapterDir, $"{chapterStem}.align.tx.json"));
         var hydrateFile = new FileInfo(Path.Combine(chapterDir, $"{chapterStem}.align.hydrate.json"));
         var treatedWav = new FileInfo(Path.Combine(chapterDir, $"{chapterStem}.treated.wav"));
+        var textGridFile = new FileInfo(Path.Combine(chapterDir, "alignment", "mfa", $"{chapterStem}.TextGrid"));
+
+        forceIndex |= force;
 
         Log.Info("=== AMS Pipeline ===");
         Log.Info("Book={BookFile}", bookFile.FullName);
@@ -211,60 +220,125 @@ public static class PipelineCommand
             throw new InvalidOperationException($"Book index file missing after build: {bookIndexFile.FullName}");
         }
 
-        Log.Info("Running ASR stage");
         EnsureDirectory(asrFile.DirectoryName);
-        await AsrCommand.RunAsrAsync(audioFile, asrFile, asrService, asrModel, asrLanguage);
+        asrFile.Refresh();
+        if (!force && asrFile.Exists)
+        {
+            Log.Info("Skipping ASR stage; {AsrFile} already exists (pass --force to rerun)", asrFile.FullName);
+        }
+        else
+        {
+            Log.Info("Running ASR stage");
+            await AsrCommand.RunAsrAsync(audioFile, asrFile, asrService, asrModel, asrLanguage);
+            asrFile.Refresh();
+        }
 
-        Log.Info("Selecting anchors");
-        await AlignCommand.RunAnchorsAsync(
-            bookIndexFile,
-            asrFile,
-            anchorsFile,
-            detectSection: true,
-            ngram: 3,
-            targetPerTokens: 50,
-            minSeparation: 100,
-            crossSentences: false,
-            domainStopwords: true,
-            asrPrefixTokens: 8,
-            emitWindows: false);
+        anchorsFile.Refresh();
+        if (!force && anchorsFile.Exists)
+        {
+            Log.Info("Skipping anchor selection; {AnchorsFile} already exists (pass --force to rerun)", anchorsFile.FullName);
+        }
+        else
+        {
+            Log.Info("Selecting anchors");
+            asrFile.Refresh();
+            await AlignCommand.RunAnchorsAsync(
+                bookIndexFile,
+                asrFile,
+                anchorsFile,
+                detectSection: true,
+                ngram: 3,
+                targetPerTokens: 50,
+                minSeparation: 100,
+                crossSentences: false,
+                domainStopwords: true,
+                asrPrefixTokens: 8,
+                emitWindows: false);
+            anchorsFile.Refresh();
+        }
 
-        Log.Info("Generating transcript index");
-        await AlignCommand.RunTranscriptIndexAsync(
-            bookIndexFile,
-            asrFile,
-            audioFile,
-            txFile,
-            detectSection: true,
-            asrPrefixTokens: 8,
-            ngram: 3,
-            targetPerTokens: 50,
-            minSeparation: 100,
-            crossSentences: false,
-            domainStopwords: true);
+        txFile.Refresh();
+        if (!force && txFile.Exists)
+        {
+            Log.Info("Skipping transcript index; {TranscriptFile} already exists (pass --force to rerun)", txFile.FullName);
+        }
+        else
+        {
+            Log.Info("Generating transcript index");
+            asrFile.Refresh();
+            await AlignCommand.RunTranscriptIndexAsync(
+                bookIndexFile,
+                asrFile,
+                audioFile,
+                txFile,
+                detectSection: true,
+                asrPrefixTokens: 8,
+                ngram: 3,
+                targetPerTokens: 50,
+                minSeparation: 100,
+                crossSentences: false,
+                domainStopwords: true);
+            txFile.Refresh();
+        }
 
-        Log.Info("Hydrating transcript");
-        await AlignCommand.RunHydrateTxAsync(bookIndexFile, asrFile, txFile, hydrateFile);
+        hydrateFile.Refresh();
+        if (!force && hydrateFile.Exists)
+        {
+            Log.Info("Skipping hydrate stage; {HydratedFile} already exists (pass --force to rerun)", hydrateFile.FullName);
+        }
+        else
+        {
+            Log.Info("Hydrating transcript");
+            asrFile.Refresh();
+            txFile.Refresh();
+            await AlignCommand.RunHydrateTxAsync(bookIndexFile, asrFile, txFile, hydrateFile);
+            hydrateFile.Refresh();
+        }
 
         cancellationToken.ThrowIfCancellationRequested();
 
-        Log.Info("Running MFA alignment workflow");
-        await MfaWorkflow.RunChapterAsync(audioFile, hydrateFile, chapterStem, chapterDirInfo, cancellationToken);
-
-        var textGridPath = Path.Combine(chapterDir, "alignment", "mfa", $"{chapterStem}.TextGrid");
-        var textGridFile = new FileInfo(textGridPath);
-        try
+        textGridFile.Refresh();
+        if (!force && textGridFile.Exists)
         {
-            MfaTimingMerger.MergeTimings(hydrateFile, asrFile, textGridFile);
-            MfaTimingMerger.MergeTimings(txFile, asrFile, textGridFile);
+            Log.Info("Skipping MFA alignment; {TextGridFile} already exists (pass --force to rerun)", textGridFile.FullName);
         }
-        catch (Exception ex)
+        else
         {
-            Log.Warn("Failed to merge MFA timings: {0}", ex);
+            Log.Info("Running MFA alignment workflow");
+            hydrateFile.Refresh();
+            await MfaWorkflow.RunChapterAsync(audioFile, hydrateFile, chapterStem, chapterDirInfo, cancellationToken);
+            textGridFile.Refresh();
         }
 
-        Log.Info("Rendering roomtone");
-        await AudioCommand.RunRenderAsync(txFile, treatedWav, sampleRate, bitDepth, fadeMs, toneDb, emitDiagnostics, adaptiveGain, verbose: false, gapLeftThresholdDb, gapRightThresholdDb, gapStepMs, gapBackoffMs);
+        if (textGridFile.Exists)
+        {
+            try
+            {
+                MfaTimingMerger.MergeTimings(hydrateFile, asrFile, textGridFile);
+                MfaTimingMerger.MergeTimings(txFile, asrFile, textGridFile);
+            }
+            catch (Exception ex)
+            {
+                Log.Warn("Failed to merge MFA timings: {0}", ex);
+            }
+        }
+        else
+        {
+            Log.Warn("Skipping MFA timing merge because TextGrid not found at {TextGridFile}", textGridFile.FullName);
+        }
+
+        treatedWav.Refresh();
+        if (!force && treatedWav.Exists)
+        {
+            Log.Info("Skipping roomtone render; {RoomtoneFile} already exists (pass --force to rerun)", treatedWav.FullName);
+        }
+        else
+        {
+            Log.Info("Rendering roomtone");
+            txFile.Refresh();
+            await AudioCommand.RunRenderAsync(txFile, treatedWav, sampleRate, bitDepth, fadeMs, toneDb, emitDiagnostics, adaptiveGain, verbose: false, gapLeftThresholdDb, gapRightThresholdDb, gapStepMs, gapBackoffMs);
+            treatedWav.Refresh();
+        }
 
         Log.Info("=== Outputs ===");
         Log.Info("Book index : {BookIndex}", bookIndexFile.FullName);
