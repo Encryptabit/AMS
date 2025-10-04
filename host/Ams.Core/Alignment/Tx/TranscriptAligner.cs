@@ -179,11 +179,13 @@ public static class TranscriptAligner
         AsrResponse? asr)
     {
         var opsList = ops.ToList();
+        var guardRanges = new (int? Start, int? End)[bookSentences.Count];
 
         // Sentences
         var sentsOut = new List<SentenceAlign>(bookSentences.Count);
-        foreach (var s in bookSentences)
+        for (int sentenceIndex = 0; sentenceIndex < bookSentences.Count; sentenceIndex++)
         {
+            var s = bookSentences[sentenceIndex];
             int start = s.Start, end = s.End, n = Math.Max(0, end - start + 1);
 
             var candidateIndices = new List<int>();
@@ -199,6 +201,7 @@ public static class TranscriptAligner
             if (candidateIndices.Count == 0)
             {
                 var emptyMetrics = new SentenceMetrics(1.0, 0.0, 1.0, n, 0);
+                guardRanges[sentenceIndex] = ComputeGuardRangeForMissingSentence(opsList, start, end);
                 sentsOut.Add(new SentenceAlign(s.Id, new IntRange(start, end), null, TimingRange.Empty, emptyMetrics,
                     "unreliable"));
                 continue;
@@ -402,11 +405,13 @@ public static class TranscriptAligner
 
             string status = weightedWer <= 0.10 && dels < 3 ? "ok" : (weightedWer <= 0.25 ? "attention" : "unreliable");
 
+            guardRanges[sentenceIndex] = (guardStart, guardEnd);
+
             var metrics = new SentenceMetrics(weightedWer, cer, legacyWer, dels, insCount);
             sentsOut.Add(new SentenceAlign(s.Id, new IntRange(start, end), aRange, TimingRange.Empty, metrics, status));
         }
 
-        SynthesizeMissingScriptRanges(sentsOut, asr?.Tokens.Length ?? 0);
+        SynthesizeMissingScriptRanges(sentsOut, asr?.Tokens.Length ?? 0, guardRanges);
 
         // Paragraphs
         var parasOut = new List<ParagraphAlign>(bookParagraphs.Count);
@@ -429,7 +434,7 @@ public static class TranscriptAligner
         return (sentsOut, parasOut);
     }
 
-    private static void SynthesizeMissingScriptRanges(List<SentenceAlign> sentences, int asrTokenCount)
+    private static void SynthesizeMissingScriptRanges(List<SentenceAlign> sentences, int asrTokenCount, (int? Start, int? End)[] guardRanges)
     {
         if (sentences.Count == 0 || asrTokenCount <= 0)
         {
@@ -469,8 +474,43 @@ public static class TranscriptAligner
             var prevRange = FindPreviousRange(sentences, blockStartIndex - 1);
             var nextRange = FindNextRange(sentences, blockEndIndex + 1);
 
-            int lower = prevRange?.End + 1 ?? 0;
-            int upper = nextRange?.Start - 1 ?? maxToken;
+            int blockSize = blockEndIndex - blockStartIndex + 1;
+            int? guardMin = null;
+            int? guardMax = null;
+            for (int offset = 0; offset < blockSize; offset++)
+            {
+                int guardIndex = blockStartIndex + offset;
+                var guard = guardIndex < guardRanges.Length
+                    ? guardRanges[guardIndex]
+                    : (null, null);
+
+                if (guard.Start.HasValue)
+                {
+                    guardMin = guardMin.HasValue
+                        ? Math.Min(guardMin.Value, guard.Start.Value)
+                        : guard.Start.Value;
+                }
+
+                if (guard.End.HasValue)
+                {
+                    guardMax = guardMax.HasValue
+                        ? Math.Max(guardMax.Value, guard.End.Value)
+                        : guard.End.Value;
+                }
+            }
+
+            int lower = guardMin ?? (prevRange?.End + 1 ?? 0);
+            int upper = guardMax ?? (nextRange?.Start - 1 ?? maxToken);
+
+            if (prevRange.HasValue)
+            {
+                lower = Math.Max(lower, Math.Min(maxToken, prevRange.Value.End + 1));
+            }
+
+            if (nextRange.HasValue)
+            {
+                upper = Math.Min(upper, Math.Max(0, nextRange.Value.Start - 1));
+            }
 
             lower = Math.Clamp(lower, 0, maxToken);
             upper = Math.Clamp(upper, 0, maxToken);
@@ -483,7 +523,6 @@ public static class TranscriptAligner
                 upper = anchor;
             }
 
-            int blockSize = blockEndIndex - blockStartIndex + 1;
             int span = Math.Max(0, upper - lower + 1);
 
             for (int offset = 0; offset < blockSize; offset++)
@@ -575,6 +614,112 @@ public static class TranscriptAligner
         }
 
         return null;
+    }
+
+    private static (int? Start, int? End) ComputeGuardRangeForMissingSentence(IReadOnlyList<WordAlign> ops, int sentenceStartWord, int sentenceEndWord)
+    {
+        if (ops.Count == 0)
+        {
+            return (null, null);
+        }
+
+        int? prevAsr = null;
+        int? nextAsr = null;
+
+        foreach (var op in ops)
+        {
+            if (op.AsrIdx is not int asr)
+            {
+                continue;
+            }
+
+            if (op.BookIdx is int bi)
+            {
+                if (bi < sentenceStartWord)
+                {
+                    prevAsr = asr;
+                    continue;
+                }
+
+                if (bi > sentenceEndWord)
+                {
+                    nextAsr = asr;
+                    break;
+                }
+            }
+        }
+
+        if (nextAsr is null)
+        {
+            for (int i = ops.Count - 1; i >= 0; i--)
+            {
+                var op = ops[i];
+                if (op.AsrIdx is not int asr)
+                {
+                    continue;
+                }
+
+                if (op.BookIdx is int bi && bi > sentenceEndWord)
+                {
+                    nextAsr = asr;
+                }
+            }
+        }
+
+        var inserted = new List<int>();
+        foreach (var op in ops)
+        {
+            if (op.AsrIdx is not int asr)
+            {
+                continue;
+            }
+
+            if (op.BookIdx.HasValue)
+            {
+                if (op.BookIdx.Value >= sentenceStartWord && op.BookIdx.Value <= sentenceEndWord)
+                {
+                    inserted.Add(asr);
+                }
+
+                continue;
+            }
+
+            bool afterPrev = !prevAsr.HasValue || asr > prevAsr.Value;
+            bool beforeNext = !nextAsr.HasValue || asr < nextAsr.Value;
+
+            if (afterPrev && beforeNext)
+            {
+                inserted.Add(asr);
+            }
+        }
+
+        if (inserted.Count > 0)
+        {
+            inserted.Sort();
+            return (inserted[0], inserted[^1]);
+        }
+
+        if (prevAsr.HasValue && nextAsr.HasValue)
+        {
+            if (nextAsr.Value - prevAsr.Value >= 2)
+            {
+                return (prevAsr.Value + 1, nextAsr.Value - 1);
+            }
+
+            return (prevAsr.Value + 1, prevAsr.Value + 1);
+        }
+
+        if (prevAsr.HasValue)
+        {
+            return (prevAsr.Value + 1, prevAsr.Value + 1);
+        }
+
+        if (nextAsr.HasValue)
+        {
+            return (nextAsr.Value - 1, nextAsr.Value - 1);
+        }
+
+        return (null, null);
     }
 
     private static double ComputeCer(BookIndex? book, AsrResponse? asr, int bookStart, int bookEnd, int? asrStart, int? asrEnd)
