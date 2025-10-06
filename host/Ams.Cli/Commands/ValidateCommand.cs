@@ -1,12 +1,17 @@
+using System.Collections.Generic;
 using System.CommandLine;
 using System.CommandLine.Invocation;
 using System.Diagnostics;
 using System.Linq;
 using System.Text;
 using System.Text.Json;
+using System.IO;
 using Ams.Core.Artifacts;
+using Ams.Core.Audio;
+using Ams.Core.Book;
 using Ams.Core.Common;
 using Ams.Core.Hydrate;
+using Ams.Core.Prosody;
 using Ams.Cli.Utilities;
 
 namespace Ams.Cli.Commands;
@@ -18,6 +23,7 @@ public static class ValidateCommand
         var validate = new Command("validate", "Validation utilities");
         validate.AddCommand(CreateReportCommand());
         validate.AddCommand(CreateTimingCommand());
+        validate.AddCommand(CreateTimingApplyCommand());
         validate.AddCommand(CreateServeCommand());
         return validate;
     }
@@ -105,6 +111,190 @@ public static class ValidateCommand
             catch (Exception ex)
             {
                 Log.Error(ex, "validate timing failed");
+                context.ExitCode = 1;
+            }
+        });
+
+        return cmd;
+    }
+
+    private static Command CreateTimingApplyCommand()
+    {
+        var cmd = new Command("timing-apply", "Render pause-adjusted audio and refreshed timing JSON from saved adjustments");
+
+        var txOption = new Option<FileInfo?>("--tx", "Path to TranscriptIndex JSON (*.align.tx.json)");
+        txOption.AddAlias("-t");
+
+        var hydrateOption = new Option<FileInfo?>("--hydrate", "Path to hydrated transcript JSON (*.align.hydrate.json)");
+        hydrateOption.AddAlias("-h");
+
+        var adjustmentsOption = new Option<FileInfo?>("--adjustments", "Path to pause-adjustments JSON (defaults to <chapter>.pause-adjustments.json)");
+        var outWavOption = new Option<FileInfo?>("--out-wav", "Output WAV path (defaults to <audio>.pause-adjusted.wav)");
+        var roomtoneOption = new Option<FileInfo?>("--roomtone", "Override roomtone WAV path (defaults to roomtone.wav near chapter)");
+        var bookIndexOption = new Option<FileInfo?>("--book-index", "Optional book-index.json path when discovery via TranscriptIndex fails");
+        var toneGainOption = new Option<double>("--tone-gain-db", () => -60.0, "Target RMS level for injected roomtone (dBFS)");
+        var overwriteOption = new Option<bool>("--overwrite", () => false, "Overwrite existing outputs");
+
+        cmd.AddOption(txOption);
+        cmd.AddOption(hydrateOption);
+        cmd.AddOption(adjustmentsOption);
+        cmd.AddOption(outWavOption);
+        cmd.AddOption(roomtoneOption);
+        cmd.AddOption(bookIndexOption);
+        cmd.AddOption(toneGainOption);
+        cmd.AddOption(overwriteOption);
+
+        cmd.SetHandler(context =>
+        {
+            try
+            {
+                var cancellationToken = context.GetCancellationToken();
+
+                var txFile = CommandInputResolver.ResolveChapterArtifact(
+                    context.ParseResult.GetValueForOption(txOption),
+                    suffix: "align.tx.json",
+                    mustExist: true);
+
+                if (txFile is null)
+                {
+                    Log.Error("timing-apply requires --tx or an active chapter with TranscriptIndex JSON");
+                    context.ExitCode = 1;
+                    return;
+                }
+
+                var hydrateFile = CommandInputResolver.ResolveChapterArtifact(
+                    context.ParseResult.GetValueForOption(hydrateOption),
+                    suffix: "align.hydrate.json",
+                    mustExist: true);
+
+                if (hydrateFile is null || !hydrateFile.Exists)
+                {
+                    Log.Error("timing-apply requires a hydrated transcript JSON (e.g., *.align.hydrate.json)");
+                    context.ExitCode = 1;
+                    return;
+                }
+
+                var adjustmentsFile = ResolveAdjustmentsPath(txFile, context.ParseResult.GetValueForOption(adjustmentsOption));
+                PauseAdjustmentsDocument adjustments;
+                try
+                {
+                    adjustments = PauseAdjustmentsDocument.Load(adjustmentsFile.FullName);
+                }
+                catch (Exception ex)
+                {
+                    Log.Error(ex, "Failed to load pause adjustments from {Path}", adjustmentsFile.FullName);
+                    context.ExitCode = 1;
+                    return;
+                }
+
+                if (adjustments.Adjustments.Count == 0)
+                {
+                    Log.Warn("No pause adjustments found in {Path}. Nothing to apply.", adjustmentsFile.FullName);
+                    context.ExitCode = 0;
+                    return;
+                }
+
+                var transcript = LoadJson<TranscriptIndex>(txFile);
+                var hydrated = LoadJson<HydratedTranscript>(hydrateFile);
+
+                FileInfo? bookIndexOptionValue = context.ParseResult.GetValueForOption(bookIndexOption);
+                FileInfo? bookIndexFile = bookIndexOptionValue ?? TryResolveBookIndex(transcript.BookIndexPath, txFile.DirectoryName);
+                BookIndex? bookIndex = null;
+                if (bookIndexFile is not null && bookIndexFile.Exists)
+                {
+                    bookIndex = LoadJson<BookIndex>(bookIndexFile);
+                }
+
+                var audioPath = ResolveAudioPath(transcript, hydrated, txFile, hydrateFile);
+                if (!File.Exists(audioPath))
+                {
+                    Log.Error("Audio file not found at {Path}", audioPath);
+                    context.ExitCode = 1;
+                    return;
+                }
+
+                string roomtonePath;
+                try
+                {
+                    roomtonePath = ResolveRoomtonePath(
+                        context.ParseResult.GetValueForOption(roomtoneOption),
+                        audioPath,
+                        transcript.ScriptPath,
+                        hydrateFile.DirectoryName ?? txFile.DirectoryName,
+                        bookIndex);
+                }
+                catch (Exception ex)
+                {
+                    Log.Error(ex, "Failed to locate roomtone.wav");
+                    context.ExitCode = 1;
+                    return;
+                }
+
+                var outWav = context.ParseResult.GetValueForOption(outWavOption)
+                    ?? BuildSiblingFile(audioPath, ".pause-adjusted.wav");
+
+                bool overwrite = context.ParseResult.GetValueForOption(overwriteOption);
+                try
+                {
+                    EnsureWritable(outWav, overwrite);
+                }
+                catch (Exception ex)
+                {
+                    Log.Error(ex, "Cannot write output WAV to {Path}", outWav.FullName);
+                    context.ExitCode = 1;
+                    return;
+                }
+
+                cancellationToken.ThrowIfCancellationRequested();
+
+                var audioBuffer = WavIo.ReadPcmOrFloat(audioPath);
+                var roomtoneBuffer = WavIo.ReadPcmOrFloat(roomtonePath);
+
+                double targetToneDb = context.ParseResult.GetValueForOption(toneGainOption);
+                var toneAnalyzer = new AudioAnalysisService(roomtoneBuffer);
+                double toneDuration = roomtoneBuffer.SampleRate > 0 ? roomtoneBuffer.Length / (double)roomtoneBuffer.SampleRate : 0.0;
+                var toneStats = toneAnalyzer.AnalyzeGap(0.0, toneDuration);
+                double toneGainLinear = ComputeToneGainLinear(toneStats.MeanRmsDb, targetToneDb);
+
+                var adjustedAudio = PauseAudioApplier.Apply(audioBuffer, roomtoneBuffer, adjustments.Adjustments, toneGainLinear);
+                WavIo.WriteFloat32(outWav.FullName, adjustedAudio);
+
+                var baselineTimings = BuildBaselineTimings(transcript, hydrated);
+                var updatedTimeline = PauseTimelineApplier.Apply(baselineTimings, adjustments.Adjustments);
+
+                var updatedTranscript = UpdateTranscriptTimings(transcript, updatedTimeline);
+                var updatedHydrate = UpdateHydratedTimings(hydrated, updatedTimeline);
+
+                var transcriptOut = BuildOutputJsonPath(txFile, ".pause-adjusted.align.tx.json");
+                var hydrateOut = BuildOutputJsonPath(hydrateFile, ".pause-adjusted.align.hydrate.json");
+
+                try
+                {
+                    EnsureWritable(transcriptOut, overwrite);
+                    EnsureWritable(hydrateOut, overwrite);
+                }
+                catch (Exception ex)
+                {
+                    Log.Error(ex, "Cannot write updated timing JSON");
+                    context.ExitCode = 1;
+                    return;
+                }
+
+                SaveJson(transcriptOut, updatedTranscript);
+                SaveJson(hydrateOut, updatedHydrate);
+
+                Log.Info("Pause-adjusted audio saved to {Output}", outWav.FullName);
+                Log.Info("Updated transcript timings saved to {Output}", transcriptOut.FullName);
+                Log.Info("Updated hydrate timings saved to {Output}", hydrateOut.FullName);
+            }
+            catch (OperationCanceledException)
+            {
+                Log.Warn("timing-apply cancelled");
+                context.ExitCode = 1;
+            }
+            catch (Exception ex)
+            {
+                Log.Error(ex, "timing-apply failed");
                 context.ExitCode = 1;
             }
         });
@@ -619,6 +809,258 @@ public static class ValidateCommand
         }
 
         return builder.ToString().TrimEnd();
+    }
+
+    private static FileInfo ResolveAdjustmentsPath(FileInfo txFile, FileInfo? overrideFile)
+    {
+        if (overrideFile is not null)
+        {
+            return overrideFile;
+        }
+
+        string stem = GetBaseStem(txFile.Name);
+        var directory = txFile.DirectoryName ?? Environment.CurrentDirectory;
+        return new FileInfo(Path.Combine(directory, stem + ".pause-adjustments.json"));
+    }
+
+    private static string GetBaseStem(string fileName)
+    {
+        var first = Path.GetFileNameWithoutExtension(fileName);
+        if (string.IsNullOrWhiteSpace(first))
+        {
+            return "chapter";
+        }
+
+        var second = Path.GetFileNameWithoutExtension(first);
+        return string.IsNullOrWhiteSpace(second) ? first : second;
+    }
+
+    private static T LoadJson<T>(FileInfo file)
+    {
+        if (file is null) throw new ArgumentNullException(nameof(file));
+        if (!file.Exists) throw new FileNotFoundException($"File not found: {file.FullName}", file.FullName);
+
+        var json = File.ReadAllText(file.FullName);
+        var payload = JsonSerializer.Deserialize<T>(json, new JsonSerializerOptions
+        {
+            PropertyNameCaseInsensitive = true
+        });
+
+        return payload ?? throw new InvalidOperationException($"Failed to deserialize {typeof(T).Name} from {file.FullName}");
+    }
+
+    private static FileInfo? TryResolveBookIndex(string? bookIndexPath, string? fallbackDirectory)
+    {
+        if (string.IsNullOrWhiteSpace(bookIndexPath))
+        {
+            return null;
+        }
+
+        var absolute = MakeAbsolute(bookIndexPath, fallbackDirectory);
+        return new FileInfo(absolute);
+    }
+
+    private static string ResolveAudioPath(TranscriptIndex transcript, HydratedTranscript hydrated, FileInfo txFile, FileInfo hydrateFile)
+    {
+        var candidates = new List<(string? Path, string? BaseDir)>
+        {
+            (hydrated.AudioPath, hydrateFile.DirectoryName),
+            (transcript.AudioPath, txFile.DirectoryName)
+        };
+
+        foreach (var (path, baseDir) in candidates)
+        {
+            if (string.IsNullOrWhiteSpace(path))
+            {
+                continue;
+            }
+
+            return MakeAbsolute(path, baseDir ?? txFile.DirectoryName);
+        }
+
+        throw new InvalidOperationException("Transcript does not reference an audioPath in hydrate or transcript JSON.");
+    }
+
+    private static string ResolveRoomtonePath(
+        FileInfo? overrideRoomtone,
+        string audioPath,
+        string? scriptPath,
+        string? baseDirectory,
+        BookIndex? bookIndex)
+    {
+        if (overrideRoomtone is not null)
+        {
+            if (!overrideRoomtone.Exists)
+            {
+                throw new FileNotFoundException("Specified roomtone file not found", overrideRoomtone.FullName);
+            }
+
+            return overrideRoomtone.FullName;
+        }
+
+        var directories = new List<string>();
+        var unique = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        void AddDirectory(string? candidate)
+        {
+            if (string.IsNullOrWhiteSpace(candidate))
+            {
+                return;
+            }
+
+            string full = Path.GetFullPath(candidate);
+            if (unique.Add(full) && Directory.Exists(full))
+            {
+                directories.Add(full);
+            }
+        }
+
+        AddDirectory(Path.GetDirectoryName(audioPath));
+
+        if (!string.IsNullOrWhiteSpace(scriptPath))
+        {
+            var scriptFull = MakeAbsolute(scriptPath, baseDirectory);
+            AddDirectory(Path.GetDirectoryName(scriptFull));
+        }
+
+        if (!string.IsNullOrWhiteSpace(baseDirectory))
+        {
+            AddDirectory(Path.GetFullPath(baseDirectory));
+        }
+
+        if (bookIndex?.SourceFile is not null)
+        {
+            var sourceFull = MakeAbsolute(bookIndex.SourceFile, baseDirectory);
+            AddDirectory(Path.GetDirectoryName(sourceFull));
+        }
+
+        foreach (var dir in directories)
+        {
+            var match = Directory.EnumerateFiles(dir, "roomtone.wav", SearchOption.TopDirectoryOnly)
+                .FirstOrDefault(path => string.Equals(Path.GetFileName(path), "roomtone.wav", StringComparison.OrdinalIgnoreCase));
+            if (match is not null)
+            {
+                return match;
+            }
+        }
+
+        throw new FileNotFoundException("roomtone.wav not found in expected directories.");
+    }
+
+    private static FileInfo BuildSiblingFile(string referencePath, string suffix)
+    {
+        var directory = Path.GetDirectoryName(referencePath) ?? Environment.CurrentDirectory;
+        var stem = Path.GetFileNameWithoutExtension(referencePath);
+        return new FileInfo(Path.Combine(directory, stem + suffix));
+    }
+
+    private static void EnsureWritable(FileInfo file, bool overwrite)
+    {
+        if (file.DirectoryName is not null)
+        {
+            Directory.CreateDirectory(Path.GetFullPath(file.DirectoryName));
+        }
+
+        if (file.Exists && !overwrite)
+        {
+            throw new IOException($"File already exists: {file.FullName}. Use --overwrite to replace it.");
+        }
+    }
+
+    private static Dictionary<int, SentenceTiming> BuildBaselineTimings(TranscriptIndex transcript, HydratedTranscript hydrated)
+    {
+        var map = new Dictionary<int, SentenceTiming>();
+
+        if (hydrated.Sentences is not null)
+        {
+            foreach (var sentence in hydrated.Sentences)
+            {
+                if (sentence.Timing is { } timing && timing.Duration > 0)
+                {
+                    map[sentence.Id] = new SentenceTiming(timing.StartSec, timing.EndSec);
+                }
+            }
+        }
+
+        foreach (var sentence in transcript.Sentences)
+        {
+            if (!map.ContainsKey(sentence.Id))
+            {
+                map[sentence.Id] = new SentenceTiming(sentence.Timing.StartSec, sentence.Timing.EndSec);
+            }
+        }
+
+        return map;
+    }
+
+    private static TranscriptIndex UpdateTranscriptTimings(TranscriptIndex transcript, IReadOnlyDictionary<int, SentenceTiming> timeline)
+    {
+        var updatedSentences = transcript.Sentences
+            .Select(sentence => timeline.TryGetValue(sentence.Id, out var timing)
+                ? sentence with { Timing = new TimingRange(timing.StartSec, timing.EndSec) }
+                : sentence)
+            .ToList();
+
+        return transcript with { Sentences = updatedSentences };
+    }
+
+    private static HydratedTranscript UpdateHydratedTimings(HydratedTranscript hydrated, IReadOnlyDictionary<int, SentenceTiming> timeline)
+    {
+        var updatedSentences = hydrated.Sentences
+            .Select(sentence => timeline.TryGetValue(sentence.Id, out var timing)
+                ? sentence with { Timing = new TimingRange(timing.StartSec, timing.EndSec) }
+                : sentence)
+            .ToList();
+
+        return hydrated with { Sentences = updatedSentences };
+    }
+
+    private static FileInfo BuildOutputJsonPath(FileInfo reference, string suffix)
+    {
+        string stem = GetBaseStem(reference.Name);
+        var directory = reference.DirectoryName ?? Environment.CurrentDirectory;
+        return new FileInfo(Path.Combine(directory, stem + suffix));
+    }
+
+    private static void SaveJson<T>(FileInfo destination, T payload)
+    {
+        if (destination.DirectoryName is not null)
+        {
+            Directory.CreateDirectory(Path.GetFullPath(destination.DirectoryName));
+        }
+
+        var json = JsonSerializer.Serialize(payload, new JsonSerializerOptions { WriteIndented = true });
+        File.WriteAllText(destination.FullName, json);
+    }
+
+    private static double ComputeToneGainLinear(double seedMeanRmsDb, double targetRmsDb)
+    {
+        double seedLinear = DbToLinear(seedMeanRmsDb);
+        double targetLinear = DbToLinear(targetRmsDb);
+        if (seedLinear <= 0)
+        {
+            return 1.0;
+        }
+
+        return targetLinear / seedLinear;
+    }
+
+    private static double DbToLinear(double db) => Math.Pow(10.0, db / 20.0);
+
+    private static string MakeAbsolute(string path, string? baseDirectory)
+    {
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            return path;
+        }
+
+        if (Path.IsPathRooted(path))
+        {
+            return Path.GetFullPath(path);
+        }
+
+        var root = baseDirectory ?? Environment.CurrentDirectory;
+        return Path.GetFullPath(Path.Combine(root, path));
     }
 
     private static string TrimText(string text, int? maxLength = null)

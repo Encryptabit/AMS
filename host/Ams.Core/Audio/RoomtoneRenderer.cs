@@ -39,8 +39,8 @@ namespace Ams.Core.Audio
             if (entries is null) throw new ArgumentNullException(nameof(entries));
 
             // Work at the target rate the rest of the pipeline uses
-            var src  = input.SampleRate == targetSampleRate ? input : ResampleLinear(input, targetSampleRate);
-            var tone = roomtoneSeed.SampleRate == targetSampleRate ? roomtoneSeed : ResampleLinear(roomtoneSeed, targetSampleRate);
+            var src  = input.SampleRate == targetSampleRate ? input : RoomtoneUtils.ResampleLinear(input, targetSampleRate);
+            var tone = roomtoneSeed.SampleRate == targetSampleRate ? roomtoneSeed : RoomtoneUtils.ResampleLinear(roomtoneSeed, targetSampleRate);
             if (tone.Length == 0) throw new InvalidOperationException("Roomtone seed must contain samples.");
             MakeLoopable(tone, seamMs: 15);
 
@@ -80,7 +80,7 @@ namespace Ams.Core.Audio
             }
 
             // Current working audio
-            var cur = CopyBuffer(src);
+            var cur = RoomtoneUtils.CopyBuffer(src);
             long toneCursor = 0;
 
             // Original markers (seconds)
@@ -259,10 +259,10 @@ namespace Ams.Core.Audio
             if (targetSampleRate <= 0) throw new ArgumentOutOfRangeException(nameof(targetSampleRate));
 
             // Resample to a common rate
-            var src = input.SampleRate == targetSampleRate ? input : ResampleLinear(input, targetSampleRate);
+            var src = input.SampleRate == targetSampleRate ? input : RoomtoneUtils.ResampleLinear(input, targetSampleRate);
             var tone = roomtoneSeed.SampleRate == targetSampleRate
                 ? roomtoneSeed
-                : ResampleLinear(roomtoneSeed, targetSampleRate);
+                : RoomtoneUtils.ResampleLinear(roomtoneSeed, targetSampleRate);
             if (tone.Length == 0) throw new InvalidOperationException("Roomtone seed must contain samples.");
 
             MakeLoopable(tone, seamMs: 20); // make roomtone seed loopable
@@ -324,14 +324,14 @@ namespace Ams.Core.Audio
             WriteMaskDebug(debugDirectory, "step0d_gaps_final", finalGaps, src);
 
             // 5) Out starts as a full copy of source (prevents accidental silence)
-            var outBuf = CopyBuffer(src);
+            var outBuf = RoomtoneUtils.CopyBuffer(src);
 
             // 6) Replace gaps with room tone, with in-gap crossfades
             int fadeSamples = fadeMs <= 0 ? 0 : (int)Math.Round(fadeMs * 0.001 * src.SampleRate);
             long toneCursor = 0;
             foreach (var (g0, g1) in finalGaps)
             {
-                ReplaceGapWithRoomtone(outBuf, src, tone, g0, g1, toneGainLinear, fadeSamples, ref toneCursor);
+                RoomtoneUtils.ReplaceGapWithRoomtone(outBuf, src, tone, g0, g1, toneGainLinear, fadeSamples, ref toneCursor);
             }
 
             WriteDebug(debugDirectory, "step1_fill_gaps", outBuf);
@@ -343,137 +343,31 @@ namespace Ams.Core.Audio
         // ---------------------------------------------------------------------------------
 
         // Call once when loading roomtoneSeed (before RenderWithSentenceMasks)
-        private static void MakeLoopable(AudioBuffer tone, int seamMs = 20)
-        {
-            int sr = tone.SampleRate;
-            int N = Math.Max(1, (int)Math.Round(seamMs * 0.001 * sr));
-            if (N * 2 >= tone.Length) return; // seed too short; skip
-
-            for (int ch = 0; ch < tone.Channels; ch++)
-            {
-                var p = tone.Planar[ch];
-                int a0 = 0; // start region [a0 .. a0+N)
-                int b0 = tone.Length - N; // end region [b0 .. b0+N)
-
-                for (int i = 0; i < N; i++)
-                {
-                    double t = (double)(i + 1) / (N + 1); // 0..1
-                    double gHead = Math.Sqrt(1.0 - t); // equal-power
-                    double gTail = Math.Sqrt(t);
-
-                    // Overwrite the head with an overlap-add of head+tail
-                    p[a0 + i] = (float)(gHead * p[a0 + i] + gTail * p[b0 + i]);
-                }
-            }
-        }
+        private static void MakeLoopable(AudioBuffer tone, int seamMs = 20) => RoomtoneUtils.MakeLoopable(tone, seamMs);
 
         /// <summary>
         /// Replace [g0,g1) with roomtone. If fadeSamples > 0, crossfade from src→tone at the head
         /// and tone→src at the tail, both inside the gap. toneCursor advances continuously.
         /// </summary>
         private static void ReplaceGapWithRoomtone(
-            AudioBuffer dst, AudioBuffer src, AudioBuffer tone,
-            int g0, int g1, double gain, int fadeSamples, ref long toneCursor)
-        {
-            int sr = dst.SampleRate;
-            int overlapSamples = fadeSamples > 0 ? fadeSamples : Math.Max(1, (int)Math.Round(0.01 * sr));
-            int overlapMs = Math.Max(1, (int)Math.Round(overlapSamples * 1000.0 / sr));
-            ReplaceGapWithRoomtoneClassic(dst, src, tone, g0, g1, gain, overlapMs, ref toneCursor);
-        }
+            AudioBuffer dst,
+            AudioBuffer src,
+            AudioBuffer tone,
+            int g0,
+            int g1,
+            double gain,
+            int fadeSamples,
+            ref long toneCursor) => RoomtoneUtils.ReplaceGapWithRoomtone(dst, src, tone, g0, g1, gain, fadeSamples, ref toneCursor);
 
-        // Classic overlap-add: blend src↔tone across the OUTSIDE edges of the gap.
-        // left overlap region:  [g0 - overlap, g0)
-        // core tone-only region:[g0, g1)
-        // right overlap region: [g1, g1 + overlap)
         private static void ReplaceGapWithRoomtoneClassic(
-            AudioBuffer dst, AudioBuffer src, AudioBuffer tone,
-            int g0, int g1,
+            AudioBuffer dst,
+            AudioBuffer src,
+            AudioBuffer tone,
+            int g0,
+            int g1,
             double baseGainLinear,
-            int overlapMs, // e.g., 30–60 ms
-            ref long toneCursor)
-        {
-            int sr = dst.SampleRate;
-            int overlapSamples = Math.Max(1, (int)Math.Round(overlapMs * 0.001 * sr));
-
-            g0 = Math.Clamp(g0, 0, dst.Length);
-            g1 = Math.Clamp(g1, g0, dst.Length);
-            int gapLen = g1 - g0;
-            int leftOv = Math.Min(overlapSamples, g0);
-            int rightOv = Math.Min(overlapSamples, dst.Length - g1);
-
-            if (gapLen <= 0 && leftOv == 0 && rightOv == 0) return;
-
-            const int wrapXfadeMs = 12; // 10–20 ms
-            int wrapX = Math.Max(1, (int)Math.Round(wrapXfadeMs * 0.001 * sr));
-
-            float ReadToneSample(float[] tt, long curPlusI)
-            {
-                int tl = tt.Length;
-                int idx = (int)(curPlusI % tl);
-                if (idx < wrapX && tl >= wrapX)
-                {
-                    int iHead = idx;
-                    int iTail = (tl - wrapX + idx) % tl;
-                    double t = wrapX == 1 ? 1.0 : (double)iHead / (wrapX - 1);
-                    double gH = Math.Sqrt(t);
-                    double gT = Math.Sqrt(1.0 - t);
-                    return (float)(gT * tt[iTail] + gH * tt[iHead]);
-                }
-                return tt[idx];
-            }
-
-            // LEFT OVERLAP
-            for (int i = 0; i < leftOv; i++)
-            {
-                int idx = g0 - leftOv + i;
-                double t = (double)(i + 1) / (leftOv + 1);
-                double gTone = Math.Sqrt(t);
-                double gSrc = Math.Sqrt(1.0 - t);
-                for (int ch = 0; ch < dst.Channels; ch++)
-                {
-                    var d = dst.Planar[ch];
-                    var s = src.Planar[ch % src.Channels];
-                    var tt = tone.Planar[ch % tone.Channels];
-                    float toneSample = ReadToneSample(tt, toneCursor + i);
-                    d[idx] = (float)(gSrc * s[idx] + gTone * (baseGainLinear * toneSample));
-                }
-            }
-            toneCursor += leftOv;
-
-            // CORE
-            if (gapLen > 0)
-            {
-                for (int i = 0; i < gapLen; i++)
-                {
-                    for (int ch = 0; ch < dst.Channels; ch++)
-                    {
-                        var d = dst.Planar[ch];
-                        var tt = tone.Planar[ch % tone.Channels];
-                        float toneSample = ReadToneSample(tt, toneCursor + i);
-                        d[g0 + i] = (float)(baseGainLinear * toneSample);
-                    }
-                }
-                toneCursor += gapLen;
-            }
-
-            // RIGHT OVERLAP
-            for (int i = 0; i < rightOv; i++)
-            {
-                int idx = g1 + i;
-                double t = (double)(i + 1) / (rightOv + 1);
-                double gSrc = Math.Sqrt(t);
-                double gTone = Math.Sqrt(1.0 - t);
-                for (int ch = 0; ch < dst.Channels; ch++)
-                {
-                    var d = dst.Planar[ch];
-                    var s = src.Planar[ch % src.Channels];
-                    var tt = tone.Planar[ch % tone.Channels];
-                    float toneSample = ReadToneSample(tt, toneCursor + i);
-                    d[idx] = (float)(gTone * (baseGainLinear * toneSample) + gSrc * s[idx]);
-                }
-            }
-            toneCursor += rightOv;
-        }
+            int overlapMs,
+            ref long toneCursor) => RoomtoneUtils.ReplaceGapWithRoomtoneClassic(dst, src, tone, g0, g1, baseGainLinear, overlapMs, ref toneCursor);
 
         private static void ApplyStructuralGaps(
             AudioBuffer dst,
@@ -729,14 +623,6 @@ namespace Ams.Core.Audio
             return Coalesce(ranges);
         }
 
-        private static AudioBuffer CopyBuffer(AudioBuffer src)
-        {
-            var dst = new AudioBuffer(src.Channels, src.SampleRate, src.Length);
-            for (int ch = 0; ch < src.Channels; ch++)
-                Array.Copy(src.Planar[ch], 0, dst.Planar[ch], 0, src.Length);
-            return dst;
-        }
-
         private static double RmsAllCh(AudioBuffer buf, int start, int len)
         {
             double sum = 0.0; int count = 0;
@@ -819,33 +705,6 @@ namespace Ams.Core.Audio
             catch { /* no-op */ }
         }
 
-        /// <summary>Very simple per-channel linear resampler. Enough for roomtone and scratch output.</summary>
-        private static AudioBuffer ResampleLinear(AudioBuffer src, int targetSampleRate)
-        {
-            if (src.SampleRate == targetSampleRate) return src;
-
-            double ratio = (double)targetSampleRate / src.SampleRate;
-            int outLen = Math.Max(1, (int)Math.Round(src.Length * ratio));
-            var dst = new AudioBuffer(src.Channels, targetSampleRate, outLen);
-
-            for (int ch = 0; ch < src.Channels; ch++)
-            {
-                var s = src.Planar[ch];
-                var d = dst.Planar[ch];
-                for (int i = 0; i < outLen; i++)
-                {
-                    double pos = i / ratio;
-                    int i0 = (int)Math.Floor(pos);
-                    int i1 = Math.Min(i0 + 1, src.Length - 1);
-                    double frac = pos - i0;
-
-                    float y0 = s[Math.Clamp(i0, 0, src.Length - 1)];
-                    float y1 = s[i1];
-                    d[i] = (float)((1.0 - frac) * y0 + frac * y1);
-                }
-            }
-            return dst;
-        }
     }
 }
 

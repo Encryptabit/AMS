@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Collections.ObjectModel;
 using System.Linq;
 using Ams.Core.Artifacts;
 using Ams.Core.Book;
@@ -18,7 +19,7 @@ public interface IPauseDynamicsService
 
     PauseTransformSet PlanTransforms(PauseAnalysisReport analysis, PausePolicy policy);
 
-    PauseApplyResult Apply(PauseTransformSet transforms, IReadOnlyList<SentenceTiming> baseline);
+    PauseApplyResult Apply(PauseTransformSet transforms, IReadOnlyDictionary<int, SentenceTiming> baseline);
 
     PauseDynamicsResult Execute(
         TranscriptIndex transcript,
@@ -29,7 +30,7 @@ public interface IPauseDynamicsService
 }
 
 public sealed record PauseApplyResult(
-    IReadOnlyList<SentenceTiming> Timeline,
+    IReadOnlyDictionary<int, SentenceTiming> Timeline,
     PauseTransformSet Transforms);
 
 public sealed record PauseDynamicsResult(
@@ -131,14 +132,23 @@ public sealed class PauseDynamicsService : IPauseDynamicsService
         return new PauseTransformSet(Array.Empty<BreathCut>(), adjustments);
     }
 
-    public PauseApplyResult Apply(PauseTransformSet transforms, IReadOnlyList<SentenceTiming> baseline)
+    public PauseApplyResult Apply(PauseTransformSet transforms, IReadOnlyDictionary<int, SentenceTiming> baseline)
     {
         if (transforms is null) throw new ArgumentNullException(nameof(transforms));
         if (baseline is null) throw new ArgumentNullException(nameof(baseline));
 
-        // Application logic will be layered on once transforms are produced. Returning the baseline timeline
-        // keeps the operation a no-op for now.
-        return new PauseApplyResult(baseline, transforms);
+        if (baseline.Count == 0)
+        {
+            return new PauseApplyResult(new ReadOnlyDictionary<int, SentenceTiming>(new Dictionary<int, SentenceTiming>()), transforms);
+        }
+
+        if (transforms.PauseAdjusts.Count == 0)
+        {
+            return new PauseApplyResult(new ReadOnlyDictionary<int, SentenceTiming>(CloneBaseline(baseline)), transforms);
+        }
+
+        var timeline = PauseTimelineApplier.Apply(baseline, transforms.PauseAdjusts);
+        return new PauseApplyResult(timeline, transforms);
     }
 
     public PauseDynamicsResult Execute(
@@ -152,8 +162,9 @@ public sealed class PauseDynamicsService : IPauseDynamicsService
         var plan = PlanTransforms(analysis, policy);
         var baseline = transcript.Sentences
             .OrderBy(s => s.Timing.StartSec)
-            .Select(s => new SentenceTiming(s.Timing.StartSec, s.Timing.EndSec))
-            .ToList();
+            .ToDictionary(
+                sentence => sentence.Id,
+                sentence => new SentenceTiming(sentence.Timing.StartSec, sentence.Timing.EndSec));
         var applyResult = Apply(plan, baseline);
         return new PauseDynamicsResult(analysis, plan, applyResult);
     }
@@ -275,4 +286,16 @@ public sealed class PauseDynamicsService : IPauseDynamicsService
     }
 
     private const double TargetEpsilon = 0.005;
+
+    private static Dictionary<int, SentenceTiming> CloneBaseline(IReadOnlyDictionary<int, SentenceTiming> baseline)
+    {
+        var clone = new Dictionary<int, SentenceTiming>(baseline.Count);
+        foreach (var kvp in baseline)
+        {
+            var timing = kvp.Value;
+            clone[kvp.Key] = new SentenceTiming(timing.StartSec, timing.EndSec, timing.FragmentBacked, timing.Confidence);
+        }
+
+        return clone;
+    }
 }
