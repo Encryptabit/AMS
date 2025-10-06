@@ -8,6 +8,7 @@ using Ams.Core.Artifacts;
 using Ams.Core.Common;
 using Ams.Core.Audio;
 using Ams.Core.Book;
+using Ams.Core.Hydrate;
 
 namespace Ams.Core.Pipeline;
 
@@ -66,6 +67,7 @@ public sealed class RoomToneInsertionStage
 
         var jsonOptions = new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
         var transcript = await LoadTranscriptAsync(manifest.TranscriptIndexPath, jsonOptions, ct);
+        var hydrate = await TryLoadHydrateAsync(manifest.TranscriptIndexPath, jsonOptions, ct);
         var asr = await LoadAsrAsync(transcript.ScriptPath, jsonOptions, ct);
         var bookIndex = await LoadBookIndexAsync(transcript.BookIndexPath, jsonOptions, ct);
         var roomtonePath = RequireRoomtone(manifest.AudioPath, bookIndex.SourceFile);
@@ -166,6 +168,18 @@ public sealed class RoomToneInsertionStage
             .Select(s => entryMap.TryGetValue(s.Id, out var e) ? s with { Timing = e.Timing } : s)
             .ToList();
 
+        HydratedTranscript? updatedHydrate = null;
+        if (hydrate is not null)
+        {
+            var hydrateSentences = hydrate.Sentences
+                .Select(s => entryMap.TryGetValue(s.Id, out var e)
+                    ? s with { Timing = new TimingRange(e.Timing.StartSec, e.Timing.EndSec) }
+                    : s)
+                .ToList();
+
+            updatedHydrate = hydrate with { Sentences = hydrateSentences };
+        }
+
         // Plan/Render/Write
         var stageDir   = manifest.ResolveStageDirectory("roomtone");
         EnsureDirectory(stageDir);
@@ -195,7 +209,25 @@ public sealed class RoomToneInsertionStage
             WavIo.WriteFloat32(wavPath, rendered);
         }
 
+        var audioTargetPath = wavPath ?? manifest.AudioPath;
+        if (!string.IsNullOrWhiteSpace(audioTargetPath))
+        {
+            audioTargetPath = Path.GetFullPath(audioTargetPath);
+        }
+
+        var updatedTranscript = transcript with
+        {
+            AudioPath = string.IsNullOrWhiteSpace(audioTargetPath) ? transcript.AudioPath : audioTargetPath,
+            Sentences = updatedSentences
+        };
+
+        if (updatedHydrate is not null && !string.IsNullOrWhiteSpace(audioTargetPath))
+        {
+            updatedHydrate = updatedHydrate with { AudioPath = audioTargetPath };
+        }
+
         await WriteTimelineAsync(timelineEntries, manifest, timelinePath, ct);
+        await WriteUpdatedTimingsAsync(manifest.TranscriptIndexPath, updatedTranscript, updatedHydrate, jsonOptions, ct);
         await WritePlanAsync(plan, planPath, ct);
         await WriteMetaAsync(manifest, wavPath, roomtonePath, planPath, metaPath, ct);
         await WriteParamsAsync(paramsPath, _toneGainDb, roomtoneSeedStats.MeanRmsDb, appliedGainDb, _fadeMs, _useAdaptiveGain, _emitDiagnostics, _gapLeftThresholdDb, _gapRightThresholdDb, _gapStepSec, _gapBackoffSec, ct);
@@ -216,6 +248,12 @@ public sealed class RoomToneInsertionStage
             ["params"] = paramsPath
         };
         if (wavPath is not null) outputs["roomtoneWav"] = wavPath;
+        outputs["transcript"] = manifest.TranscriptIndexPath;
+        var hydratePath = DeriveHydratePath(manifest.TranscriptIndexPath);
+        if (hydratePath is not null && File.Exists(hydratePath))
+        {
+            outputs["hydrate"] = hydratePath;
+        }
         if (!string.IsNullOrWhiteSpace(textGridGapsPath)) outputs["textgridGaps"] = textGridGapsPath;
         return outputs;
     }
@@ -274,6 +312,46 @@ public sealed class RoomToneInsertionStage
                ?? throw new InvalidOperationException("Failed to parse TranscriptIndex");
     }
 
+    private static string? DeriveHydratePath(string transcriptPath)
+    {
+        if (string.IsNullOrWhiteSpace(transcriptPath))
+        {
+            return null;
+        }
+
+        var directory = Path.GetDirectoryName(transcriptPath);
+        var fileName = Path.GetFileName(transcriptPath);
+        if (string.IsNullOrEmpty(fileName))
+        {
+            return null;
+        }
+
+        string hydrateName;
+        const string TxSuffix = ".tx.json";
+        if (fileName.EndsWith(TxSuffix, StringComparison.OrdinalIgnoreCase))
+        {
+            hydrateName = fileName[..^TxSuffix.Length] + ".hydrate.json";
+        }
+        else
+        {
+            hydrateName = Path.ChangeExtension(fileName, ".hydrate.json") ?? fileName + ".hydrate.json";
+        }
+
+        return directory is null ? hydrateName : Path.Combine(directory, hydrateName);
+    }
+
+    private static async Task<HydratedTranscript?> TryLoadHydrateAsync(string transcriptPath, JsonSerializerOptions options, CancellationToken ct)
+    {
+        var hydratePath = DeriveHydratePath(transcriptPath);
+        if (hydratePath is null || !File.Exists(hydratePath))
+        {
+            return null;
+        }
+
+        var json = await File.ReadAllTextAsync(hydratePath, ct);
+        return JsonSerializer.Deserialize<HydratedTranscript>(json, options);
+    }
+
     private static async Task<AsrResponse> LoadAsrAsync(string path, JsonSerializerOptions options, CancellationToken ct)
     {
         if (!File.Exists(path)) throw new FileNotFoundException("ASR JSON not found", path);
@@ -317,6 +395,39 @@ public sealed class RoomToneInsertionStage
 
         var json = JsonSerializer.Serialize(payload, new JsonSerializerOptions { WriteIndented = true });
         await File.WriteAllTextAsync(path, json, ct);
+    }
+
+    private static async Task WriteUpdatedTimingsAsync(
+        string transcriptPath,
+        TranscriptIndex updatedTranscript,
+        HydratedTranscript? updatedHydrate,
+        JsonSerializerOptions options,
+        CancellationToken ct)
+    {
+        var writeOptions = new JsonSerializerOptions
+        {
+            PropertyNamingPolicy = options.PropertyNamingPolicy,
+            WriteIndented = true
+        };
+
+        Directory.CreateDirectory(Path.GetDirectoryName(transcriptPath) ?? Environment.CurrentDirectory);
+        var transcriptJson = JsonSerializer.Serialize(updatedTranscript, writeOptions);
+        await File.WriteAllTextAsync(transcriptPath, transcriptJson, ct);
+
+        if (updatedHydrate is null)
+        {
+            return;
+        }
+
+        var hydratePath = DeriveHydratePath(transcriptPath);
+        if (hydratePath is null)
+        {
+            return;
+        }
+
+        Directory.CreateDirectory(Path.GetDirectoryName(hydratePath) ?? Environment.CurrentDirectory);
+        var hydrateJson = JsonSerializer.Serialize(updatedHydrate, writeOptions);
+        await File.WriteAllTextAsync(hydratePath, hydrateJson, ct);
     }
 
     private static async Task WritePlanAsync(RoomtonePlan plan, string path, CancellationToken ct)
