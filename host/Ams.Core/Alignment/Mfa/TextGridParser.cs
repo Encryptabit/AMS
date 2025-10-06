@@ -5,11 +5,23 @@ using System.IO;
 
 namespace Ams.Core.Alignment.Mfa;
 
-internal sealed record TextGridInterval(double Start, double End, string Text);
+public sealed record TextGridInterval(double Start, double End, string Text);
 
-internal static class TextGridParser
+public static class TextGridParser
 {
     public static IReadOnlyList<TextGridInterval> ParseWordIntervals(string textGridPath)
+        => ParseIntervals(textGridPath, static name =>
+            string.Equals(name, "words", StringComparison.OrdinalIgnoreCase));
+
+    public static IReadOnlyList<TextGridInterval> ParsePhoneIntervals(string textGridPath)
+        => ParseIntervals(textGridPath, static name =>
+            string.Equals(name, "phones", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(name, "phonemes", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(name, "segments", StringComparison.OrdinalIgnoreCase));
+
+    private static IReadOnlyList<TextGridInterval> ParseIntervals(
+        string textGridPath,
+        Func<string?, bool> tierPredicate)
     {
         if (!File.Exists(textGridPath))
         {
@@ -17,7 +29,7 @@ internal static class TextGridParser
         }
 
         var intervals = new List<TextGridInterval>();
-        string? currentTier = null;
+        bool capture = false;
         double? xmin = null;
         double? xmax = null;
         string? text = null;
@@ -28,18 +40,24 @@ internal static class TextGridParser
 
             if (line.StartsWith("item [", StringComparison.Ordinal))
             {
-                currentTier = null;
+                capture = false;
+                xmin = null;
+                xmax = null;
+                text = null;
                 continue;
             }
 
             if (line.StartsWith("name =", StringComparison.Ordinal))
             {
                 var name = ExtractQuotedValue(line);
-                currentTier = string.Equals(name, "words", StringComparison.OrdinalIgnoreCase) ? "words" : null;
+                capture = tierPredicate(name);
+                xmin = null;
+                xmax = null;
+                text = null;
                 continue;
             }
 
-            if (!string.Equals(currentTier, "words", StringComparison.Ordinal))
+            if (!capture)
             {
                 continue;
             }
@@ -56,19 +74,21 @@ internal static class TextGridParser
                 continue;
             }
 
-            if (line.StartsWith("text =", StringComparison.Ordinal))
+            if (!line.StartsWith("text =", StringComparison.Ordinal))
             {
-                text = ExtractQuotedValue(line) ?? string.Empty;
-
-                if (xmin.HasValue && xmax.HasValue)
-                {
-                    intervals.Add(new TextGridInterval(xmin.Value, xmax.Value, text));
-                }
-
-                xmin = null;
-                xmax = null;
-                text = null;
+                continue;
             }
+
+            text = ExtractQuotedValue(line) ?? string.Empty;
+
+            if (xmin.HasValue && xmax.HasValue)
+            {
+                intervals.Add(new TextGridInterval(xmin.Value, xmax.Value, text));
+            }
+
+            xmin = null;
+            xmax = null;
+            text = null;
         }
 
         return intervals;
