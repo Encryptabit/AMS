@@ -19,6 +19,23 @@ public sealed record PauseAdjustmentsDocument(
         WriteIndented = true
     };
 
+    public static PauseAdjustmentsDocument Load(string path)
+    {
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            throw new ArgumentException("Path must be provided", nameof(path));
+        }
+
+        if (!File.Exists(path))
+        {
+            throw new FileNotFoundException("Pause adjustments JSON not found", path);
+        }
+
+        var json = File.ReadAllText(path);
+        var document = JsonSerializer.Deserialize<PauseAdjustmentsDocument>(json, JsonOptions);
+        return document ?? throw new InvalidOperationException($"Failed to deserialize pause adjustments from {path}");
+    }
+
     public static PauseAdjustmentsDocument Create(
         string sourceTranscript,
         DateTime generatedAtUtc,
