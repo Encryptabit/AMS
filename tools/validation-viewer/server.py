@@ -8,16 +8,88 @@ import os
 import sys
 import json
 import re
+import shutil
+import subprocess
+import tempfile
+import traceback
+import copy
 from pathlib import Path
+from datetime import datetime, timedelta
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from urllib.parse import parse_qs, urlparse
+from xml.etree import ElementTree as ET
+from zipfile import ZipFile
+import openpyxl
+from openpyxl.utils import get_column_letter
+import xlwings as xw
+
+# Get AppData directory for reviewed status
+APPDATA_DIR = Path(os.getenv('APPDATA')) / 'AMS' / 'validation-viewer'
+APPDATA_DIR.mkdir(parents=True, exist_ok=True)
+REVIEWED_STATUS_FILE = APPDATA_DIR / 'reviewed-status.json'
 
 # Default configuration
 BASE_DIR = Path(r"C:\Aethon\InProgress\Vain Glory 2")
 PORT = 8081
 
+SCRIPT_DIR = Path(__file__).resolve().parent
+REPO_ROOT = SCRIPT_DIR.parent.parent
+CRX_TEMPLATE_PATH = Path(r"C:\Aethon\BASE_CRX.xlsx")
+CRX_DIR_NAME = 'CRX'
+CRX_DATA_ROW_START = 11
+DEFAULT_ERROR_TYPE = 'MR'
+
+EXCEL_NS = 'http://schemas.openxmlformats.org/spreadsheetml/2006/main'
+XML_NS = 'http://www.w3.org/XML/1998/namespace'
+REL_NS = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships'
+MC_NS = 'http://schemas.openxmlformats.org/markup-compatibility/2006'
+X14AC_NS = 'http://schemas.microsoft.com/office/spreadsheetml/2009/9/ac'
+XR_NS = 'http://schemas.microsoft.com/office/spreadsheetml/2014/revision'
+XR2_NS = 'http://schemas.openxmlformats.org/spreadsheetml/2015/revision2'
+XR3_NS = 'http://schemas.microsoft.com/office/spreadsheetml/2016/revision3'
+
+NAMESPACES = {'a': EXCEL_NS}
+CELL_REF_RE = re.compile(r'([A-Z]+)(\d+)')
+
+for prefix, uri in [('', EXCEL_NS), ('r', REL_NS), ('mc', MC_NS), ('x14ac', X14AC_NS), ('xr', XR_NS), ('xr2', XR2_NS), ('xr3', XR3_NS)]:
+    ET.register_namespace(prefix, uri)
+
 
 class ValidationReportHandler(BaseHTTPRequestHandler):
+    @staticmethod
+    def load_reviewed_status():
+        """Load reviewed status from AppData"""
+        if REVIEWED_STATUS_FILE.exists():
+            try:
+                with open(REVIEWED_STATUS_FILE, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                    # Key by book name
+                    book_name = BASE_DIR.name
+                    return data.get(book_name, {})
+            except Exception as e:
+                print(f"Error loading reviewed status: {e}")
+        return {}
+
+    @staticmethod
+    def save_reviewed_status(reviewed_chapters):
+        """Save reviewed status to AppData"""
+        try:
+            # Load existing data
+            all_data = {}
+            if REVIEWED_STATUS_FILE.exists():
+                with open(REVIEWED_STATUS_FILE, 'r', encoding='utf-8') as f:
+                    all_data = json.load(f)
+
+            # Update for current book
+            book_name = BASE_DIR.name
+            all_data[book_name] = reviewed_chapters
+
+            # Save back
+            with open(REVIEWED_STATUS_FILE, 'w', encoding='utf-8') as f:
+                json.dump(all_data, f, indent=2)
+        except Exception as e:
+            print(f"Error saving reviewed status: {e}")
+
     def do_GET(self):
         parsed_path = urlparse(self.path)
         path = parsed_path.path
@@ -26,6 +98,10 @@ class ValidationReportHandler(BaseHTTPRequestHandler):
             self.serve_index()
         elif path == '/api/chapters':
             self.serve_chapters_list()
+        elif path == '/api/overview':
+            self.serve_overview()
+        elif path == '/api/reviewed':
+            self.serve_reviewed_status()
         elif path.startswith('/api/report/'):
             chapter_name = path[len('/api/report/'):]
             self.serve_report(chapter_name)
@@ -35,6 +111,69 @@ class ValidationReportHandler(BaseHTTPRequestHandler):
             self.serve_audio_segment(remainder, parsed_path.query)
         else:
             self.send_error(404)
+
+    def do_POST(self):
+        parsed_path = urlparse(self.path)
+        path = parsed_path.path
+        print(f"POST request path: {path}")
+
+        if path.startswith('/api/export/'):
+            chapter_name = path[len('/api/export/'):]
+            print(f"Matched export route, chapter: {chapter_name}")
+            self.handle_export_audio(chapter_name)
+        elif path.startswith('/api/crx/'):
+            chapter_name = path[len('/api/crx/'):]
+            print(f"Matched CRX route, chapter: {chapter_name}")
+            self.handle_add_to_crx(chapter_name)
+        elif path.startswith('/api/reviewed/'):
+            chapter_name = path[len('/api/reviewed/'):]
+            print(f"Matched reviewed route, chapter: {chapter_name}")
+            self.handle_mark_reviewed(chapter_name)
+        else:
+            print(f"No route matched for path: {path}")
+            self.send_error(404)
+
+    def serve_reviewed_status(self):
+        """Serve reviewed status for all chapters"""
+        reviewed = self.load_reviewed_status()
+        self.send_json_response(reviewed)
+
+    def handle_mark_reviewed(self, chapter_name):
+        """Mark a chapter as reviewed"""
+        from urllib.parse import unquote
+
+        chapter_name = unquote(chapter_name)
+
+        # Read POST data
+        content_length = int(self.headers['Content-Length'])
+        post_data = self.rfile.read(content_length)
+        params = json.loads(post_data.decode('utf-8'))
+
+        reviewed_status = params.get('reviewed', True)
+
+        try:
+            # Load current status
+            all_reviewed = self.load_reviewed_status()
+
+            # Update status for this chapter
+            all_reviewed[chapter_name] = {
+                'reviewed': reviewed_status,
+                'timestamp': datetime.utcnow().isoformat()
+            }
+
+            # Save back
+            self.save_reviewed_status(all_reviewed)
+
+            self.send_json_response({
+                'success': True,
+                'chapter': chapter_name,
+                'reviewed': reviewed_status
+            })
+
+        except Exception as e:
+            print(f"Error marking reviewed: {e}")
+            print(traceback.format_exc())
+            self.send_json_response({'error': str(e)}, 500)
 
     def serve_index(self):
         """Serve the main HTML page"""
@@ -205,6 +344,11 @@ class ValidationReportHandler(BaseHTTPRequestHandler):
             border-left-color: #dcdcaa;
         }
 
+        .sentence-item.highlight {
+            box-shadow: 0 0 0 2px rgba(255, 215, 0, 0.25);
+            border-left-color: #ffd54f;
+        }
+
         .sentence-header {
             display: flex;
             justify-content: space-between;
@@ -279,6 +423,20 @@ class ValidationReportHandler(BaseHTTPRequestHandler):
             margin-bottom: 12px;
         }
 
+        .paragraph-flags {
+            font-size: 13px;
+            margin-top: 4px;
+        }
+
+        .paragraph-flags a {
+            color: #4ec9b0;
+            text-decoration: none;
+        }
+
+        .paragraph-flags a:hover {
+            text-decoration: underline;
+        }
+
         .sentence-text {
             background: #1e1e1e;
             padding: 12px;
@@ -344,6 +502,152 @@ class ValidationReportHandler(BaseHTTPRequestHandler):
             border-bottom: 5px solid transparent;
         }
 
+        .action-buttons {
+            display: flex;
+            gap: 8px;
+            margin-top: 12px;
+        }
+
+        .export-button {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 6px 12px;
+            background: #0e7a0d;
+            color: #ffffff;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 12px;
+            font-weight: 500;
+            transition: background 0.2s;
+        }
+
+        .export-button:hover {
+            background: #0d9e0c;
+        }
+
+        .export-button:active {
+            background: #0a660a;
+        }
+
+        .crx-button {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 6px 12px;
+            background: #7a0e7a;
+            color: #ffffff;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 12px;
+            font-weight: 500;
+            transition: background 0.2s;
+        }
+
+        .crx-button:hover {
+            background: #9e0c9e;
+        }
+
+        .crx-button:active {
+            background: #660a66;
+        }
+
+        .button-disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .modal {
+            display: none;
+            position: fixed;
+            z-index: 1000;
+            left: 0;
+            top: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0, 0, 0, 0.6);
+        }
+
+        .modal-content {
+            background-color: #252526;
+            margin: 15% auto;
+            padding: 24px;
+            border: 1px solid #3e3e42;
+            border-radius: 8px;
+            width: 80%;
+            max-width: 500px;
+        }
+
+        .modal-header {
+            font-size: 18px;
+            font-weight: 600;
+            margin-bottom: 16px;
+            color: #ffffff;
+        }
+
+        .modal-body {
+            margin-bottom: 16px;
+        }
+
+        .modal-input {
+            width: 100%;
+            padding: 8px;
+            margin: 8px 0;
+            background: #1e1e1e;
+            color: #d4d4d4;
+            border: 1px solid #3e3e42;
+            border-radius: 4px;
+            font-size: 13px;
+        }
+
+        .modal-textarea {
+            width: 100%;
+            padding: 8px;
+            margin: 8px 0;
+            background: #1e1e1e;
+            color: #d4d4d4;
+            border: 1px solid #3e3e42;
+            border-radius: 4px;
+            font-size: 13px;
+            min-height: 80px;
+            resize: vertical;
+        }
+
+        .modal-footer {
+            display: flex;
+            justify-content: flex-end;
+            gap: 8px;
+        }
+
+        .modal-button {
+            padding: 8px 16px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 13px;
+            font-weight: 500;
+        }
+
+        .modal-button-primary {
+            background: #0e639c;
+            color: #ffffff;
+        }
+
+        .modal-button-primary:hover {
+            background: #1177bb;
+        }
+
+        .modal-button-secondary {
+            background: #3e3e42;
+            color: #d4d4d4;
+        }
+
+        .modal-button-secondary:hover {
+            background: #4e4e52;
+        }
+
         .paragraph-item {
             background: #252526;
             padding: 18px;
@@ -377,9 +681,204 @@ class ValidationReportHandler(BaseHTTPRequestHandler):
         ::-webkit-scrollbar-thumb:hover {
             background: #4e4e4e;
         }
+
+        .toast-container {
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            z-index: 2000;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+
+        .toast {
+            background: #252526;
+            border: 1px solid #3e3e42;
+            border-radius: 6px;
+            padding: 16px 20px;
+            min-width: 300px;
+            max-width: 400px;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
+            animation: slideIn 0.3s ease-out;
+        }
+
+        @keyframes slideIn {
+            from {
+                transform: translateX(400px);
+                opacity: 0;
+            }
+            to {
+                transform: translateX(0);
+                opacity: 1;
+            }
+        }
+
+        .toast.success {
+            border-left: 4px solid #4ec9b0;
+        }
+
+        .toast.error {
+            border-left: 4px solid #f48771;
+        }
+
+        .toast-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 8px;
+        }
+
+        .toast-title {
+            font-weight: 600;
+            font-size: 14px;
+            color: #ffffff;
+        }
+
+        .toast-close {
+            background: none;
+            border: none;
+            color: #858585;
+            cursor: pointer;
+            font-size: 18px;
+            padding: 0;
+            line-height: 1;
+        }
+
+        .toast-close:hover {
+            color: #d4d4d4;
+        }
+
+        .toast-message {
+            font-size: 13px;
+            color: #cccccc;
+            line-height: 1.5;
+        }
+
+        .chapter-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(350px, 1fr));
+            gap: 16px;
+            margin-top: 16px;
+        }
+
+        .chapter-card {
+            background: #252526;
+            border: 1px solid #3e3e42;
+            border-radius: 6px;
+            padding: 16px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .chapter-card:hover {
+            background: #2d2d30;
+            border-color: #007acc;
+            box-shadow: 0 2px 8px rgba(0, 122, 204, 0.2);
+        }
+
+        .chapter-card-header {
+            margin-bottom: 12px;
+            padding-bottom: 12px;
+            border-bottom: 1px solid #3e3e42;
+        }
+
+        .chapter-card-name {
+            font-size: 15px;
+            font-weight: 600;
+            color: #ffffff;
+        }
+
+        .chapter-card-metrics {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            font-size: 13px;
+        }
+
+        .chapter-card-metrics .metric {
+            display: flex;
+            justify-content: space-between;
+        }
+
+        .overview-item {
+            border-left: 3px solid #007acc;
+            background: #2a2d2e;
+        }
+
+        .reviewed-button {
+            position: fixed;
+            bottom: 30px;
+            right: 30px;
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 12px 24px;
+            background: #0e7a0d;
+            color: #ffffff;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: 600;
+            transition: all 0.2s;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
+            z-index: 1000;
+        }
+
+        .reviewed-button:hover {
+            background: #0d9e0c;
+            transform: translateY(-2px);
+            box-shadow: 0 6px 16px rgba(0, 0, 0, 0.6);
+        }
+
+        .reviewed-button.reviewed {
+            background: #3e3e42;
+            color: #4ec9b0;
+        }
+
+        .reviewed-button.reviewed:hover {
+            background: #4e4e52;
+            transform: translateY(-2px);
+            box-shadow: 0 6px 16px rgba(0, 0, 0, 0.6);
+        }
+
+        .reviewed-indicator {
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            padding: 2px 8px;
+            background: #4ec9b01a;
+            color: #4ec9b0;
+            border-radius: 3px;
+            font-size: 11px;
+            font-weight: 600;
+            margin-left: 8px;
+        }
+
+        .chapter-card.reviewed {
+            opacity: 0.7;
+        }
+
+        .chapter-card.reviewed .chapter-card-name::after {
+            content: ' ✓';
+            color: #4ec9b0;
+            margin-left: 8px;
+        }
+
+        .chapter-item.reviewed {
+            opacity: 0.7;
+        }
+
+        .chapter-item.reviewed .chapter-name::after {
+            content: ' ✓';
+            color: #4ec9b0;
+            margin-left: 4px;
+        }
     </style>
 </head>
 <body>
+    <div id="toast-container" class="toast-container"></div>
     <div id="sidebar">
         <h2>Validation Reports</h2>
         <div id="chapter-list"></div>
@@ -388,36 +887,149 @@ class ValidationReportHandler(BaseHTTPRequestHandler):
         <div id="loading">Select a chapter to view its validation report</div>
     </div>
 
+    <!-- CRX Modal -->
+    <div id="crxModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">Add to CRX</div>
+            <div class="modal-body">
+                <label for="errorType">Error Type:</label>
+                <select id="errorType" class="modal-input">
+                    <option value="MR" selected>MR</option>
+                    <option value="PRON">PRON</option>
+                    <option value="DIC">DIC</option>
+                    <option value="NZ">NZ</option>
+                    <option value="PL">PL</option>
+                    <option value="DIST">DIST</option>
+                    <option value="MW">MW</option>
+                    <option value="ML">ML</option>
+                    <option value="TYPO">TYPO</option>
+                    <option value="CHAR">CHAR</option>
+                </select>
+                <label for="comments">Comments:</label>
+                <textarea id="comments" class="modal-textarea" placeholder="Enter any additional comments..."></textarea>
+            </div>
+            <div class="modal-footer">
+                <button class="modal-button modal-button-secondary" onclick="closeCrxModal()">Cancel</button>
+                <button class="modal-button modal-button-primary" onclick="submitCrx()">Add to CRX</button>
+            </div>
+        </div>
+    </div>
+
     <script>
         let chapters = [];
         let currentChapter = null;
+        let pendingCrxData = null;
+        let reviewedStatus = {};
+
+        async function loadReviewedStatus() {
+            try {
+                const response = await fetch('/api/reviewed');
+                reviewedStatus = await response.json();
+            } catch (error) {
+                console.error('Failed to load reviewed status:', error);
+                reviewedStatus = {};
+            }
+        }
 
         async function loadChapters() {
             try {
                 const response = await fetch('/api/chapters');
                 chapters = await response.json();
+                await loadReviewedStatus();
                 renderChapterList();
             } catch (error) {
                 console.error('Failed to load chapters:', error);
             }
         }
 
-        function renderChapterList() {
-            const list = document.getElementById('chapter-list');
-            list.innerHTML = chapters.map(chapter => `
-                <div class="chapter-item" onclick="loadReport('${chapter.name}')">
-                    <div class="chapter-name">${chapter.name}</div>
-                    <div class="chapter-stats">${chapter.path}</div>
-                </div>
-            `).join('');
+        async function markReviewed(chapterName, reviewed = true) {
+            try {
+                const response = await fetch(`/api/reviewed/${encodeURIComponent(chapterName)}`, {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ reviewed: reviewed })
+                });
+
+                const result = await response.json();
+
+                if (result.success) {
+                    reviewedStatus[chapterName] = { reviewed: reviewed, timestamp: new Date().toISOString() };
+                    showToast(reviewed ? `Marked "${chapterName}" as reviewed` : `Unmarked "${chapterName}"`, 'success');
+                    renderChapterList();
+                    // Re-render current view
+                    if (currentChapter === chapterName) {
+                        loadReport(chapterName);
+                    } else if (!currentChapter) {
+                        loadOverview();
+                    }
+                    // Update floating button
+                    updateFloatingButton();
+                } else {
+                    showToast(`Failed to update reviewed status: ${result.error}`, 'error');
+                }
+            } catch (err) {
+                console.error('Failed to mark reviewed:', err);
+                showToast('Failed to update reviewed status', 'error');
+            }
         }
 
-        async function loadReport(chapterName) {
-            currentChapter = chapterName;
+        function updateFloatingButton() {
+            // Remove existing button
+            const existingButton = document.getElementById('floating-reviewed-button');
+            if (existingButton) {
+                existingButton.remove();
+            }
+
+            // Only show button when viewing a chapter report
+            if (!currentChapter) return;
+
+            const isReviewed = reviewedStatus[currentChapter]?.reviewed;
+            const reviewedClass = isReviewed ? 'reviewed' : '';
+            const buttonText = isReviewed ? '✓ Reviewed' : 'Mark as Reviewed';
+
+            const button = document.createElement('button');
+            button.id = 'floating-reviewed-button';
+            button.className = `reviewed-button ${reviewedClass}`;
+            button.innerHTML = buttonText;
+            button.onclick = () => markReviewed(currentChapter, !isReviewed);
+
+            document.body.appendChild(button);
+        }
+
+        function renderChapterList() {
+            const list = document.getElementById('chapter-list');
+
+            // Add overview link at the top
+            let html = `
+                <div class="chapter-item overview-item" onclick="loadOverview()">
+                    <div class="chapter-name">📊 Book Overview</div>
+                    <div class="chapter-stats">All Chapters</div>
+                </div>
+            `;
+
+            html += chapters.map(chapter => {
+                const m = chapter.metrics;
+                const isReviewed = reviewedStatus[chapter.name]?.reviewed;
+                const reviewedClass = isReviewed ? 'reviewed' : '';
+                const flaggedInfo = `${m.sentenceFlagged} sentences, ${m.paragraphFlagged} paragraphs`;
+                return `
+                    <div class="chapter-item ${reviewedClass}" onclick="loadReport('${chapter.name}')">
+                        <div class="chapter-name">${chapter.name}</div>
+                        <div class="chapter-stats">Flagged: ${flaggedInfo}</div>
+                        <div class="chapter-stats">Avg WER: ${m.sentenceAvgWer}</div>
+                    </div>
+                `;
+            }).join('');
+
+            list.innerHTML = html;
+        }
+
+        async function loadOverview() {
+            currentChapter = null;
 
             // Update active state
-            document.querySelectorAll('.chapter-item').forEach((item, index) => {
-                if (chapters[index].name === chapterName) {
+            document.querySelectorAll('.chapter-item').forEach(item => {
+                if (item.classList.contains('overview-item')) {
                     item.classList.add('active');
                 } else {
                     item.classList.remove('active');
@@ -425,9 +1037,101 @@ class ValidationReportHandler(BaseHTTPRequestHandler):
             });
 
             try {
+                const response = await fetch('/api/overview');
+                const overview = await response.json();
+                renderOverview(overview);
+                updateFloatingButton(); // Hide button on overview
+            } catch (error) {
+                console.error('Failed to load overview:', error);
+                document.getElementById('content').innerHTML = '<div id="loading">Failed to load overview</div>';
+            }
+        }
+
+        function renderOverview(overview) {
+            const content = document.getElementById('content');
+
+            const chaptersHtml = overview.chapters.map(c => {
+                const m = c.metrics;
+                const werClass = parseFloat(m.sentenceAvgWer) > 5 ? 'high' : parseFloat(m.sentenceAvgWer) > 2 ? 'medium' : 'low';
+                const isReviewed = reviewedStatus[c.name]?.reviewed;
+                const reviewedClass = isReviewed ? 'reviewed' : '';
+
+                return `
+                    <div class="chapter-card ${reviewedClass}" onclick="loadReport('${c.name}')">
+                        <div class="chapter-card-header">
+                            <div class="chapter-card-name">${c.name}</div>
+                        </div>
+                        <div class="chapter-card-metrics">
+                            <div class="metric">
+                                <span class="metric-label">Sentences:</span>
+                                <span class="metric-value">${m.sentenceCount} (${m.sentenceFlagged} flagged)</span>
+                            </div>
+                            <div class="metric">
+                                <span class="metric-label">Paragraphs:</span>
+                                <span class="metric-value">${m.paragraphCount} (${m.paragraphFlagged} flagged)</span>
+                            </div>
+                            <div class="metric">
+                                <span class="metric-label">Avg WER:</span>
+                                <span class="metric-value ${werClass}">${m.sentenceAvgWer}</span>
+                            </div>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+
+            content.innerHTML = `
+                <div class="report-header">
+                    <h1>${overview.bookName} - Validation Overview</h1>
+                </div>
+
+                <div class="stats-grid">
+                    <div class="stat-card">
+                        <div class="stat-label">Total Chapters</div>
+                        <div class="stat-value">${overview.chapterCount}</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-label">Total Sentences</div>
+                        <div class="stat-value">${overview.totalSentences}</div>
+                        <div class="stat-detail">Flagged: ${overview.totalFlaggedSentences}</div>
+                        <div class="stat-detail">Avg WER: ${overview.avgSentenceWer}</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-label">Total Paragraphs</div>
+                        <div class="stat-value">${overview.totalParagraphs}</div>
+                        <div class="stat-detail">Flagged: ${overview.totalFlaggedParagraphs}</div>
+                        <div class="stat-detail">Avg WER: ${overview.avgParagraphWer}</div>
+                    </div>
+                </div>
+
+                <div class="section-title">Chapters</div>
+                <div class="chapter-grid">
+                    ${chaptersHtml}
+                </div>
+            `;
+        }
+
+        async function loadReport(chapterName) {
+            currentChapter = chapterName;
+
+            // Update active state - need to account for overview item at index 0
+            document.querySelectorAll('.chapter-item').forEach((item) => {
+                if (item.classList.contains('overview-item')) {
+                    item.classList.remove('active');
+                } else {
+                    const itemName = item.querySelector('.chapter-name').textContent;
+                    if (itemName === chapterName) {
+                        item.classList.add('active');
+                    } else {
+                        item.classList.remove('active');
+                    }
+                }
+            });
+
+            try {
                 const response = await fetch(`/api/report/${encodeURIComponent(chapterName)}`);
                 const report = await response.json();
                 renderReport(report);
+                updateFloatingButton(); // Show/update button for this chapter
             } catch (error) {
                 console.error('Failed to load report:', error);
                 document.getElementById('content').innerHTML = '<div id="loading">Failed to load report</div>';
@@ -438,7 +1142,7 @@ class ValidationReportHandler(BaseHTTPRequestHandler):
             const content = document.getElementById('content');
 
             const sentencesHtml = report.sentences.map(s => `
-                <div class="sentence-item ${s.status}">
+                <div id="sentence-${s.id}" class="sentence-item ${s.status}">
                     <div class="sentence-header">
                         <span class="sentence-id">#${s.id}</span>
                         <div class="sentence-metrics">
@@ -457,20 +1161,32 @@ class ValidationReportHandler(BaseHTTPRequestHandler):
                         <div>Book range: ${s.bookRange}</div>
                         <div>Script range: ${s.scriptRange}</div>
                         <div>Timing: ${s.timing}</div>
+                        ${s.paragraphId !== null && s.paragraphId !== undefined ? `<div class="paragraph-flags">Parent paragraph: <a href="#paragraph-${s.paragraphId}" onclick="focusParagraph(${s.paragraphId}); return false;">#${s.paragraphId}</a></div>` : ''}
                     </div>
                     <div class="sentence-text">
-                        <div class="text-label">Book</div>
-                        <div class="text-content">${escapeHtml(s.bookText)}</div>
-                        ${s.scriptText ? `
-                            <div class="text-label" style="margin-top: 12px;">Script</div>
-                            <div class="text-content">${escapeHtml(s.scriptText)}</div>
-                        ` : ''}
+                        ${s.excerpt ? `
+                            <div class="text-label">Excerpt</div>
+                            <div class="text-content">${escapeHtml(s.excerpt)}</div>
+                        ` : `
+                            <div class="text-label">Book</div>
+                            <div class="text-content">${escapeHtml(s.bookText)}</div>
+                            ${s.scriptText ? `
+                                <div class="text-label" style="margin-top: 12px;">Script</div>
+                                <div class="text-content">${escapeHtml(s.scriptText)}</div>
+                            ` : ''}
+                        `}
                     </div>
                     ${s.startTime !== null && s.endTime !== null ? `
-                        <div class="audio-player">
+                        <div class="action-buttons">
                             <button class="play-button" onclick="playAudioSegment('${currentChapter}', ${s.startTime}, ${s.endTime})">
                                 <span class="play-icon"></span>
                                 Play Audio Segment
+                            </button>
+                            <button class="export-button" data-chapter="${currentChapter}" data-start="${s.startTime}" data-end="${s.endTime}" data-sentence-id="${s.id}" data-excerpt="${escapeHtml(s.excerpt || '')}">
+                                Export Audio
+                            </button>
+                            <button class="crx-button" data-chapter="${currentChapter}" data-start="${s.startTime}" data-end="${s.endTime}" data-sentence-id="${s.id}" data-excerpt="${escapeHtml(s.excerpt || '')}" data-book-text="${escapeHtml(s.bookText || '')}" data-script-text="${escapeHtml(s.scriptText || '')}">
+                                Add to CRX
                             </button>
                         </div>
                     ` : ''}
@@ -478,7 +1194,7 @@ class ValidationReportHandler(BaseHTTPRequestHandler):
             `).join('');
 
             const paragraphsHtml = report.paragraphs.map(p => `
-                <div class="paragraph-item ${p.status}">
+                <div id="paragraph-${p.id}" class="paragraph-item ${p.status}">
                     <div class="sentence-header">
                         <span class="sentence-id">#${p.id}</span>
                         <div class="sentence-metrics">
@@ -495,11 +1211,21 @@ class ValidationReportHandler(BaseHTTPRequestHandler):
                     </div>
                     <div class="sentence-details">
                         <div>Book range: ${p.bookRange}</div>
+                        ${p.timing ? `<div>Timing: ${p.timing}</div>` : ''}
+                        ${Array.isArray(p.flaggedSentenceIds) && p.flaggedSentenceIds.length ? `<div class="paragraph-flags">Flagged sentences: ${p.flaggedSentenceIds.map(id => `<a href="#sentence-${id}" onclick="focusSentence(${id}); return false;">#${id}</a>`).join(', ')}</div>` : ''}
                     </div>
                     ${p.bookText ? `
                         <div class="sentence-text">
                             <div class="text-label">Book</div>
-                            <div class="text-content">${escapeHtml(p.bookText)}</div>
+                            <div class="text-content">${renderParagraphText(p.bookText, p.flaggedSentenceIds || [], report.sentences)}</div>
+                        </div>
+                    ` : ''}
+                    ${p.startTime !== null && p.endTime !== null ? `
+                        <div class="action-buttons">
+                            <button class="play-button" onclick="playAudioSegment('${currentChapter}', ${p.startTime}, ${p.endTime})">
+                                <span class="play-icon"></span>
+                                Play Paragraph Audio
+                            </button>
                         </div>
                     ` : ''}
                 </div>
@@ -540,6 +1266,33 @@ class ValidationReportHandler(BaseHTTPRequestHandler):
                 <div class="section-title">Paragraphs by WER</div>
                 ${paragraphsHtml}
             `;
+
+            // Add event listeners for export and CRX buttons
+            setTimeout(() => {
+                document.querySelectorAll('.export-button').forEach(btn => {
+                    btn.addEventListener('click', function() {
+                        const chapter = this.getAttribute('data-chapter');
+                        const start = parseFloat(this.getAttribute('data-start'));
+                        const end = parseFloat(this.getAttribute('data-end'));
+                        const sentenceId = this.getAttribute('data-sentence-id');
+                        const excerpt = this.getAttribute('data-excerpt');
+                        exportAudio(chapter, start, end, sentenceId, excerpt);
+                    });
+                });
+
+                document.querySelectorAll('.crx-button').forEach(btn => {
+                    btn.addEventListener('click', function() {
+                        const chapter = this.getAttribute('data-chapter');
+                        const start = parseFloat(this.getAttribute('data-start'));
+                        const end = parseFloat(this.getAttribute('data-end'));
+                        const sentenceId = this.getAttribute('data-sentence-id');
+                        const excerpt = this.getAttribute('data-excerpt');
+                        const bookText = this.getAttribute('data-book-text');
+                        const scriptText = this.getAttribute('data-script-text');
+                        openCrxModal(chapter, start, end, sentenceId, excerpt, bookText, scriptText);
+                    });
+                });
+            }, 0);
         }
 
         function getMetricClass(value) {
@@ -575,8 +1328,245 @@ class ValidationReportHandler(BaseHTTPRequestHandler):
             });
         }
 
-        // Load chapters on page load
-        loadChapters();
+        function focusSentence(sentenceId) {
+            const element = document.getElementById(`sentence-${sentenceId}`);
+            if (!element) return;
+
+            element.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            element.classList.add('highlight');
+            setTimeout(() => element.classList.remove('highlight'), 1600);
+        }
+
+        function focusParagraph(paragraphId) {
+            const element = document.getElementById(`paragraph-${paragraphId}`);
+            if (!element) return;
+
+            element.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            element.classList.add('highlight');
+            setTimeout(() => element.classList.remove('highlight'), 1600);
+        }
+
+        function renderParagraphText(paragraphText, flaggedSentenceIds, allSentences) {
+            // If no flagged sentences, just return escaped text
+            if (!flaggedSentenceIds || flaggedSentenceIds.length === 0) {
+                return escapeHtml(paragraphText);
+            }
+
+            // Build a map of sentence ID to sentence text
+            const sentenceMap = {};
+            allSentences.forEach(s => {
+                if (flaggedSentenceIds.includes(s.id)) {
+                    sentenceMap[s.id] = s.bookText;
+                }
+            });
+
+            // Try to find and hyperlink each flagged sentence in the paragraph
+            let result = escapeHtml(paragraphText);
+
+            flaggedSentenceIds.forEach(sentenceId => {
+                const sentenceText = sentenceMap[sentenceId];
+                if (!sentenceText) return;
+
+                // Escape the sentence text for regex
+                const escapedSentenceText = escapeHtml(sentenceText);
+
+                // Find this sentence in the paragraph and wrap it in a link
+                // Use word boundary matching to avoid partial matches
+                const regex = new RegExp(escapedSentenceText.replace(/[.*+?^${}()|[\\]\\\\]/g, '\\\\\\\\$&'), 'g');
+                result = result.replace(regex, `<a href="#sentence-${sentenceId}" onclick="focusSentence(${sentenceId}); return false;" style="color: #4ec9b0; text-decoration: none;">${escapedSentenceText}</a>`);
+            });
+
+            return result;
+        }
+
+        async function exportAudio(chapterName, startTime, endTime, sentenceId, excerpt) {
+            try {
+                const response = await fetch(`/api/export/${encodeURIComponent(chapterName)}`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        start: startTime,
+                        end: endTime,
+                        sentenceId: sentenceId,
+                        excerpt: excerpt
+                    })
+                });
+
+                const result = await response.json();
+
+                if (result.success) {
+                    showToast(`Audio exported: ${result.filename}<br>Error #${result.errorNumber}`, 'success');
+                } else {
+                    showToast(`Export failed: ${result.error}`, 'error');
+                }
+            } catch (err) {
+                console.error('Failed to export audio:', err);
+                showToast('Failed to export audio. Check console for details.', 'error');
+            }
+        }
+
+        function openCrxModal(chapterName, startTime, endTime, sentenceId, excerpt, bookText, scriptText) {
+            pendingCrxData = {
+                chapterName: chapterName,
+                start: startTime,
+                end: endTime,
+                sentenceId: sentenceId,
+                excerpt: excerpt
+            };
+
+            // Pre-populate comments with formatted comparison
+            const commentsField = document.getElementById('comments');
+
+            if (excerpt) {
+                commentsField.value = excerpt;
+            } else if (scriptText && bookText) {
+                // Generate "Read as / Should be" format with differences highlighted
+                const diff = highlightDifferences(scriptText, bookText);
+                commentsField.value = `Read as: ${diff.scriptHighlighted}\nShould be: ${diff.bookHighlighted}`;
+            } else {
+                commentsField.value = '';
+            }
+
+            // Show modal
+            document.getElementById('crxModal').style.display = 'block';
+        }
+
+        function highlightDifferences(script, book) {
+            // Word-by-word comparison with grouped mismatches
+            const scriptWords = script.split(/\\s+/);
+            const bookWords = book.split(/\\s+/);
+
+            let scriptResult = [];
+            let bookResult = [];
+            let scriptMismatchBuffer = [];
+            let bookMismatchBuffer = [];
+
+            const maxLen = Math.max(scriptWords.length, bookWords.length);
+
+            function stripPunctuation(word) {
+                return word.replace(/[.,!?;:'"()-]/g, '');
+            }
+
+            function flushBuffers() {
+                if (scriptMismatchBuffer.length > 0) {
+                    scriptResult.push(`[${scriptMismatchBuffer.join(' ')}]`);
+                    scriptMismatchBuffer = [];
+                }
+                if (bookMismatchBuffer.length > 0) {
+                    bookResult.push(`[${bookMismatchBuffer.join(' ')}]`);
+                    bookMismatchBuffer = [];
+                }
+            }
+
+            for (let i = 0; i < maxLen; i++) {
+                const scriptWord = scriptWords[i] || '';
+                const bookWord = bookWords[i] || '';
+
+                // Compare words without punctuation
+                const scriptWordNoPunct = stripPunctuation(scriptWord);
+                const bookWordNoPunct = stripPunctuation(bookWord);
+
+                if (scriptWordNoPunct !== bookWordNoPunct) {
+                    // Accumulate mismatches
+                    if (scriptWord) scriptMismatchBuffer.push(scriptWord);
+                    if (bookWord) bookMismatchBuffer.push(bookWord);
+                } else {
+                    // Flush accumulated mismatches before adding matching word
+                    flushBuffers();
+                    if (scriptWord) scriptResult.push(scriptWord);
+                    if (bookWord) bookResult.push(bookWord);
+                }
+            }
+
+            // Flush any remaining mismatches
+            flushBuffers();
+
+            return {
+                scriptHighlighted: scriptResult.join(' '),
+                bookHighlighted: bookResult.join(' ')
+            };
+        }
+
+        function closeCrxModal() {
+            document.getElementById('crxModal').style.display = 'none';
+            pendingCrxData = null;
+        }
+
+        async function submitCrx() {
+            if (!pendingCrxData) return;
+
+            const errorType = document.getElementById('errorType').value;
+            const comments = document.getElementById('comments').value;
+
+            try {
+                const response = await fetch(`/api/crx/${encodeURIComponent(pendingCrxData.chapterName)}`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        start: pendingCrxData.start,
+                        end: pendingCrxData.end,
+                        sentenceId: pendingCrxData.sentenceId,
+                        errorType: errorType,
+                        comments: comments,
+                        excerpt: pendingCrxData.excerpt
+                    })
+                });
+
+                const result = await response.json();
+
+                if (result.success) {
+                    showToast(`Added to CRX!<br>Error #${result.errorNumber} • ${result.timecode}`, 'success');
+                    closeCrxModal();
+                } else {
+                    showToast(`Failed to add to CRX: ${result.error}`, 'error');
+                }
+            } catch (err) {
+                console.error('Failed to add to CRX:', err);
+                showToast('Failed to add to CRX. Check console for details.', 'error');
+            }
+        }
+
+        // Toast notification system
+        function showToast(message, type = 'success', duration = 5000) {
+            const container = document.getElementById('toast-container');
+            const toast = document.createElement('div');
+            toast.className = `toast ${type}`;
+
+            const title = type === 'success' ? 'Success' : 'Error';
+
+            toast.innerHTML = `
+                <div class="toast-header">
+                    <div class="toast-title">${title}</div>
+                    <button class="toast-close" onclick="this.parentElement.parentElement.remove()">×</button>
+                </div>
+                <div class="toast-message">${message}</div>
+            `;
+
+            container.appendChild(toast);
+
+            // Auto-remove after duration
+            setTimeout(() => {
+                toast.style.animation = 'slideIn 0.3s ease-out reverse';
+                setTimeout(() => toast.remove(), 300);
+            }, duration);
+        }
+
+        // Close modal when clicking outside of it
+        window.onclick = function(event) {
+            const modal = document.getElementById('crxModal');
+            if (event.target === modal) {
+                closeCrxModal();
+            }
+        }
+
+        // Load chapters and overview on page load
+        loadChapters().then(() => {
+            loadOverview();
+        });
     </script>
 </body>
 </html>"""
@@ -586,8 +1576,54 @@ class ValidationReportHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(html.encode())
 
+    def extract_report_metrics(self, report_path):
+        """Extract summary metrics from a validation report"""
+        try:
+            with open(report_path, 'r', encoding='utf-8-sig') as f:
+                content = f.read()
+
+            metrics = {
+                'sentenceCount': 0,
+                'sentenceFlagged': 0,
+                'sentenceAvgWer': '0.00%',
+                'paragraphCount': 0,
+                'paragraphFlagged': 0,
+                'paragraphAvgWer': '0.00%'
+            }
+
+            # Parse sentences line: "Sentences : 277 (Avg WER 2.48%, Max WER 100.00%, Flagged 18)"
+            sent_match = re.search(r'Sentences\s*:\s*(\d+)\s*\(Avg WER ([\d.]+)%.*Flagged (\d+)\)', content)
+            if sent_match:
+                metrics['sentenceCount'] = int(sent_match.group(1))
+                metrics['sentenceAvgWer'] = sent_match.group(2) + '%'
+                metrics['sentenceFlagged'] = int(sent_match.group(3))
+
+            # Parse paragraphs line: "Paragraphs: 72 (Avg WER 3.57%, Avg Coverage 99.89%)"
+            para_match = re.search(r'Paragraphs\s*:\s*(\d+)\s*\(Avg WER ([\d.]+)%', content)
+            if para_match:
+                metrics['paragraphCount'] = int(para_match.group(1))
+                metrics['paragraphAvgWer'] = para_match.group(2) + '%'
+
+            # Count flagged paragraphs
+            para_section = content.split('All paragraphs by WER:')
+            if len(para_section) > 1:
+                flagged_paras = re.findall(r'#\d+ \| WER [\d.]+% \| Coverage [\d.]+% \| Status (attention|unreliable)', para_section[1])
+                metrics['paragraphFlagged'] = len(flagged_paras)
+
+            return metrics
+        except Exception as e:
+            print(f"Error extracting metrics from {report_path}: {e}")
+            return {
+                'sentenceCount': 0,
+                'sentenceFlagged': 0,
+                'sentenceAvgWer': 'N/A',
+                'paragraphCount': 0,
+                'paragraphFlagged': 0,
+                'paragraphAvgWer': 'N/A'
+            }
+
     def serve_chapters_list(self):
-        """Find all validation report files and return chapter list"""
+        """Find all validation report files and return chapter list with metrics"""
         chapters = []
 
         for item in BASE_DIR.iterdir():
@@ -597,9 +1633,12 @@ class ValidationReportHandler(BaseHTTPRequestHandler):
                 report_path = item / report_pattern
 
                 if report_path.exists():
+                    # Extract basic metrics from report
+                    metrics = self.extract_report_metrics(report_path)
                     chapters.append({
                         'name': item.name,
-                        'path': str(item.relative_to(BASE_DIR))
+                        'path': str(item.relative_to(BASE_DIR)),
+                        'metrics': metrics
                     })
 
         def natural_sort_key(chapter):
@@ -619,6 +1658,75 @@ class ValidationReportHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(json.dumps(chapters).encode())
 
+    def serve_overview(self):
+        """Serve book-wide overview with aggregated metrics"""
+        chapters = []
+
+        for item in BASE_DIR.iterdir():
+            if item.is_dir():
+                report_pattern = item.name + ".validate.report.txt"
+                report_path = item / report_pattern
+
+                if report_path.exists():
+                    metrics = self.extract_report_metrics(report_path)
+                    chapters.append({
+                        'name': item.name,
+                        'path': str(item.relative_to(BASE_DIR)),
+                        'metrics': metrics
+                    })
+
+        def natural_sort_key(chapter):
+            name = chapter['name']
+            number_groups = [int(match.group()) for match in re.finditer(r"\d+", name)]
+            if number_groups:
+                primary = number_groups[0]
+                return (0, primary, name.lower())
+            return (1, name.lower())
+
+        chapters.sort(key=natural_sort_key)
+
+        # Calculate book-wide totals
+        total_sentences = sum(c['metrics']['sentenceCount'] for c in chapters)
+        total_flagged_sentences = sum(c['metrics']['sentenceFlagged'] for c in chapters)
+        total_paragraphs = sum(c['metrics']['paragraphCount'] for c in chapters)
+        total_flagged_paragraphs = sum(c['metrics']['paragraphFlagged'] for c in chapters)
+
+        # Calculate weighted average WER
+        if total_sentences > 0:
+            weighted_sent_wer_sum = sum(
+                c['metrics']['sentenceCount'] * float(c['metrics']['sentenceAvgWer'].rstrip('%'))
+                for c in chapters if c['metrics']['sentenceAvgWer'] != 'N/A'
+            )
+            avg_sentence_wer = weighted_sent_wer_sum / total_sentences
+        else:
+            avg_sentence_wer = 0
+
+        if total_paragraphs > 0:
+            weighted_para_wer_sum = sum(
+                c['metrics']['paragraphCount'] * float(c['metrics']['paragraphAvgWer'].rstrip('%'))
+                for c in chapters if c['metrics']['paragraphAvgWer'] != 'N/A'
+            )
+            avg_paragraph_wer = weighted_para_wer_sum / total_paragraphs
+        else:
+            avg_paragraph_wer = 0
+
+        overview = {
+            'bookName': BASE_DIR.name,
+            'chapterCount': len(chapters),
+            'totalSentences': total_sentences,
+            'totalFlaggedSentences': total_flagged_sentences,
+            'avgSentenceWer': f"{avg_sentence_wer:.2f}%",
+            'totalParagraphs': total_paragraphs,
+            'totalFlaggedParagraphs': total_flagged_paragraphs,
+            'avgParagraphWer': f"{avg_paragraph_wer:.2f}%",
+            'chapters': chapters
+        }
+
+        self.send_response(200)
+        self.send_header('Content-type', 'application/json')
+        self.end_headers()
+        self.wfile.write(json.dumps(overview).encode())
+
     def serve_report(self, chapter_name):
         """Parse and serve a validation report"""
         from urllib.parse import unquote
@@ -628,9 +1736,12 @@ class ValidationReportHandler(BaseHTTPRequestHandler):
 
         chapter_dir = BASE_DIR / chapter_name
         report_file = chapter_dir / f"{chapter_name}.validate.report.txt"
+        hydrate_file = chapter_dir / f"{chapter_name}.align.hydrate.json"
 
         print(f"Looking for report: {report_file}")
         print(f"File exists: {report_file.exists()}")
+        print(f"Looking for hydrate: {hydrate_file}")
+        print(f"Hydrate exists: {hydrate_file.exists()}")
 
         if not report_file.exists():
             error_msg = json.dumps({
@@ -645,7 +1756,13 @@ class ValidationReportHandler(BaseHTTPRequestHandler):
             return
 
         try:
-            report_data = self.parse_report(report_file, chapter_name)
+            # Load hydrate data if available
+            hydrate_data = None
+            if hydrate_file.exists():
+                with open(hydrate_file, 'r', encoding='utf-8') as f:
+                    hydrate_data = json.load(f)
+
+            report_data = self.parse_report(report_file, chapter_name, hydrate_data)
             self.send_response(200)
             self.send_header('Content-type', 'application/json')
             self.end_headers()
@@ -664,7 +1781,7 @@ class ValidationReportHandler(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(error_msg.encode())
 
-    def parse_report(self, report_path, chapter_name):
+    def parse_report(self, report_path, chapter_name, hydrate_data=None):
         """Parse validation report text file into structured data"""
         with open(report_path, 'r', encoding='utf-8-sig') as f:
             content = f.read()
@@ -682,6 +1799,21 @@ class ValidationReportHandler(BaseHTTPRequestHandler):
             'sentences': [],
             'paragraphs': []
         }
+
+        def parse_index_range(range_text):
+            if not range_text:
+                return None, None
+
+            match = re.search(r'(\d+)\s*-\s*(\d+)', range_text)
+            if match:
+                return int(match.group(1)), int(match.group(2))
+
+            match = re.search(r'(\d+)', range_text)
+            if match:
+                value = int(match.group(1))
+                return value, value
+
+            return None, None
 
         # Extract metadata from header
         for line in lines[:10]:
@@ -731,7 +1863,7 @@ class ValidationReportHandler(BaseHTTPRequestHandler):
                         report_data['sentences'].append(current_item)
 
                     current_item = {
-                        'id': match.group(1),
+                        'id': int(match.group(1)),
                         'wer': match.group(2) + '%',
                         'cer': match.group(3) + '%',
                         'status': match.group(4),
@@ -740,12 +1872,19 @@ class ValidationReportHandler(BaseHTTPRequestHandler):
                         'timing': '',
                         'bookText': '',
                         'scriptText': '',
+                        'excerpt': '',
                         'startTime': None,
-                        'endTime': None
+                        'endTime': None,
+                        'bookRangeStart': None,
+                        'bookRangeEnd': None
                     }
                 elif current_item:
                     if line.startswith('Book range:'):
-                        current_item['bookRange'] = line.split(':', 1)[1].strip()
+                        range_text = line.split(':', 1)[1].strip()
+                        current_item['bookRange'] = range_text
+                        start, end = parse_index_range(range_text)
+                        current_item['bookRangeStart'] = start
+                        current_item['bookRangeEnd'] = end
                     elif line.startswith('Script range:'):
                         current_item['scriptRange'] = line.split(':', 1)[1].strip()
                     elif line.startswith('Timing:'):
@@ -760,6 +1899,8 @@ class ValidationReportHandler(BaseHTTPRequestHandler):
                         current_item['bookText'] = line.split(':', 1)[1].strip()
                     elif line.startswith('Script :'):
                         current_item['scriptText'] = line.split(':', 1)[1].strip()
+                    elif line.startswith('Excerpt:'):
+                        current_item['excerpt'] = line.split(':', 1)[1].strip()
 
             elif current_section == 'paragraphs':
                 # Match paragraph header: "  #44 | WER 100.0% | Coverage 100.0% | Status unreliable"
@@ -769,16 +1910,26 @@ class ValidationReportHandler(BaseHTTPRequestHandler):
                         report_data['paragraphs'].append(current_item)
 
                     current_item = {
-                        'id': match.group(1),
+                        'id': int(match.group(1)),
                         'wer': match.group(2) + '%',
                         'coverage': match.group(3) + '%',
                         'status': match.group(4),
                         'bookRange': '',
-                        'bookText': ''
+                        'bookText': '',
+                        'bookRangeStart': None,
+                        'bookRangeEnd': None,
+                        'sentenceIds': [],
+                        'startTime': None,
+                        'endTime': None,
+                        'timing': ''
                     }
                 elif current_item and 'coverage' in current_item:
                     if line.startswith('Book range:'):
-                        current_item['bookRange'] = line.split(':', 1)[1].strip()
+                        range_text = line.split(':', 1)[1].strip()
+                        current_item['bookRange'] = range_text
+                        start, end = parse_index_range(range_text)
+                        current_item['bookRangeStart'] = start
+                        current_item['bookRangeEnd'] = end
                     elif line.startswith('Book   :'):
                         current_item['bookText'] = line.split(':', 1)[1].strip()
 
@@ -788,6 +1939,135 @@ class ValidationReportHandler(BaseHTTPRequestHandler):
                 report_data['sentences'].append(current_item)
             elif current_section == 'paragraphs' and 'coverage' in current_item:
                 report_data['paragraphs'].append(current_item)
+
+        # Map paragraphs to sentences for linking and audio timing
+        # Use hydrate data if available to get complete sentence list with timing
+        if hydrate_data and 'paragraphs' in hydrate_data and 'sentences' in hydrate_data:
+            # Create lookup for hydrate sentences by ID
+            hydrate_sentences = {s['id']: s for s in hydrate_data['sentences']}
+            hydrate_paragraphs = {p['id']: p for p in hydrate_data['paragraphs']}
+
+            # Build a map from sentence ID to paragraph ID
+            sentence_to_paragraph = {}
+            for para in hydrate_data['paragraphs']:
+                for sent_id in para.get('sentenceIds', []):
+                    sentence_to_paragraph[sent_id] = para['id']
+
+            # Add paragraph ID to each sentence
+            for sentence in report_data['sentences']:
+                sentence['paragraphId'] = sentence_to_paragraph.get(sentence['id'])
+
+            for paragraph in report_data['paragraphs']:
+                para_id = paragraph.get('id')
+                hydrate_para = hydrate_paragraphs.get(para_id)
+
+                if hydrate_para and 'sentenceIds' in hydrate_para:
+                    # Get ALL sentence IDs from hydrate (not just flagged ones)
+                    all_sentence_ids = hydrate_para['sentenceIds']
+                    paragraph['sentenceIds'] = all_sentence_ids
+
+                    # Find which of these sentences are flagged (in report_data['sentences'])
+                    flagged_ids = {s['id'] for s in report_data['sentences']}
+                    paragraph['flaggedSentenceIds'] = [sid for sid in all_sentence_ids if sid in flagged_ids]
+
+                    # Calculate timing from ALL sentences in paragraph
+                    # Also include last sentence of previous paragraph and first sentence of next paragraph
+                    context_sentence_ids = all_sentence_ids.copy()
+
+                    # Add last sentence from previous paragraph (by ID, not by sorted position)
+                    prev_para_id = para_id - 1
+                    if prev_para_id >= 0:
+                        prev_hydrate = hydrate_paragraphs.get(prev_para_id)
+                        if prev_hydrate and 'sentenceIds' in prev_hydrate and prev_hydrate['sentenceIds']:
+                            last_prev_sent_id = prev_hydrate['sentenceIds'][-1]
+                            if last_prev_sent_id not in context_sentence_ids:
+                                context_sentence_ids.insert(0, last_prev_sent_id)
+
+                    # Add first sentence from next paragraph (by ID, not by sorted position)
+                    next_para_id = para_id + 1
+                    next_hydrate = hydrate_paragraphs.get(next_para_id)
+                    if next_hydrate and 'sentenceIds' in next_hydrate and next_hydrate['sentenceIds']:
+                        first_next_sent_id = next_hydrate['sentenceIds'][0]
+                        if first_next_sent_id not in context_sentence_ids:
+                            context_sentence_ids.append(first_next_sent_id)
+
+                    start_times = []
+                    end_times = []
+                    for sent_id in context_sentence_ids:
+                        hydrate_sent = hydrate_sentences.get(sent_id)
+                        if hydrate_sent and 'timing' in hydrate_sent:
+                            timing = hydrate_sent['timing']
+                            if 'startSec' in timing and 'endSec' in timing:
+                                start_times.append(timing['startSec'])
+                                end_times.append(timing['endSec'])
+
+                    if start_times and end_times:
+                        paragraph_start = min(start_times)
+                        paragraph_end = max(end_times)
+                        paragraph['startTime'] = paragraph_start
+                        paragraph['endTime'] = paragraph_end
+                        duration = paragraph_end - paragraph_start
+                        paragraph['timing'] = f"{paragraph_start:.3f}s → {paragraph_end:.3f}s (Δ {duration:.3f}s)"
+                    else:
+                        paragraph['startTime'] = None
+                        paragraph['endTime'] = None
+                        paragraph['timing'] = ''
+                else:
+                    # Fallback if hydrate data not available for this paragraph
+                    paragraph['sentenceIds'] = []
+                    paragraph['flaggedSentenceIds'] = []
+                    paragraph['startTime'] = None
+                    paragraph['endTime'] = None
+                    paragraph['timing'] = ''
+        else:
+            # Original fallback logic using only flagged sentences
+            for paragraph in report_data['paragraphs']:
+                start = paragraph.get('bookRangeStart')
+                end = paragraph.get('bookRangeEnd')
+                if start is None or end is None:
+                    paragraph['sentenceIds'] = []
+                    paragraph['flaggedSentenceIds'] = []
+                    paragraph['startTime'] = None
+                    paragraph['endTime'] = None
+                    paragraph['timing'] = ''
+                    continue
+
+                sentence_ids = []
+                start_times = []
+                end_times = []
+
+                for sentence in report_data['sentences']:
+                    sentence_start = sentence.get('bookRangeStart')
+                    sentence_end = sentence.get('bookRangeEnd')
+                    if sentence_start is None or sentence_end is None:
+                        continue
+
+                    if sentence_end < start or sentence_start > end:
+                        continue
+
+                    sentence_ids.append(sentence['id'])
+                    if sentence.get('startTime') is not None:
+                        start_times.append(sentence['startTime'])
+                    if sentence.get('endTime') is not None:
+                        end_times.append(sentence['endTime'])
+
+                sentence_ids.sort()
+                paragraph['sentenceIds'] = sentence_ids
+                paragraph['flaggedSentenceIds'] = sentence_ids  # All are flagged in fallback mode
+
+                if start_times and end_times:
+                    paragraph_start = min(start_times)
+                    paragraph_end = max(end_times)
+                    if paragraph_end < paragraph_start:
+                        paragraph_end = paragraph_start
+                    paragraph['startTime'] = paragraph_start
+                    paragraph['endTime'] = paragraph_end
+                    duration = paragraph_end - paragraph_start
+                    paragraph['timing'] = f"{paragraph_start:.3f}s → {paragraph_end:.3f}s (Δ {duration:.3f}s)"
+                else:
+                    paragraph['startTime'] = None
+                    paragraph['endTime'] = None
+                    paragraph['timing'] = ''
 
         return report_data
 
@@ -870,6 +2150,185 @@ class ValidationReportHandler(BaseHTTPRequestHandler):
             self.send_header('Content-type', 'application/json')
             self.end_headers()
             self.wfile.write(error_msg.encode())
+
+    def handle_export_audio(self, chapter_name):
+        """Export audio segment to CRX folder"""
+        from urllib.parse import unquote
+
+        chapter_name = unquote(chapter_name)
+        print(f"Export audio request for chapter: {chapter_name}")
+
+        # Read POST data
+        content_length = int(self.headers['Content-Length'])
+        post_data = self.rfile.read(content_length)
+        params = json.loads(post_data.decode('utf-8'))
+
+        start_time = float(params['start'])
+        end_time = float(params['end'])
+        sentence_id = params.get('sentenceId', 'unknown')
+
+        # Find the audio file
+        audio_path = BASE_DIR / f"{chapter_name}.wav"
+        print(f"Looking for audio at: {audio_path}")
+        print(f"Audio exists: {audio_path.exists()}")
+
+        if not audio_path.exists():
+            self.send_json_response({'error': 'Audio file not found'}, 404)
+            return
+
+        try:
+            # Create CRX directory if it doesn't exist
+            crx_dir = BASE_DIR / CRX_DIR_NAME
+            crx_dir.mkdir(exist_ok=True)
+
+            # Determine the next error number by checking existing audio files
+            # Find the highest numbered .wav file in the CRX directory
+            existing_files = list(crx_dir.glob('*.wav'))
+            if existing_files:
+                # Extract numbers from filenames like "001.wav", "002.wav"
+                error_numbers = []
+                for f in existing_files:
+                    match = re.match(r'(\d+)\.wav', f.name)
+                    if match:
+                        error_numbers.append(int(match.group(1)))
+
+                if error_numbers:
+                    error_num = max(error_numbers) + 1
+                else:
+                    error_num = 1
+            else:
+                error_num = 1
+
+            # Generate filename: ErrorNum.wav (e.g., 001.wav)
+            export_filename = f"{error_num:03d}.wav"
+            export_path = crx_dir / export_filename
+
+            # Extract segment using ffmpeg
+            duration = end_time - start_time
+            cmd = [
+                'ffmpeg',
+                '-i', str(audio_path),
+                '-ss', str(start_time),
+                '-t', str(duration),
+                '-c', 'copy',
+                '-y',
+                str(export_path)
+            ]
+
+            result = subprocess.run(cmd, capture_output=True, text=True)
+
+            if result.returncode != 0:
+                raise Exception(f"ffmpeg failed: {result.stderr}")
+
+            self.send_json_response({
+                'success': True,
+                'filename': export_filename,
+                'errorNumber': error_num,
+                'path': str(export_path.relative_to(BASE_DIR))
+            })
+
+        except Exception as e:
+            print(f"Error exporting audio: {e}")
+            print(traceback.format_exc())
+            self.send_json_response({'error': str(e)}, 500)
+
+    def handle_add_to_crx(self, chapter_name):
+        """Add entry to CRX Excel file"""
+        from urllib.parse import unquote
+
+        chapter_name = unquote(chapter_name)
+
+        # Read POST data
+        content_length = int(self.headers['Content-Length'])
+        post_data = self.rfile.read(content_length)
+        params = json.loads(post_data.decode('utf-8'))
+
+        start_time = float(params['start'])
+        end_time = float(params['end'])
+        sentence_id = params.get('sentenceId', 'unknown')
+        error_type = params.get('errorType', DEFAULT_ERROR_TYPE)
+        comments = params.get('comments', '')
+
+        try:
+            # Create CRX directory if it doesn't exist
+            crx_dir = BASE_DIR / CRX_DIR_NAME
+            crx_dir.mkdir(exist_ok=True)
+
+            # CRX file path
+            crx_filename = f"{BASE_DIR.name}_CRX.xlsx"
+            crx_path = crx_dir / crx_filename
+
+            # Determine error number by checking existing audio files
+            existing_files = list(crx_dir.glob('*.wav'))
+            if existing_files:
+                error_numbers = []
+                for f in existing_files:
+                    match = re.match(r'(\d+)\.wav', f.name)
+                    if match:
+                        error_numbers.append(int(match.group(1)))
+                error_num = max(error_numbers) if error_numbers else 1
+            else:
+                error_num = 1
+
+            # If CRX doesn't exist, copy BASE_CRX template
+            if not crx_path.exists():
+                if not CRX_TEMPLATE_PATH.exists():
+                    raise Exception(f"CRX template not found: {CRX_TEMPLATE_PATH}")
+                # Use shutil.copy2 to preserve metadata and formatting
+                shutil.copy2(CRX_TEMPLATE_PATH, crx_path)
+
+            # Use openpyxl to modify cells
+            wb = openpyxl.load_workbook(crx_path)
+            ws = wb.active
+
+            # Find the row corresponding to this error number
+            # Row number = CRX_DATA_ROW_START + (error_num - 1)
+            target_row = CRX_DATA_ROW_START + (error_num - 1)
+
+            # Format timecode as hh:mm:ss
+            hours = int(start_time // 3600)
+            minutes = int((start_time % 3600) // 60)
+            seconds = int(start_time % 60)
+            timecode = f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+
+            # Ensure Error # is populated in this row (Column B = 2)
+            current_error = ws.cell(row=target_row, column=2).value
+            if not current_error or not re.search(r'(\d+)', str(current_error)):
+                ws.cell(row=target_row, column=2).value = f"{error_num:03d}"
+
+            # Write data to cells
+            # Column C: Recording Day (leave empty)
+            # Column D: Chapter/Section
+            ws.cell(row=target_row, column=4).value = chapter_name
+            # Column E: PDF/Word Page # (leave empty)
+            # Column F: File Timecode
+            ws.cell(row=target_row, column=6).value = timecode
+            # Column G: Error Type
+            ws.cell(row=target_row, column=7).value = error_type
+            # Column H: Comments
+            ws.cell(row=target_row, column=8).value = comments
+
+            # Save workbook
+            wb.save(crx_path)
+
+            self.send_json_response({
+                'success': True,
+                'errorNumber': error_num,
+                'crxFile': crx_filename,
+                'timecode': timecode
+            })
+
+        except Exception as e:
+            print(f"Error adding to CRX: {e}")
+            print(traceback.format_exc())
+            self.send_json_response({'error': str(e)}, 500)
+
+    def send_json_response(self, data, status=200):
+        """Helper to send JSON response"""
+        self.send_response(status)
+        self.send_header('Content-type', 'application/json')
+        self.end_headers()
+        self.wfile.write(json.dumps(data).encode())
 
     def log_message(self, format, *args):
         """Custom log format"""
