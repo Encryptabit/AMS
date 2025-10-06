@@ -835,6 +835,22 @@ public static class ValidateCommand
         return string.IsNullOrWhiteSpace(second) ? first : second;
     }
 
+    private static string NormalizeStem(string? stem)
+    {
+        if (string.IsNullOrWhiteSpace(stem))
+        {
+            return string.Empty;
+        }
+
+        var result = stem;
+        if (result.EndsWith(".treated", StringComparison.OrdinalIgnoreCase))
+        {
+            result = result[..^".treated".Length];
+        }
+
+        return result;
+    }
+
     private static T LoadJson<T>(FileInfo file)
     {
         if (file is null) throw new ArgumentNullException(nameof(file));
@@ -862,20 +878,97 @@ public static class ValidateCommand
 
     private static string ResolveAudioPath(TranscriptIndex transcript, HydratedTranscript hydrated, FileInfo txFile, FileInfo hydrateFile)
     {
-        var candidates = new List<(string? Path, string? BaseDir)>
-        {
-            (hydrated.AudioPath, hydrateFile.DirectoryName),
-            (transcript.AudioPath, txFile.DirectoryName)
-        };
+        var directories = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var stems = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var existingOriginals = new List<string>();
+        string? firstAbsolute = null;
+        string? treatedHit = null;
 
-        foreach (var (path, baseDir) in candidates)
+        void Register(string? path, string? baseDir)
         {
             if (string.IsNullOrWhiteSpace(path))
             {
-                continue;
+                return;
             }
 
-            return MakeAbsolute(path, baseDir ?? txFile.DirectoryName);
+            var absolute = MakeAbsolute(path, baseDir ?? txFile.DirectoryName);
+            if (string.IsNullOrWhiteSpace(absolute))
+            {
+                return;
+            }
+
+            if (firstAbsolute is null)
+            {
+                firstAbsolute = absolute;
+            }
+
+            var directory = Path.GetDirectoryName(absolute);
+            if (!string.IsNullOrWhiteSpace(directory))
+            {
+                directories.Add(Path.GetFullPath(directory));
+            }
+
+            var stem = NormalizeStem(Path.GetFileNameWithoutExtension(absolute));
+            if (!string.IsNullOrWhiteSpace(stem))
+            {
+                stems.Add(stem);
+            }
+
+            if (File.Exists(absolute))
+            {
+                existingOriginals.Add(absolute);
+                if (absolute.EndsWith(".treated.wav", StringComparison.OrdinalIgnoreCase))
+                {
+                    treatedHit ??= absolute;
+                }
+            }
+        }
+
+        Register(hydrated.AudioPath, hydrateFile.DirectoryName);
+        if (treatedHit is not null) return treatedHit;
+        Register(transcript.AudioPath, txFile.DirectoryName);
+        if (treatedHit is not null) return treatedHit;
+
+        if (txFile.DirectoryName is not null)
+        {
+            directories.Add(Path.GetFullPath(txFile.DirectoryName));
+            var stem = NormalizeStem(GetBaseStem(txFile.Name));
+            if (!string.IsNullOrWhiteSpace(stem)) stems.Add(stem);
+        }
+
+        if (hydrateFile.DirectoryName is not null)
+        {
+            directories.Add(Path.GetFullPath(hydrateFile.DirectoryName));
+            var stem = NormalizeStem(GetBaseStem(hydrateFile.Name));
+            if (!string.IsNullOrWhiteSpace(stem)) stems.Add(stem);
+        }
+
+        foreach (var dir in directories)
+        {
+            foreach (var stem in stems)
+            {
+                if (string.IsNullOrWhiteSpace(stem)) continue;
+                var treatedCandidate = Path.Combine(dir, stem + ".treated.wav");
+                if (File.Exists(treatedCandidate))
+                {
+                    return treatedCandidate;
+                }
+            }
+        }
+
+        if (treatedHit is not null && File.Exists(treatedHit))
+        {
+            return treatedHit;
+        }
+
+        if (existingOriginals.Count > 0)
+        {
+            return existingOriginals[0];
+        }
+
+        if (firstAbsolute is not null)
+        {
+            return firstAbsolute;
         }
 
         throw new InvalidOperationException("Transcript does not reference an audioPath in hydrate or transcript JSON.");

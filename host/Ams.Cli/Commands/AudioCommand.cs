@@ -8,6 +8,7 @@ using Ams.Core;
 using Ams.Core.Pipeline;
 using Ams.Core.Common;
 using Ams.Cli.Utilities;
+using Ams.Core.Hydrate;
 
 namespace Ams.Cli.Commands;
 
@@ -33,11 +34,11 @@ public static class AudioCommand
         var srOption = new Option<int>("--sample-rate", () => 44100, "Output sample rate (Hz)");
         var bitOption = new Option<int>("--bit-depth", () => 32, "Output bit depth");
         var fadeMsOption = new Option<double>("--fade-ms", () => 10.0, "Crossfade length at boundaries (ms)");
-        var toneDbOption = new Option<double>("--tone-gain-db", () => -60.0, "Roomtone RMS level (dBFS)");
+        var toneDbOption = new Option<double>("--tone-gain-db", () => -74.0, "Roomtone RMS level (dBFS)");
         var diagnosticsOption = new Option<bool>("--emit-diagnostics", () => false, "Write intermediate diagnostic WAV snapshots");
         var adaptiveGainOption = new Option<bool>("--adaptive-gain", () => false, "Scale roomtone seed to the target RMS");
         var verboseOption = new Option<bool>("--verbose", () => false, "Enable verbose roomtone gap logging");
-        var gapLeftThresholdOption = new Option<double>("--gap-left-threshold-db", () => -30.0, "RMS threshold (dBFS) used to detect silence on the left side of gaps");
+        var gapLeftThresholdOption = new Option<double>("--gap-left-threshold-db", () => -45.0, "RMS threshold (dBFS) used to detect silence on the left side of gaps");
         var gapRightThresholdOption = new Option<double>("--gap-right-threshold-db", () => -30.0, "RMS threshold (dBFS) used to detect silence on the right side of gaps");
         var gapStepOption = new Option<double>("--gap-step-ms", () => 5.0, "Step size (ms) when probing gap boundaries");
         var gapBackoffOption = new Option<double>("--gap-backoff-ms", () => 5.0, "Backoff amount (ms) applied after a silent window is detected");
@@ -182,6 +183,15 @@ public static class AudioCommand
             File.Copy(producedWav, outWav.FullName, overwrite: true);
         }
 
+        try
+        {
+            UpdateAudioMetadata(txFile, outWav.FullName);
+        }
+        catch (Exception ex)
+        {
+            Log.Warn("Failed to update transcript audio path metadata: {Message}", ex.Message);
+        }
+
         Log.Info("Roomtone WAV saved to {OutputWav}", outWav.FullName);
         if (outputs.TryGetValue("plan", out var plan)) Log.Info("Roomtone plan saved to {PlanPath}", plan);
         if (outputs.TryGetValue("timeline", out var timeline)) Log.Info("Roomtone timeline saved to {TimelinePath}", timeline);
@@ -291,6 +301,69 @@ public static class AudioCommand
     {
         if (string.IsNullOrWhiteSpace(dir)) return;
         Directory.CreateDirectory(dir);
+    }
+
+    private static void UpdateAudioMetadata(FileInfo txFile, string audioPath)
+    {
+        if (txFile is null) throw new ArgumentNullException(nameof(txFile));
+        if (string.IsNullOrWhiteSpace(audioPath)) return;
+
+        var readOptions = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
+        var writeOptions = new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase, WriteIndented = true };
+
+        var transcriptJson = File.ReadAllText(txFile.FullName);
+        var transcript = JsonSerializer.Deserialize<TranscriptIndex>(transcriptJson, readOptions);
+        if (transcript is null)
+        {
+            return;
+        }
+
+        var updatedTranscript = transcript with { AudioPath = audioPath };
+        File.WriteAllText(txFile.FullName, JsonSerializer.Serialize(updatedTranscript, writeOptions));
+
+        var hydratePath = DeriveHydratePath(txFile.FullName);
+        if (hydratePath is null || !File.Exists(hydratePath))
+        {
+            return;
+        }
+
+        var hydrateJson = File.ReadAllText(hydratePath);
+        var hydrate = JsonSerializer.Deserialize<HydratedTranscript>(hydrateJson, readOptions);
+        if (hydrate is null)
+        {
+            return;
+        }
+
+        var updatedHydrate = hydrate with { AudioPath = audioPath };
+        File.WriteAllText(hydratePath, JsonSerializer.Serialize(updatedHydrate, writeOptions));
+    }
+
+    private static string? DeriveHydratePath(string transcriptPath)
+    {
+        if (string.IsNullOrWhiteSpace(transcriptPath))
+        {
+            return null;
+        }
+
+        var directory = Path.GetDirectoryName(transcriptPath);
+        var fileName = Path.GetFileName(transcriptPath);
+        if (string.IsNullOrEmpty(fileName))
+        {
+            return null;
+        }
+
+        const string TxSuffix = ".tx.json";
+        string hydrateName;
+        if (fileName.EndsWith(TxSuffix, StringComparison.OrdinalIgnoreCase))
+        {
+            hydrateName = fileName[..^TxSuffix.Length] + ".hydrate.json";
+        }
+        else
+        {
+            hydrateName = Path.ChangeExtension(fileName, ".hydrate.json") ?? fileName + ".hydrate.json";
+        }
+
+        return directory is null ? hydrateName : Path.Combine(directory, hydrateName);
     }
 
     private static string NormalizePath(string path)
