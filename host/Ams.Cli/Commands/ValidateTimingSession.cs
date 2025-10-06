@@ -674,31 +674,14 @@ internal sealed class ValidateTimingSession
 
         public bool HasCompressionPreview => _compression is not null && _compression.HasPreview;
 
-        public bool ApplyCompressionPreview()
+        public CompressionApplySummary ApplyCompressionPreview()
         {
             if (_compression is null)
             {
-                return false;
+                return CompressionApplySummary.Empty;
             }
 
-            bool changed = false;
-            foreach (var item in _compression.Preview)
-            {
-                if (Math.Abs(item.TargetDuration - item.OriginalDuration) < DurationEpsilon)
-                {
-                    continue;
-                }
-
-                item.Pause.Set(item.TargetDuration);
-                changed = true;
-            }
-
-            if (changed)
-            {
-                _compression.RebuildPreview(_basePolicy);
-            }
-
-            return changed;
+            return _compression.ApplyPreview(DurationEpsilon, _basePolicy);
         }
 
         private void RefreshCompressionStateIfNeeded(bool resetSelection)
@@ -866,7 +849,7 @@ internal sealed class ValidateTimingSession
             return CollectPauses(scope).Count(pause => pause.HasChanges);
         }
 
-        public CommitResult CommitScope(ScopeEntry scope)
+        public CommitResult CommitScope(ScopeEntry scope, CompressionApplySummary? summary = null)
         {
             IEnumerable<EditablePause> pauseSource;
 
@@ -914,7 +897,18 @@ internal sealed class ValidateTimingSession
                 _ => "scope"
             };
 
-            _lastCommitMessage = $"Committed {adjustments.Count} adjustment(s) for {scopeLabel}.";
+            int total = summary?.TotalCount ?? adjustments.Count;
+            int within = summary?.WithinScopeCount ?? adjustments.Count;
+            int downstream = summary?.DownstreamCount ?? 0;
+
+            if (summary is null)
+            {
+                downstream = Math.Max(0, total - within);
+            }
+
+            _lastCommitMessage = downstream > 0
+                ? $"Committed {total} adjustment(s) for {scopeLabel} (scope {within}, downstream {downstream})."
+                : $"Committed {total} adjustment(s) for {scopeLabel}.";
 
             _compression?.HandleCommit(scope, _basePolicy);
             return new CommitResult(adjustments.Count, scopeLabel, adjustments);
@@ -1272,6 +1266,54 @@ internal sealed class ValidateTimingSession
                 Preview = preview;
                 int maxOffset = Math.Max(0, Preview.Count - 1);
                 PreviewOffset = Math.Clamp(PreviewOffset, 0, maxOffset);
+            }
+
+            public CompressionApplySummary ApplyPreview(double epsilon, PausePolicy basePolicy)
+            {
+                int total = 0;
+                int within = 0;
+
+                foreach (var item in Preview)
+                {
+                    double delta = item.TargetDuration - item.OriginalDuration;
+                    if (Math.Abs(delta) <= epsilon)
+                    {
+                        continue;
+                    }
+
+                    item.Pause.Set(item.TargetDuration);
+                    total++;
+
+                    if (IsWithinScope(item.Pause))
+                    {
+                        within++;
+                    }
+                }
+
+                if (total > 0)
+                {
+                    RebuildPreview(basePolicy);
+                }
+
+                int downstream = Math.Max(0, total - within);
+                return new CompressionApplySummary(total, within, downstream);
+            }
+
+            private bool IsWithinScope(EditablePause pause)
+            {
+                return Scope.Kind switch
+                {
+                    ScopeEntryKind.Chapter => true,
+                    ScopeEntryKind.Paragraph when Scope.ParagraphId.HasValue => GetPauseParagraphId(pause) == Scope.ParagraphId.Value,
+                    ScopeEntryKind.Sentence when Scope.SentenceId.HasValue => pause.Span.LeftSentenceId == Scope.SentenceId.Value,
+                    ScopeEntryKind.Pause => Scope.Pause is not null && ReferenceEquals(pause, Scope.Pause),
+                    _ => false
+                };
+            }
+
+            private static int GetPauseParagraphId(EditablePause pause)
+            {
+                return pause.LeftParagraphId ?? pause.RightParagraphId ?? -1;
             }
         }
 
@@ -2194,18 +2236,18 @@ internal sealed class ValidateTimingSession
                         previewTable.AddRow("[grey]…[/]", string.Empty, string.Empty, string.Empty);
                     }
 
-                    foreach (var item in previewItems)
-                    {
-                        string deltaText = item.Delta >= 0
-                            ? $"[green]+{item.Delta:0.000}[/]"
-                            : $"[red]{item.Delta:0.000}[/]";
+            foreach (var item in previewItems)
+            {
+                string deltaText = item.Delta >= 0
+                    ? $"[green]+{item.Delta:0.000}[/]"
+                    : $"[red]{item.Delta:0.000}[/]";
 
-                        previewTable.AddRow(
-                            Markup.Escape(item.Label),
-                            item.OriginalDuration.ToString("0.000"),
-                            item.TargetDuration.ToString("0.000"),
-                            deltaText);
-                    }
+                previewTable.AddRow(
+                    Markup.Escape(item.Label),
+                    item.OriginalDuration.ToString("0.000"),
+                    item.TargetDuration.ToString("0.000"),
+                    deltaText);
+            }
 
                     if (hasNext)
                     {
@@ -2497,12 +2539,13 @@ internal sealed class ValidateTimingSession
 
         private bool CommitCurrentScope()
         {
+            CompressionApplySummary summary = CompressionApplySummary.Empty;
             if (_state.OptionsFocused)
             {
-                _state.ApplyCompressionPreview();
+                summary = _state.ApplyCompressionPreview();
             }
 
-            var result = _state.CommitScope(_state.Current);
+            var result = _state.CommitScope(_state.Current, summary.HasChanges ? summary : null);
             if (!result.HasChanges)
             {
                 return false;
@@ -2565,6 +2608,12 @@ internal sealed class ValidateTimingSession
     {
         public static CommitResult Empty { get; } = new CommitResult(0, string.Empty, Array.Empty<PauseAdjust>());
         public bool HasChanges => Count > 0;
+    }
+
+    private sealed record CompressionApplySummary(int TotalCount, int WithinScopeCount, int DownstreamCount)
+    {
+        public static CompressionApplySummary Empty { get; } = new CompressionApplySummary(0, 0, 0);
+        public bool HasChanges => TotalCount > 0;
     }
 
     private sealed class EditablePause
