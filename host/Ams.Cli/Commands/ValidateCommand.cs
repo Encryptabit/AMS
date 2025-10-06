@@ -6,6 +6,7 @@ using System.Text;
 using System.Text.Json;
 using Ams.Core.Artifacts;
 using Ams.Core.Common;
+using Ams.Core.Hydrate;
 using Ams.Cli.Utilities;
 
 namespace Ams.Cli.Commands;
@@ -32,16 +33,22 @@ public static class ValidateCommand
 
         var hydrateOption = new Option<FileInfo?>(
             name: "--hydrate",
-            description: "Optional hydrated transcript JSON (defaults to active chapter's *.align.hydrate.json if present)");
+            description: "Path to hydrated transcript JSON (defaults to active chapter's *.align.hydrate.json)");
         hydrateOption.AddAlias("-h");
 
         var bookIndexOption = new Option<FileInfo?>(
             name: "--book-index",
             description: "Path to book-index.json (defaults to working directory)");
 
+        var prosodyAnalyzeOption = new Option<bool>(
+            "--prosody-analyze",
+            () => false,
+            "Run pause dynamics analysis before launching the interactive session.");
+
         cmd.AddOption(txOption);
         cmd.AddOption(hydrateOption);
         cmd.AddOption(bookIndexOption);
+        cmd.AddOption(prosodyAnalyzeOption);
 
         cmd.SetHandler(async context =>
         {
@@ -62,7 +69,14 @@ public static class ValidateCommand
                 var hydrate = CommandInputResolver.TryResolveChapterArtifact(
                     context.ParseResult.GetValueForOption(hydrateOption),
                     suffix: "align.hydrate.json",
-                    mustExist: false);
+                    mustExist: true);
+
+                if (hydrate is null || !hydrate.Exists)
+                {
+                    Log.Error("validate timing requires a hydrated transcript JSON (e.g., *.align.hydrate.json)");
+                    context.ExitCode = 1;
+                    return;
+                }
 
                 FileInfo bookIndex;
                 try
@@ -78,7 +92,9 @@ public static class ValidateCommand
                     return;
                 }
 
-                var session = new ValidateTimingSession(tx, bookIndex, hydrate);
+                var runProsody = context.ParseResult.GetValueForOption(prosodyAnalyzeOption);
+
+                var session = new ValidateTimingSession(tx, bookIndex, hydrate, runProsody);
                 await session.RunAsync(context.GetCancellationToken());
             }
             catch (OperationCanceledException)
@@ -643,37 +659,4 @@ public static class ValidateCommand
         IReadOnlyList<ParagraphView> Paragraphs,
         WordTallies? WordTallies);
 
-    private sealed record HydratedTranscript(
-        string AudioPath,
-        string ScriptPath,
-        string BookIndexPath,
-        DateTime CreatedAtUtc,
-        string? NormalizationVersion,
-        IReadOnlyList<HydratedWord> Words,
-        IReadOnlyList<HydratedSentence> Sentences,
-        IReadOnlyList<HydratedParagraph> Paragraphs);
-
-    private sealed record HydratedWord(int? BookIdx, int? AsrIdx, string? BookWord, string? AsrWord, string Op, string Reason, double Score);
-
-    private sealed record HydratedSentence(
-        int Id,
-        HydratedRange BookRange,
-        HydratedScriptRange? ScriptRange,
-        string BookText,
-        string ScriptText,
-        SentenceMetrics Metrics,
-        string Status,
-        TimingRange? Timing);
-
-    private sealed record HydratedParagraph(
-        int Id,
-        HydratedRange BookRange,
-        IReadOnlyList<int> SentenceIds,
-        string BookText,
-        ParagraphMetrics Metrics,
-        string Status);
-
-    private sealed record HydratedRange(int Start, int End);
-
-    private sealed record HydratedScriptRange(int? Start, int? End);
 }

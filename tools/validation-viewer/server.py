@@ -129,6 +129,9 @@ class ValidationReportHandler(BaseHTTPRequestHandler):
             chapter_name = path[len('/api/reviewed/'):]
             print(f"Matched reviewed route, chapter: {chapter_name}")
             self.handle_mark_reviewed(chapter_name)
+        elif path == '/api/reset-reviews':
+            print(f"Matched reset reviews route")
+            self.handle_reset_reviews()
         else:
             print(f"No route matched for path: {path}")
             self.send_error(404)
@@ -172,6 +175,22 @@ class ValidationReportHandler(BaseHTTPRequestHandler):
 
         except Exception as e:
             print(f"Error marking reviewed: {e}")
+            print(traceback.format_exc())
+            self.send_json_response({'error': str(e)}, 500)
+
+    def handle_reset_reviews(self):
+        """Reset all review status for the current book"""
+        try:
+            # Clear all reviewed status for current book
+            self.save_reviewed_status({})
+
+            self.send_json_response({
+                'success': True,
+                'message': 'All review status reset'
+            })
+
+        except Exception as e:
+            print(f"Error resetting reviews: {e}")
             print(traceback.format_exc())
             self.send_json_response({'error': str(e)}, 500)
 
@@ -456,6 +475,14 @@ class ValidationReportHandler(BaseHTTPRequestHandler):
 
         .text-content {
             color: #d4d4d4;
+        }
+
+        .diff-highlight {
+            background: #3a3a00;
+            color: #ffff99;
+            padding: 2px 4px;
+            border-radius: 3px;
+            font-weight: 500;
         }
 
         .audio-player {
@@ -843,6 +870,23 @@ class ValidationReportHandler(BaseHTTPRequestHandler):
             box-shadow: 0 6px 16px rgba(0, 0, 0, 0.6);
         }
 
+        .reset-review-button {
+            padding: 8px 16px;
+            background: #722020;
+            color: #ffffff;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 13px;
+            font-weight: 500;
+            transition: all 0.2s;
+        }
+
+        .reset-review-button:hover {
+            background: #8b2828;
+            transform: translateY(-1px);
+        }
+
         .reviewed-indicator {
             display: inline-flex;
             align-items: center;
@@ -973,6 +1017,33 @@ class ValidationReportHandler(BaseHTTPRequestHandler):
             }
         }
 
+        async function resetAllReviews() {
+            if (!confirm('Are you sure you want to reset review status for ALL chapters? This cannot be undone.')) {
+                return;
+            }
+
+            try {
+                const response = await fetch('/api/reset-reviews', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' }
+                });
+
+                const result = await response.json();
+
+                if (result.success) {
+                    reviewedStatus = {};
+                    showToast('Reset all review status', 'success');
+                    renderChapterList();
+                    loadOverview(); // Reload overview to update visual state
+                } else {
+                    showToast(`Failed to reset reviews: ${result.error}`, 'error');
+                }
+            } catch (err) {
+                console.error('Failed to reset reviews:', err);
+                showToast('Failed to reset review status', 'error');
+            }
+        }
+
         function updateFloatingButton() {
             // Remove existing button
             const existingButton = document.getElementById('floating-reviewed-button');
@@ -1041,6 +1112,11 @@ class ValidationReportHandler(BaseHTTPRequestHandler):
                 const overview = await response.json();
                 renderOverview(overview);
                 updateFloatingButton(); // Hide button on overview
+                // Scroll the content div to top (not window, since content has overflow-y: auto)
+                const contentDiv = document.getElementById('content');
+                if (contentDiv) {
+                    contentDiv.scrollTo({ top: 0, behavior: 'smooth' });
+                }
             } catch (error) {
                 console.error('Failed to load overview:', error);
                 document.getElementById('content').innerHTML = '<div id="loading">Failed to load overview</div>';
@@ -1103,7 +1179,10 @@ class ValidationReportHandler(BaseHTTPRequestHandler):
                     </div>
                 </div>
 
-                <div class="section-title">Chapters</div>
+                <div class="section-title" style="display: flex; justify-content: space-between; align-items: center;">
+                    <span>Chapters</span>
+                    <button class="reset-review-button" onclick="resetAllReviews()">Reset All Review Status</button>
+                </div>
                 <div class="chapter-grid">
                     ${chaptersHtml}
                 </div>
@@ -1132,6 +1211,11 @@ class ValidationReportHandler(BaseHTTPRequestHandler):
                 const report = await response.json();
                 renderReport(report);
                 updateFloatingButton(); // Show/update button for this chapter
+                // Scroll the content div to top (not window, since content has overflow-y: auto)
+                const contentDiv = document.getElementById('content');
+                if (contentDiv) {
+                    contentDiv.scrollTo({ top: 0, behavior: 'smooth' });
+                }
             } catch (error) {
                 console.error('Failed to load report:', error);
                 document.getElementById('content').innerHTML = '<div id="loading">Failed to load report</div>';
@@ -1168,12 +1252,19 @@ class ValidationReportHandler(BaseHTTPRequestHandler):
                             <div class="text-label">Excerpt</div>
                             <div class="text-content">${escapeHtml(s.excerpt)}</div>
                         ` : `
-                            <div class="text-label">Book</div>
-                            <div class="text-content">${escapeHtml(s.bookText)}</div>
-                            ${s.scriptText ? `
-                                <div class="text-label" style="margin-top: 12px;">Script</div>
-                                <div class="text-content">${escapeHtml(s.scriptText)}</div>
-                            ` : ''}
+                            ${s.scriptText && s.bookText ? `
+                                <div class="text-label">Script (Read as)</div>
+                                <div class="text-content diff-text" data-diff-script="${escapeHtml(s.scriptText)}" data-diff-book="${escapeHtml(s.bookText)}"></div>
+                                <div class="text-label" style="margin-top: 12px;">Book (Should be)</div>
+                                <div class="text-content diff-text" data-diff-script="${escapeHtml(s.scriptText)}" data-diff-book="${escapeHtml(s.bookText)}" data-diff-type="book"></div>
+                            ` : `
+                                <div class="text-label">Book</div>
+                                <div class="text-content">${escapeHtml(s.bookText)}</div>
+                                ${s.scriptText ? `
+                                    <div class="text-label" style="margin-top: 12px;">Script</div>
+                                    <div class="text-content">${escapeHtml(s.scriptText)}</div>
+                                ` : ''}
+                            `}
                         `}
                     </div>
                     ${s.startTime !== null && s.endTime !== null ? `
@@ -1291,6 +1382,18 @@ class ValidationReportHandler(BaseHTTPRequestHandler):
                         const scriptText = this.getAttribute('data-script-text');
                         openCrxModal(chapter, start, end, sentenceId, excerpt, bookText, scriptText);
                     });
+                });
+
+                // Apply diff highlighting to all diff-text elements
+                document.querySelectorAll('.diff-text').forEach(elem => {
+                    const scriptText = elem.getAttribute('data-diff-script');
+                    const bookText = elem.getAttribute('data-diff-book');
+                    const diffType = elem.getAttribute('data-diff-type') || 'script';
+
+                    if (scriptText && bookText) {
+                        const highlighted = highlightDifferencesVisual(scriptText, bookText);
+                        elem.innerHTML = diffType === 'book' ? highlighted.bookHighlighted : highlighted.scriptHighlighted;
+                    }
                 });
             }, 0);
         }
@@ -1434,7 +1537,7 @@ class ValidationReportHandler(BaseHTTPRequestHandler):
         }
 
         function highlightDifferences(script, book) {
-            // Word-by-word comparison with grouped mismatches
+            // Word-by-word comparison with grouped mismatches (bracket format for CRX)
             const scriptWords = script.split(/\\s+/);
             const bookWords = book.split(/\\s+/);
 
@@ -1443,10 +1546,10 @@ class ValidationReportHandler(BaseHTTPRequestHandler):
             let scriptMismatchBuffer = [];
             let bookMismatchBuffer = [];
 
-            const maxLen = Math.max(scriptWords.length, bookWords.length);
-
-            function stripPunctuation(word) {
-                return word.replace(/[.,!?;:'"()-]/g, '');
+            function normalizeWord(word) {
+                // Remove all punctuation/hyphens/dashes and convert to lowercase for comparison
+                // Includes em-dash (—), en-dash (–), and regular hyphen (-)
+                return word.replace(/[.,!?;:'"()\\-—–]/g, '').toLowerCase();
             }
 
             function flushBuffers() {
@@ -1460,23 +1563,173 @@ class ValidationReportHandler(BaseHTTPRequestHandler):
                 }
             }
 
-            for (let i = 0; i < maxLen; i++) {
+            // Track positions in both arrays
+            let i = 0, j = 0;
+
+            while (i < scriptWords.length || j < bookWords.length) {
                 const scriptWord = scriptWords[i] || '';
-                const bookWord = bookWords[i] || '';
+                const bookWord = bookWords[j] || '';
 
-                // Compare words without punctuation
-                const scriptWordNoPunct = stripPunctuation(scriptWord);
-                const bookWordNoPunct = stripPunctuation(bookWord);
+                const scriptNorm = normalizeWord(scriptWord);
+                const bookNorm = normalizeWord(bookWord);
 
-                if (scriptWordNoPunct !== bookWordNoPunct) {
-                    // Accumulate mismatches
-                    if (scriptWord) scriptMismatchBuffer.push(scriptWord);
-                    if (bookWord) bookMismatchBuffer.push(bookWord);
-                } else {
-                    // Flush accumulated mismatches before adding matching word
+                if (scriptNorm === bookNorm) {
+                    // Exact match - flush and add
                     flushBuffers();
                     if (scriptWord) scriptResult.push(scriptWord);
                     if (bookWord) bookResult.push(bookWord);
+                    i++;
+                    j++;
+                } else {
+                    // Check if we can match by consuming multiple words (compound word handling)
+                    // Try matching script[i..i+n] with book[j]
+                    let matched = false;
+                    for (let n = 1; n <= 3 && i + n <= scriptWords.length; n++) {
+                        const scriptPhrase = scriptWords.slice(i, i + n).join('');
+                        const scriptPhraseNorm = normalizeWord(scriptPhrase);
+                        if (scriptPhraseNorm === bookNorm) {
+                            // Script needs multiple words to match one book word
+                            flushBuffers();
+                            scriptResult.push(scriptWords.slice(i, i + n).join(' '));
+                            bookResult.push(bookWord);
+                            i += n;
+                            j++;
+                            matched = true;
+                            break;
+                        }
+                    }
+
+                    if (!matched) {
+                        // Try matching book[j..j+n] with script[i]
+                        for (let n = 1; n <= 3 && j + n <= bookWords.length; n++) {
+                            const bookPhrase = bookWords.slice(j, j + n).join('');
+                            const bookPhraseNorm = normalizeWord(bookPhrase);
+                            if (bookPhraseNorm === scriptNorm) {
+                                // Book needs multiple words to match one script word
+                                flushBuffers();
+                                scriptResult.push(scriptWord);
+                                bookResult.push(bookWords.slice(j, j + n).join(' '));
+                                i++;
+                                j += n;
+                                matched = true;
+                                break;
+                            }
+                        }
+                    }
+
+                    if (!matched) {
+                        // True mismatch - accumulate
+                        if (scriptWord) scriptMismatchBuffer.push(scriptWord);
+                        if (bookWord) bookMismatchBuffer.push(bookWord);
+                        if (i < scriptWords.length) i++;
+                        if (j < bookWords.length) j++;
+                    }
+                }
+            }
+
+            // Flush any remaining mismatches
+            flushBuffers();
+
+            return {
+                scriptHighlighted: scriptResult.join(' '),
+                bookHighlighted: bookResult.join(' ')
+            };
+        }
+
+        function highlightDifferencesVisual(script, book) {
+            // Word-by-word comparison with visual highlighting using <mark> tags
+            const scriptWords = script.split(/\\s+/);
+            const bookWords = book.split(/\\s+/);
+
+            let scriptResult = [];
+            let bookResult = [];
+            let scriptMismatchBuffer = [];
+            let bookMismatchBuffer = [];
+
+            function normalizeWord(word) {
+                // Remove all punctuation/hyphens/dashes and convert to lowercase for comparison
+                // Includes em-dash (—), en-dash (–), and regular hyphen (-)
+                return word.replace(/[.,!?;:'"()\\-—–]/g, '').toLowerCase();
+            }
+
+            function escapeHtml(text) {
+                const div = document.createElement('div');
+                div.textContent = text;
+                return div.innerHTML;
+            }
+
+            function flushBuffers() {
+                if (scriptMismatchBuffer.length > 0) {
+                    scriptResult.push(`<mark class="diff-highlight">${escapeHtml(scriptMismatchBuffer.join(' '))}</mark>`);
+                    scriptMismatchBuffer = [];
+                }
+                if (bookMismatchBuffer.length > 0) {
+                    bookResult.push(`<mark class="diff-highlight">${escapeHtml(bookMismatchBuffer.join(' '))}</mark>`);
+                    bookMismatchBuffer = [];
+                }
+            }
+
+            // Track positions in both arrays
+            let i = 0, j = 0;
+
+            while (i < scriptWords.length || j < bookWords.length) {
+                const scriptWord = scriptWords[i] || '';
+                const bookWord = bookWords[j] || '';
+
+                const scriptNorm = normalizeWord(scriptWord);
+                const bookNorm = normalizeWord(bookWord);
+
+                if (scriptNorm === bookNorm) {
+                    // Exact match - flush and add
+                    flushBuffers();
+                    if (scriptWord) scriptResult.push(escapeHtml(scriptWord));
+                    if (bookWord) bookResult.push(escapeHtml(bookWord));
+                    i++;
+                    j++;
+                } else {
+                    // Check if we can match by consuming multiple words (compound word handling)
+                    // Try matching script[i..i+n] with book[j]
+                    let matched = false;
+                    for (let n = 1; n <= 3 && i + n <= scriptWords.length; n++) {
+                        const scriptPhrase = scriptWords.slice(i, i + n).join('');
+                        const scriptPhraseNorm = normalizeWord(scriptPhrase);
+                        if (scriptPhraseNorm === bookNorm) {
+                            // Script needs multiple words to match one book word
+                            flushBuffers();
+                            scriptResult.push(escapeHtml(scriptWords.slice(i, i + n).join(' ')));
+                            bookResult.push(escapeHtml(bookWord));
+                            i += n;
+                            j++;
+                            matched = true;
+                            break;
+                        }
+                    }
+
+                    if (!matched) {
+                        // Try matching book[j..j+n] with script[i]
+                        for (let n = 1; n <= 3 && j + n <= bookWords.length; n++) {
+                            const bookPhrase = bookWords.slice(j, j + n).join('');
+                            const bookPhraseNorm = normalizeWord(bookPhrase);
+                            if (bookPhraseNorm === scriptNorm) {
+                                // Book needs multiple words to match one script word
+                                flushBuffers();
+                                scriptResult.push(escapeHtml(scriptWord));
+                                bookResult.push(escapeHtml(bookWords.slice(j, j + n).join(' ')));
+                                i++;
+                                j += n;
+                                matched = true;
+                                break;
+                            }
+                        }
+                    }
+
+                    if (!matched) {
+                        // True mismatch - accumulate
+                        if (scriptWord) scriptMismatchBuffer.push(scriptWord);
+                        if (bookWord) bookMismatchBuffer.push(bookWord);
+                        if (i < scriptWords.length) i++;
+                        if (j < bookWords.length) j++;
+                    }
                 }
             }
 
