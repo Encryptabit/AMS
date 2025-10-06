@@ -288,7 +288,7 @@ internal sealed class ValidateTimingSession
             _gaps[CursorIndex] = updated;
         }
 
-        public IReadOnlyList<ParagraphExcerpt> GetCurrentParagraphs(int radius = 20)
+        public IReadOnlyList<ParagraphExcerpt> GetCurrentParagraphs(int radius)
         {
             if (_gaps.Count == 0 || _paragraphs.Count == 0)
             {
@@ -427,7 +427,7 @@ internal sealed class ValidateTimingSession
 
         private void RenderBookPreview()
         {
-            const int manuscriptRadius = 20;
+            const int manuscriptRadius = 5;
             var excerpts = _state.GetCurrentParagraphs(manuscriptRadius);
             if (excerpts.Count == 0)
             {

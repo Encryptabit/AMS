@@ -1,4 +1,5 @@
 ﻿using System.CommandLine;
+using System.Linq;
 using System.Text;
 using System.Threading;
 using Ams.Cli.Services;
@@ -15,7 +16,154 @@ public static class PipelineCommand
     {
         var pipeline = new Command("pipeline", "Run the end-to-end chapter pipeline");
         pipeline.AddCommand(CreateRun());
+        pipeline.AddCommand(CreatePrepCommand());
         return pipeline;
+    }
+
+    private static readonly StringComparison PathComparison = OperatingSystem.IsWindows()
+        ? StringComparison.OrdinalIgnoreCase
+        : StringComparison.Ordinal;
+
+    private static readonly StringComparer PathComparer = OperatingSystem.IsWindows()
+        ? StringComparer.OrdinalIgnoreCase
+        : StringComparer.Ordinal;
+
+    private const string DefaultBatchFolderName = "Batch 2";
+
+    private static Command CreatePrepCommand()
+    {
+        var cmd = new Command("prep", "Preparation utilities for batch handoff");
+        cmd.AddCommand(CreatePrepStageCommand());
+        cmd.AddCommand(CreatePrepResetCommand());
+        return cmd;
+    }
+
+    private static Command CreatePrepStageCommand()
+    {
+        var cmd = new Command("stage", "Collect treated WAVs into a batch folder for delivery");
+
+        var rootOption = new Option<DirectoryInfo?>(
+            "--root",
+            () => null,
+            "Root directory containing chapter folders (defaults to the REPL working directory or current directory)");
+        rootOption.AddAlias("-r");
+
+        var outputOption = new Option<DirectoryInfo?>(
+            "--output",
+            "Destination directory for staged files (defaults to <root>/Batch 2)");
+        outputOption.AddAlias("-o");
+
+        var overwriteOption = new Option<bool>(
+            "--overwrite",
+            () => false,
+            "Overwrite existing files in the destination folder");
+
+        cmd.AddOption(rootOption);
+        cmd.AddOption(outputOption);
+        cmd.AddOption(overwriteOption);
+
+        cmd.SetHandler(context =>
+        {
+            var cancellationToken = context.GetCancellationToken();
+
+            var root = CommandInputResolver.ResolveDirectory(context.ParseResult.GetValueForOption(rootOption));
+            root.Refresh();
+            if (!root.Exists)
+            {
+                throw new DirectoryNotFoundException($"Root directory not found: {root.FullName}");
+            }
+
+            var explicitOutput = context.ParseResult.GetValueForOption(outputOption);
+            var destination = explicitOutput ?? new DirectoryInfo(Path.Combine(root.FullName, DefaultBatchFolderName));
+            EnsureDirectory(destination.FullName);
+            destination.Refresh();
+
+            var overwrite = context.ParseResult.GetValueForOption(overwriteOption);
+
+            var destNormalized = NormalizeDirectoryPath(destination.FullName);
+
+            var treatedFiles = Directory.EnumerateFiles(root.FullName, "*.treated.wav", SearchOption.AllDirectories)
+                .Where(path => !IsWithinDirectory(path, destNormalized))
+                .Select(path => new FileInfo(path))
+                .OrderBy(file => file.FullName, PathComparer)
+                .ToList();
+
+            if (treatedFiles.Count == 0)
+            {
+                Log.Info("No treated WAV files found under {Root}", root.FullName);
+                return;
+            }
+
+            Log.Info("Staging {Count} treated file(s) from {Root} to {Destination}", treatedFiles.Count, root.FullName, destination.FullName);
+
+            var stagedCount = 0;
+            foreach (var file in treatedFiles)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+
+                var targetName = GetStagedFileName(file);
+                var targetPath = Path.Combine(destination.FullName, targetName);
+
+                if (!overwrite && File.Exists(targetPath))
+                {
+                    Log.Warn("Skipping {Source}; destination already exists at {Destination} (use --overwrite to replace)", file.FullName, targetPath);
+                    continue;
+                }
+
+                File.Copy(file.FullName, targetPath, overwrite);
+                stagedCount++;
+            }
+
+            Log.Info("Staged {Count} file(s) into {Destination}", stagedCount, destination.FullName);
+        });
+
+        return cmd;
+    }
+
+    private static Command CreatePrepResetCommand()
+    {
+        var cmd = new Command("reset", "Remove generated chapter artifacts from the working directory");
+
+        var rootOption = new Option<DirectoryInfo?>(
+            "--root",
+            () => null,
+            "Root directory containing chapter folders (defaults to the REPL working directory or current directory)");
+        rootOption.AddAlias("-r");
+
+        var hardOption = new Option<bool>(
+            "--hard",
+            () => false,
+            "Delete everything under the root except manuscript DOCX files");
+
+        cmd.AddOption(rootOption);
+        cmd.AddOption(hardOption);
+
+        cmd.SetHandler(context =>
+        {
+            var cancellationToken = context.GetCancellationToken();
+
+            var root = CommandInputResolver.ResolveDirectory(context.ParseResult.GetValueForOption(rootOption));
+            root.Refresh();
+            if (!root.Exists)
+            {
+                throw new DirectoryNotFoundException($"Root directory not found: {root.FullName}");
+            }
+
+            var hard = context.ParseResult.GetValueForOption(hardOption);
+
+            if (hard)
+            {
+                Log.Warn("Hard reset: deleting all generated content under {Root} (DOCX files preserved)", root.FullName);
+                PerformHardReset(root, cancellationToken);
+            }
+            else
+            {
+                Log.Info("Resetting chapter directories under {Root}", root.FullName);
+                PerformSoftReset(root, cancellationToken);
+            }
+        });
+
+        return cmd;
     }
 
     private static Command CreateRun()
@@ -349,6 +497,84 @@ public static class PipelineCommand
         Log.Info("Roomtone   : {RoomtoneFile}", treatedWav.FullName);
     }
 
+    private static void PerformSoftReset(DirectoryInfo root, CancellationToken cancellationToken)
+    {
+        var defaultBatchPath = Path.Combine(root.FullName, DefaultBatchFolderName);
+        var skipBatch = NormalizeDirectoryPath(defaultBatchPath);
+
+        var deleted = 0;
+        foreach (var directory in root.EnumerateDirectories("*", SearchOption.TopDirectoryOnly))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            var normalized = NormalizeDirectoryPath(directory.FullName);
+            if (normalized.Equals(skipBatch, PathComparison))
+            {
+                continue;
+            }
+
+            if (!LooksLikeChapterDirectory(directory))
+            {
+                continue;
+            }
+
+            try
+            {
+                directory.Delete(recursive: true);
+                deleted++;
+                Log.Info("Deleted chapter directory {Directory}", directory.FullName);
+            }
+            catch (Exception ex)
+            {
+                Log.Warn("Failed to delete {Directory}: {Message}", directory.FullName, ex.Message);
+            }
+        }
+
+        Log.Info("Soft reset complete. Removed {Count} chapter directorie(s).", deleted);
+    }
+
+    private static void PerformHardReset(DirectoryInfo root, CancellationToken cancellationToken)
+    {
+        // Delete directories first
+        foreach (var directory in root.EnumerateDirectories())
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            try
+            {
+                directory.Delete(recursive: true);
+                Log.Info("Deleted directory {Directory}", directory.FullName);
+            }
+            catch (Exception ex)
+            {
+                Log.Warn("Failed to delete {Directory}: {Message}", directory.FullName, ex.Message);
+            }
+        }
+
+        // Delete files except DOCX
+        foreach (var file in root.EnumerateFiles())
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            if (file.Extension.Equals(".docx", StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            try
+            {
+                file.Delete();
+                Log.Info("Deleted file {File}", file.FullName);
+            }
+            catch (Exception ex)
+            {
+                Log.Warn("Failed to delete {File}: {Message}", file.FullName, ex.Message);
+            }
+        }
+
+        Log.Info("Hard reset complete for {Root}", root.FullName);
+    }
+
     private static void EnsureDirectory(string? dir)
     {
         if (!string.IsNullOrWhiteSpace(dir))
@@ -374,5 +600,68 @@ public static class PipelineCommand
 
         var result = builder.ToString().Trim();
         return string.IsNullOrEmpty(result) ? fallback : result;
+    }
+
+    private static bool LooksLikeChapterDirectory(DirectoryInfo directory)
+    {
+        if (directory.Name.Equals(DefaultBatchFolderName, PathComparison))
+        {
+            return false;
+        }
+
+        if (directory.Name.StartsWith(".", StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        // Quick heuristic: presence of common pipeline artifacts
+        var patterns = new[]
+        {
+            "*.treated.wav",
+            "*.asr.json",
+            "*.align.*",
+            "*.validate.*",
+            "*.tx.json",
+            "*.wav"
+        };
+
+        foreach (var pattern in patterns)
+        {
+            if (directory.EnumerateFiles(pattern, SearchOption.TopDirectoryOnly).Any())
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static string NormalizeDirectoryPath(string path)
+    {
+        var full = Path.GetFullPath(path);
+        return full.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) + Path.DirectorySeparatorChar;
+    }
+
+    private static bool IsWithinDirectory(string candidatePath, string directoryNormalized)
+    {
+        var candidateFull = Path.GetFullPath(candidatePath);
+        return candidateFull.StartsWith(directoryNormalized, PathComparison);
+    }
+
+    private static string GetStagedFileName(FileInfo source)
+    {
+        var stem = Path.GetFileNameWithoutExtension(source.Name);
+        const string marker = ".treated";
+
+        if (stem.EndsWith(marker, PathComparison))
+        {
+            stem = stem[..^marker.Length];
+        }
+        else if (stem.EndsWith("treated", PathComparison))
+        {
+            stem = stem[..^"treated".Length];
+        }
+
+        return stem + source.Extension;
     }
 }

@@ -206,6 +206,7 @@ public static class ValidateCommand
         var topSentencesOption = new Option<int>("--top-sentences", () => 10, "Number of highest-WER sentences to display (0 to disable).");
         var topParagraphsOption = new Option<int>("--top-paragraphs", () => 5, "Number of highest-WER paragraphs to display (0 to disable).");
         var includeWordsOption = new Option<bool>("--include-words", () => false, "Include word-level alignment tallies when TranscriptIndex is provided.");
+        var includeAllFlaggedOption = new Option<bool>("--include-all-flagged", () => false, "Include parent paragraphs of all flagged sentences, even if the paragraph status is 'ok'.");
 
         cmd.AddOption(txOption);
         cmd.AddOption(hydrateOption);
@@ -214,6 +215,7 @@ public static class ValidateCommand
         cmd.AddOption(topSentencesOption);
         cmd.AddOption(topParagraphsOption);
         cmd.AddOption(includeWordsOption);
+        cmd.AddOption(includeAllFlaggedOption);
 
         cmd.SetHandler(async context =>
         {
@@ -224,6 +226,7 @@ public static class ValidateCommand
             var topSentences = context.ParseResult.GetValueForOption(topSentencesOption);
             var topParagraphs = context.ParseResult.GetValueForOption(topParagraphsOption);
             var includeWords = context.ParseResult.GetValueForOption(includeWordsOption);
+            var includeAllFlagged = context.ParseResult.GetValueForOption(includeAllFlaggedOption);
 
             if (txFile is null && hydrateFile is null)
             {
@@ -234,7 +237,7 @@ public static class ValidateCommand
 
             try
             {
-                var result = await GenerateReportAsync(txFile, hydrateFile, allErrors, topSentences, topParagraphs, includeWords);
+                var result = await GenerateReportAsync(txFile, hydrateFile, allErrors, topSentences, topParagraphs, includeWords, includeAllFlagged);
 
                 var summarySentences = result.Sentences.Count;
                 var summarySentencesFlagged = result.Sentences.Count(s => !string.Equals(s.Status, "ok", StringComparison.OrdinalIgnoreCase));
@@ -269,7 +272,8 @@ public static class ValidateCommand
         bool allErrors,
         int topSentences,
         int topParagraphs,
-        bool includeWordTallies)
+        bool includeWordTallies,
+        bool includeAllFlagged)
     {
         TranscriptIndex? tx = null;
         HydratedTranscript? hydrated = null;
@@ -313,7 +317,7 @@ public static class ValidateCommand
         var paragraphViews = BuildParagraphViews(tx, hydrated);
         var wordTallies = includeWordTallies ? BuildWordTallies(tx) : null;
 
-        var fullReport = BuildTextReport(info, sentenceViews, paragraphViews, wordTallies, allErrors, topSentences, topParagraphs);
+        var fullReport = BuildTextReport(info, sentenceViews, paragraphViews, wordTallies, allErrors, topSentences, topParagraphs, includeAllFlagged, hydrated);
         return new ReportResult(fullReport, sentenceViews, paragraphViews, wordTallies);
     }
 
@@ -459,7 +463,9 @@ public static class ValidateCommand
         WordTallies? wordTallies,
         bool allErrors,
         int topSentences,
-        int topParagraphs)
+        int topParagraphs,
+        bool includeAllFlagged,
+        HydratedTranscript? hydrated)
     {
         var builder = new StringBuilder();
 
@@ -546,7 +552,36 @@ public static class ValidateCommand
             .OrderByDescending(p => p.Metrics.Wer)
             .ThenByDescending(p => p.Metrics.Coverage);
         
-        var paragraphBucket = allErrors ? paragraphOrdered.Where(p => !p.Status.Equals("ok", StringComparison.OrdinalIgnoreCase)) : paragraphOrdered.Take(topParagraphs);
+        IEnumerable<ParagraphView> paragraphBucket;
+        
+        if (includeAllFlagged && hydrated?.Paragraphs is not null)
+        {
+            // Build a set of flagged sentence IDs
+            var flaggedSentenceIds = new HashSet<int>(
+                sentences.Where(s => !s.Status.Equals("ok", StringComparison.OrdinalIgnoreCase))
+                        .Select(s => s.Id));
+
+            // Build a set of paragraph IDs that contain flagged sentences
+            var paragraphsWithFlaggedSentences = new HashSet<int>();
+            foreach (var hydratedPara in hydrated.Paragraphs)
+            {
+                if (hydratedPara.SentenceIds.Any(sid => flaggedSentenceIds.Contains(sid)))
+                {
+                    paragraphsWithFlaggedSentences.Add(hydratedPara.Id);
+                }
+            }
+
+            // Include paragraphs that are either flagged OR contain flagged sentences
+            paragraphBucket = allErrors 
+                ? paragraphOrdered.Where(p => !p.Status.Equals("ok", StringComparison.OrdinalIgnoreCase) || paragraphsWithFlaggedSentences.Contains(p.Id))
+                : paragraphOrdered.Take(topParagraphs);
+        }
+        else
+        {
+            paragraphBucket = allErrors 
+                ? paragraphOrdered.Where(p => !p.Status.Equals("ok", StringComparison.OrdinalIgnoreCase)) 
+                : paragraphOrdered.Take(topParagraphs);
+        }
 
         if (topParagraphs > 0 && paragraphs.Count > 0)
         {
@@ -570,15 +605,15 @@ public static class ValidateCommand
         return builder.ToString().TrimEnd();
     }
 
-    private static string TrimText(string text, int maxLength = 160)
+    private static string TrimText(string text, int? maxLength = null)
     {
         var normalized = text.Replace('\n', ' ').Replace('\r', ' ').Trim();
-        if (normalized.Length <= maxLength)
+        if (maxLength is null || normalized.Length <= maxLength.Value)
         {
             return normalized;
         }
 
-        return normalized[..maxLength].TrimEnd() + "…";
+        return normalized[..maxLength.Value].TrimEnd() + "…";
     }
 
     private sealed record SourceInfo(string AudioPath, string ScriptPath, string BookIndexPath, DateTime CreatedAtUtc);
