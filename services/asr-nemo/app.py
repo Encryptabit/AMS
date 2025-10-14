@@ -201,48 +201,61 @@ def _normalize_segment_entry(entry: dict, index: int) -> dict:
     }
 
 
-def _load_model(device: str, nemo_asr_module):
+def _load_model(device: str, nemo_asr_module, requested_model: Optional[str] = None):
     """Load the ASR model on the requested device if needed."""
     global _model, _model_name
 
+    target_models = []
+    if requested_model:
+        target_models.append(requested_model)
+    target_models.extend([
+        "nvidia/parakeet-tdt-0.6b-v3",
+        "nvidia/stt_en_quartznet15x5",
+        "nvidia/stt_en_conformer_ctc_small",
+    ])
+
+    # If we already have a model loaded, check whether it satisfies the request
     if _model is not None:
         try:
             current_device = next(_model.parameters()).device.type
         except Exception:
             current_device = device
-        if current_device != device:
-            logging.info(f"Moving model from {current_device} to {device}")
-            _model = _model.to(device)
-        _model.eval()
-        return
 
-    logging.info("Loading ASR model...")
-    try:
-        _model_name = "nvidia/parakeet-tdt-0.6b-v3"
-        logging.info(f"Attempting to load model: {_model_name}")
-        _model = nemo_asr_module.models.ASRModel.from_pretrained(_model_name).to(device)
-        logging.info(f"Successfully loaded model: {_model_name} on {device}")
-    except Exception as e:
-        logging.warning(f"Failed to load Parakeet model: {e}")
+        if requested_model and _model_name != requested_model:
+            logging.info(f"Requested model '{requested_model}' differs from loaded model '{_model_name}'. Reloading...")
+            _cleanup_model()
+        else:
+            if current_device != device:
+                logging.info(f"Moving model from {current_device} to {device}")
+                _model = _model.to(device)
+            _model.eval()
+            return
+
+    last_error: Optional[Exception] = None
+
+    for candidate in target_models:
+        if candidate is None:
+            continue
+
         try:
-            _model_name = "nvidia/stt_en_quartznet15x5"
-            logging.info(f"Attempting fallback to model: {_model_name}")
-            _model = nemo_asr_module.models.ASRModel.from_pretrained(_model_name).to(device)
-            logging.info(f"Successfully loaded fallback model: {_model_name} on {device}")
-        except Exception as e2:
-            logging.warning(f"Failed to load QuartzNet model: {e2}")
-            try:
-                _model_name = "nvidia/stt_en_conformer_ctc_small"
-                logging.info(f"Attempting final fallback to model: {_model_name}")
-                _model = nemo_asr_module.models.ASRModel.from_pretrained(_model_name).to(device)
-                logging.info(f"Successfully loaded final fallback model: {_model_name} on {device}")
-            except Exception as e3:
-                logging.error("Failed to load any compatible model. Parakeet: %s, QuartzNet: %s, Conformer: %s", e, e2, e3)
-                raise HTTPException(
-                    status_code=500,
-                    detail=f"Failed to load any compatible model. Errors: Parakeet: {str(e)}, QuartzNet: {str(e2)}, Conformer: {str(e3)}"
-                )
-    _model.eval()
+            logging.info(f"Attempting to load model: {candidate}")
+            model = nemo_asr_module.models.ASRModel.from_pretrained(candidate)
+            model = model.to(device)
+            model.eval()
+            _model = model
+            _model_name = candidate
+            logging.info(f"Successfully loaded model: {_model_name} on {device}")
+            return
+        except Exception as exc:
+            logging.warning(f"Failed to load model '{candidate}': {exc}")
+            last_error = exc
+            continue
+
+    logging.error("Failed to load any compatible model. Last error: %s", last_error)
+    raise HTTPException(
+        status_code=500,
+        detail=f"Failed to load requested model. Last error: {str(last_error)}"
+    )
 
 
 def _cleanup_model():
@@ -396,7 +409,7 @@ async def _transcribe_impl(request: AsrRequest) -> AsrResponse:
             raise HTTPException(status_code=500, detail=f"Failed to import NeMo: {str(e)}")
 
         device = "cuda" if torch.cuda.is_available() else "cpu"
-        _load_model(device, nemo_asr)
+        _load_model(device, nemo_asr, request.model)
 
         chunk_infos = _prepare_chunks(request.audio_path)
         if not chunk_infos:

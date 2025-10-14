@@ -230,7 +230,7 @@ public sealed class RoomToneInsertionStage
         await WriteUpdatedTimingsAsync(manifest.TranscriptIndexPath, updatedTranscript, updatedHydrate, jsonOptions, ct);
         await WritePlanAsync(plan, planPath, ct);
         await WriteMetaAsync(manifest, wavPath, roomtonePath, planPath, metaPath, ct);
-        await WriteParamsAsync(paramsPath, _toneGainDb, roomtoneSeedStats.MeanRmsDb, appliedGainDb, _fadeMs, _useAdaptiveGain, _emitDiagnostics, _gapLeftThresholdDb, _gapRightThresholdDb, _gapStepSec, _gapBackoffSec, ct);
+        await WriteParamsAsync(paramsPath, roomtonePath, _toneGainDb, roomtoneSeedStats.MeanRmsDb, appliedGainDb, _fadeMs, _useAdaptiveGain, _emitDiagnostics, _gapLeftThresholdDb, _gapRightThresholdDb, _gapStepSec, _gapBackoffSec, ct);
 
         string? textGridGapsPath = null;
         if (textGridHintList.Count > 0)
@@ -248,6 +248,8 @@ public sealed class RoomToneInsertionStage
             ["params"] = paramsPath
         };
         if (wavPath is not null) outputs["roomtoneWav"] = wavPath;
+        outputs["roomtoneSeed"] = roomtonePath;
+        outputs["fadeMs"] = _fadeMs.ToString("0.###");
         outputs["transcript"] = manifest.TranscriptIndexPath;
         var hydratePath = DeriveHydratePath(manifest.TranscriptIndexPath);
         if (hydratePath is not null && File.Exists(hydratePath))
@@ -1159,6 +1161,7 @@ public sealed class RoomToneInsertionStage
 
     private static async Task WriteParamsAsync(
         string path,
+        string roomtoneSeedPath,
         double targetRmsDb,
         double roomtoneSeedRmsDb,
         double appliedGainDb,
@@ -1185,6 +1188,7 @@ public sealed class RoomToneInsertionStage
                 gapRightThresholdDb,
                 gapStepMs = gapStepSec * 1000.0,
                 gapBackoffMs = gapBackoffSec * 1000.0,
+                roomtoneSeedPath,
                 usedExistingRoomtone = true
             }
         };

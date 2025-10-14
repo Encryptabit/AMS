@@ -1,12 +1,21 @@
-﻿using System.CommandLine;
+﻿using System.Collections.Generic;
+using System.CommandLine;
+using System.CommandLine.Invocation;
+using System.Globalization;
 using System.Linq;
 using System.Text;
+using System.Text.Json;
 using System.Threading;
 using Ams.Cli.Services;
+using Ams.Cli.Utilities;
 using Ams.Core.Alignment.Mfa;
+using Ams.Core.Artifacts;
+using Ams.Core.Audio;
 using Ams.Core.Book;
 using Ams.Core.Common;
-using Ams.Cli.Utilities;
+using Ams.Core.Hydrate;
+using Ams.Core.Prosody;
+using Spectre.Console;
 
 namespace Ams.Cli.Commands;
 
@@ -17,6 +26,7 @@ public static class PipelineCommand
         var pipeline = new Command("pipeline", "Run the end-to-end chapter pipeline");
         pipeline.AddCommand(CreateRun());
         pipeline.AddCommand(CreatePrepCommand());
+        pipeline.AddCommand(CreateStatsCommand());
         return pipeline;
     }
 
@@ -30,11 +40,72 @@ public static class PipelineCommand
 
     private const string DefaultBatchFolderName = "Batch 2";
 
+    private static readonly JsonSerializerOptions StatsJsonOptions = new()
+    {
+        PropertyNameCaseInsensitive = true
+    };
+
     private static Command CreatePrepCommand()
     {
         var cmd = new Command("prep", "Preparation utilities for batch handoff");
         cmd.AddCommand(CreatePrepStageCommand());
         cmd.AddCommand(CreatePrepResetCommand());
+        return cmd;
+    }
+
+    private static Command CreateStatsCommand()
+    {
+        var cmd = new Command("stats", "Display audio and prosody statistics for pipeline artifacts");
+
+        var workDirOption = new Option<DirectoryInfo?>(
+            "--work-dir",
+            () => null,
+            "Root directory containing chapter folders (defaults to the REPL working directory or current directory)");
+
+        var bookIndexOption = new Option<FileInfo?>(
+            "--book-index",
+            () => null,
+            "Optional path to book-index.json (defaults to <work-dir>/book-index.json if present)");
+
+        var chapterOption = new Option<string?>(
+            "--chapter",
+            () => null,
+            "Specific chapter directory to analyze (folder name under work-dir)");
+
+        var allOption = new Option<bool>(
+            "--all",
+            () => false,
+            "Analyze every chapter directory detected under work-dir");
+
+        cmd.AddOption(workDirOption);
+        cmd.AddOption(bookIndexOption);
+        cmd.AddOption(chapterOption);
+        cmd.AddOption(allOption);
+
+        cmd.SetHandler(context =>
+        {
+            var cancellationToken = context.GetCancellationToken();
+            var workDir = context.ParseResult.GetValueForOption(workDirOption);
+            var bookIndex = context.ParseResult.GetValueForOption(bookIndexOption);
+            var chapter = context.ParseResult.GetValueForOption(chapterOption);
+            var all = context.ParseResult.GetValueForOption(allOption);
+
+            try
+            {
+                RunStats(workDir, bookIndex, chapter, all, cancellationToken);
+            }
+            catch (OperationCanceledException)
+            {
+                Log.Warn("pipeline stats cancelled");
+                context.ExitCode = 1;
+            }
+            catch (Exception ex)
+            {
+                Log.Error(ex, "pipeline stats command failed");
+                context.ExitCode = 1;
+            }
+        });
+
         return cmd;
     }
 
@@ -348,7 +419,9 @@ public static class PipelineCommand
         Log.Info("Chapter={Chapter}", chapterStem);
         Log.Info("ChapterDir={ChapterDir}", chapterDir);
 
-        if (forceIndex || !bookIndexFile.Exists)
+        bool bookIndexExists = bookIndexFile.Exists;
+
+        if (forceIndex || !bookIndexExists)
         {
             Log.Info(forceIndex ? "Rebuilding book index at {BookIndexFile}" : "Building book index at {BookIndexFile}", bookIndexFile.FullName);
             await BuildIndexCommand.BuildBookIndexAsync(
@@ -357,15 +430,16 @@ public static class PipelineCommand
                 forceIndex,
                 new BookIndexOptions { AverageWpm = avgWpm },
                 noCache: false);
+            bookIndexExists = bookIndexFile.Exists;
         }
         else
         {
             Log.Info("Using cached book index at {BookIndexFile}", bookIndexFile.FullName);
         }
 
-        if (!bookIndexFile.Exists)
+        if (!bookIndexExists)
         {
-            throw new InvalidOperationException($"Book index file missing after build: {bookIndexFile.FullName}");
+            throw new InvalidOperationException($"Book index file missing or inaccessible: {bookIndexFile.FullName}");
         }
 
         EnsureDirectory(asrFile.DirectoryName);
@@ -463,7 +537,9 @@ public static class PipelineCommand
             try
             {
                 MfaTimingMerger.MergeTimings(hydrateFile, asrFile, textGridFile);
-                MfaTimingMerger.MergeTimings(txFile, asrFile, textGridFile);
+                hydrateFile.Refresh();
+                var fallbackTexts = MfaTimingMerger.BuildFallbackTextMap(hydrateFile);
+                MfaTimingMerger.MergeTimings(txFile, asrFile, textGridFile, fallbackTexts);
             }
             catch (Exception ex)
             {
@@ -574,6 +650,476 @@ public static class PipelineCommand
 
         Log.Info("Hard reset complete for {Root}", root.FullName);
     }
+
+    private static void RunStats(DirectoryInfo? workDirOption, FileInfo? bookIndexOption, string? chapterName, bool analyzeAll, CancellationToken cancellationToken)
+    {
+        var root = CommandInputResolver.ResolveDirectory(workDirOption);
+        root.Refresh();
+        if (!root.Exists)
+        {
+            Log.Error("Work directory not found: {Directory}", root.FullName);
+            return;
+        }
+
+        FileInfo? bookIndexFile = bookIndexOption ?? new FileInfo(Path.Combine(root.FullName, "book-index.json"));
+        if (bookIndexFile is not null && !bookIndexFile.Exists)
+        {
+            if (bookIndexOption is not null)
+            {
+                Log.Warn("Book index not found at {Path}", bookIndexFile.FullName);
+            }
+            bookIndexFile = null;
+        }
+
+        BookIndex? bookIndex = null;
+        if (bookIndexFile is not null)
+        {
+            try
+            {
+                bookIndex = LoadJson<BookIndex>(bookIndexFile);
+            }
+            catch (Exception ex)
+            {
+                Log.Warn("Failed to load book index {Path}: {Message}", bookIndexFile.FullName, ex.Message);
+                bookIndexFile = null;
+            }
+        }
+
+        if (bookIndex is null)
+        {
+            Log.Warn("Book index unavailable; prosody statistics will be skipped.");
+        }
+
+        var chapterDirs = ResolveChapterDirectories(root, chapterName, analyzeAll);
+        if (chapterDirs.Count == 0)
+        {
+            Log.Warn("No chapter directories found under {Root}", root.FullName);
+            return;
+        }
+
+        var statsList = new List<ChapterStats>();
+        double totalAudioSec = 0;
+
+        foreach (var chapterDir in chapterDirs)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            try
+            {
+                var stats = ComputeChapterStats(chapterDir, bookIndex, bookIndexFile);
+                if (stats is null)
+                {
+                    continue;
+                }
+
+                statsList.Add(stats);
+                totalAudioSec += stats.Audio.LengthSec;
+            }
+            catch (Exception ex)
+            {
+                Log.Warn("Failed to compute stats for {Chapter}: {Message}", chapterDir.Name, ex.Message);
+            }
+        }
+
+        if (statsList.Count == 0)
+        {
+            Log.Warn("No statistics could be generated.");
+            return;
+        }
+
+        PrintStatsReport(root, bookIndexFile, bookIndex, statsList, totalAudioSec);
+    }
+
+    private static List<DirectoryInfo> ResolveChapterDirectories(DirectoryInfo root, string? chapterName, bool analyzeAll)
+    {
+        var chapters = new List<DirectoryInfo>();
+
+        if (!string.IsNullOrWhiteSpace(chapterName))
+        {
+            var explicitDir = new DirectoryInfo(Path.Combine(root.FullName, chapterName));
+            if (!explicitDir.Exists)
+            {
+                Log.Warn("Chapter directory not found: {Directory}", explicitDir.FullName);
+            }
+            else
+            {
+                chapters.Add(explicitDir);
+            }
+
+            return chapters;
+        }
+
+        var candidates = root.EnumerateDirectories("*", SearchOption.TopDirectoryOnly)
+            .Where(LooksLikeChapterDirectory)
+            .OrderBy(directory => directory.Name, PathComparer)
+            .ToList();
+
+        if (candidates.Count == 0)
+        {
+            return chapters;
+        }
+
+        if (analyzeAll || candidates.Count == 1)
+        {
+            chapters.AddRange(candidates);
+            return chapters;
+        }
+
+        Log.Warn("Multiple chapter directories detected under {Root}. Use --chapter <name> or --all.", root.FullName);
+        return chapters;
+    }
+
+    private static ChapterStats? ComputeChapterStats(DirectoryInfo chapterDir, BookIndex? bookIndex, FileInfo? bookIndexFile)
+    {
+        var txFile = chapterDir.EnumerateFiles("*.align.tx.json", SearchOption.TopDirectoryOnly).FirstOrDefault();
+        if (txFile is null)
+        {
+            Log.Warn("Skipping {Chapter}: transcript index not found", chapterDir.FullName);
+            return null;
+        }
+
+        var stem = ExtractChapterStem(Path.GetFileNameWithoutExtension(txFile.Name));
+        var hydrateFile = new FileInfo(Path.Combine(chapterDir.FullName, $"{stem}.align.hydrate.json"));
+        var textGridFile = new FileInfo(Path.Combine(chapterDir.FullName, "alignment", "mfa", $"{stem}.TextGrid"));
+
+        var audioCandidates = new[]
+        {
+            new FileInfo(Path.Combine(chapterDir.FullName, $"{stem}.treated.pause-adjusted.wav")),
+            new FileInfo(Path.Combine(chapterDir.FullName, $"{stem}.pause-adjusted.wav")),
+            new FileInfo(Path.Combine(chapterDir.FullName, $"{stem}.treated.wav")),
+            new FileInfo(Path.Combine(chapterDir.FullName, $"{stem}.wav"))
+        };
+
+        var audioFile = audioCandidates.FirstOrDefault(file => file.Exists);
+        if (audioFile is null)
+        {
+            Log.Warn("Skipping {Chapter}: treated audio not found", chapterDir.FullName);
+            return null;
+        }
+
+        var audioStats = ComputeAudioStats(audioFile);
+
+        PauseStatsSet? prosodyStats = null;
+        if (bookIndex is not null && hydrateFile.Exists)
+        {
+            try
+            {
+                var transcript = LoadJson<TranscriptIndex>(txFile);
+                var hydrated = LoadJson<HydratedTranscript>(hydrateFile);
+                var silences = LoadMfaSilences(textGridFile);
+                var pauseMap = PauseMapBuilder.Build(transcript, bookIndex, hydrated, PausePolicyPresets.House(), silences);
+                prosodyStats = pauseMap.Stats;
+            }
+            catch (Exception ex)
+            {
+                Log.Warn("Failed to compute prosody stats for {Chapter}: {Message}", chapterDir.FullName, ex.Message);
+            }
+        }
+
+        return new ChapterStats(chapterDir.Name, audioStats, prosodyStats);
+    }
+
+    private static void PrintStatsReport(DirectoryInfo root, FileInfo? bookIndexFile, BookIndex? bookIndex, IReadOnlyList<ChapterStats> chapters, double totalAudioSec)
+    {
+        AnsiConsole.MarkupLine($"[bold]Pipeline Statistics[/] ({root.FullName})");
+
+        if (bookIndexFile is not null)
+        {
+            AnsiConsole.MarkupLine($"Book Index: {bookIndexFile.FullName}");
+        }
+
+        if (bookIndex is not null)
+        {
+            var totals = bookIndex.Totals;
+            var bookTable = new Table().AddColumn("Metric").AddColumn("Value");
+            bookTable.AddRow("Words", totals.Words.ToString("N0", CultureInfo.InvariantCulture));
+            bookTable.AddRow("Sentences", totals.Sentences.ToString("N0", CultureInfo.InvariantCulture));
+            bookTable.AddRow("Paragraphs", totals.Paragraphs.ToString("N0", CultureInfo.InvariantCulture));
+            bookTable.AddRow("Estimated Duration", FormatDuration(totals.EstimatedDurationSec));
+            bookTable.AddRow("Total Audio (analyzed)", FormatDuration(totalAudioSec));
+
+            if (totals.EstimatedDurationSec > 0)
+            {
+                var delta = totalAudioSec - totals.EstimatedDurationSec;
+                bookTable.AddRow("Audio - Estimate", $"{FormatDuration(delta)} ({delta:+0.##;-0.##;0} s)");
+            }
+
+            AnsiConsole.Write(bookTable);
+        }
+        else
+        {
+            AnsiConsole.MarkupLine("[yellow]Book index not available; book-level statistics omitted.[/]");
+        }
+
+        AnsiConsole.MarkupLine($"Chapters analyzed: {chapters.Count}");
+
+        foreach (var chapter in chapters.OrderBy(c => c.Chapter, StringComparer.OrdinalIgnoreCase))
+        {
+            AnsiConsole.MarkupLine($"\n[bold yellow]{chapter.Chapter}[/]");
+
+            var audioTable = CreateAudioTable(chapter.Audio);
+            AnsiConsole.MarkupLine("[bold]Audio[/]");
+            AnsiConsole.Write(audioTable);
+
+            if (chapter.Prosody is not null)
+            {
+                var prosodyTable = CreateProsodyTable(chapter.Prosody);
+                if (prosodyTable is not null)
+                {
+                    AnsiConsole.MarkupLine("[bold]Prosody[/]");
+                    AnsiConsole.Write(prosodyTable);
+                }
+                else
+                {
+                    AnsiConsole.MarkupLine("[yellow]No pause intervals detected for this chapter.[/]");
+                }
+            }
+            else
+            {
+                AnsiConsole.MarkupLine("[yellow]Prosody statistics unavailable (book index missing or failed to load).[/]");
+            }
+        }
+    }
+
+    private static Table CreateAudioTable(AudioStats audio)
+    {
+        var table = new Table().AddColumn("Metric").AddColumn("Value");
+        table.AddRow("Length", FormatDuration(audio.LengthSec));
+        table.AddRow("Sample Peak", FormatDb(audio.SamplePeak));
+        table.AddRow("True Peak", FormatDb(audio.TruePeak));
+        table.AddRow("Overall RMS", FormatDb(audio.OverallRms));
+        table.AddRow("Window RMS Max (0.5s)", FormatDb(audio.MaxWindowRms));
+        table.AddRow("Window RMS Min (0.5s)", FormatDb(audio.MinWindowRms));
+        return table;
+    }
+
+    private static Table? CreateProsodyTable(PauseStatsSet stats)
+    {
+        var table = new Table()
+            .AddColumn("Class")
+            .AddColumn("Count")
+            .AddColumn("Min (s)")
+            .AddColumn("Median (s)")
+            .AddColumn("Max (s)")
+            .AddColumn("Mean (s)")
+            .AddColumn("Total (s)");
+
+        var hasRows = false;
+        foreach (var (pauseClass, pauseStats) in EnumerateStats(stats))
+        {
+            if (pauseStats.Count == 0)
+            {
+                continue;
+            }
+
+            hasRows = true;
+            table.AddRow(
+                pauseClass.ToString(),
+                pauseStats.Count.ToString(CultureInfo.InvariantCulture),
+                pauseStats.Min.ToString("F3", CultureInfo.InvariantCulture),
+                pauseStats.Median.ToString("F3", CultureInfo.InvariantCulture),
+                pauseStats.Max.ToString("F3", CultureInfo.InvariantCulture),
+                pauseStats.Mean.ToString("F3", CultureInfo.InvariantCulture),
+                pauseStats.Total.ToString("F3", CultureInfo.InvariantCulture));
+        }
+
+        return hasRows ? table : null;
+    }
+
+    private static IEnumerable<(PauseClass Class, PauseStats Stats)> EnumerateStats(PauseStatsSet stats)
+    {
+        yield return (PauseClass.Comma, stats.Comma);
+        yield return (PauseClass.Sentence, stats.Sentence);
+        yield return (PauseClass.Paragraph, stats.Paragraph);
+        yield return (PauseClass.ChapterHead, stats.ChapterHead);
+        yield return (PauseClass.PostChapterRead, stats.PostChapterRead);
+        yield return (PauseClass.Tail, stats.Tail);
+        yield return (PauseClass.Other, stats.Other);
+    }
+
+    private static string FormatDuration(double seconds)
+    {
+        var ts = TimeSpan.FromSeconds(seconds);
+        return ts.ToString(@"hh\:mm\:ss\.fff", CultureInfo.InvariantCulture);
+    }
+
+    private static string FormatDb(double amplitude)
+    {
+        if (amplitude <= 0)
+        {
+            return "-∞ dBFS";
+        }
+
+        var db = 20.0 * Math.Log10(amplitude);
+        return db.ToString("F2", CultureInfo.InvariantCulture) + " dBFS";
+    }
+
+    private static AudioStats ComputeAudioStats(FileInfo audioFile)
+    {
+        var buffer = WavIo.ReadPcmOrFloat(audioFile.FullName);
+        var totalSamples = buffer.Length;
+        var channels = buffer.Channels;
+        if (totalSamples == 0 || channels == 0)
+        {
+            return new AudioStats(0, 0, 0, 0, 0, 0);
+        }
+
+        var sampleRate = buffer.SampleRate;
+        var channelData = buffer.Planar;
+
+        var perSampleMeanSquare = new double[totalSamples];
+        double totalSquares = 0;
+        double samplePeak = 0;
+        double truePeak = 0;
+
+        for (int ch = 0; ch < channels; ch++)
+        {
+            var samples = channelData[ch];
+            double previous = 0;
+            for (int i = 0; i < totalSamples; i++)
+            {
+                double sample = samples[i];
+                double abs = Math.Abs(sample);
+                if (abs > samplePeak)
+                {
+                    samplePeak = abs;
+                }
+
+                double square = sample * sample;
+                perSampleMeanSquare[i] += square;
+                totalSquares += square;
+
+                if (i > 0)
+                {
+                    double s0 = previous;
+                    double s1 = sample;
+                    for (int step = 1; step <= 3; step++)
+                    {
+                        double t = step / 4.0;
+                        double interp = s0 + (s1 - s0) * t;
+                        double interpAbs = Math.Abs(interp);
+                        if (interpAbs > truePeak)
+                        {
+                            truePeak = interpAbs;
+                        }
+                    }
+                }
+
+                previous = sample;
+            }
+        }
+
+        truePeak = Math.Max(truePeak, samplePeak);
+
+        for (int i = 0; i < totalSamples; i++)
+        {
+            perSampleMeanSquare[i] /= channels;
+        }
+
+        double overallRms = Math.Sqrt(totalSquares / (channels * (double)totalSamples));
+
+        int windowSamples = Math.Max(1, (int)Math.Round(sampleRate * 0.5));
+        if (windowSamples > totalSamples)
+        {
+            windowSamples = totalSamples;
+        }
+
+        double minWindowRms = double.PositiveInfinity;
+        double maxWindowRms = double.NegativeInfinity;
+
+        for (int start = 0; start < totalSamples; start += windowSamples)
+        {
+            int end = Math.Min(totalSamples, start + windowSamples);
+            if (end <= start)
+            {
+                continue;
+            }
+
+            double sum = 0;
+            for (int i = start; i < end; i++)
+            {
+                sum += perSampleMeanSquare[i];
+            }
+
+            double meanSquare = sum / (end - start);
+            double rms = Math.Sqrt(meanSquare);
+            if (rms < minWindowRms)
+            {
+                minWindowRms = rms;
+            }
+            if (rms > maxWindowRms)
+            {
+                maxWindowRms = rms;
+            }
+        }
+
+        if (double.IsPositiveInfinity(minWindowRms))
+        {
+            minWindowRms = overallRms;
+        }
+        if (double.IsNegativeInfinity(maxWindowRms))
+        {
+            maxWindowRms = overallRms;
+        }
+
+        double lengthSec = totalSamples / (double)sampleRate;
+
+        return new AudioStats(lengthSec, samplePeak, truePeak, overallRms, minWindowRms, maxWindowRms);
+    }
+
+    private static IReadOnlyList<(double Start, double End)> LoadMfaSilences(FileInfo textGridFile)
+    {
+        if (!textGridFile.Exists)
+        {
+            return Array.Empty<(double, double)>();
+        }
+
+        try
+        {
+            return TextGridParser.ParseWordIntervals(textGridFile.FullName)
+                .Where(interval => string.IsNullOrEmpty(interval.Text) && interval.End > interval.Start)
+                .Select(interval => (interval.Start, interval.End))
+                .ToList();
+        }
+        catch (Exception ex)
+        {
+            Log.Warn("Failed to parse TextGrid for silences {Path}: {Message}", textGridFile.FullName, ex.Message);
+            return Array.Empty<(double, double)>();
+        }
+    }
+
+    private static string ExtractChapterStem(string nameWithoutExtension)
+    {
+        var stem = nameWithoutExtension;
+
+        const string alignTxSuffix = ".align.tx";
+        if (stem.EndsWith(alignTxSuffix, StringComparison.OrdinalIgnoreCase))
+        {
+            stem = stem[..^alignTxSuffix.Length];
+        }
+        else if (stem.EndsWith(".tx", StringComparison.OrdinalIgnoreCase))
+        {
+            stem = stem[..^3];
+        }
+
+        if (stem.EndsWith(".align", StringComparison.OrdinalIgnoreCase))
+        {
+            stem = stem[..^".align".Length];
+        }
+
+        return stem;
+    }
+
+    private static T LoadJson<T>(FileInfo file)
+    {
+        using var stream = file.OpenRead();
+        var payload = JsonSerializer.Deserialize<T>(stream, StatsJsonOptions);
+        return payload ?? throw new InvalidOperationException($"Failed to deserialize {typeof(T).Name} from {file.FullName}");
+    }
+
+    private sealed record AudioStats(double LengthSec, double SamplePeak, double TruePeak, double OverallRms, double MinWindowRms, double MaxWindowRms);
+
+    private sealed record ChapterStats(string Chapter, AudioStats Audio, PauseStatsSet? Prosody);
 
     private static void EnsureDirectory(string? dir)
     {

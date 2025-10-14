@@ -64,7 +64,7 @@ public static class AsrCommand
         }
 
         Log.Info("Running ASR for {AudioFile} -> {OutputFile} via {ServiceUrl}", audioFile.FullName, outputFile.FullName, serviceUrl);
-        Log.Debug("ASR parameters: Language={Language}, Model={Model}", language, model ?? "(default)");
+        Log.Info("ASR parameters: Language={Language}, Model={Model}", language, model ?? "(default)");
 
         await AsrProcessSupervisor.EnsureServiceReadyAsync(serviceUrl, CancellationToken.None);
 

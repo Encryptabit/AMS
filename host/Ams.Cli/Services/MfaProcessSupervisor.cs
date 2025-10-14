@@ -97,7 +97,7 @@ internal static class MfaProcessSupervisor
             var payload = new Payload(command, NormalizeWorkingDirectory(workingDirectory));
             var payloadJson = JsonSerializer.Serialize(payload, JsonOptions);
 
-            Log.Debug("MFA> {Command}", command);
+            Log.Info("MFA> {Command}", command);
 
             await _stdin!.WriteLineAsync(payloadJson.AsMemory(), cancellationToken).ConfigureAwait(false);
             await _stdin.FlushAsync().ConfigureAwait(false);
@@ -249,7 +249,7 @@ internal static class MfaProcessSupervisor
                 }
                 else
                 {
-                    Log.Debug("mfa> {Line}", line.Line);
+                    Log.Info("mfa> {Line}", line.Line);
                 }
             }
         }

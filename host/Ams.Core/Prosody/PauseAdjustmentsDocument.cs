@@ -31,9 +31,21 @@ public sealed record PauseAdjustmentsDocument(
             throw new FileNotFoundException("Pause adjustments JSON not found", path);
         }
 
-        var json = File.ReadAllText(path);
-        var document = JsonSerializer.Deserialize<PauseAdjustmentsDocument>(json, JsonOptions);
-        return document ?? throw new InvalidOperationException($"Failed to deserialize pause adjustments from {path}");
+        try
+        {
+            var json = File.ReadAllText(path);
+            var document = JsonSerializer.Deserialize<PauseAdjustmentsDocument>(json, JsonOptions);
+            if (document is null)
+            {
+                throw new InvalidOperationException($"Failed to deserialize pause adjustments from {path}");
+            }
+
+            return document;
+        }
+        catch (Exception ex) when (ex is not FileNotFoundException)
+        {
+            throw new InvalidOperationException($"Failed to load pause adjustments from {path}: {ex.Message}", ex);
+        }
     }
 
     public static PauseAdjustmentsDocument Create(
