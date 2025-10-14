@@ -62,6 +62,8 @@ public static class TextNormalizer
 
         var normalized = text.Trim();
 
+        normalized = NormalizeTypography(normalized);
+
         // Convert to lowercase
         normalized = normalized.ToLowerInvariant();
 
@@ -100,6 +102,30 @@ public static class TextNormalizer
         normalized = WhitespaceRegex.Replace(normalized, " ").Trim();
 
         return normalized;
+    }
+
+    public static string NormalizeTypography(string text)
+    {
+        if (string.IsNullOrEmpty(text))
+        {
+            return string.Empty;
+        }
+
+        return text
+            .Replace('\u2018', '\'')
+            .Replace('\u2019', '\'')
+            .Replace('\u201A', '\'')
+            .Replace('\u2032', '\'')
+            .Replace('\u2035', '\'')
+            .Replace('\u201C', '\"')
+            .Replace('\u201D', '\"')
+            .Replace('\u201E', '\"')
+            .Replace('\u2033', '\"')
+            .Replace('\u00AB', '\"')
+            .Replace('\u00BB', '\"')
+            .Replace('\u2013', '-')
+            .Replace('\u2014', '-')
+            .Replace('\u2212', '-');
     }
 
     private static string NumberToWords(int number)

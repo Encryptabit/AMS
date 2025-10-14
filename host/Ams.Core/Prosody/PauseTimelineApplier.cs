@@ -54,7 +54,10 @@ internal static class PauseTimelineApplier
 
             if (adjust.IsIntraSentence)
             {
-                ApplyIntraSentenceAdjust(result, orderedSentenceIds, indexBySentence, adjust.LeftSentenceId, delta);
+                if (indexBySentence.TryGetValue(adjust.LeftSentenceId, out var index))
+                {
+                    ShiftFollowingSentences(result, orderedSentenceIds, indexBySentence, index, delta);
+                }
                 continue;
             }
 
@@ -67,24 +70,6 @@ internal static class PauseTimelineApplier
         }
 
         return new ReadOnlyDictionary<int, SentenceTiming>(result);
-    }
-
-    private static void ApplyIntraSentenceAdjust(
-        IDictionary<int, SentenceTiming> timeline,
-        IReadOnlyList<int> orderedSentenceIds,
-        IReadOnlyDictionary<int, int> indexBySentence,
-        int sentenceId,
-        double delta)
-    {
-        if (!timeline.TryGetValue(sentenceId, out var sentence) || !indexBySentence.TryGetValue(sentenceId, out var index))
-        {
-            return;
-        }
-
-        double newEnd = Math.Max(sentence.StartSec, sentence.EndSec + delta);
-        timeline[sentenceId] = new SentenceTiming(sentence.StartSec, newEnd, sentence.FragmentBacked, sentence.Confidence);
-
-        ShiftFollowingSentences(timeline, orderedSentenceIds, indexBySentence, index, delta);
     }
 
     private static void ApplyInterSentenceAdjust(

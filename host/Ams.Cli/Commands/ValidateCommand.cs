@@ -48,13 +48,19 @@ public static class ValidateCommand
 
         var prosodyAnalyzeOption = new Option<bool>(
             "--prosody-analyze",
-            () => false,
+            () => true,
             "Run pause dynamics analysis before launching the interactive session.");
+
+        var useAdjustedOption = new Option<bool>(
+            "--use-adjusted",
+            () => false,
+            "Load pause-adjusted transcript/hydrate artifacts when present.");
 
         cmd.AddOption(txOption);
         cmd.AddOption(hydrateOption);
         cmd.AddOption(bookIndexOption);
         cmd.AddOption(prosodyAnalyzeOption);
+        cmd.AddOption(useAdjustedOption);
 
         cmd.SetHandler(async context =>
         {
@@ -82,6 +88,32 @@ public static class ValidateCommand
                     Log.Error("validate timing requires a hydrated transcript JSON (e.g., *.align.hydrate.json)");
                     context.ExitCode = 1;
                     return;
+                }
+
+                var useAdjusted = context.ParseResult.GetValueForOption(useAdjustedOption);
+                if (useAdjusted)
+                {
+                    var adjustedTx = TryResolveAdjustedArtifact(tx, ".pause-adjusted.align.tx.json");
+                    if (adjustedTx is not null)
+                    {
+                        Log.Info("validate timing loading pause-adjusted transcript: {0}", adjustedTx.FullName);
+                        tx = adjustedTx;
+                    }
+                    else
+                    {
+                        Log.Warn("Pause-adjusted transcript not found; falling back to {0}", tx.FullName);
+                    }
+
+                    var adjustedHydrate = TryResolveAdjustedArtifact(hydrate, ".pause-adjusted.align.hydrate.json");
+                    if (adjustedHydrate is not null)
+                    {
+                        Log.Info("validate timing loading pause-adjusted hydrate: {0}", adjustedHydrate.FullName);
+                        hydrate = adjustedHydrate;
+                    }
+                    else
+                    {
+                        Log.Warn("Pause-adjusted hydrate not found; falling back to {0}", hydrate.FullName);
+                    }
                 }
 
                 FileInfo bookIndex;
@@ -134,6 +166,7 @@ public static class ValidateCommand
         var bookIndexOption = new Option<FileInfo?>("--book-index", "Optional book-index.json path when discovery via TranscriptIndex fails");
         var toneGainOption = new Option<double>("--tone-gain-db", () => -60.0, "Target RMS level for injected roomtone (dBFS)");
         var overwriteOption = new Option<bool>("--overwrite", () => false, "Overwrite existing outputs");
+        var useAdjustedOption = new Option<bool>("--use-adjusted", () => false, "Load pause-adjusted transcript/hydrate artifacts when present");
 
         cmd.AddOption(txOption);
         cmd.AddOption(hydrateOption);
@@ -143,6 +176,7 @@ public static class ValidateCommand
         cmd.AddOption(bookIndexOption);
         cmd.AddOption(toneGainOption);
         cmd.AddOption(overwriteOption);
+        cmd.AddOption(useAdjustedOption);
 
         cmd.SetHandler(context =>
         {
@@ -174,7 +208,40 @@ public static class ValidateCommand
                     return;
                 }
 
+                var useAdjusted = context.ParseResult.GetValueForOption(useAdjustedOption);
+                if (useAdjusted)
+                {
+                    var adjustedTx = TryResolveAdjustedArtifact(txFile, ".pause-adjusted.align.tx.json");
+                    if (adjustedTx is not null)
+                    {
+                        Log.Info("timing-apply loading pause-adjusted transcript: {0}", adjustedTx.FullName);
+                        txFile = adjustedTx;
+                    }
+                    else
+                    {
+                        Log.Warn("Pause-adjusted transcript not found; using {0}", txFile.FullName);
+                    }
+
+                    var adjustedHydrate = TryResolveAdjustedArtifact(hydrateFile, ".pause-adjusted.align.hydrate.json");
+                    if (adjustedHydrate is not null)
+                    {
+                        Log.Info("timing-apply loading pause-adjusted hydrate: {0}", adjustedHydrate.FullName);
+                        hydrateFile = adjustedHydrate;
+                    }
+                    else
+                    {
+                        Log.Warn("Pause-adjusted hydrate not found; using {0}", hydrateFile.FullName);
+                    }
+                }
+
                 var adjustmentsFile = ResolveAdjustmentsPath(txFile, context.ParseResult.GetValueForOption(adjustmentsOption));
+                if (!adjustmentsFile.Exists)
+                {
+                    Log.Error("Pause adjustments file not found: {0}", adjustmentsFile.FullName);
+                    context.ExitCode = 1;
+                    return;
+                }
+
                 PauseAdjustmentsDocument adjustments;
                 try
                 {
@@ -214,14 +281,21 @@ public static class ValidateCommand
                 }
 
                 string roomtonePath;
+                double? stageFadeMs;
+                double? stageAppliedGainDb;
                 try
                 {
                     roomtonePath = ResolveRoomtonePath(
                         context.ParseResult.GetValueForOption(roomtoneOption),
+                        txFile,
+                        transcript,
+                        hydrated,
                         audioPath,
                         transcript.ScriptPath,
                         hydrateFile.DirectoryName ?? txFile.DirectoryName,
-                        bookIndex);
+                        bookIndex,
+                        out stageFadeMs,
+                        out stageAppliedGainDb);
                 }
                 catch (Exception ex)
                 {
@@ -249,18 +323,26 @@ public static class ValidateCommand
 
                 var audioBuffer = WavIo.ReadPcmOrFloat(audioPath);
                 var roomtoneBuffer = WavIo.ReadPcmOrFloat(roomtonePath);
+                double fadeMs = stageFadeMs ?? 5.0;
 
                 double targetToneDb = context.ParseResult.GetValueForOption(toneGainOption);
                 var toneAnalyzer = new AudioAnalysisService(roomtoneBuffer);
                 double toneDuration = roomtoneBuffer.SampleRate > 0 ? roomtoneBuffer.Length / (double)roomtoneBuffer.SampleRate : 0.0;
                 var toneStats = toneAnalyzer.AnalyzeGap(0.0, toneDuration);
-                double toneGainLinear = ComputeToneGainLinear(toneStats.MeanRmsDb, targetToneDb);
-
-                var adjustedAudio = PauseAudioApplier.Apply(audioBuffer, roomtoneBuffer, adjustments.Adjustments, toneGainLinear);
-                WavIo.WriteFloat32(outWav.FullName, adjustedAudio);
+                double toneGainLinear = 1.0;
+                Log.Info("timing-apply using roomtone seed {0} (stageFade={1}, stageGain={2}, measuredRms={3:F2} dB)", roomtonePath, stageFadeMs, stageAppliedGainDb, toneStats.MeanRmsDb);
 
                 var baselineTimings = BuildBaselineTimings(transcript, hydrated);
                 var updatedTimeline = PauseTimelineApplier.Apply(baselineTimings, adjustments.Adjustments);
+
+                var adjustedAudio = PauseAudioApplier.Apply(
+                    audioBuffer,
+                    roomtoneBuffer,
+                    transcript.Sentences,
+                    updatedTimeline,
+                    toneGainLinear,
+                    fadeMs: fadeMs);
+                WavIo.WriteFloat32(outWav.FullName, adjustedAudio);
 
                 var updatedTranscript = UpdateTranscriptTimings(transcript, updatedTimeline);
                 var updatedHydrate = UpdateHydratedTimings(hydrated, updatedTimeline);
@@ -832,7 +914,14 @@ public static class ValidateCommand
         }
 
         var second = Path.GetFileNameWithoutExtension(first);
-        return string.IsNullOrWhiteSpace(second) ? first : second;
+        var stem = string.IsNullOrWhiteSpace(second) ? first : second;
+        stem = NormalizeStem(stem);
+        if (stem.EndsWith(".align", StringComparison.OrdinalIgnoreCase))
+        {
+            stem = stem[..^".align".Length];
+        }
+
+        return string.IsNullOrWhiteSpace(stem) ? "chapter" : stem;
     }
 
     private static string NormalizeStem(string? stem)
@@ -847,8 +936,22 @@ public static class ValidateCommand
         {
             result = result[..^".treated".Length];
         }
+        if (result.EndsWith(".pause-adjusted", StringComparison.OrdinalIgnoreCase))
+        {
+            result = result[..^".pause-adjusted".Length];
+        }
+        if (result.EndsWith(".align", StringComparison.OrdinalIgnoreCase))
+        {
+            result = result[..^".align".Length];
+        }
 
         return result;
+    }
+
+    private static FileInfo? TryResolveAdjustedArtifact(FileInfo reference, string suffix)
+    {
+        var candidate = BuildOutputJsonPath(reference, suffix);
+        return candidate.Exists ? candidate : null;
     }
 
     private static T LoadJson<T>(FileInfo file)
@@ -976,11 +1079,19 @@ public static class ValidateCommand
 
     private static string ResolveRoomtonePath(
         FileInfo? overrideRoomtone,
+        FileInfo txFile,
+        TranscriptIndex transcript,
+        HydratedTranscript hydrated,
         string audioPath,
         string? scriptPath,
         string? baseDirectory,
-        BookIndex? bookIndex)
+        BookIndex? bookIndex,
+        out double? stageFadeMs,
+        out double? stageAppliedGainDb)
     {
+        stageFadeMs = null;
+        stageAppliedGainDb = null;
+
         if (overrideRoomtone is not null)
         {
             if (!overrideRoomtone.Exists)
@@ -1008,6 +1119,40 @@ public static class ValidateCommand
             }
         }
 
+        // Load stage parameters if available
+        var paramsPath = Path.Combine(Path.GetDirectoryName(audioPath) ?? string.Empty, "params.snapshot.json");
+        if (File.Exists(paramsPath))
+        {
+            try
+            {
+                using var doc = JsonDocument.Parse(File.ReadAllText(paramsPath));
+                if (doc.RootElement.TryGetProperty("parameters", out var parameters))
+                {
+                    if (parameters.TryGetProperty("fadeMs", out var fadeElement) && fadeElement.ValueKind == JsonValueKind.Number)
+                    {
+                        stageFadeMs = fadeElement.GetDouble();
+                    }
+                    if (parameters.TryGetProperty("appliedGainDb", out var appliedGainElement) && appliedGainElement.ValueKind == JsonValueKind.Number)
+                    {
+                        stageAppliedGainDb = appliedGainElement.GetDouble();
+                    }
+
+                    if (parameters.TryGetProperty("roomtoneSeedPath", out var seedElement) && seedElement.ValueKind == JsonValueKind.String)
+                    {
+                        var seedPath = seedElement.GetString();
+                        if (!string.IsNullOrWhiteSpace(seedPath) && File.Exists(seedPath))
+                        {
+                            return Path.GetFullPath(seedPath);
+                        }
+                    }
+                }
+            }
+            catch
+            {
+                // Ignore and fall back to directory search
+            }
+        }
+
         AddDirectory(Path.GetDirectoryName(audioPath));
 
         if (!string.IsNullOrWhiteSpace(scriptPath))
@@ -1027,6 +1172,33 @@ public static class ValidateCommand
             AddDirectory(Path.GetDirectoryName(sourceFull));
         }
 
+        AddDirectory(txFile.DirectoryName);
+
+        var current = txFile.DirectoryName;
+        for (int i = 0; i < 4 && !string.IsNullOrEmpty(current); i++)
+        {
+            current = Path.GetDirectoryName(current);
+            if (!string.IsNullOrEmpty(current))
+            {
+                AddDirectory(current);
+            }
+        }
+
+        var candidateNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            "roomtone"
+        };
+        void AddCandidateName(string? value)
+        {
+            var stem = NormalizeStem(value);
+            if (!string.IsNullOrWhiteSpace(stem)) candidateNames.Add(stem);
+        }
+
+        AddCandidateName(GetBaseStem(txFile.Name));
+        AddCandidateName(Path.GetFileNameWithoutExtension(audioPath));
+        AddCandidateName(Path.GetFileNameWithoutExtension(transcript.AudioPath));
+        AddCandidateName(Path.GetFileNameWithoutExtension(hydrated.AudioPath ?? string.Empty));
+
         foreach (var dir in directories)
         {
             var match = Directory.EnumerateFiles(dir, "roomtone.wav", SearchOption.TopDirectoryOnly)
@@ -1037,7 +1209,44 @@ public static class ValidateCommand
             }
         }
 
+        foreach (var dir in directories)
+        {
+            var candidates = Directory.EnumerateFiles(dir, "*.wav", SearchOption.TopDirectoryOnly)
+                .Where(path => !path.EndsWith(".treated.wav", StringComparison.OrdinalIgnoreCase)
+                               && !path.Contains(".pause", StringComparison.OrdinalIgnoreCase)
+                               && !path.Contains(".adjusted", StringComparison.OrdinalIgnoreCase))
+                .OrderBy(path => ScoreCandidate(path, candidateNames))
+                .ThenBy(Path.GetFileName)
+                .ToList();
+
+            if (candidates.Count > 0)
+            {
+                return candidates[0];
+            }
+        }
+
         throw new FileNotFoundException("roomtone.wav not found in expected directories.");
+
+        static int ScoreCandidate(string path, HashSet<string> names)
+        {
+            var stem = NormalizeStem(Path.GetFileNameWithoutExtension(path));
+            if (string.Equals(stem, "roomtone", StringComparison.OrdinalIgnoreCase))
+            {
+                return 0;
+            }
+
+            if (names.Contains(stem))
+            {
+                return 1;
+            }
+
+            if (stem.Contains("room", StringComparison.OrdinalIgnoreCase))
+            {
+                return 2;
+            }
+
+            return 3;
+        }
     }
 
     private static FileInfo BuildSiblingFile(string referencePath, string suffix)

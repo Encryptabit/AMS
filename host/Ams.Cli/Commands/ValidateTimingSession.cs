@@ -40,6 +40,12 @@ internal sealed class ValidateTimingSession
             baseName = Path.GetFileNameWithoutExtension(baseName);
         }
 
+        if (!string.IsNullOrWhiteSpace(baseName))
+        {
+            baseName = baseName.Replace(".pause-adjusted", string.Empty, StringComparison.OrdinalIgnoreCase)
+                               .Replace(".align", string.Empty, StringComparison.OrdinalIgnoreCase);
+        }
+
         if (string.IsNullOrWhiteSpace(baseName))
         {
             baseName = "pause";

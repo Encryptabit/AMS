@@ -8,6 +8,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Ams.Core.Alignment.Mfa;
 using Ams.Core.Common;
+using System.Text.RegularExpressions;
 
 namespace Ams.Cli.Services;
 
@@ -211,27 +212,89 @@ internal static class MfaWorkflow
         foreach (var sentence in sentencesElement.EnumerateArray())
         {
             var script = sentence.TryGetProperty("scriptText", out var scriptProp) ? scriptProp.GetString() : null;
-            var text = string.IsNullOrWhiteSpace(script) && sentence.TryGetProperty("bookText", out var bookProp)
-                ? bookProp.GetString()
-                : script;
+            var book = sentence.TryGetProperty("bookText", out var bookProp) ? bookProp.GetString() : null;
+            var status = sentence.TryGetProperty("status", out var statusProp) ? statusProp.GetString() : null;
+            var metrics = sentence.TryGetProperty("metrics", out var metricsProp) ? metricsProp : default;
 
-            if (string.IsNullOrWhiteSpace(text))
+            bool isReliable = string.Equals(status, "ok", StringComparison.OrdinalIgnoreCase);
+            if (isReliable && metrics.ValueKind == JsonValueKind.Object)
+            {
+                if (metrics.TryGetProperty("MissingRuns", out var missingRuns) && missingRuns.GetInt32() > 0)
+                {
+                    isReliable = false;
+                }
+            }
+
+            string? chosen = isReliable ? script : null;
+
+            if (string.IsNullOrWhiteSpace(chosen))
+            {
+                chosen = !string.IsNullOrWhiteSpace(book) ? book : script;
+            }
+            else if (!isReliable && !string.IsNullOrWhiteSpace(book))
+            {
+                chosen = book;
+            }
+
+            if (string.IsNullOrWhiteSpace(chosen))
             {
                 continue;
             }
 
-            lines.Add(text.Trim());
+            var normalized = PrepareLabLine(chosen);
+            if (string.IsNullOrWhiteSpace(normalized))
+            {
+                continue;
+            }
+
+            lines.Add(normalized);
         }
 
         var labContent = string.Join(Environment.NewLine, lines);
         await File.WriteAllTextAsync(labPath, labContent, Encoding.UTF8, cancellationToken).ConfigureAwait(false);
     }
 
+    private static readonly Regex LabWhitespaceRegex = new(@"\s+", RegexOptions.Compiled);
+
+    private static string PrepareLabLine(string text)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            return string.Empty;
+        }
+
+        text = TextNormalizer.NormalizeTypography(text);
+
+        var builder = new StringBuilder(text.Length);
+        foreach (var ch in text)
+        {
+            if (char.IsLetterOrDigit(ch))
+            {
+                builder.Append(char.ToLowerInvariant(ch));
+            }
+            else if (ch == '\'')
+            {
+                builder.Append('\'');
+            }
+            else if (char.IsWhiteSpace(ch))
+            {
+                builder.Append(' ');
+            }
+            else
+            {
+                builder.Append(' ');
+            }
+        }
+
+        var collapsed = LabWhitespaceRegex.Replace(builder.ToString(), " ").Trim();
+        return collapsed;
+    }
+
     private static bool EnsureSuccess(string stage, MfaCommandResult result, bool allowFailure = false)
     {
         foreach (var line in result.StdOut)
         {
-            Log.Debug("{Stage}> {Line}", stage, line);
+            Log.Info("{Stage}> {Line}", stage, line);
         }
 
         foreach (var line in result.StdErr)
