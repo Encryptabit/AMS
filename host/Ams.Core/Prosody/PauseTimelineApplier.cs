@@ -9,6 +9,7 @@ namespace Ams.Core.Prosody;
 internal static class PauseTimelineApplier
 {
     private const double DurationEpsilon = 1e-9;
+    internal const int TailSentinelSentenceId = int.MinValue;
 
     public static IReadOnlyDictionary<int, SentenceTiming> Apply(
         IReadOnlyDictionary<int, SentenceTiming> baseline,
@@ -46,6 +47,18 @@ internal static class PauseTimelineApplier
 
         foreach (var adjust in orderedAdjustments)
         {
+            if (adjust.Class == PauseClass.ChapterHead)
+            {
+                ApplyChapterHeadAdjust(result, orderedSentenceIds, indexBySentence, adjust);
+                continue;
+            }
+
+            if (adjust.Class == PauseClass.Tail)
+            {
+                ApplyTailAdjust(result, orderedSentenceIds, indexBySentence, adjust);
+                continue;
+            }
+
             double delta = adjust.TargetDurationSec - adjust.OriginalDurationSec;
             if (Math.Abs(delta) < DurationEpsilon)
             {
@@ -70,6 +83,67 @@ internal static class PauseTimelineApplier
         }
 
         return new ReadOnlyDictionary<int, SentenceTiming>(result);
+    }
+
+    private static void ApplyTailAdjust(
+        IDictionary<int, SentenceTiming> timeline,
+        IReadOnlyList<int> orderedSentenceIds,
+        IReadOnlyDictionary<int, int> indexBySentence,
+        PauseAdjust adjust)
+    {
+        if (!indexBySentence.TryGetValue(adjust.LeftSentenceId, out _))
+        {
+            return;
+        }
+
+        if (!timeline.TryGetValue(adjust.LeftSentenceId, out var leftTiming))
+        {
+            return;
+        }
+
+        double tail = Math.Max(0d, adjust.TargetDurationSec);
+        if (tail < DurationEpsilon)
+        {
+            if (timeline.ContainsKey(TailSentinelSentenceId))
+            {
+                timeline.Remove(TailSentinelSentenceId);
+            }
+            return;
+        }
+
+        double start = leftTiming.EndSec;
+        double end = start + tail;
+        timeline[TailSentinelSentenceId] = new SentenceTiming(start, end, fragmentBacked: false, confidence: null);
+    }
+
+    private static void ApplyChapterHeadAdjust(
+        IDictionary<int, SentenceTiming> timeline,
+        IReadOnlyList<int> orderedSentenceIds,
+        IReadOnlyDictionary<int, int> indexBySentence,
+        PauseAdjust adjust)
+    {
+        if (!indexBySentence.TryGetValue(adjust.LeftSentenceId, out var index))
+        {
+            return;
+        }
+
+        if (!timeline.TryGetValue(adjust.LeftSentenceId, out var timing))
+        {
+            return;
+        }
+
+        double targetStart = Math.Max(0d, adjust.TargetDurationSec);
+        double delta = targetStart - timing.StartSec;
+        if (Math.Abs(delta) < DurationEpsilon)
+        {
+            return;
+        }
+
+        double newStart = timing.StartSec + delta;
+        double newEnd = timing.EndSec + delta;
+        timeline[adjust.LeftSentenceId] = new SentenceTiming(newStart, newEnd, timing.FragmentBacked, timing.Confidence);
+
+        ShiftFollowingSentences(timeline, orderedSentenceIds, indexBySentence, index, delta);
     }
 
     private static void ApplyInterSentenceAdjust(

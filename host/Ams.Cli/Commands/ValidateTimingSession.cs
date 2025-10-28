@@ -18,6 +18,8 @@ namespace Ams.Cli.Commands;
 
 internal sealed class ValidateTimingSession
 {
+    private const double StructuralEpsilon = 1e-6;
+
     private readonly FileInfo _transcriptFile;
     private readonly FileInfo _bookIndexFile;
     private readonly FileInfo _hydrateFile;
@@ -324,7 +326,7 @@ internal sealed class ValidateTimingSession
 
     private void PersistPauseAdjustments(InteractiveState state)
     {
-        var adjustments = state.GetCommittedAdjustments();
+        var adjustments = BuildAdjustmentsIncludingStatic(state);
 
         if (adjustments.Count == 0)
         {
@@ -349,6 +351,101 @@ internal sealed class ValidateTimingSession
         var relativePath = GetRelativePathSafe(_pauseAdjustmentsFile.FullName);
         var message = state.LastCommitMessage ?? string.Empty;
         state.UpdateLastCommitMessage($"{message}  Saved to {relativePath}");
+    }
+
+    private IReadOnlyList<PauseAdjust> BuildAdjustmentsIncludingStatic(InteractiveState state)
+    {
+        var dynamicAdjustments = state.GetCommittedAdjustments()
+            .Where(adjust => !IsStructuralClass(adjust.Class))
+            .ToList();
+
+        var structural = BuildStaticBufferAdjustments(state, dynamicAdjustments);
+        if (structural.Count > 0)
+        {
+            dynamicAdjustments.AddRange(structural);
+        }
+
+        return dynamicAdjustments;
+    }
+
+    private IReadOnlyList<PauseAdjust> BuildStaticBufferAdjustments(InteractiveState state, IReadOnlyList<PauseAdjust> dynamicAdjustments)
+    {
+        var baseline = state.GetBaselineTimeline();
+        if (baseline.Count == 0)
+        {
+            return Array.Empty<PauseAdjust>();
+        }
+
+        var timeline = PauseTimelineApplier.Apply(baseline, dynamicAdjustments);
+        var ordered = timeline
+            .OrderBy(kvp => kvp.Value.StartSec)
+            .Select(kvp => (SentenceId: kvp.Key, Timing: kvp.Value))
+            .ToList();
+
+        if (ordered.Count == 0)
+        {
+            return Array.Empty<PauseAdjust>();
+        }
+
+        var structural = new List<PauseAdjust>();
+
+        var first = ordered[0];
+        double currentHead = Math.Max(0d, first.Timing.StartSec);
+        double targetHead = Math.Max(0d, _policy.HeadOfChapter);
+        if (Math.Abs(currentHead - targetHead) > StructuralEpsilon)
+        {
+            structural.Add(new PauseAdjust(
+                first.SentenceId,
+                first.SentenceId,
+                PauseClass.ChapterHead,
+                currentHead,
+                targetHead,
+                StartSec: 0d,
+                EndSec: currentHead,
+                HasGapHint: false));
+        }
+
+        if (ordered.Count >= 2)
+        {
+            var second = ordered[1];
+            double currentGap = second.Timing.StartSec - first.Timing.EndSec;
+            double targetGap = Math.Max(0d, _policy.PostChapterRead);
+            if (Math.Abs(currentGap - targetGap) > StructuralEpsilon)
+            {
+                structural.Add(new PauseAdjust(
+                    first.SentenceId,
+                    second.SentenceId,
+                    PauseClass.PostChapterRead,
+                    currentGap,
+                    targetGap,
+                    StartSec: first.Timing.EndSec,
+                    EndSec: second.Timing.StartSec,
+                    HasGapHint: false));
+            }
+        }
+
+        var last = ordered[^1];
+        double currentTail = 0d;
+        double targetTail = Math.Max(0d, _policy.Tail);
+        if (Math.Abs(currentTail - targetTail) > StructuralEpsilon)
+        {
+            structural.Add(new PauseAdjust(
+                last.SentenceId,
+                -1,
+                PauseClass.Tail,
+                currentTail,
+                targetTail,
+                StartSec: last.Timing.EndSec,
+                EndSec: last.Timing.EndSec + currentTail,
+                HasGapHint: false));
+        }
+
+        return structural;
+    }
+
+    private static bool IsStructuralClass(PauseClass pauseClass)
+    {
+        return pauseClass is PauseClass.ChapterHead or PauseClass.PostChapterRead or PauseClass.Tail;
     }
 
     private static string GetRelativePathSafe(string path)
@@ -378,6 +475,7 @@ internal sealed class ValidateTimingSession
         private readonly List<EditablePause> _chapterPauses;
         private readonly List<ScopeEntry> _entries;
         private readonly List<int> _orderedParagraphIds;
+        private readonly Dictionary<int, SentenceTiming> _baselineTimeline;
         private readonly List<PauseAdjust> _committedAdjustments = new();
         private CompressionState? _compression;
 
@@ -411,6 +509,7 @@ internal sealed class ValidateTimingSession
                 .OrderBy(paragraph => paragraph.OriginalStart)
                 .Select(paragraph => paragraph.ParagraphId)
                 .ToList();
+            _baselineTimeline = BuildBaselineTimeline(_chapter);
             CursorIndex = _entries.Count > 0 ? 0 : -1;
             EnsureTreeVisibility();
         }
@@ -432,6 +531,18 @@ internal sealed class ValidateTimingSession
         public string? LastCommitMessage => _lastCommitMessage;
 
         public IReadOnlyList<PauseAdjust> GetCommittedAdjustments() => _committedAdjustments.ToList();
+
+        public IReadOnlyDictionary<int, SentenceTiming> GetBaselineTimeline()
+        {
+            var clone = new Dictionary<int, SentenceTiming>(_baselineTimeline.Count);
+            foreach (var kvp in _baselineTimeline)
+            {
+                var timing = kvp.Value;
+                clone[kvp.Key] = new SentenceTiming(timing.StartSec, timing.EndSec, timing.FragmentBacked, timing.Confidence);
+            }
+
+            return clone;
+        }
 
         public bool MoveWithinTier(int delta)
         {
@@ -1556,6 +1667,26 @@ internal sealed class ValidateTimingSession
             }
 
             _chapterPauses.Sort(static (a, b) => a.Span.StartSec.CompareTo(b.Span.StartSec));
+        }
+
+        private static Dictionary<int, SentenceTiming> BuildBaselineTimeline(ChapterPauseMap chapter)
+        {
+            var timeline = new Dictionary<int, SentenceTiming>();
+
+            foreach (var paragraph in chapter.Paragraphs)
+            {
+                foreach (var sentence in paragraph.Sentences)
+                {
+                    var timing = sentence.OriginalTiming;
+                    timeline[sentence.SentenceId] = new SentenceTiming(
+                        timing.StartSec,
+                        timing.EndSec,
+                        timing.FragmentBacked,
+                        timing.Confidence);
+                }
+            }
+
+            return timeline;
         }
 
         private EditablePause CreateEditablePause(PauseSpan span)

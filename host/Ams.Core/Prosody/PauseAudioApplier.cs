@@ -33,6 +33,11 @@ internal static class PauseAudioApplier
         var analyzer = new AudioAnalysisService(audio);
 
         var timeline = new Dictionary<int, SentenceTiming>(updatedTimeline);
+        bool hasTailTiming = timeline.TryGetValue(PauseTimelineApplier.TailSentinelSentenceId, out var tailTiming);
+        if (hasTailTiming)
+        {
+            timeline.Remove(PauseTimelineApplier.TailSentinelSentenceId);
+        }
 
         var orderedSentences = sentences
             .Where(sentence => timeline.ContainsKey(sentence.Id))
@@ -49,12 +54,13 @@ internal static class PauseAudioApplier
             .Select(sentence => sentence.Id)
             .ToHashSet();
 
-        EnforceStructuralPauses(timeline, orderedSentences);
-
         int sampleRate = audio.SampleRate;
         double timelineMaxEnd = timeline.Values.Max(t => t.EndSec);
         double durationSec = Math.Max(timelineMaxEnd, audio.Length / (double)sampleRate);
-        durationSec = Math.Max(durationSec, timelineMaxEnd + RoomtoneRenderer.DefaultTailSec);
+        if (hasTailTiming)
+        {
+            durationSec = Math.Max(durationSec, tailTiming!.EndSec);
+        }
         int targetLength = Math.Max(audio.Length, (int)Math.Ceiling(durationSec * sampleRate));
         var working = new AudioBuffer(audio.Channels, sampleRate, targetLength);
 
@@ -154,62 +160,6 @@ internal static class PauseAudioApplier
             var src = source.Planar[Math.Min(ch, source.Channels - 1)];
             var dst = destination.Planar[ch];
             Array.Copy(src, origStart, dst, targetStart, length);
-        }
-    }
-
-    private static void EnforceStructuralPauses(IDictionary<int, SentenceTiming> timeline, IReadOnlyList<SentenceAlign> orderedSentences)
-    {
-        if (orderedSentences.Count == 0)
-        {
-            return;
-        }
-
-        var orderedIds = orderedSentences.Select(s => s.Id).ToList();
-
-        if (timeline.TryGetValue(orderedIds[0], out var firstTiming))
-        {
-            double minStart = RoomtoneRenderer.DefaultPreRollSec;
-            if (firstTiming.StartSec < minStart - DurationEpsilon)
-            {
-                double delta = minStart - firstTiming.StartSec;
-                ShiftRange(timeline, orderedIds, 0, delta);
-            }
-        }
-
-        if (orderedIds.Count > 1 &&
-            timeline.TryGetValue(orderedIds[0], out var headTiming) &&
-            timeline.TryGetValue(orderedIds[1], out var secondTiming))
-        {
-            double gap = secondTiming.StartSec - headTiming.EndSec;
-            double minGap = RoomtoneRenderer.DefaultPostChapterPauseSec;
-            if (gap < minGap - DurationEpsilon)
-            {
-                double delta = minGap - gap;
-                ShiftRange(timeline, orderedIds, 1, delta);
-            }
-        }
-    }
-
-    private static void ShiftRange(IDictionary<int, SentenceTiming> timeline, IReadOnlyList<int> orderedIds, int startIndex, double delta)
-    {
-        if (delta <= 0)
-        {
-            return;
-        }
-
-        for (int i = startIndex; i < orderedIds.Count; i++)
-        {
-            int id = orderedIds[i];
-            if (!timeline.TryGetValue(id, out var timing))
-            {
-                continue;
-            }
-
-            timeline[id] = new SentenceTiming(
-                timing.StartSec + delta,
-                timing.EndSec + delta,
-                timing.FragmentBacked,
-                timing.Confidence);
         }
     }
 
