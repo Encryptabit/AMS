@@ -743,7 +743,7 @@ public sealed class RoomToneInsertionStage
             }
 
             double midpoint = (initialStart + initialEnd) / 2.0;
-            midpoint = Math.Clamp(midpoint, initialStart + epsilon, initialEnd - epsilon);
+            midpoint = ClampOrdered(midpoint, initialStart + epsilon, initialEnd - epsilon);
 
             if (midpoint <= initialStart + epsilon || initialEnd <= midpoint + epsilon)
             {
@@ -762,7 +762,7 @@ public sealed class RoomToneInsertionStage
 
             if (leftAccepted && midpoint - leftStart > epsilon)
             {
-                double safeLeftStart = Math.Clamp(Math.Max(leftStart, leftClamp), initialStart, rightClamp);
+                double safeLeftStart = ClampOrdered(Math.Max(leftStart, leftClamp), initialStart, rightClamp);
 
                 if (midpoint - safeLeftStart > epsilon)
                 {
@@ -795,7 +795,7 @@ public sealed class RoomToneInsertionStage
 
             if (rightAccepted && rightEnd - midpoint > epsilon)
             {
-                double safeRightEnd = Math.Clamp(Math.Min(rightEnd, rightClamp), initialStart, rightClamp);
+                double safeRightEnd = ClampOrdered(Math.Min(rightEnd, rightClamp), initialStart, rightClamp);
 
                 if (safeRightEnd - midpoint > epsilon)
                 {
@@ -902,8 +902,8 @@ public sealed class RoomToneInsertionStage
 
             void AddHintRange(TextGridGapHint hint)
             {
-                double start = Math.Clamp(hint.StartSec, initialStart, initialEnd);
-                double end = Math.Clamp(hint.EndSec, initialStart, initialEnd);
+                double start = ClampOrdered(hint.StartSec, initialStart, initialEnd);
+                double end = ClampOrdered(hint.EndSec, initialStart, initialEnd);
                 if (leftEntry is not null)
                 {
                     start = Math.Max(start, leftEntry.Timing.EndSec);
@@ -1194,6 +1194,16 @@ public sealed class RoomToneInsertionStage
         };
         var json = JsonSerializer.Serialize(snapshot, new JsonSerializerOptions { WriteIndented = true });
         await File.WriteAllTextAsync(path, json, ct);
+    }
+
+    private static double ClampOrdered(double value, double min, double max)
+    {
+        if (max < min)
+        {
+            (min, max) = (max, min);
+        }
+
+        return Math.Clamp(value, min, max);
     }
 
     private static void EnsureDirectory(string? dir)
