@@ -104,32 +104,14 @@ public sealed class RoomToneInsertionStage
             }
         }
 
-        // Build timeline on the original audio first
-        var analyzer0 = new AudioAnalysisService(inputAudio);
-        var entries0  = SentenceTimelineBuilder.Build(transcript.Sentences, analyzer0, asr);
+        // Build timeline on the original audio (no structural normalization)
+        var analyzer = new AudioAnalysisService(inputAudio);
+        var timelineEntries = SentenceTimelineBuilder.Build(transcript.Sentences, analyzer, asr);
         if (_verbose)
         {
-            Log.Info($"[Roomtone] Timeline built on original audio: {entries0.Count} sentences.");
+            Log.Info($"[Roomtone] Timeline built on source audio: {timelineEntries.Count} sentences.");
         }
 
-        // Enforce exact structure (insert OR trim) and shift entries accordingly
-        var norm = RoomtoneRenderer.NormalizeStructureExact(
-            input: inputAudio,
-            roomtoneSeed: roomtoneSeed,
-            entries: entries0,
-            targetSampleRate: _targetSampleRate,
-            toneGainLinear: toneGainLinear,
-            preRollSec: RoomtoneRenderer.DefaultPreRollSec,
-            postChapterPauseSec: RoomtoneRenderer.DefaultPostChapterPauseSec,
-            tailSec: RoomtoneRenderer.DefaultTailSec,
-            overlapMs: (int)Math.Round(_fadeMs),
-            debugDirectory: _emitDiagnostics ? manifest.ResolveStageDirectory("roomtone") : null);  // diagnostics optional  :contentReference[oaicite:4]{index=4}
-
-        inputAudio = norm.Audio;
-        var timelineEntries = norm.Entries;
-
-        // Now plan/fill against the normalized audio
-        var analyzer = new AudioAnalysisService(inputAudio);
         double audioDurationSec = inputAudio.SampleRate > 0 ? inputAudio.Length / (double)inputAudio.SampleRate : 0.0;
 
         Dictionary<(int? Prev, int? Next), List<TextGridGapHint>>? textGridHints = null;
