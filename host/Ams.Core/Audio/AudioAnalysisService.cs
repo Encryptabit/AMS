@@ -258,6 +258,39 @@ namespace Ams.Core.Audio
             return new GapRmsStats(min, max, sum / valuesDb.Count, (double)sil / valuesDb.Count);
         }
 
+        /// <summary>
+        /// Walks a gap from the right edge toward the left, stopping on the first window
+        /// that exceeds <paramref name="silenceThresholdDb"/>. Returns the boundary (in seconds)
+        /// slightly past the detected speech using <paramref name="backoffMs"/>.
+        /// </summary>
+        public double FindSpeechEndFromGap(double gapStartSec, double gapEndSec, double silenceThresholdDb = -55.0, double stepMs = 5.0, double backoffMs = 3.0)
+        {
+            double lo = Math.Min(gapStartSec, gapEndSec);
+            double hi = Math.Max(gapStartSec, gapEndSec);
+            int start = ClampToBuffer(lo);
+            int end = ClampToBuffer(hi);
+            if (end <= start) return lo;
+
+            int sr = _buffer.SampleRate;
+            int window = Math.Max(1, (int)Math.Round(stepMs * 0.001 * sr));
+            int backoff = Math.Max(0, (int)Math.Round(backoffMs * 0.001 * sr));
+
+            for (int pos = end; pos > start; pos -= window)
+            {
+                int segStart = Math.Max(start, pos - window);
+                int len = pos - segStart;
+                if (len <= 0) continue;
+                double rmsDb = ToDb(CalculateRms(segStart, len));
+                if (rmsDb > silenceThresholdDb)
+                {
+                    int boundary = Math.Min(end, pos + backoff);
+                    return boundary / (double)sr;
+                }
+            }
+
+            return lo;
+        }
+
         // --------------------------------------------------------------------
         // AUTO-TUNER
         // --------------------------------------------------------------------
