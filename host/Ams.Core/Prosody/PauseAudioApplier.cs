@@ -199,7 +199,8 @@ internal static class PauseAudioApplier
                     MinRmsDb: -60,
                     MaxRmsDb: -60,
                     MeanRmsDb: -60,
-                    SilenceFraction: 1.0));
+                    SilenceFraction: 1.0,
+                    BreathRegions: Array.Empty<RoomtoneBreathRegion>()));
             }
 
             previousEnd = sentence.Timing.EndSec;
@@ -218,7 +219,8 @@ internal static class PauseAudioApplier
                 MinRmsDb: -60,
                 MaxRmsDb: -60,
                 MeanRmsDb: -60,
-                SilenceFraction: 1.0));
+                SilenceFraction: 1.0,
+                BreathRegions: Array.Empty<RoomtoneBreathRegion>()));
         }
 
         return gaps;

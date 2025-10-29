@@ -116,8 +116,8 @@ public class RoomToneStageTests
 
         var gaps = new List<RoomtonePlanGap>
         {
-            new RoomtonePlanGap(0.0, 0.18, 0.18, null, 1, -70, -60, -65, 1.0),
-            new RoomtonePlanGap(0.42, 0.80, 0.38, 1, null, -70, -60, -65, 1.0)
+            new RoomtonePlanGap(0.0, 0.18, 0.18, null, 1, -70, -60, -65, 1.0, Array.Empty<RoomtoneBreathRegion>()),
+            new RoomtonePlanGap(0.42, 0.80, 0.38, 1, null, -70, -60, -65, 1.0, Array.Empty<RoomtoneBreathRegion>())
         };
 
         var output = RoomtoneRenderer.RenderWithSentenceMasks(

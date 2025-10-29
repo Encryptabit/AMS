@@ -34,14 +34,17 @@ namespace Ams.Core.Audio
         bool FragmentBacked,
         double? Confidence);
 
-    public sealed record RoomtonePlanGap(
-        double StartSec,
-        double EndSec,
-        double DurationSec,
-        int? PreviousSentenceId,
-        int? NextSentenceId,
-        double MinRmsDb,
-        double MaxRmsDb,
-        double MeanRmsDb,
-        double SilenceFraction);
+public sealed record RoomtoneBreathRegion(double StartSec, double EndSec);
+
+public sealed record RoomtonePlanGap(
+    double StartSec,
+    double EndSec,
+    double DurationSec,
+    int? PreviousSentenceId,
+    int? NextSentenceId,
+    double MinRmsDb,
+    double MaxRmsDb,
+    double MeanRmsDb,
+    double SilenceFraction,
+    IReadOnlyList<RoomtoneBreathRegion> BreathRegions);
 }
