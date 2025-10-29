@@ -115,7 +115,7 @@ public static class ValidateCommand
                         Log.Warn("Pause-adjusted hydrate not found; falling back to {0}", hydrate.FullName);
                     }
                 }
-
+              
                 FileInfo bookIndex;
                 try
                 {

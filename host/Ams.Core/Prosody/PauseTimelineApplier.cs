@@ -11,7 +11,7 @@ internal static class PauseTimelineApplier
     private const double DurationEpsilon = 1e-9;
     internal const int TailSentinelSentenceId = int.MinValue;
 
-    public static IReadOnlyDictionary<int, SentenceTiming> Apply(
+public static IReadOnlyDictionary<int, SentenceTiming> Apply(
         IReadOnlyDictionary<int, SentenceTiming> baseline,
         IReadOnlyList<PauseAdjust> adjustments)
     {
@@ -65,14 +65,22 @@ internal static class PauseTimelineApplier
                 continue;
             }
 
-            if (adjust.IsIntraSentence)
+        if (adjust.IsIntraSentence)
+        {
+            if (indexBySentence.TryGetValue(adjust.LeftSentenceId, out var index)
+                && result.TryGetValue(adjust.LeftSentenceId, out var timing))
             {
-                if (indexBySentence.TryGetValue(adjust.LeftSentenceId, out var index))
-                {
-                    ShiftFollowingSentences(result, orderedSentenceIds, indexBySentence, index, delta);
-                }
-                continue;
+                double newEnd = Math.Max(timing.StartSec, timing.EndSec + delta);
+                result[adjust.LeftSentenceId] = new SentenceTiming(
+                    timing.StartSec,
+                    newEnd,
+                    timing.FragmentBacked,
+                    timing.Confidence);
+
+                ShiftFollowingSentences(result, orderedSentenceIds, indexBySentence, index, delta);
             }
+            continue;
+        }
 
             if (!result.ContainsKey(adjust.LeftSentenceId) || !result.ContainsKey(adjust.RightSentenceId))
             {
