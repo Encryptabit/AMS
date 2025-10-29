@@ -333,19 +333,20 @@ public static class ValidateCommand
                 Log.Info("timing-apply using roomtone seed {0} (stageFade={1}, stageGain={2}, measuredRms={3:F2} dB)", roomtonePath, stageFadeMs, stageAppliedGainDb, toneStats.MeanRmsDb);
 
                 var baselineTimings = BuildBaselineTimings(transcript, hydrated);
-                var updatedTimeline = PauseTimelineApplier.Apply(baselineTimings, adjustments.Adjustments);
+                var timelineResult = PauseTimelineApplier.Apply(baselineTimings, adjustments.Adjustments);
 
                 var adjustedAudio = PauseAudioApplier.Apply(
                     audioBuffer,
                     roomtoneBuffer,
                     transcript.Sentences,
-                    updatedTimeline,
+                    timelineResult.Timeline,
                     toneGainLinear,
-                    fadeMs: fadeMs);
+                    fadeMs: fadeMs,
+                    intraSentenceGaps: timelineResult.IntraSentenceGaps);
                 WavIo.WriteFloat32(outWav.FullName, adjustedAudio);
 
-                var updatedTranscript = UpdateTranscriptTimings(transcript, updatedTimeline);
-                var updatedHydrate = UpdateHydratedTimings(hydrated, updatedTimeline);
+                var updatedTranscript = UpdateTranscriptTimings(transcript, timelineResult.Timeline);
+                var updatedHydrate = UpdateHydratedTimings(hydrated, timelineResult.Timeline);
 
                 var transcriptOut = BuildOutputJsonPath(txFile, ".pause-adjusted.align.tx.json");
                 var hydrateOut = BuildOutputJsonPath(hydrateFile, ".pause-adjusted.align.hydrate.json");

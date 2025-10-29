@@ -23,7 +23,7 @@ public sealed class PauseApplierTests
             new PauseAdjust(1, 2, PauseClass.Sentence, 0.5, 0.2, 1.0, 1.5, false)
         };
 
-        var result = PauseTimelineApplier.Apply(baseline, adjustments);
+        var result = PauseTimelineApplier.Apply(baseline, adjustments).Timeline;
 
         Assert.Equal(0.0, result[1].StartSec, 6);
         Assert.Equal(1.0, result[1].EndSec, 6);

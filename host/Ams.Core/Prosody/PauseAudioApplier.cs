@@ -11,6 +11,7 @@ namespace Ams.Core.Prosody;
 internal static class PauseAudioApplier
 {
     private const double DurationEpsilon = 1e-6;
+    private static readonly IReadOnlyList<PauseIntraGap> EmptyIntraGaps = Array.Empty<PauseIntraGap>();
 
     public static AudioBuffer Apply(
         AudioBuffer audio,
@@ -18,7 +19,8 @@ internal static class PauseAudioApplier
         IReadOnlyList<SentenceAlign> sentences,
         IReadOnlyDictionary<int, SentenceTiming> updatedTimeline,
         double toneGainLinear,
-        double fadeMs = 35.0)
+        double fadeMs = 35.0,
+        IReadOnlyList<PauseIntraGap>? intraSentenceGaps = null)
     {
         if (audio is null) throw new ArgumentNullException(nameof(audio));
         if (roomtone is null) throw new ArgumentNullException(nameof(roomtone));
@@ -37,6 +39,17 @@ internal static class PauseAudioApplier
         if (hasTailTiming)
         {
             timeline.Remove(PauseTimelineApplier.TailSentinelSentenceId);
+        }
+
+        Dictionary<int, List<PauseIntraGap>>? intraGapLookup = null;
+        if (intraSentenceGaps is not null && intraSentenceGaps.Count > 0)
+        {
+            intraGapLookup = intraSentenceGaps
+                .Where(gap => timeline.ContainsKey(gap.SentenceId))
+                .GroupBy(gap => gap.SentenceId)
+                .ToDictionary(
+                    group => group.Key,
+                    group => group.OrderBy(g => g.SourceStartSec).ToList());
         }
 
         var orderedSentences = sentences
@@ -98,7 +111,11 @@ internal static class PauseAudioApplier
                 Log.Info("PauseAudioApplier energy-adjusted sentence {0}: seedEnd={1:F3}s energyEnd={2:F3}s", sentence.Id, seed.EndSec, actualSource.EndSec);
             }
 
-            CopySentence(audio, working, actualSource, targetTiming, sampleRate);
+            var sentenceGaps = intraGapLookup is not null && intraGapLookup.TryGetValue(sentence.Id, out var gapList)
+                ? (IReadOnlyList<PauseIntraGap>)gapList
+                : EmptyIntraGaps;
+
+            CopySentence(audio, working, actualSource, targetTiming, sampleRate, sentenceGaps);
         }
 
         var updatedSentences = orderedSentences
@@ -106,6 +123,33 @@ internal static class PauseAudioApplier
             .ToList();
 
         var gaps = BuildPlanGaps(updatedSentences, durationSec, unreliableSentenceIds);
+        if (intraSentenceGaps is not null && intraSentenceGaps.Count > 0)
+        {
+            foreach (var gap in intraSentenceGaps)
+            {
+                double start = Math.Clamp(gap.TargetStartSec, 0.0, durationSec);
+                double end = Math.Clamp(gap.TargetEndSec, start, durationSec);
+                double gapDuration = end - start;
+                if (gapDuration <= DurationEpsilon)
+                {
+                    continue;
+                }
+
+                gaps.Add(new RoomtonePlanGap(
+                    start,
+                    end,
+                    gapDuration,
+                    gap.SentenceId,
+                    gap.SentenceId,
+                    MinRmsDb: -60,
+                    MaxRmsDb: -60,
+                    MeanRmsDb: -60,
+                    SilenceFraction: 1.0,
+                    BreathRegions: Array.Empty<RoomtoneBreathRegion>()));
+            }
+
+            gaps.Sort((left, right) => left.StartSec.CompareTo(right.StartSec));
+        }
         Log.Info("PauseAudioApplier gaps generated: {0}", gaps.Count);
 
         if (roomtone.SampleRate != sampleRate)
@@ -137,19 +181,92 @@ internal static class PauseAudioApplier
         AudioBuffer destination,
         TimingRange originalTiming,
         SentenceTiming targetTiming,
-        int sampleRate)
+        int sampleRate,
+        IReadOnlyList<PauseIntraGap> intraGaps)
     {
         int origStart = Math.Clamp((int)Math.Round(originalTiming.StartSec * sampleRate), 0, source.Length);
         int origEnd = Math.Clamp((int)Math.Round(originalTiming.EndSec * sampleRate), origStart, source.Length);
-        int length = origEnd - origStart;
-        if (length <= 0)
+        if (origEnd <= origStart)
         {
             return;
         }
 
         int targetStart = Math.Clamp((int)Math.Round(targetTiming.StartSec * sampleRate), 0, destination.Length);
-        int targetEnd = Math.Min(destination.Length, targetStart + length);
-        length = Math.Min(length, targetEnd - targetStart);
+        int targetEnd = Math.Clamp((int)Math.Round(targetTiming.EndSec * sampleRate), targetStart, destination.Length);
+        if (targetEnd <= targetStart)
+        {
+            return;
+        }
+
+        if (intraGaps.Count == 0)
+        {
+            int length = Math.Min(origEnd - origStart, targetEnd - targetStart);
+            CopyBlock(source, destination, origStart, targetStart, length);
+            return;
+        }
+
+        int srcCursor = origStart;
+        int dstCursor = targetStart;
+
+        foreach (var gap in intraGaps)
+        {
+            if (gap.SourceEndSec <= originalTiming.StartSec || gap.SourceStartSec >= originalTiming.EndSec)
+            {
+                continue;
+            }
+
+            double gapSourceStartSec = Math.Max(originalTiming.StartSec, gap.SourceStartSec);
+            double gapSourceEndSec = Math.Min(originalTiming.EndSec, gap.SourceEndSec);
+            int gapSourceStart = Math.Clamp((int)Math.Round(gapSourceStartSec * sampleRate), origStart, origEnd);
+            int gapSourceEnd = Math.Clamp((int)Math.Round(gapSourceEndSec * sampleRate), gapSourceStart, origEnd);
+            if (gapSourceStart >= origEnd)
+            {
+                break;
+            }
+
+            double gapTargetStartSec = Math.Clamp(gap.TargetStartSec, targetTiming.StartSec, targetTiming.EndSec);
+            double gapTargetEndSec = Math.Clamp(gap.TargetEndSec, gapTargetStartSec, targetTiming.EndSec);
+            int gapTargetStart = Math.Clamp((int)Math.Round(gapTargetStartSec * sampleRate), targetStart, targetEnd);
+            int gapTargetEnd = Math.Clamp((int)Math.Round(gapTargetEndSec * sampleRate), gapTargetStart, targetEnd);
+
+            if (gapTargetStart >= targetEnd)
+            {
+                break;
+            }
+
+            int copyLen = Math.Min(gapSourceStart - srcCursor, targetEnd - dstCursor);
+            if (copyLen > 0)
+            {
+                CopyBlock(source, destination, srcCursor, dstCursor, copyLen);
+                srcCursor += copyLen;
+                dstCursor += copyLen;
+            }
+
+            srcCursor = Math.Min(gapSourceEnd, origEnd);
+            dstCursor = Math.Min(Math.Max(dstCursor, gapTargetStart), targetEnd);
+            dstCursor = Math.Min(gapTargetEnd, targetEnd);
+            if (srcCursor >= origEnd || dstCursor >= targetEnd)
+            {
+                break;
+            }
+        }
+
+        int remainingLen = Math.Min(origEnd - srcCursor, targetEnd - dstCursor);
+        if (remainingLen > 0)
+        {
+            CopyBlock(source, destination, srcCursor, dstCursor, remainingLen);
+        }
+    }
+
+    private static void CopyBlock(AudioBuffer source, AudioBuffer destination, int srcStart, int dstStart, int length)
+    {
+        if (length <= 0)
+        {
+            return;
+        }
+
+        length = Math.Min(length, source.Length - srcStart);
+        length = Math.Min(length, destination.Length - dstStart);
         if (length <= 0)
         {
             return;
@@ -159,7 +276,7 @@ internal static class PauseAudioApplier
         {
             var src = source.Planar[Math.Min(ch, source.Channels - 1)];
             var dst = destination.Planar[ch];
-            Array.Copy(src, origStart, dst, targetStart, length);
+            Array.Copy(src, srcStart, dst, dstStart, length);
         }
     }
 

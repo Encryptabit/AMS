@@ -138,6 +138,13 @@ public sealed record PauseTransformSet(
     public static readonly PauseTransformSet Empty = new(Array.Empty<BreathCut>(), Array.Empty<PauseAdjust>());
 }
 
+public sealed record PauseIntraGap(
+    int SentenceId,
+    double SourceStartSec,
+    double SourceEndSec,
+    double TargetStartSec,
+    double TargetEndSec);
+
 public static class PausePolicyPresets
 {
     public static PausePolicy House() => new();
