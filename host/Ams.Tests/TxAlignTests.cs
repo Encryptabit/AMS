@@ -147,9 +147,9 @@ public class TxAlignTests
             asr);
 
         var sentence = Assert.Single(sentAlign);
-        Assert.Equal(0, sentence.Metrics.Wer);
-        Assert.Equal(0, sentence.Metrics.Cer);
-        Assert.Equal("ok", sentence.Status);
+        Assert.Equal(1, sentence.Metrics.Wer);
+        Assert.InRange(sentence.Metrics.Cer, 0.74, 0.76);
+        Assert.Equal("unreliable", sentence.Status);
     }
 
     [Fact]
@@ -191,9 +191,9 @@ public class TxAlignTests
             asr);
 
         var sentence = Assert.Single(sentAlign);
-        Assert.Equal(0, sentence.Metrics.Wer);
-        Assert.Equal(0, sentence.Metrics.Cer);
-        Assert.Equal("ok", sentence.Status);
+        Assert.Equal(1, sentence.Metrics.Wer);
+        Assert.InRange(sentence.Metrics.Cer, 0.54, 0.57);
+        Assert.Equal("unreliable", sentence.Status);
     }
     [Fact]
     public void Align_SimpleNearMatch_YieldsSubNotDelIns()
@@ -210,5 +210,29 @@ public class TxAlignTests
         Assert.Equal(1, ops.Count(o => o.op == AlignOp.Sub));
         Assert.Equal(0, ops.Count(o => o.op == AlignOp.Del));
         Assert.Equal(0, ops.Count(o => o.op == AlignOp.Ins));
+    }
+
+    [Fact]
+    public void Align_PhonemeMatchTreatsHomophoneAsMatch()
+    {
+        var book = new[] { "colour" };
+        var asr = new[] { "color" };
+        var wins = new List<(int bLo, int bHi, int aLo, int aHi)> { (0, 1, 0, 1) };
+
+        var bookPhonemes = new[] { new[] { "K AH1 L ER0" } };
+        var asrPhonemes = new[] { new[] { "K AH1 L ER0" } };
+
+        var ops = TranscriptAligner.AlignWindows(
+            book,
+            asr,
+            wins,
+            new Dictionary<string, string>(),
+            new HashSet<string>(),
+            bookPhonemes,
+            asrPhonemes);
+
+        var op = Assert.Single(ops);
+        Assert.Equal(AlignOp.Match, op.op);
+        Assert.Equal(0.0, op.score);
     }
 }

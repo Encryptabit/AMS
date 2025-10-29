@@ -1,5 +1,10 @@
+using System.Collections.Generic;
+using System.Linq;
 using System.Text.Json;
+using System.Threading;
+using System.Threading.Tasks;
 using Ams.Core;
+using Ams.Core.Book;
 
 namespace Ams.Tests;
 
@@ -199,6 +204,50 @@ public class BookModelsTests
         Assert.Equal(3, w.WordIndex);
         Assert.Equal(1, w.SentenceIndex);
         Assert.Equal(0, w.ParagraphIndex);
+        Assert.Equal(-1, w.SectionIndex);
+        Assert.Null(w.Phonemes);
+    }
+
+    [Fact]
+    public async Task BookPhonemePopulator_PopulatesPhonemes()
+    {
+        var parser = new BookParser();
+        var source = Path.GetTempFileName() + ".txt";
+        try
+        {
+            await File.WriteAllTextAsync(source, "Hello world.\n");
+            var parsed = await parser.ParseAsync(source);
+
+            var pronunciations = new Dictionary<string, string[]>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["hello"] = new[] { "HH AH0 L OW1" },
+                ["world"] = new[] { "W ER1 L D", "W ER1 L D" }
+            };
+
+            var indexer = new BookIndexer();
+            var index = await indexer.CreateIndexAsync(parsed, source);
+            var enriched = await BookPhonemePopulator.PopulateMissingAsync(index, new StubPronunciationProvider(pronunciations));
+
+            Assert.Contains(enriched.Words, w => w.Text == "Hello" && w.Phonemes is { Length: >0 } phon && phon.Contains("HH AH0 L OW1"));
+            Assert.Contains(enriched.Words, w => w.Text == "world." && w.Phonemes is { Length: 1 or >1 } phon && phon.Contains("W ER1 L D"));
+        }
+        finally
+        {
+            if (File.Exists(source))
+            {
+                File.Delete(source);
+            }
+        }
+    }
+
+    [Fact]
+    public void PronunciationHelper_NormalizesNumbersToWords()
+    {
+        var lexeme = PronunciationHelper.NormalizeForLookup("123");
+        Assert.Equal("one hundred twenty three", lexeme);
+
+        var parts = PronunciationHelper.ExtractPronunciationParts("1,024");
+        Assert.Equal(new[] { "one", "thousand", "twenty", "four" }, parts);
     }
 
     [Fact]
@@ -206,5 +255,20 @@ public class BookModelsTests
     {
         var opt = new BookIndexOptions();
         Assert.Equal(200.0, opt.AverageWpm);
+    }
+
+    private sealed class StubPronunciationProvider : IPronunciationProvider
+    {
+        private readonly IReadOnlyDictionary<string, string[]> _map;
+
+        public StubPronunciationProvider(IReadOnlyDictionary<string, string[]> map)
+        {
+            _map = map;
+        }
+
+        public Task<IReadOnlyDictionary<string, string[]>> GetPronunciationsAsync(IEnumerable<string> words, CancellationToken cancellationToken)
+        {
+            return Task.FromResult(_map);
+        }
     }
 }

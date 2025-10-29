@@ -3,12 +3,16 @@ using System.CommandLine;
 using System.IO;
 using System.Linq;
 using System.Text.Json;
+using System.Threading;
+using System.Threading.Tasks;
 using Ams.Core.Alignment.Tx;
 using Ams.Core.Artifacts;
 using Ams.Core.Alignment.Anchors;
 using Ams.Core;
+using Ams.Core.Book;
 using Ams.Core.Validation;
 using Ams.Cli.Utilities;
+using Ams.Cli.Services;
 
 namespace Ams.Cli.Commands;
 
@@ -352,12 +356,17 @@ public static class AlignCommand
     var fillers = new HashSet<string>(new[] { "uh", "um", "erm", "uhh", "hmm", "mm", "huh", "like" }, StringComparer.Ordinal);
 
     // Align in filtered coordinates (4)
+    var bookPhonemes = BuildBookPhonemeView(book, pipe.BookFilteredToOriginalWord, bookView.Tokens.Count);
+    var asrPhonemes = await BuildAsrPhonemeViewAsync(asr, asrView, CancellationToken.None);
+
     var opsNm = TranscriptAligner.AlignWindows(
         bookView.Tokens,
         asrView.Tokens,
         windows,
         equiv,
-        fillers);
+        fillers,
+        bookPhonemes,
+        asrPhonemes);
 
     var anchorOps = new List<WordAlign>(pipe.Anchors.Count * policy.NGram);
     var anchorSeen = new HashSet<(int BookIdx, int? AsrIdx)>();
@@ -494,6 +503,54 @@ public static class AlignCommand
     await File.WriteAllTextAsync(outFile.FullName, outJson);
     Log.Info("TranscriptIndex written to: {OutputFile}", outFile.FullName);
 }
+
+    private static string[][] BuildBookPhonemeView(BookIndex book, IReadOnlyList<int> filteredToOriginal, int filteredCount)
+    {
+        var result = new string[filteredCount][];
+        for (int i = 0; i < filteredCount; i++)
+        {
+            var originalIndex = filteredToOriginal[i];
+            if (originalIndex >= 0 && originalIndex < book.Words.Length)
+            {
+                result[i] = book.Words[originalIndex].Phonemes ?? Array.Empty<string>();
+            }
+            else
+            {
+                result[i] = Array.Empty<string>();
+            }
+        }
+
+        return result;
+    }
+
+    private static async Task<string[][]> BuildAsrPhonemeViewAsync(AsrResponse asr, AsrAnchorView asrView, CancellationToken cancellationToken)
+    {
+        var provider = new MfaPronunciationProvider();
+        var pronunciations = await provider.GetPronunciationsAsync(asr.Tokens.Select(t => t.Word), cancellationToken).ConfigureAwait(false);
+
+        var result = new string[asrView.Tokens.Count][];
+        for (int i = 0; i < asrView.Tokens.Count; i++)
+        {
+            var originalIndex = asrView.FilteredToOriginalToken[i];
+            if (originalIndex < 0 || originalIndex >= asr.Tokens.Length)
+            {
+                result[i] = Array.Empty<string>();
+                continue;
+            }
+
+            var lexeme = PronunciationHelper.NormalizeForLookup(asr.Tokens[originalIndex].Word);
+            if (!string.IsNullOrEmpty(lexeme) && pronunciations.TryGetValue(lexeme, out var variants) && variants.Length > 0)
+            {
+                result[i] = variants;
+            }
+            else
+            {
+                result[i] = Array.Empty<string>();
+            }
+        }
+
+        return result;
+    }
 
     private static TimingRange ComputeTiming(ScriptRange? scriptRange, AsrResponse asr)
     {

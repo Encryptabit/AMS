@@ -1,9 +1,15 @@
 using System.CommandLine;
+using System.IO;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using System.Linq;
+using System.Threading;
+using System.Threading.Tasks;
 using Ams.Core;
+using Ams.Core.Book;
 using Ams.Cli.Utilities;
+using Ams.Cli.Services;
 
 namespace Ams.Cli.Commands;
 
@@ -13,6 +19,7 @@ public static class BookCommand
     {
         var book = new Command("book", "Book-related operations");
         book.AddCommand(CreateVerify());
+        book.AddCommand(CreatePopulatePhonemes());
         return book;
     }
 
@@ -39,6 +46,105 @@ public static class BookCommand
         });
 
         return verify;
+    }
+
+    private static Command CreatePopulatePhonemes()
+    {
+        var populate = new Command("populate-phonemes", "Populate missing phoneme entries on an existing book index.");
+
+        var indexOption = new Option<FileInfo?>("--index", "Path to BookIndex JSON to enrich");
+        indexOption.AddAlias("-i");
+
+        var outputOption = new Option<FileInfo?>("--out", description: "Optional output path (defaults to overwriting the input index)");
+        outputOption.AddAlias("-o");
+
+        var modelOption = new Option<string?>("--g2p-model", () => null, "Optional MFA G2P model name to use");
+
+        populate.AddOption(indexOption);
+        populate.AddOption(outputOption);
+        populate.AddOption(modelOption);
+
+        populate.SetHandler(async context =>
+        {
+            var indexFile = CommandInputResolver.ResolveBookIndex(context.ParseResult.GetValueForOption(indexOption));
+            var outputFile = context.ParseResult.GetValueForOption(outputOption);
+            var g2pModel = context.ParseResult.GetValueForOption(modelOption);
+
+            try
+            {
+                await PopulatePhonemesAsync(indexFile, outputFile, g2pModel, context.GetCancellationToken());
+            }
+            catch (Exception ex)
+            {
+                Log.Error(ex, "book populate-phonemes command failed");
+                Environment.Exit(1);
+            }
+        });
+
+        return populate;
+    }
+
+    private static async Task PopulatePhonemesAsync(FileInfo indexFile, FileInfo? outputFile, string? g2pModel, CancellationToken cancellationToken)
+    {
+        if (!indexFile.Exists)
+        {
+            throw new FileNotFoundException($"Book index not found: {indexFile.FullName}");
+        }
+
+        var rawJson = await File.ReadAllTextAsync(indexFile.FullName, cancellationToken).ConfigureAwait(false);
+
+        var jsonOptions = new JsonSerializerOptions
+        {
+            PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+            ReadCommentHandling = JsonCommentHandling.Skip,
+            AllowTrailingCommas = true
+        };
+
+        var index = JsonSerializer.Deserialize<BookIndex>(rawJson, jsonOptions)
+            ?? throw new InvalidOperationException("Failed to deserialize BookIndex JSON.");
+
+        var provider = new MfaPronunciationProvider(g2pModel: g2pModel);
+
+        var enriched = await BookPhonemePopulator.PopulateMissingAsync(index, provider, cancellationToken).ConfigureAwait(false);
+
+        static bool HasPhonemes(BookWord w) => w.Phonemes is { Length: >0 };
+
+        var missingAfter = enriched.Words.Count(w => !HasPhonemes(w));
+        var missingBefore = index.Words.Count(w => !HasPhonemes(w));
+        var populated = missingBefore - missingAfter;
+
+        if (populated <= 0)
+        {
+            Log.Warn("No new phoneme entries were populated (missing before={Before}, after={After}).", missingBefore, missingAfter);
+        }
+        else
+        {
+            Log.Info("Populated phonemes for {Count} words (remaining without phonemes: {Remaining}).", populated, missingAfter);
+        }
+
+        var destination = outputFile ?? indexFile;
+        var outputPath = destination.FullName;
+        if (destination.Directory is { Exists: false })
+        {
+            destination.Directory.Create();
+        }
+
+        if (outputFile == null)
+        {
+            Log.Info("Overwriting index in-place at {Path}", outputPath);
+        }
+        else
+        {
+            Log.Info("Writing enriched index to {Path}", outputPath);
+        }
+
+        var outputJson = JsonSerializer.Serialize(enriched, new JsonSerializerOptions
+        {
+            WriteIndented = true,
+            PropertyNamingPolicy = JsonNamingPolicy.CamelCase
+        });
+
+        await File.WriteAllTextAsync(outputPath, outputJson, cancellationToken).ConfigureAwait(false);
     }
 
     private static async Task RunVerifyAsync(FileInfo indexFile)
