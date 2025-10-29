@@ -31,7 +31,8 @@ public interface IPauseDynamicsService
 
 public sealed record PauseApplyResult(
     IReadOnlyDictionary<int, SentenceTiming> Timeline,
-    PauseTransformSet Transforms);
+    PauseTransformSet Transforms,
+    IReadOnlyList<PauseIntraGap> IntraSentenceGaps);
 
 public sealed record PauseDynamicsResult(
     PauseAnalysisReport Analysis,
@@ -139,16 +140,22 @@ public sealed class PauseDynamicsService : IPauseDynamicsService
 
         if (baseline.Count == 0)
         {
-            return new PauseApplyResult(new ReadOnlyDictionary<int, SentenceTiming>(new Dictionary<int, SentenceTiming>()), transforms);
+            return new PauseApplyResult(
+                new ReadOnlyDictionary<int, SentenceTiming>(new Dictionary<int, SentenceTiming>()),
+                transforms,
+                Array.Empty<PauseIntraGap>());
         }
 
         if (transforms.PauseAdjusts.Count == 0)
         {
-            return new PauseApplyResult(new ReadOnlyDictionary<int, SentenceTiming>(CloneBaseline(baseline)), transforms);
+            return new PauseApplyResult(
+                new ReadOnlyDictionary<int, SentenceTiming>(CloneBaseline(baseline)),
+                transforms,
+                Array.Empty<PauseIntraGap>());
         }
 
-        var timeline = PauseTimelineApplier.Apply(baseline, transforms.PauseAdjusts);
-        return new PauseApplyResult(timeline, transforms);
+        var timelineResult = PauseTimelineApplier.Apply(baseline, transforms.PauseAdjusts);
+        return new PauseApplyResult(timelineResult.Timeline, transforms, timelineResult.IntraSentenceGaps);
     }
 
     public PauseDynamicsResult Execute(

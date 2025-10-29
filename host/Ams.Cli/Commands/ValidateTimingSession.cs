@@ -376,8 +376,8 @@ internal sealed class ValidateTimingSession
             return Array.Empty<PauseAdjust>();
         }
 
-        var timeline = PauseTimelineApplier.Apply(baseline, dynamicAdjustments);
-        var ordered = timeline
+        var timelineResult = PauseTimelineApplier.Apply(baseline, dynamicAdjustments);
+        var ordered = timelineResult.Timeline
             .OrderBy(kvp => kvp.Value.StartSec)
             .Select(kvp => (SentenceId: kvp.Key, Timing: kvp.Value))
             .ToList();
