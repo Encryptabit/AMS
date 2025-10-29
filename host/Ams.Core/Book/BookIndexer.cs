@@ -72,7 +72,9 @@ public class BookIndexer : IBookIndexer
             }
 
             var trimmedParagraph = pText.Trim();
-            if (ShouldStartSection(trimmedParagraph, style, kind))
+            bool paragraphHasLexical = ContainsLexicalContent(trimmedParagraph);
+
+            if (paragraphHasLexical && ShouldStartSection(trimmedParagraph, style, kind))
             {
                 int sectionLevel = GetHeadingLevel(style);
                 if (sectionLevel <= 0 && LooksLikeHeadingStyle(style, kind))
@@ -119,6 +121,13 @@ public class BookIndexer : IBookIndexer
 
             foreach (var token in TokenizeByWhitespace(pText))
             {
+                if (!ContainsLexicalContent(token))
+                {
+                    continue;
+                }
+
+                paragraphHasLexical = true;
+
                 var w = new BookWord(
                     Text: token,
                     WordIndex: globalWord,
@@ -135,6 +144,12 @@ public class BookIndexer : IBookIndexer
                     sentenceIndex++;
                     sentenceStartWord = globalWord;
                 }
+            }
+
+            if (!paragraphHasLexical)
+            {
+                paragraphs.Add(new ParagraphRange(Index: pIndex, Start: paragraphStartWord, End: paragraphStartWord - 1, Kind: "Pause", Style: style));
+                continue;
             }
 
             // If paragraph ends without terminal punctuation but has words, close sentence
@@ -466,10 +481,28 @@ public class BookIndexer : IBookIndexer
         if (string.IsNullOrEmpty(token)) return false;
         // Strip common closing punctuation to inspect terminal char
         int i = token.Length - 1;
-        while (i >= 0 && ")]}\'\"»”’".IndexOf(token[i]) >= 0) i--;
+        while (i >= 0 && ")]}\"»”".Contains(token[i])) i--;
         if (i < 0) return false;
         char c = token[i];
-        return c == '.' || c == '!' || c == '?' || c == '…';
+        return c is '.' or '!' or '?' or '…';
+    }
+
+    private static bool ContainsLexicalContent(string text)
+    {
+        if (string.IsNullOrEmpty(text))
+        {
+            return false;
+        }
+
+        foreach (char c in text)
+        {
+            if (char.IsLetterOrDigit(c))
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private static string ComputeFileHash(string filePath)

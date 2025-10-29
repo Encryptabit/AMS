@@ -272,6 +272,7 @@ public static class PipelineCommand
         var gapRightThresholdOption = new Option<double>("--gap-right-threshold-db", () => -30.0, "RMS threshold (dBFS) used to detect silence on the right side of gaps");
         var gapStepOption = new Option<double>("--gap-step-ms", () => 5.0, "Step size (ms) when probing gap boundaries");
         var gapBackoffOption = new Option<double>("--gap-backoff-ms", () => 5.0, "Backoff amount (ms) applied after a silent window is detected");
+        var verboseOption = new Option<bool>("--verbose", () => false, "Enable verbose logging for pipeline stages (roomtone gap analysis, ASR, etc.)");
 
         cmd.AddOption(bookOption);
         cmd.AddOption(audioOption);
@@ -294,6 +295,7 @@ public static class PipelineCommand
         cmd.AddOption(gapRightThresholdOption);
         cmd.AddOption(gapStepOption);
         cmd.AddOption(gapBackoffOption);
+        cmd.AddOption(verboseOption);
 
         cmd.SetHandler(async context =>
         {
@@ -319,6 +321,7 @@ public static class PipelineCommand
             var gapRightThreshold = context.ParseResult.GetValueForOption(gapRightThresholdOption);
             var gapStep = context.ParseResult.GetValueForOption(gapStepOption);
             var gapBackoff = context.ParseResult.GetValueForOption(gapBackoffOption);
+            var verbose = context.ParseResult.GetValueForOption(verboseOption);
 
             try
             {
@@ -344,6 +347,7 @@ public static class PipelineCommand
                     gapRightThreshold,
                     gapStep,
                     gapBackoff,
+                    verbose,
                     cancellationToken);
             }
             catch (Exception ex)
@@ -378,6 +382,7 @@ public static class PipelineCommand
         double gapRightThresholdDb,
         double gapStepMs,
         double gapBackoffMs,
+        bool verbose,
         CancellationToken cancellationToken)
     {
         if (!bookFile.Exists)
@@ -560,7 +565,7 @@ public static class PipelineCommand
         {
             Log.Info("Rendering roomtone");
             txFile.Refresh();
-            await AudioCommand.RunRenderAsync(txFile, treatedWav, sampleRate, bitDepth, fadeMs, toneDb, emitDiagnostics, adaptiveGain, verbose: false, gapLeftThresholdDb, gapRightThresholdDb, gapStepMs, gapBackoffMs);
+            await AudioCommand.RunRenderAsync(txFile, treatedWav, sampleRate, bitDepth, fadeMs, toneDb, emitDiagnostics, adaptiveGain, verbose, gapLeftThresholdDb, gapRightThresholdDb, gapStepMs, gapBackoffMs);
             treatedWav.Refresh();
         }
 

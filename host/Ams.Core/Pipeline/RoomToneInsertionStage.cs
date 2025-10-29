@@ -24,12 +24,17 @@ public sealed class RoomToneInsertionStage
     private readonly double _gapRightThresholdDb;
     private readonly double _gapStepSec;
     private readonly double _gapBackoffSec;
+    private static readonly FrameBreathDetectorOptions BreathDetectorOptions = new()
+    {
+        ApplyEnergyGate = false
+    };
 
-    private const double DefaultGapThresholdDb = -30.0;
+    private const double DefaultGapThresholdDb = -45.0;
     private const double DefaultGapStepMs = 5.0;
     private const double DefaultGapBackoffMs = 5.0;
     private const double TextGridGapToleranceSec = 0.02;
     private const double TextGridMinGapLengthSec = 0.10;
+    private const double TextGridPhoneToleranceSec = 0.02;
 
     private sealed record TextGridGapHint(double StartSec, double EndSec, int? PreviousSentenceId, int? NextSentenceId, string Text);
 
@@ -141,7 +146,21 @@ public sealed class RoomToneInsertionStage
             }
         }
 
-        var gaps = BuildGaps(timelineEntries, analyzer, audioDurationSec, _verbose, out var gapSummary, _gapLeftThresholdDb, _gapRightThresholdDb, _gapStepSec, _gapBackoffSec, textGridHints);
+        var phoneMap = TryBuildPhoneMap(manifest.TextGridPath, timelineEntries);
+
+        var gaps = BuildGaps(
+            inputAudio,
+            timelineEntries,
+            analyzer,
+            audioDurationSec,
+            _verbose,
+            out var gapSummary,
+            _gapLeftThresholdDb,
+            _gapRightThresholdDb,
+            _gapStepSec,
+            _gapBackoffSec,
+            textGridHints,
+            phoneMap);
         Log.Info($"[Roomtone] Gap candidates: {gapSummary.Candidates}, retained: {gapSummary.Retained}, collapsed: {gapSummary.Collapsed}");
 
         // Update transcript timings from the (shifted) entries
@@ -547,6 +566,71 @@ public sealed class RoomToneInsertionStage
         return map;
     }
 
+    private static Dictionary<int, IReadOnlyList<PhoneSpan>> TryBuildPhoneMap(
+        string? textGridPath,
+        IReadOnlyList<SentenceTimelineEntry> sentences)
+    {
+        var map = new Dictionary<int, IReadOnlyList<PhoneSpan>>();
+        if (string.IsNullOrWhiteSpace(textGridPath) || sentences.Count == 0)
+        {
+            return map;
+        }
+
+        IReadOnlyList<TextGridInterval> intervals;
+        try
+        {
+            intervals = TextGridParser.ParsePhoneIntervals(textGridPath);
+        }
+        catch
+        {
+            return map;
+        }
+
+        if (intervals.Count == 0)
+        {
+            return map;
+        }
+
+        var orderedSentences = sentences
+            .OrderBy(s => s.Timing.StartSec)
+            .ToList();
+
+        int intervalIndex = 0;
+        for (int i = 0; i < orderedSentences.Count; i++)
+        {
+            var sentence = orderedSentences[i];
+            double startThreshold = sentence.Timing.StartSec - TextGridPhoneToleranceSec;
+            double endThreshold = sentence.Timing.EndSec + TextGridPhoneToleranceSec;
+
+            while (intervalIndex < intervals.Count && intervals[intervalIndex].End <= startThreshold)
+            {
+                intervalIndex++;
+            }
+
+            int cursor = intervalIndex;
+            var spans = new List<PhoneSpan>();
+
+            while (cursor < intervals.Count && intervals[cursor].Start < endThreshold)
+            {
+                var interval = intervals[cursor];
+                double spanStart = Math.Clamp(interval.Start, sentence.Timing.StartSec, sentence.Timing.EndSec);
+                double spanEnd = Math.Clamp(interval.End, sentence.Timing.StartSec, sentence.Timing.EndSec);
+                if (spanEnd - spanStart > 1e-6)
+                {
+                    spans.Add(new PhoneSpan(spanStart, spanEnd, interval.Text));
+                }
+                cursor++;
+            }
+
+            if (spans.Count > 0)
+            {
+                map[sentence.SentenceId] = spans;
+            }
+        }
+
+        return map;
+    }
+
     private static bool IsSilenceLabel(string label)
     {
         if (string.IsNullOrWhiteSpace(label))
@@ -610,6 +694,7 @@ public sealed class RoomToneInsertionStage
     }
 
     private static IReadOnlyList<RoomtonePlanGap> BuildGaps(
+        AudioBuffer audio,
         IReadOnlyList<SentenceTimelineEntry> entries,
         AudioAnalysisService analyzer,
         double audioDurationSec,
@@ -619,7 +704,8 @@ public sealed class RoomToneInsertionStage
         double rightThresholdDb,
         double stepSec,
         double backoffSec,
-        Dictionary<(int? Prev, int? Next), List<TextGridGapHint>>? textGridHints = null)
+        Dictionary<(int? Prev, int? Next), List<TextGridGapHint>>? textGridHints,
+        Dictionary<int, IReadOnlyList<PhoneSpan>> phoneMap)
     {
         const double epsilon = 1e-6;
 
@@ -643,9 +729,28 @@ public sealed class RoomToneInsertionStage
         {
             Log.Warn("[Roomtone] No sentence timings; treating entire chapter as a single gap.");
             var stats = analyzer.AnalyzeGap(0.0, audioDurationSec);
-            gaps.Add(CreateGap(0.0, audioDurationSec, null, null, stats));
-            summary = new GapSummary(1, gaps.Count, 0);
+        if (TryValidateBreathSafety(audio, analyzer, 0.0, audioDurationSec, Math.Min(leftThresholdDb, rightThresholdDb), verbose, null, null, out var breathRegions))
+            {
+                gaps.Add(CreateGap(0.0, audioDurationSec, null, null, stats, breathRegions));
+                summary = new GapSummary(1, gaps.Count, 0);
+            }
+            else
+            {
+                if (verbose)
+                {
+                    Log.Info("[Roomtone]   breath guard rejected chapter-wide gap.");
+                }
+                summary = new GapSummary(1, 0, 1);
+            }
+
             return gaps;
+        }
+
+        IReadOnlyList<PhoneSpan>? GetPhones(int? sentenceId)
+        {
+            return sentenceId.HasValue && phoneMap.TryGetValue(sentenceId.Value, out var phones)
+                ? phones
+                : null;
         }
 
         SentenceTimelineEntry? previous = null;
@@ -708,6 +813,8 @@ public sealed class RoomToneInsertionStage
             }
 
             var hintKey = (leftEntry?.SentenceId, rightEntry?.SentenceId);
+            var leftPhones = GetPhones(leftEntry?.SentenceId);
+            var rightPhones = GetPhones(rightEntry?.SentenceId);
             if (textGridHints is not null && textGridHints.TryGetValue(hintKey, out var hintRanges) && hintRanges.Count > 0)
             {
                 foreach (var hint in hintRanges)
@@ -820,20 +927,12 @@ public sealed class RoomToneInsertionStage
 
                 var stats = analyzer.AnalyzeGap(finalStart, finalEnd);
                 double combinedThreshold = Math.Min(leftThresholdDb, rightThresholdDb);
-                if (stats.MaxRmsDb > combinedThreshold)
+                if (!TryAddGapWithBreath(finalStart, finalEnd, leftEntry?.SentenceId, rightEntry?.SentenceId, leftPhones, rightPhones, stats, combinedThreshold, "final", leftClamp, rightClamp))
                 {
-                    if (verbose)
+                    if (verbose && stats.MaxRmsDb > combinedThreshold)
                     {
                         Log.Info($"[Roomtone]   final rejected [{finalStart:F3},{finalEnd:F3}] maxRms={stats.MaxRmsDb:F2} dB > threshold {combinedThreshold:F2} dB");
                     }
-                }
-                else
-                {
-                    if (verbose)
-                    {
-                        Log.Info($"[Roomtone]   final gap [{finalStart:F3},{finalEnd:F3}] meanRms={stats.MeanRmsDb:F2} dB");
-                    }
-                    produced.Add(CreateGap(finalStart, finalEnd, leftEntry?.SentenceId, rightEntry?.SentenceId, stats));
                 }
             }
             else
@@ -845,16 +944,9 @@ public sealed class RoomToneInsertionStage
                     if (end - start > epsilon)
                     {
                         var stats = analyzer.AnalyzeGap(start, end);
-                        if (stats.MaxRmsDb > leftThresholdDb)
+                        if (!TryAddGapWithBreath(start, end, leftEntry?.SentenceId, rightEntry?.SentenceId, leftPhones, rightPhones, stats, leftThresholdDb, "left-only", leftClamp, rightClamp) && verbose && stats.MaxRmsDb > leftThresholdDb)
                         {
-                            if (verbose)
-                            {
-                                Log.Info($"[Roomtone]   left-only rejected [{start:F3},{end:F3}] maxRms={stats.MaxRmsDb:F2} dB > threshold {leftThresholdDb:F2} dB");
-                            }
-                        }
-                        else
-                        {
-                        produced.Add(CreateGap(start, end, leftEntry?.SentenceId, rightEntry?.SentenceId, stats));
+                            Log.Info($"[Roomtone]   left-only rejected [{start:F3},{end:F3}] maxRms={stats.MaxRmsDb:F2} dB > threshold {leftThresholdDb:F2} dB");
                         }
                     }
                 }
@@ -865,16 +957,9 @@ public sealed class RoomToneInsertionStage
                     if (end - start > epsilon)
                     {
                         var stats = analyzer.AnalyzeGap(start, end);
-                        if (stats.MaxRmsDb > rightThresholdDb)
+                        if (!TryAddGapWithBreath(start, end, leftEntry?.SentenceId, rightEntry?.SentenceId, leftPhones, rightPhones, stats, rightThresholdDb, "right-only", leftClamp, rightClamp) && verbose && stats.MaxRmsDb > rightThresholdDb)
                         {
-                            if (verbose)
-                            {
-                                Log.Info($"[Roomtone]   right-only rejected [{start:F3},{end:F3}] maxRms={stats.MaxRmsDb:F2} dB > threshold {rightThresholdDb:F2} dB");
-                            }
-                        }
-                        else
-                        {
-                            produced.Add(CreateGap(start, end, leftEntry?.SentenceId, rightEntry?.SentenceId, stats));
+                            Log.Info($"[Roomtone]   right-only rejected [{start:F3},{end:F3}] maxRms={stats.MaxRmsDb:F2} dB > threshold {rightThresholdDb:F2} dB");
                         }
                     }
                 }
@@ -918,7 +1003,93 @@ public sealed class RoomToneInsertionStage
 
                 var prevId = hint.PreviousSentenceId ?? leftEntry?.SentenceId;
                 var nextId = hint.NextSentenceId ?? rightEntry?.SentenceId;
-                produced.Add(CreateGap(start, end, prevId, nextId, stats));
+                TryAddGapWithBreath(
+                    start,
+                    end,
+                    prevId,
+                    nextId,
+                    GetPhones(prevId),
+                    GetPhones(nextId),
+                    stats,
+                    hintThreshold,
+                    "hint",
+                    leftClamp,
+                    rightClamp);
+            }
+
+            bool TryAddGapWithBreath(
+                double start,
+                double end,
+                int? prevId,
+                int? nextId,
+                IReadOnlyList<PhoneSpan>? leftOverride,
+                IReadOnlyList<PhoneSpan>? rightOverride,
+                GapRmsStats stats,
+                double thresholdDb,
+                string context,
+                double clampStart,
+                double clampEnd)
+            {
+                var leftList = leftOverride ?? GetPhones(prevId);
+                var rightList = rightOverride ?? GetPhones(nextId);
+
+                if (!TryValidateBreathSafety(audio, analyzer, start, end, thresholdDb, verbose, leftList, rightList, out var breathRegions))
+                {
+                    if (verbose)
+                    {
+                        Log.Info($"[Roomtone]   {context} rejected by breath guard [{start:F3},{end:F3}]");
+                    }
+                    return false;
+                }
+
+                double adjustedStart = start;
+                double adjustedEnd = end;
+
+                if (breathRegions.Count > 0)
+                {
+                    double minBreath = breathRegions.Min(r => r.StartSec);
+                    double maxBreath = breathRegions.Max(r => r.EndSec);
+                    adjustedStart = Math.Min(adjustedStart, minBreath);
+                    adjustedEnd = Math.Max(adjustedEnd, maxBreath);
+                }
+
+                adjustedStart = Math.Clamp(adjustedStart, clampStart, clampEnd);
+                adjustedEnd = Math.Clamp(adjustedEnd, clampStart, clampEnd);
+
+                if (adjustedEnd - adjustedStart <= epsilon)
+                {
+                    if (verbose)
+                    {
+                        Log.Info($"[Roomtone]   {context} collapsed after breath expansion");
+                    }
+                    return false;
+                }
+
+                GapRmsStats finalStats = stats;
+                if (!NearlyEqual(adjustedStart, start) || !NearlyEqual(adjustedEnd, end))
+                {
+                    finalStats = analyzer.AnalyzeGap(adjustedStart, adjustedEnd);
+                }
+
+                IReadOnlyList<RoomtoneBreathRegion> finalBreaths = breathRegions;
+                if (breathRegions.Count > 0)
+                {
+                    var adjustedBreaths = breathRegions
+                        .Select(r => new RoomtoneBreathRegion(
+                            Math.Clamp(r.StartSec, adjustedStart, adjustedEnd),
+                            Math.Clamp(r.EndSec, adjustedStart, adjustedEnd)))
+                        .Where(r => r.EndSec - r.StartSec > epsilon)
+                        .ToList();
+                    finalBreaths = adjustedBreaths;
+                }
+
+                if (verbose && stats.MaxRmsDb > thresholdDb)
+                {
+                    Log.Info($"[Roomtone]   {context} accepted despite maxRms={stats.MaxRmsDb:F2} dB > threshold {thresholdDb:F2} dB (breath regions {finalBreaths.Count})");
+                }
+
+                produced.Add(CreateGap(adjustedStart, adjustedEnd, prevId, nextId, finalStats, finalBreaths));
+                return true;
             }
         }
 
@@ -1060,7 +1231,13 @@ public sealed class RoomToneInsertionStage
         return Math.Min(limitSec, best);
     }
 
-    private static RoomtonePlanGap CreateGap(double startSec, double endSec, int? previousId, int? nextId, GapRmsStats stats)
+    private static RoomtonePlanGap CreateGap(
+        double startSec,
+        double endSec,
+        int? previousId,
+        int? nextId,
+        GapRmsStats stats,
+        IReadOnlyList<RoomtoneBreathRegion>? breathRegions = null)
     {
         double duration = Math.Max(0.0, endSec - startSec);
         return new RoomtonePlanGap(
@@ -1072,7 +1249,8 @@ public sealed class RoomToneInsertionStage
             SanitizeDb(stats.MinRmsDb),
             SanitizeDb(stats.MaxRmsDb),
             SanitizeDb(stats.MeanRmsDb),
-            SanitizeFraction(stats.SilenceFraction));
+            SanitizeFraction(stats.SilenceFraction),
+            breathRegions ?? Array.Empty<RoomtoneBreathRegion>());
     }
 
     private static double SanitizeDb(double value)
@@ -1092,6 +1270,91 @@ public sealed class RoomToneInsertionStage
         }
         return Math.Clamp(value, 0.0, 1.0);
     }
+
+    private static bool TryValidateBreathSafety(
+        AudioBuffer audio,
+        AudioAnalysisService analyzer,
+        double startSec,
+        double endSec,
+        double thresholdDb,
+        bool verbose,
+        IReadOnlyList<PhoneSpan>? leftPhones,
+        IReadOnlyList<PhoneSpan>? rightPhones,
+        out IReadOnlyList<RoomtoneBreathRegion> breathRegions)
+    {
+        const double MinNonBreathDurationSec = 0.03; // 30 ms
+
+        if (endSec - startSec <= 0)
+        {
+            breathRegions = Array.Empty<RoomtoneBreathRegion>();
+            return false;
+        }
+
+        var detection = FrameBreathDetector.Detect(audio, startSec, endSec, BreathDetectorOptions, leftPhones, rightPhones);
+        var mapped = detection
+            .Select(region => new RoomtoneBreathRegion(
+                Math.Clamp(region.StartSec, startSec, endSec),
+                Math.Clamp(region.EndSec, startSec, endSec)))
+            .Where(region => region.EndSec - region.StartSec > 0)
+            .OrderBy(region => region.StartSec)
+            .ToList();
+
+        breathRegions = mapped;
+
+        if (mapped.Count == 0)
+        {
+            double rms = analyzer.MeasureRms(startSec, endSec);
+            if (rms > thresholdDb)
+            {
+                if (verbose)
+                {
+                    Log.Info($"[Roomtone]   breath guard: detected speech energy {rms:F2} dB in [{startSec:F3},{endSec:F3}]");
+                }
+                return false;
+            }
+
+            return true;
+        }
+
+        double cursor = startSec;
+        foreach (var region in mapped)
+        {
+            double segmentStart = cursor;
+            double segmentEnd = region.StartSec;
+            if (segmentEnd - segmentStart >= MinNonBreathDurationSec)
+            {
+                double rms = analyzer.MeasureRms(segmentStart, segmentEnd);
+                if (rms > thresholdDb)
+                {
+                    if (verbose)
+                    {
+                        Log.Info($"[Roomtone]   breath guard: speech energy {rms:F2} dB in [{segmentStart:F3},{segmentEnd:F3}]");
+                    }
+                    return false;
+                }
+            }
+
+            cursor = Math.Max(cursor, region.EndSec);
+        }
+
+        if (endSec - cursor >= MinNonBreathDurationSec)
+        {
+            double rms = analyzer.MeasureRms(cursor, endSec);
+            if (rms > thresholdDb)
+            {
+                if (verbose)
+                {
+                    Log.Info($"[Roomtone]   breath guard: speech energy {rms:F2} dB in [{cursor:F3},{endSec:F3}]");
+                }
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private static bool NearlyEqual(double a, double b, double tolerance = 1e-6)
+        => Math.Abs(a - b) <= tolerance;
 
     private readonly struct GapSummary
     {

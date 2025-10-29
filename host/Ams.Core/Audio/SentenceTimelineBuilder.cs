@@ -139,8 +139,8 @@ namespace Ams.Core.Audio
                 exitThresholdDb: exitThresholdDb,
                 searchWindowSec: searchWindowSec,
                 stepMs: stepMs,
-                preRollMs: 30.0,
-                postRollMs: 140.0,
+                preRollMs: 20.0,
+                postRollMs: 20.0,
                 hangoverMs: 35.0);
 
           //var snapped = analyzer.SnapToEnergyAuto(seed: seed, AutoTuneStyle.Tight);
