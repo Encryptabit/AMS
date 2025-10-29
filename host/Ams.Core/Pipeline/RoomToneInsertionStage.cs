@@ -1290,7 +1290,7 @@ public sealed class RoomToneInsertionStage
             return false;
         }
 
-        var detection = FrameBreathDetector.Detect(audio, startSec, endSec, BreathDetectorOptions, leftPhones, rightPhones);
+        var detection = FeatureExtraction.Detect(audio, startSec, endSec, BreathDetectorOptions, leftPhones, rightPhones);
         var mapped = detection
             .Select(region => new RoomtoneBreathRegion(
                 Math.Clamp(region.StartSec, startSec, endSec),

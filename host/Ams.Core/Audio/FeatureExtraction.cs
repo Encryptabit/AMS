@@ -66,7 +66,7 @@ public sealed class FrameFeatures
 /// <summary>
 /// Frame-level breath detector that combines spectral and temporal cues with hysteresis.
 /// </summary>
-public static class FrameBreathDetector
+public static class FeatureExtraction
 {
     /// <summary>
     /// Detects breath regions inside a gap using an <see cref="AudioBuffer"/> as the source.
