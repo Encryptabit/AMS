@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using System.Linq;
 using System.Security.Cryptography;
 using System.Text.RegularExpressions;
@@ -11,6 +12,12 @@ namespace Ams.Core.Book;
 public class BookIndexer : IBookIndexer
 {
     private static readonly Regex _blankLineSplit = new("(\r?\n){2,}", RegexOptions.Compiled);
+    private readonly IPronunciationProvider _pronunciationProvider;
+
+    public BookIndexer(IPronunciationProvider? pronunciationProvider = null)
+    {
+        _pronunciationProvider = pronunciationProvider ?? NullPronunciationProvider.Instance;
+    }
 
     public async Task<BookIndex> CreateIndexAsync(
         BookParseResult parseResult,
@@ -25,9 +32,22 @@ public class BookIndexer : IBookIndexer
 
         options ??= new BookIndexOptions();
 
+        var paragraphTexts = BuildParagraphTexts(parseResult);
+        var lexicalTokens = CollectLexicalTokens(paragraphTexts);
+        IReadOnlyDictionary<string, string[]> pronunciations;
+
         try
         {
-            return await Task.Run(() => Process(parseResult, sourceFile, options, cancellationToken), cancellationToken);
+            pronunciations = await _pronunciationProvider.GetPronunciationsAsync(lexicalTokens, cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            throw new BookIndexException($"Failed to generate pronunciations for '{sourceFile}': {ex.Message}", ex);
+        }
+
+        try
+        {
+            return await Task.Run(() => Process(parseResult, sourceFile, options, paragraphTexts, pronunciations, cancellationToken), cancellationToken);
         }
         catch (Exception ex) when (!(ex is OperationCanceledException || ex is ArgumentException))
         {
@@ -39,17 +59,11 @@ public class BookIndexer : IBookIndexer
         BookParseResult parseResult,
         string sourceFile,
         BookIndexOptions options,
+        List<(string Text, string Style, string Kind)> paragraphTexts,
+        IReadOnlyDictionary<string, string[]> pronunciations,
         CancellationToken cancellationToken)
     {
         var sourceFileHash = ComputeFileHash(sourceFile);
-
-        // Determine paragraphs: prefer structured from parser, else split from text
-        var paragraphTexts = (parseResult.Paragraphs != null && parseResult.Paragraphs.Count > 0)
-            ? parseResult.Paragraphs.Select(p => (Text: p.Text, Style: p.Style ?? "Unknown", Kind: p.Kind ?? "Body")).ToList()
-            : _blankLineSplit.Split(parseResult.Text)
-                .Where(s => !string.IsNullOrEmpty(s))
-                .Select(t => (Text: t.TrimEnd('\r', '\n'), Style: "Unknown", Kind: "Body"))
-                .ToList();
 
         var words = new List<BookWord>();
         var sentences = new List<SentenceRange>();
@@ -128,12 +142,20 @@ public class BookIndexer : IBookIndexer
 
                 paragraphHasLexical = true;
 
+                string? lexeme = PronunciationHelper.NormalizeForLookup(token);
+                string[]? phonemes = null;
+                if (!string.IsNullOrEmpty(lexeme) && pronunciations.TryGetValue(lexeme, out var mapped) && mapped.Length > 0)
+                {
+                    phonemes = mapped.ToArray();
+                }
+
                 var w = new BookWord(
                     Text: token,
                     WordIndex: globalWord,
                     SentenceIndex: sentenceIndex,
                     ParagraphIndex: pIndex,
-                    SectionIndex: currentSection?.Id ?? -1
+                    SectionIndex: currentSection?.Id ?? -1,
+                    Phonemes: phonemes
                 );
                 words.Add(w);
                 globalWord++;
@@ -481,10 +503,48 @@ public class BookIndexer : IBookIndexer
         if (string.IsNullOrEmpty(token)) return false;
         // Strip common closing punctuation to inspect terminal char
         int i = token.Length - 1;
-        while (i >= 0 && ")]}\"»”".Contains(token[i])) i--;
+        while (i >= 0 && ")]}'\"»”’".Contains(token[i])) i--;
         if (i < 0) return false;
         char c = token[i];
         return c is '.' or '!' or '?' or '…';
+    }
+
+    private static List<(string Text, string Style, string Kind)> BuildParagraphTexts(BookParseResult parseResult)
+    {
+        if (parseResult.Paragraphs != null && parseResult.Paragraphs.Count > 0)
+        {
+            return parseResult.Paragraphs
+                .Select(p => (Text: p.Text, Style: p.Style ?? "Unknown", Kind: p.Kind ?? "Body"))
+                .ToList();
+        }
+
+        return _blankLineSplit.Split(parseResult.Text)
+            .Where(s => !string.IsNullOrEmpty(s))
+            .Select(t => (Text: t.TrimEnd('\r', '\n'), Style: "Unknown", Kind: "Body"))
+            .ToList();
+    }
+
+    private static IEnumerable<string> CollectLexicalTokens(List<(string Text, string Style, string Kind)> paragraphs)
+    {
+        var set = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var (text, _, _) in paragraphs)
+        {
+            foreach (var token in TokenizeByWhitespace(text))
+            {
+                if (!ContainsLexicalContent(token))
+                {
+                    continue;
+                }
+
+                var normalized = PronunciationHelper.NormalizeForLookup(token);
+                if (!string.IsNullOrEmpty(normalized))
+                {
+                    set.Add(normalized);
+                }
+            }
+        }
+
+        return set;
     }
 
     private static bool ContainsLexicalContent(string text)

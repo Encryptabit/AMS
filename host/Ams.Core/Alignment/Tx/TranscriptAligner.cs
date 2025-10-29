@@ -44,10 +44,25 @@ public static class TranscriptAligner
     public static bool Equivalent(string a, string b, IReadOnlyDictionary<string, string> equiv)
         => a == b || (equiv.TryGetValue(a, out var e) && e == b) || (equiv.TryGetValue(b, out var e2) && e2 == a);
 
-    public static double SubCost(string bookTok, string asrTok, IReadOnlyDictionary<string, string> equiv)
+    public static double SubCost(
+        string bookTok,
+        string asrTok,
+        IReadOnlyDictionary<string, string> equiv,
+        string[]? bookPhonemes = null,
+        string[]? asrPhonemes = null,
+        double phonemeSoftThreshold = 0.8)
     {
         if (Equivalent(bookTok, asrTok, equiv)) return 0.0;
-        if (LevLe1(bookTok, asrTok)) return 0.3;
+
+        if (HasExactPhonemeMatch(bookPhonemes, asrPhonemes))
+        {
+            return 0.0;
+        }
+
+        if (LevLe1(bookTok, asrTok) || HasSoftPhonemeMatch(bookPhonemes, asrPhonemes, phonemeSoftThreshold))
+        {
+            return 0.3;
+        }
         return 1.0;
     }
 
@@ -61,7 +76,11 @@ public static class TranscriptAligner
         IReadOnlyList<(int bLo, int bHi, int aLo, int aHi)> windows,
         IReadOnlyDictionary<string, string> equiv,
         ISet<string> fillers,
-        int maxRun = 8, double maxAvg = 0.6)
+        IReadOnlyList<string[]>? bookPhonemes = null,
+        IReadOnlyList<string[]>? asrPhonemes = null,
+        int maxRun = 8,
+        double maxAvg = 0.6,
+        double phonemeSoftThreshold = 0.8)
     {
         var all = new List<(int?, int?, AlignOp, string, double)>(bookNorm.Count + asrNorm.Count);
 
@@ -91,7 +110,13 @@ public static class TranscriptAligner
             for (int i = 1; i <= n; i++)
             for (int j = 1; j <= m; j++)
             {
-                var sub = dp[i - 1, j - 1] + SubCost(bookNorm[bLo + i - 1], asrNorm[aLo + j - 1], equiv);
+                var sub = dp[i - 1, j - 1] + SubCost(
+                    bookNorm[bLo + i - 1],
+                    asrNorm[aLo + j - 1],
+                    equiv,
+                    GetPhonemes(bookPhonemes, bLo + i - 1),
+                    GetPhonemes(asrPhonemes, aLo + j - 1),
+                    phonemeSoftThreshold);
                 var del = dp[i - 1, j] + DelCost(bookNorm[bLo + i - 1]);
                 var ins = dp[i, j - 1] + InsCost(asrNorm[aLo + j - 1], fillers);
                 var best = sub;
@@ -123,7 +148,13 @@ public static class TranscriptAligner
                     {
                         int bi = bLo + ii - 1;
                         int aj = aLo + jj - 1;
-                        var cost = SubCost(bookNorm[bi], asrNorm[aj], equiv);
+                        var cost = SubCost(
+                            bookNorm[bi],
+                            asrNorm[aj],
+                            equiv,
+                            GetPhonemes(bookPhonemes, bi),
+                            GetPhonemes(asrPhonemes, aj),
+                            phonemeSoftThreshold);
                         var isMatch = cost == 0.0;
                         var reason = isMatch ? "equal_or_equiv" : "near_or_diff";
                         winOps.Add((bi, aj, isMatch ? AlignOp.Match : AlignOp.Sub, reason, cost));
@@ -164,6 +195,123 @@ public static class TranscriptAligner
         return all;
     }
 
+    private static string[]? GetPhonemes(IReadOnlyList<string[]>? list, int index)
+    {
+        if (list == null || index < 0 || index >= list.Count) return null;
+        var entry = list[index];
+        return entry is { Length: >0 } ? entry : null;
+    }
+
+    private static bool HasExactPhonemeMatch(string[]? bookPhonemes, string[]? asrPhonemes)
+    {
+        if (bookPhonemes is not { Length: >0 } bookList || asrPhonemes is not { Length: >0 } asrList)
+        {
+            return false;
+        }
+
+        foreach (var bookVariant in bookList)
+        {
+            if (string.IsNullOrWhiteSpace(bookVariant)) continue;
+            foreach (var asrVariant in asrList)
+            {
+                if (string.IsNullOrWhiteSpace(asrVariant)) continue;
+                if (PhonemeComparer.Equals(bookVariant, asrVariant))
+                {
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
+
+    private static bool HasSoftPhonemeMatch(string[]? bookPhonemes, string[]? asrPhonemes, double threshold)
+    {
+        if (bookPhonemes is not { Length: >0 } bookList || asrPhonemes is not { Length: >0 } asrList)
+        {
+            return false;
+        }
+
+        double best = 0.0;
+        foreach (var bookVariant in bookList)
+        {
+            if (string.IsNullOrWhiteSpace(bookVariant)) continue;
+            var bookSeq = PhonemeComparer.Tokenize(bookVariant);
+            if (bookSeq.Length == 0) continue;
+
+            foreach (var asrVariant in asrList)
+            {
+                if (string.IsNullOrWhiteSpace(asrVariant)) continue;
+                var asrSeq = PhonemeComparer.Tokenize(asrVariant);
+                if (asrSeq.Length == 0) continue;
+
+                var sim = PhonemeComparer.Similarity(bookSeq, asrSeq);
+                if (sim > best)
+                {
+                    best = sim;
+                }
+
+                if (best >= threshold)
+                {
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
+
+    private static class PhonemeComparer
+    {
+        public static bool Equals(string a, string b)
+        {
+            if (string.IsNullOrWhiteSpace(a) || string.IsNullOrWhiteSpace(b)) return false;
+            return string.Equals(Normalize(a), Normalize(b), StringComparison.OrdinalIgnoreCase);
+        }
+
+        public static string[] Tokenize(string phonemeVariant)
+            => string.IsNullOrWhiteSpace(phonemeVariant)
+                ? Array.Empty<string>()
+                : phonemeVariant.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+
+        public static double Similarity(string[] a, string[] b)
+        {
+            if (a.Length == 0 || b.Length == 0)
+            {
+                return 0.0;
+            }
+
+            var dist = Levenshtein(a, b);
+            var maxLen = Math.Max(a.Length, b.Length);
+            return maxLen == 0 ? 1.0 : 1.0 - (double)dist / maxLen;
+        }
+
+        private static string Normalize(string value)
+            => string.Join(' ', Tokenize(value));
+
+        private static int Levenshtein(string[] a, string[] b)
+        {
+            var m = a.Length;
+            var n = b.Length;
+            var dp = new int[m + 1, n + 1];
+
+            for (int i = 0; i <= m; i++) dp[i, 0] = i;
+            for (int j = 0; j <= n; j++) dp[0, j] = j;
+
+            for (int i = 1; i <= m; i++)
+            {
+                for (int j = 1; j <= n; j++)
+                {
+                    var cost = string.Equals(a[i - 1], b[j - 1], StringComparison.OrdinalIgnoreCase) ? 0 : 1;
+                    dp[i, j] = Math.Min(
+                        Math.Min(dp[i - 1, j] + 1, dp[i, j - 1] + 1),
+                        dp[i - 1, j - 1] + cost);
+                }
+            }
+
+            return dp[m, n];
+        }
+    }
     // (3.3) Sentence/Paragraph rollups from word ops
     public static (List<SentenceAlign> sents, List<ParagraphAlign> paras) Rollup(
         IReadOnlyList<WordAlign> ops,
