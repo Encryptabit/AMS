@@ -106,6 +106,18 @@ internal static class PauseAudioApplier
                 actualSource = seed;
             }
 
+            double gapLeft = Math.Max(actualSource.EndSec, targetTiming.EndSec);
+            if (nextStart - gapLeft > DurationEpsilon)
+            {
+                double refinedTail = analyzer.FindSpeechEndFromGap(gapLeft, nextStart, silenceThresholdDb: -55.0, stepMs: 5.0, backoffMs: 3.0);
+                if (refinedTail - actualSource.EndSec > DurationEpsilon)
+                {
+                    Log.Info("PauseAudioApplier tail-extended sentence {0}: prevEnd={1:F3}s refinedEnd={2:F3}s", sentence.Id, actualSource.EndSec, refinedTail);
+                    double clampedTail = Math.Min(refinedTail, nextStart);
+                    actualSource = new TimingRange(actualSource.StartSec, Math.Max(actualSource.StartSec, clampedTail));
+                }
+            }
+
             if (!IsApproximatelyEqual(actualSource.EndSec, seed.EndSec))
             {
                 Log.Info("PauseAudioApplier energy-adjusted sentence {0}: seedEnd={1:F3}s energyEnd={2:F3}s", sentence.Id, seed.EndSec, actualSource.EndSec);
