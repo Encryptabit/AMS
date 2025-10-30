@@ -236,13 +236,15 @@ public sealed class PauseDynamicsService : IPauseDynamicsService
     {
         var analysis = AnalyzeChapter(transcript, bookIndex, hydrated, policy, intraSentenceSilences, includeAllIntraSentenceGaps);
         var plan = PlanTransforms(analysis, policy);
+        var sentenceToParagraph = BuildSentenceParagraphMap(bookIndex);
+        var filteredPlan = FilterParagraphZeroAdjustments(plan, sentenceToParagraph);
         var baseline = transcript.Sentences
             .OrderBy(s => s.Timing.StartSec)
             .ToDictionary(
                 sentence => sentence.Id,
                 sentence => new SentenceTiming(sentence.Timing.StartSec, sentence.Timing.EndSec));
-        var applyResult = Apply(plan, baseline);
-        return new PauseDynamicsResult(analysis, plan, applyResult);
+        var applyResult = Apply(filteredPlan, baseline);
+        return new PauseDynamicsResult(analysis, filteredPlan, applyResult);
     }
 
     private static List<PauseSpan> BuildInterSentenceSpans(
@@ -718,6 +720,36 @@ public sealed class PauseDynamicsService : IPauseDynamicsService
         }
 
         return headings;
+    }
+
+    private static PauseTransformSet FilterParagraphZeroAdjustments(
+        PauseTransformSet plan,
+        IReadOnlyDictionary<int, int> sentenceToParagraph)
+    {
+        if (plan.PauseAdjusts.Count == 0)
+        {
+            return plan;
+        }
+
+        bool TouchesParagraphZero(int sentenceId)
+        {
+            if (sentenceId < 0)
+            {
+                return false;
+            }
+
+            return sentenceToParagraph.TryGetValue(sentenceId, out var paragraphId) && paragraphId == 0;
+        }
+
+        var filtered = plan.PauseAdjusts
+            .Where(adj =>
+                adj.Class is PauseClass.ChapterHead or PauseClass.PostChapterRead
+                || (!TouchesParagraphZero(adj.LeftSentenceId) && !TouchesParagraphZero(adj.RightSentenceId)))
+            .ToList();
+
+        return filtered.Count == plan.PauseAdjusts.Count
+            ? plan
+            : new PauseTransformSet(plan.BreathCuts, filtered);
     }
 
     private const double TargetEpsilon = 0.005;
