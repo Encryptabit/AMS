@@ -15,7 +15,8 @@ public static class PauseMapBuilder
         BookIndex bookIndex,
         HydratedTranscript hydrated,
         PausePolicy? policy = null,
-        IReadOnlyList<(double Start, double End)>? intraSentenceSilences = null)
+        IReadOnlyList<(double Start, double End)>? intraSentenceSilences = null,
+        bool includeAllIntraSentenceGaps = false)
     {
         if (transcript is null) throw new ArgumentNullException(nameof(transcript));
         if (bookIndex is null) throw new ArgumentNullException(nameof(bookIndex));
@@ -32,7 +33,8 @@ public static class PauseMapBuilder
             bookIndex,
             hydrated,
             policy,
-            intraSentenceSilences);
+            intraSentenceSilences,
+            includeAllIntraSentenceGaps);
 
         var sentenceCollectors = CreateSentenceCollectors(transcript, hydratedSentenceMap, bookIndex, sentenceToParagraph);
         var paragraphCollectors = CreateParagraphCollectors(paragraphSentenceOrder);

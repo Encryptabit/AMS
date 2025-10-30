@@ -812,7 +812,7 @@ public static class PipelineCommand
                 var transcript = LoadJson<TranscriptIndex>(txFile);
                 var hydrated = LoadJson<HydratedTranscript>(hydrateFile);
                 var silences = LoadMfaSilences(textGridFile);
-                var pauseMap = PauseMapBuilder.Build(transcript, bookIndex, hydrated, PausePolicyPresets.House(), silences);
+                var pauseMap = PauseMapBuilder.Build(transcript, bookIndex, hydrated, PausePolicyPresets.House(), silences, includeAllIntraSentenceGaps: true);
                 prosodyStats = pauseMap.Stats;
             }
             catch (Exception ex)
@@ -1082,7 +1082,7 @@ public static class PipelineCommand
         try
         {
             return TextGridParser.ParseWordIntervals(textGridFile.FullName)
-                .Where(interval => string.IsNullOrEmpty(interval.Text) && interval.End > interval.Start)
+                .Where(interval => IsSilenceLabel(interval.Text) && interval.End > interval.Start)
                 .Select(interval => (interval.Start, interval.End))
                 .ToList();
         }
@@ -1091,6 +1091,23 @@ public static class PipelineCommand
             Log.Warn("Failed to parse TextGrid for silences {Path}: {Message}", textGridFile.FullName, ex.Message);
             return Array.Empty<(double, double)>();
         }
+    }
+
+    private static bool IsSilenceLabel(string? text)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            return true;
+        }
+
+        text = text.Trim();
+        return text.Length switch
+        {
+            0 => true,
+            2 when text.Equals("sp", StringComparison.OrdinalIgnoreCase) => true,
+            3 when text.Equals("sil", StringComparison.OrdinalIgnoreCase) => true,
+            _ => text.Equals("<sil>", StringComparison.OrdinalIgnoreCase)
+        };
     }
 
     private static string ExtractChapterStem(string nameWithoutExtension)
