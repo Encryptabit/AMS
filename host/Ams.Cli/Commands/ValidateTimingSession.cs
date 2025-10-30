@@ -387,6 +387,8 @@ internal sealed class ValidateTimingSession
             dynamicAdjustments.AddRange(structural);
         }
 
+        state.FilterParagraphZeroAdjustments(dynamicAdjustments);
+
         return dynamicAdjustments;
     }
 
@@ -414,37 +416,31 @@ internal sealed class ValidateTimingSession
 
         var first = ordered[0];
         double currentHead = Math.Max(0d, first.Timing.StartSec);
-        double targetHead = Math.Max(0d, _policy.HeadOfChapter);
-        if (Math.Abs(currentHead - targetHead) > StructuralEpsilon)
-        {
-            structural.Add(new PauseAdjust(
-                first.SentenceId,
-                first.SentenceId,
-                PauseClass.ChapterHead,
-                currentHead,
-                targetHead,
-                StartSec: 0d,
-                EndSec: currentHead,
-                HasGapHint: false));
-        }
+        double forcedHeadTarget = 0.75d;
+        structural.Add(new PauseAdjust(
+            first.SentenceId,
+            first.SentenceId,
+            PauseClass.ChapterHead,
+            currentHead,
+            forcedHeadTarget,
+            StartSec: 0d,
+            EndSec: currentHead,
+            HasGapHint: false));
 
         if (ordered.Count >= 2)
         {
             var second = ordered[1];
             double currentGap = second.Timing.StartSec - first.Timing.EndSec;
-            double targetGap = Math.Max(0d, _policy.PostChapterRead);
-            if (Math.Abs(currentGap - targetGap) > StructuralEpsilon)
-            {
-                structural.Add(new PauseAdjust(
-                    first.SentenceId,
-                    second.SentenceId,
-                    PauseClass.PostChapterRead,
-                    currentGap,
-                    targetGap,
-                    StartSec: first.Timing.EndSec,
-                    EndSec: second.Timing.StartSec,
-                    HasGapHint: false));
-            }
+            double forcedPostChapterTarget = 1.5d;
+            structural.Add(new PauseAdjust(
+                first.SentenceId,
+                second.SentenceId,
+                PauseClass.PostChapterRead,
+                currentGap,
+                forcedPostChapterTarget,
+                StartSec: first.Timing.EndSec,
+                EndSec: second.Timing.StartSec,
+                HasGapHint: false));
         }
 
         var last = ordered[^1];
@@ -733,6 +729,23 @@ internal sealed class ValidateTimingSession
         public string GetSentenceText(int sentenceId)
         {
             return _sentenceLookup.TryGetValue(sentenceId, out var text) ? text : string.Empty;
+        }
+
+        public bool IsParagraphZero(int sentenceId)
+        {
+            return _sentenceToParagraph.TryGetValue(sentenceId, out var paragraphId) && paragraphId == 0;
+        }
+
+        public void FilterParagraphZeroAdjustments(List<PauseAdjust> adjustments)
+        {
+            if (adjustments is null || adjustments.Count == 0)
+            {
+                return;
+            }
+
+            adjustments.RemoveAll(adj =>
+                adj.Class is not PauseClass.ChapterHead and not PauseClass.PostChapterRead
+                && (IsParagraphZero(adj.LeftSentenceId) || IsParagraphZero(adj.RightSentenceId)));
         }
 
         public IReadOnlyList<int> GetParagraphSentenceIds(int paragraphId)

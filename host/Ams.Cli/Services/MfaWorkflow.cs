@@ -8,6 +8,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Ams.Core.Alignment.Mfa;
 using Ams.Core.Common;
+using Ams.Core.Book;
 using System.Text.RegularExpressions;
 
 namespace Ams.Cli.Services;
@@ -254,8 +255,6 @@ internal static class MfaWorkflow
         await File.WriteAllTextAsync(labPath, labContent, Encoding.UTF8, cancellationToken).ConfigureAwait(false);
     }
 
-    private static readonly Regex LabWhitespaceRegex = new(@"\s+", RegexOptions.Compiled);
-
     private static string PrepareLabLine(string text)
     {
         if (string.IsNullOrWhiteSpace(text))
@@ -263,31 +262,13 @@ internal static class MfaWorkflow
             return string.Empty;
         }
 
-        text = TextNormalizer.NormalizeTypography(text);
-
-        var builder = new StringBuilder(text.Length);
-        foreach (var ch in text)
+        var parts = PronunciationHelper.ExtractPronunciationParts(text);
+        if (parts.Count == 0)
         {
-            if (char.IsLetterOrDigit(ch))
-            {
-                builder.Append(char.ToLowerInvariant(ch));
-            }
-            else if (ch == '\'')
-            {
-                builder.Append('\'');
-            }
-            else if (char.IsWhiteSpace(ch))
-            {
-                builder.Append(' ');
-            }
-            else
-            {
-                builder.Append(' ');
-            }
+            return string.Empty;
         }
 
-        var collapsed = LabWhitespaceRegex.Replace(builder.ToString(), " ").Trim();
-        return collapsed;
+        return string.Join(' ', parts);
     }
 
     private static bool EnsureSuccess(string stage, MfaCommandResult result, bool allowFailure = false)
