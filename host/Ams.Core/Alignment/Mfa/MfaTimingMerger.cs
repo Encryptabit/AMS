@@ -15,9 +15,11 @@ public static class MfaTimingMerger
 {
     private static readonly JsonSerializerOptions SerializerOptions = new()
     {
-        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+        PropertyNameCaseInsensitive = true,
         WriteIndented = true
     };
+
+    private const double TimingExtensionTolerance = 1e-3;
 
     public static void MergeTimings(FileInfo hydrateFile, FileInfo asrFile, FileInfo textGridFile, IReadOnlyDictionary<int, (string? ScriptText, string? BookText)>? fallbackTexts = null)
     {
@@ -56,7 +58,8 @@ public static class MfaTimingMerger
             return;
         }
 
-        var timingMap = BuildTimingMap(asr.Tokens, textGridIntervals);
+        var asrTokens = asr.Tokens;
+        var timingMap = BuildTimingMap(asrTokens, textGridIntervals);
         if (timingMap.Count == 0)
         {
             Log.Warn("Unable to map any MFA timings to ASR tokens for {File}", hydrateFile.Name);
@@ -94,19 +97,67 @@ public static class MfaTimingMerger
             }
 
             var useBookForTiming = IsUnreliable(sentenceNode);
-            var timings = useBookForTiming ? new List<(double start, double end)>() : CollectTimings(timingMap, startIdx, endIdx);
+            var timings = new List<(double start, double end)>();
+            int totalTokenCount = 0;
+            int mfaTokenCount = 0;
+            int asrTokenCount = 0;
 
-            if ((timings.Count == 0 || useBookForTiming) && intervalTokens.Count > 0)
+            if (!useBookForTiming && startIdx >= 0 && endIdx < asrTokens.Length && startIdx <= endIdx)
             {
-                if (TryFindSentenceTiming(sentenceNode, intervalTokens, ref intervalCursor, previousEndSec, fallbackTexts, out var fallbackStart, out var fallbackEnd))
+                totalTokenCount = endIdx - startIdx + 1;
+                for (int idx = startIdx; idx <= endIdx; idx++)
                 {
-                    timings.Add((fallbackStart, fallbackEnd));
-                    Log.Info("MFA fallback timing applied for sentence {SentenceId}: {Start:F3}-{End:F3}", sentenceNode["id"]?.GetValue<int?>(), fallbackStart, fallbackEnd);
+                    if (timingMap.TryGetValue(idx, out var mapped))
+                    {
+                        timings.Add(mapped);
+                        mfaTokenCount++;
+                    }
+                    else
+                    {
+                        var token = asrTokens[idx];
+                        double startTime = token.StartTime;
+                        double endTime = token.StartTime + token.Duration;
+                        timings.Add((startTime, endTime));
+                        asrTokenCount++;
+                    }
                 }
-                else if (useBookForTiming)
+            }
+
+            int expectedTokenCount = endIdx >= startIdx ? (endIdx - startIdx + 1) : 0;
+            int coveredTokenCount = mfaTokenCount;
+            bool needsFallback = useBookForTiming || timings.Count == 0 || (expectedTokenCount > 0 && coveredTokenCount < expectedTokenCount);
+
+            double fallbackStart = 0;
+            double fallbackEnd = 0;
+            bool fallbackApplied = false;
+            if (intervalTokens.Count > 0)
+            {
+                var fallbackCursor = intervalCursor;
+                if (TryFindSentenceTiming(sentenceNode, intervalTokens, ref fallbackCursor, previousEndSec, fallbackTexts, out fallbackStart, out fallbackEnd))
                 {
-                    Log.Info("MFA fallback timing failed for unreliable sentence {SentenceId}", sentenceNode["id"]?.GetValue<int?>());
+                    double minTiming = timings.Count > 0 ? timings.Min(t => t.start) : double.PositiveInfinity;
+                    double maxTiming = timings.Count > 0 ? timings.Max(t => t.end) : double.NegativeInfinity;
+                    bool extendsExisting = timings.Count == 0
+                        || fallbackStart < minTiming - TimingExtensionTolerance
+                        || fallbackEnd > maxTiming + TimingExtensionTolerance;
+
+                    if (needsFallback || extendsExisting)
+                    {
+                        timings.Add((fallbackStart, fallbackEnd));
+                        intervalCursor = fallbackCursor;
+                        fallbackApplied = true;
+                        Log.Info("MFA fallback timing applied for sentence {SentenceId}: {Start:F3}-{End:F3}{Reason}",
+                            sentenceNode["id"]?.GetValue<int?>(),
+                            fallbackStart,
+                            fallbackEnd,
+                            needsFallback ? string.Empty : " (extended coverage)");
+                    }
                 }
+            }
+
+            if (needsFallback && !fallbackApplied && useBookForTiming)
+            {
+                Log.Info("MFA fallback timing failed for unreliable sentence {SentenceId}", sentenceNode["id"]?.GetValue<int?>());
             }
 
             if (timings.Count == 0)
@@ -144,6 +195,20 @@ public static class MfaTimingMerger
 
             updated++;
             previousEndSec = end;
+
+            if (!useBookForTiming && totalTokenCount > 0)
+            {
+                Log.Info("MFA merge sentence {SentenceId}: tokens={Total} mfa={Mfa} asr={Asr}{Fallback}",
+                    sentenceNode["id"]?.GetValue<int?>(),
+                    totalTokenCount,
+                    mfaTokenCount,
+                    asrTokenCount,
+                    fallbackApplied ? " fallbackApplied" : string.Empty);
+            }
+            else if (useBookForTiming && fallbackApplied)
+            {
+                Log.Info("MFA merge sentence {SentenceId}: fallback applied to unreliable sentence", sentenceNode["id"]?.GetValue<int?>());
+            }
         }
 
         File.WriteAllText(hydrateFile.FullName, hydrateNode.ToJsonString(SerializerOptions));
@@ -237,7 +302,7 @@ public static class MfaTimingMerger
     }
 
     private static List<(double start, double end)> CollectTimings(
-        IReadOnlyDictionary<int, (double start, double end)> map,
+        Dictionary<int, (double start, double end)> map,
         int startIdx,
         int endIdx)
     {
