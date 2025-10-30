@@ -41,7 +41,7 @@ public sealed class RoomToneInsertionStage
     public RoomToneInsertionStage(
         int targetSampleRate = 44100,
         double toneGainDb = -74.0,
-        double fadeMs = 5.0,
+        double fadeMs = 35.0,
         bool emitDiagnostics = true,
         bool useAdaptiveGain = true,
         bool verbose = false,
@@ -1457,7 +1457,6 @@ public sealed class RoomToneInsertionStage
         Directory.CreateDirectory(dir);
     }
 }
-
 
 
 
