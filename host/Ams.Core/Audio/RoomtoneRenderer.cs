@@ -31,7 +31,7 @@ namespace Ams.Core.Audio
             double preRollSec = DefaultPreRollSec,
             double postChapterPauseSec = DefaultPostChapterPauseSec,
             double tailSec = DefaultTailSec,
-            int overlapMs = 35,
+            int overlapMs = 65,
             string? debugDirectory = null)
         {
             if (input is null) throw new ArgumentNullException(nameof(input));
@@ -42,7 +42,7 @@ namespace Ams.Core.Audio
             var src  = input.SampleRate == targetSampleRate ? input : RoomtoneUtils.ResampleLinear(input, targetSampleRate);
             var tone = roomtoneSeed.SampleRate == targetSampleRate ? roomtoneSeed : RoomtoneUtils.ResampleLinear(roomtoneSeed, targetSampleRate);
             if (tone.Length == 0) throw new InvalidOperationException("Roomtone seed must contain samples.");
-            MakeLoopable(tone, seamMs: 15);
+            MakeLoopable(tone, seamMs: 60);
 
             int sr = targetSampleRate;
             int N  = Math.Max(1, (int)Math.Round(overlapMs * 0.001 * sr));
@@ -265,7 +265,7 @@ namespace Ams.Core.Audio
                 : RoomtoneUtils.ResampleLinear(roomtoneSeed, targetSampleRate);
             if (tone.Length == 0) throw new InvalidOperationException("Roomtone seed must contain samples.");
 
-            MakeLoopable(tone, seamMs: 20); // make roomtone seed loopable
+            MakeLoopable(tone, seamMs: 75); // make roomtone seed loopable
 
             WriteDebug(debugDirectory, "step0_source", src);
             WriteDebug(debugDirectory, "step0_roomtone_seed", tone);
