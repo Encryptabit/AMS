@@ -25,7 +25,8 @@ public sealed class PauseDynamicsServiceTests
             pauseClass,
             hasGapHint,
             CrossesParagraph: false,
-            CrossesChapterHead: false);
+            CrossesChapterHead: false,
+            Provenance: PauseProvenance.ScriptPunctuation);
     }
 
     [Fact]
