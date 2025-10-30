@@ -56,12 +56,25 @@ public sealed class PauseDynamicsService : IPauseDynamicsService
         if (bookIndex is null) throw new ArgumentNullException(nameof(bookIndex));
         if (policy is null) throw new ArgumentNullException(nameof(policy));
 
-        var spans = BuildInterSentenceSpans(transcript, bookIndex, hydrated);
+        var sentenceToParagraph = BuildSentenceParagraphMap(bookIndex);
+        var headingParagraphIds = BuildHeadingParagraphSet(bookIndex);
+        var headingSentenceIds = new HashSet<int>(sentenceToParagraph
+            .Where(static kvp => kvp.Value >= 0)
+            .Where(kvp => headingParagraphIds.Contains(kvp.Value))
+            .Select(static kvp => kvp.Key));
+
+        var spans = BuildInterSentenceSpans(transcript, sentenceToParagraph, headingParagraphIds);
         Dictionary<int, HydratedSentence>? hydratedSentenceMap = hydrated?.Sentences.ToDictionary(s => s.Id);
 
         if (intraSentenceSilences is not null && intraSentenceSilences.Count > 0)
         {
-            spans.AddRange(BuildIntraSentenceSpans(transcript, bookIndex, hydratedSentenceMap, intraSentenceSilences, includeAllIntraSentenceGaps));
+            spans.AddRange(BuildIntraSentenceSpans(
+                transcript,
+                bookIndex,
+                hydratedSentenceMap,
+                intraSentenceSilences,
+                headingSentenceIds,
+                includeAllIntraSentenceGaps));
         }
 
         var classStats = new Dictionary<PauseClass, PauseClassSummary>();
@@ -98,10 +111,17 @@ public sealed class PauseDynamicsService : IPauseDynamicsService
 
         foreach (var span in analysis.Spans)
         {
+            if (span.CrossesChapterHead || span.Class == PauseClass.ChapterHead)
+            {
+                continue;
+            }
+
             if (!double.IsFinite(span.DurationSec) || span.DurationSec <= 0d)
             {
                 continue;
             }
+
+            bool isIntraSentence = span.LeftSentenceId >= 0 && span.LeftSentenceId == span.RightSentenceId;
 
             if (PauseCompressionMath.ShouldPreserve(span.DurationSec, span.Class, classProfiles))
             {
@@ -112,6 +132,49 @@ public sealed class PauseDynamicsService : IPauseDynamicsService
             if (!double.IsFinite(target))
             {
                 continue;
+            }
+
+            bool isShrink = target < span.DurationSec - TargetEpsilon;
+
+            if (isIntraSentence && isShrink)
+            {
+                double minAllowedByRatio = span.DurationSec * IntraSentenceMinRatio;
+                double minAllowed = Math.Max(IntraSentenceFloorDuration, minAllowedByRatio);
+                if (minAllowed >= span.DurationSec - TargetEpsilon)
+                {
+                    continue;
+                }
+
+                double clampedTarget = Math.Max(target, minAllowed);
+                double maxShrink = Math.Min(IntraSentenceMaxShrinkSeconds, span.DurationSec - minAllowed);
+                if (maxShrink <= TargetEpsilon)
+                {
+                    continue;
+                }
+
+                double desiredShrink = span.DurationSec - clampedTarget;
+                if (desiredShrink > maxShrink)
+                {
+                    clampedTarget = span.DurationSec - maxShrink;
+                }
+
+                clampedTarget = Math.Max(clampedTarget, minAllowed);
+
+                if (span.DurationSec - clampedTarget < TargetEpsilon)
+                {
+                    continue;
+                }
+
+                if (Math.Abs(clampedTarget - target) > TargetEpsilon)
+                {
+                    Log.Info(
+                        "PauseDynamics clamped intra-sentence pause target for sentence {SentenceId} from {Original:F3}s to {Clamped:F3}s",
+                        span.LeftSentenceId,
+                        target,
+                        clampedTarget);
+                }
+
+                target = clampedTarget;
             }
 
             if (Math.Abs(target - span.DurationSec) < TargetEpsilon)
@@ -184,18 +247,14 @@ public sealed class PauseDynamicsService : IPauseDynamicsService
 
     private static List<PauseSpan> BuildInterSentenceSpans(
         TranscriptIndex transcript,
-        BookIndex bookIndex,
-        HydratedTranscript? hydrated)
+        IReadOnlyDictionary<int, int> sentenceToParagraph,
+        HashSet<int> headingParagraphIds)
     {
         var orderedSentences = transcript.Sentences
             .OrderBy(s => s.Timing.StartSec)
             .ThenBy(s => s.Timing.EndSec)
             .ToList();
 
-        var sentenceToParagraph = hydrated is not null
-            ? hydrated.Paragraphs.SelectMany(paragraph => paragraph.SentenceIds.Select(id => (id, paragraph.Id)))
-                .ToDictionary(tuple => tuple.id, tuple => tuple.Id)
-            : BuildSentenceParagraphMap(bookIndex);
         var spans = new List<PauseSpan>(Math.Max(0, orderedSentences.Count - 1));
 
         for (int i = 0; i < orderedSentences.Count - 1; i++)
@@ -210,9 +269,15 @@ public sealed class PauseDynamicsService : IPauseDynamicsService
                 continue;
             }
 
-            bool crossesParagraph = sentenceToParagraph.TryGetValue(left.Id, out var leftParagraph)
-                && sentenceToParagraph.TryGetValue(right.Id, out var rightParagraph)
-                && leftParagraph != rightParagraph;
+            sentenceToParagraph.TryGetValue(left.Id, out var leftParagraphId);
+            sentenceToParagraph.TryGetValue(right.Id, out var rightParagraphId);
+
+            bool crossesParagraph = leftParagraphId >= 0
+                && rightParagraphId >= 0
+                && leftParagraphId != rightParagraphId;
+            bool leftHeading = leftParagraphId >= 0 && headingParagraphIds.Contains(leftParagraphId);
+            bool rightHeading = rightParagraphId >= 0 && headingParagraphIds.Contains(rightParagraphId);
+            bool crossesChapterHead = leftHeading || rightHeading;
 
             var pauseClass = crossesParagraph ? PauseClass.Paragraph : PauseClass.Sentence;
 
@@ -225,7 +290,7 @@ public sealed class PauseDynamicsService : IPauseDynamicsService
                 pauseClass,
                 HasGapHint: false,
                 CrossesParagraph: crossesParagraph,
-                CrossesChapterHead: false,
+                CrossesChapterHead: crossesChapterHead,
                 Provenance: PauseProvenance.ScriptPunctuation);
 
             spans.Add(span);
@@ -244,6 +309,7 @@ public sealed class PauseDynamicsService : IPauseDynamicsService
         BookIndex bookIndex,
         Dictionary<int, HydratedSentence>? hydratedSentenceMap,
         IReadOnlyList<(double Start, double End)> silences,
+        HashSet<int> headingSentenceIds,
         bool includeAllIntraSentenceGaps)
     {
         const double MinGapSeconds = 0.05;
@@ -266,7 +332,7 @@ public sealed class PauseDynamicsService : IPauseDynamicsService
 
         if (includeAllIntraSentenceGaps)
         {
-            foreach (var span in BuildAllIntraSentenceSpans(sentences, silences))
+            foreach (var span in BuildAllIntraSentenceSpans(sentences, silences, headingSentenceIds))
             {
                 yield return span;
             }
@@ -297,17 +363,44 @@ public sealed class PauseDynamicsService : IPauseDynamicsService
                 continue;
             }
 
+            if (!IsReliableSentence(sentence))
+            {
+                continue;
+            }
+
+            if (headingSentenceIds.Contains(sentence.Id))
+            {
+                continue;
+            }
+
+            double safeStart = start + IntraSentenceEdgeGuardSeconds;
+            double safeEnd = end - IntraSentenceEdgeGuardSeconds;
+            if (safeEnd - safeStart < MinGapSeconds)
+            {
+                continue;
+            }
+
             if (!sentenceSilences.TryGetValue(sentence.Id, out var list))
             {
                 list = new List<(double, double)>();
                 sentenceSilences[sentence.Id] = list;
             }
 
-            list.Add((start, end));
+            list.Add((safeStart, safeEnd));
         }
 
         foreach (var sentence in sentences)
         {
+            if (!IsReliableSentence(sentence))
+            {
+                continue;
+            }
+
+            if (headingSentenceIds.Contains(sentence.Id))
+            {
+                continue;
+            }
+
             if (!sentenceSilences.TryGetValue(sentence.Id, out var gaps))
             {
                 continue;
@@ -352,17 +445,20 @@ public sealed class PauseDynamicsService : IPauseDynamicsService
             }
         }
 
-        static IEnumerable<PauseSpan> BuildAllIntraSentenceSpans(IReadOnlyList<SentenceAlign> sentences, IReadOnlyList<(double Start, double End)> silences)
+        static IEnumerable<PauseSpan> BuildAllIntraSentenceSpans(
+            IReadOnlyList<SentenceAlign> sentences,
+            IReadOnlyList<(double Start, double End)> silences,
+            HashSet<int> headingSentenceIds)
         {
             const double MinGapSecondsLocal = 0.05;
             const double ToleranceLocal = 0.002;
 
-            foreach (var (start, end) in silences)
+        foreach (var (start, end) in silences)
+        {
+            if (!double.IsFinite(start) || !double.IsFinite(end))
             {
-                if (!double.IsFinite(start) || !double.IsFinite(end))
-                {
-                    continue;
-                }
+                continue;
+            }
 
                 double duration = end - start;
                 if (duration < MinGapSecondsLocal)
@@ -374,26 +470,43 @@ public sealed class PauseDynamicsService : IPauseDynamicsService
                     s.Timing.StartSec <= start + ToleranceLocal &&
                     s.Timing.EndSec >= end - ToleranceLocal);
 
-                if (sentence is null)
-                {
-                    continue;
-                }
-
-                var span = new PauseSpan(
-                    sentence.Id,
-                    sentence.Id,
-                    start,
-                    end,
-                    duration,
-                    PauseClass.Comma,
-                    HasGapHint: true,
-                    CrossesParagraph: false,
-                    CrossesChapterHead: false,
-                    Provenance: PauseProvenance.TextGridSilence);
-
-                Log.Info("PauseDynamics comma span from TextGrid: sentence {SentenceId} start={Start:F3}s end={End:F3}s", sentence.Id, start, end);
-                yield return span;
+            if (sentence is null)
+            {
+                continue;
             }
+
+            if (!IsReliableSentence(sentence))
+            {
+                continue;
+            }
+
+            if (headingSentenceIds.Contains(sentence.Id))
+            {
+                continue;
+            }
+
+            double safeStart = start + IntraSentenceEdgeGuardSeconds;
+            double safeEnd = end - IntraSentenceEdgeGuardSeconds;
+            if (safeEnd - safeStart < MinGapSecondsLocal)
+            {
+                continue;
+            }
+
+            var span = new PauseSpan(
+                sentence.Id,
+                sentence.Id,
+                safeStart,
+                safeEnd,
+                safeEnd - safeStart,
+                PauseClass.Comma,
+                HasGapHint: true,
+                CrossesParagraph: false,
+                CrossesChapterHead: false,
+                Provenance: PauseProvenance.TextGridSilence);
+
+            Log.Info("PauseDynamics comma span from TextGrid: sentence {SentenceId} start={Start:F3}s end={End:F3}s", sentence.Id, safeStart, safeEnd);
+            yield return span;
+        }
         }
     }
 
@@ -567,6 +680,11 @@ public sealed class PauseDynamicsService : IPauseDynamicsService
         public double Center => (Start + End) * 0.5d;
     }
 
+    private static bool IsReliableSentence(SentenceAlign sentence)
+    {
+        return string.Equals(sentence.Status, "ok", StringComparison.OrdinalIgnoreCase);
+    }
+
     private static Dictionary<int, int> BuildSentenceParagraphMap(BookIndex bookIndex)
     {
         var map = new Dictionary<int, int>();
@@ -582,7 +700,31 @@ public sealed class PauseDynamicsService : IPauseDynamicsService
         return map;
     }
 
+    private static HashSet<int> BuildHeadingParagraphSet(BookIndex bookIndex)
+    {
+        var headings = new HashSet<int>();
+        foreach (var paragraph in bookIndex.Paragraphs)
+        {
+            if (paragraph is null)
+            {
+                continue;
+            }
+
+            if (!string.IsNullOrWhiteSpace(paragraph.Kind)
+                && paragraph.Kind.Equals("Heading", StringComparison.OrdinalIgnoreCase))
+            {
+                headings.Add(paragraph.Index);
+            }
+        }
+
+        return headings;
+    }
+
     private const double TargetEpsilon = 0.005;
+    private const double IntraSentenceFloorDuration = 0.12;
+    private const double IntraSentenceMaxShrinkSeconds = 0.12;
+    private const double IntraSentenceEdgeGuardSeconds = 0.01;
+    private const double IntraSentenceMinRatio = 0.55;
 
     private static Dictionary<int, SentenceTiming> CloneBaseline(IReadOnlyDictionary<int, SentenceTiming> baseline)
     {
