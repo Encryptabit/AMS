@@ -71,12 +71,12 @@ internal sealed class ValidateTimingSession
         var sentenceLookup = BuildSentenceLookup(bookIndex);
         var (paragraphs, sentenceToParagraph, paragraphSentences) = BuildParagraphData(bookIndex);
 
-        var silenceSpans = _includeAllIntraSentenceGaps ? TryLoadMfaSilences(transcript) : null;
+        var silenceSpans = TryLoadMfaSilences(transcript);
         var policy = _policy;
 
         var service = new PauseDynamicsService();
-        var analysis = service.AnalyzeChapter(transcript, bookIndex, hydrated, policy, silenceSpans);
-        var pauseMap = PauseMapBuilder.Build(transcript, bookIndex, hydrated, policy, silenceSpans);
+        var analysis = service.AnalyzeChapter(transcript, bookIndex, hydrated, policy, silenceSpans, _includeAllIntraSentenceGaps);
+        var pauseMap = PauseMapBuilder.Build(transcript, bookIndex, hydrated, policy, silenceSpans, _includeAllIntraSentenceGaps);
 
         if (_runProsodyAnalysis)
         {
@@ -160,7 +160,7 @@ internal sealed class ValidateTimingSession
             {
                 var wordIntervals = TextGridParser.ParseWordIntervals(path);
                 var silences = wordIntervals
-                    .Where(interval => string.IsNullOrEmpty(interval.Text))
+                    .Where(interval => IsSilenceLabel(interval.Text))
                     .Select(interval => (interval.Start, interval.End))
                     .Where(span => span.End - span.Start > 0.0)
                     .ToList();
@@ -216,6 +216,23 @@ internal sealed class ValidateTimingSession
         }
 
         return results;
+    }
+
+    private static bool IsSilenceLabel(string? text)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            return true;
+        }
+
+        text = text.Trim();
+        return text.Length switch
+        {
+            0 => true,
+            2 when text.Equals("sp", StringComparison.OrdinalIgnoreCase) => true,
+            3 when text.Equals("sil", StringComparison.OrdinalIgnoreCase) => true,
+            _ => text.Equals("<sil>", StringComparison.OrdinalIgnoreCase)
+        };
     }
 
 
@@ -1871,7 +1888,7 @@ internal sealed class ValidateTimingSession
         private string BuildPauseLabel(EditablePause pause)
         {
             var builder = new StringBuilder();
-            builder.Append("Pause [").Append(pause.Span.Class).Append(']');
+            builder.Append("Pause [").Append(pause.Span.Class).Append('|').Append(pause.Span.Provenance).Append(']');
             builder.Append(' ').Append(pause.BaselineDurationSec.ToString("0.000")).Append('s');
             if (pause.HasChanges)
             {

@@ -107,6 +107,7 @@ public enum PauseProvenance
 {
     ScriptPunctuation,
     TextGridSilence,
+    ScriptAndTextGrid,
     TimelineGap,
     Unknown
 }

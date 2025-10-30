@@ -16,7 +16,8 @@ public interface IPauseDynamicsService
         BookIndex bookIndex,
         HydratedTranscript? hydrated,
         PausePolicy policy,
-        IReadOnlyList<(double Start, double End)>? intraSentenceSilences = null);
+        IReadOnlyList<(double Start, double End)>? intraSentenceSilences = null,
+        bool includeAllIntraSentenceGaps = true);
 
     PauseTransformSet PlanTransforms(PauseAnalysisReport analysis, PausePolicy policy);
 
@@ -27,7 +28,8 @@ public interface IPauseDynamicsService
         BookIndex bookIndex,
         HydratedTranscript? hydrated,
         PausePolicy policy,
-        IReadOnlyList<(double Start, double End)>? intraSentenceSilences = null);
+        IReadOnlyList<(double Start, double End)>? intraSentenceSilences = null,
+        bool includeAllIntraSentenceGaps = true);
 }
 
 public sealed record PauseApplyResult(
@@ -47,17 +49,19 @@ public sealed class PauseDynamicsService : IPauseDynamicsService
         BookIndex bookIndex,
         HydratedTranscript? hydrated,
         PausePolicy policy,
-        IReadOnlyList<(double Start, double End)>? intraSentenceSilences = null)
+        IReadOnlyList<(double Start, double End)>? intraSentenceSilences = null,
+        bool includeAllIntraSentenceGaps = true)
     {
         if (transcript is null) throw new ArgumentNullException(nameof(transcript));
         if (bookIndex is null) throw new ArgumentNullException(nameof(bookIndex));
         if (policy is null) throw new ArgumentNullException(nameof(policy));
 
         var spans = BuildInterSentenceSpans(transcript, bookIndex, hydrated);
+        Dictionary<int, HydratedSentence>? hydratedSentenceMap = hydrated?.Sentences.ToDictionary(s => s.Id);
 
         if (intraSentenceSilences is not null && intraSentenceSilences.Count > 0)
         {
-            spans.AddRange(BuildIntraSentenceSpans(transcript, intraSentenceSilences));
+            spans.AddRange(BuildIntraSentenceSpans(transcript, bookIndex, hydratedSentenceMap, intraSentenceSilences, includeAllIntraSentenceGaps));
         }
 
         var classStats = new Dictionary<PauseClass, PauseClassSummary>();
@@ -164,9 +168,10 @@ public sealed class PauseDynamicsService : IPauseDynamicsService
         BookIndex bookIndex,
         HydratedTranscript? hydrated,
         PausePolicy policy,
-        IReadOnlyList<(double Start, double End)>? intraSentenceSilences = null)
+        IReadOnlyList<(double Start, double End)>? intraSentenceSilences = null,
+        bool includeAllIntraSentenceGaps = true)
     {
-        var analysis = AnalyzeChapter(transcript, bookIndex, hydrated, policy, intraSentenceSilences);
+        var analysis = AnalyzeChapter(transcript, bookIndex, hydrated, policy, intraSentenceSilences, includeAllIntraSentenceGaps);
         var plan = PlanTransforms(analysis, policy);
         var baseline = transcript.Sentences
             .OrderBy(s => s.Timing.StartSec)
@@ -236,7 +241,10 @@ public sealed class PauseDynamicsService : IPauseDynamicsService
 
     private static IEnumerable<PauseSpan> BuildIntraSentenceSpans(
         TranscriptIndex transcript,
-        IReadOnlyList<(double Start, double End)> silences)
+        BookIndex bookIndex,
+        Dictionary<int, HydratedSentence>? hydratedSentenceMap,
+        IReadOnlyList<(double Start, double End)> silences,
+        bool includeAllIntraSentenceGaps)
     {
         const double MinGapSeconds = 0.05;
         const double Tolerance = 0.002;
@@ -250,6 +258,22 @@ public sealed class PauseDynamicsService : IPauseDynamicsService
         {
             yield break;
         }
+
+        if (silences.Count == 0)
+        {
+            yield break;
+        }
+
+        if (includeAllIntraSentenceGaps)
+        {
+            foreach (var span in BuildAllIntraSentenceSpans(sentences, silences))
+            {
+                yield return span;
+            }
+            yield break;
+        }
+
+        var sentenceSilences = new Dictionary<int, List<(double Start, double End)>>();
 
         foreach (var (start, end) in silences)
         {
@@ -273,21 +297,274 @@ public sealed class PauseDynamicsService : IPauseDynamicsService
                 continue;
             }
 
-            var span = new PauseSpan(
-                sentence.Id,
-                sentence.Id,
-                start,
-                end,
-                duration,
-                PauseClass.Comma,
-                HasGapHint: true,
-                CrossesParagraph: false,
-                CrossesChapterHead: false,
-                Provenance: PauseProvenance.TextGridSilence);
+            if (!sentenceSilences.TryGetValue(sentence.Id, out var list))
+            {
+                list = new List<(double, double)>();
+                sentenceSilences[sentence.Id] = list;
+            }
 
-            Log.Info("PauseDynamics comma span from TextGrid: sentence {SentenceId} start={Start:F3}s end={End:F3}s", sentence.Id, span.StartSec, span.EndSec);
-            yield return span;
+            list.Add((start, end));
         }
+
+        foreach (var sentence in sentences)
+        {
+            if (!sentenceSilences.TryGetValue(sentence.Id, out var gaps))
+            {
+                continue;
+            }
+
+            HydratedSentence? hydratedSentence = null;
+            hydratedSentenceMap?.TryGetValue(sentence.Id, out hydratedSentence);
+            var punctuationTimes = GetPunctuationTimes(sentence, bookIndex, hydratedSentence);
+            if (punctuationTimes.Count == 0)
+            {
+                Log.Info("PauseDynamics punctuation count zero for sentence {SentenceId}", sentence.Id);
+                continue;
+            }
+
+            var selectedGaps = MatchSilencesToPunctuation(gaps, punctuationTimes, sentence.Id);
+            foreach (var (start, end, provenance) in selectedGaps)
+            {
+                double duration = end - start;
+                if (duration < MinGapSeconds)
+                {
+                    continue;
+                }
+
+                var span = new PauseSpan(
+                    sentence.Id,
+                    sentence.Id,
+                    start,
+                    end,
+                    duration,
+                    PauseClass.Comma,
+                    HasGapHint: true,
+                    CrossesParagraph: false,
+                    CrossesChapterHead: false,
+                    Provenance: provenance);
+
+                Log.Info("PauseDynamics comma span (script/textgrid) sentence {SentenceId} start={Start:F3}s end={End:F3}s provenance={Prov}",
+                    sentence.Id,
+                    start,
+                    end,
+                    span.Provenance);
+                yield return span;
+            }
+        }
+
+        static IEnumerable<PauseSpan> BuildAllIntraSentenceSpans(IReadOnlyList<SentenceAlign> sentences, IReadOnlyList<(double Start, double End)> silences)
+        {
+            const double MinGapSecondsLocal = 0.05;
+            const double ToleranceLocal = 0.002;
+
+            foreach (var (start, end) in silences)
+            {
+                if (!double.IsFinite(start) || !double.IsFinite(end))
+                {
+                    continue;
+                }
+
+                double duration = end - start;
+                if (duration < MinGapSecondsLocal)
+                {
+                    continue;
+                }
+
+                var sentence = sentences.FirstOrDefault(s =>
+                    s.Timing.StartSec <= start + ToleranceLocal &&
+                    s.Timing.EndSec >= end - ToleranceLocal);
+
+                if (sentence is null)
+                {
+                    continue;
+                }
+
+                var span = new PauseSpan(
+                    sentence.Id,
+                    sentence.Id,
+                    start,
+                    end,
+                    duration,
+                    PauseClass.Comma,
+                    HasGapHint: true,
+                    CrossesParagraph: false,
+                    CrossesChapterHead: false,
+                    Provenance: PauseProvenance.TextGridSilence);
+
+                Log.Info("PauseDynamics comma span from TextGrid: sentence {SentenceId} start={Start:F3}s end={End:F3}s", sentence.Id, start, end);
+                yield return span;
+            }
+        }
+    }
+
+    private static List<double> GetPunctuationTimes(SentenceAlign sentence, BookIndex bookIndex, HydratedSentence? hydratedSentence)
+    {
+        double sentenceStart = sentence.Timing.StartSec;
+        double sentenceEnd = sentence.Timing.EndSec;
+        double duration = Math.Max(0d, sentenceEnd - sentenceStart);
+
+        var times = ExtractTimesFromScript(sentence.Id, sentenceStart, duration, hydratedSentence?.BookText, "Book");
+        if (times.Count > 0)
+        {
+            return times;
+        }
+
+        var fallbackTimes = ExtractTimesFromScript(sentence.Id, sentenceStart, duration, hydratedSentence?.ScriptText, "Script");
+        if (fallbackTimes.Count > 0)
+        {
+            return fallbackTimes;
+        }
+
+        return ExtractTimesFromBookWords(sentence, bookIndex);
+    }
+
+    private static bool IsIntraSentencePunctuation(char ch) => ch == ',';
+
+    private static List<double> ExtractTimesFromScript(
+        int sentenceId,
+        double sentenceStart,
+        double duration,
+        string? scriptText,
+        string sourceLabel)
+    {
+        var times = new List<double>();
+        if (string.IsNullOrWhiteSpace(scriptText) || duration <= 0)
+        {
+            return times;
+        }
+
+        var indices = new List<int>();
+        for (int i = 0; i < scriptText.Length; i++)
+        {
+            if (IsIntraSentencePunctuation(scriptText[i]))
+            {
+                indices.Add(i);
+            }
+        }
+
+        if (indices.Count == 0)
+        {
+            return times;
+        }
+
+        double length = Math.Max(1, scriptText.Length - 1);
+        foreach (var idx in indices)
+        {
+            double ratio = idx / length;
+            times.Add(sentenceStart + ratio * duration);
+        }
+
+        Log.Info(
+            "PauseDynamics {Source} punctuation count {Count} for sentence {SentenceId}",
+            sourceLabel,
+            times.Count,
+            sentenceId);
+
+        return times;
+    }
+
+    private static List<double> ExtractTimesFromBookWords(SentenceAlign sentence, BookIndex bookIndex)
+    {
+        var times = new List<double>();
+        var range = sentence.BookRange;
+        int start = Math.Clamp(range.Start, 0, bookIndex.Words.Length - 1);
+        int end = Math.Clamp(range.End, start, bookIndex.Words.Length - 1);
+
+        double sentenceStart = sentence.Timing.StartSec;
+        double sentenceEnd = sentence.Timing.EndSec;
+        double duration = Math.Max(0d, sentenceEnd - sentenceStart);
+        if (duration <= 0)
+        {
+            return times;
+        }
+
+        int wordCount = end - start + 1;
+        double step = wordCount > 0 ? duration / Math.Max(1, wordCount) : 0d;
+
+        for (int i = start; i <= end; i++)
+        {
+            var token = bookIndex.Words[i].Text;
+            if (string.IsNullOrEmpty(token))
+            {
+                continue;
+            }
+
+            double wordStart = sentenceStart + step * (i - start);
+            double wordEnd = (i == end) ? sentenceEnd : sentenceStart + step * (i - start + 1);
+            double wordCenter = (wordStart + wordEnd) * 0.5d;
+
+            foreach (char ch in token)
+            {
+                if (IsIntraSentencePunctuation(ch))
+                {
+                    times.Add(wordCenter);
+                }
+            }
+        }
+
+        return times;
+    }
+
+    private static IReadOnlyList<(double Start, double End, PauseProvenance Provenance)> MatchSilencesToPunctuation(
+        List<(double Start, double End)> gaps,
+        IReadOnlyList<double> punctuationTimes,
+        int sentenceId)
+    {
+        var results = new List<(double, double, PauseProvenance)>();
+        if (gaps.Count == 0 || punctuationTimes.Count == 0)
+        {
+            return results;
+        }
+
+        var available = gaps
+            .Select((gap, idx) => new GapCandidate(idx, gap.Start, gap.End))
+            .ToDictionary(candidate => candidate.Index);
+
+        var used = new HashSet<int>();
+
+        foreach (var punctuationTime in punctuationTimes)
+        {
+            double bestScore = double.MaxValue;
+            int bestIndex = -1;
+
+            foreach (var candidate in available.Values)
+            {
+                if (used.Contains(candidate.Index))
+                {
+                    continue;
+                }
+
+                double center = candidate.Center;
+                double score = Math.Abs(center - punctuationTime);
+                if (score < bestScore)
+                {
+                    bestScore = score;
+                    bestIndex = candidate.Index;
+                }
+            }
+
+            if (bestIndex >= 0)
+            {
+                used.Add(bestIndex);
+                var gap = gaps[bestIndex];
+                results.Add((gap.Start, gap.End, PauseProvenance.ScriptAndTextGrid));
+            }
+        }
+
+        if (results.Count < punctuationTimes.Count)
+        {
+            Log.Info("PauseDynamics matched {Matched} of {Expected} punctuation-driven pauses for sentence {SentenceId}",
+                results.Count,
+                punctuationTimes.Count,
+                sentenceId);
+        }
+
+        return results;
+    }
+
+    private readonly record struct GapCandidate(int Index, double Start, double End)
+    {
+        public double Center => (Start + End) * 0.5d;
     }
 
     private static Dictionary<int, int> BuildSentenceParagraphMap(BookIndex bookIndex)
