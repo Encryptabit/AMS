@@ -156,19 +156,17 @@ namespace Ams.Core.Audio
                 end = start;
             }
 
-
-
             if (end - start <= 0)
-
             {
-
                 start = seed.StartSec;
-
                 end = Math.Max(start, seed.EndSec);
-
             }
 
-
+            if (baseTiming.Duration > 0)
+            {
+                start = Math.Min(start, baseTiming.StartSec);
+                end = Math.Max(end, baseTiming.EndSec);
+            }
 
             return new SentenceTiming(start, end, baseTiming.FragmentBacked, baseTiming.Confidence);
 
