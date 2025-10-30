@@ -103,6 +103,14 @@ public sealed record BreathGateConfig
     public double GuardHeadMs { get; init; } = 20.0;
 }
 
+public enum PauseProvenance
+{
+    ScriptPunctuation,
+    TextGridSilence,
+    TimelineGap,
+    Unknown
+}
+
 public sealed record PauseSpan(
     int LeftSentenceId,
     int RightSentenceId,
@@ -112,7 +120,8 @@ public sealed record PauseSpan(
     PauseClass Class,
     bool HasGapHint,
     bool CrossesParagraph,
-    bool CrossesChapterHead);
+    bool CrossesChapterHead,
+    PauseProvenance Provenance = PauseProvenance.Unknown);
 
 public abstract record PauseTransform;
 

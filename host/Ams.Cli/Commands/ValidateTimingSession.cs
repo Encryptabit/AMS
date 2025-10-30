@@ -24,16 +24,19 @@ internal sealed class ValidateTimingSession
     private readonly FileInfo _bookIndexFile;
     private readonly FileInfo _hydrateFile;
     private readonly bool _runProsodyAnalysis;
+    private readonly bool _includeAllIntraSentenceGaps;
     private readonly PausePolicy _policy;
     private readonly FileInfo _pauseAdjustmentsFile;
     private PauseAnalysisReport? _prosodyAnalysis;
 
-    public ValidateTimingSession(FileInfo transcriptFile, FileInfo bookIndexFile, FileInfo hydrateFile, bool runProsodyAnalysis)
+    public ValidateTimingSession(FileInfo transcriptFile, FileInfo bookIndexFile, FileInfo hydrateFile,
+        bool runProsodyAnalysis, bool includeAllIntraSentenceGaps = false)
     {
         _transcriptFile = transcriptFile ?? throw new ArgumentNullException(nameof(transcriptFile));
         _bookIndexFile = bookIndexFile ?? throw new ArgumentNullException(nameof(bookIndexFile));
         _hydrateFile = hydrateFile ?? throw new ArgumentNullException(nameof(hydrateFile));
         _runProsodyAnalysis = runProsodyAnalysis;
+        _includeAllIntraSentenceGaps = includeAllIntraSentenceGaps;
         _policy = PausePolicyPresets.House();
 
         var baseName = Path.GetFileNameWithoutExtension(_transcriptFile.Name);
@@ -45,7 +48,7 @@ internal sealed class ValidateTimingSession
         if (!string.IsNullOrWhiteSpace(baseName))
         {
             baseName = baseName.Replace(".pause-adjusted", string.Empty, StringComparison.OrdinalIgnoreCase)
-                               .Replace(".align", string.Empty, StringComparison.OrdinalIgnoreCase);
+                .Replace(".align", string.Empty, StringComparison.OrdinalIgnoreCase);
         }
 
         if (string.IsNullOrWhiteSpace(baseName))
@@ -68,7 +71,7 @@ internal sealed class ValidateTimingSession
         var sentenceLookup = BuildSentenceLookup(bookIndex);
         var (paragraphs, sentenceToParagraph, paragraphSentences) = BuildParagraphData(bookIndex);
 
-        var silenceSpans = TryLoadMfaSilences(transcript);
+        var silenceSpans = _includeAllIntraSentenceGaps ? TryLoadMfaSilences(transcript) : null;
         var policy = _policy;
 
         var service = new PauseDynamicsService();
@@ -252,7 +255,8 @@ internal sealed class ValidateTimingSession
         return map;
     }
 
-    private static (IReadOnlyList<ParagraphInfo> Paragraphs, IReadOnlyDictionary<int, int> SentenceToParagraph, IReadOnlyDictionary<int, IReadOnlyList<int>> ParagraphSentences) BuildParagraphData(BookIndex book)
+    private static (IReadOnlyList<ParagraphInfo> Paragraphs, IReadOnlyDictionary<int, int> SentenceToParagraph,
+        IReadOnlyDictionary<int, IReadOnlyList<int>> ParagraphSentences) BuildParagraphData(BookIndex book)
     {
         var paragraphs = new List<ParagraphInfo>(book.Paragraphs.Length);
         foreach (var paragraph in book.Paragraphs)
@@ -302,7 +306,8 @@ internal sealed class ValidateTimingSession
         }
 
         AnsiConsole.WriteLine();
-        AnsiConsole.MarkupLineInterpolated($"Loaded [green]{transcript.Sentences.Count}[/] sentences, [green]{gapCount}[/] gap spans.");
+        AnsiConsole.MarkupLineInterpolated(
+            $"Loaded [green]{transcript.Sentences.Count}[/] sentences, [green]{gapCount}[/] gap spans.");
         AnsiConsole.MarkupLineInterpolated($"Source manuscript words: [green]{book.Words.Length}[/].");
         AnsiConsole.WriteLine();
     }
@@ -368,7 +373,8 @@ internal sealed class ValidateTimingSession
         return dynamicAdjustments;
     }
 
-    private IReadOnlyList<PauseAdjust> BuildStaticBufferAdjustments(InteractiveState state, IReadOnlyList<PauseAdjust> dynamicAdjustments)
+    private IReadOnlyList<PauseAdjust> BuildStaticBufferAdjustments(InteractiveState state,
+        IReadOnlyList<PauseAdjust> dynamicAdjustments)
     {
         var baseline = state.GetBaselineTimeline();
         if (baseline.Count == 0)
@@ -518,7 +524,8 @@ internal sealed class ValidateTimingSession
 
         public IReadOnlyList<ScopeEntry> Entries => _entries;
 
-        public ScopeEntry Current => CursorIndex >= 0 && CursorIndex < _entries.Count ? _entries[CursorIndex] : ScopeEntry.Empty;
+        public ScopeEntry Current =>
+            CursorIndex >= 0 && CursorIndex < _entries.Count ? _entries[CursorIndex] : ScopeEntry.Empty;
 
         public int ParagraphCount => _chapter.Paragraphs.Count;
 
@@ -538,7 +545,8 @@ internal sealed class ValidateTimingSession
             foreach (var kvp in _baselineTimeline)
             {
                 var timing = kvp.Value;
-                clone[kvp.Key] = new SentenceTiming(timing.StartSec, timing.EndSec, timing.FragmentBacked, timing.Confidence);
+                clone[kvp.Key] = new SentenceTiming(timing.StartSec, timing.EndSec, timing.FragmentBacked,
+                    timing.Confidence);
             }
 
             return clone;
@@ -777,7 +785,8 @@ internal sealed class ValidateTimingSession
             return _compression.GetSnapshot();
         }
 
-        public IReadOnlyList<CompressionPreviewItem> GetCompressionPreview(int maxRows, out bool hasPrevious, out bool hasNext)
+        public IReadOnlyList<CompressionPreviewItem> GetCompressionPreview(int maxRows, out bool hasPrevious,
+            out bool hasNext)
         {
             if (_compression is null)
             {
@@ -837,7 +846,8 @@ internal sealed class ValidateTimingSession
                 return;
             }
 
-            _compression = new CompressionState(scope, CompressionControls.FromPolicy(_basePolicy), pauses, _basePolicy);
+            _compression =
+                new CompressionState(scope, CompressionControls.FromPolicy(_basePolicy), pauses, _basePolicy);
         }
 
         private List<EditablePause> CollectCompressionPauses(ScopeEntry scope)
@@ -875,6 +885,7 @@ internal sealed class ValidateTimingSession
                             AddPause(pause);
                         }
                     }
+
                     break;
 
                 case ScopeEntryKind.Paragraph when scope.ParagraphId.HasValue:
@@ -898,6 +909,7 @@ internal sealed class ValidateTimingSession
                             AddPause(pause);
                         }
                     }
+
                     break;
 
                 case ScopeEntryKind.Sentence when scope.ParagraphId.HasValue && scope.SentenceId.HasValue:
@@ -917,6 +929,7 @@ internal sealed class ValidateTimingSession
                             }
                         }
                     }
+
                     break;
 
                 default:
@@ -1054,11 +1067,13 @@ internal sealed class ValidateTimingSession
                     {
                         Append(list);
                     }
+
                     break;
 
                 case ScopeEntryKind.Paragraph when scope.ParagraphId.HasValue:
                     int paragraphId = scope.ParagraphId.Value;
-                    Append(_chapterPauses.Where(pause => pause.LeftParagraphId == paragraphId || pause.RightParagraphId == paragraphId));
+                    Append(_chapterPauses.Where(pause =>
+                        pause.LeftParagraphId == paragraphId || pause.RightParagraphId == paragraphId));
                     foreach (var sentenceId in GetParagraphSentenceIds(paragraphId))
                     {
                         if (_sentencePauses.TryGetValue(sentenceId, out var list))
@@ -1066,6 +1081,7 @@ internal sealed class ValidateTimingSession
                             Append(list);
                         }
                     }
+
                     break;
 
                 case ScopeEntryKind.Sentence when scope.SentenceId.HasValue:
@@ -1073,6 +1089,7 @@ internal sealed class ValidateTimingSession
                     {
                         Append(sentencePauses);
                     }
+
                     break;
 
                 case ScopeEntryKind.Pause when scope.Pause is not null:
@@ -1085,7 +1102,8 @@ internal sealed class ValidateTimingSession
 
         public ScopeEntry? GetChapterEntry() => _entries.FirstOrDefault(entry => entry.Kind == ScopeEntryKind.Chapter);
 
-        public IEnumerable<ScopeEntry> EnumerateParagraphEntries() => _entries.Where(entry => entry.Kind == ScopeEntryKind.Paragraph);
+        public IEnumerable<ScopeEntry> EnumerateParagraphEntries() =>
+            _entries.Where(entry => entry.Kind == ScopeEntryKind.Paragraph);
 
         public IEnumerable<ScopeEntry> EnumerateSentenceEntries(int paragraphId) => _entries
             .Where(entry => entry.Kind == ScopeEntryKind.Sentence && entry.ParagraphId == paragraphId);
@@ -1228,8 +1246,10 @@ internal sealed class ValidateTimingSession
                 {
                     ScopeEntryKind.Chapter => true,
                     ScopeEntryKind.Paragraph => scope.ParagraphId == Scope.ParagraphId,
-                    ScopeEntryKind.Sentence => scope.ParagraphId == Scope.ParagraphId && scope.SentenceId == Scope.SentenceId,
-                    ScopeEntryKind.Pause => scope.Pause is not null && Scope.Pause is not null && ReferenceEquals(scope.Pause, Scope.Pause),
+                    ScopeEntryKind.Sentence => scope.ParagraphId == Scope.ParagraphId &&
+                                               scope.SentenceId == Scope.SentenceId,
+                    ScopeEntryKind.Pause => scope.Pause is not null && Scope.Pause is not null &&
+                                            ReferenceEquals(scope.Pause, Scope.Pause),
                     _ => false
                 };
             }
@@ -1291,7 +1311,8 @@ internal sealed class ValidateTimingSession
                 return true;
             }
 
-            public IReadOnlyList<CompressionPreviewItem> GetPreviewSlice(int maxRows, out bool hasPrevious, out bool hasNext)
+            public IReadOnlyList<CompressionPreviewItem> GetPreviewSlice(int maxRows, out bool hasPrevious,
+                out bool hasNext)
             {
                 hasPrevious = false;
                 hasNext = false;
@@ -1421,8 +1442,10 @@ internal sealed class ValidateTimingSession
                 return Scope.Kind switch
                 {
                     ScopeEntryKind.Chapter => true,
-                    ScopeEntryKind.Paragraph when Scope.ParagraphId.HasValue => GetPauseParagraphId(pause) == Scope.ParagraphId.Value,
-                    ScopeEntryKind.Sentence when Scope.SentenceId.HasValue => pause.Span.LeftSentenceId == Scope.SentenceId.Value,
+                    ScopeEntryKind.Paragraph when Scope.ParagraphId.HasValue => GetPauseParagraphId(pause) ==
+                        Scope.ParagraphId.Value,
+                    ScopeEntryKind.Sentence when Scope.SentenceId.HasValue => pause.Span.LeftSentenceId ==
+                                                                              Scope.SentenceId.Value,
                     ScopeEntryKind.Pause => Scope.Pause is not null && ReferenceEquals(pause, Scope.Pause),
                     _ => false
                 };
@@ -1443,7 +1466,8 @@ internal sealed class ValidateTimingSession
             private const double MinQuantile = 0.0;
             private const double MaxQuantile = 0.99;
 
-            private CompressionControls(double ratioInside, double ratioOutside, double kneeWidth, double preserveTopQuantile)
+            private CompressionControls(double ratioInside, double ratioOutside, double kneeWidth,
+                double preserveTopQuantile)
             {
                 RatioInside = ratioInside;
                 RatioOutside = ratioOutside;
@@ -1460,7 +1484,8 @@ internal sealed class ValidateTimingSession
 
             public static CompressionControls FromPolicy(PausePolicy policy)
             {
-                return new CompressionControls(policy.RatioInside, policy.RatioOutside, policy.KneeWidth, policy.PreserveTopQuantile);
+                return new CompressionControls(policy.RatioInside, policy.RatioOutside, policy.KneeWidth,
+                    policy.PreserveTopQuantile);
             }
 
             public PausePolicy ToPolicy(PausePolicy basePolicy)
@@ -1564,7 +1589,8 @@ internal sealed class ValidateTimingSession
                         return $"Sentence {Pause.Span.LeftSentenceId} [{Pause.Span.Class}]";
                     }
 
-                    if (Pause.Span.LeftSentenceId >= 0 && Pause.Span.RightSentenceId >= 0 && Pause.Span.LeftSentenceId != Pause.Span.RightSentenceId)
+                    if (Pause.Span.LeftSentenceId >= 0 && Pause.Span.RightSentenceId >= 0 &&
+                        Pause.Span.LeftSentenceId != Pause.Span.RightSentenceId)
                     {
                         return $"Sent {Pause.Span.LeftSentenceId}->{Pause.Span.RightSentenceId} [{Pause.Span.Class}]";
                     }
@@ -1574,9 +1600,12 @@ internal sealed class ValidateTimingSession
             }
         }
 
-        public sealed record CompressionControlsSnapshot(IReadOnlyList<CompressionControlDisplay> Controls, int SelectedIndex)
+        public sealed record CompressionControlsSnapshot(
+            IReadOnlyList<CompressionControlDisplay> Controls,
+            int SelectedIndex)
         {
-            public static CompressionControlsSnapshot Empty { get; } = new CompressionControlsSnapshot(Array.Empty<CompressionControlDisplay>(), 0);
+            public static CompressionControlsSnapshot Empty { get; } =
+                new CompressionControlsSnapshot(Array.Empty<CompressionControlDisplay>(), 0);
         }
 
         public sealed record CompressionControlDisplay(string Label, string Value);
@@ -1622,6 +1651,7 @@ internal sealed class ValidateTimingSession
                     {
                         AppendPauseSentencesFallback(sb, pause);
                     }
+
                     break;
             }
 
@@ -1692,7 +1722,10 @@ internal sealed class ValidateTimingSession
         private EditablePause CreateEditablePause(PauseSpan span)
         {
             string leftText = _sentenceLookup.TryGetValue(span.LeftSentenceId, out var left) ? left : string.Empty;
-            string rightText = span.RightSentenceId >= 0 && _sentenceLookup.TryGetValue(span.RightSentenceId, out var right) ? right : string.Empty;
+            string rightText =
+                span.RightSentenceId >= 0 && _sentenceLookup.TryGetValue(span.RightSentenceId, out var right)
+                    ? right
+                    : string.Empty;
             int? leftParagraph = _sentenceToParagraph.TryGetValue(span.LeftSentenceId, out var lp) ? lp : null;
             int? rightParagraph = _sentenceToParagraph.TryGetValue(span.RightSentenceId, out var rp) ? rp : null;
             return new EditablePause(span, leftText, rightText, leftParagraph, rightParagraph);
@@ -1889,7 +1922,8 @@ internal sealed class ValidateTimingSession
             }
         }
 
-        private void AppendParagraphMarkup(StringBuilder sb, int paragraphId, int? highlightSentenceId, int? partnerSentenceId)
+        private void AppendParagraphMarkup(StringBuilder sb, int paragraphId, int? highlightSentenceId,
+            int? partnerSentenceId)
         {
             if (!_paragraphLookup.TryGetValue(paragraphId, out var info))
             {
@@ -1963,7 +1997,8 @@ internal sealed class ValidateTimingSession
 
         private void AppendPauseSentencesFallback(StringBuilder sb, EditablePause pause)
         {
-            AppendSentenceFallback(sb, pause.Span.LeftSentenceId, pause.Span.RightSentenceId >= 0 ? pause.Span.RightSentenceId : null);
+            AppendSentenceFallback(sb, pause.Span.LeftSentenceId,
+                pause.Span.RightSentenceId >= 0 ? pause.Span.RightSentenceId : null);
         }
 
         private sealed record TopLevelItem(double Start, ParagraphPauseMap? Paragraph, EditablePause? Pause);
@@ -1971,9 +2006,9 @@ internal sealed class ValidateTimingSession
         private static bool MatchesCommittedPause(PauseAdjust adjust, PauseSpan span)
         {
             return adjust.LeftSentenceId == span.LeftSentenceId
-                && adjust.RightSentenceId == span.RightSentenceId
-                && Math.Abs(adjust.StartSec - span.StartSec) <= DurationEpsilon
-                && Math.Abs(adjust.EndSec - span.EndSec) <= DurationEpsilon;
+                   && adjust.RightSentenceId == span.RightSentenceId
+                   && Math.Abs(adjust.StartSec - span.StartSec) <= DurationEpsilon
+                   && Math.Abs(adjust.EndSec - span.EndSec) <= DurationEpsilon;
         }
     }
 
@@ -1982,6 +2017,7 @@ internal sealed class ValidateTimingSession
         private readonly InteractiveState _state;
         private readonly PauseAnalysisReport? _analysisSummary;
         private readonly PausePolicy _policy;
+
         public TimingRenderer(InteractiveState state, PauseAnalysisReport? analysisSummary, PausePolicy policy)
         {
             _state = state ?? throw new ArgumentNullException(nameof(state));
@@ -2005,7 +2041,8 @@ internal sealed class ValidateTimingSession
             var header = new Layout("header") { Size = 3 };
             header.Update(new Rows(new IRenderable[]
             {
-                new Markup("[bold dodgerblue1]Timing session[/] 🕒  [grey]Esc=exit  ↑/↓=next peer  Ctrl+↑/↓=level  ←/→=±5ms (pause)  Shift+←/→=±10ms  Enter=set duration[/]"),
+                new Markup(
+                    "[bold dodgerblue1]Timing session[/] 🕒  [grey]Esc=exit  ↑/↓=next peer  Ctrl+↑/↓=level  ←/→=±5ms (pause)  Shift+←/→=±10ms  Enter=set duration[/]"),
                 new Markup(string.Empty)
             }));
 
@@ -2014,7 +2051,8 @@ internal sealed class ValidateTimingSession
                 var rootEmpty = new Layout("root").SplitRows(header);
                 header.Update(new Rows(new IRenderable[]
                 {
-                    new Markup("[bold dodgerblue1]Timing session[/] 🕒  [grey]Esc=exit  ↑/↓=next peer  Ctrl+↑/↓=level  ←/→=±5ms (pause)  Shift+←/→=±10ms  Enter=set duration[/]"),
+                    new Markup(
+                        "[bold dodgerblue1]Timing session[/] 🕒  [grey]Esc=exit  ↑/↓=next peer  Ctrl+↑/↓=level  ←/→=±5ms (pause)  Shift+←/→=±10ms  Enter=set duration[/]"),
                     new Markup("[yellow]No pause spans available for this chapter.[/]")
                 }));
                 return rootEmpty;
@@ -2166,9 +2204,12 @@ internal sealed class ValidateTimingSession
         {
             string summary = entry.Kind switch
             {
-                ScopeEntryKind.Chapter => $"Par {_state.ParagraphCount}  Sent {_state.TotalSentenceCount}  Pauses {_state.TotalPauseCount}",
-                ScopeEntryKind.Paragraph when entry.ParagraphId.HasValue => $"Sent {_state.GetParagraphSentenceCount(entry.ParagraphId.Value)}  Pauses {_state.CountParagraphPauses(entry.ParagraphId.Value)}",
-                ScopeEntryKind.Sentence when entry.SentenceId.HasValue => $"Pauses {_state.CountSentencePauses(entry.SentenceId.Value)}",
+                ScopeEntryKind.Chapter =>
+                    $"Par {_state.ParagraphCount}  Sent {_state.TotalSentenceCount}  Pauses {_state.TotalPauseCount}",
+                ScopeEntryKind.Paragraph when entry.ParagraphId.HasValue =>
+                    $"Sent {_state.GetParagraphSentenceCount(entry.ParagraphId.Value)}  Pauses {_state.CountParagraphPauses(entry.ParagraphId.Value)}",
+                ScopeEntryKind.Sentence when entry.SentenceId.HasValue =>
+                    $"Pauses {_state.CountSentencePauses(entry.SentenceId.Value)}",
                 ScopeEntryKind.Pause when entry.Pause is not null => $"{entry.Pause.Span.DurationSec:0.000}s",
                 _ => string.Empty
             };
@@ -2194,7 +2235,8 @@ internal sealed class ValidateTimingSession
 
             if (_state.Current.Stats is not null)
             {
-                items.Add(WrapInPanel(CreateStatsTable(_state.Current.Stats), $"Chapter Pauses ({_state.TotalPauseCount})"));
+                items.Add(WrapInPanel(CreateStatsTable(_state.Current.Stats),
+                    $"Chapter Pauses ({_state.TotalPauseCount})"));
             }
 
             if (_analysisSummary is not null && _analysisSummary.Spans.Count > 0)
@@ -2277,6 +2319,7 @@ internal sealed class ValidateTimingSession
             {
                 return new Markup("[grey]No statistics for this sentence.[/]");
             }
+
             var items = new List<IRenderable>
             {
                 WrapInPanel(CreateStatsTable(current.Stats), $"Sentence {current.SentenceId}")
@@ -2373,18 +2416,18 @@ internal sealed class ValidateTimingSession
                         previewTable.AddRow("[grey]…[/]", string.Empty, string.Empty, string.Empty);
                     }
 
-            foreach (var item in previewItems)
-            {
-                string deltaText = item.Delta >= 0
-                    ? $"[green]+{item.Delta:0.000}[/]"
-                    : $"[red]{item.Delta:0.000}[/]";
+                    foreach (var item in previewItems)
+                    {
+                        string deltaText = item.Delta >= 0
+                            ? $"[green]+{item.Delta:0.000}[/]"
+                            : $"[red]{item.Delta:0.000}[/]";
 
-                previewTable.AddRow(
-                    Markup.Escape(item.Label),
-                    item.OriginalDuration.ToString("0.000"),
-                    item.TargetDuration.ToString("0.000"),
-                    deltaText);
-            }
+                        previewTable.AddRow(
+                            Markup.Escape(item.Label),
+                            item.OriginalDuration.ToString("0.000"),
+                            item.TargetDuration.ToString("0.000"),
+                            deltaText);
+                    }
 
                     if (hasNext)
                     {
@@ -2633,18 +2676,32 @@ internal sealed class ValidateTimingSession
 
                     bool updated = key.Key switch
                     {
-                        ConsoleKey.UpArrow or ConsoleKey.K when _state.OptionsFocused && (key.Modifiers & ConsoleModifiers.Control) != 0 => _state.ScrollCompressionPreview(-5),
-                        ConsoleKey.DownArrow or ConsoleKey.J when _state.OptionsFocused && (key.Modifiers & ConsoleModifiers.Control) != 0 => _state.ScrollCompressionPreview(+5),
-                        ConsoleKey.UpArrow or ConsoleKey.K when _state.OptionsFocused => _state.MoveCompressionControlSelection(-1),
-                        ConsoleKey.DownArrow or ConsoleKey.J when _state.OptionsFocused => _state.MoveCompressionControlSelection(+1),
-                        ConsoleKey.LeftArrow or ConsoleKey.H when _state.OptionsFocused => _state.AdjustCompressionControl(-1, key.Modifiers),
-                        ConsoleKey.RightArrow or ConsoleKey.L when _state.OptionsFocused => _state.AdjustCompressionControl(+1, key.Modifiers),
-                        ConsoleKey.UpArrow or ConsoleKey.K when !_state.OptionsFocused && (key.Modifiers & ConsoleModifiers.Control) != 0 => _state.StepOut(),
-                        ConsoleKey.DownArrow or ConsoleKey.J when !_state.OptionsFocused && (key.Modifiers & ConsoleModifiers.Control) != 0 => _state.StepInto(),
+                        ConsoleKey.UpArrow or ConsoleKey.K when _state.OptionsFocused &&
+                                                                (key.Modifiers & ConsoleModifiers.Control) != 0 =>
+                            _state.ScrollCompressionPreview(-5),
+                        ConsoleKey.DownArrow or ConsoleKey.J when _state.OptionsFocused &&
+                                                                  (key.Modifiers & ConsoleModifiers.Control) != 0 =>
+                            _state.ScrollCompressionPreview(+5),
+                        ConsoleKey.UpArrow or ConsoleKey.K when _state.OptionsFocused => _state
+                            .MoveCompressionControlSelection(-1),
+                        ConsoleKey.DownArrow or ConsoleKey.J when _state.OptionsFocused => _state
+                            .MoveCompressionControlSelection(+1),
+                        ConsoleKey.LeftArrow or ConsoleKey.H when _state.OptionsFocused => _state
+                            .AdjustCompressionControl(-1, key.Modifiers),
+                        ConsoleKey.RightArrow or ConsoleKey.L when _state.OptionsFocused => _state
+                            .AdjustCompressionControl(+1, key.Modifiers),
+                        ConsoleKey.UpArrow or ConsoleKey.K when !_state.OptionsFocused &&
+                                                                (key.Modifiers & ConsoleModifiers.Control) != 0 =>
+                            _state.StepOut(),
+                        ConsoleKey.DownArrow or ConsoleKey.J when !_state.OptionsFocused &&
+                                                                  (key.Modifiers & ConsoleModifiers.Control) != 0 =>
+                            _state.StepInto(),
                         ConsoleKey.UpArrow or ConsoleKey.K when !_state.OptionsFocused => _state.MoveWithinTier(-1),
                         ConsoleKey.DownArrow or ConsoleKey.J when !_state.OptionsFocused => _state.MoveWithinTier(+1),
-                        ConsoleKey.LeftArrow or ConsoleKey.H when !_state.OptionsFocused => AdjustCurrent(-1, key.Modifiers),
-                        ConsoleKey.RightArrow or ConsoleKey.L when !_state.OptionsFocused => AdjustCurrent(+1, key.Modifiers),
+                        ConsoleKey.LeftArrow or ConsoleKey.H when !_state.OptionsFocused => AdjustCurrent(-1,
+                            key.Modifiers),
+                        ConsoleKey.RightArrow or ConsoleKey.L when !_state.OptionsFocused => AdjustCurrent(+1,
+                            key.Modifiers),
                         ConsoleKey.Spacebar => ToggleOptionsFocus(),
                         ConsoleKey.Enter => _state.OptionsFocused ? CommitCurrentScope() : PromptForValue(),
                         _ => false
@@ -2723,7 +2780,8 @@ internal sealed class ValidateTimingSession
         double? Start,
         double? End)
     {
-        public static ScopeEntry Empty { get; } = new ScopeEntry(ScopeEntryKind.Chapter, 0, Markup.Escape("No scope"), null, null, null, null, null, null);
+        public static ScopeEntry Empty { get; } = new ScopeEntry(ScopeEntryKind.Chapter, 0, Markup.Escape("No scope"),
+            null, null, null, null, null, null);
     }
 
     private enum ScopeEntryKind
@@ -2758,7 +2816,8 @@ internal sealed class ValidateTimingSession
         private const double DurationEpsilon = 1e-6;
         private double _baselineDurationSec;
 
-        public EditablePause(PauseSpan span, string leftText, string rightText, int? leftParagraphId, int? rightParagraphId)
+        public EditablePause(PauseSpan span, string leftText, string rightText, int? leftParagraphId,
+            int? rightParagraphId)
         {
             Span = span;
             LeftText = leftText;
@@ -2796,7 +2855,8 @@ internal sealed class ValidateTimingSession
                     return true;
                 }
 
-                if (LeftParagraphId.HasValue && RightParagraphId.HasValue && LeftParagraphId.Value != RightParagraphId.Value)
+                if (LeftParagraphId.HasValue && RightParagraphId.HasValue &&
+                    LeftParagraphId.Value != RightParagraphId.Value)
                 {
                     return true;
                 }

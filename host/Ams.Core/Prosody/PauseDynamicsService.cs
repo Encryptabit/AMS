@@ -4,6 +4,7 @@ using System.Collections.ObjectModel;
 using System.Linq;
 using Ams.Core.Artifacts;
 using Ams.Core.Book;
+using Ams.Core.Common;
 using Ams.Core.Hydrate;
 
 namespace Ams.Core.Prosody;
@@ -210,7 +211,7 @@ public sealed class PauseDynamicsService : IPauseDynamicsService
 
             var pauseClass = crossesParagraph ? PauseClass.Paragraph : PauseClass.Sentence;
 
-            spans.Add(new PauseSpan(
+            var span = new PauseSpan(
                 left.Id,
                 right.Id,
                 start,
@@ -219,7 +220,15 @@ public sealed class PauseDynamicsService : IPauseDynamicsService
                 pauseClass,
                 HasGapHint: false,
                 CrossesParagraph: crossesParagraph,
-                CrossesChapterHead: false));
+                CrossesChapterHead: false,
+                Provenance: PauseProvenance.ScriptPunctuation);
+
+            spans.Add(span);
+
+            if (span.Class == PauseClass.Comma)
+            {
+                Log.Info("PauseDynamics comma span from script: sentence {SentenceId} start={Start:F3}s end={End:F3}s", left.Id, span.StartSec, span.EndSec);
+            }
         }
 
         return spans;
@@ -264,7 +273,7 @@ public sealed class PauseDynamicsService : IPauseDynamicsService
                 continue;
             }
 
-            yield return new PauseSpan(
+            var span = new PauseSpan(
                 sentence.Id,
                 sentence.Id,
                 start,
@@ -273,7 +282,11 @@ public sealed class PauseDynamicsService : IPauseDynamicsService
                 PauseClass.Comma,
                 HasGapHint: true,
                 CrossesParagraph: false,
-                CrossesChapterHead: false);
+                CrossesChapterHead: false,
+                Provenance: PauseProvenance.TextGridSilence);
+
+            Log.Info("PauseDynamics comma span from TextGrid: sentence {SentenceId} start={Start:F3}s end={End:F3}s", sentence.Id, span.StartSec, span.EndSec);
+            yield return span;
         }
     }
 

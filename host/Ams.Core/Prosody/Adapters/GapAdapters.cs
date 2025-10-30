@@ -25,7 +25,8 @@ public static class GapAdapters
             pauseClass,
             hasGapHint,
             crossesParagraph,
-            crossesChapterHead);
+            crossesChapterHead,
+            PauseProvenance.TimelineGap);
     }
 
     public static IReadOnlyList<PauseSpan> BuildFromTimeline(
@@ -73,7 +74,8 @@ public static class GapAdapters
                 pauseClass,
                 hint,
                 crossesParagraph,
-                crossesChapter));
+                crossesChapter,
+                PauseProvenance.TimelineGap));
         }
 
         return spans;

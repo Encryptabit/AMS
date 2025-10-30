@@ -56,11 +56,18 @@ public static class ValidateCommand
             () => false,
             "Load pause-adjusted transcript/hydrate artifacts when present.");
 
+        var includeAllIntraOption = new Option<bool>(
+            "--all-gaps",
+            () => false,
+            "Include all detected intra-sentence gaps (TextGrid silences) instead of only script punctuation.");
+        includeAllIntraOption.AddAlias("-A");
+
         cmd.AddOption(txOption);
         cmd.AddOption(hydrateOption);
         cmd.AddOption(bookIndexOption);
         cmd.AddOption(prosodyAnalyzeOption);
         cmd.AddOption(useAdjustedOption);
+        cmd.AddOption(includeAllIntraOption);
 
         cmd.SetHandler(async context =>
         {
@@ -131,8 +138,9 @@ public static class ValidateCommand
                 }
 
                 var runProsody = context.ParseResult.GetValueForOption(prosodyAnalyzeOption);
+                var includeAllIntra = context.ParseResult.GetValueForOption(includeAllIntraOption);
 
-                var session = new ValidateTimingSession(tx, bookIndex, hydrate, runProsody);
+                var session = new ValidateTimingSession(tx, bookIndex, hydrate, runProsody, includeAllIntra);
                 await session.RunAsync(context.GetCancellationToken());
             }
             catch (OperationCanceledException)
