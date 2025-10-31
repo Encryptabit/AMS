@@ -12,6 +12,7 @@ internal static class PauseAudioApplier
 {
     private const double DurationEpsilon = 1e-6;
     private const double SegmentFadeMs = 5.0;
+    private const double LoopTransitionMs = 6.0;
     private static readonly IReadOnlyList<PauseIntraGap> EmptyIntraGaps = Array.Empty<PauseIntraGap>();
 
     public static AudioBuffer Apply(
@@ -139,8 +140,7 @@ internal static class PauseAudioApplier
         }
 
         double scheduledEndSec = finalTimeline.Count > 0 ? finalTimeline.Values.Max(t => t.EndSec) : 0d;
-        double baseDurationSec = Math.Max(scheduledEndSec, audio.Length / (double)sampleRate);
-        double totalDurationSec = Math.Max(baseDurationSec, maxSegmentEndSec);
+        double totalDurationSec = Math.Max(scheduledEndSec, maxSegmentEndSec);
         if (hasTail)
         {
             totalDurationSec = Math.Max(totalDurationSec, tailTiming!.EndSec);
@@ -185,27 +185,62 @@ internal static class PauseAudioApplier
 
         int toneLength = tone.Planar[0].Length;
         int toneIndex = FindBestStartIndex(tone.Planar[0]);
-        float prevSample = tone.Planar[0][toneIndex];
+
+        int transitionSamples = Math.Max(8, (int)Math.Round(LoopTransitionMs * 0.001 * sampleRate));
+        var prevSamples = new float[channels];
+        var transitionStart = new float[channels];
+        int transitionLength = 0;
+        int transitionIndex = 0;
+        float prevReferenceSample = 0f;
 
         for (int i = 0; i < length; i++)
         {
             if (toneIndex >= toneLength)
             {
-                toneIndex = FindBestWrapIndex(tone.Planar[0], prevSample);
+                toneIndex = FindBestWrapIndex(tone.Planar[0], prevReferenceSample, gain);
+                if (transitionSamples > 0)
+                {
+                    Array.Copy(prevSamples, transitionStart, channels);
+                    transitionLength = transitionSamples;
+                    transitionIndex = 0;
+                }
             }
+
+            double blendProgress = transitionLength > 0
+                ? Math.Min(1.0, (transitionIndex + 1) / (double)transitionLength)
+                : 1.0;
 
             for (int ch = 0; ch < channels; ch++)
             {
                 var src = tone.Planar[ch % tone.Channels];
                 var dst = bed.Planar[ch];
-                float sample = src[toneIndex];
-                dst[i] = (float)(gain * sample);
+
+                double raw = gain * src[toneIndex];
+                if (transitionLength > 0)
+                {
+                    double startVal = transitionStart[ch];
+                    raw = startVal + (raw - startVal) * blendProgress;
+                }
+
+                float sample = (float)raw;
+                dst[i] = sample;
+                prevSamples[ch] = sample;
+
                 if (ch == 0)
                 {
-                    prevSample = sample;
+                    prevReferenceSample = sample;
                 }
             }
 
+            if (transitionLength > 0)
+            {
+                transitionIndex++;
+                if (transitionIndex >= transitionLength)
+                {
+                    transitionLength = 0;
+                    transitionIndex = 0;
+                }
+            }
             toneIndex++;
         }
 
@@ -359,7 +394,7 @@ internal static class PauseAudioApplier
         return bestIndex;
     }
 
-    private static int FindBestWrapIndex(float[] samples, float prevSample)
+    private static int FindBestWrapIndex(float[] samples, float prevSample, double gain)
     {
         if (samples.Length == 0)
         {
@@ -367,11 +402,11 @@ internal static class PauseAudioApplier
         }
 
         int bestIndex = 0;
-        float bestDiff = Math.Abs(samples[0] - prevSample);
+        float bestDiff = Math.Abs((float)(gain * samples[0]) - prevSample);
 
         for (int i = 1; i < samples.Length; i++)
         {
-            float diff = Math.Abs(samples[i] - prevSample);
+            float diff = Math.Abs((float)(gain * samples[i]) - prevSample);
             if (diff < bestDiff)
             {
                 bestDiff = diff;

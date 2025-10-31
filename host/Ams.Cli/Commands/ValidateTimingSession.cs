@@ -11,6 +11,8 @@ using Ams.Core.Book;
 using Ams.Core.Hydrate;
 using Ams.Core.Prosody;
 using Ams.Core.Alignment.Mfa;
+using Ams.Cli.Repl;
+using Ams.Cli.Utilities;
 using Spectre.Console;
 using Spectre.Console.Rendering;
 
@@ -26,6 +28,7 @@ internal sealed class ValidateTimingSession
     private readonly bool _runProsodyAnalysis;
     private readonly bool _includeAllIntraSentenceGaps;
     private readonly PausePolicy _policy;
+    private readonly string? _policySourcePath;
     private readonly FileInfo _pauseAdjustmentsFile;
     private PauseAnalysisReport? _prosodyAnalysis;
 
@@ -37,7 +40,15 @@ internal sealed class ValidateTimingSession
         _hydrateFile = hydrateFile ?? throw new ArgumentNullException(nameof(hydrateFile));
         _runProsodyAnalysis = runProsodyAnalysis;
         _includeAllIntraSentenceGaps = includeAllIntraSentenceGaps;
-        _policy = PausePolicyPresets.House();
+        (_policy, _policySourcePath) = PausePolicyResolver.Resolve(_transcriptFile);
+        if (!string.IsNullOrWhiteSpace(_policySourcePath))
+        {
+            Log.Info("Loaded pause policy from {Path}", _policySourcePath);
+        }
+        else
+        {
+            Log.Info("Using default pause policy preset (house).");
+        }
 
         var baseName = Path.GetFileNameWithoutExtension(_transcriptFile.Name);
         if (!string.IsNullOrWhiteSpace(baseName))
@@ -60,6 +71,7 @@ internal sealed class ValidateTimingSession
         var outputName = baseName + ".pause-adjustments.json";
         _pauseAdjustmentsFile = new FileInfo(Path.Combine(directory, outputName));
     }
+
 
     public async Task RunAsync(CancellationToken cancellationToken)
     {

@@ -13,6 +13,7 @@ using Ams.Core.Book;
 using Ams.Core.Common;
 using Ams.Core.Hydrate;
 using Ams.Core.Prosody;
+using Ams.Cli.Repl;
 using Ams.Cli.Utilities;
 
 namespace Ams.Cli.Commands;
@@ -81,6 +82,8 @@ public static class ValidateCommand
         cmd.AddOption(includeAllIntraOption);
         cmd.AddOption(headlessOption);
         cmd.AddOption(headlessOverwriteOption);
+
+        cmd.AddCommand(CreateTimingInitCommand());
 
         cmd.SetHandler(async context =>
         {
@@ -206,7 +209,101 @@ public static class ValidateCommand
         return cmd;
     }
 
-    private static int RunTimingApplyCore(
+    private static Command CreateTimingInitCommand()
+    {
+        var cmd = new Command("init", "Scaffold a pause-policy.json for the current chapter or entire book.");
+
+        var bookOption = new Option<bool>(
+            "--book",
+            () => false,
+            "Create or overwrite the book-level pause-policy.json in the working directory.");
+
+        var chapterOption = new Option<bool>(
+            "--chapter",
+            () => false,
+            "Create or overwrite the active chapter's pause-policy.json (default).");
+
+        var forceOption = new Option<bool>(
+            "--force",
+            () => false,
+            "Overwrite an existing pause-policy.json if present.");
+
+        cmd.AddOption(bookOption);
+        cmd.AddOption(chapterOption);
+        cmd.AddOption(forceOption);
+
+        cmd.SetHandler(context =>
+        {
+            bool book = context.ParseResult.GetValueForOption(bookOption);
+            bool chapter = context.ParseResult.GetValueForOption(chapterOption);
+            bool force = context.ParseResult.GetValueForOption(forceOption);
+
+            if (book && chapter)
+            {
+                Log.Error("Specify at most one of --book or --chapter.");
+                context.ExitCode = 1;
+                return;
+            }
+
+            if (!book && !chapter)
+            {
+                chapter = true;
+            }
+
+            string? targetPath = null;
+
+            if (book)
+            {
+                var workingDir = ReplContext.Current?.WorkingDirectory ?? Directory.GetCurrentDirectory();
+                targetPath = Path.Combine(workingDir, "pause-policy.json");
+            }
+            else
+            {
+                var repl = ReplContext.Current;
+                if (repl?.ActiveChapterStem is null)
+                {
+                    Log.Error("validate timing init --chapter requires an active chapter. Use 'use <chapter>' first or pass --book.");
+                    context.ExitCode = 1;
+                    return;
+                }
+
+                var chapterDir = Path.Combine(repl.WorkingDirectory, repl.ActiveChapterStem);
+                Directory.CreateDirectory(chapterDir);
+                targetPath = Path.Combine(chapterDir, "pause-policy.json");
+            }
+
+            if (string.IsNullOrWhiteSpace(targetPath))
+            {
+                Log.Error("Failed to determine pause-policy.json destination.");
+                context.ExitCode = 1;
+                return;
+            }
+
+            if (File.Exists(targetPath) && !force)
+            {
+                Log.Warn("pause-policy.json already exists at {Path}. Re-run with --force to overwrite.", targetPath);
+                context.ExitCode = 0;
+                return;
+            }
+
+            try
+            {
+                var policy = PausePolicyPresets.House();
+                PausePolicyStorage.Save(targetPath, policy);
+                Log.Info("pause-policy.json written to {Path}", targetPath);
+                context.ExitCode = 0;
+            }
+            catch (Exception ex)
+            {
+                Log.Error(ex, "Failed to write pause-policy.json to {Path}", targetPath);
+                context.ExitCode = 1;
+            }
+        });
+
+        return cmd;
+    }
+
+    internal static int RunTimingApplyCore(
         FileInfo txFile,
         FileInfo hydrateFile,
         FileInfo? adjustmentsOverride,

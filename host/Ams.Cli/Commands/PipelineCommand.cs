@@ -6,6 +6,7 @@ using System.Linq;
 using System.Text;
 using System.Text.Json;
 using System.Threading;
+using System.Threading.Tasks;
 using Ams.Cli.Services;
 using Ams.Cli.Utilities;
 using Ams.Core.Alignment.Mfa;
@@ -129,9 +130,15 @@ public static class PipelineCommand
             () => false,
             "Overwrite existing files in the destination folder");
 
+        var adjustedOption = new Option<bool>(
+            "--adjusted",
+            () => false,
+            "Stage pause-adjusted WAVs instead of treated WAVs.");
+
         cmd.AddOption(rootOption);
         cmd.AddOption(outputOption);
         cmd.AddOption(overwriteOption);
+        cmd.AddOption(adjustedOption);
 
         cmd.SetHandler(context =>
         {
@@ -150,25 +157,37 @@ public static class PipelineCommand
             destination.Refresh();
 
             var overwrite = context.ParseResult.GetValueForOption(overwriteOption);
+            var useAdjusted = context.ParseResult.GetValueForOption(adjustedOption);
 
             var destNormalized = NormalizeDirectoryPath(destination.FullName);
 
-            var treatedFiles = Directory.EnumerateFiles(root.FullName, "*.treated.wav", SearchOption.AllDirectories)
+            var searchPattern = useAdjusted ? "*.pause-adjusted.wav" : "*.treated.wav";
+            var stagedFiles = Directory.EnumerateFiles(root.FullName, searchPattern, SearchOption.AllDirectories)
                 .Where(path => !IsWithinDirectory(path, destNormalized))
                 .Select(path => new FileInfo(path))
                 .OrderBy(file => file.FullName, PathComparer)
                 .ToList();
 
-            if (treatedFiles.Count == 0)
+            if (stagedFiles.Count == 0)
             {
-                Log.Info("No treated WAV files found under {Root}", root.FullName);
+                Log.Info(
+                    useAdjusted
+                        ? "No pause-adjusted WAV files found under {Root}"
+                        : "No treated WAV files found under {Root}",
+                    root.FullName);
                 return;
             }
 
-            Log.Info("Staging {Count} treated file(s) from {Root} to {Destination}", treatedFiles.Count, root.FullName, destination.FullName);
+            Log.Info(
+                useAdjusted
+                    ? "Staging {Count} pause-adjusted file(s) from {Root} to {Destination}"
+                    : "Staging {Count} treated file(s) from {Root} to {Destination}",
+                stagedFiles.Count,
+                root.FullName,
+                destination.FullName);
 
             var stagedCount = 0;
-            foreach (var file in treatedFiles)
+            foreach (var file in stagedFiles)
             {
                 cancellationToken.ThrowIfCancellationRequested();
 
@@ -569,6 +588,8 @@ public static class PipelineCommand
             treatedWav.Refresh();
         }
 
+        await RunValidateTimingHeadlessAsync(txFile, hydrateFile, bookIndexFile, toneDb, cancellationToken).ConfigureAwait(false);
+
         Log.Info("=== Outputs ===");
         Log.Info("Book index : {BookIndex}", bookIndexFile.FullName);
         Log.Info("ASR JSON   : {AsrFile}", asrFile.FullName);
@@ -576,6 +597,65 @@ public static class PipelineCommand
         Log.Info("Transcript : {TranscriptFile}", txFile.FullName);
         Log.Info("Hydrated   : {HydratedFile}", hydrateFile.FullName);
         Log.Info("Roomtone   : {RoomtoneFile}", treatedWav.FullName);
+    }
+
+    private static async Task RunValidateTimingHeadlessAsync(
+        FileInfo txFile,
+        FileInfo hydrateFile,
+        FileInfo bookIndexFile,
+        double toneGainDb,
+        CancellationToken cancellationToken)
+    {
+        if (!txFile.Exists || !hydrateFile.Exists)
+        {
+            Log.Warn("Skipping validate timing headless: required artifacts missing (Transcript/Hydrate).");
+            return;
+        }
+
+        if (!bookIndexFile.Exists)
+        {
+            Log.Warn("Skipping validate timing headless: book-index not found at {Path}", bookIndexFile.FullName);
+            return;
+        }
+
+        try
+        {
+            Log.Info("Running validate timing headless to apply pause policy defaults");
+            var session = new ValidateTimingSession(txFile, bookIndexFile, hydrateFile, runProsodyAnalysis: true);
+            var headlessResult = await session.RunHeadlessAsync(cancellationToken).ConfigureAwait(false);
+            if (!headlessResult.HasAdjustments)
+            {
+                Log.Info("validate timing headless produced no adjustments; skipping timing-apply.");
+                return;
+            }
+
+            Log.Info("validate timing headless produced {Count} adjustment(s); applying timing updates", headlessResult.AdjustmentCount);
+            var exitCode = ValidateCommand.RunTimingApplyCore(
+                txFile,
+                hydrateFile,
+                headlessResult.AdjustmentsFile,
+                outWavOverride: null,
+                roomtoneOverride: null,
+                bookIndexOverride: bookIndexFile,
+                toneGainDb: toneGainDb,
+                overwriteOutputs: true,
+                useAdjusted: false,
+                cancellationToken: cancellationToken);
+
+            if (exitCode != 0)
+            {
+                Log.Warn("timing-apply exited with code {ExitCode}", exitCode);
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            Log.Warn("validate timing headless cancelled");
+            throw;
+        }
+        catch (Exception ex)
+        {
+            Log.Error(ex, "validate timing headless failed; continuing without pause-adjusted outputs");
+        }
     }
 
     private static void PerformSoftReset(DirectoryInfo root, CancellationToken cancellationToken)
@@ -812,7 +892,12 @@ public static class PipelineCommand
                 var transcript = LoadJson<TranscriptIndex>(txFile);
                 var hydrated = LoadJson<HydratedTranscript>(hydrateFile);
                 var silences = LoadMfaSilences(textGridFile);
-                var pauseMap = PauseMapBuilder.Build(transcript, bookIndex, hydrated, PausePolicyPresets.House(), silences, includeAllIntraSentenceGaps: true);
+                var (policy, policyPath) = PausePolicyResolver.Resolve(txFile);
+                if (!string.IsNullOrWhiteSpace(policyPath))
+                {
+                    Log.Info("Pause policy loaded for {Chapter} from {Path}", chapterDir.Name, policyPath);
+                }
+                var pauseMap = PauseMapBuilder.Build(transcript, bookIndex, hydrated, policy, silences, includeAllIntraSentenceGaps: true);
                 prosodyStats = pauseMap.Stats;
             }
             catch (Exception ex)
@@ -1219,15 +1304,20 @@ public static class PipelineCommand
     private static string GetStagedFileName(FileInfo source)
     {
         var stem = Path.GetFileNameWithoutExtension(source.Name);
-        const string marker = ".treated";
+        var markers = new[] { ".pause-adjusted", ".treated" };
 
-        if (stem.EndsWith(marker, PathComparison))
+        foreach (var marker in markers)
         {
-            stem = stem[..^marker.Length];
-        }
-        else if (stem.EndsWith("treated", PathComparison))
-        {
-            stem = stem[..^"treated".Length];
+            while (stem.EndsWith(marker, PathComparison) || stem.EndsWith(marker.TrimStart('.'), PathComparison))
+            {
+                var toTrim = stem.EndsWith(marker, PathComparison) ? marker.Length : marker.TrimStart('.').Length;
+                if (stem.Length <= toTrim)
+                {
+                    break;
+                }
+
+                stem = stem[..^toTrim];
+            }
         }
 
         return stem + source.Extension;
