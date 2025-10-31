@@ -84,8 +84,8 @@ internal static class PauseAudioApplier
                 windowMs: 25.0,
                 stepMs: 5.0,
                 preRollMs: 25.0,
-                postRollMs: 0.0,
-                hangoverMs: 0.0);
+                postRollMs: 10.0,
+                hangoverMs: 30.0);
 
             if (energy.EndSec <= energy.StartSec)
             {

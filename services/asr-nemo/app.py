@@ -280,7 +280,13 @@ def _cleanup_model():
             pass
 
 
-def _prepare_chunks(audio_path: str, min_chunk_sec: float = 60.0, max_chunk_sec: float = 90.0, silence_db: float = 35.0):
+def _prepare_chunks(
+    audio_path: str,
+    min_chunk_sec: float = 60.0,
+    max_chunk_sec: float = 90.0,
+    silence_db: float = 45.0,
+    min_pause_sec: float = 0.8,
+):
     """Slice audio into manageable chunks aligned to low-energy regions."""
     y, sr = librosa.load(audio_path, sr=None)
     if y.ndim > 1:
@@ -297,7 +303,7 @@ def _prepare_chunks(audio_path: str, min_chunk_sec: float = 60.0, max_chunk_sec:
         temp_file.close()
         return [{"path": temp_file.name, "start_sec": 0.0, "end_sec": duration_sec}]
 
-    segments = _derive_chunk_segments(y, sr, min_chunk_sec, max_chunk_sec, silence_db)
+    segments = _derive_chunk_segments(y, sr, min_chunk_sec, max_chunk_sec, silence_db, min_pause_sec)
     chunk_infos = []
     for idx, (start_sample, end_sample) in enumerate(segments):
         temp_file = tempfile.NamedTemporaryFile(suffix=f'_chunk{idx}.wav', delete=False)
@@ -311,7 +317,14 @@ def _prepare_chunks(audio_path: str, min_chunk_sec: float = 60.0, max_chunk_sec:
     return chunk_infos
 
 
-def _derive_chunk_segments(y: np.ndarray, sr: int, min_chunk_sec: float, max_chunk_sec: float, silence_db: float):
+def _derive_chunk_segments(
+    y: np.ndarray,
+    sr: int,
+    min_chunk_sec: float,
+    max_chunk_sec: float,
+    silence_db: float,
+    min_pause_sec: float,
+):
     total_samples = len(y)
     duration_sec = total_samples / sr
     if duration_sec <= max_chunk_sec:
@@ -324,12 +337,16 @@ def _derive_chunk_segments(y: np.ndarray, sr: int, min_chunk_sec: float, max_chu
         return _fallback_segments(total_samples, sr, max_chunk_sec)
 
     silence_points = {0, total_samples}
+    min_pause_samples = int(min_pause_sec * sr)
+
     for i in range(len(non_silent) - 1):
         silence_start = non_silent[i][1]
         silence_end = non_silent[i + 1][0]
         if silence_end <= silence_start:
             continue
-        silence_points.add(int((silence_start + silence_end) / 2))
+
+        if (silence_end - silence_start) >= min_pause_samples:
+            silence_points.add(int((silence_start + silence_end) / 2))
 
     silence_samples = sorted(silence_points)
     silence_secs = [s / sr for s in silence_samples]

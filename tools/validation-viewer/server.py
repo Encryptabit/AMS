@@ -962,6 +962,7 @@ class ValidationReportHandler(BaseHTTPRequestHandler):
     <script>
         let chapters = [];
         let currentChapter = null;
+        let currentReport = null;
         let pendingCrxData = null;
         let reviewedStatus = {};
 
@@ -1223,6 +1224,7 @@ class ValidationReportHandler(BaseHTTPRequestHandler):
         }
 
         function renderReport(report) {
+            currentReport = report;
             const content = document.getElementById('content');
 
             const sentencesHtml = report.sentences.map(s => `
@@ -1254,9 +1256,9 @@ class ValidationReportHandler(BaseHTTPRequestHandler):
                         ` : `
                             ${s.scriptText && s.bookText ? `
                                 <div class="text-label">Script (Read as)</div>
-                                <div class="text-content diff-text" data-diff-script="${escapeHtml(s.scriptText)}" data-diff-book="${escapeHtml(s.bookText)}"></div>
+                                <div class="text-content diff-text" data-sentence-id="${s.id}" data-diff-script="${escapeHtml(s.scriptText)}" data-diff-book="${escapeHtml(s.bookText)}"></div>
                                 <div class="text-label" style="margin-top: 12px;">Book (Should be)</div>
-                                <div class="text-content diff-text" data-diff-script="${escapeHtml(s.scriptText)}" data-diff-book="${escapeHtml(s.bookText)}" data-diff-type="book"></div>
+                                <div class="text-content diff-text" data-sentence-id="${s.id}" data-diff-script="${escapeHtml(s.scriptText)}" data-diff-book="${escapeHtml(s.bookText)}" data-diff-type="book"></div>
                             ` : `
                                 <div class="text-label">Book</div>
                                 <div class="text-content">${escapeHtml(s.bookText)}</div>
@@ -1276,7 +1278,7 @@ class ValidationReportHandler(BaseHTTPRequestHandler):
                             <button class="export-button" data-chapter="${currentChapter}" data-start="${s.startTime}" data-end="${s.endTime}" data-sentence-id="${s.id}" data-excerpt="${escapeHtml(s.excerpt || '')}">
                                 Export Audio
                             </button>
-                            <button class="crx-button" data-chapter="${currentChapter}" data-start="${s.startTime}" data-end="${s.endTime}" data-sentence-id="${s.id}" data-excerpt="${escapeHtml(s.excerpt || '')}" data-book-text="${escapeHtml(s.bookText || '')}" data-script-text="${escapeHtml(s.scriptText || '')}">
+                            <button class="crx-button" data-chapter="${currentChapter}" data-start="${s.startTime}" data-end="${s.endTime}" data-sentence-id="${s.id}" data-excerpt="${escapeHtml(s.excerpt || '')}">
                                 Add to CRX
                             </button>
                         </div>
@@ -1376,22 +1378,33 @@ class ValidationReportHandler(BaseHTTPRequestHandler):
                         const chapter = this.getAttribute('data-chapter');
                         const start = parseFloat(this.getAttribute('data-start'));
                         const end = parseFloat(this.getAttribute('data-end'));
-                        const sentenceId = this.getAttribute('data-sentence-id');
+                        const sentenceId = parseInt(this.getAttribute('data-sentence-id'), 10);
                         const excerpt = this.getAttribute('data-excerpt');
-                        const bookText = this.getAttribute('data-book-text');
-                        const scriptText = this.getAttribute('data-script-text');
-                        openCrxModal(chapter, start, end, sentenceId, excerpt, bookText, scriptText);
+                        openCrxModal(chapter, start, end, sentenceId, excerpt);
                     });
                 });
 
                 // Apply diff highlighting to all diff-text elements
                 document.querySelectorAll('.diff-text').forEach(elem => {
-                    const scriptText = elem.getAttribute('data-diff-script');
-                    const bookText = elem.getAttribute('data-diff-book');
+                    const sentenceIdAttr = elem.getAttribute('data-sentence-id');
                     const diffType = elem.getAttribute('data-diff-type') || 'script';
+                    const scriptRaw = elem.getAttribute('data-diff-script');
+                    const bookRaw = elem.getAttribute('data-diff-book');
 
-                    if (scriptText && bookText) {
-                        const highlighted = highlightDifferencesVisual(scriptText, bookText);
+                    const scriptText = decodeHtml(scriptRaw);
+                    const bookText = decodeHtml(bookRaw);
+
+                    let wordOps = null;
+                    if (sentenceIdAttr && currentReport && Array.isArray(currentReport.sentences)) {
+                        const sentenceId = parseInt(sentenceIdAttr, 10);
+                        const sentenceData = currentReport.sentences.find(s => s.id === sentenceId);
+                        if (sentenceData && Array.isArray(sentenceData.wordOps)) {
+                            wordOps = sentenceData.wordOps;
+                        }
+                    }
+
+                    if (scriptText || bookText) {
+                        const highlighted = highlightDifferencesVisual(scriptText, bookText, wordOps);
                         elem.innerHTML = diffType === 'book' ? highlighted.bookHighlighted : highlighted.scriptHighlighted;
                     }
                 });
@@ -1408,6 +1421,13 @@ class ValidationReportHandler(BaseHTTPRequestHandler):
             const div = document.createElement('div');
             div.textContent = text;
             return div.innerHTML;
+        }
+
+        function decodeHtml(html) {
+            if (!html) return '';
+            const textarea = document.createElement('textarea');
+            textarea.innerHTML = html;
+            return textarea.value;
         }
 
         function playAudioSegment(chapterName, startTime, endTime) {
@@ -1510,34 +1530,99 @@ class ValidationReportHandler(BaseHTTPRequestHandler):
             }
         }
 
-        function openCrxModal(chapterName, startTime, endTime, sentenceId, excerpt, bookText, scriptText) {
+        function openCrxModal(chapterName, startTime, endTime, sentenceId, excerpt) {
+            const decodedExcerpt = decodeHtml(excerpt || '');
+
             pendingCrxData = {
                 chapterName: chapterName,
                 start: startTime,
                 end: endTime,
                 sentenceId: sentenceId,
-                excerpt: excerpt
+                excerpt: decodedExcerpt
             };
 
-            // Pre-populate comments with formatted comparison
             const commentsField = document.getElementById('comments');
+            const sentence = currentReport && Array.isArray(currentReport.sentences)
+                ? currentReport.sentences.find(s => s.id === sentenceId)
+                : null;
 
-            if (excerpt) {
-                commentsField.value = excerpt;
-            } else if (scriptText && bookText) {
-                // Generate "Read as / Should be" format with differences highlighted
-                const diff = highlightDifferences(scriptText, bookText);
-                commentsField.value = `Read as: ${diff.scriptHighlighted}\nShould be: ${diff.bookHighlighted}`;
+            if (decodedExcerpt) {
+                commentsField.value = decodedExcerpt;
+            } else if (sentence) {
+                const diff = highlightDifferences(sentence.scriptText || '', sentence.bookText || '', sentence.wordOps);
+                commentsField.value = `Read as: ${diff.scriptHighlighted}
+Should be: ${diff.bookHighlighted}`;
             } else {
                 commentsField.value = '';
             }
 
-            // Show modal
             document.getElementById('crxModal').style.display = 'block';
         }
 
-        function highlightDifferences(script, book) {
-            // Word-by-word comparison with grouped mismatches (bracket format for CRX)
+        function buildDiffFromWordOps(wordOps, options) {
+            if (!Array.isArray(wordOps) || wordOps.length === 0) {
+                return null;
+            }
+
+            const scriptParts = [];
+            const bookParts = [];
+
+            const pushScript = (word, highlighted) => {
+                if (!word) return;
+                scriptParts.push(highlighted ? options.highlight(word) : options.normal(word));
+            };
+
+            const pushBook = (word, highlighted) => {
+                if (!word) return;
+                bookParts.push(highlighted ? options.highlight(word) : options.normal(word));
+            };
+
+            wordOps.forEach(op => {
+                const opType = (op.op || '').toLowerCase();
+                const scriptWord = (op.asrWord || '').trim();
+                const bookWord = (op.bookWord || '').trim();
+
+                switch (opType) {
+                    case 'match':
+                        pushScript(scriptWord, false);
+                        pushBook(bookWord, false);
+                        break;
+                    case 'sub':
+                        pushScript(scriptWord, true);
+                        pushBook(bookWord, true);
+                        break;
+                    case 'del':
+                        pushBook(bookWord, true);
+                        break;
+                    case 'ins':
+                        pushScript(scriptWord, true);
+                        break;
+                    default:
+                        pushScript(scriptWord, false);
+                        pushBook(bookWord, false);
+                        break;
+                }
+            });
+
+            return {
+                script: scriptParts.join(' ').replace(/\\s+/g, ' ').trim(),
+                book: bookParts.join(' ').replace(/\\s+/g, ' ').trim()
+            };
+        }
+
+        function highlightDifferences(script, book, wordOps = null) {
+            const diffFromOps = buildDiffFromWordOps(wordOps, {
+                normal: word => word,
+                highlight: word => `[${word}]`
+            });
+
+            if (diffFromOps) {
+                return {
+                    scriptHighlighted: diffFromOps.script,
+                    bookHighlighted: diffFromOps.book
+                };
+            }
+
             const scriptWords = script.split(/\\s+/);
             const bookWords = book.split(/\\s+/);
 
@@ -1547,8 +1632,6 @@ class ValidationReportHandler(BaseHTTPRequestHandler):
             let bookMismatchBuffer = [];
 
             function normalizeWord(word) {
-                // Remove all punctuation/hyphens/dashes and convert to lowercase for comparison
-                // Includes em-dash (—), en-dash (–), and regular hyphen (-)
                 return word.replace(/[.,!?;:'"()\\-—–]/g, '').toLowerCase();
             }
 
@@ -1563,7 +1646,6 @@ class ValidationReportHandler(BaseHTTPRequestHandler):
                 }
             }
 
-            // Track positions in both arrays
             let i = 0, j = 0;
 
             while (i < scriptWords.length || j < bookWords.length) {
@@ -1574,21 +1656,17 @@ class ValidationReportHandler(BaseHTTPRequestHandler):
                 const bookNorm = normalizeWord(bookWord);
 
                 if (scriptNorm === bookNorm) {
-                    // Exact match - flush and add
                     flushBuffers();
                     if (scriptWord) scriptResult.push(scriptWord);
                     if (bookWord) bookResult.push(bookWord);
                     i++;
                     j++;
                 } else {
-                    // Check if we can match by consuming multiple words (compound word handling)
-                    // Try matching script[i..i+n] with book[j]
                     let matched = false;
                     for (let n = 1; n <= 3 && i + n <= scriptWords.length; n++) {
                         const scriptPhrase = scriptWords.slice(i, i + n).join('');
                         const scriptPhraseNorm = normalizeWord(scriptPhrase);
                         if (scriptPhraseNorm === bookNorm) {
-                            // Script needs multiple words to match one book word
                             flushBuffers();
                             scriptResult.push(scriptWords.slice(i, i + n).join(' '));
                             bookResult.push(bookWord);
@@ -1600,12 +1678,10 @@ class ValidationReportHandler(BaseHTTPRequestHandler):
                     }
 
                     if (!matched) {
-                        // Try matching book[j..j+n] with script[i]
                         for (let n = 1; n <= 3 && j + n <= bookWords.length; n++) {
                             const bookPhrase = bookWords.slice(j, j + n).join('');
                             const bookPhraseNorm = normalizeWord(bookPhrase);
                             if (bookPhraseNorm === scriptNorm) {
-                                // Book needs multiple words to match one script word
                                 flushBuffers();
                                 scriptResult.push(scriptWord);
                                 bookResult.push(bookWords.slice(j, j + n).join(' '));
@@ -1618,7 +1694,6 @@ class ValidationReportHandler(BaseHTTPRequestHandler):
                     }
 
                     if (!matched) {
-                        // True mismatch - accumulate
                         if (scriptWord) scriptMismatchBuffer.push(scriptWord);
                         if (bookWord) bookMismatchBuffer.push(bookWord);
                         if (i < scriptWords.length) i++;
@@ -1627,7 +1702,6 @@ class ValidationReportHandler(BaseHTTPRequestHandler):
                 }
             }
 
-            // Flush any remaining mismatches
             flushBuffers();
 
             return {
@@ -1636,7 +1710,20 @@ class ValidationReportHandler(BaseHTTPRequestHandler):
             };
         }
 
-        function highlightDifferencesVisual(script, book) {
+
+        function highlightDifferencesVisual(script, book, wordOps = null) {
+            const diffFromOps = buildDiffFromWordOps(wordOps, {
+                normal: word => escapeHtml(word),
+                highlight: word => `<mark class="diff-highlight">${escapeHtml(word)}</mark>`
+            });
+
+            if (diffFromOps) {
+                return {
+                    scriptHighlighted: diffFromOps.script,
+                    bookHighlighted: diffFromOps.book
+                };
+            }
+
             // Word-by-word comparison with visual highlighting using <mark> tags
             const scriptWords = script.split(/\\s+/);
             const bookWords = book.split(/\\s+/);
@@ -1652,12 +1739,6 @@ class ValidationReportHandler(BaseHTTPRequestHandler):
                 return word.replace(/[.,!?;:'"()\\-—–]/g, '').toLowerCase();
             }
 
-            function escapeHtml(text) {
-                const div = document.createElement('div');
-                div.textContent = text;
-                return div.innerHTML;
-            }
-
             function flushBuffers() {
                 if (scriptMismatchBuffer.length > 0) {
                     scriptResult.push(`<mark class="diff-highlight">${escapeHtml(scriptMismatchBuffer.join(' '))}</mark>`);
@@ -1669,7 +1750,6 @@ class ValidationReportHandler(BaseHTTPRequestHandler):
                 }
             }
 
-            // Track positions in both arrays
             let i = 0, j = 0;
 
             while (i < scriptWords.length || j < bookWords.length) {
@@ -1680,21 +1760,17 @@ class ValidationReportHandler(BaseHTTPRequestHandler):
                 const bookNorm = normalizeWord(bookWord);
 
                 if (scriptNorm === bookNorm) {
-                    // Exact match - flush and add
                     flushBuffers();
                     if (scriptWord) scriptResult.push(escapeHtml(scriptWord));
                     if (bookWord) bookResult.push(escapeHtml(bookWord));
                     i++;
                     j++;
                 } else {
-                    // Check if we can match by consuming multiple words (compound word handling)
-                    // Try matching script[i..i+n] with book[j]
                     let matched = false;
                     for (let n = 1; n <= 3 && i + n <= scriptWords.length; n++) {
                         const scriptPhrase = scriptWords.slice(i, i + n).join('');
                         const scriptPhraseNorm = normalizeWord(scriptPhrase);
                         if (scriptPhraseNorm === bookNorm) {
-                            // Script needs multiple words to match one book word
                             flushBuffers();
                             scriptResult.push(escapeHtml(scriptWords.slice(i, i + n).join(' ')));
                             bookResult.push(escapeHtml(bookWord));
@@ -1706,12 +1782,10 @@ class ValidationReportHandler(BaseHTTPRequestHandler):
                     }
 
                     if (!matched) {
-                        // Try matching book[j..j+n] with script[i]
                         for (let n = 1; n <= 3 && j + n <= bookWords.length; n++) {
                             const bookPhrase = bookWords.slice(j, j + n).join('');
                             const bookPhraseNorm = normalizeWord(bookPhrase);
                             if (bookPhraseNorm === scriptNorm) {
-                                // Book needs multiple words to match one script word
                                 flushBuffers();
                                 scriptResult.push(escapeHtml(scriptWord));
                                 bookResult.push(escapeHtml(bookWords.slice(j, j + n).join(' ')));
@@ -1724,7 +1798,6 @@ class ValidationReportHandler(BaseHTTPRequestHandler):
                     }
 
                     if (!matched) {
-                        // True mismatch - accumulate
                         if (scriptWord) scriptMismatchBuffer.push(scriptWord);
                         if (bookWord) bookMismatchBuffer.push(bookWord);
                         if (i < scriptWords.length) i++;
@@ -1733,7 +1806,6 @@ class ValidationReportHandler(BaseHTTPRequestHandler):
                 }
             }
 
-            // Flush any remaining mismatches
             flushBuffers();
 
             return {
@@ -1741,6 +1813,7 @@ class ValidationReportHandler(BaseHTTPRequestHandler):
                 bookHighlighted: bookResult.join(' ')
             };
         }
+
 
         function closeCrxModal() {
             document.getElementById('crxModal').style.display = 'none';
@@ -2206,9 +2279,53 @@ class ValidationReportHandler(BaseHTTPRequestHandler):
                 for sent_id in para.get('sentenceIds', []):
                     sentence_to_paragraph[sent_id] = para['id']
 
+            # Build alignment word operations grouped by sentence, preserving order
+            word_ops_by_sentence = {}
+            words = hydrate_data.get('words') or []
+            if words:
+                # Map each book word index to its sentence ID for quick lookup
+                book_to_sentence = {}
+                for sent in hydrate_data['sentences']:
+                    book_range = sent.get('bookRange') or {}
+                    start = book_range.get('start')
+                    end = book_range.get('end')
+                    if start is None or end is None:
+                        continue
+                    if end < start:
+                        start, end = end, start
+
+                    for idx in range(start, end + 1):
+                        book_to_sentence[idx] = sent['id']
+
+                    word_ops_by_sentence.setdefault(sent['id'], [])
+
+                last_sentence_id = None
+                for word in words:
+                    sentence_id = None
+                    book_idx = word.get('bookIdx')
+                    if book_idx is not None:
+                        sentence_id = book_to_sentence.get(book_idx)
+                    if sentence_id is None:
+                        sentence_id = last_sentence_id
+                    if sentence_id is None:
+                        continue
+
+                    entry = {
+                        'op': word.get('op'),
+                        'reason': word.get('reason'),
+                        'bookWord': (word.get('bookWord') or '').strip(),
+                        'asrWord': (word.get('asrWord') or '').strip()
+                    }
+                    word_ops_by_sentence.setdefault(sentence_id, []).append(entry)
+                    last_sentence_id = sentence_id
+
             # Add paragraph ID to each sentence
             for sentence in report_data['sentences']:
                 sentence['paragraphId'] = sentence_to_paragraph.get(sentence['id'])
+                if word_ops_by_sentence:
+                    ops = word_ops_by_sentence.get(sentence['id'])
+                    if ops:
+                        sentence['wordOps'] = ops
 
             for paragraph in report_data['paragraphs']:
                 para_id = paragraph.get('id')
