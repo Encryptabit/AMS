@@ -121,6 +121,21 @@ public sealed record PausePolicySnapshot(
             policy.RatioOutside,
             policy.PreserveTopQuantile);
     }
+
+    public PausePolicy ToPolicy()
+    {
+        return new PausePolicy(
+            Comma.ToWindow(),
+            Sentence.ToWindow(),
+            Paragraph.ToWindow(),
+            HeadOfChapter,
+            PostChapterRead,
+            Tail,
+            KneeWidth,
+            RatioInside,
+            RatioOutside,
+            PreserveTopQuantile);
+    }
 }
 
 public sealed record PauseWindowSnapshot(
@@ -132,4 +147,6 @@ public sealed record PauseWindowSnapshot(
         if (window is null) throw new ArgumentNullException(nameof(window));
         return new PauseWindowSnapshot(window.Min, window.Max);
     }
+
+    public PauseWindow ToWindow() => new(Min, Max);
 }
