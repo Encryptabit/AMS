@@ -44,6 +44,12 @@ public sealed record PauseDynamicsResult(
 
 public sealed class PauseDynamicsService : IPauseDynamicsService
 {
+    
+    private const double TargetEpsilon = 0.005;
+    private const double IntraSentenceFloorDuration = 0.010;
+    private const double IntraSentenceMaxShrinkSeconds = 0.001;
+    private const double IntraSentenceEdgeGuardSeconds = 0.007;
+    private const double IntraSentenceMinRatio = 0.15;
     public PauseAnalysisReport AnalyzeChapter(
         TranscriptIndex transcript,
         BookIndex bookIndex,
@@ -752,11 +758,6 @@ public sealed class PauseDynamicsService : IPauseDynamicsService
             : new PauseTransformSet(plan.BreathCuts, filtered);
     }
 
-    private const double TargetEpsilon = 0.005;
-    private const double IntraSentenceFloorDuration = 0.12;
-    private const double IntraSentenceMaxShrinkSeconds = 0.12;
-    private const double IntraSentenceEdgeGuardSeconds = 0.01;
-    private const double IntraSentenceMinRatio = 0.55;
 
     private static Dictionary<int, SentenceTiming> CloneBaseline(IReadOnlyDictionary<int, SentenceTiming> baseline)
     {

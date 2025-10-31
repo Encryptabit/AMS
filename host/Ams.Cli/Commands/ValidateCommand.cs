@@ -6,6 +6,7 @@ using System.Linq;
 using System.Text;
 using System.Text.Json;
 using System.IO;
+using System.Threading;
 using Ams.Core.Artifacts;
 using Ams.Core.Audio;
 using Ams.Core.Book;
@@ -62,12 +63,24 @@ public static class ValidateCommand
             "Include all detected intra-sentence gaps (TextGrid silences) instead of only script punctuation.");
         includeAllIntraOption.AddAlias("-A");
 
+        var headlessOption = new Option<bool>(
+            "--headless",
+            () => false,
+            "Apply default pause compression and automatically run timing-apply without launching the UI.");
+
+        var headlessOverwriteOption = new Option<bool>(
+            "--overwrite",
+            () => false,
+            "Overwrite pause-adjusted outputs when --headless runs timing-apply.");
+
         cmd.AddOption(txOption);
         cmd.AddOption(hydrateOption);
         cmd.AddOption(bookIndexOption);
         cmd.AddOption(prosodyAnalyzeOption);
         cmd.AddOption(useAdjustedOption);
         cmd.AddOption(includeAllIntraOption);
+        cmd.AddOption(headlessOption);
+        cmd.AddOption(headlessOverwriteOption);
 
         cmd.SetHandler(async context =>
         {
@@ -85,6 +98,8 @@ public static class ValidateCommand
 
             try
             {
+                var cancellationToken = context.GetCancellationToken();
+
                 var hydrate = CommandInputResolver.TryResolveChapterArtifact(
                     context.ParseResult.GetValueForOption(hydrateOption),
                     suffix: "align.hydrate.json",
@@ -122,12 +137,14 @@ public static class ValidateCommand
                         Log.Warn("Pause-adjusted hydrate not found; falling back to {0}", hydrate.FullName);
                     }
                 }
-              
+
+                var headless = context.ParseResult.GetValueForOption(headlessOption);
+                FileInfo? bookIndexOverride = context.ParseResult.GetValueForOption(bookIndexOption);
                 FileInfo bookIndex;
                 try
                 {
                     bookIndex = CommandInputResolver.ResolveBookIndex(
-                        context.ParseResult.GetValueForOption(bookIndexOption),
+                        bookIndexOverride,
                         mustExist: true);
                 }
                 catch (Exception ex)
@@ -141,7 +158,38 @@ public static class ValidateCommand
                 var includeAllIntra = context.ParseResult.GetValueForOption(includeAllIntraOption);
 
                 var session = new ValidateTimingSession(tx, bookIndex, hydrate, runProsody, includeAllIntra);
-                await session.RunAsync(context.GetCancellationToken());
+
+                if (headless)
+                {
+                    var overwriteOutputs = context.ParseResult.GetValueForOption(headlessOverwriteOption);
+                    var headlessResult = await session.RunHeadlessAsync(cancellationToken).ConfigureAwait(false);
+                    if (!headlessResult.HasAdjustments)
+                    {
+                        context.ExitCode = 0;
+                        return;
+                    }
+
+                    Log.Info(
+                        "validate timing headless committed {Adjustments} adjustment(s); invoking timing-apply",
+                        headlessResult.AdjustmentCount);
+
+                    var applyExitCode = RunTimingApplyCore(
+                        txFile: tx,
+                        hydrateFile: hydrate,
+                        adjustmentsOverride: headlessResult.AdjustmentsFile,
+                        outWavOverride: null,
+                        roomtoneOverride: null,
+                        bookIndexOverride: bookIndexOverride,
+                        toneGainDb: -60.0,
+                        overwriteOutputs: overwriteOutputs,
+                        useAdjusted: false,
+                        cancellationToken: cancellationToken);
+
+                    context.ExitCode = applyExitCode;
+                    return;
+                }
+
+                await session.RunAsync(cancellationToken).ConfigureAwait(false);
             }
             catch (OperationCanceledException)
             {
@@ -156,6 +204,195 @@ public static class ValidateCommand
         });
 
         return cmd;
+    }
+
+    private static int RunTimingApplyCore(
+        FileInfo txFile,
+        FileInfo hydrateFile,
+        FileInfo? adjustmentsOverride,
+        FileInfo? outWavOverride,
+        FileInfo? roomtoneOverride,
+        FileInfo? bookIndexOverride,
+        double toneGainDb,
+        bool overwriteOutputs,
+        bool useAdjusted,
+        CancellationToken cancellationToken)
+    {
+        if (txFile is null) throw new ArgumentNullException(nameof(txFile));
+        if (hydrateFile is null) throw new ArgumentNullException(nameof(hydrateFile));
+
+        var effectiveTx = txFile;
+        var effectiveHydrate = hydrateFile;
+
+        if (!effectiveTx.Exists)
+        {
+            Log.Error("TranscriptIndex JSON not found at {Path}", effectiveTx.FullName);
+            return 1;
+        }
+
+        if (!effectiveHydrate.Exists)
+        {
+            Log.Error("Hydrated transcript JSON not found at {Path}", effectiveHydrate.FullName);
+            return 1;
+        }
+
+        if (useAdjusted)
+        {
+            var adjustedTx = TryResolveAdjustedArtifact(txFile, ".pause-adjusted.align.tx.json");
+            if (adjustedTx is not null)
+            {
+                Log.Info("timing-apply loading pause-adjusted transcript: {0}", adjustedTx.FullName);
+                effectiveTx = adjustedTx;
+            }
+            else
+            {
+                Log.Warn("Pause-adjusted transcript not found; using {0}", effectiveTx.FullName);
+            }
+
+            var adjustedHydrate = TryResolveAdjustedArtifact(hydrateFile, ".pause-adjusted.align.hydrate.json");
+            if (adjustedHydrate is not null)
+            {
+                Log.Info("timing-apply loading pause-adjusted hydrate: {0}", adjustedHydrate.FullName);
+                effectiveHydrate = adjustedHydrate;
+            }
+            else
+            {
+                Log.Warn("Pause-adjusted hydrate not found; using {0}", effectiveHydrate.FullName);
+            }
+        }
+
+        var adjustmentsFile = adjustmentsOverride ?? ResolveAdjustmentsPath(effectiveTx, null);
+        if (!adjustmentsFile.Exists)
+        {
+            Log.Error("Pause adjustments file not found: {0}", adjustmentsFile.FullName);
+            return 1;
+        }
+
+        PauseAdjustmentsDocument adjustments;
+        try
+        {
+            adjustments = PauseAdjustmentsDocument.Load(adjustmentsFile.FullName);
+        }
+        catch (Exception ex)
+        {
+            Log.Error(ex, "Failed to load pause adjustments from {Path}", adjustmentsFile.FullName);
+            return 1;
+        }
+
+        if (adjustments.Adjustments.Count == 0)
+        {
+            Log.Warn("No pause adjustments found in {Path}. Nothing to apply.", adjustmentsFile.FullName);
+            return 0;
+        }
+
+        var transcript = LoadJson<TranscriptIndex>(effectiveTx);
+        var hydrated = LoadJson<HydratedTranscript>(effectiveHydrate);
+
+        FileInfo? bookIndexFile = bookIndexOverride ?? TryResolveBookIndex(transcript.BookIndexPath, effectiveTx.DirectoryName);
+        BookIndex? bookIndex = null;
+        if (bookIndexFile is not null && bookIndexFile.Exists)
+        {
+            bookIndex = LoadJson<BookIndex>(bookIndexFile);
+        }
+
+        var audioPath = ResolveAudioPath(transcript, hydrated, effectiveTx, effectiveHydrate);
+        if (!File.Exists(audioPath))
+        {
+            Log.Error("Audio file not found at {Path}", audioPath);
+            return 1;
+        }
+
+        string roomtonePath;
+        double? stageFadeMs;
+        double? stageAppliedGainDb;
+        try
+        {
+            roomtonePath = ResolveRoomtonePath(
+                roomtoneOverride,
+                effectiveTx,
+                transcript,
+                hydrated,
+                audioPath,
+                transcript.ScriptPath,
+                effectiveHydrate.DirectoryName ?? effectiveTx.DirectoryName,
+                bookIndex,
+                out stageFadeMs,
+                out stageAppliedGainDb);
+        }
+        catch (Exception ex)
+        {
+            Log.Error(ex, "Failed to locate roomtone.wav");
+            return 1;
+        }
+
+        var outWav = outWavOverride ?? BuildSiblingFile(audioPath, ".pause-adjusted.wav");
+        try
+        {
+            EnsureWritable(outWav, overwriteOutputs);
+        }
+        catch (Exception ex)
+        {
+            Log.Error(ex, "Cannot write output WAV to {Path}", outWav.FullName);
+            return 1;
+        }
+
+        cancellationToken.ThrowIfCancellationRequested();
+
+        var audioBuffer = WavIo.ReadPcmOrFloat(audioPath);
+        var roomtoneBuffer = WavIo.ReadPcmOrFloat(roomtonePath);
+        double fadeMs = stageFadeMs ?? 5.0;
+
+        double targetToneDb = toneGainDb;
+        var toneAnalyzer = new AudioAnalysisService(roomtoneBuffer);
+        double toneDuration = roomtoneBuffer.SampleRate > 0 ? roomtoneBuffer.Length / (double)roomtoneBuffer.SampleRate : 0.0;
+        var toneStats = toneAnalyzer.AnalyzeGap(0.0, toneDuration);
+        double toneGainLinear = 1.0;
+        Log.Info(
+            "timing-apply using roomtone seed {0} (stageFade={1}, stageGain={2}, measuredRms={3:F2} dB, targetRms={4:F2} dB)",
+            roomtonePath,
+            stageFadeMs,
+            stageAppliedGainDb,
+            toneStats.MeanRmsDb,
+            targetToneDb);
+
+        var baselineTimings = BuildBaselineTimings(transcript, hydrated);
+        var timelineResult = PauseTimelineApplier.Apply(baselineTimings, adjustments.Adjustments);
+
+        var adjustedAudio = PauseAudioApplier.Apply(
+            audioBuffer,
+            roomtoneBuffer,
+            transcript.Sentences,
+            timelineResult.Timeline,
+            toneGainLinear,
+            fadeMs: fadeMs,
+            intraSentenceGaps: timelineResult.IntraSentenceGaps);
+        WavIo.WriteFloat32(outWav.FullName, adjustedAudio);
+
+        var updatedTranscript = UpdateTranscriptTimings(transcript, timelineResult.Timeline);
+        var updatedHydrate = UpdateHydratedTimings(hydrated, timelineResult.Timeline);
+
+        var transcriptOut = BuildOutputJsonPath(effectiveTx, ".pause-adjusted.align.tx.json");
+        var hydrateOut = BuildOutputJsonPath(effectiveHydrate, ".pause-adjusted.align.hydrate.json");
+
+        try
+        {
+            EnsureWritable(transcriptOut, overwriteOutputs);
+            EnsureWritable(hydrateOut, overwriteOutputs);
+        }
+        catch (Exception ex)
+        {
+            Log.Error(ex, "Cannot write updated timing JSON");
+            return 1;
+        }
+
+        SaveJson(transcriptOut, updatedTranscript);
+        SaveJson(hydrateOut, updatedHydrate);
+
+        Log.Info("Pause-adjusted audio saved to {Output}", outWav.FullName);
+        Log.Info("Updated transcript timings saved to {Output}", transcriptOut.FullName);
+        Log.Info("Updated hydrate timings saved to {Output}", hydrateOut.FullName);
+
+        return 0;
     }
 
     private static Command CreateTimingApplyCommand()
@@ -216,167 +453,25 @@ public static class ValidateCommand
                     return;
                 }
 
+                var adjustmentsOverride = context.ParseResult.GetValueForOption(adjustmentsOption);
+                var outWavOverride = context.ParseResult.GetValueForOption(outWavOption);
+                var roomtoneOverride = context.ParseResult.GetValueForOption(roomtoneOption);
+                var bookIndexOverride = context.ParseResult.GetValueForOption(bookIndexOption);
+                var toneGainDb = context.ParseResult.GetValueForOption(toneGainOption);
+                var overwrite = context.ParseResult.GetValueForOption(overwriteOption);
                 var useAdjusted = context.ParseResult.GetValueForOption(useAdjustedOption);
-                if (useAdjusted)
-                {
-                    var adjustedTx = TryResolveAdjustedArtifact(txFile, ".pause-adjusted.align.tx.json");
-                    if (adjustedTx is not null)
-                    {
-                        Log.Info("timing-apply loading pause-adjusted transcript: {0}", adjustedTx.FullName);
-                        txFile = adjustedTx;
-                    }
-                    else
-                    {
-                        Log.Warn("Pause-adjusted transcript not found; using {0}", txFile.FullName);
-                    }
 
-                    var adjustedHydrate = TryResolveAdjustedArtifact(hydrateFile, ".pause-adjusted.align.hydrate.json");
-                    if (adjustedHydrate is not null)
-                    {
-                        Log.Info("timing-apply loading pause-adjusted hydrate: {0}", adjustedHydrate.FullName);
-                        hydrateFile = adjustedHydrate;
-                    }
-                    else
-                    {
-                        Log.Warn("Pause-adjusted hydrate not found; using {0}", hydrateFile.FullName);
-                    }
-                }
-
-                var adjustmentsFile = ResolveAdjustmentsPath(txFile, context.ParseResult.GetValueForOption(adjustmentsOption));
-                if (!adjustmentsFile.Exists)
-                {
-                    Log.Error("Pause adjustments file not found: {0}", adjustmentsFile.FullName);
-                    context.ExitCode = 1;
-                    return;
-                }
-
-                PauseAdjustmentsDocument adjustments;
-                try
-                {
-                    adjustments = PauseAdjustmentsDocument.Load(adjustmentsFile.FullName);
-                }
-                catch (Exception ex)
-                {
-                    Log.Error(ex, "Failed to load pause adjustments from {Path}", adjustmentsFile.FullName);
-                    context.ExitCode = 1;
-                    return;
-                }
-
-                if (adjustments.Adjustments.Count == 0)
-                {
-                    Log.Warn("No pause adjustments found in {Path}. Nothing to apply.", adjustmentsFile.FullName);
-                    context.ExitCode = 0;
-                    return;
-                }
-
-                var transcript = LoadJson<TranscriptIndex>(txFile);
-                var hydrated = LoadJson<HydratedTranscript>(hydrateFile);
-
-                FileInfo? bookIndexOptionValue = context.ParseResult.GetValueForOption(bookIndexOption);
-                FileInfo? bookIndexFile = bookIndexOptionValue ?? TryResolveBookIndex(transcript.BookIndexPath, txFile.DirectoryName);
-                BookIndex? bookIndex = null;
-                if (bookIndexFile is not null && bookIndexFile.Exists)
-                {
-                    bookIndex = LoadJson<BookIndex>(bookIndexFile);
-                }
-
-                var audioPath = ResolveAudioPath(transcript, hydrated, txFile, hydrateFile);
-                if (!File.Exists(audioPath))
-                {
-                    Log.Error("Audio file not found at {Path}", audioPath);
-                    context.ExitCode = 1;
-                    return;
-                }
-
-                string roomtonePath;
-                double? stageFadeMs;
-                double? stageAppliedGainDb;
-                try
-                {
-                    roomtonePath = ResolveRoomtonePath(
-                        context.ParseResult.GetValueForOption(roomtoneOption),
-                        txFile,
-                        transcript,
-                        hydrated,
-                        audioPath,
-                        transcript.ScriptPath,
-                        hydrateFile.DirectoryName ?? txFile.DirectoryName,
-                        bookIndex,
-                        out stageFadeMs,
-                        out stageAppliedGainDb);
-                }
-                catch (Exception ex)
-                {
-                    Log.Error(ex, "Failed to locate roomtone.wav");
-                    context.ExitCode = 1;
-                    return;
-                }
-
-                var outWav = context.ParseResult.GetValueForOption(outWavOption)
-                    ?? BuildSiblingFile(audioPath, ".pause-adjusted.wav");
-
-                bool overwrite = context.ParseResult.GetValueForOption(overwriteOption);
-                try
-                {
-                    EnsureWritable(outWav, overwrite);
-                }
-                catch (Exception ex)
-                {
-                    Log.Error(ex, "Cannot write output WAV to {Path}", outWav.FullName);
-                    context.ExitCode = 1;
-                    return;
-                }
-
-                cancellationToken.ThrowIfCancellationRequested();
-
-                var audioBuffer = WavIo.ReadPcmOrFloat(audioPath);
-                var roomtoneBuffer = WavIo.ReadPcmOrFloat(roomtonePath);
-                double fadeMs = stageFadeMs ?? 5.0;
-
-                double targetToneDb = context.ParseResult.GetValueForOption(toneGainOption);
-                var toneAnalyzer = new AudioAnalysisService(roomtoneBuffer);
-                double toneDuration = roomtoneBuffer.SampleRate > 0 ? roomtoneBuffer.Length / (double)roomtoneBuffer.SampleRate : 0.0;
-                var toneStats = toneAnalyzer.AnalyzeGap(0.0, toneDuration);
-                double toneGainLinear = 1.0;
-                Log.Info("timing-apply using roomtone seed {0} (stageFade={1}, stageGain={2}, measuredRms={3:F2} dB)", roomtonePath, stageFadeMs, stageAppliedGainDb, toneStats.MeanRmsDb);
-
-                var baselineTimings = BuildBaselineTimings(transcript, hydrated);
-                var timelineResult = PauseTimelineApplier.Apply(baselineTimings, adjustments.Adjustments);
-
-                var adjustedAudio = PauseAudioApplier.Apply(
-                    audioBuffer,
-                    roomtoneBuffer,
-                    transcript.Sentences,
-                    timelineResult.Timeline,
-                    toneGainLinear,
-                    fadeMs: fadeMs,
-                    intraSentenceGaps: timelineResult.IntraSentenceGaps);
-                WavIo.WriteFloat32(outWav.FullName, adjustedAudio);
-
-                var updatedTranscript = UpdateTranscriptTimings(transcript, timelineResult.Timeline);
-                var updatedHydrate = UpdateHydratedTimings(hydrated, timelineResult.Timeline);
-
-                var transcriptOut = BuildOutputJsonPath(txFile, ".pause-adjusted.align.tx.json");
-                var hydrateOut = BuildOutputJsonPath(hydrateFile, ".pause-adjusted.align.hydrate.json");
-
-                try
-                {
-                    EnsureWritable(transcriptOut, overwrite);
-                    EnsureWritable(hydrateOut, overwrite);
-                }
-                catch (Exception ex)
-                {
-                    Log.Error(ex, "Cannot write updated timing JSON");
-                    context.ExitCode = 1;
-                    return;
-                }
-
-                SaveJson(transcriptOut, updatedTranscript);
-                SaveJson(hydrateOut, updatedHydrate);
-
-                Log.Info("Pause-adjusted audio saved to {Output}", outWav.FullName);
-                Log.Info("Updated transcript timings saved to {Output}", transcriptOut.FullName);
-                Log.Info("Updated hydrate timings saved to {Output}", hydrateOut.FullName);
+                context.ExitCode = RunTimingApplyCore(
+                    txFile,
+                    hydrateFile,
+                    adjustmentsOverride,
+                    outWavOverride,
+                    roomtoneOverride,
+                    bookIndexOverride,
+                    toneGainDb,
+                    overwrite,
+                    useAdjusted,
+                    cancellationToken);
             }
             catch (OperationCanceledException)
             {
