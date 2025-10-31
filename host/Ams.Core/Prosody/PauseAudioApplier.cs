@@ -11,6 +11,7 @@ namespace Ams.Core.Prosody;
 internal static class PauseAudioApplier
 {
     private const double DurationEpsilon = 1e-6;
+    private const double SegmentFadeMs = 5.0;
     private static readonly IReadOnlyList<PauseIntraGap> EmptyIntraGaps = Array.Empty<PauseIntraGap>();
 
     public static AudioBuffer Apply(
@@ -32,29 +33,19 @@ internal static class PauseAudioApplier
         }
 
         Log.Info("PauseAudioApplier starting: sampleRate={0}, timelineCount={1}", audio.SampleRate, updatedTimeline.Count);
+
         var analyzer = new AudioAnalysisService(audio);
+        var finalTimeline = new Dictionary<int, SentenceTiming>(updatedTimeline);
 
-        var timeline = new Dictionary<int, SentenceTiming>(updatedTimeline);
-        bool hasTailTiming = timeline.TryGetValue(PauseTimelineApplier.TailSentinelSentenceId, out var tailTiming);
-        if (hasTailTiming)
+        bool hasTail = finalTimeline.TryGetValue(PauseTimelineApplier.TailSentinelSentenceId, out var tailTiming);
+        if (hasTail)
         {
-            timeline.Remove(PauseTimelineApplier.TailSentinelSentenceId);
-        }
-
-        Dictionary<int, List<PauseIntraGap>>? intraGapLookup = null;
-        if (intraSentenceGaps is not null && intraSentenceGaps.Count > 0)
-        {
-            intraGapLookup = intraSentenceGaps
-                .Where(gap => timeline.ContainsKey(gap.SentenceId))
-                .GroupBy(gap => gap.SentenceId)
-                .ToDictionary(
-                    group => group.Key,
-                    group => group.OrderBy(g => g.SourceStartSec).ToList());
+            finalTimeline.Remove(PauseTimelineApplier.TailSentinelSentenceId);
         }
 
         var orderedSentences = sentences
-            .Where(sentence => timeline.ContainsKey(sentence.Id))
-            .OrderBy(sentence => sentence.Timing.StartSec)
+            .Where(sentence => finalTimeline.ContainsKey(sentence.Id))
+            .OrderBy(sentence => finalTimeline[sentence.Id].StartSec)
             .ToList();
 
         if (orderedSentences.Count == 0)
@@ -62,298 +53,281 @@ internal static class PauseAudioApplier
             return audio;
         }
 
-        var unreliableSentenceIds = orderedSentences
-            .Where(sentence => !IsReliableStatus(sentence.Status))
-            .Select(sentence => sentence.Id)
-            .ToHashSet();
+        var intraLookup = intraSentenceGaps is not null && intraSentenceGaps.Count > 0
+            ? intraSentenceGaps
+                .Where(gap => finalTimeline.ContainsKey(gap.SentenceId))
+                .GroupBy(gap => gap.SentenceId)
+                .ToDictionary(
+                    group => group.Key,
+                    group => group.OrderBy(g => g.SourceStartSec).ToList())
+            : new Dictionary<int, List<PauseIntraGap>>();
 
         int sampleRate = audio.SampleRate;
-        double timelineMaxEnd = timeline.Values.Max(t => t.EndSec);
-        double durationSec = Math.Max(timelineMaxEnd, audio.Length / (double)sampleRate);
-        if (hasTailTiming)
-        {
-            durationSec = Math.Max(durationSec, tailTiming!.EndSec);
-        }
-        int targetLength = Math.Max(audio.Length, (int)Math.Ceiling(durationSec * sampleRate));
-        var working = new AudioBuffer(audio.Channels, sampleRate, targetLength);
 
-        for (int i = 0; i < orderedSentences.Count; i++)
+        var overlays = new List<IReadOnlyList<SentenceSegment>>(orderedSentences.Count);
+        double maxSegmentEndSec = hasTail ? tailTiming!.EndSec : 0d;
+
+        foreach (var sentence in orderedSentences)
         {
-            var sentence = orderedSentences[i];
-            if (!timeline.TryGetValue(sentence.Id, out var targetTiming))
+            if (!finalTimeline.TryGetValue(sentence.Id, out var targetTiming))
             {
-                Log.Warn("PauseAudioApplier missing timeline entry for sentence {0}; preserving original timing {1:F3}-{2:F3}", sentence.Id, sentence.Timing.StartSec, sentence.Timing.EndSec);
-                targetTiming = new SentenceTiming(sentence.Timing.StartSec, sentence.Timing.EndSec);
+                continue;
             }
 
             var seed = new TimingRange(sentence.Timing.StartSec, sentence.Timing.EndSec);
-            var energy = analyzer.SnapToEnergy(seed, enterThresholdDb: -48.0, exitThresholdDb: -60.0, searchWindowSec: 1.0, windowMs: 25.0, stepMs: 5.0, preRollMs: 25.0, postRollMs: 30.0, hangoverMs: 15.0);
+            var energy = analyzer.SnapToEnergy(
+                seed,
+                enterThresholdDb: -48.0,
+                exitThresholdDb: -60.0,
+                searchWindowSec: 1.0,
+                windowMs: 25.0,
+                stepMs: 5.0,
+                preRollMs: 25.0,
+                postRollMs: 30.0,
+                hangoverMs: 15.0);
+
             if (energy.EndSec <= energy.StartSec)
             {
                 energy = seed;
             }
 
-            double nextStart = i + 1 < orderedSentences.Count && timeline.TryGetValue(orderedSentences[i + 1].Id, out var nextTiming)
-                ? nextTiming.StartSec
-                : durationSec;
+            double sourceStartSec = Math.Max(seed.StartSec, energy.StartSec);
+            double sourceEndSec = Math.Max(seed.EndSec, energy.EndSec);
 
-            var actualSource = new TimingRange(
-                Math.Max(seed.StartSec, energy.StartSec),
-                Math.Min(nextStart, Math.Max(seed.EndSec, energy.EndSec)));
-
-            if (actualSource.EndSec - actualSource.StartSec < DurationEpsilon)
+            if (sourceEndSec - sourceStartSec < DurationEpsilon)
             {
-                actualSource = seed;
+                sourceStartSec = seed.StartSec;
+                sourceEndSec = seed.EndSec;
             }
 
-            double gapLeft = Math.Max(actualSource.EndSec, targetTiming.EndSec);
-            if (nextStart - gapLeft > DurationEpsilon)
+            if (!IsApproximatelyEqual(sourceEndSec, seed.EndSec))
             {
-                double refinedTail = analyzer.FindSpeechEndFromGap(gapLeft, nextStart, silenceThresholdDb: -55.0, stepMs: 5.0, backoffMs: 3.0);
-                if (refinedTail - actualSource.EndSec > DurationEpsilon)
-                {
-                    Log.Info("PauseAudioApplier tail-extended sentence {0}: prevEnd={1:F3}s refinedEnd={2:F3}s", sentence.Id, actualSource.EndSec, refinedTail);
-                    double clampedTail = Math.Min(refinedTail, nextStart);
-                    actualSource = new TimingRange(actualSource.StartSec, Math.Max(actualSource.StartSec, clampedTail));
-                }
+                Log.Info(
+                    "PauseAudioApplier energy-adjusted sentence {0}: seedEnd={1:F3}s energyEnd={2:F3}s",
+                    sentence.Id,
+                    seed.EndSec,
+                    sourceEndSec);
             }
 
-            if (!IsApproximatelyEqual(actualSource.EndSec, seed.EndSec))
-            {
-                Log.Info("PauseAudioApplier energy-adjusted sentence {0}: seedEnd={1:F3}s energyEnd={2:F3}s", sentence.Id, seed.EndSec, actualSource.EndSec);
-            }
-
-            var sentenceGaps = intraGapLookup is not null && intraGapLookup.TryGetValue(sentence.Id, out var gapList)
-                ? (IReadOnlyList<PauseIntraGap>)gapList
+            var gaps = intraLookup.TryGetValue(sentence.Id, out var list)
+                ? list
                 : EmptyIntraGaps;
 
-            CopySentence(audio, working, actualSource, targetTiming, sampleRate, sentenceGaps);
-        }
+            var segments = BuildSentenceSegments(
+                sentence.Id,
+                sourceStartSec,
+                sourceEndSec,
+                targetTiming,
+                gaps);
 
-        var updatedSentences = orderedSentences
-            .Select(sentence => sentence with { Timing = new TimingRange(timeline[sentence.Id].StartSec, timeline[sentence.Id].EndSec) })
-            .ToList();
-
-        var gaps = BuildPlanGaps(updatedSentences, durationSec, unreliableSentenceIds);
-        if (intraSentenceGaps is not null && intraSentenceGaps.Count > 0)
-        {
-            foreach (var gap in intraSentenceGaps)
-            {
-                double start = Math.Clamp(gap.TargetStartSec, 0.0, durationSec);
-                double end = Math.Clamp(gap.TargetEndSec, start, durationSec);
-                double gapDuration = end - start;
-                if (gapDuration <= DurationEpsilon)
-                {
-                    continue;
-                }
-
-                gaps.Add(new RoomtonePlanGap(
-                    start,
-                    end,
-                    gapDuration,
-                    gap.SentenceId,
-                    gap.SentenceId,
-                    MinRmsDb: -60,
-                    MaxRmsDb: -60,
-                    MeanRmsDb: -60,
-                    SilenceFraction: 1.0,
-                    BreathRegions: Array.Empty<RoomtoneBreathRegion>()));
-            }
-
-            gaps.Sort((left, right) => left.StartSec.CompareTo(right.StartSec));
-        }
-        Log.Info("PauseAudioApplier gaps generated: {0}", gaps.Count);
-
-        if (roomtone.SampleRate != sampleRate)
-        {
-            roomtone = RoomtoneUtils.ResampleLinear(roomtone, sampleRate);
-            Log.Info("PauseAudioApplier resampled roomtone seed to {0} Hz", sampleRate);
-        }
-
-        var rendered = RoomtoneRenderer.RenderWithSentenceMasks(
-            working,
-            roomtone,
-            gaps,
-            updatedSentences,
-            sampleRate,
-            toneGainLinear,
-            fadeMs,
-            debugDirectory: null);
-
-        var analysis = new AudioAnalysisService(rendered);
-        double lengthSec = rendered.SampleRate > 0 ? rendered.Length / (double)rendered.SampleRate : 0.0;
-        var rms = analysis.AnalyzeGap(0.0, lengthSec);
-        Log.Info("PauseAudioApplier output RMS mean={0:F2} dB min={1:F2} dB max={2:F2} dB", rms.MeanRmsDb, rms.MinRmsDb, rms.MaxRmsDb);
-
-        return rendered;
-    }
-
-    private static void CopySentence(
-        AudioBuffer source,
-        AudioBuffer destination,
-        TimingRange originalTiming,
-        SentenceTiming targetTiming,
-        int sampleRate,
-        IReadOnlyList<PauseIntraGap> intraGaps)
-    {
-        int origStart = Math.Clamp((int)Math.Round(originalTiming.StartSec * sampleRate), 0, source.Length);
-        int origEnd = Math.Clamp((int)Math.Round(originalTiming.EndSec * sampleRate), origStart, source.Length);
-        if (origEnd <= origStart)
-        {
-            return;
-        }
-
-        int targetStart = Math.Clamp((int)Math.Round(targetTiming.StartSec * sampleRate), 0, destination.Length);
-        int targetEnd = Math.Clamp((int)Math.Round(targetTiming.EndSec * sampleRate), targetStart, destination.Length);
-        if (targetEnd <= targetStart)
-        {
-            return;
-        }
-
-        if (intraGaps.Count == 0)
-        {
-            int length = Math.Min(origEnd - origStart, targetEnd - targetStart);
-            CopyBlock(source, destination, origStart, targetStart, length);
-            return;
-        }
-
-        int srcCursor = origStart;
-        int dstCursor = targetStart;
-
-        foreach (var gap in intraGaps)
-        {
-            if (gap.SourceEndSec <= originalTiming.StartSec || gap.SourceStartSec >= originalTiming.EndSec)
+            if (segments.Count == 0)
             {
                 continue;
             }
 
-            double gapSourceStartSec = Math.Max(originalTiming.StartSec, gap.SourceStartSec);
-            double gapSourceEndSec = Math.Min(originalTiming.EndSec, gap.SourceEndSec);
-            int gapSourceStart = Math.Clamp((int)Math.Round(gapSourceStartSec * sampleRate), origStart, origEnd);
-            int gapSourceEnd = Math.Clamp((int)Math.Round(gapSourceEndSec * sampleRate), gapSourceStart, origEnd);
-            if (gapSourceStart >= origEnd)
+            foreach (var segment in segments)
             {
-                break;
+                double duration = segment.SourceEndSec - segment.SourceStartSec;
+                double end = segment.DestinationStartSec + duration;
+                if (end > maxSegmentEndSec)
+                {
+                    maxSegmentEndSec = end;
+                }
             }
 
-            double gapTargetStartSec = Math.Clamp(gap.TargetStartSec, targetTiming.StartSec, targetTiming.EndSec);
-            double gapTargetEndSec = Math.Clamp(gap.TargetEndSec, gapTargetStartSec, targetTiming.EndSec);
-            int gapTargetStart = Math.Clamp((int)Math.Round(gapTargetStartSec * sampleRate), targetStart, targetEnd);
-            int gapTargetEnd = Math.Clamp((int)Math.Round(gapTargetEndSec * sampleRate), gapTargetStart, targetEnd);
-
-            if (gapTargetStart >= targetEnd)
-            {
-                break;
-            }
-
-            int copyLen = Math.Min(gapSourceStart - srcCursor, targetEnd - dstCursor);
-            if (copyLen > 0)
-            {
-                CopyBlock(source, destination, srcCursor, dstCursor, copyLen);
-                srcCursor += copyLen;
-                dstCursor += copyLen;
-            }
-
-            srcCursor = Math.Min(gapSourceEnd, origEnd);
-            dstCursor = Math.Min(Math.Max(dstCursor, gapTargetStart), targetEnd);
-            dstCursor = Math.Min(gapTargetEnd, targetEnd);
-            if (srcCursor >= origEnd || dstCursor >= targetEnd)
-            {
-                break;
-            }
+            overlays.Add(segments);
         }
 
-        int remainingLen = Math.Min(origEnd - srcCursor, targetEnd - dstCursor);
-        if (remainingLen > 0)
+        double scheduledEndSec = finalTimeline.Count > 0 ? finalTimeline.Values.Max(t => t.EndSec) : 0d;
+        double baseDurationSec = Math.Max(scheduledEndSec, audio.Length / (double)sampleRate);
+        double totalDurationSec = Math.Max(baseDurationSec, maxSegmentEndSec);
+        if (hasTail)
         {
-            CopyBlock(source, destination, srcCursor, dstCursor, remainingLen);
+            totalDurationSec = Math.Max(totalDurationSec, tailTiming!.EndSec);
         }
+
+        if (totalDurationSec < DurationEpsilon)
+        {
+            return audio;
+        }
+
+        var tone = roomtone.SampleRate == sampleRate
+            ? roomtone
+            : RoomtoneUtils.ResampleLinear(roomtone, sampleRate);
+        if (tone.Length == 0)
+        {
+            throw new InvalidOperationException("Roomtone seed must contain samples.");
+        }
+
+        RoomtoneUtils.MakeLoopable(tone, seamMs: 60);
+
+        int targetLength = Math.Max((int)Math.Ceiling(totalDurationSec * sampleRate), 1);
+        var output = BuildRoomtoneBed(tone, audio.Channels, sampleRate, targetLength, toneGainLinear);
+
+        double segmentFadeMs = Math.Clamp(fadeMs, 1.0, SegmentFadeMs);
+        int fadeSamples = Math.Max(1, (int)Math.Round(segmentFadeMs * 0.001 * sampleRate));
+
+        foreach (var segments in overlays)
+        {
+            OverlaySegments(audio, output, segments, sampleRate, fadeSamples);
+        }
+
+        return output;
     }
 
-    private static void CopyBlock(AudioBuffer source, AudioBuffer destination, int srcStart, int dstStart, int length)
+    private static AudioBuffer BuildRoomtoneBed(AudioBuffer tone, int channels, int sampleRate, int length, double gain)
     {
-        if (length <= 0)
+        var bed = new AudioBuffer(channels, sampleRate, length);
+        var random = Random.Shared;
+
+        for (int ch = 0; ch < channels; ch++)
+        {
+            var dst = bed.Planar[ch];
+            var src = tone.Planar[ch % tone.Channels];
+            int toneLength = src.Length;
+            int offset = random.Next(toneLength);
+
+            for (int i = 0; i < length; i++)
+            {
+                int idx = (offset + i) % toneLength;
+                dst[i] = (float)(gain * src[idx]);
+            }
+        }
+
+        return bed;
+    }
+
+    private static IReadOnlyList<SentenceSegment> BuildSentenceSegments(
+        int sentenceId,
+        double sourceStartSec,
+        double sourceEndSec,
+        SentenceTiming targetTiming,
+        IReadOnlyList<PauseIntraGap> intraGaps)
+    {
+        var segments = new List<SentenceSegment>();
+
+        double srcCursor = sourceStartSec;
+        double destCursor = targetTiming.StartSec;
+        double targetEnd = targetTiming.EndSec;
+
+        if (intraGaps.Count > 0)
+        {
+            foreach (var gap in intraGaps)
+            {
+                double gapSourceStart = Math.Clamp(gap.SourceStartSec, sourceStartSec, sourceEndSec);
+                double gapSourceEnd = Math.Clamp(gap.SourceEndSec, gapSourceStart, sourceEndSec);
+
+                double gapTargetStart = Math.Clamp(gap.TargetStartSec, targetTiming.StartSec, targetEnd);
+                double gapTargetEnd = Math.Clamp(gap.TargetEndSec, gapTargetStart, targetEnd);
+
+                if (gapSourceStart - srcCursor > DurationEpsilon)
+                {
+                    segments.Add(new SentenceSegment(srcCursor, gapSourceStart, destCursor));
+                }
+
+                srcCursor = gapSourceEnd;
+                destCursor = gapTargetEnd;
+            }
+        }
+
+        if (sourceEndSec - srcCursor > DurationEpsilon)
+        {
+            segments.Add(new SentenceSegment(srcCursor, sourceEndSec, destCursor));
+        }
+
+        return segments;
+    }
+
+    private static void OverlaySegments(
+        AudioBuffer source,
+        AudioBuffer destination,
+        IReadOnlyList<SentenceSegment> segments,
+        int sampleRate,
+        int fadeSamples)
+    {
+        if (segments.Count == 0)
         {
             return;
         }
 
-        length = Math.Min(length, source.Length - srcStart);
-        length = Math.Min(length, destination.Length - dstStart);
-        if (length <= 0)
+        int sourceChannels = source.Channels;
+        int destChannels = destination.Channels;
+
+        foreach (var segment in segments)
         {
-            return;
-        }
+            int srcStart = SecondsToSample(segment.SourceStartSec, sampleRate, source.Length);
+            int srcEnd = SecondsToSample(segment.SourceEndSec, sampleRate, source.Length);
+            int dstStart = SecondsToSample(segment.DestinationStartSec, sampleRate, destination.Length);
 
-        for (int ch = 0; ch < destination.Channels; ch++)
-        {
-            var src = source.Planar[Math.Min(ch, source.Channels - 1)];
-            var dst = destination.Planar[ch];
-            Array.Copy(src, srcStart, dst, dstStart, length);
-        }
-    }
-
-    private static bool IsReliableStatus(string? status)
-    {
-        return string.Equals(status, "ok", StringComparison.OrdinalIgnoreCase);
-    }
-
-    private static List<RoomtonePlanGap> BuildPlanGaps(IReadOnlyList<SentenceAlign> updatedSentences, double durationSec, ISet<int>? unreliableSentenceIds)
-    {
-        var gaps = new List<RoomtonePlanGap>();
-        if (updatedSentences.Count == 0)
-        {
-            return gaps;
-        }
-
-        double previousEnd = 0.0;
-        int? previousId = null;
-
-        foreach (var sentence in updatedSentences)
-        {
-            double gapStart = previousEnd;
-            double gapEnd = sentence.Timing.StartSec;
-
-            bool leftUnreliable = previousId.HasValue && unreliableSentenceIds is not null && unreliableSentenceIds.Contains(previousId.Value);
-            bool rightUnreliable = unreliableSentenceIds is not null && unreliableSentenceIds.Contains(sentence.Id);
-            bool skipFill = leftUnreliable && rightUnreliable;
-
-            if (!skipFill && gapEnd - gapStart > 1e-6)
+            int length = Math.Min(srcEnd - srcStart, destination.Length - dstStart);
+            if (length <= 0)
             {
-                gaps.Add(new RoomtonePlanGap(
-                    gapStart,
-                    gapEnd,
-                    gapEnd - gapStart,
-                    previousId,
-                    sentence.Id,
-                    MinRmsDb: -60,
-                    MaxRmsDb: -60,
-                    MeanRmsDb: -60,
-                    SilenceFraction: 1.0,
-                    BreathRegions: Array.Empty<RoomtoneBreathRegion>()));
+                continue;
             }
 
-            previousEnd = sentence.Timing.EndSec;
-            previousId = sentence.Id;
-        }
+            for (int ch = 0; ch < destChannels; ch++)
+            {
+                var srcArr = source.Planar[ch % sourceChannels];
+                var dstArr = destination.Planar[ch];
 
-        double finalGapDuration = Math.Max(0.0, durationSec - previousEnd);
-        if (finalGapDuration > 1e-6)
-        {
-            gaps.Add(new RoomtonePlanGap(
-                previousEnd,
-                previousEnd + finalGapDuration,
-                finalGapDuration,
-                previousId,
-                null,
-                MinRmsDb: -60,
-                MaxRmsDb: -60,
-                MeanRmsDb: -60,
-                SilenceFraction: 1.0,
-                BreathRegions: Array.Empty<RoomtoneBreathRegion>()));
-        }
+                for (int i = 0; i < length; i++)
+                {
+                    int srcIndex = srcStart + i;
+                    int dstIndex = dstStart + i;
 
-        return gaps;
+                    if (srcIndex >= srcArr.Length || dstIndex >= dstArr.Length)
+                    {
+                        break;
+                    }
+
+                    double envelope = 1.0;
+
+                    if (fadeSamples > 0 && length > 1)
+                    {
+                        if (i < fadeSamples)
+                        {
+                            double ratio = (i + 1.0) / (fadeSamples + 1.0);
+                            envelope *= Math.Sin(ratio * (Math.PI * 0.5));
+                        }
+
+                        if (i >= length - fadeSamples)
+                        {
+                            double ratio = (length - i) / (fadeSamples + 1.0);
+                            envelope *= Math.Sin(ratio * (Math.PI * 0.5));
+                        }
+                    }
+
+                    double srcSample = srcArr[srcIndex];
+                    double dstSample = dstArr[dstIndex];
+                    double mixed = srcSample * envelope + dstSample * (1.0 - envelope);
+                    dstArr[dstIndex] = (float)mixed;
+                }
+            }
+        }
     }
 
-    private static bool IsApproximatelyEqual(double a, double b) => Math.Abs(a - b) < DurationEpsilon;
+    private static int SecondsToSample(double seconds, int sampleRate, int maxLength)
+    {
+        int sample = (int)Math.Round(seconds * sampleRate);
+        return Math.Clamp(sample, 0, Math.Max(0, maxLength));
+    }
+
+    private static bool IsApproximatelyEqual(double left, double right)
+    {
+        return Math.Abs(left - right) < DurationEpsilon;
+    }
+
+    private readonly struct SentenceSegment
+    {
+        public SentenceSegment(double sourceStartSec, double sourceEndSec, double destinationStartSec)
+        {
+            SourceStartSec = sourceStartSec;
+            SourceEndSec = sourceEndSec;
+            DestinationStartSec = destinationStartSec;
+        }
+
+        public double SourceStartSec { get; }
+        public double SourceEndSec { get; }
+        public double DestinationStartSec { get; }
+    }
 }
