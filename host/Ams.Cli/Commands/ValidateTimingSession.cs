@@ -63,6 +63,83 @@ internal sealed class ValidateTimingSession
 
     public async Task RunAsync(CancellationToken cancellationToken)
     {
+        var context = await LoadSessionContextAsync(cancellationToken).ConfigureAwait(false);
+
+        if (_runProsodyAnalysis)
+        {
+            _prosodyAnalysis = context.Analysis;
+        }
+
+        RenderIntro(context.Transcript, context.BookIndex, context.Analysis.Spans.Count);
+
+        var sessionState = new InteractiveState(
+            context.PauseMap,
+            context.Analysis,
+            _policy,
+            context.SentenceLookup,
+            context.Paragraphs,
+            context.SentenceToParagraph,
+            context.ParagraphSentences);
+        var renderer = new TimingRenderer(sessionState, _prosodyAnalysis, _policy);
+        var controller = new TimingController(sessionState, renderer, result => OnCommit(sessionState, result));
+
+        controller.Run();
+    }
+
+    public async Task<HeadlessResult> RunHeadlessAsync(CancellationToken cancellationToken)
+    {
+        var context = await LoadSessionContextAsync(cancellationToken).ConfigureAwait(false);
+
+        if (_runProsodyAnalysis)
+        {
+            _prosodyAnalysis = context.Analysis;
+        }
+
+        var state = new InteractiveState(
+            context.PauseMap,
+            context.Analysis,
+            _policy,
+            context.SentenceLookup,
+            context.Paragraphs,
+            context.SentenceToParagraph,
+            context.ParagraphSentences);
+
+        state.ToggleOptionsFocus();
+        var compressionSummary = state.ApplyCompressionPreview();
+        var commitResult = state.CommitScope(state.Current, compressionSummary.HasChanges ? compressionSummary : null);
+        _ = commitResult; // commitResult updates internal state; summary captured for logging.
+
+        var adjustments = PersistPauseAdjustments(state);
+        bool fileExists = _pauseAdjustmentsFile.Exists;
+        bool hasAdjustments = adjustments.Count > 0 && fileExists;
+
+        if (hasAdjustments)
+        {
+            var relativePath = GetRelativePathSafe(_pauseAdjustmentsFile.FullName);
+            Log.Info(
+                "validate timing headless saved {Count} adjustment(s) to {Path} (compression total={Total}, within={Within}, downstream={Downstream})",
+                adjustments.Count,
+                relativePath,
+                compressionSummary.TotalCount,
+                compressionSummary.WithinScopeCount,
+                compressionSummary.DownstreamCount);
+        }
+        else
+        {
+            Log.Warn("validate timing headless produced no adjustments; skipping pause-adjustments file");
+        }
+
+        return new HeadlessResult(
+            hasAdjustments,
+            new FileInfo(_pauseAdjustmentsFile.FullName),
+            adjustments.Count,
+            compressionSummary.TotalCount,
+            compressionSummary.WithinScopeCount,
+            compressionSummary.DownstreamCount);
+    }
+
+    private async Task<SessionContext> LoadSessionContextAsync(CancellationToken cancellationToken)
+    {
         cancellationToken.ThrowIfCancellationRequested();
 
         var transcript = await LoadTranscriptAsync(_transcriptFile, cancellationToken).ConfigureAwait(false);
@@ -75,27 +152,31 @@ internal sealed class ValidateTimingSession
         var policy = _policy;
 
         var service = new PauseDynamicsService();
-        var analysis = service.AnalyzeChapter(transcript, bookIndex, hydrated, policy, silenceSpans, _includeAllIntraSentenceGaps);
-        var pauseMap = PauseMapBuilder.Build(transcript, bookIndex, hydrated, policy, silenceSpans, _includeAllIntraSentenceGaps);
-
-        if (_runProsodyAnalysis)
-        {
-            _prosodyAnalysis = analysis;
-        }
-
-        RenderIntro(transcript, bookIndex, analysis.Spans.Count);
-        var sessionState = new InteractiveState(
-            pauseMap,
-            analysis,
+        var analysis = service.AnalyzeChapter(
+            transcript,
+            bookIndex,
+            hydrated,
             policy,
+            silenceSpans,
+            _includeAllIntraSentenceGaps);
+        var pauseMap = PauseMapBuilder.Build(
+            transcript,
+            bookIndex,
+            hydrated,
+            policy,
+            silenceSpans,
+            _includeAllIntraSentenceGaps);
+
+        return new SessionContext(
+            transcript,
+            bookIndex,
+            hydrated,
             sentenceLookup,
             paragraphs,
             sentenceToParagraph,
-            paragraphSentences);
-        var renderer = new TimingRenderer(sessionState, _prosodyAnalysis, policy);
-        var controller = new TimingController(sessionState, renderer, result => OnCommit(sessionState, result));
-
-        controller.Run();
+            paragraphSentences,
+            analysis,
+            pauseMap);
     }
 
     private static async Task<TranscriptIndex> LoadTranscriptAsync(FileInfo file, CancellationToken cancellationToken)
@@ -338,7 +419,7 @@ internal sealed class ValidateTimingSession
 
         try
         {
-            PersistPauseAdjustments(state);
+            _ = PersistPauseAdjustments(state);
         }
         catch (Exception ex)
         {
@@ -346,7 +427,7 @@ internal sealed class ValidateTimingSession
         }
     }
 
-    private void PersistPauseAdjustments(InteractiveState state)
+    private IReadOnlyList<PauseAdjust> PersistPauseAdjustments(InteractiveState state)
     {
         var adjustments = BuildAdjustmentsIncludingStatic(state);
 
@@ -359,7 +440,7 @@ internal sealed class ValidateTimingSession
 
             var baseMessage = state.LastCommitMessage ?? string.Empty;
             state.UpdateLastCommitMessage($"{baseMessage}  No adjustments to save.");
-            return;
+            return adjustments;
         }
 
         var document = PauseAdjustmentsDocument.Create(
@@ -373,6 +454,8 @@ internal sealed class ValidateTimingSession
         var relativePath = GetRelativePathSafe(_pauseAdjustmentsFile.FullName);
         var message = state.LastCommitMessage ?? string.Empty;
         state.UpdateLastCommitMessage($"{message}  Saved to {relativePath}");
+
+        return adjustments;
     }
 
     private IReadOnlyList<PauseAdjust> BuildAdjustmentsIncludingStatic(InteractiveState state)
@@ -461,6 +544,25 @@ internal sealed class ValidateTimingSession
 
         return structural;
     }
+
+    internal sealed record HeadlessResult(
+        bool HasAdjustments,
+        FileInfo AdjustmentsFile,
+        int AdjustmentCount,
+        int CompressionTotal,
+        int CompressionWithin,
+        int CompressionDownstream);
+
+    private sealed record SessionContext(
+        TranscriptIndex Transcript,
+        BookIndex BookIndex,
+        HydratedTranscript Hydrated,
+        IReadOnlyDictionary<int, string> SentenceLookup,
+        IReadOnlyList<ParagraphInfo> Paragraphs,
+        IReadOnlyDictionary<int, int> SentenceToParagraph,
+        IReadOnlyDictionary<int, IReadOnlyList<int>> ParagraphSentences,
+        PauseAnalysisReport Analysis,
+        ChapterPauseMap PauseMap);
 
     private static bool IsStructuralClass(PauseClass pauseClass)
     {
