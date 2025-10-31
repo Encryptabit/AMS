@@ -81,9 +81,9 @@ namespace Ams.Core.Audio
             double searchWindowSec  = 0.8,
             double windowMs         = 25.0,
             double stepMs           = 5.0,
-            double preRollMs        = 35.0,
-            double postRollMs       = 30.0,
-            double hangoverMs       = 20.0)
+            double preRollMs        = 0.0,
+            double postRollMs       = 0.0,
+            double hangoverMs       = 0.0)
         {
             int sr    = _buffer.SampleRate;
             int step  = Math.Max(1, (int)Math.Round(stepMs * 0.001 * sr));

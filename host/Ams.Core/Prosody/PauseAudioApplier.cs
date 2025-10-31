@@ -83,8 +83,8 @@ internal static class PauseAudioApplier
                 windowMs: 25.0,
                 stepMs: 5.0,
                 preRollMs: 25.0,
-                postRollMs: 30.0,
-                hangoverMs: 15.0);
+                postRollMs: 0.0,
+                hangoverMs: 0.0);
 
             if (energy.EndSec <= energy.StartSec)
             {
@@ -178,20 +178,35 @@ internal static class PauseAudioApplier
     private static AudioBuffer BuildRoomtoneBed(AudioBuffer tone, int channels, int sampleRate, int length, double gain)
     {
         var bed = new AudioBuffer(channels, sampleRate, length);
-        var random = Random.Shared;
-
-        for (int ch = 0; ch < channels; ch++)
+        if (tone.Length == 0)
         {
-            var dst = bed.Planar[ch];
-            var src = tone.Planar[ch % tone.Channels];
-            int toneLength = src.Length;
-            int offset = random.Next(toneLength);
+            return bed;
+        }
 
-            for (int i = 0; i < length; i++)
+        int toneLength = tone.Planar[0].Length;
+        int toneIndex = FindBestStartIndex(tone.Planar[0]);
+        float prevSample = tone.Planar[0][toneIndex];
+
+        for (int i = 0; i < length; i++)
+        {
+            if (toneIndex >= toneLength)
             {
-                int idx = (offset + i) % toneLength;
-                dst[i] = (float)(gain * src[idx]);
+                toneIndex = FindBestWrapIndex(tone.Planar[0], prevSample);
             }
+
+            for (int ch = 0; ch < channels; ch++)
+            {
+                var src = tone.Planar[ch % tone.Channels];
+                var dst = bed.Planar[ch];
+                float sample = src[toneIndex];
+                dst[i] = (float)(gain * sample);
+                if (ch == 0)
+                {
+                    prevSample = sample;
+                }
+            }
+
+            toneIndex++;
         }
 
         return bed;
@@ -315,6 +330,60 @@ internal static class PauseAudioApplier
     private static bool IsApproximatelyEqual(double left, double right)
     {
         return Math.Abs(left - right) < DurationEpsilon;
+    }
+
+    private static int FindBestStartIndex(float[] samples)
+    {
+        if (samples.Length == 0)
+        {
+            return 0;
+        }
+
+        int bestIndex = 0;
+        float bestAbs = Math.Abs(samples[0]);
+
+        for (int i = 1; i < samples.Length; i++)
+        {
+            float abs = Math.Abs(samples[i]);
+            if (abs < bestAbs)
+            {
+                bestAbs = abs;
+                bestIndex = i;
+                if (bestAbs <= 1e-6f)
+                {
+                    break;
+                }
+            }
+        }
+
+        return bestIndex;
+    }
+
+    private static int FindBestWrapIndex(float[] samples, float prevSample)
+    {
+        if (samples.Length == 0)
+        {
+            return 0;
+        }
+
+        int bestIndex = 0;
+        float bestDiff = Math.Abs(samples[0] - prevSample);
+
+        for (int i = 1; i < samples.Length; i++)
+        {
+            float diff = Math.Abs(samples[i] - prevSample);
+            if (diff < bestDiff)
+            {
+                bestDiff = diff;
+                bestIndex = i;
+                if (bestDiff <= 1e-6f)
+                {
+                    break;
+                }
+            }
+        }
+
+        return bestIndex;
     }
 
     private readonly struct SentenceSegment

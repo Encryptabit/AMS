@@ -69,16 +69,10 @@ internal static class RoomtoneUtils
 
         int sr = dst.SampleRate;
         int overlapSamples = Math.Max(1, (int)Math.Round(overlapMs * 0.001 * sr));
-
-        if (tone.Length > 0)
+        int toneLength = tone.Planar[0].Length;
+        if (toneLength == 0)
         {
-            var zeroCrossings = BuildZeroCrossings(tone);
-            int toneStartSample = zeroCrossings.Length > 0
-                ? zeroCrossings[Random.Shared.Next(zeroCrossings.Length)]
-                : Random.Shared.Next(tone.Length);
-            long startCursor = toneStartSample - overlapSamples;
-            long mod = tone.Length;
-            toneCursor = ((startCursor % mod) + mod) % mod;
+            return;
         }
 
         g0 = Math.Clamp(g0, 0, dst.Length);
@@ -92,50 +86,59 @@ internal static class RoomtoneUtils
             return;
         }
 
-        const int wrapXfadeMs = 60;
-        int wrapX = Math.Max(1, (int)Math.Round(wrapXfadeMs * 0.001 * sr));
-
-        float ReadToneSample(float[] tt, long curPlusI)
+        float initialMatch = 0f;
+        if (src.Length > 0)
         {
-            int tl = tt.Length;
-            int idx = (int)(curPlusI % tl);
-            if (idx < wrapX && tl >= wrapX)
-            {
-                int iHead = idx;
-                int iTail = (tl - wrapX + idx) % tl;
-                double t = wrapX == 1 ? 1.0 : (double)iHead / (wrapX - 1);
-                double gH = Math.Sqrt(t);
-                double gT = Math.Sqrt(1.0 - t);
-                return (float)(gT * tt[iTail] + gH * tt[iHead]);
-            }
-
-            return tt[idx];
+            int targetSample = g0 > 0 ? g0 - 1 : 0;
+            targetSample = Math.Clamp(targetSample, 0, src.Planar[0].Length - 1);
+            initialMatch = src.Planar[0][targetSample];
         }
 
+        AlignCursorToMatch(tone.Planar[0], toneLength, ref toneCursor, initialMatch);
+
+        // Left overlap crossfade
         for (int i = 0; i < leftOv; i++)
         {
-            int idx = g0 - leftOv + i;
+            int dstIndex = g0 - leftOv + i;
             double ratio = leftOv <= 1 ? (double)(i + 1) / (leftOv + 1) : (double)i / (leftOv - 1);
             double angle = ratio * (Math.PI * 0.5);
             double gTone = Math.Sin(angle);
             double gSrc = Math.Cos(angle);
+
+            int toneIdx = NormalizeIndex(toneCursor, toneLength);
+            float toneSample0 = tone.Planar[0][toneIdx];
+
             for (int ch = 0; ch < dst.Channels; ch++)
             {
                 var d = dst.Planar[ch];
                 var s = src.Planar[ch % src.Channels];
                 var tt = tone.Planar[ch % tone.Channels];
-                float toneSample = ReadToneSample(tt, toneCursor + i);
-                d[idx] = (float)(gSrc * s[idx] + gTone * (baseGainLinear * toneSample));
+                float toneSample = tt[toneIdx];
+                d[dstIndex] = (float)(gSrc * s[dstIndex] + gTone * (baseGainLinear * toneSample));
+            }
+
+            toneCursor++;
+            if (NormalizeIndex(toneCursor, toneLength) == 0)
+            {
+                AlignCursorToMatch(tone.Planar[0], toneLength, ref toneCursor, toneSample0);
             }
         }
 
-        toneCursor += leftOv;
-        toneCursor = AlignToNextZeroCrossing(tone, toneCursor);
-
+        // Gap interior
         if (gapLen > 0)
         {
             int fadeIn = leftOv > 0 ? 0 : Math.Min(gapLen, overlapSamples);
             int fadeOut = rightOv > 0 ? 0 : Math.Min(gapLen, overlapSamples);
+
+            var prevOutputs = new double[dst.Channels];
+            if (leftOv == 0)
+            {
+                for (int ch = 0; ch < dst.Channels; ch++)
+                {
+                    int sampleIndex = g0 > 0 ? Math.Clamp(g0 - 1, 0, dst.Planar[ch].Length - 1) : 0;
+                    prevOutputs[ch] = dst.Planar[ch][sampleIndex];
+                }
+            }
 
             for (int i = 0; i < gapLen; i++)
             {
@@ -143,7 +146,7 @@ internal static class RoomtoneUtils
 
                 if (fadeIn > 0 && i < fadeIn)
                 {
-                    double ratio = fadeIn <= 1 ? (double)(i + 1) / (fadeIn + 1) : (double)i / (fadeIn - 1);
+                    double ratio = ComputeRamp(i, fadeIn);
                     double angle = ratio * (Math.PI * 0.5);
                     gainScale *= Math.Sin(angle);
                 }
@@ -151,51 +154,73 @@ internal static class RoomtoneUtils
                 if (fadeOut > 0 && i >= gapLen - fadeOut)
                 {
                     double local = i - (gapLen - fadeOut);
-                    double ratio = fadeOut <= 1 ? (local + 1) / (fadeOut + 1) : local / (fadeOut - 1);
-                    double angle = ratio * (Math.PI * 0.5);
-                    gainScale *= Math.Cos(angle);
+                    double ratio = ComputeRamp((int)local, fadeOut);
+                    double angle = (1.0 - ratio) * (Math.PI * 0.5);
+                    gainScale *= Math.Sin(angle);
                 }
+
+                int toneIdx = NormalizeIndex(toneCursor, toneLength);
+                float toneSample0 = tone.Planar[0][toneIdx];
 
                 for (int ch = 0; ch < dst.Channels; ch++)
                 {
                     var d = dst.Planar[ch];
                     var tt = tone.Planar[ch % tone.Channels];
-                    float toneSample = ReadToneSample(tt, toneCursor + i);
-                    d[g0 + i] = (float)(baseGainLinear * gainScale * toneSample);
+                    double toneValue = baseGainLinear * gainScale * tt[toneIdx];
+
+                    if (leftOv == 0)
+                    {
+                        double prevOut = prevOutputs[ch];
+                        if (fadeIn > 0)
+                        {
+                            toneValue = (1.0 - gainScale) * prevOut + toneValue;
+                        }
+                        else if (i == 0)
+                        {
+                            toneValue = 0.5 * (prevOut + toneValue);
+                        }
+
+                        prevOutputs[ch] = toneValue;
+                    }
+
+                    d[g0 + i] = (float)toneValue;
                 }
-            }
 
-            toneCursor += gapLen;
-            toneCursor = AlignToNextZeroCrossing(tone, toneCursor);
-
-            if (rightOv == 0 && gapLen > 0)
-            {
-                int lastIdx = g0 + gapLen - 1;
-                for (int ch = 0; ch < dst.Channels; ch++)
+                toneCursor++;
+                if (NormalizeIndex(toneCursor, toneLength) == 0)
                 {
-                    dst.Planar[ch][lastIdx] = 0f;
+                    AlignCursorToMatch(tone.Planar[0], toneLength, ref toneCursor, toneSample0);
                 }
             }
         }
 
+        // Right overlap crossfade
         for (int i = 0; i < rightOv; i++)
         {
-            int idx = g1 + i;
-            double ratio = rightOv <= 1 ? (double)(i + 1) / (rightOv + 1) : (double)i / (rightOv - 1);
+            int dstIndex = g1 + i;
+            double ratio = ComputeRamp(i, rightOv);
             double angle = ratio * (Math.PI * 0.5);
             double gTone = Math.Cos(angle);
             double gSrc = Math.Sin(angle);
+
+            int toneIdx = NormalizeIndex(toneCursor, toneLength);
+            float toneSample0 = tone.Planar[0][toneIdx];
+
             for (int ch = 0; ch < dst.Channels; ch++)
             {
                 var d = dst.Planar[ch];
                 var s = src.Planar[ch % src.Channels];
                 var tt = tone.Planar[ch % tone.Channels];
-                float toneSample = ReadToneSample(tt, toneCursor + i);
-                d[idx] = (float)(gTone * (baseGainLinear * toneSample) + gSrc * s[idx]);
+                float toneSample = tt[toneIdx];
+                d[dstIndex] = (float)(gTone * (baseGainLinear * toneSample) + gSrc * s[dstIndex]);
+            }
+
+            toneCursor++;
+            if (NormalizeIndex(toneCursor, toneLength) == 0)
+            {
+                AlignCursorToMatch(tone.Planar[0], toneLength, ref toneCursor, toneSample0);
             }
         }
-
-        toneCursor += rightOv;
     }
 
     private static int[] BuildZeroCrossings(AudioBuffer tone)
@@ -271,62 +296,62 @@ internal static class RoomtoneUtils
 
 
 
-    private static long AlignToNextZeroCrossing(AudioBuffer tone, long cursor)
+    private static int NormalizeIndex(long value, int length)
     {
-        if (tone.Length == 0)
-        {
-            return cursor;
-        }
-
-        float[] samples = tone.Planar[0];
-        int len = samples.Length;
-        if (len == 0)
-        {
-            return cursor;
-        }
-
-        int start = Mod(cursor, len);
-        int bestIndex = start;
-        float bestAbs = Math.Abs(samples[start]);
-        float prev = samples[start];
-
-        for (int step = 1; step <= len; step++)
-        {
-            int i = (start + step) % len;
-            float cur = samples[i];
-            float absCur = Math.Abs(cur);
-
-            if (absCur < bestAbs)
-            {
-                bestAbs = absCur;
-                bestIndex = i;
-            }
-
-            if ((prev <= 0f && cur >= 0f) || (prev >= 0f && cur <= 0f))
-            {
-                float absPrev = Math.Abs(prev);
-                if (absPrev < bestAbs)
-                {
-                    bestIndex = Mod(i - 1, len);
-                }
-
-                return bestIndex;
-            }
-
-            prev = cur;
-        }
-
-        return bestIndex;
+        int idx = (int)(value % length);
+        return idx < 0 ? idx + length : idx;
     }
 
-    private static int Mod(long value, int modulus)
+    private static void AlignCursorToMatch(float[] samples, int length, ref long cursor, float match)
     {
-        long result = value % modulus;
-        if (result < 0)
+        if (samples.Length == 0 || length <= 0)
         {
-            result += modulus;
+            return;
         }
 
-        return (int)result;
+        int best = FindBestMatch(samples, match);
+        long baseCursor = cursor - NormalizeIndex(cursor, length);
+        cursor = baseCursor + best;
+    }
+
+    private static int FindBestMatch(float[] samples, float target)
+    {
+        if (samples.Length == 0)
+        {
+            return 0;
+        }
+
+        int best = 0;
+        float bestDiff = Math.Abs(samples[0] - target);
+        for (int i = 1; i < samples.Length; i++)
+        {
+            float diff = Math.Abs(samples[i] - target);
+            if (diff < bestDiff)
+            {
+                bestDiff = diff;
+                best = i;
+                if (bestDiff <= 1e-6f)
+                {
+                    break;
+                }
+            }
+        }
+
+        return best;
+    }
+
+    private static double ComputeRamp(int index, int count)
+    {
+        if (count <= 0)
+        {
+            return 1.0;
+        }
+
+        if (count == 1)
+        {
+            return index >= 1 ? 1.0 : 0.0;
+        }
+
+        return Math.Clamp(index / (double)(count - 1), 0.0, 1.0);
     }
 }
