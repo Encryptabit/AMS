@@ -140,8 +140,8 @@ namespace Ams.Core.Audio
                 searchWindowSec: searchWindowSec,
                 stepMs: stepMs,
                 preRollMs: 20.0,
-                postRollMs: 0.0,
-                hangoverMs: 0.0);
+                postRollMs: 10.0,
+                hangoverMs: 30.0);
 
           //var snapped = analyzer.SnapToEnergyAuto(seed: seed, AutoTuneStyle.Tight);
             if (windowTiming.Duration > 0)
