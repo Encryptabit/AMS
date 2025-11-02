@@ -188,12 +188,20 @@ public static class AudioIntegrityVerifier
             minMismatchSec,
             AudioMismatchType.ExtraSpeech);
 
-        var missingMismatches = BuildMismatches(filteredMissingSegments, rawDb, treatedDb, stepSec, windowSec, sentences);
-        var extraMismatches = BuildMismatches(extraSegments, rawDb, treatedDb, stepSec, windowSec, sentences);
+        int mergeGapFrames = Math.Max(0, (int)Math.Round(0.05 / Math.Max(stepSec, 1e-6)));
 
-        var mismatches = missingMismatches
-            .Concat(extraMismatches)
-            .OrderBy(m => m.StartSec)
+        var mergedMissingSegments = MergeSegmentWindows(filteredMissingSegments, mergeGapFrames);
+        var mergedExtraSegments = MergeSegmentWindows(extraSegments, mergeGapFrames);
+
+        var missingMismatches = BuildMismatches(mergedMissingSegments, rawDb, treatedDb, stepSec, windowSec, sentences);
+        var extraMismatches = BuildMismatches(mergedExtraSegments, rawDb, treatedDb, stepSec, windowSec, sentences);
+
+        var mismatches = ConsolidateBySentence(
+                missingMismatches
+                    .Concat(extraMismatches)
+                    .OrderBy(m => m.StartSec)
+                    .ToList(),
+                stepSec)
             .ToList();
 
         double totalAudioDurationSec = maxSamples / (double)sampleRate;
@@ -426,6 +434,120 @@ public static class AudioIntegrityVerifier
         }
 
         return mismatches;
+    }
+
+    private static List<SegmentWindow> MergeSegmentWindows(
+        IReadOnlyList<SegmentWindow> segments,
+        int maxGapFrames)
+    {
+        if (segments.Count <= 1)
+        {
+            return segments.ToList();
+        }
+
+        var merged = new List<SegmentWindow>(segments.Count);
+
+        foreach (var segment in segments.OrderBy(s => s.StartIndex))
+        {
+            if (merged.Count == 0)
+            {
+                merged.Add(segment);
+                continue;
+            }
+
+            var last = merged[^1];
+            int gapFrames = segment.StartIndex - last.EndIndex - 1;
+
+            if (segment.Type == last.Type && gapFrames >= 0 && gapFrames <= maxGapFrames)
+            {
+                merged[^1] = new SegmentWindow(last.StartIndex, Math.Max(last.EndIndex, segment.EndIndex), last.Type);
+            }
+            else
+            {
+                merged.Add(segment);
+            }
+        }
+
+        return merged;
+    }
+
+    private static List<AudioMismatch> ConsolidateBySentence(
+        List<AudioMismatch> mismatches,
+        double stepSec)
+    {
+        if (mismatches.Count <= 1)
+        {
+            return mismatches;
+        }
+
+        var grouped = new Dictionary<(AudioMismatchType Type, int SentenceId), AudioMismatch>();
+        var extras = new List<AudioMismatch>();
+
+        foreach (var mismatch in mismatches)
+        {
+            if (mismatch.Sentences.Count == 0)
+            {
+                extras.Add(mismatch);
+                continue;
+            }
+
+            var key = (mismatch.Type, mismatch.Sentences[0].SentenceId);
+
+            if (!grouped.TryGetValue(key, out var existing))
+            {
+                grouped[key] = mismatch;
+                continue;
+            }
+
+            double start = Math.Min(existing.StartSec, mismatch.StartSec);
+            double end = Math.Max(existing.EndSec, mismatch.EndSec);
+            double rawDb = Math.Max(existing.RawDb, mismatch.RawDb);
+            double treatedDb = Math.Min(existing.TreatedDb, mismatch.TreatedDb);
+            double deltaDb = rawDb - treatedDb;
+            var combinedSentences = MergeSentenceContexts(existing.Sentences, mismatch.Sentences);
+
+            grouped[key] = new AudioMismatch(
+                start,
+                end,
+                existing.Type,
+                rawDb,
+                treatedDb,
+                deltaDb,
+                combinedSentences);
+        }
+
+        var results = grouped.Values
+            .Concat(extras)
+            .OrderBy(m => m.StartSec)
+            .ToList();
+
+        return results;
+    }
+
+    private static IReadOnlyList<SentenceSpan> MergeSentenceContexts(
+        IReadOnlyList<SentenceSpan> left,
+        IReadOnlyList<SentenceSpan> right)
+    {
+        if (left.Count == 0) return right;
+        if (right.Count == 0) return left;
+
+        var map = new Dictionary<int, SentenceSpan>();
+
+        foreach (var span in left.Concat(right))
+        {
+            if (!map.TryGetValue(span.SentenceId, out var existing))
+            {
+                map[span.SentenceId] = span;
+                continue;
+            }
+
+            double start = Math.Min(existing.StartSec, span.StartSec);
+            double end = Math.Max(existing.EndSec, span.EndSec);
+
+            map[span.SentenceId] = existing with { StartSec = start, EndSec = end };
+        }
+
+        return map.Values.OrderBy(span => span.StartSec).ToList();
     }
 
     private static (List<SegmentWindow> Segments, int SuppressedCount) FilterMissingSpeechWithBreath(
