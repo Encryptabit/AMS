@@ -6,6 +6,7 @@ using System.IO;
 using System.Linq;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
@@ -30,6 +31,7 @@ public static class PipelineCommand
         var pipeline = new Command("pipeline", "Run the end-to-end chapter pipeline");
         pipeline.AddCommand(CreateRun());
         pipeline.AddCommand(CreatePrepCommand());
+        pipeline.AddCommand(CreateVerifyCommand());
         pipeline.AddCommand(CreateStatsCommand());
         return pipeline;
     }
@@ -47,6 +49,12 @@ public static class PipelineCommand
     private static readonly JsonSerializerOptions StatsJsonOptions = new()
     {
         PropertyNameCaseInsensitive = true
+    };
+
+    private static readonly JsonSerializerOptions VerifyJsonOptions = new()
+    {
+        WriteIndented = true,
+        Converters = { new JsonStringEnumConverter() }
     };
 
     private static readonly Regex PatternTokenRegex = new(@"\{(d{1,2})([+-]\d+)?\}", RegexOptions.Compiled | RegexOptions.CultureInvariant | RegexOptions.IgnoreCase);
@@ -109,6 +117,139 @@ public static class PipelineCommand
             catch (Exception ex)
             {
                 Log.Error(ex, "pipeline stats command failed");
+                context.ExitCode = 1;
+            }
+        });
+
+        return cmd;
+    }
+
+    private static Command CreateVerifyCommand()
+    {
+        var cmd = new Command("verify", "Verify treated WAVs by comparing speech activity against raw audio");
+
+        var rootOption = new Option<DirectoryInfo?>(
+            "--root",
+            () => null,
+            "Root directory containing raw chapter WAV files (defaults to the REPL working directory or current directory)");
+        rootOption.AddAlias("-r");
+
+        var chapterOption = new Option<string?>(
+            "--chapter",
+            () => null,
+            "Specific chapter to verify (stem or WAV filename)");
+
+        var allOption = new Option<bool>(
+            "--all",
+            () => false,
+            "Verify every chapter WAV under the root directory");
+
+        var reportDirOption = new Option<DirectoryInfo?>(
+            "--report-dir",
+            () => null,
+            "Directory where verification reports should be written (defaults to each chapter directory)");
+
+        var formatOption = new Option<string>(
+            "--format",
+            () => "json",
+            "Report format: json, csv, or both");
+        formatOption.FromAmong("json", "csv", "both");
+
+        var windowOption = new Option<double>(
+            "--window-ms",
+            () => 30.0,
+            "RMS window length in milliseconds");
+
+        var stepOption = new Option<double>(
+            "--step-ms",
+            () => 15.0,
+            "RMS hop length in milliseconds");
+
+        var minDurationOption = new Option<double>(
+            "--min-duration-ms",
+            () => 60.0,
+            "Minimum duration (ms) a mismatch must span to be reported");
+
+        var minDeltaOption = new Option<double>(
+            "--min-delta-db",
+            () => 12.0,
+            "Minimum dB delta between raw and treated audio required to flag a mismatch");
+
+        var rawThresholdOption = new Option<double?>(
+            "--raw-threshold-db",
+            () => null,
+            "Optional override for the raw speech threshold (dBFS)");
+
+        var treatedThresholdOption = new Option<double?>(
+            "--treated-threshold-db",
+            () => null,
+            "Optional override for the treated speech threshold (dBFS)");
+
+        cmd.AddOption(rootOption);
+        cmd.AddOption(chapterOption);
+        cmd.AddOption(allOption);
+        cmd.AddOption(reportDirOption);
+        cmd.AddOption(formatOption);
+        cmd.AddOption(windowOption);
+        cmd.AddOption(stepOption);
+        cmd.AddOption(minDurationOption);
+        cmd.AddOption(minDeltaOption);
+        cmd.AddOption(rawThresholdOption);
+        cmd.AddOption(treatedThresholdOption);
+
+        cmd.SetHandler(context =>
+        {
+            var cancellationToken = context.GetCancellationToken();
+            var root = CommandInputResolver.ResolveDirectory(context.ParseResult.GetValueForOption(rootOption));
+            root.Refresh();
+            if (!root.Exists)
+            {
+                throw new DirectoryNotFoundException($"Root directory not found: {root.FullName}");
+            }
+
+            var chapter = context.ParseResult.GetValueForOption(chapterOption);
+            var verifyAll = context.ParseResult.GetValueForOption(allOption);
+            var reportDirValue = context.ParseResult.GetValueForOption(reportDirOption);
+
+            DirectoryInfo? reportDir = null;
+            if (reportDirValue is not null)
+            {
+                EnsureDirectory(reportDirValue.FullName);
+                reportDirValue.Refresh();
+                reportDir = reportDirValue;
+            }
+
+            var formatToken = context.ParseResult.GetValueForOption(formatOption)?.Trim().ToLowerInvariant() ?? "json";
+            var format = formatToken switch
+            {
+                "json" => VerificationReportFormat.Json,
+                "csv" => VerificationReportFormat.Csv,
+                "both" => VerificationReportFormat.Both,
+                _ => throw new InvalidOperationException($"Unsupported report format: {formatToken}")
+            };
+
+            var options = new AudioIntegrityVerifierOptions
+            {
+                WindowMs = context.ParseResult.GetValueForOption(windowOption),
+                StepMs = context.ParseResult.GetValueForOption(stepOption),
+                MinMismatchDurationMs = context.ParseResult.GetValueForOption(minDurationOption),
+                MinDeltaDb = context.ParseResult.GetValueForOption(minDeltaOption),
+                RawSpeechThresholdDb = context.ParseResult.GetValueForOption(rawThresholdOption),
+                TreatedSpeechThresholdDb = context.ParseResult.GetValueForOption(treatedThresholdOption)
+            };
+
+            try
+            {
+                RunVerify(root, reportDir, chapter, verifyAll, format, options, cancellationToken);
+            }
+            catch (OperationCanceledException)
+            {
+                Log.Warn("pipeline verify cancelled");
+                context.ExitCode = 1;
+            }
+            catch (Exception ex)
+            {
+                Log.Error(ex, "pipeline verify command failed");
                 context.ExitCode = 1;
             }
         });
@@ -1368,6 +1509,328 @@ public static class PipelineCommand
                 AnsiConsole.MarkupLine("[yellow]Prosody statistics unavailable (book index missing or failed to load).[/]");
             }
         }
+    }
+
+    private static void RunVerify(
+        DirectoryInfo root,
+        DirectoryInfo? reportDir,
+        string? chapterName,
+        bool verifyAll,
+        VerificationReportFormat format,
+        AudioIntegrityVerifierOptions options,
+        CancellationToken cancellationToken)
+    {
+        var rawTargets = ResolveVerifyTargets(root, chapterName, verifyAll);
+        if (rawTargets.Count == 0)
+        {
+            Log.Warn("No chapter WAV files found under {Root}", root.FullName);
+            return;
+        }
+
+        int processed = 0;
+        int withMismatches = 0;
+
+        foreach (var raw in rawTargets)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            var stem = Path.GetFileNameWithoutExtension(raw.Name);
+            var chapterDir = new DirectoryInfo(Path.Combine(root.FullName, stem));
+            chapterDir.Refresh();
+
+            try
+            {
+                bool usedPauseAdjusted = false;
+                var treated = ResolveTreatedAudio(root, chapterDir, stem, out usedPauseAdjusted);
+                if (treated is null)
+                {
+                    Log.Warn("Skipping {Chapter}: treated WAV not found", stem);
+                    continue;
+                }
+
+                TranscriptIndex? transcript = null;
+                HydratedTranscript? hydrated = null;
+
+                var txFile = new FileInfo(Path.Combine(chapterDir.FullName, $"{stem}.align.tx.json"));
+                if (txFile.Exists)
+                {
+                    try
+                    {
+                        transcript = LoadJson<TranscriptIndex>(txFile);
+                    }
+                    catch (Exception ex)
+                    {
+                        Log.Warn("Failed to load transcript for {Chapter}: {Message}", stem, ex.Message);
+                    }
+                }
+
+                var hydrateFile = new FileInfo(Path.Combine(chapterDir.FullName, $"{stem}.align.hydrate.json"));
+                if (hydrateFile.Exists)
+                {
+                    try
+                    {
+                        hydrated = LoadJson<HydratedTranscript>(hydrateFile);
+                    }
+                    catch (Exception ex)
+                    {
+                        Log.Warn("Failed to load hydrate for {Chapter}: {Message}", stem, ex.Message);
+                    }
+                }
+
+                var sentenceSpans = BuildSentenceSpans(transcript, hydrated);
+
+                var rawBuffer = WavIo.ReadPcmOrFloat(raw.FullName);
+                var treatedBuffer = WavIo.ReadPcmOrFloat(treated.FullName);
+
+                var result = AudioIntegrityVerifier.Verify(
+                    stem,
+                    raw.FullName,
+                    rawBuffer,
+                    treated.FullName,
+                    treatedBuffer,
+                    options,
+                    sentenceSpans);
+
+                var outputDir = reportDir ?? chapterDir;
+                EnsureDirectory(outputDir.FullName);
+
+                var artifacts = new List<string>();
+
+                if (format is VerificationReportFormat.Json or VerificationReportFormat.Both)
+                {
+                    var jsonPath = Path.Combine(outputDir.FullName, $"{stem}.verify.json");
+                    using (var stream = File.Create(jsonPath))
+                    {
+                        JsonSerializer.Serialize(stream, result, VerifyJsonOptions);
+                    }
+
+                    artifacts.Add(jsonPath);
+                }
+
+                if (format is VerificationReportFormat.Csv or VerificationReportFormat.Both)
+                {
+                    var csvPath = Path.Combine(outputDir.FullName, $"{stem}.verify.csv");
+                    WriteVerificationCsv(csvPath, result);
+                    artifacts.Add(csvPath);
+                }
+
+                Log.Info(
+                    usedPauseAdjusted
+                        ? "Verified {Chapter}: mismatches={Count} missing={Missing:F3}s extra={Extra:F3}s suppressedBreaths={Suppressed} (pause-adjusted WAV). Reports: {Reports}"
+                        : "Verified {Chapter}: mismatches={Count} missing={Missing:F3}s extra={Extra:F3}s suppressedBreaths={Suppressed}. Reports: {Reports}",
+                    stem,
+                    result.Mismatches.Count,
+                    result.MissingSpeechDurationSec,
+                    result.ExtraSpeechDurationSec,
+                    result.MissingBreathSuppressedCount,
+                    artifacts.ToArray());
+
+                processed++;
+                if (result.Mismatches.Count > 0)
+                {
+                    withMismatches++;
+                }
+            }
+            catch (Exception ex)
+            {
+                Log.Error(ex, "Verification failed for {Chapter}", stem);
+            }
+        }
+
+        Log.Info("Verification complete. Processed {Processed} chapter(s); {WithIssues} with mismatches.", processed, withMismatches);
+    }
+
+    private static List<FileInfo> ResolveVerifyTargets(DirectoryInfo root, string? chapterName, bool verifyAll)
+    {
+        if (!string.IsNullOrWhiteSpace(chapterName))
+        {
+            var candidateName = chapterName.EndsWith(".wav", StringComparison.OrdinalIgnoreCase)
+                ? chapterName
+                : chapterName + ".wav";
+            var explicitPath = Path.Combine(root.FullName, candidateName);
+            if (!File.Exists(explicitPath))
+            {
+                Log.Warn("Chapter WAV not found: {Path}", explicitPath);
+                return new List<FileInfo>();
+            }
+
+            return new List<FileInfo> { new FileInfo(explicitPath) };
+        }
+
+        var repl = ReplContext.Current;
+        if (repl is not null && PathsEqual(repl.WorkingDirectory, root.FullName))
+        {
+            if (verifyAll || repl.RunAllChapters)
+            {
+                return repl.Chapters.ToList();
+            }
+
+            if (repl.ActiveChapter is not null)
+            {
+                return new List<FileInfo> { repl.ActiveChapter };
+            }
+
+            return new List<FileInfo>();
+        }
+
+        var allChapters = Directory.EnumerateFiles(root.FullName, "*.wav", SearchOption.TopDirectoryOnly)
+            .Where(path => !string.Equals(Path.GetFileName(path), "roomtone.wav", StringComparison.OrdinalIgnoreCase))
+            .Select(path => new FileInfo(path))
+            .OrderBy(file => file.Name, PathComparer)
+            .ToList();
+
+        if (verifyAll)
+        {
+            return allChapters;
+        }
+
+        return allChapters.Count > 0 ? new List<FileInfo> { allChapters[0] } : new List<FileInfo>();
+    }
+
+    private static FileInfo? ResolveTreatedAudio(DirectoryInfo root, DirectoryInfo chapterDir, string stem, out bool usedPauseAdjusted)
+    {
+        usedPauseAdjusted = false;
+
+        var treatedCandidates = new[]
+        {
+            new FileInfo(Path.Combine(chapterDir.FullName, $"{stem}.treated.wav")),
+            new FileInfo(Path.Combine(root.FullName, $"{stem}.treated.wav"))
+        };
+
+        foreach (var candidate in treatedCandidates)
+        {
+            if (candidate.Exists)
+            {
+                return candidate;
+            }
+        }
+
+        var pauseAdjustedCandidates = new[]
+        {
+            new FileInfo(Path.Combine(chapterDir.FullName, $"{stem}.pause-adjusted.wav")),
+            new FileInfo(Path.Combine(root.FullName, $"{stem}.pause-adjusted.wav"))
+        };
+
+        foreach (var candidate in pauseAdjustedCandidates)
+        {
+            if (candidate.Exists)
+            {
+                usedPauseAdjusted = true;
+                return candidate;
+            }
+        }
+
+        return null;
+    }
+
+    private static IReadOnlyList<SentenceSpan> BuildSentenceSpans(TranscriptIndex? transcript, HydratedTranscript? hydrated)
+    {
+        var map = new Dictionary<int, SentenceSpan>();
+
+        if (transcript?.Sentences is not null)
+        {
+            foreach (var sentence in transcript.Sentences)
+            {
+                if (sentence.Timing is not { Duration: > 0 })
+                {
+                    continue;
+                }
+
+                map[sentence.Id] = new SentenceSpan(
+                    sentence.Id,
+                    sentence.Timing.StartSec,
+                    sentence.Timing.EndSec,
+                    null,
+                    null);
+            }
+        }
+
+        if (hydrated?.Sentences is not null)
+        {
+            foreach (var sentence in hydrated.Sentences)
+            {
+                if (sentence.Timing is not { } timing || timing.Duration <= 0)
+                {
+                    continue;
+                }
+
+                map[sentence.Id] = new SentenceSpan(
+                    sentence.Id,
+                    timing.StartSec,
+                    timing.EndSec,
+                    TrimText(sentence.BookText),
+                    TrimText(sentence.ScriptText));
+            }
+        }
+
+        return map.Values
+            .Where(span => span.EndSec > span.StartSec)
+            .OrderBy(span => span.StartSec)
+            .ToList();
+    }
+
+    private static string? TrimText(string? value, int maxLength = 160)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return null;
+        }
+
+        var normalized = value.Trim();
+        if (normalized.Length <= maxLength)
+        {
+            return normalized;
+        }
+
+        return normalized[..maxLength] + "…";
+    }
+
+    private static void WriteVerificationCsv(string path, AudioVerificationResult result)
+    {
+        using var writer = new StreamWriter(path, false, Encoding.UTF8);
+        writer.WriteLine("chapter,type,startSec,endSec,rawDb,treatedDb,deltaDb,sentenceIds");
+
+        foreach (var mismatch in result.Mismatches)
+        {
+            var sentenceIds = mismatch.Sentences.Count > 0
+                ? string.Join('|', mismatch.Sentences.Select(span => span.SentenceId))
+                : string.Empty;
+
+            writer.WriteLine(string.Join(
+                ',',
+                EscapeCsv(result.ChapterId),
+                mismatch.Type.ToString(),
+                mismatch.StartSec.ToString("F6", CultureInfo.InvariantCulture),
+                mismatch.EndSec.ToString("F6", CultureInfo.InvariantCulture),
+                mismatch.RawDb.ToString("F2", CultureInfo.InvariantCulture),
+                mismatch.TreatedDb.ToString("F2", CultureInfo.InvariantCulture),
+                mismatch.DeltaDb.ToString("F2", CultureInfo.InvariantCulture),
+                EscapeCsv(sentenceIds)));
+        }
+    }
+
+    private static string EscapeCsv(string value)
+    {
+        if (string.IsNullOrEmpty(value))
+        {
+            return string.Empty;
+        }
+
+        bool requiresQuotes = value.IndexOfAny(new[] { ',', '"', '\n', '\r' }) >= 0;
+        if (!requiresQuotes)
+        {
+            return value;
+        }
+
+        var escaped = value.Replace("\"", "\"\"", StringComparison.Ordinal);
+        return "\"" + escaped + "\"";
+    }
+
+    private enum VerificationReportFormat
+    {
+        Json,
+        Csv,
+        Both
     }
 
     private static Table CreateAudioTable(AudioStats audio)
