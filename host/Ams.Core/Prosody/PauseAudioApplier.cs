@@ -83,7 +83,7 @@ internal static class PauseAudioApplier
                 searchWindowSec: 1.0,
                 windowMs: 25.0,
                 stepMs: 5.0,
-                preRollMs: 25.0,
+                preRollMs: 10.0,
                 postRollMs: 10.0,
                 hangoverMs: 30.0);
 
@@ -113,6 +113,20 @@ internal static class PauseAudioApplier
             var gaps = intraLookup.TryGetValue(sentence.Id, out var list)
                 ? list
                 : EmptyIntraGaps;
+
+            if (gaps.Count > 0)
+            {
+                Log.Info(
+                    "PauseAudioApplier using feature-derived intra-gaps for sentence {SentenceId}: {GapCount} gap(s).",
+                    sentence.Id,
+                    gaps.Count);
+            }
+            else
+            {
+                Log.Info(
+                    "PauseAudioApplier using SnapToEnergy fallback for sentence {SentenceId} (no intra-gap timeline).",
+                    sentence.Id);
+            }
 
             var segments = BuildSentenceSegments(
                 sentence.Id,

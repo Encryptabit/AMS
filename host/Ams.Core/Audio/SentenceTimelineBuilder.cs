@@ -139,7 +139,7 @@ namespace Ams.Core.Audio
                 exitThresholdDb: exitThresholdDb,
                 searchWindowSec: searchWindowSec,
                 stepMs: stepMs,
-                preRollMs: 20.0,
+                preRollMs: 10.0,
                 postRollMs: 10.0,
                 hangoverMs: 30.0);
 

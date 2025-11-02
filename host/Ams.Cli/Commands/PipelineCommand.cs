@@ -2,13 +2,16 @@
 using System.CommandLine;
 using System.CommandLine.Invocation;
 using System.Globalization;
+using System.IO;
 using System.Linq;
 using System.Text;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
 using Ams.Cli.Services;
 using Ams.Cli.Utilities;
+using Ams.Cli.Repl;
 using Ams.Core.Alignment.Mfa;
 using Ams.Core.Artifacts;
 using Ams.Core.Audio;
@@ -46,10 +49,13 @@ public static class PipelineCommand
         PropertyNameCaseInsensitive = true
     };
 
+    private static readonly Regex PatternTokenRegex = new(@"\{(d{1,2})([+-]\d+)?\}", RegexOptions.Compiled | RegexOptions.CultureInvariant | RegexOptions.IgnoreCase);
+
     private static Command CreatePrepCommand()
     {
         var cmd = new Command("prep", "Preparation utilities for batch handoff");
         cmd.AddCommand(CreatePrepStageCommand());
+        cmd.AddCommand(CreatePrepRenameCommand());
         cmd.AddCommand(CreatePrepResetCommand());
         return cmd;
     }
@@ -210,6 +216,203 @@ public static class PipelineCommand
         return cmd;
     }
 
+    private static Command CreatePrepRenameCommand()
+    {
+        var cmd = new Command("rename", "Rename chapter audio and related artifacts using a naming pattern.");
+
+        var rootOption = new Option<DirectoryInfo?>
+        (
+            "--root",
+            () => null,
+            "Root directory containing chapter files (defaults to the REPL working directory or current directory)"
+        );
+        rootOption.AddAlias("-r");
+
+        var patternOption = new Option<string>
+        (
+            "--pattern",
+            description: "Naming template. Use {d} or {dd} tokens with optional +/- offsets (e.g., {dd}, {d+1}, {dd-1})."
+        )
+        {
+            IsRequired = true
+        };
+        patternOption.AddAlias("-p");
+
+        var dryRunOption = new Option<bool>
+        (
+            "--dry-run",
+            () => false,
+            "Preview the planned renames without touching the filesystem."
+        );
+
+        cmd.AddOption(rootOption);
+        cmd.AddOption(patternOption);
+        cmd.AddOption(dryRunOption);
+
+        cmd.SetHandler(context =>
+        {
+            var rootOverride = context.ParseResult.GetValueForOption(rootOption);
+            var pattern = context.ParseResult.GetValueForOption(patternOption);
+            var dryRun = context.ParseResult.GetValueForOption(dryRunOption);
+
+            if (string.IsNullOrWhiteSpace(pattern))
+            {
+                Log.Error("pipeline prep rename requires --pattern");
+                context.ExitCode = 1;
+                return;
+            }
+
+            DirectoryInfo root;
+            try
+            {
+                root = CommandInputResolver.ResolveDirectory(rootOverride);
+            }
+            catch (Exception ex)
+            {
+                Log.Error(ex, "Failed to resolve chapter root");
+                context.ExitCode = 1;
+                return;
+            }
+
+            root.Refresh();
+            if (!root.Exists)
+            {
+                Log.Error("Root directory not found: {Path}", root.FullName);
+                context.ExitCode = 1;
+                return;
+            }
+
+            var chapters = ResolveRenameTargets(root);
+            if (chapters.Count == 0)
+            {
+                Log.Warn("No chapter WAV files detected under {Root}", root.FullName);
+                return;
+            }
+
+            var renamePlans = new List<ChapterRenamePlan>();
+            var newStemSet = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+            for (int i = 0; i < chapters.Count; i++)
+            {
+                var chapter = chapters[i];
+                var oldStem = Path.GetFileNameWithoutExtension(chapter.Name);
+                var newStem = ApplyRenamePattern(pattern, i).Trim();
+
+                if (string.IsNullOrEmpty(newStem))
+                {
+                    Log.Error("Pattern produced an empty name for chapter {Stem}", oldStem);
+                    context.ExitCode = 1;
+                    return;
+                }
+
+                if (newStem.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0)
+                {
+                    Log.Error("Pattern produced an invalid file name '{Name}'", newStem);
+                    context.ExitCode = 1;
+                    return;
+                }
+
+                if (!newStemSet.Add(newStem))
+                {
+                    Log.Error("Pattern would produce duplicate name '{Name}'", newStem);
+                    context.ExitCode = 1;
+                    return;
+                }
+
+                if (string.Equals(oldStem, newStem, StringComparison.OrdinalIgnoreCase))
+                {
+                    Log.Info("Chapter {Stem} already matches the requested pattern; skipping.", oldStem);
+                    continue;
+                }
+
+                renamePlans.Add(BuildRenamePlan(chapter, oldStem, newStem));
+            }
+
+            if (renamePlans.Count == 0)
+            {
+                Log.Info("No renames required.");
+                return;
+            }
+
+            try
+            {
+                ValidateRenamePlans(renamePlans);
+            }
+            catch (Exception ex)
+            {
+                Log.Error(ex.Message);
+                context.ExitCode = 1;
+                return;
+            }
+
+            foreach (var plan in renamePlans)
+            {
+                Log.Info("Renaming {Old} -> {New}", plan.OldStem, plan.NewStem);
+                if (dryRun)
+                {
+                    foreach (var op in plan.FileOps)
+                    {
+                        if (!PathsEqual(op.Source, op.Target))
+                        {
+                            Log.Info("  FILE: {Source} => {Target}", op.Source, op.Target);
+                        }
+                    }
+
+                    foreach (var op in plan.DirectoryOps)
+                    {
+                        if (!PathsEqual(op.Source, op.Target))
+                        {
+                            Log.Info("  DIR : {Source} => {Target}", op.Source, op.Target);
+                        }
+                    }
+                }
+            }
+
+            if (dryRun)
+            {
+                Log.Info("Dry run only; no files were renamed.");
+                return;
+            }
+
+            foreach (var plan in renamePlans)
+            {
+                foreach (var op in plan.FileOps)
+                {
+                    if (PathsEqual(op.Source, op.Target))
+                    {
+                        continue;
+                    }
+
+                    Directory.CreateDirectory(Path.GetDirectoryName(op.Target)!);
+                    File.Move(op.Source, op.Target);
+                }
+            }
+
+            foreach (var plan in renamePlans)
+            {
+                foreach (var op in plan.DirectoryOps.OrderByDescending(d => d.Source.Length))
+                {
+                    if (PathsEqual(op.Source, op.Target))
+                    {
+                        continue;
+                    }
+
+                    Directory.Move(op.Source, op.Target);
+                }
+            }
+
+            Log.Info("Renamed {Count} chapter(s)", renamePlans.Count);
+
+            var repl = ReplContext.Current;
+            if (repl is not null && PathsEqual(repl.WorkingDirectory, root.FullName))
+            {
+                repl.RefreshChapters();
+            }
+        });
+
+        return cmd;
+    }
+
     private static Command CreatePrepResetCommand()
     {
         var cmd = new Command("reset", "Remove generated chapter artifacts from the working directory");
@@ -291,7 +494,7 @@ public static class PipelineCommand
         var gapRightThresholdOption = new Option<double>("--gap-right-threshold-db", () => -30.0, "RMS threshold (dBFS) used to detect silence on the right side of gaps");
         var gapStepOption = new Option<double>("--gap-step-ms", () => 5.0, "Step size (ms) when probing gap boundaries");
         var gapBackoffOption = new Option<double>("--gap-backoff-ms", () => 5.0, "Backoff amount (ms) applied after a silent window is detected");
-        var verboseOption = new Option<bool>("--verbose", () => false, "Enable verbose logging for pipeline stages (roomtone gap analysis, ASR, etc.)");
+        var verboseOption = new Option<bool>("--verbose", () => true, "Enable verbose logging for pipeline stages (roomtone gap analysis, ASR, etc.)");
 
         cmd.AddOption(bookOption);
         cmd.AddOption(audioOption);
@@ -814,6 +1017,202 @@ public static class PipelineCommand
 
         PrintStatsReport(root, bookIndexFile, bookIndex, statsList, totalAudioSec);
     }
+
+    private static List<FileInfo> ResolveRenameTargets(DirectoryInfo root)
+    {
+        var repl = ReplContext.Current;
+        if (repl is not null && PathsEqual(repl.WorkingDirectory, root.FullName))
+        {
+            if (repl.RunAllChapters)
+            {
+                return repl.Chapters.ToList();
+            }
+
+            if (repl.ActiveChapter is not null)
+            {
+                return new List<FileInfo> { repl.ActiveChapter };
+            }
+
+            return new List<FileInfo>();
+        }
+
+        return Directory.EnumerateFiles(root.FullName, "*.wav", SearchOption.TopDirectoryOnly)
+            .Where(path => !string.Equals(Path.GetFileName(path), "roomtone.wav", StringComparison.OrdinalIgnoreCase))
+            .Select(path => new FileInfo(path))
+            .OrderBy(file => file.Name, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+    }
+
+    private static string ApplyRenamePattern(string pattern, int index)
+    {
+        var result = PatternTokenRegex.Replace(pattern, match =>
+        {
+            var token = match.Groups[1].Value.ToLowerInvariant();
+            var offsetGroup = match.Groups[2];
+            var offset = offsetGroup.Success ? int.Parse(offsetGroup.Value, CultureInfo.InvariantCulture) : 0;
+            var value = index + offset;
+            return token.Length > 1
+                ? value.ToString("D" + token.Length, CultureInfo.InvariantCulture)
+                : value.ToString(CultureInfo.InvariantCulture);
+        });
+
+        if (result.IndexOf('{') >= 0 || result.IndexOf('}') >= 0)
+        {
+            throw new InvalidOperationException($"Pattern contains unsupported token: {pattern}");
+        }
+
+        return result;
+    }
+
+    private static ChapterRenamePlan BuildRenamePlan(FileInfo chapter, string oldStem, string newStem)
+    {
+        var root = chapter.Directory?.FullName
+                   ?? throw new InvalidOperationException($"Cannot resolve directory for {chapter.FullName}");
+
+        var directoryOps = new List<RenameOp>();
+        var fileOps = new List<RenameOp>();
+        CollectRenameOperations(root, root, root, oldStem, newStem, directoryOps, fileOps);
+
+        return new ChapterRenamePlan(chapter, oldStem, newStem, directoryOps, fileOps);
+    }
+
+    private static void CollectRenameOperations(
+        string root,
+        string currentDirOldPath,
+        string currentDirNewPath,
+        string oldStem,
+        string newStem,
+        List<RenameOp> directoryOps,
+        List<RenameOp> fileOps)
+    {
+        foreach (var subDir in Directory.EnumerateDirectories(currentDirOldPath))
+        {
+            var dirName = Path.GetFileName(subDir)!;
+            var newDirName = ReplaceStem(dirName, oldStem, newStem);
+            var targetDir = Path.Combine(currentDirNewPath, newDirName);
+
+            if (!PathsEqual(subDir, targetDir))
+            {
+                directoryOps.Add(new RenameOp(subDir, targetDir));
+            }
+
+            CollectRenameOperations(root, subDir, targetDir, oldStem, newStem, directoryOps, fileOps);
+        }
+
+        foreach (var filePath in Directory.EnumerateFiles(currentDirOldPath))
+        {
+            var fileName = Path.GetFileName(filePath)!;
+            var newFileName = ReplaceStem(fileName, oldStem, newStem);
+            var targetFile = Path.Combine(currentDirOldPath, newFileName);
+
+            if (!PathsEqual(filePath, targetFile))
+            {
+                fileOps.Add(new RenameOp(filePath, targetFile));
+            }
+        }
+    }
+
+    private static void ValidateRenamePlans(IEnumerable<ChapterRenamePlan> plans)
+    {
+        var dirOps = plans.SelectMany(p => p.DirectoryOps).ToList();
+        var fileOps = plans.SelectMany(p => p.FileOps).ToList();
+
+        var dirTargets = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var op in dirOps)
+        {
+            if (PathsEqual(op.Source, op.Target))
+            {
+                continue;
+            }
+
+            if ((Directory.Exists(op.Target) || File.Exists(op.Target)) && !PathsEqual(op.Source, op.Target))
+            {
+                throw new InvalidOperationException($"Target already exists: {op.Target}");
+            }
+
+            dirTargets.Add(Path.GetFullPath(op.Target));
+        }
+
+        var orderedDirOps = dirOps.OrderByDescending(op => op.Source.Length).ToList();
+        var fileTargets = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var op in fileOps)
+        {
+            if (PathsEqual(op.Source, op.Target))
+            {
+                continue;
+            }
+
+            if (File.Exists(op.Target) && !PathsEqual(op.Source, op.Target))
+            {
+                throw new InvalidOperationException($"Target already exists: {op.Target}");
+            }
+
+            var finalPath = ProjectPath(op.Target, orderedDirOps);
+
+            if (!fileTargets.Add(Path.GetFullPath(finalPath)))
+            {
+                throw new InvalidOperationException($"Multiple items would be renamed to {finalPath}");
+            }
+        }
+    }
+
+    private static string ProjectPath(string path, IReadOnlyList<RenameOp> directoryOps)
+    {
+        var projected = path;
+        foreach (var op in directoryOps)
+        {
+            var source = EnsureTrailingSeparator(op.Source);
+            if (projected.StartsWith(source, PathComparison))
+            {
+                projected = EnsureTrailingSeparator(op.Target) + projected[source.Length..];
+                continue;
+            }
+
+            if (PathsEqual(projected, op.Source))
+            {
+                projected = op.Target;
+            }
+        }
+
+        return projected;
+    }
+
+    private static string EnsureTrailingSeparator(string path)
+    {
+        if (path.EndsWith(Path.DirectorySeparatorChar) || path.EndsWith(Path.AltDirectorySeparatorChar))
+        {
+            return path;
+        }
+
+        return path + Path.DirectorySeparatorChar;
+    }
+
+    private static string ReplaceStem(string name, string oldStem, string newStem)
+    {
+        return name.StartsWith(oldStem, StringComparison.OrdinalIgnoreCase)
+            ? newStem + name[oldStem.Length..]
+            : name;
+    }
+
+    private static bool PathsEqual(string? left, string? right)
+    {
+        if (left is null || right is null)
+        {
+            return false;
+        }
+
+        return string.Equals(Path.GetFullPath(left), Path.GetFullPath(right), PathComparison);
+    }
+
+    private sealed record RenameOp(string Source, string Target);
+
+    private sealed record ChapterRenamePlan(
+        FileInfo ChapterFile,
+        string OldStem,
+        string NewStem,
+        List<RenameOp> DirectoryOps,
+        List<RenameOp> FileOps);
 
     private static List<DirectoryInfo> ResolveChapterDirectories(DirectoryInfo root, string? chapterName, bool analyzeAll)
     {

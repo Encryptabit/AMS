@@ -37,7 +37,7 @@ public static class AudioCommand
         var toneDbOption = new Option<double>("--tone-gain-db", () => -74.0, "Roomtone RMS level (dBFS)");
         var diagnosticsOption = new Option<bool>("--emit-diagnostics", () => false, "Write intermediate diagnostic WAV snapshots");
         var adaptiveGainOption = new Option<bool>("--adaptive-gain", () => false, "Scale roomtone seed to the target RMS");
-        var verboseOption = new Option<bool>("--verbose", () => false, "Enable verbose roomtone gap logging");
+        var verboseOption = new Option<bool>("--verbose", () => true, "Enable verbose roomtone gap logging");
         var gapLeftThresholdOption = new Option<double>("--gap-left-threshold-db", () => -45.0, "RMS threshold (dBFS) used to detect silence on the left side of gaps");
         var gapRightThresholdOption = new Option<double>("--gap-right-threshold-db", () => -30.0, "RMS threshold (dBFS) used to detect silence on the right side of gaps");
         var gapStepOption = new Option<double>("--gap-step-ms", () => 5.0, "Step size (ms) when probing gap boundaries");
