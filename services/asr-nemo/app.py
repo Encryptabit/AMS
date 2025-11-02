@@ -284,7 +284,7 @@ def _prepare_chunks(
     audio_path: str,
     min_chunk_sec: float = 60.0,
     max_chunk_sec: float = 90.0,
-    silence_db: float = 45.0,
+    silence_db: float = 35.0,
     min_pause_sec: float = 0.8,
 ):
     """Slice audio into manageable chunks aligned to low-energy regions."""

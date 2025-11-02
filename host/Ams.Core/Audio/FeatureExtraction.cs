@@ -25,7 +25,7 @@ public sealed record FrameBreathDetectorOptions
     public double WInvNacf { get; init; } = 0.20;
     public double WSlope { get; init; } = 0.10;
 
-    public double ScoreHigh { get; init; } = 0.35;
+    public double ScoreHigh { get; init; } = 0.45;
     public double ScoreLow { get; init; } = 0.25;
     public int MinRunMs { get; init; } = 60;
     public int MergeGapMs { get; init; } = 40;
@@ -34,7 +34,7 @@ public sealed record FrameBreathDetectorOptions
     public int GuardRightMs { get; init; } = 20;
     public int FricativeGuardMs { get; init; } = 25;
 
-    public double Aggressiveness { get; init; } = 10.0;
+    public double Aggressiveness { get; init; } = 5.0;
 
     public bool ApplyEnergyGate { get; init; } = true;
 }

@@ -1313,6 +1313,16 @@ public sealed class RoomToneInsertionStage
                 return false;
             }
 
+            if (verbose)
+            {
+                Log.Info(
+                    "[Roomtone]   breath guard: FeatureExtraction yielded no regions; accepted via snap-to-energy fallback [{Start:F3},{End:F3}] rms={Rms:F2} dB <= {Threshold:F2} dB",
+                    startSec,
+                    endSec,
+                    rms,
+                    thresholdDb);
+            }
+
             return true;
         }
 
@@ -1348,6 +1358,15 @@ public sealed class RoomToneInsertionStage
                 }
                 return false;
             }
+        }
+
+        if (verbose)
+        {
+            Log.Info(
+                "[Roomtone]   breath guard: FeatureExtraction accepted {RegionCount} region(s) for [{Start:F3},{End:F3}]",
+                mapped.Count,
+                startSec,
+                endSec);
         }
 
         return true;
@@ -1457,6 +1476,4 @@ public sealed class RoomToneInsertionStage
         Directory.CreateDirectory(dir);
     }
 }
-
-
 
