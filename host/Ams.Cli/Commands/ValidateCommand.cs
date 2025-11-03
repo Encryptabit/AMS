@@ -453,7 +453,16 @@ public static class ValidateCommand
             targetToneDb);
 
         var baselineTimings = BuildBaselineTimings(transcript, hydrated);
-        var timelineResult = PauseTimelineApplier.Apply(baselineTimings, adjustments.Adjustments);
+
+        var breathAdjustments = DetectBreathAdjustments(transcript, audioBuffer);
+        if (breathAdjustments.Count > 0)
+        {
+            double totalTrim = breathAdjustments.Sum(a => a.OriginalDurationSec);
+            Log.Info("Detected {Count} breath region(s) totaling {Duration:F3}s for removal.", breathAdjustments.Count, totalTrim);
+        }
+
+        var combinedAdjustments = adjustments.Adjustments.Concat(breathAdjustments).ToList();
+        var timelineResult = PauseTimelineApplier.Apply(baselineTimings, combinedAdjustments);
 
         var adjustedAudio = PauseAudioApplier.Apply(
             audioBuffer,
@@ -1564,6 +1573,162 @@ public static class ValidateCommand
 
         var root = baseDirectory ?? Environment.CurrentDirectory;
         return Path.GetFullPath(Path.Combine(root, path));
+    }
+
+    private static IReadOnlyList<PauseAdjust> DetectBreathAdjustments(
+        TranscriptIndex transcript,
+        AudioBuffer audio,
+        double minDurationSec = 0.06)
+    {
+        if (audio is null || audio.SampleRate <= 0 || audio.Length == 0)
+        {
+            return Array.Empty<PauseAdjust>();
+        }
+
+        double audioDurationSec = audio.Length / (double)audio.SampleRate;
+        if (audioDurationSec <= 0)
+        {
+            return Array.Empty<PauseAdjust>();
+        }
+
+        var options = new FrameBreathDetectorOptions
+        {
+            FrameMs = 25,
+            HopMs = 10,
+            HiSplitHz = 4000.0,
+            ScoreHigh = 0.45,
+            ScoreLow = 0.25,
+            MinRunMs = 60,
+            MergeGapMs = 40,
+            GuardLeftMs = 12,
+            GuardRightMs = 12,
+            FricativeGuardMs = 15,
+            ApplyEnergyGate = false 
+        };
+
+        var breathRegions = FeatureExtraction.Detect(audio, 0.0, audioDurationSec, options);
+        if (breathRegions.Count == 0)
+        {
+            return Array.Empty<PauseAdjust>();
+        }
+
+        var sentences = transcript.Sentences
+            .OrderBy(s => s.Timing.StartSec)
+            .ToList();
+
+        if (sentences.Count == 0)
+        {
+            return Array.Empty<PauseAdjust>();
+        }
+
+        var perSentence = new Dictionary<int, List<(double Start, double End)>>();
+        int regionIndex = 0;
+
+        foreach (var sentence in sentences)
+        {
+            double sentStart = sentence.Timing.StartSec;
+            double sentEnd = sentence.Timing.EndSec;
+            if (!double.IsFinite(sentStart) || !double.IsFinite(sentEnd) || sentEnd <= sentStart)
+            {
+                continue;
+            }
+
+            while (regionIndex < breathRegions.Count && breathRegions[regionIndex].EndSec <= sentStart)
+            {
+                regionIndex++;
+            }
+
+            int probe = regionIndex;
+            while (probe < breathRegions.Count)
+            {
+                var region = breathRegions[probe];
+                if (region.StartSec >= sentEnd)
+                {
+                    break;
+                }
+
+                double overlapStart = Math.Max(region.StartSec, sentStart);
+                double overlapEnd = Math.Min(region.EndSec, sentEnd);
+                if (overlapEnd - overlapStart >= minDurationSec)
+                {
+                    if (!perSentence.TryGetValue(sentence.Id, out var list))
+                    {
+                        list = new List<(double, double)>();
+                        perSentence[sentence.Id] = list;
+                    }
+                    list.Add((overlapStart, overlapEnd));
+                }
+
+                if (region.EndSec <= sentEnd)
+                {
+                    probe++;
+                }
+                else
+                {
+                    break;
+                }
+            }
+        }
+
+        if (perSentence.Count == 0)
+        {
+            return Array.Empty<PauseAdjust>();
+        }
+
+        var adjustments = new List<PauseAdjust>();
+
+        foreach (var kvp in perSentence)
+        {
+            var segments = kvp.Value
+                .OrderBy(segment => segment.Start)
+                .ToList();
+
+            if (segments.Count == 0)
+            {
+                continue;
+            }
+
+            var merged = new List<(double Start, double End)>();
+            foreach (var segment in segments)
+            {
+                if (merged.Count == 0)
+                {
+                    merged.Add(segment);
+                    continue;
+                }
+
+                var last = merged[^1];
+                if (segment.Start <= last.End + 0.01)
+                {
+                    merged[^1] = (last.Start, Math.Max(last.End, segment.End));
+                }
+                else
+                {
+                    merged.Add(segment);
+                }
+            }
+
+            foreach (var segment in merged)
+            {
+                double duration = segment.End - segment.Start;
+                if (duration < minDurationSec)
+                {
+                    continue;
+                }
+
+                adjustments.Add(new PauseAdjust(
+                    kvp.Key,
+                    kvp.Key,
+                    PauseClass.Other,
+                    duration,
+                    0.0,
+                    segment.Start,
+                    segment.End,
+                    HasGapHint: false));
+            }
+        }
+
+        return adjustments;
     }
 
     private static string TrimText(string text, int? maxLength = null)
