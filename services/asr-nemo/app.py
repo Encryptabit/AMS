@@ -14,9 +14,18 @@ import traceback
 import sys
 import logging
 import logging.handlers
+import io
 from pathlib import Path
 from datetime import datetime
 from huggingface_hub import login
+
+# Ensure stdout/stderr emit UTF-8 so logging can safely print diagnostic glyphs on Windows consoles
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+else:
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
+    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="replace")
 
 # Set up logging configuration
 def setup_logging():
@@ -192,48 +201,61 @@ def _normalize_segment_entry(entry: dict, index: int) -> dict:
     }
 
 
-def _load_model(device: str, nemo_asr_module):
+def _load_model(device: str, nemo_asr_module, requested_model: Optional[str] = None):
     """Load the ASR model on the requested device if needed."""
     global _model, _model_name
 
+    target_models = []
+    if requested_model:
+        target_models.append(requested_model)
+    target_models.extend([
+        "nvidia/parakeet-tdt-0.6b-v3",
+        "nvidia/stt_en_quartznet15x5",
+        "nvidia/stt_en_conformer_ctc_small",
+    ])
+
+    # If we already have a model loaded, check whether it satisfies the request
     if _model is not None:
         try:
             current_device = next(_model.parameters()).device.type
         except Exception:
             current_device = device
-        if current_device != device:
-            logging.info(f"Moving model from {current_device} to {device}")
-            _model = _model.to(device)
-        _model.eval()
-        return
 
-    logging.info("Loading ASR model...")
-    try:
-        _model_name = "nvidia/parakeet-tdt-0.6b-v3"
-        logging.info(f"Attempting to load model: {_model_name}")
-        _model = nemo_asr_module.models.ASRModel.from_pretrained(_model_name).to(device)
-        logging.info(f"Successfully loaded model: {_model_name} on {device}")
-    except Exception as e:
-        logging.warning(f"Failed to load Parakeet model: {e}")
+        if requested_model and _model_name != requested_model:
+            logging.info(f"Requested model '{requested_model}' differs from loaded model '{_model_name}'. Reloading...")
+            _cleanup_model()
+        else:
+            if current_device != device:
+                logging.info(f"Moving model from {current_device} to {device}")
+                _model = _model.to(device)
+            _model.eval()
+            return
+
+    last_error: Optional[Exception] = None
+
+    for candidate in target_models:
+        if candidate is None:
+            continue
+
         try:
-            _model_name = "nvidia/stt_en_quartznet15x5"
-            logging.info(f"Attempting fallback to model: {_model_name}")
-            _model = nemo_asr_module.models.ASRModel.from_pretrained(_model_name).to(device)
-            logging.info(f"Successfully loaded fallback model: {_model_name} on {device}")
-        except Exception as e2:
-            logging.warning(f"Failed to load QuartzNet model: {e2}")
-            try:
-                _model_name = "nvidia/stt_en_conformer_ctc_small"
-                logging.info(f"Attempting final fallback to model: {_model_name}")
-                _model = nemo_asr_module.models.ASRModel.from_pretrained(_model_name).to(device)
-                logging.info(f"Successfully loaded final fallback model: {_model_name} on {device}")
-            except Exception as e3:
-                logging.error("Failed to load any compatible model. Parakeet: %s, QuartzNet: %s, Conformer: %s", e, e2, e3)
-                raise HTTPException(
-                    status_code=500,
-                    detail=f"Failed to load any compatible model. Errors: Parakeet: {str(e)}, QuartzNet: {str(e2)}, Conformer: {str(e3)}"
-                )
-    _model.eval()
+            logging.info(f"Attempting to load model: {candidate}")
+            model = nemo_asr_module.models.ASRModel.from_pretrained(candidate)
+            model = model.to(device)
+            model.eval()
+            _model = model
+            _model_name = candidate
+            logging.info(f"Successfully loaded model: {_model_name} on {device}")
+            return
+        except Exception as exc:
+            logging.warning(f"Failed to load model '{candidate}': {exc}")
+            last_error = exc
+            continue
+
+    logging.error("Failed to load any compatible model. Last error: %s", last_error)
+    raise HTTPException(
+        status_code=500,
+        detail=f"Failed to load requested model. Last error: {str(last_error)}"
+    )
 
 
 def _cleanup_model():
@@ -258,7 +280,13 @@ def _cleanup_model():
             pass
 
 
-def _prepare_chunks(audio_path: str, min_chunk_sec: float = 60.0, max_chunk_sec: float = 90.0, silence_db: float = 35.0):
+def _prepare_chunks(
+    audio_path: str,
+    min_chunk_sec: float = 60.0,
+    max_chunk_sec: float = 90.0,
+    silence_db: float = 35.0,
+    min_pause_sec: float = 0.8,
+):
     """Slice audio into manageable chunks aligned to low-energy regions."""
     y, sr = librosa.load(audio_path, sr=None)
     if y.ndim > 1:
@@ -275,7 +303,7 @@ def _prepare_chunks(audio_path: str, min_chunk_sec: float = 60.0, max_chunk_sec:
         temp_file.close()
         return [{"path": temp_file.name, "start_sec": 0.0, "end_sec": duration_sec}]
 
-    segments = _derive_chunk_segments(y, sr, min_chunk_sec, max_chunk_sec, silence_db)
+    segments = _derive_chunk_segments(y, sr, min_chunk_sec, max_chunk_sec, silence_db, min_pause_sec)
     chunk_infos = []
     for idx, (start_sample, end_sample) in enumerate(segments):
         temp_file = tempfile.NamedTemporaryFile(suffix=f'_chunk{idx}.wav', delete=False)
@@ -289,7 +317,14 @@ def _prepare_chunks(audio_path: str, min_chunk_sec: float = 60.0, max_chunk_sec:
     return chunk_infos
 
 
-def _derive_chunk_segments(y: np.ndarray, sr: int, min_chunk_sec: float, max_chunk_sec: float, silence_db: float):
+def _derive_chunk_segments(
+    y: np.ndarray,
+    sr: int,
+    min_chunk_sec: float,
+    max_chunk_sec: float,
+    silence_db: float,
+    min_pause_sec: float,
+):
     total_samples = len(y)
     duration_sec = total_samples / sr
     if duration_sec <= max_chunk_sec:
@@ -302,12 +337,16 @@ def _derive_chunk_segments(y: np.ndarray, sr: int, min_chunk_sec: float, max_chu
         return _fallback_segments(total_samples, sr, max_chunk_sec)
 
     silence_points = {0, total_samples}
+    min_pause_samples = int(min_pause_sec * sr)
+
     for i in range(len(non_silent) - 1):
         silence_start = non_silent[i][1]
         silence_end = non_silent[i + 1][0]
         if silence_end <= silence_start:
             continue
-        silence_points.add(int((silence_start + silence_end) / 2))
+
+        if (silence_end - silence_start) >= min_pause_samples:
+            silence_points.add(int((silence_start + silence_end) / 2))
 
     silence_samples = sorted(silence_points)
     silence_secs = [s / sr for s in silence_samples]
@@ -387,7 +426,7 @@ async def _transcribe_impl(request: AsrRequest) -> AsrResponse:
             raise HTTPException(status_code=500, detail=f"Failed to import NeMo: {str(e)}")
 
         device = "cuda" if torch.cuda.is_available() else "cpu"
-        _load_model(device, nemo_asr)
+        _load_model(device, nemo_asr, request.model)
 
         chunk_infos = _prepare_chunks(request.audio_path)
         if not chunk_infos:
@@ -406,7 +445,8 @@ async def _transcribe_impl(request: AsrRequest) -> AsrResponse:
             transcribe_kwargs = {
                 "batch_size": DEFAULT_GPU_BATCH_SIZE,
                 "return_hypotheses": True,
-                "timestamps": True
+                "timestamps": True,
+                "verbose": False
             }
 
             def _run_transcribe():

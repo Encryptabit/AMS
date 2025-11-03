@@ -62,7 +62,7 @@ internal static class AsrProcessSupervisor
 
         if (IsAutoStartDisabled())
         {
-            Log.Debug("ASR auto-start disabled via {Env}", DisableAutoStartEnv);
+            Log.Info("ASR auto-start disabled via {Env}", DisableAutoStartEnv);
             return;
         }
 
@@ -230,7 +230,7 @@ internal static class AsrProcessSupervisor
             {
                 if (!string.IsNullOrWhiteSpace(e.Data))
                 {
-                    Log.Debug("asr-nemo: {Line}", e.Data);
+                    Log.Info("asr-nemo: {Line}", e.Data);
                 }
             };
 

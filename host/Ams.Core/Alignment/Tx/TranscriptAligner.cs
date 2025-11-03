@@ -44,10 +44,25 @@ public static class TranscriptAligner
     public static bool Equivalent(string a, string b, IReadOnlyDictionary<string, string> equiv)
         => a == b || (equiv.TryGetValue(a, out var e) && e == b) || (equiv.TryGetValue(b, out var e2) && e2 == a);
 
-    public static double SubCost(string bookTok, string asrTok, IReadOnlyDictionary<string, string> equiv)
+    public static double SubCost(
+        string bookTok,
+        string asrTok,
+        IReadOnlyDictionary<string, string> equiv,
+        string[]? bookPhonemes = null,
+        string[]? asrPhonemes = null,
+        double phonemeSoftThreshold = 0.8)
     {
         if (Equivalent(bookTok, asrTok, equiv)) return 0.0;
-        if (LevLe1(bookTok, asrTok)) return 0.3;
+
+        if (HasExactPhonemeMatch(bookPhonemes, asrPhonemes))
+        {
+            return 0.0;
+        }
+
+        if (LevLe1(bookTok, asrTok) || HasSoftPhonemeMatch(bookPhonemes, asrPhonemes, phonemeSoftThreshold))
+        {
+            return 0.3;
+        }
         return 1.0;
     }
 
@@ -61,7 +76,11 @@ public static class TranscriptAligner
         IReadOnlyList<(int bLo, int bHi, int aLo, int aHi)> windows,
         IReadOnlyDictionary<string, string> equiv,
         ISet<string> fillers,
-        int maxRun = 8, double maxAvg = 0.6)
+        IReadOnlyList<string[]>? bookPhonemes = null,
+        IReadOnlyList<string[]>? asrPhonemes = null,
+        int maxRun = 8,
+        double maxAvg = 0.6,
+        double phonemeSoftThreshold = 0.8)
     {
         var all = new List<(int?, int?, AlignOp, string, double)>(bookNorm.Count + asrNorm.Count);
 
@@ -91,7 +110,13 @@ public static class TranscriptAligner
             for (int i = 1; i <= n; i++)
             for (int j = 1; j <= m; j++)
             {
-                var sub = dp[i - 1, j - 1] + SubCost(bookNorm[bLo + i - 1], asrNorm[aLo + j - 1], equiv);
+                var sub = dp[i - 1, j - 1] + SubCost(
+                    bookNorm[bLo + i - 1],
+                    asrNorm[aLo + j - 1],
+                    equiv,
+                    GetPhonemes(bookPhonemes, bLo + i - 1),
+                    GetPhonemes(asrPhonemes, aLo + j - 1),
+                    phonemeSoftThreshold);
                 var del = dp[i - 1, j] + DelCost(bookNorm[bLo + i - 1]);
                 var ins = dp[i, j - 1] + InsCost(asrNorm[aLo + j - 1], fillers);
                 var best = sub;
@@ -123,7 +148,13 @@ public static class TranscriptAligner
                     {
                         int bi = bLo + ii - 1;
                         int aj = aLo + jj - 1;
-                        var cost = SubCost(bookNorm[bi], asrNorm[aj], equiv);
+                        var cost = SubCost(
+                            bookNorm[bi],
+                            asrNorm[aj],
+                            equiv,
+                            GetPhonemes(bookPhonemes, bi),
+                            GetPhonemes(asrPhonemes, aj),
+                            phonemeSoftThreshold);
                         var isMatch = cost == 0.0;
                         var reason = isMatch ? "equal_or_equiv" : "near_or_diff";
                         winOps.Add((bi, aj, isMatch ? AlignOp.Match : AlignOp.Sub, reason, cost));
@@ -164,6 +195,123 @@ public static class TranscriptAligner
         return all;
     }
 
+    private static string[]? GetPhonemes(IReadOnlyList<string[]>? list, int index)
+    {
+        if (list == null || index < 0 || index >= list.Count) return null;
+        var entry = list[index];
+        return entry is { Length: >0 } ? entry : null;
+    }
+
+    private static bool HasExactPhonemeMatch(string[]? bookPhonemes, string[]? asrPhonemes)
+    {
+        if (bookPhonemes is not { Length: >0 } bookList || asrPhonemes is not { Length: >0 } asrList)
+        {
+            return false;
+        }
+
+        foreach (var bookVariant in bookList)
+        {
+            if (string.IsNullOrWhiteSpace(bookVariant)) continue;
+            foreach (var asrVariant in asrList)
+            {
+                if (string.IsNullOrWhiteSpace(asrVariant)) continue;
+                if (PhonemeComparer.Equals(bookVariant, asrVariant))
+                {
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
+
+    private static bool HasSoftPhonemeMatch(string[]? bookPhonemes, string[]? asrPhonemes, double threshold)
+    {
+        if (bookPhonemes is not { Length: >0 } bookList || asrPhonemes is not { Length: >0 } asrList)
+        {
+            return false;
+        }
+
+        double best = 0.0;
+        foreach (var bookVariant in bookList)
+        {
+            if (string.IsNullOrWhiteSpace(bookVariant)) continue;
+            var bookSeq = PhonemeComparer.Tokenize(bookVariant);
+            if (bookSeq.Length == 0) continue;
+
+            foreach (var asrVariant in asrList)
+            {
+                if (string.IsNullOrWhiteSpace(asrVariant)) continue;
+                var asrSeq = PhonemeComparer.Tokenize(asrVariant);
+                if (asrSeq.Length == 0) continue;
+
+                var sim = PhonemeComparer.Similarity(bookSeq, asrSeq);
+                if (sim > best)
+                {
+                    best = sim;
+                }
+
+                if (best >= threshold)
+                {
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
+
+    private static class PhonemeComparer
+    {
+        public static bool Equals(string a, string b)
+        {
+            if (string.IsNullOrWhiteSpace(a) || string.IsNullOrWhiteSpace(b)) return false;
+            return string.Equals(Normalize(a), Normalize(b), StringComparison.OrdinalIgnoreCase);
+        }
+
+        public static string[] Tokenize(string phonemeVariant)
+            => string.IsNullOrWhiteSpace(phonemeVariant)
+                ? Array.Empty<string>()
+                : phonemeVariant.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+
+        public static double Similarity(string[] a, string[] b)
+        {
+            if (a.Length == 0 || b.Length == 0)
+            {
+                return 0.0;
+            }
+
+            var dist = Levenshtein(a, b);
+            var maxLen = Math.Max(a.Length, b.Length);
+            return maxLen == 0 ? 1.0 : 1.0 - (double)dist / maxLen;
+        }
+
+        private static string Normalize(string value)
+            => string.Join(' ', Tokenize(value));
+
+        private static int Levenshtein(string[] a, string[] b)
+        {
+            var m = a.Length;
+            var n = b.Length;
+            var dp = new int[m + 1, n + 1];
+
+            for (int i = 0; i <= m; i++) dp[i, 0] = i;
+            for (int j = 0; j <= n; j++) dp[0, j] = j;
+
+            for (int i = 1; i <= m; i++)
+            {
+                for (int j = 1; j <= n; j++)
+                {
+                    var cost = string.Equals(a[i - 1], b[j - 1], StringComparison.OrdinalIgnoreCase) ? 0 : 1;
+                    dp[i, j] = Math.Min(
+                        Math.Min(dp[i - 1, j] + 1, dp[i, j - 1] + 1),
+                        dp[i - 1, j - 1] + cost);
+                }
+            }
+
+            return dp[m, n];
+        }
+    }
     // (3.3) Sentence/Paragraph rollups from word ops
     public static (List<SentenceAlign> sents, List<ParagraphAlign> paras) Rollup(
         IReadOnlyList<WordAlign> ops,
@@ -179,11 +327,13 @@ public static class TranscriptAligner
         AsrResponse? asr)
     {
         var opsList = ops.ToList();
+        var guardRanges = new (int? Start, int? End)[bookSentences.Count];
 
         // Sentences
         var sentsOut = new List<SentenceAlign>(bookSentences.Count);
-        foreach (var s in bookSentences)
+        for (int sentenceIndex = 0; sentenceIndex < bookSentences.Count; sentenceIndex++)
         {
+            var s = bookSentences[sentenceIndex];
             int start = s.Start, end = s.End, n = Math.Max(0, end - start + 1);
 
             var candidateIndices = new List<int>();
@@ -199,6 +349,7 @@ public static class TranscriptAligner
             if (candidateIndices.Count == 0)
             {
                 var emptyMetrics = new SentenceMetrics(1.0, 0.0, 1.0, n, 0);
+                guardRanges[sentenceIndex] = ComputeGuardRangeForMissingSentence(opsList, start, end);
                 sentsOut.Add(new SentenceAlign(s.Id, new IntRange(start, end), null, TimingRange.Empty, emptyMetrics,
                     "unreliable"));
                 continue;
@@ -402,9 +553,13 @@ public static class TranscriptAligner
 
             string status = weightedWer <= 0.10 && dels < 3 ? "ok" : (weightedWer <= 0.25 ? "attention" : "unreliable");
 
+            guardRanges[sentenceIndex] = (guardStart, guardEnd);
+
             var metrics = new SentenceMetrics(weightedWer, cer, legacyWer, dels, insCount);
             sentsOut.Add(new SentenceAlign(s.Id, new IntRange(start, end), aRange, TimingRange.Empty, metrics, status));
         }
+
+        SynthesizeMissingScriptRanges(sentsOut, asr?.Tokens.Length ?? 0, guardRanges);
 
         // Paragraphs
         var parasOut = new List<ParagraphAlign>(bookParagraphs.Count);
@@ -425,6 +580,294 @@ public static class TranscriptAligner
         }
 
         return (sentsOut, parasOut);
+    }
+
+    private static void SynthesizeMissingScriptRanges(List<SentenceAlign> sentences, int asrTokenCount, (int? Start, int? End)[] guardRanges)
+    {
+        if (sentences.Count == 0 || asrTokenCount <= 0)
+        {
+            return;
+        }
+
+        var missing = new List<int>();
+        for (int i = 0; i < sentences.Count; i++)
+        {
+            if (!TryGetConcreteRange(sentences[i], out _, out _))
+            {
+                missing.Add(i);
+            }
+        }
+
+        if (missing.Count == 0)
+        {
+            return;
+        }
+
+        int maxToken = asrTokenCount - 1;
+        int cursor = 0;
+
+        while (cursor < missing.Count)
+        {
+            int blockStartIndex = missing[cursor];
+            int blockEndIndex = blockStartIndex;
+
+            while (cursor + 1 < missing.Count && missing[cursor + 1] == blockEndIndex + 1)
+            {
+                cursor++;
+                blockEndIndex = missing[cursor];
+            }
+
+            cursor++;
+
+            var prevRange = FindPreviousRange(sentences, blockStartIndex - 1);
+            var nextRange = FindNextRange(sentences, blockEndIndex + 1);
+
+            int blockSize = blockEndIndex - blockStartIndex + 1;
+            int? guardMin = null;
+            int? guardMax = null;
+            for (int offset = 0; offset < blockSize; offset++)
+            {
+                int guardIndex = blockStartIndex + offset;
+                var guard = guardIndex < guardRanges.Length
+                    ? guardRanges[guardIndex]
+                    : (null, null);
+
+                if (guard.Start.HasValue)
+                {
+                    guardMin = guardMin.HasValue
+                        ? Math.Min(guardMin.Value, guard.Start.Value)
+                        : guard.Start.Value;
+                }
+
+                if (guard.End.HasValue)
+                {
+                    guardMax = guardMax.HasValue
+                        ? Math.Max(guardMax.Value, guard.End.Value)
+                        : guard.End.Value;
+                }
+            }
+
+            int lower = guardMin ?? (prevRange?.End + 1 ?? 0);
+            int upper = guardMax ?? (nextRange?.Start - 1 ?? maxToken);
+
+            if (prevRange.HasValue)
+            {
+                lower = Math.Max(lower, Math.Min(maxToken, prevRange.Value.End + 1));
+            }
+
+            if (nextRange.HasValue)
+            {
+                upper = Math.Min(upper, Math.Max(0, nextRange.Value.Start - 1));
+            }
+
+            lower = Math.Clamp(lower, 0, maxToken);
+            upper = Math.Clamp(upper, 0, maxToken);
+
+            if (upper < lower)
+            {
+                int anchor = prevRange?.End ?? nextRange?.Start ?? 0;
+                anchor = Math.Clamp(anchor, 0, maxToken);
+                lower = anchor;
+                upper = anchor;
+            }
+
+            int span = Math.Max(0, upper - lower + 1);
+
+            for (int offset = 0; offset < blockSize; offset++)
+            {
+                int sentenceIndex = blockStartIndex + offset;
+                int startIdx;
+                int endIdx;
+
+                if (span == 0)
+                {
+                    startIdx = lower;
+                    endIdx = lower;
+                }
+                else
+                {
+                    double portionStart = (double)offset / blockSize;
+                    double portionEnd = (double)(offset + 1) / blockSize;
+                    startIdx = lower + (int)Math.Floor(span * portionStart);
+                    endIdx = lower + (int)Math.Floor(span * portionEnd) - 1;
+                    startIdx = Math.Clamp(startIdx, lower, upper);
+                    endIdx = Math.Clamp(endIdx, startIdx, upper);
+                }
+
+                if (sentenceIndex > 0 && TryGetConcreteRange(sentences[sentenceIndex - 1], out _, out var prevEnd))
+                {
+                    if (startIdx <= prevEnd)
+                    {
+                        startIdx = Math.Min(upper, prevEnd + 1);
+                        if (startIdx > upper)
+                        {
+                            startIdx = upper;
+                        }
+                        if (endIdx < startIdx)
+                        {
+                            endIdx = startIdx;
+                        }
+                    }
+                }
+
+                if (sentenceIndex < sentences.Count - 1 && TryGetConcreteRange(sentences[sentenceIndex + 1], out var nextStart, out _))
+                {
+                    if (endIdx >= nextStart)
+                    {
+                        endIdx = Math.Max(startIdx, Math.Clamp(nextStart - 1, startIdx, upper));
+                    }
+                }
+
+                var synthesized = new ScriptRange(startIdx, endIdx);
+                sentences[sentenceIndex] = sentences[sentenceIndex] with { ScriptRange = synthesized };
+            }
+        }
+    }
+
+    private static bool TryGetConcreteRange(SentenceAlign sentence, out int start, out int end)
+    {
+        if (sentence.ScriptRange is { Start: int s, End: int e })
+        {
+            start = s;
+            end = e;
+            return true;
+        }
+
+        start = default;
+        end = default;
+        return false;
+    }
+
+    private static (int Start, int End)? FindPreviousRange(IReadOnlyList<SentenceAlign> sentences, int index)
+    {
+        for (int i = index; i >= 0; i--)
+        {
+            if (TryGetConcreteRange(sentences[i], out var start, out var end))
+            {
+                return (start, end);
+            }
+        }
+
+        return null;
+    }
+
+    private static (int Start, int End)? FindNextRange(IReadOnlyList<SentenceAlign> sentences, int index)
+    {
+        for (int i = index; i < sentences.Count; i++)
+        {
+            if (TryGetConcreteRange(sentences[i], out var start, out var end))
+            {
+                return (start, end);
+            }
+        }
+
+        return null;
+    }
+
+    private static (int? Start, int? End) ComputeGuardRangeForMissingSentence(IReadOnlyList<WordAlign> ops, int sentenceStartWord, int sentenceEndWord)
+    {
+        if (ops.Count == 0)
+        {
+            return (null, null);
+        }
+
+        int? prevAsr = null;
+        int? nextAsr = null;
+
+        foreach (var op in ops)
+        {
+            if (op.AsrIdx is not int asr)
+            {
+                continue;
+            }
+
+            if (op.BookIdx is int bi)
+            {
+                if (bi < sentenceStartWord)
+                {
+                    prevAsr = asr;
+                    continue;
+                }
+
+                if (bi > sentenceEndWord)
+                {
+                    nextAsr = asr;
+                    break;
+                }
+            }
+        }
+
+        if (nextAsr is null)
+        {
+            for (int i = ops.Count - 1; i >= 0; i--)
+            {
+                var op = ops[i];
+                if (op.AsrIdx is not int asr)
+                {
+                    continue;
+                }
+
+                if (op.BookIdx is int bi && bi > sentenceEndWord)
+                {
+                    nextAsr = asr;
+                }
+            }
+        }
+
+        var inserted = new List<int>();
+        foreach (var op in ops)
+        {
+            if (op.AsrIdx is not int asr)
+            {
+                continue;
+            }
+
+            if (op.BookIdx.HasValue)
+            {
+                if (op.BookIdx.Value >= sentenceStartWord && op.BookIdx.Value <= sentenceEndWord)
+                {
+                    inserted.Add(asr);
+                }
+
+                continue;
+            }
+
+            bool afterPrev = !prevAsr.HasValue || asr > prevAsr.Value;
+            bool beforeNext = !nextAsr.HasValue || asr < nextAsr.Value;
+
+            if (afterPrev && beforeNext)
+            {
+                inserted.Add(asr);
+            }
+        }
+
+        if (inserted.Count > 0)
+        {
+            inserted.Sort();
+            return (inserted[0], inserted[^1]);
+        }
+
+        if (prevAsr.HasValue && nextAsr.HasValue)
+        {
+            if (nextAsr.Value - prevAsr.Value >= 2)
+            {
+                return (prevAsr.Value + 1, nextAsr.Value - 1);
+            }
+
+            return (prevAsr.Value + 1, prevAsr.Value + 1);
+        }
+
+        if (prevAsr.HasValue)
+        {
+            return (prevAsr.Value + 1, prevAsr.Value + 1);
+        }
+
+        if (nextAsr.HasValue)
+        {
+            return (nextAsr.Value - 1, nextAsr.Value - 1);
+        }
+
+        return (null, null);
     }
 
     private static double ComputeCer(BookIndex? book, AsrResponse? asr, int bookStart, int bookEnd, int? asrStart, int? asrEnd)

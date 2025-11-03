@@ -30,8 +30,19 @@ public static class WavIo
         while (br.BaseStream.Position + 8 <= br.BaseStream.Length)
         {
             string chunkId = new string(br.ReadChars(4));
+            if (chunkId.Length < 4)
+            {
+                break;
+            }
+
             uint chunkSize = br.ReadUInt32();
-            long next = br.BaseStream.Position + chunkSize;
+            long chunkDataPos = br.BaseStream.Position;
+            long next = chunkDataPos + chunkSize;
+
+            if (next > br.BaseStream.Length)
+            {
+                throw new InvalidDataException($"Chunk '{chunkId.Trim()}' exceeds declared file length");
+            }
 
             switch (chunkId)
             {
@@ -47,7 +58,7 @@ public static class WavIo
 
                 case "data":
                     dataSize = chunkSize;
-                    dataPos = br.BaseStream.Position;
+                    dataPos = chunkDataPos;
                     break;
 
                 default:
@@ -55,7 +66,12 @@ public static class WavIo
                     break;
             }
 
-            br.BaseStream.Position = next;
+            if ((chunkSize & 1) == 1)
+            {
+                next++;
+            }
+
+            br.BaseStream.Position = Math.Min(next, br.BaseStream.Length);
         }
 
         if (dataPos == 0) throw new InvalidDataException("No data chunk found");

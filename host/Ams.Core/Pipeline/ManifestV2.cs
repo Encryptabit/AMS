@@ -9,7 +9,8 @@ public sealed record ManifestV2(
     string ChapterId,
     string WorkDirectory,
     string AudioPath,
-    string TranscriptIndexPath)
+    string TranscriptIndexPath,
+    string? TextGridPath = null)
 {
     public string ResolveStageDirectory(string stageName)
     {
