@@ -44,12 +44,11 @@ public sealed record PauseDynamicsResult(
 
 public sealed class PauseDynamicsService : IPauseDynamicsService
 {
-    
     private const double TargetEpsilon = 0.002;
-    private const double IntraSentenceFloorDuration = 0.010;
+    private const double IntraSentenceFloorDuration = 0.005;
     private const double IntraSentenceMaxShrinkSeconds = 0.050;
-    private const double IntraSentenceEdgeGuardSeconds = 0.020;
-    private const double IntraSentenceMinRatio = 0.15;
+    private const double IntraSentenceEdgeGuardSeconds = 0.010;
+    private const double IntraSentenceMinRatio = 0.005;
     public PauseAnalysisReport AnalyzeChapter(
         TranscriptIndex transcript,
         BookIndex bookIndex,
