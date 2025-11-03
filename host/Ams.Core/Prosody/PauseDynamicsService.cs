@@ -45,10 +45,10 @@ public sealed record PauseDynamicsResult(
 public sealed class PauseDynamicsService : IPauseDynamicsService
 {
     
-    private const double TargetEpsilon = 0.005;
+    private const double TargetEpsilon = 0.002;
     private const double IntraSentenceFloorDuration = 0.010;
-    private const double IntraSentenceMaxShrinkSeconds = 0.001;
-    private const double IntraSentenceEdgeGuardSeconds = 0.007;
+    private const double IntraSentenceMaxShrinkSeconds = 0.050;
+    private const double IntraSentenceEdgeGuardSeconds = 0.020;
     private const double IntraSentenceMinRatio = 0.15;
     public PauseAnalysisReport AnalyzeChapter(
         TranscriptIndex transcript,
@@ -637,38 +637,41 @@ public sealed class PauseDynamicsService : IPauseDynamicsService
             return results;
         }
 
-        var available = gaps
-            .Select((gap, idx) => new GapCandidate(idx, gap.Start, gap.End))
-            .ToDictionary(candidate => candidate.Index);
-
-        var used = new HashSet<int>();
+        int gapIndex = 0;
 
         foreach (var punctuationTime in punctuationTimes)
         {
-            double bestScore = double.MaxValue;
-            int bestIndex = -1;
-
-            foreach (var candidate in available.Values)
+            if (gapIndex >= gaps.Count)
             {
-                if (used.Contains(candidate.Index))
-                {
-                    continue;
-                }
+                break;
+            }
 
-                double center = candidate.Center;
+            int bestIndex = -1;
+            double bestScore = double.MaxValue;
+
+            for (int j = gapIndex; j < gaps.Count; j++)
+            {
+                var gap = gaps[j];
+                double center = (gap.Start + gap.End) * 0.5d;
                 double score = Math.Abs(center - punctuationTime);
+
                 if (score < bestScore)
                 {
                     bestScore = score;
-                    bestIndex = candidate.Index;
+                    bestIndex = j;
+                }
+
+                if (center >= punctuationTime && score > bestScore)
+                {
+                    break;
                 }
             }
 
             if (bestIndex >= 0)
             {
-                used.Add(bestIndex);
                 var gap = gaps[bestIndex];
                 results.Add((gap.Start, gap.End, PauseProvenance.ScriptAndTextGrid));
+                gapIndex = bestIndex + 1;
             }
         }
 
@@ -681,11 +684,6 @@ public sealed class PauseDynamicsService : IPauseDynamicsService
         }
 
         return results;
-    }
-
-    private readonly record struct GapCandidate(int Index, double Start, double End)
-    {
-        public double Center => (Start + End) * 0.5d;
     }
 
     private static bool IsReliableSentence(SentenceAlign sentence)

@@ -11,7 +11,7 @@ namespace Ams.Core.Prosody;
 internal static class PauseAudioApplier
 {
     private const double DurationEpsilon = 1e-6;
-    private const double SegmentFadeMs = 5.0;
+    private const double SegmentFadeMs = 60.0;
     private const double LoopTransitionMs = 6.0;
     private static readonly IReadOnlyList<PauseIntraGap> EmptyIntraGaps = Array.Empty<PauseIntraGap>();
 
