@@ -454,15 +454,8 @@ public static class ValidateCommand
 
         var baselineTimings = BuildBaselineTimings(transcript, hydrated);
 
-        var breathAdjustments = DetectBreathAdjustments(transcript, audioBuffer);
-        if (breathAdjustments.Count > 0)
-        {
-            double totalTrim = breathAdjustments.Sum(a => a.OriginalDurationSec);
-            Log.Info("Detected {Count} breath region(s) totaling {Duration:F3}s for removal.", breathAdjustments.Count, totalTrim);
-        }
-
-        var combinedAdjustments = adjustments.Adjustments.Concat(breathAdjustments).ToList();
-        var timelineResult = PauseTimelineApplier.Apply(baselineTimings, combinedAdjustments);
+        var vettedAdjustments = VetPauseAdjustments(adjustments.Adjustments, transcript, audioBuffer);
+        var timelineResult = PauseTimelineApplier.Apply(baselineTimings, vettedAdjustments);
 
         var adjustedAudio = PauseAudioApplier.Apply(
             audioBuffer,
@@ -1575,160 +1568,172 @@ public static class ValidateCommand
         return Path.GetFullPath(Path.Combine(root, path));
     }
 
-    private static IReadOnlyList<PauseAdjust> DetectBreathAdjustments(
-        TranscriptIndex transcript,
-        AudioBuffer audio,
-        double minDurationSec = 0.06)
+    private static readonly FrameBreathDetectorOptions BreathGuardOptions = new()
     {
+        FrameMs = 25,
+        HopMs = 10,
+        HiSplitHz = 4000.0,
+        ScoreHigh = 0.45,
+        ScoreLow = 0.25,
+        MinRunMs = 60,
+        MergeGapMs = 40,
+        GuardLeftMs = 12,
+        GuardRightMs = 12,
+        FricativeGuardMs = 15,
+        ApplyEnergyGate = true
+    };
+
+    private const double BreathGuardMinSpanSec = 0.03;
+    private const double BreathGuardSpeechThresholdDb = -34.0;
+
+    private static IReadOnlyList<PauseAdjust> VetPauseAdjustments(
+        IReadOnlyList<PauseAdjust> plannedAdjustments,
+        TranscriptIndex transcript,
+        AudioBuffer audio)
+    {
+        if (plannedAdjustments is null || plannedAdjustments.Count == 0)
+        {
+            return plannedAdjustments ?? Array.Empty<PauseAdjust>();
+        }
+
         if (audio is null || audio.SampleRate <= 0 || audio.Length == 0)
         {
-            return Array.Empty<PauseAdjust>();
+            return plannedAdjustments;
         }
 
         double audioDurationSec = audio.Length / (double)audio.SampleRate;
         if (audioDurationSec <= 0)
         {
-            return Array.Empty<PauseAdjust>();
+            return plannedAdjustments;
         }
 
-        var options = new FrameBreathDetectorOptions
-        {
-            FrameMs = 25,
-            HopMs = 10,
-            HiSplitHz = 4000.0,
-            ScoreHigh = 0.45,
-            ScoreLow = 0.25,
-            MinRunMs = 60,
-            MergeGapMs = 40,
-            GuardLeftMs = 12,
-            GuardRightMs = 12,
-            FricativeGuardMs = 15,
-            ApplyEnergyGate = false 
-        };
+        var sentenceLookup = transcript?.Sentences?
+            .Where(s => s is not null)
+            .ToDictionary(s => s.Id) ?? new Dictionary<int, SentenceAlign>();
 
-        var breathRegions = FeatureExtraction.Detect(audio, 0.0, audioDurationSec, options);
-        if (breathRegions.Count == 0)
+        var analyzer = new AudioAnalysisService(audio);
+
+        var accepted = new List<PauseAdjust>(plannedAdjustments.Count);
+        var rejected = new List<(PauseAdjust Adjust, double Start, double End, double RmsDb)>();
+
+        foreach (var adjust in plannedAdjustments)
         {
-            return Array.Empty<PauseAdjust>();
+            if (!ShouldVet(adjust, sentenceLookup))
+            {
+                accepted.Add(adjust);
+                continue;
+            }
+
+            double spanStart = Math.Clamp(adjust.StartSec, 0.0, audioDurationSec);
+            double spanEnd = Math.Clamp(adjust.EndSec, spanStart, audioDurationSec);
+            if (spanEnd - spanStart < BreathGuardMinSpanSec)
+            {
+                accepted.Add(adjust);
+                continue;
+            }
+
+            if (IsBreathSafe(audio, analyzer, spanStart, spanEnd))
+            {
+                accepted.Add(adjust);
+            }
+            else
+            {
+                double rms = analyzer.MeasureRms(spanStart, spanEnd);
+                rejected.Add((adjust, spanStart, spanEnd, rms));
+            }
         }
 
-        var sentences = transcript.Sentences
-            .OrderBy(s => s.Timing.StartSec)
+        if (rejected.Count > 0)
+        {
+            foreach (var (adjust, start, end, rms) in rejected)
+            {
+                Log.Warn(
+                    "Breath guard rejected intra-sentence adjustment for sentence {SentenceId}: span=[{Start:F3},{End:F3}] original={Original:F3}s target={Target:F3}s rms={Rms:F2} dB",
+                    adjust.LeftSentenceId,
+                    start,
+                    end,
+                    adjust.OriginalDurationSec,
+                    adjust.TargetDurationSec,
+                    rms);
+            }
+
+            Log.Warn(
+                "Breath guard removed {Rejected} of {Total} planned adjustment(s).",
+                rejected.Count,
+                plannedAdjustments.Count);
+        }
+
+        return accepted;
+    }
+
+    private static bool ShouldVet(PauseAdjust adjust, IReadOnlyDictionary<int, SentenceAlign> sentences)
+    {
+        if (adjust is null || !adjust.IsIntraSentence)
+        {
+            return false;
+        }
+
+        if (adjust.TargetDurationSec >= adjust.OriginalDurationSec)
+        {
+            return false;
+        }
+
+        if (!sentences.TryGetValue(adjust.LeftSentenceId, out var sentence))
+        {
+            return false;
+        }
+
+        return string.Equals(sentence.Status, "ok", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsBreathSafe(AudioBuffer audio, AudioAnalysisService analyzer, double startSec, double endSec)
+    {
+        if (endSec - startSec <= 0)
+        {
+            return true;
+        }
+
+        var regions = FeatureExtraction.Detect(audio, startSec, endSec, BreathGuardOptions)
+            .OrderBy(region => region.StartSec)
+            .Select(region => new Region(
+                Math.Clamp(region.StartSec, startSec, endSec),
+                Math.Clamp(region.EndSec, startSec, endSec)))
+            .Where(region => region.DurationSec > 0)
             .ToList();
 
-        if (sentences.Count == 0)
+        if (regions.Count == 0)
         {
-            return Array.Empty<PauseAdjust>();
+            double rms = analyzer.MeasureRms(startSec, endSec);
+            return rms <= BreathGuardSpeechThresholdDb;
         }
 
-        var perSentence = new Dictionary<int, List<(double Start, double End)>>();
-        int regionIndex = 0;
-
-        foreach (var sentence in sentences)
+        double cursor = startSec;
+        foreach (var region in regions)
         {
-            double sentStart = sentence.Timing.StartSec;
-            double sentEnd = sentence.Timing.EndSec;
-            if (!double.IsFinite(sentStart) || !double.IsFinite(sentEnd) || sentEnd <= sentStart)
+            double gapStart = cursor;
+            double gapEnd = region.StartSec;
+            if (gapEnd - gapStart >= BreathGuardMinSpanSec)
             {
-                continue;
+                double rms = analyzer.MeasureRms(gapStart, gapEnd);
+                if (rms > BreathGuardSpeechThresholdDb)
+                {
+                    return false;
+                }
             }
 
-            while (regionIndex < breathRegions.Count && breathRegions[regionIndex].EndSec <= sentStart)
+            cursor = Math.Max(cursor, region.EndSec);
+        }
+
+        if (endSec - cursor >= BreathGuardMinSpanSec)
+        {
+            double rms = analyzer.MeasureRms(cursor, endSec);
+            if (rms > BreathGuardSpeechThresholdDb)
             {
-                regionIndex++;
-            }
-
-            int probe = regionIndex;
-            while (probe < breathRegions.Count)
-            {
-                var region = breathRegions[probe];
-                if (region.StartSec >= sentEnd)
-                {
-                    break;
-                }
-
-                double overlapStart = Math.Max(region.StartSec, sentStart);
-                double overlapEnd = Math.Min(region.EndSec, sentEnd);
-                if (overlapEnd - overlapStart >= minDurationSec)
-                {
-                    if (!perSentence.TryGetValue(sentence.Id, out var list))
-                    {
-                        list = new List<(double, double)>();
-                        perSentence[sentence.Id] = list;
-                    }
-                    list.Add((overlapStart, overlapEnd));
-                }
-
-                if (region.EndSec <= sentEnd)
-                {
-                    probe++;
-                }
-                else
-                {
-                    break;
-                }
+                return false;
             }
         }
 
-        if (perSentence.Count == 0)
-        {
-            return Array.Empty<PauseAdjust>();
-        }
-
-        var adjustments = new List<PauseAdjust>();
-
-        foreach (var kvp in perSentence)
-        {
-            var segments = kvp.Value
-                .OrderBy(segment => segment.Start)
-                .ToList();
-
-            if (segments.Count == 0)
-            {
-                continue;
-            }
-
-            var merged = new List<(double Start, double End)>();
-            foreach (var segment in segments)
-            {
-                if (merged.Count == 0)
-                {
-                    merged.Add(segment);
-                    continue;
-                }
-
-                var last = merged[^1];
-                if (segment.Start <= last.End + 0.01)
-                {
-                    merged[^1] = (last.Start, Math.Max(last.End, segment.End));
-                }
-                else
-                {
-                    merged.Add(segment);
-                }
-            }
-
-            foreach (var segment in merged)
-            {
-                double duration = segment.End - segment.Start;
-                if (duration < minDurationSec)
-                {
-                    continue;
-                }
-
-                adjustments.Add(new PauseAdjust(
-                    kvp.Key,
-                    kvp.Key,
-                    PauseClass.Other,
-                    duration,
-                    0.0,
-                    segment.Start,
-                    segment.End,
-                    HasGapHint: false));
-            }
-        }
-
-        return adjustments;
+        return true;
     }
 
     private static string TrimText(string text, int? maxLength = null)
