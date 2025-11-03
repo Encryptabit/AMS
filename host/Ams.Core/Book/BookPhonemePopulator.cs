@@ -39,7 +39,7 @@ public static class BookPhonemePopulator
             }
         }
 
-        Log.Info("Phoneme population: {MissingCount} tokens missing phonemes; {LexemeCount} unique lexemes queued", index.Words.Count(w => !HasPhonemes(w)), missingLexemes.Count);
+        Log.Debug("Phoneme population: {MissingCount} tokens missing phonemes; {LexemeCount} unique lexemes queued", index.Words.Count(w => !HasPhonemes(w)), missingLexemes.Count);
 
         if (missingLexemes.Count == 0)
         {

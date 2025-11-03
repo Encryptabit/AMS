@@ -84,13 +84,13 @@ internal sealed class MfaPronunciationProvider : IPronunciationProvider
             var result = await _mfaService.GeneratePronunciationsAsync(context, cancellationToken).ConfigureAwait(false);
             if (result.ExitCode != 0)
             {
-                Log.Warn("MFA g2p exited with code {ExitCode}; falling back to text-only index", result.ExitCode);
+                Log.Debug("MFA g2p exited with code {ExitCode}; falling back to text-only index", result.ExitCode);
                 return new Dictionary<string, string[]>(StringComparer.OrdinalIgnoreCase);
             }
 
             if (!File.Exists(outputPath))
             {
-                Log.Warn("MFA g2p output not found at {Path}; falling back to text-only index", outputPath);
+                Log.Debug("MFA g2p output not found at {Path}; falling back to text-only index", outputPath);
                 return new Dictionary<string, string[]>(StringComparer.OrdinalIgnoreCase);
             }
 
@@ -132,7 +132,7 @@ internal sealed class MfaPronunciationProvider : IPronunciationProvider
                 }
             }
 
-            Log.Info(
+            Log.Debug(
                 "MFA g2p parsed {UniqueCount} atomic pronunciations ({AlternateCount} duplicate variants ignored) from {OutputPath}",
                 wordPronunciations.Count,
                 alternateCount,
@@ -141,14 +141,14 @@ internal sealed class MfaPronunciationProvider : IPronunciationProvider
             if (wordPronunciations.Count == 0)
             {
                 var preview = await File.ReadAllTextAsync(outputPath, cancellationToken).ConfigureAwait(false);
-                Log.Warn("MFA g2p output appeared empty; first 200 characters: {Preview}", preview.Length > 200 ? preview[..200] : preview);
+                Log.Debug("MFA g2p output appeared empty; first 200 characters: {Preview}", preview.Length > 200 ? preview[..200] : preview);
             }
 
             return ComposeLexemePronunciations(lexemeComponents, wordPronunciations);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            Log.Warn("Failed to generate pronunciations via MFA; falling back to text-only index ({Message})", ex.Message);
+            Log.Debug("Failed to generate pronunciations via MFA; falling back to text-only index ({Message})", ex.Message);
             return new Dictionary<string, string[]>(StringComparer.OrdinalIgnoreCase);
         }
         finally

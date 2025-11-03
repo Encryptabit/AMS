@@ -37,7 +37,7 @@ public static class AudioCommand
         var toneDbOption = new Option<double>("--tone-gain-db", () => -74.0, "Roomtone RMS level (dBFS)");
         var diagnosticsOption = new Option<bool>("--emit-diagnostics", () => false, "Write intermediate diagnostic WAV snapshots");
         var adaptiveGainOption = new Option<bool>("--adaptive-gain", () => false, "Scale roomtone seed to the target RMS");
-        var verboseOption = new Option<bool>("--verbose", () => true, "Enable verbose roomtone gap logging");
+        var verboseOption = new Option<bool>("--verbose", () => false, "Enable verbose roomtone gap logging");
         var gapLeftThresholdOption = new Option<double>("--gap-left-threshold-db", () => -45.0, "RMS threshold (dBFS) used to detect silence on the left side of gaps");
         var gapRightThresholdOption = new Option<double>("--gap-right-threshold-db", () => -30.0, "RMS threshold (dBFS) used to detect silence on the right side of gaps");
         var gapStepOption = new Option<double>("--gap-step-ms", () => 5.0, "Step size (ms) when probing gap boundaries");
@@ -168,7 +168,7 @@ public static class AudioCommand
     {
         if (!txFile.Exists) throw new FileNotFoundException($"TranscriptIndex not found: {txFile.FullName}");
 
-        Log.Info("Rendering roomtone for {TranscriptIndex} -> {OutputWav}", txFile.FullName, outWav.FullName);
+        Log.Debug("Rendering roomtone for {TranscriptIndex} -> {OutputWav}", txFile.FullName, outWav.FullName);
 
         var manifest = await PrepareManifestAsync(txFile, outWav.DirectoryName);
 
@@ -189,14 +189,14 @@ public static class AudioCommand
         }
         catch (Exception ex)
         {
-            Log.Warn("Failed to update transcript audio path metadata: {Message}", ex.Message);
+            Log.Debug("Failed to update transcript audio path metadata: {Message}", ex.Message);
         }
 
-        Log.Info("Roomtone WAV saved to {OutputWav}", outWav.FullName);
-        if (outputs.TryGetValue("plan", out var plan)) Log.Info("Roomtone plan saved to {PlanPath}", plan);
-        if (outputs.TryGetValue("timeline", out var timeline)) Log.Info("Roomtone timeline saved to {TimelinePath}", timeline);
-        if (outputs.TryGetValue("meta", out var meta)) Log.Info("Roomtone metadata saved to {MetaPath}", meta);
-        if (outputs.TryGetValue("params", out var snapshot)) Log.Info("Roomtone params snapshot saved to {ParamsPath}", snapshot);
+        Log.Debug("Roomtone WAV saved to {OutputWav}", outWav.FullName);
+        if (outputs.TryGetValue("plan", out var plan)) Log.Debug("Roomtone plan saved to {PlanPath}", plan);
+        if (outputs.TryGetValue("timeline", out var timeline)) Log.Debug("Roomtone timeline saved to {TimelinePath}", timeline);
+        if (outputs.TryGetValue("meta", out var meta)) Log.Debug("Roomtone metadata saved to {MetaPath}", meta);
+        if (outputs.TryGetValue("params", out var snapshot)) Log.Debug("Roomtone params snapshot saved to {ParamsPath}", snapshot);
     }
 
     private static async Task RunPlanAsync(
@@ -215,7 +215,7 @@ public static class AudioCommand
     {
         if (!txFile.Exists) throw new FileNotFoundException($"TranscriptIndex not found: {txFile.FullName}");
 
-        Log.Info("Generating roomtone plan for {TranscriptIndex} -> {OutputJson}", txFile.FullName, outJson.FullName);
+        Log.Debug("Generating roomtone plan for {TranscriptIndex} -> {OutputJson}", txFile.FullName, outJson.FullName);
 
         var manifest = await PrepareManifestAsync(txFile, outJson.DirectoryName);
 
@@ -230,10 +230,10 @@ public static class AudioCommand
             File.Copy(planPath, outJson.FullName, overwrite: true);
         }
 
-        Log.Info("Roomtone plan saved to {OutputJson}", outJson.FullName);
-        if (outputs.TryGetValue("timeline", out var timeline)) Log.Info("Roomtone timeline saved to {TimelinePath}", timeline);
-        if (outputs.TryGetValue("meta", out var meta)) Log.Info("Roomtone metadata saved to {MetaPath}", meta);
-        if (outputs.TryGetValue("params", out var snapshot)) Log.Info("Roomtone params snapshot saved to {ParamsPath}", snapshot);
+        Log.Debug("Roomtone plan saved to {OutputJson}", outJson.FullName);
+        if (outputs.TryGetValue("timeline", out var timeline)) Log.Debug("Roomtone timeline saved to {TimelinePath}", timeline);
+        if (outputs.TryGetValue("meta", out var meta)) Log.Debug("Roomtone metadata saved to {MetaPath}", meta);
+        if (outputs.TryGetValue("params", out var snapshot)) Log.Debug("Roomtone params snapshot saved to {ParamsPath}", snapshot);
     }
 
     private static async Task<ManifestV2> PrepareManifestAsync(FileInfo txFile, string? workDirectory)

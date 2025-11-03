@@ -40,6 +40,7 @@ internal static class MfaProcessSupervisor
     private static bool _isReady;
     private static string? _scriptPath;
     private static int _activePumpCount;
+    private static Task? _startTask;
 
     private enum StreamKind
     {
@@ -67,7 +68,7 @@ internal static class MfaProcessSupervisor
             }
             catch (Exception ex)
             {
-                Log.Warn("MFA warmup failed: {0}", ex);
+                Log.Debug("MFA warmup failed: {0}", ex);
             }
         });
     }
@@ -97,7 +98,7 @@ internal static class MfaProcessSupervisor
             var payload = new Payload(command, NormalizeWorkingDirectory(workingDirectory));
             var payloadJson = JsonSerializer.Serialize(payload, JsonOptions);
 
-            Log.Info("MFA> {Command}", command);
+            Log.Debug("MFA> {Command}", command);
 
             await _stdin!.WriteLineAsync(payloadJson.AsMemory(), cancellationToken).ConfigureAwait(false);
             await _stdin.FlushAsync().ConfigureAwait(false);
@@ -115,17 +116,29 @@ internal static class MfaProcessSupervisor
         }
     }
 
-    private static async Task EnsureStartedAsync(CancellationToken cancellationToken)
+    private static Task EnsureStartedAsync(CancellationToken cancellationToken)
     {
-        if (_process is { HasExited: false } && _isReady)
+        Task startTask;
+
+        lock (StartLock)
         {
-            return;
+            if (_process is { HasExited: false } && _isReady)
+            {
+                return Task.CompletedTask;
+            }
+
+            if (_startTask is null || _startTask.IsCompleted)
+            {
+                _startTask = StartProcessAsync();
+            }
+
+            startTask = _startTask;
         }
 
-        await StartProcessAsync(cancellationToken).ConfigureAwait(false);
+        return startTask.WaitAsync(cancellationToken);
     }
 
-    private static async Task StartProcessAsync(CancellationToken cancellationToken)
+    private static async Task StartProcessAsync()
     {
         lock (StartLock)
         {
@@ -175,8 +188,18 @@ internal static class MfaProcessSupervisor
             _isReady = false;
         }
 
-        await WaitForReadyAsync(cancellationToken).ConfigureAwait(false);
-        _isReady = true;
+        try
+        {
+            await WaitForReadyAsync(CancellationToken.None).ConfigureAwait(false);
+            _isReady = true;
+        }
+        finally
+        {
+            lock (StartLock)
+            {
+                _startTask = null;
+            }
+        }
     }
 
     private static void EnsureBootstrapScript()
@@ -239,17 +262,17 @@ internal static class MfaProcessSupervisor
             {
                 if (line.Kind == StreamKind.StdOut && string.Equals(line.Line, ReadyToken, StringComparison.Ordinal))
                 {
-                    Log.Info("MFA environment ready");
+                    Log.Debug("MFA environment ready");
                     return;
                 }
 
                 if (line.Kind == StreamKind.StdErr)
                 {
-                    Log.Warn("mfa! {Line}", line.Line);
+                    Log.Debug("mfa! {Line}", line.Line);
                 }
                 else
                 {
-                    Log.Info("mfa> {Line}", line.Line);
+                    Log.Debug("mfa> {Line}", line.Line);
                 }
             }
         }
@@ -281,7 +304,7 @@ internal static class MfaProcessSupervisor
         }
         catch (Exception ex)
         {
-            Log.Warn("MFA output pump faulted: {0}", ex);
+            Log.Debug("MFA output pump faulted: {0}", ex);
         }
         finally
         {
@@ -300,13 +323,13 @@ internal static class MfaProcessSupervisor
             {
                 try
                 {
-                    Log.Info("Stopping MFA process...");
+                    Log.Debug("Stopping MFA process...");
                     _stdin.WriteLine(QuitToken);
                     _stdin.Flush();
                 }
                 catch (Exception ex)
                 {
-                    Log.Warn("Failed to signal MFA shutdown: {0}", ex.Message);
+                    Log.Debug("Failed to signal MFA shutdown: {0}", ex.Message);
                 }
             }
 
@@ -334,6 +357,9 @@ internal static class MfaProcessSupervisor
         _lineChannel?.Writer.TryComplete();
         _lineChannel = null;
 
+        _startTask = null;
+        _isReady = false;
+
         if (_process is { HasExited: false })
         {
             try
@@ -357,11 +383,11 @@ internal static class MfaProcessSupervisor
             }
             catch (Exception ex)
             {
-                Log.Warn("Error while waiting for MFA process exit: {0}", ex.Message);
+                Log.Debug("Error while waiting for MFA process exit: {0}", ex.Message);
             }
             finally
             {
-                Log.Info("MFA process terminated.");
+                Log.Debug("MFA process terminated.");
                 _process.Dispose();
                 _process = null;
             }
@@ -381,7 +407,7 @@ internal static class MfaProcessSupervisor
             }
             catch (Exception ex)
             {
-                Log.Warn("Failed to delete MFA bootstrap script {Path}: {Message}", _scriptPath, ex.Message);
+                Log.Debug("Failed to delete MFA bootstrap script {Path}: {Message}", _scriptPath, ex.Message);
             }
             finally
             {

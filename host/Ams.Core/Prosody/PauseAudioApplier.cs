@@ -33,7 +33,7 @@ internal static class PauseAudioApplier
             return audio;
         }
 
-        Log.Info("PauseAudioApplier starting: sampleRate={0}, timelineCount={1}", audio.SampleRate, updatedTimeline.Count);
+        Log.Debug("PauseAudioApplier starting: sampleRate={SampleRate}, timelineCount={TimelineCount}", audio.SampleRate, updatedTimeline.Count);
 
         var analyzer = new AudioAnalysisService(audio);
         var finalTimeline = new Dictionary<int, SentenceTiming>(updatedTimeline);
@@ -103,8 +103,8 @@ internal static class PauseAudioApplier
 
             if (!IsApproximatelyEqual(sourceEndSec, seed.EndSec))
             {
-                Log.Info(
-                    "PauseAudioApplier energy-adjusted sentence {0}: seedEnd={1:F3}s energyEnd={2:F3}s",
+                Log.Debug(
+                    "PauseAudioApplier energy-adjusted sentence {SentenceId}: seedEnd={SeedEnd:F3}s energyEnd={EnergyEnd:F3}s",
                     sentence.Id,
                     seed.EndSec,
                     sourceEndSec);
@@ -116,14 +116,14 @@ internal static class PauseAudioApplier
 
             if (gaps.Count > 0)
             {
-                Log.Info(
+                Log.Debug(
                     "PauseAudioApplier using feature-derived intra-gaps for sentence {SentenceId}: {GapCount} gap(s).",
                     sentence.Id,
                     gaps.Count);
             }
             else
             {
-                Log.Info(
+                Log.Debug(
                     "PauseAudioApplier using SnapToEnergy fallback for sentence {SentenceId} (no intra-gap timeline).",
                     sentence.Id);
             }

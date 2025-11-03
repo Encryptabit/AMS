@@ -62,7 +62,7 @@ internal static class AsrProcessSupervisor
 
         if (IsAutoStartDisabled())
         {
-            Log.Info("ASR auto-start disabled via {Env}", DisableAutoStartEnv);
+            Log.Debug("ASR auto-start disabled via {Env}", DisableAutoStartEnv);
             return;
         }
 
@@ -81,7 +81,7 @@ internal static class AsrProcessSupervisor
                 }
                 catch (Exception ex)
                 {
-                    Log.Warn("Background ASR warmup failed: {0}",ex);
+                    Log.Debug("Background ASR warmup failed: {0}",ex);
                 }
             });
         }
@@ -123,7 +123,7 @@ internal static class AsrProcessSupervisor
                     return;
                 }
 
-                Log.Warn("Existing managed ASR process did not become healthy; restarting");
+                Log.Debug("Existing managed ASR process did not become healthy; restarting");
                 KillProcess();
             }
 
@@ -156,17 +156,17 @@ internal static class AsrProcessSupervisor
             {
                 if (_ownsProcess && !_process.HasExited)
                 {
-                    Log.Info("Stopping managed ASR process (PID {Pid})", _process.Id);
+                    Log.Debug("Stopping managed ASR process (PID {Pid})", _process.Id);
                     _process.Kill(true);
                     if (!_process.WaitForExit((int)TimeSpan.FromSeconds(10).TotalMilliseconds))
                     {
-                        Log.Warn("ASR process did not exit within timeout");
+                        Log.Debug("ASR process did not exit within timeout");
                     }
                 }
             }
             catch (Exception ex)
             {
-                Log.Warn("Error while stopping ASR process {0}", ex);
+                Log.Debug("Error while stopping ASR process {0}", ex);
             }
             finally
             {
@@ -216,7 +216,7 @@ internal static class AsrProcessSupervisor
             throw new InvalidOperationException("Unable to locate asr-nemo startup script. Set AMS_ASR_START_SCRIPT to override.");
         }
 
-        Log.Info("Starting asr-nemo via {File} {Args}", startInfo.FileName, startInfo.Arguments);
+        Log.Debug("Starting asr-nemo via {File} {Args}", startInfo.FileName, startInfo.Arguments);
 
         try
         {
@@ -230,7 +230,7 @@ internal static class AsrProcessSupervisor
             {
                 if (!string.IsNullOrWhiteSpace(e.Data))
                 {
-                    Log.Info("asr-nemo: {Line}", e.Data);
+                    Log.Debug("asr-nemo: {Line}", e.Data);
                 }
             };
 
@@ -238,7 +238,7 @@ internal static class AsrProcessSupervisor
             {
                 if (!string.IsNullOrWhiteSpace(e.Data))
                 {
-                    Log.Warn("asr-nemo: {Line}", e.Data);
+                    Log.Debug("asr-nemo: {Line}", e.Data);
                 }
             };
 
@@ -246,7 +246,7 @@ internal static class AsrProcessSupervisor
             {
                 if (_ownsProcess)
                 {
-                    Log.Warn("Managed ASR process exited with code {ExitCode}", process.ExitCode);
+                    Log.Debug("Managed ASR process exited with code {ExitCode}", process.ExitCode);
                     _state = SupervisorState.Faulted;
                 }
             };
@@ -287,7 +287,7 @@ internal static class AsrProcessSupervisor
         }
         catch (Exception ex)
         {
-            Log.Warn("Failed to terminate existing ASR process: {0}", ex);
+            Log.Debug("Failed to terminate existing ASR process: {0}", ex);
         }
         finally
         {
@@ -366,7 +366,7 @@ internal static class AsrProcessSupervisor
     {
         if (!File.Exists(scriptPath))
         {
-            Log.Warn("Configured ASR start script not found at {Path}", scriptPath);
+            Log.Debug("Configured ASR start script not found at {Path}", scriptPath);
             return null;
         }
 
@@ -416,7 +416,7 @@ internal static class AsrProcessSupervisor
             };
         }
 
-        Log.Warn("Unsupported ASR start script extension: {Ext}", extension);
+        Log.Debug("Unsupported ASR start script extension: {Ext}", extension);
         return null;
     }
 

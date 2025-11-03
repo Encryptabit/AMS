@@ -25,19 +25,19 @@ public static class MfaTimingMerger
     {
         if (!hydrateFile.Exists)
         {
-            Log.Warn("Hydrate file not found; skipping MFA timing merge ({File})", hydrateFile.FullName);
+            Log.Debug("Hydrate file not found; skipping MFA timing merge ({File})", hydrateFile.FullName);
             return;
         }
 
         if (!asrFile.Exists)
         {
-            Log.Warn("ASR file not found; skipping MFA timing merge ({File})", asrFile.FullName);
+            Log.Debug("ASR file not found; skipping MFA timing merge ({File})", asrFile.FullName);
             return;
         }
 
         if (!textGridFile.Exists)
         {
-            Log.Warn("TextGrid file not found; skipping MFA timing merge ({File})", textGridFile.FullName);
+            Log.Debug("TextGrid file not found; skipping MFA timing merge ({File})", textGridFile.FullName);
             return;
         }
 
@@ -47,14 +47,14 @@ public static class MfaTimingMerger
 
         if (textGridIntervals.Count == 0)
         {
-            Log.Warn("TextGrid contained no word intervals ({File})", textGridFile.FullName);
+            Log.Debug("TextGrid contained no word intervals ({File})", textGridFile.FullName);
             return;
         }
 
         var asr = JsonSerializer.Deserialize<AsrResponse>(File.ReadAllText(asrFile.FullName), SerializerOptions);
         if (asr?.Tokens is null || asr.Tokens.Length == 0)
         {
-            Log.Warn("ASR file missing tokens; skipping MFA timing merge ({File})", asrFile.FullName);
+            Log.Debug("ASR file missing tokens; skipping MFA timing merge ({File})", asrFile.FullName);
             return;
         }
 
@@ -62,7 +62,7 @@ public static class MfaTimingMerger
         var timingMap = BuildTimingMap(asrTokens, textGridIntervals);
         if (timingMap.Count == 0)
         {
-            Log.Warn("Unable to map any MFA timings to ASR tokens for {File}", hydrateFile.Name);
+            Log.Debug("Unable to map any MFA timings to ASR tokens for {File}", hydrateFile.Name);
             return;
         }
 
@@ -73,13 +73,13 @@ public static class MfaTimingMerger
         var hydrateNode = JsonNode.Parse(File.ReadAllText(hydrateFile.FullName))?.AsObject();
         if (hydrateNode is null)
         {
-            Log.Warn("Failed to parse hydrate JSON; skipping MFA timing merge ({File})", hydrateFile.FullName);
+            Log.Debug("Failed to parse hydrate JSON; skipping MFA timing merge ({File})", hydrateFile.FullName);
             return;
         }
 
         if (hydrateNode["sentences"] is not JsonArray sentencesArray)
         {
-            Log.Warn("Hydrate JSON missing sentences array; skipping MFA timing merge ({File})", hydrateFile.FullName);
+            Log.Debug("Hydrate JSON missing sentences array; skipping MFA timing merge ({File})", hydrateFile.FullName);
             return;
         }
 
@@ -146,7 +146,7 @@ public static class MfaTimingMerger
                         timings.Add((fallbackStart, fallbackEnd));
                         intervalCursor = fallbackCursor;
                         fallbackApplied = true;
-                        Log.Info("MFA fallback timing applied for sentence {SentenceId}: {Start:F3}-{End:F3}{Reason}",
+                        Log.Debug("MFA fallback timing applied for sentence {SentenceId}: {Start:F3}-{End:F3}{Reason}",
                             sentenceNode["id"]?.GetValue<int?>(),
                             fallbackStart,
                             fallbackEnd,
@@ -157,7 +157,7 @@ public static class MfaTimingMerger
 
             if (needsFallback && !fallbackApplied && useBookForTiming)
             {
-                Log.Info("MFA fallback timing failed for unreliable sentence {SentenceId}", sentenceNode["id"]?.GetValue<int?>());
+                Log.Debug("MFA fallback timing failed for unreliable sentence {SentenceId}", sentenceNode["id"]?.GetValue<int?>());
             }
 
             if (timings.Count == 0)
@@ -198,7 +198,7 @@ public static class MfaTimingMerger
 
             if (!useBookForTiming && totalTokenCount > 0)
             {
-                Log.Info("MFA merge sentence {SentenceId}: tokens={Total} mfa={Mfa} asr={Asr}{Fallback}",
+                Log.Debug("MFA merge sentence {SentenceId}: tokens={Total} mfa={Mfa} asr={Asr}{Fallback}",
                     sentenceNode["id"]?.GetValue<int?>(),
                     totalTokenCount,
                     mfaTokenCount,
@@ -207,12 +207,12 @@ public static class MfaTimingMerger
             }
             else if (useBookForTiming && fallbackApplied)
             {
-                Log.Info("MFA merge sentence {SentenceId}: fallback applied to unreliable sentence", sentenceNode["id"]?.GetValue<int?>());
+                Log.Debug("MFA merge sentence {SentenceId}: fallback applied to unreliable sentence", sentenceNode["id"]?.GetValue<int?>());
             }
         }
 
         File.WriteAllText(hydrateFile.FullName, hydrateNode.ToJsonString(SerializerOptions));
-        Log.Info("Updated {Count} sentences with MFA timings ({File})", updated, hydrateFile.Name);
+        Log.Debug("Updated {Count} sentences with MFA timings ({File})", updated, hydrateFile.Name);
     }
 
     private static Dictionary<int, (double start, double end)> BuildTimingMap(

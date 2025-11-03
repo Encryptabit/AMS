@@ -12,7 +12,7 @@ internal static class Program
     private static async Task<int> Main(string[] args)
     {
         using var loggerFactory = Log.ConfigureDefaults(logFileName: "ams-log.txt");
-        Log.Info("Structured logging initialized. Console + file at {LogFile}", Log.LogFilePath ?? "(unknown)");
+        Log.Debug("Structured logging initialized. Console + file at {LogFile}", Log.LogFilePath ?? "(unknown)");
 
         AsrProcessSupervisor.RegisterForShutdown();
         var defaultAsrUrl = ResolveDefaultAsrUrl();
@@ -299,24 +299,39 @@ internal static class Program
 
             if (state.RunAllChapters && state.Chapters.Count > 0)
             {
-                foreach (var chapter in state.Chapters)
+                if (ShouldHandleAllChaptersInBulk(args))
                 {
-                    Console.WriteLine($"=== {chapter.Name} ===");
-                    using var scope = state.BeginChapterScope(chapter);
                     ReplContext.Current = state;
                     try
                     {
-                        var concreteArgs = ReplacePlaceholders(args, chapter);
-                        var exitCode = await rootCommand.InvokeAsync(concreteArgs);
-                        if (exitCode != 0)
-                        {
-                            Console.WriteLine($"Command exited with {exitCode}; stopping batch.");
-                            break;
-                        }
+                        await rootCommand.InvokeAsync(args);
                     }
                     finally
                     {
                         ReplContext.Current = null;
+                    }
+                }
+                else
+                {
+                    foreach (var chapter in state.Chapters)
+                    {
+                        Console.WriteLine($"=== {chapter.Name} ===");
+                        using var scope = state.BeginChapterScope(chapter);
+                        ReplContext.Current = state;
+                        try
+                        {
+                            var concreteArgs = ReplacePlaceholders(args, chapter);
+                            var exitCode = await rootCommand.InvokeAsync(concreteArgs);
+                            if (exitCode != 0)
+                            {
+                                Console.WriteLine($"Command exited with {exitCode}; stopping batch.");
+                                break;
+                            }
+                        }
+                        finally
+                        {
+                            ReplContext.Current = null;
+                        }
                     }
                 }
             }
@@ -352,6 +367,21 @@ internal static class Program
         {
             Directory.SetCurrentDirectory(originalDirectory);
         }
+    }
+
+    private static bool ShouldHandleAllChaptersInBulk(IReadOnlyList<string> args)
+    {
+        if (args.Count < 2)
+        {
+            return false;
+        }
+
+        if (!args[0].Equals("pipeline", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        return args[1].Equals("run", StringComparison.OrdinalIgnoreCase);
     }
 
     private static string[] ReplacePlaceholders(string[] args, FileInfo chapter)

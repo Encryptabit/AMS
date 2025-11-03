@@ -26,7 +26,7 @@ internal static class PausePolicyResolver
             }
             catch (Exception ex)
             {
-                Log.Warn("Failed to load pause-policy.json from {Path}; trying next candidate. Error={Message}", path, ex.Message);
+                Log.Debug("Failed to load pause-policy.json from {Path}; trying next candidate. Error={Message}", path, ex.Message);
             }
         }
 
