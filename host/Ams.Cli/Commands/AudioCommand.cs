@@ -1,4 +1,5 @@
 using System.CommandLine;
+using System.Linq;
 using System.Text.Json;
 using Ams.Core.Artifacts;
 using Ams.Core.Audio;
@@ -7,6 +8,7 @@ using Ams.Core;
 using Ams.Core.Pipeline;
 using Ams.Core.Common;
 using Ams.Cli.Utilities;
+using Ams.Core.Hydrate;
 
 namespace Ams.Cli.Commands;
 
@@ -32,10 +34,14 @@ public static class AudioCommand
         var srOption = new Option<int>("--sample-rate", () => 44100, "Output sample rate (Hz)");
         var bitOption = new Option<int>("--bit-depth", () => 32, "Output bit depth");
         var fadeMsOption = new Option<double>("--fade-ms", () => 10.0, "Crossfade length at boundaries (ms)");
-        var toneDbOption = new Option<double>("--tone-gain-db", () => -60.0, "Roomtone RMS level (dBFS)");
+        var toneDbOption = new Option<double>("--tone-gain-db", () => -74.0, "Roomtone RMS level (dBFS)");
         var diagnosticsOption = new Option<bool>("--emit-diagnostics", () => false, "Write intermediate diagnostic WAV snapshots");
         var adaptiveGainOption = new Option<bool>("--adaptive-gain", () => false, "Scale roomtone seed to the target RMS");
-        var verboseOption = new Option<bool>("--verbose", () => false, "Enable verbose roomtone gap logging");
+        var verboseOption = new Option<bool>("--verbose", () => true, "Enable verbose roomtone gap logging");
+        var gapLeftThresholdOption = new Option<double>("--gap-left-threshold-db", () => -45.0, "RMS threshold (dBFS) used to detect silence on the left side of gaps");
+        var gapRightThresholdOption = new Option<double>("--gap-right-threshold-db", () => -30.0, "RMS threshold (dBFS) used to detect silence on the right side of gaps");
+        var gapStepOption = new Option<double>("--gap-step-ms", () => 5.0, "Step size (ms) when probing gap boundaries");
+        var gapBackoffOption = new Option<double>("--gap-backoff-ms", () => 5.0, "Backoff amount (ms) applied after a silent window is detected");
 
         cmd.AddOption(txOption);
         cmd.AddOption(outOption);
@@ -46,6 +52,10 @@ public static class AudioCommand
         cmd.AddOption(diagnosticsOption);
         cmd.AddOption(adaptiveGainOption);
         cmd.AddOption(verboseOption);
+        cmd.AddOption(gapLeftThresholdOption);
+        cmd.AddOption(gapRightThresholdOption);
+        cmd.AddOption(gapStepOption);
+        cmd.AddOption(gapBackoffOption);
 
         cmd.SetHandler(async (context) =>
         {
@@ -58,10 +68,14 @@ public static class AudioCommand
             var emitDiagnostics = context.ParseResult.GetValueForOption(diagnosticsOption);
             var adaptiveGain = context.ParseResult.GetValueForOption(adaptiveGainOption);
             var verbose = context.ParseResult.GetValueForOption(verboseOption);
+            var gapLeftThreshold = context.ParseResult.GetValueForOption(gapLeftThresholdOption);
+            var gapRightThreshold = context.ParseResult.GetValueForOption(gapRightThresholdOption);
+            var gapStep = context.ParseResult.GetValueForOption(gapStepOption);
+            var gapBackoff = context.ParseResult.GetValueForOption(gapBackoffOption);
 
             try
             {
-                await RunRenderAsync(txFile, outWav, sr, bit, fadeMs, toneDb, emitDiagnostics, adaptiveGain, verbose);
+                await RunRenderAsync(txFile, outWav, sr, bit, fadeMs, toneDb, emitDiagnostics, adaptiveGain, verbose, gapLeftThreshold, gapRightThreshold, gapStep, gapBackoff);
             }
             catch (Exception ex)
             {
@@ -88,6 +102,10 @@ public static class AudioCommand
         var diagnosticsOption = new Option<bool>("--emit-diagnostics", () => false, "Write intermediate diagnostic WAV snapshots when rendering");
         var adaptiveGainOption = new Option<bool>("--adaptive-gain", () => false, "Scale roomtone seed to the target RMS");
         var verboseOption = new Option<bool>("--verbose", () => false, "Enable verbose roomtone gap logging");
+        var gapLeftThresholdOption = new Option<double>("--gap-left-threshold-db", () => -30.0, "RMS threshold (dBFS) used to detect silence on the left side of gaps");
+        var gapRightThresholdOption = new Option<double>("--gap-right-threshold-db", () => -30.0, "RMS threshold (dBFS) used to detect silence on the right side of gaps");
+        var gapStepOption = new Option<double>("--gap-step-ms", () => 5.0, "Step size (ms) when probing gap boundaries");
+        var gapBackoffOption = new Option<double>("--gap-backoff-ms", () => 5.0, "Backoff amount (ms) applied after a silent window is detected");
 
         cmd.AddOption(txOption);
         cmd.AddOption(outOption);
@@ -97,6 +115,10 @@ public static class AudioCommand
         cmd.AddOption(diagnosticsOption);
         cmd.AddOption(adaptiveGainOption);
         cmd.AddOption(verboseOption);
+        cmd.AddOption(gapLeftThresholdOption);
+        cmd.AddOption(gapRightThresholdOption);
+        cmd.AddOption(gapStepOption);
+        cmd.AddOption(gapBackoffOption);
 
         cmd.SetHandler(async context =>
         {
@@ -108,12 +130,16 @@ public static class AudioCommand
             var emitDiagnostics = context.ParseResult.GetValueForOption(diagnosticsOption);
             var adaptiveGain = context.ParseResult.GetValueForOption(adaptiveGainOption);
             var verbose = context.ParseResult.GetValueForOption(verboseOption);
+            var gapLeftThreshold = context.ParseResult.GetValueForOption(gapLeftThresholdOption);
+            var gapRightThreshold = context.ParseResult.GetValueForOption(gapRightThresholdOption);
+            var gapStep = context.ParseResult.GetValueForOption(gapStepOption);
+            var gapBackoff = context.ParseResult.GetValueForOption(gapBackoffOption);
 
             var outJson = outJsonOpt ?? new FileInfo(Path.Combine(txFile.DirectoryName ?? Directory.GetCurrentDirectory(), Path.GetFileNameWithoutExtension(txFile.Name) + ".roomtone.json"));
 
             try
             {
-                await RunPlanAsync(txFile, outJson, sr, fadeMs, toneDb, emitDiagnostics, adaptiveGain, verbose);
+                await RunPlanAsync(txFile, outJson, sr, fadeMs, toneDb, emitDiagnostics, adaptiveGain, verbose, gapLeftThreshold, gapRightThreshold, gapStep, gapBackoff);
             }
             catch (Exception ex)
             {
@@ -125,7 +151,20 @@ public static class AudioCommand
         return cmd;
     }
 
-    internal static async Task RunRenderAsync(FileInfo txFile, FileInfo outWav, int sampleRate, int bitDepth, double fadeMs, double toneDb, bool emitDiagnostics, bool adaptiveGain, bool verbose)
+    internal static async Task RunRenderAsync(
+        FileInfo txFile,
+        FileInfo outWav,
+        int sampleRate,
+        int bitDepth,
+        double fadeMs,
+        double toneDb,
+        bool emitDiagnostics,
+        bool adaptiveGain,
+        bool verbose,
+        double gapLeftThresholdDb,
+        double gapRightThresholdDb,
+        double gapStepMs,
+        double gapBackoffMs)
     {
         if (!txFile.Exists) throw new FileNotFoundException($"TranscriptIndex not found: {txFile.FullName}");
 
@@ -133,7 +172,7 @@ public static class AudioCommand
 
         var manifest = await PrepareManifestAsync(txFile, outWav.DirectoryName);
 
-        var stage = new RoomToneInsertionStage(sampleRate, toneDb, fadeMs, emitDiagnostics, adaptiveGain, verbose);
+        var stage = new RoomToneInsertionStage(sampleRate, toneDb, fadeMs, emitDiagnostics, adaptiveGain, verbose, gapLeftThresholdDb, gapRightThresholdDb, gapStepMs, gapBackoffMs);
         var outputs = await stage.RunAsync(manifest, CancellationToken.None);
 
         var producedWav = outputs.TryGetValue("roomtoneWav", out var path) ? path : throw new InvalidOperationException("Stage did not produce roomtone WAV");
@@ -144,6 +183,15 @@ public static class AudioCommand
             File.Copy(producedWav, outWav.FullName, overwrite: true);
         }
 
+        try
+        {
+            UpdateAudioMetadata(txFile, outWav.FullName);
+        }
+        catch (Exception ex)
+        {
+            Log.Warn("Failed to update transcript audio path metadata: {Message}", ex.Message);
+        }
+
         Log.Info("Roomtone WAV saved to {OutputWav}", outWav.FullName);
         if (outputs.TryGetValue("plan", out var plan)) Log.Info("Roomtone plan saved to {PlanPath}", plan);
         if (outputs.TryGetValue("timeline", out var timeline)) Log.Info("Roomtone timeline saved to {TimelinePath}", timeline);
@@ -151,7 +199,19 @@ public static class AudioCommand
         if (outputs.TryGetValue("params", out var snapshot)) Log.Info("Roomtone params snapshot saved to {ParamsPath}", snapshot);
     }
 
-    private static async Task RunPlanAsync(FileInfo txFile, FileInfo outJson, int sampleRate, double fadeMs, double toneDb, bool emitDiagnostics, bool adaptiveGain, bool verbose)
+    private static async Task RunPlanAsync(
+        FileInfo txFile,
+        FileInfo outJson,
+        int sampleRate,
+        double fadeMs,
+        double toneDb,
+        bool emitDiagnostics,
+        bool adaptiveGain,
+        bool verbose,
+        double gapLeftThresholdDb,
+        double gapRightThresholdDb,
+        double gapStepMs,
+        double gapBackoffMs)
     {
         if (!txFile.Exists) throw new FileNotFoundException($"TranscriptIndex not found: {txFile.FullName}");
 
@@ -159,7 +219,7 @@ public static class AudioCommand
 
         var manifest = await PrepareManifestAsync(txFile, outJson.DirectoryName);
 
-        var stage = new RoomToneInsertionStage(sampleRate, toneDb, fadeMs, emitDiagnostics, adaptiveGain, verbose);
+        var stage = new RoomToneInsertionStage(sampleRate, toneDb, fadeMs, emitDiagnostics, adaptiveGain, verbose, gapLeftThresholdDb, gapRightThresholdDb, gapStepMs, gapBackoffMs);
         var outputs = await stage.RunAsync(manifest, CancellationToken.None, renderAudio: false);
 
         var planPath = outputs.TryGetValue("plan", out var plan) ? plan : throw new InvalidOperationException("Stage did not produce roomtone plan");
@@ -189,12 +249,121 @@ public static class AudioCommand
         string chapterId = Path.GetFileNameWithoutExtension(txFile.Name);
         if (string.IsNullOrWhiteSpace(chapterId)) chapterId = "chapter";
 
-        return new ManifestV2(chapterId, workDir, audioPath, txFile.FullName);
+        string? textGridPath = ResolveTextGridPath(txFile.DirectoryName, audioPath, chapterId);
+
+        return new ManifestV2(chapterId, workDir, audioPath, txFile.FullName, textGridPath);
+    }
+
+    private static string? ResolveTextGridPath(string? txDirectory, string audioPath, string chapterId)
+    {
+        if (string.IsNullOrWhiteSpace(txDirectory))
+        {
+            return null;
+        }
+
+        string alignmentDir = Path.Combine(txDirectory, "alignment", "mfa");
+        if (!Directory.Exists(alignmentDir))
+        {
+            return null;
+        }
+
+        var candidates = new List<string>();
+
+        void TryAdd(string path)
+        {
+            if (!string.IsNullOrWhiteSpace(path) && File.Exists(path))
+            {
+                candidates.Add(Path.GetFullPath(path));
+            }
+        }
+
+        var audioStem = Path.GetFileNameWithoutExtension(audioPath);
+        TryAdd(Path.Combine(alignmentDir, audioStem + ".TextGrid"));
+
+        var normalizedChapter = chapterId.Replace(".align", string.Empty, StringComparison.OrdinalIgnoreCase)
+                                        .Replace(".tx", string.Empty, StringComparison.OrdinalIgnoreCase);
+        TryAdd(Path.Combine(alignmentDir, normalizedChapter + ".TextGrid"));
+
+        if (candidates.Count == 0)
+        {
+            candidates.AddRange(Directory.GetFiles(alignmentDir, "*.TextGrid"));
+        }
+
+        if (candidates.Count == 0)
+        {
+            return null;
+        }
+
+        var distinct = candidates.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+        return distinct.Count > 0 ? distinct[0] : null;
     }
     private static void EnsureDirectory(string? dir)
     {
         if (string.IsNullOrWhiteSpace(dir)) return;
         Directory.CreateDirectory(dir);
+    }
+
+    private static void UpdateAudioMetadata(FileInfo txFile, string audioPath)
+    {
+        if (txFile is null) throw new ArgumentNullException(nameof(txFile));
+        if (string.IsNullOrWhiteSpace(audioPath)) return;
+
+        var readOptions = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
+        var writeOptions = new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase, WriteIndented = true };
+
+        var transcriptJson = File.ReadAllText(txFile.FullName);
+        var transcript = JsonSerializer.Deserialize<TranscriptIndex>(transcriptJson, readOptions);
+        if (transcript is null)
+        {
+            return;
+        }
+
+        var updatedTranscript = transcript with { AudioPath = audioPath };
+        File.WriteAllText(txFile.FullName, JsonSerializer.Serialize(updatedTranscript, writeOptions));
+
+        var hydratePath = DeriveHydratePath(txFile.FullName);
+        if (hydratePath is null || !File.Exists(hydratePath))
+        {
+            return;
+        }
+
+        var hydrateJson = File.ReadAllText(hydratePath);
+        var hydrate = JsonSerializer.Deserialize<HydratedTranscript>(hydrateJson, readOptions);
+        if (hydrate is null)
+        {
+            return;
+        }
+
+        var updatedHydrate = hydrate with { AudioPath = audioPath };
+        File.WriteAllText(hydratePath, JsonSerializer.Serialize(updatedHydrate, writeOptions));
+    }
+
+    private static string? DeriveHydratePath(string transcriptPath)
+    {
+        if (string.IsNullOrWhiteSpace(transcriptPath))
+        {
+            return null;
+        }
+
+        var directory = Path.GetDirectoryName(transcriptPath);
+        var fileName = Path.GetFileName(transcriptPath);
+        if (string.IsNullOrEmpty(fileName))
+        {
+            return null;
+        }
+
+        const string TxSuffix = ".tx.json";
+        string hydrateName;
+        if (fileName.EndsWith(TxSuffix, StringComparison.OrdinalIgnoreCase))
+        {
+            hydrateName = fileName[..^TxSuffix.Length] + ".hydrate.json";
+        }
+        else
+        {
+            hydrateName = Path.ChangeExtension(fileName, ".hydrate.json") ?? fileName + ".hydrate.json";
+        }
+
+        return directory is null ? hydrateName : Path.Combine(directory, hydrateName);
     }
 
     private static string NormalizePath(string path)

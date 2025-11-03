@@ -2,6 +2,8 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Text.Json;
+using System.Text.RegularExpressions;
 using System.Threading;
 
 namespace Ams.Cli.Repl;
@@ -20,15 +22,41 @@ internal static class ReplContext
 internal sealed class ReplState
 {
     private FileInfo? _chapterOverride;
+    private readonly string _stateFilePath;
+    private bool _suppressPersist;
+    private string? _pendingChapterName;
+    private bool _pendingRunAll;
+    private string? _lastSelectedChapterName;
 
     public ReplState()
     {
+        _stateFilePath = ResolveStateFilePath();
         WorkingDirectory = Directory.GetCurrentDirectory();
+
+        _suppressPersist = true;
+        LoadPersistedState();
+
         RefreshChapters();
-        if (Chapters.Count > 0)
+
+        if (_pendingRunAll && Chapters.Count > 0)
         {
-            SelectedChapterIndex = 0;
+            RunAllChapters = true;
+            SelectedChapterIndex = null;
         }
+        else if (!string.IsNullOrWhiteSpace(_pendingChapterName))
+        {
+            if (!SelectChapterByNameInternal(_pendingChapterName!, updateLastSelected: true))
+            {
+                InitializeFallbackSelection();
+            }
+        }
+        else
+        {
+            InitializeFallbackSelection();
+        }
+
+        _suppressPersist = false;
+        PersistState();
     }
 
     public string WorkingDirectory { get; private set; }
@@ -97,17 +125,29 @@ internal sealed class ReplState
         WorkingDirectory = full;
         RefreshChapters();
         RunAllChapters = false;
-        SelectedChapterIndex = Chapters.Count > 0 ? 0 : null;
+        if (Chapters.Count > 0)
+        {
+            SelectChapterByIndexInternal(0);
+        }
+        else
+        {
+            SelectedChapterIndex = null;
+        }
+
+        PersistState();
     }
 
     public void RefreshChapters()
     {
+        var previousName = SelectedChapter?.Name ?? _lastSelectedChapterName;
+        var previousRunAll = RunAllChapters;
+
         try
         {
             Chapters = Directory.EnumerateFiles(WorkingDirectory, "*.wav", SearchOption.TopDirectoryOnly)
                 .Where(path => !string.Equals(Path.GetFileName(path), "roomtone.wav", StringComparison.OrdinalIgnoreCase))
                 .Select(path => new FileInfo(path))
-                .OrderBy(file => file.Name, StringComparer.OrdinalIgnoreCase)
+                .OrderBy(file => file, ChapterFileComparer.Instance)
                 .ToList();
         }
         catch (Exception ex)
@@ -121,6 +161,26 @@ internal sealed class ReplState
             RunAllChapters = false;
             SelectedChapterIndex = null;
         }
+        else if (previousRunAll)
+        {
+            RunAllChapters = true;
+            SelectedChapterIndex = null;
+        }
+        else if (!string.IsNullOrWhiteSpace(previousName) && SelectChapterByNameInternal(previousName, updateLastSelected: false))
+        {
+            // selection restored
+        }
+        else if (SelectedChapterIndex is null || SelectedChapterIndex < 0 || SelectedChapterIndex >= Chapters.Count)
+        {
+            SelectChapterByIndexInternal(0, updateLastSelected: true);
+        }
+
+        if (!RunAllChapters && SelectedChapter is not null)
+        {
+            _lastSelectedChapterName = SelectedChapter.Name;
+        }
+
+        PersistState();
     }
 
     public void ListChapters()
@@ -171,6 +231,9 @@ internal sealed class ReplState
 
         RunAllChapters = true;
         SelectedChapterIndex = null;
+        _chapterOverride = null;
+
+        PersistState();
     }
 
     public bool UseChapterByIndex(int index)
@@ -181,23 +244,20 @@ internal sealed class ReplState
         }
 
         RunAllChapters = false;
-        SelectedChapterIndex = index;
+        SelectChapterByIndexInternal(index);
         return true;
     }
 
     public bool UseChapterByName(string name)
     {
-        for (int i = 0; i < Chapters.Count; i++)
+        var originalRunAll = RunAllChapters;
+        RunAllChapters = false;
+        if (SelectChapterByNameInternal(name))
         {
-            if (Chapters[i].Name.Equals(name, StringComparison.OrdinalIgnoreCase) ||
-                Path.GetFileNameWithoutExtension(Chapters[i].Name).Equals(name, StringComparison.OrdinalIgnoreCase))
-            {
-                RunAllChapters = false;
-                SelectedChapterIndex = i;
-                return true;
-            }
+            return true;
         }
 
+        RunAllChapters = originalRunAll;
         return false;
     }
 
@@ -265,5 +325,180 @@ internal sealed class ReplState
             _state._chapterOverride = _previous;
             _disposed = true;
         }
+    }
+
+    private void InitializeFallbackSelection()
+    {
+        if (Chapters.Count > 0)
+        {
+            SelectChapterByIndexInternal(SelectedChapterIndex is int idx && idx >= 0 && idx < Chapters.Count ? idx : 0,
+                updateLastSelected: true);
+            RunAllChapters = false;
+        }
+        else
+        {
+            SelectedChapterIndex = null;
+            RunAllChapters = false;
+        }
+    }
+
+    private bool SelectChapterByNameInternal(string name, bool updateLastSelected = true)
+    {
+        for (int i = 0; i < Chapters.Count; i++)
+        {
+            var candidate = Chapters[i].Name;
+            if (candidate.Equals(name, StringComparison.OrdinalIgnoreCase) ||
+                Path.GetFileNameWithoutExtension(candidate).Equals(name, StringComparison.OrdinalIgnoreCase))
+            {
+                SelectChapterByIndexInternal(i, updateLastSelected);
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private void SelectChapterByIndexInternal(int index, bool updateLastSelected = true)
+    {
+        if (Chapters.Count == 0)
+        {
+            SelectedChapterIndex = null;
+            return;
+        }
+
+        SelectedChapterIndex = Math.Clamp(index, 0, Chapters.Count - 1);
+        _chapterOverride = null;
+        if (updateLastSelected && SelectedChapter is not null)
+        {
+            _lastSelectedChapterName = SelectedChapter.Name;
+        }
+
+        PersistState();
+    }
+
+    private void LoadPersistedState()
+    {
+        try
+        {
+            if (!File.Exists(_stateFilePath))
+            {
+                return;
+            }
+
+            var json = File.ReadAllText(_stateFilePath);
+            if (string.IsNullOrWhiteSpace(json))
+            {
+                return;
+            }
+
+            var state = JsonSerializer.Deserialize<PersistedReplState>(json);
+            if (state is null)
+            {
+                return;
+            }
+
+            if (!string.IsNullOrWhiteSpace(state.WorkingDirectory) && Directory.Exists(state.WorkingDirectory))
+            {
+                WorkingDirectory = state.WorkingDirectory;
+            }
+
+            _pendingChapterName = state.SelectedChapterName;
+            _pendingRunAll = state.RunAllChapters;
+            _lastSelectedChapterName = state.SelectedChapterName;
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Warning: failed to load REPL state: {ex.Message}");
+        }
+    }
+
+    private void PersistState()
+    {
+        if (_suppressPersist)
+        {
+            return;
+        }
+
+        try
+        {
+            var directory = Path.GetDirectoryName(_stateFilePath);
+            if (!string.IsNullOrEmpty(directory))
+            {
+                Directory.CreateDirectory(directory);
+            }
+
+            var snapshot = new PersistedReplState(
+                WorkingDirectory,
+                _lastSelectedChapterName,
+                RunAllChapters);
+
+            var json = JsonSerializer.Serialize(snapshot, new JsonSerializerOptions { WriteIndented = true });
+            File.WriteAllText(_stateFilePath, json);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Warning: failed to persist REPL state: {ex.Message}");
+        }
+    }
+
+    private static string ResolveStateFilePath()
+    {
+        var basePath = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
+        if (string.IsNullOrEmpty(basePath))
+        {
+            basePath = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+        }
+
+        if (string.IsNullOrEmpty(basePath))
+        {
+            basePath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".ams");
+        }
+
+        var directory = Path.Combine(basePath, "AMS");
+        return Path.Combine(directory, "repl-state.json");
+    }
+
+    private sealed record PersistedReplState(string WorkingDirectory, string? SelectedChapterName, bool RunAllChapters);
+
+    private sealed class ChapterFileComparer : IComparer<FileInfo>
+    {
+        public static readonly ChapterFileComparer Instance = new();
+
+        private static readonly Regex NumberRegex = new("\\d+", RegexOptions.Compiled);
+
+        public int Compare(FileInfo? x, FileInfo? y)
+        {
+            if (ReferenceEquals(x, y)) return 0;
+            if (x is null) return -1;
+            if (y is null) return 1;
+
+            var keyX = GetSortKey(x);
+            var keyY = GetSortKey(y);
+
+            var category = keyX.Category.CompareTo(keyY.Category);
+            if (category != 0) return category;
+
+            var number = keyX.PrimaryNumber.CompareTo(keyY.PrimaryNumber);
+            if (number != 0) return number;
+
+            var name = string.Compare(keyX.NameLower, keyY.NameLower, StringComparison.Ordinal);
+            if (name != 0) return name;
+
+            return string.Compare(x.Name, y.Name, StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static SortKey GetSortKey(FileInfo file)
+        {
+            var stem = Path.GetFileNameWithoutExtension(file.Name);
+            var match = NumberRegex.Match(stem);
+            if (match.Success && int.TryParse(match.Value, out var primary))
+            {
+                return new SortKey(0, primary, stem.ToLowerInvariant());
+            }
+
+            return new SortKey(1, int.MaxValue, stem.ToLowerInvariant());
+        }
+
+        private readonly record struct SortKey(int Category, int PrimaryNumber, string NameLower);
     }
 }

@@ -1,8 +1,10 @@
 using System.CommandLine;
 using System.Text.Json;
 using Ams.Core;
+using Ams.Core.Book;
 using Ams.Core.Common;
 using Ams.Cli.Utilities;
+using Ams.Cli.Services;
 
 namespace Ams.Cli.Commands;
 

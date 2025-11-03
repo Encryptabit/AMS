@@ -14,8 +14,19 @@ public class AsrClient : IDisposable
         _baseUrl = baseUrl.TrimEnd('/');
         _httpClient = new HttpClient
         {
-            Timeout = TimeSpan.FromMinutes(5)
+            Timeout = ResolveTimeout()
         };
+    }
+
+    private static TimeSpan ResolveTimeout()
+    {
+        var env = Environment.GetEnvironmentVariable("AMS_ASR_HTTP_TIMEOUT_SECONDS");
+        if (int.TryParse(env, out var seconds) && seconds > 0)
+        {
+            return TimeSpan.FromSeconds(seconds);
+        }
+
+        return TimeSpan.FromMinutes(15);
     }
 
     public async Task<AsrResponse> TranscribeAsync(string audioPath, string? model = null, string language = "en", CancellationToken cancellationToken = default)
@@ -49,7 +60,7 @@ public class AsrClient : IDisposable
             
             return result ?? throw new InvalidOperationException("Failed to deserialize ASR response");
         }
-        catch (TaskCanceledException ex) when (ex.InnerException is TimeoutException)
+        catch (TaskCanceledException ex) when (ex.InnerException is TimeoutException || !cancellationToken.IsCancellationRequested)
         {
             throw new TimeoutException("ASR service request timed out", ex);
         }

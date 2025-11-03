@@ -11,7 +11,8 @@ public record BookWord(
     [property: JsonPropertyName("wordIndex")] int WordIndex,
     [property: JsonPropertyName("sentenceIndex")] int SentenceIndex,
     [property: JsonPropertyName("paragraphIndex")] int ParagraphIndex,
-    [property: JsonPropertyName("sectionIndex")] int SectionIndex = -1
+    [property: JsonPropertyName("sectionIndex")] int SectionIndex = -1,
+    [property: JsonPropertyName("phonemes")] string[]? Phonemes = null
 );
 
 /// <summary>

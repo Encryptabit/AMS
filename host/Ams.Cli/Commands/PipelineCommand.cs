@@ -1,8 +1,26 @@
-﻿using System.CommandLine;
+﻿using System.Collections.Generic;
+using System.CommandLine;
+using System.CommandLine.Invocation;
+using System.Globalization;
+using System.IO;
+using System.Linq;
 using System.Text;
+using System.Text.Json;
+using System.Text.Json.Serialization;
+using System.Text.RegularExpressions;
+using System.Threading;
+using System.Threading.Tasks;
+using Ams.Cli.Services;
+using Ams.Cli.Utilities;
+using Ams.Cli.Repl;
+using Ams.Core.Alignment.Mfa;
+using Ams.Core.Artifacts;
+using Ams.Core.Audio;
 using Ams.Core.Book;
 using Ams.Core.Common;
-using Ams.Cli.Utilities;
+using Ams.Core.Hydrate;
+using Ams.Core.Prosody;
+using Spectre.Console;
 
 namespace Ams.Cli.Commands;
 
@@ -12,7 +30,574 @@ public static class PipelineCommand
     {
         var pipeline = new Command("pipeline", "Run the end-to-end chapter pipeline");
         pipeline.AddCommand(CreateRun());
+        pipeline.AddCommand(CreatePrepCommand());
+        pipeline.AddCommand(CreateVerifyCommand());
+        pipeline.AddCommand(CreateStatsCommand());
         return pipeline;
+    }
+
+    private static readonly StringComparison PathComparison = OperatingSystem.IsWindows()
+        ? StringComparison.OrdinalIgnoreCase
+        : StringComparison.Ordinal;
+
+    private static readonly StringComparer PathComparer = OperatingSystem.IsWindows()
+        ? StringComparer.OrdinalIgnoreCase
+        : StringComparer.Ordinal;
+
+    private const string DefaultBatchFolderName = "Batch 2";
+
+    private static readonly JsonSerializerOptions StatsJsonOptions = new()
+    {
+        PropertyNameCaseInsensitive = true
+    };
+
+    private static readonly JsonSerializerOptions VerifyJsonOptions = new()
+    {
+        WriteIndented = true,
+        Converters = { new JsonStringEnumConverter() }
+    };
+
+    private static readonly Regex PatternTokenRegex = new(@"\{(d{1,2})([+-]\d+)?\}", RegexOptions.Compiled | RegexOptions.CultureInvariant | RegexOptions.IgnoreCase);
+
+    private static Command CreatePrepCommand()
+    {
+        var cmd = new Command("prep", "Preparation utilities for batch handoff");
+        cmd.AddCommand(CreatePrepStageCommand());
+        cmd.AddCommand(CreatePrepRenameCommand());
+        cmd.AddCommand(CreatePrepResetCommand());
+        return cmd;
+    }
+
+    private static Command CreateStatsCommand()
+    {
+        var cmd = new Command("stats", "Display audio and prosody statistics for pipeline artifacts");
+
+        var workDirOption = new Option<DirectoryInfo?>(
+            "--work-dir",
+            () => null,
+            "Root directory containing chapter folders (defaults to the REPL working directory or current directory)");
+
+        var bookIndexOption = new Option<FileInfo?>(
+            "--book-index",
+            () => null,
+            "Optional path to book-index.json (defaults to <work-dir>/book-index.json if present)");
+
+        var chapterOption = new Option<string?>(
+            "--chapter",
+            () => null,
+            "Specific chapter directory to analyze (folder name under work-dir)");
+
+        var allOption = new Option<bool>(
+            "--all",
+            () => false,
+            "Analyze every chapter directory detected under work-dir");
+
+        cmd.AddOption(workDirOption);
+        cmd.AddOption(bookIndexOption);
+        cmd.AddOption(chapterOption);
+        cmd.AddOption(allOption);
+
+        cmd.SetHandler(context =>
+        {
+            var cancellationToken = context.GetCancellationToken();
+            var workDir = context.ParseResult.GetValueForOption(workDirOption);
+            var bookIndex = context.ParseResult.GetValueForOption(bookIndexOption);
+            var chapter = context.ParseResult.GetValueForOption(chapterOption);
+            var all = context.ParseResult.GetValueForOption(allOption);
+
+            try
+            {
+                RunStats(workDir, bookIndex, chapter, all, cancellationToken);
+            }
+            catch (OperationCanceledException)
+            {
+                Log.Warn("pipeline stats cancelled");
+                context.ExitCode = 1;
+            }
+            catch (Exception ex)
+            {
+                Log.Error(ex, "pipeline stats command failed");
+                context.ExitCode = 1;
+            }
+        });
+
+        return cmd;
+    }
+
+    private static Command CreateVerifyCommand()
+    {
+        var cmd = new Command("verify", "Verify treated WAVs by comparing speech activity against raw audio");
+
+        var rootOption = new Option<DirectoryInfo?>(
+            "--root",
+            () => null,
+            "Root directory containing raw chapter WAV files (defaults to the REPL working directory or current directory)");
+        rootOption.AddAlias("-r");
+
+        var chapterOption = new Option<string?>(
+            "--chapter",
+            () => null,
+            "Specific chapter to verify (stem or WAV filename)");
+
+        var allOption = new Option<bool>(
+            "--all",
+            () => false,
+            "Verify every chapter WAV under the root directory");
+
+        var reportDirOption = new Option<DirectoryInfo?>(
+            "--report-dir",
+            () => null,
+            "Directory where verification reports should be written (defaults to each chapter directory)");
+
+        var formatOption = new Option<string>(
+            "--format",
+            () => "json",
+            "Report format: json, csv, or both");
+        formatOption.FromAmong("json", "csv", "both");
+
+        var windowOption = new Option<double>(
+            "--window-ms",
+            () => 30.0,
+            "RMS window length in milliseconds");
+
+        var stepOption = new Option<double>(
+            "--step-ms",
+            () => 15.0,
+            "RMS hop length in milliseconds");
+
+        var minDurationOption = new Option<double>(
+            "--min-duration-ms",
+            () => 60.0,
+            "Minimum duration (ms) a mismatch must span to be reported");
+
+        var minDeltaOption = new Option<double>(
+            "--min-delta-db",
+            () => 12.0,
+            "Minimum dB delta between raw and treated audio required to flag a mismatch");
+
+        var rawThresholdOption = new Option<double?>(
+            "--raw-threshold-db",
+            () => null,
+            "Optional override for the raw speech threshold (dBFS)");
+
+        var treatedThresholdOption = new Option<double?>(
+            "--treated-threshold-db",
+            () => null,
+            "Optional override for the treated speech threshold (dBFS)");
+
+        cmd.AddOption(rootOption);
+        cmd.AddOption(chapterOption);
+        cmd.AddOption(allOption);
+        cmd.AddOption(reportDirOption);
+        cmd.AddOption(formatOption);
+        cmd.AddOption(windowOption);
+        cmd.AddOption(stepOption);
+        cmd.AddOption(minDurationOption);
+        cmd.AddOption(minDeltaOption);
+        cmd.AddOption(rawThresholdOption);
+        cmd.AddOption(treatedThresholdOption);
+
+        cmd.SetHandler(context =>
+        {
+            var cancellationToken = context.GetCancellationToken();
+            var root = CommandInputResolver.ResolveDirectory(context.ParseResult.GetValueForOption(rootOption));
+            root.Refresh();
+            if (!root.Exists)
+            {
+                throw new DirectoryNotFoundException($"Root directory not found: {root.FullName}");
+            }
+
+            var chapter = context.ParseResult.GetValueForOption(chapterOption);
+            var verifyAll = context.ParseResult.GetValueForOption(allOption);
+            var reportDirValue = context.ParseResult.GetValueForOption(reportDirOption);
+
+            DirectoryInfo? reportDir = null;
+            if (reportDirValue is not null)
+            {
+                EnsureDirectory(reportDirValue.FullName);
+                reportDirValue.Refresh();
+                reportDir = reportDirValue;
+            }
+
+            var formatToken = context.ParseResult.GetValueForOption(formatOption)?.Trim().ToLowerInvariant() ?? "json";
+            var format = formatToken switch
+            {
+                "json" => VerificationReportFormat.Json,
+                "csv" => VerificationReportFormat.Csv,
+                "both" => VerificationReportFormat.Both,
+                _ => throw new InvalidOperationException($"Unsupported report format: {formatToken}")
+            };
+
+            var options = new AudioIntegrityVerifierOptions
+            {
+                WindowMs = context.ParseResult.GetValueForOption(windowOption),
+                StepMs = context.ParseResult.GetValueForOption(stepOption),
+                MinMismatchDurationMs = context.ParseResult.GetValueForOption(minDurationOption),
+                MinDeltaDb = context.ParseResult.GetValueForOption(minDeltaOption),
+                RawSpeechThresholdDb = context.ParseResult.GetValueForOption(rawThresholdOption),
+                TreatedSpeechThresholdDb = context.ParseResult.GetValueForOption(treatedThresholdOption)
+            };
+
+            try
+            {
+                RunVerify(root, reportDir, chapter, verifyAll, format, options, cancellationToken);
+            }
+            catch (OperationCanceledException)
+            {
+                Log.Warn("pipeline verify cancelled");
+                context.ExitCode = 1;
+            }
+            catch (Exception ex)
+            {
+                Log.Error(ex, "pipeline verify command failed");
+                context.ExitCode = 1;
+            }
+        });
+
+        return cmd;
+    }
+
+    private static Command CreatePrepStageCommand()
+    {
+        var cmd = new Command("stage", "Collect treated WAVs into a batch folder for delivery");
+
+        var rootOption = new Option<DirectoryInfo?>(
+            "--root",
+            () => null,
+            "Root directory containing chapter folders (defaults to the REPL working directory or current directory)");
+        rootOption.AddAlias("-r");
+
+        var outputOption = new Option<DirectoryInfo?>(
+            "--output",
+            "Destination directory for staged files (defaults to <root>/Batch 2)");
+        outputOption.AddAlias("-o");
+
+        var overwriteOption = new Option<bool>(
+            "--overwrite",
+            () => false,
+            "Overwrite existing files in the destination folder");
+
+        var adjustedOption = new Option<bool>(
+            "--adjusted",
+            () => false,
+            "Stage pause-adjusted WAVs instead of treated WAVs.");
+
+        cmd.AddOption(rootOption);
+        cmd.AddOption(outputOption);
+        cmd.AddOption(overwriteOption);
+        cmd.AddOption(adjustedOption);
+
+        cmd.SetHandler(context =>
+        {
+            var cancellationToken = context.GetCancellationToken();
+
+            var root = CommandInputResolver.ResolveDirectory(context.ParseResult.GetValueForOption(rootOption));
+            root.Refresh();
+            if (!root.Exists)
+            {
+                throw new DirectoryNotFoundException($"Root directory not found: {root.FullName}");
+            }
+
+            var explicitOutput = context.ParseResult.GetValueForOption(outputOption);
+            var destination = explicitOutput ?? new DirectoryInfo(Path.Combine(root.FullName, DefaultBatchFolderName));
+            EnsureDirectory(destination.FullName);
+            destination.Refresh();
+
+            var overwrite = context.ParseResult.GetValueForOption(overwriteOption);
+            var useAdjusted = context.ParseResult.GetValueForOption(adjustedOption);
+
+            var destNormalized = NormalizeDirectoryPath(destination.FullName);
+
+            var searchPattern = useAdjusted ? "*.pause-adjusted.wav" : "*.treated.wav";
+            var stagedFiles = Directory.EnumerateFiles(root.FullName, searchPattern, SearchOption.AllDirectories)
+                .Where(path => !IsWithinDirectory(path, destNormalized))
+                .Select(path => new FileInfo(path))
+                .OrderBy(file => file.FullName, PathComparer)
+                .ToList();
+
+            if (stagedFiles.Count == 0)
+            {
+                Log.Info(
+                    useAdjusted
+                        ? "No pause-adjusted WAV files found under {Root}"
+                        : "No treated WAV files found under {Root}",
+                    root.FullName);
+                return;
+            }
+
+            Log.Info(
+                useAdjusted
+                    ? "Staging {Count} pause-adjusted file(s) from {Root} to {Destination}"
+                    : "Staging {Count} treated file(s) from {Root} to {Destination}",
+                stagedFiles.Count,
+                root.FullName,
+                destination.FullName);
+
+            var stagedCount = 0;
+            foreach (var file in stagedFiles)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+
+                var targetName = GetStagedFileName(file);
+                var targetPath = Path.Combine(destination.FullName, targetName);
+
+                if (!overwrite && File.Exists(targetPath))
+                {
+                    Log.Warn("Skipping {Source}; destination already exists at {Destination} (use --overwrite to replace)", file.FullName, targetPath);
+                    continue;
+                }
+
+                File.Copy(file.FullName, targetPath, overwrite);
+                stagedCount++;
+            }
+
+            Log.Info("Staged {Count} file(s) into {Destination}", stagedCount, destination.FullName);
+        });
+
+        return cmd;
+    }
+
+    private static Command CreatePrepRenameCommand()
+    {
+        var cmd = new Command("rename", "Rename chapter audio and related artifacts using a naming pattern.");
+
+        var rootOption = new Option<DirectoryInfo?>
+        (
+            "--root",
+            () => null,
+            "Root directory containing chapter files (defaults to the REPL working directory or current directory)"
+        );
+        rootOption.AddAlias("-r");
+
+        var patternOption = new Option<string>
+        (
+            "--pattern",
+            description: "Naming template. Use {d} or {dd} tokens with optional +/- offsets (e.g., {dd}, {d+1}, {dd-1})."
+        )
+        {
+            IsRequired = true
+        };
+        patternOption.AddAlias("-p");
+
+        var dryRunOption = new Option<bool>
+        (
+            "--dry-run",
+            () => false,
+            "Preview the planned renames without touching the filesystem."
+        );
+
+        cmd.AddOption(rootOption);
+        cmd.AddOption(patternOption);
+        cmd.AddOption(dryRunOption);
+
+        cmd.SetHandler(context =>
+        {
+            var rootOverride = context.ParseResult.GetValueForOption(rootOption);
+            var pattern = context.ParseResult.GetValueForOption(patternOption);
+            var dryRun = context.ParseResult.GetValueForOption(dryRunOption);
+
+            if (string.IsNullOrWhiteSpace(pattern))
+            {
+                Log.Error("pipeline prep rename requires --pattern");
+                context.ExitCode = 1;
+                return;
+            }
+
+            DirectoryInfo root;
+            try
+            {
+                root = CommandInputResolver.ResolveDirectory(rootOverride);
+            }
+            catch (Exception ex)
+            {
+                Log.Error(ex, "Failed to resolve chapter root");
+                context.ExitCode = 1;
+                return;
+            }
+
+            root.Refresh();
+            if (!root.Exists)
+            {
+                Log.Error("Root directory not found: {Path}", root.FullName);
+                context.ExitCode = 1;
+                return;
+            }
+
+            var chapters = ResolveRenameTargets(root);
+            if (chapters.Count == 0)
+            {
+                Log.Warn("No chapter WAV files detected under {Root}", root.FullName);
+                return;
+            }
+
+            var renamePlans = new List<ChapterRenamePlan>();
+            var newStemSet = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+            for (int i = 0; i < chapters.Count; i++)
+            {
+                var chapter = chapters[i];
+                var oldStem = Path.GetFileNameWithoutExtension(chapter.Name);
+                var newStem = ApplyRenamePattern(pattern, i).Trim();
+
+                if (string.IsNullOrEmpty(newStem))
+                {
+                    Log.Error("Pattern produced an empty name for chapter {Stem}", oldStem);
+                    context.ExitCode = 1;
+                    return;
+                }
+
+                if (newStem.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0)
+                {
+                    Log.Error("Pattern produced an invalid file name '{Name}'", newStem);
+                    context.ExitCode = 1;
+                    return;
+                }
+
+                if (!newStemSet.Add(newStem))
+                {
+                    Log.Error("Pattern would produce duplicate name '{Name}'", newStem);
+                    context.ExitCode = 1;
+                    return;
+                }
+
+                if (string.Equals(oldStem, newStem, StringComparison.OrdinalIgnoreCase))
+                {
+                    Log.Info("Chapter {Stem} already matches the requested pattern; skipping.", oldStem);
+                    continue;
+                }
+
+                renamePlans.Add(BuildRenamePlan(chapter, oldStem, newStem));
+            }
+
+            if (renamePlans.Count == 0)
+            {
+                Log.Info("No renames required.");
+                return;
+            }
+
+            try
+            {
+                ValidateRenamePlans(renamePlans);
+            }
+            catch (Exception ex)
+            {
+                Log.Error(ex.Message);
+                context.ExitCode = 1;
+                return;
+            }
+
+            foreach (var plan in renamePlans)
+            {
+                Log.Info("Renaming {Old} -> {New}", plan.OldStem, plan.NewStem);
+                if (dryRun)
+                {
+                    foreach (var op in plan.FileOps)
+                    {
+                        if (!PathsEqual(op.Source, op.Target))
+                        {
+                            Log.Info("  FILE: {Source} => {Target}", op.Source, op.Target);
+                        }
+                    }
+
+                    foreach (var op in plan.DirectoryOps)
+                    {
+                        if (!PathsEqual(op.Source, op.Target))
+                        {
+                            Log.Info("  DIR : {Source} => {Target}", op.Source, op.Target);
+                        }
+                    }
+                }
+            }
+
+            if (dryRun)
+            {
+                Log.Info("Dry run only; no files were renamed.");
+                return;
+            }
+
+            foreach (var plan in renamePlans)
+            {
+                foreach (var op in plan.FileOps)
+                {
+                    if (PathsEqual(op.Source, op.Target))
+                    {
+                        continue;
+                    }
+
+                    Directory.CreateDirectory(Path.GetDirectoryName(op.Target)!);
+                    File.Move(op.Source, op.Target);
+                }
+            }
+
+            foreach (var plan in renamePlans)
+            {
+                foreach (var op in plan.DirectoryOps.OrderByDescending(d => d.Source.Length))
+                {
+                    if (PathsEqual(op.Source, op.Target))
+                    {
+                        continue;
+                    }
+
+                    Directory.Move(op.Source, op.Target);
+                }
+            }
+
+            Log.Info("Renamed {Count} chapter(s)", renamePlans.Count);
+
+            var repl = ReplContext.Current;
+            if (repl is not null && PathsEqual(repl.WorkingDirectory, root.FullName))
+            {
+                repl.RefreshChapters();
+            }
+        });
+
+        return cmd;
+    }
+
+    private static Command CreatePrepResetCommand()
+    {
+        var cmd = new Command("reset", "Remove generated chapter artifacts from the working directory");
+
+        var rootOption = new Option<DirectoryInfo?>(
+            "--root",
+            () => null,
+            "Root directory containing chapter folders (defaults to the REPL working directory or current directory)");
+        rootOption.AddAlias("-r");
+
+        var hardOption = new Option<bool>(
+            "--hard",
+            () => false,
+            "Delete everything under the root except manuscript DOCX files");
+
+        cmd.AddOption(rootOption);
+        cmd.AddOption(hardOption);
+
+        cmd.SetHandler(context =>
+        {
+            var cancellationToken = context.GetCancellationToken();
+
+            var root = CommandInputResolver.ResolveDirectory(context.ParseResult.GetValueForOption(rootOption));
+            root.Refresh();
+            if (!root.Exists)
+            {
+                throw new DirectoryNotFoundException($"Root directory not found: {root.FullName}");
+            }
+
+            var hard = context.ParseResult.GetValueForOption(hardOption);
+
+            if (hard)
+            {
+                Log.Warn("Hard reset: deleting all generated content under {Root} (DOCX files preserved)", root.FullName);
+                PerformHardReset(root, cancellationToken);
+            }
+            else
+            {
+                Log.Info("Resetting chapter directories under {Root}", root.FullName);
+                PerformSoftReset(root, cancellationToken);
+            }
+        });
+
+        return cmd;
     }
 
     private static Command CreateRun()
@@ -28,6 +613,8 @@ public static class PipelineCommand
         var workDirOption = new Option<DirectoryInfo?>("--work-dir", () => null, "Working directory for generated artifacts");
         var bookIndexOption = new Option<FileInfo?>("--book-index", () => null, "Existing/target BookIndex JSON path (defaults to work-dir/book-index.json)");
         var chapterIdOption = new Option<string?>("--chapter-id", () => null, "Override output stem (defaults to audio file name)");
+        var forceOption = new Option<bool>("--force", () => false, "Re-run all stages even if outputs are already present");
+        forceOption.AddAlias("-f");
         var forceIndexOption = new Option<bool>("--force-index", () => false, "Rebuild book index even if it already exists");
         var avgWpmOption = new Option<double>("--avg-wpm", () => 200.0, "Average WPM used for duration estimation when indexing");
 
@@ -44,12 +631,18 @@ public static class PipelineCommand
         var toneDbOption = new Option<double>("--tone-gain-db", () => -60.0, "Target RMS level for roomtone (dBFS)");
         var diagnosticsOption = new Option<bool>("--emit-diagnostics", () => false, "Emit diagnostic WAVs during roomtone rendering");
         var adaptiveGainOption = new Option<bool>("--adaptive-gain", () => false, "Scale roomtone seed to match target RMS");
+        var gapLeftThresholdOption = new Option<double>("--gap-left-threshold-db", () => -30.0, "RMS threshold (dBFS) used to detect silence on the left side of gaps");
+        var gapRightThresholdOption = new Option<double>("--gap-right-threshold-db", () => -30.0, "RMS threshold (dBFS) used to detect silence on the right side of gaps");
+        var gapStepOption = new Option<double>("--gap-step-ms", () => 5.0, "Step size (ms) when probing gap boundaries");
+        var gapBackoffOption = new Option<double>("--gap-backoff-ms", () => 5.0, "Backoff amount (ms) applied after a silent window is detected");
+        var verboseOption = new Option<bool>("--verbose", () => true, "Enable verbose logging for pipeline stages (roomtone gap analysis, ASR, etc.)");
 
         cmd.AddOption(bookOption);
         cmd.AddOption(audioOption);
         cmd.AddOption(workDirOption);
         cmd.AddOption(bookIndexOption);
         cmd.AddOption(chapterIdOption);
+        cmd.AddOption(forceOption);
         cmd.AddOption(forceIndexOption);
         cmd.AddOption(avgWpmOption);
         cmd.AddOption(asrServiceOption);
@@ -61,14 +654,21 @@ public static class PipelineCommand
         cmd.AddOption(toneDbOption);
         cmd.AddOption(diagnosticsOption);
         cmd.AddOption(adaptiveGainOption);
+        cmd.AddOption(gapLeftThresholdOption);
+        cmd.AddOption(gapRightThresholdOption);
+        cmd.AddOption(gapStepOption);
+        cmd.AddOption(gapBackoffOption);
+        cmd.AddOption(verboseOption);
 
         cmd.SetHandler(async context =>
         {
+            var cancellationToken = context.GetCancellationToken();
             var bookFile = CommandInputResolver.ResolveBookSource(context.ParseResult.GetValueForOption(bookOption));
             var audioFile = CommandInputResolver.RequireAudio(context.ParseResult.GetValueForOption(audioOption));
             var workDir = context.ParseResult.GetValueForOption(workDirOption);
             var bookIndex = context.ParseResult.GetValueForOption(bookIndexOption) ?? CommandInputResolver.ResolveBookIndex(null, mustExist: false);
             var chapterId = context.ParseResult.GetValueForOption(chapterIdOption) ?? Path.GetFileNameWithoutExtension(audioFile.Name);
+            var forceAll = context.ParseResult.GetValueForOption(forceOption);
             var forceIndex = context.ParseResult.GetValueForOption(forceIndexOption);
             var avgWpm = context.ParseResult.GetValueForOption(avgWpmOption);
             var asrService = context.ParseResult.GetValueForOption(asrServiceOption) ?? "http://localhost:8000";
@@ -80,6 +680,11 @@ public static class PipelineCommand
             var toneDb = context.ParseResult.GetValueForOption(toneDbOption);
             var emitDiagnostics = context.ParseResult.GetValueForOption(diagnosticsOption);
             var adaptiveGain = context.ParseResult.GetValueForOption(adaptiveGainOption);
+            var gapLeftThreshold = context.ParseResult.GetValueForOption(gapLeftThresholdOption);
+            var gapRightThreshold = context.ParseResult.GetValueForOption(gapRightThresholdOption);
+            var gapStep = context.ParseResult.GetValueForOption(gapStepOption);
+            var gapBackoff = context.ParseResult.GetValueForOption(gapBackoffOption);
+            var verbose = context.ParseResult.GetValueForOption(verboseOption);
 
             try
             {
@@ -90,6 +695,7 @@ public static class PipelineCommand
                     bookIndex,
                     chapterId,
                     forceIndex,
+                    forceAll,
                     avgWpm,
                     asrService,
                     asrModel,
@@ -99,7 +705,13 @@ public static class PipelineCommand
                     fadeMs,
                     toneDb,
                     emitDiagnostics,
-                    adaptiveGain);
+                    adaptiveGain,
+                    gapLeftThreshold,
+                    gapRightThreshold,
+                    gapStep,
+                    gapBackoff,
+                    verbose,
+                    cancellationToken);
             }
             catch (Exception ex)
             {
@@ -118,6 +730,7 @@ public static class PipelineCommand
         FileInfo? bookIndexOverride,
         string? chapterIdOverride,
         bool forceIndex,
+        bool force,
         double avgWpm,
         string asrService,
         string? asrModel,
@@ -127,7 +740,13 @@ public static class PipelineCommand
         double fadeMs,
         double toneDb,
         bool emitDiagnostics,
-        bool adaptiveGain)
+        bool adaptiveGain,
+        double gapLeftThresholdDb,
+        double gapRightThresholdDb,
+        double gapStepMs,
+        double gapBackoffMs,
+        bool verbose,
+        CancellationToken cancellationToken)
     {
         if (!bookFile.Exists)
         {
@@ -147,6 +766,7 @@ public static class PipelineCommand
             : chapterIdOverride!);
         var chapterDir = Path.Combine(workDirPath, chapterStem);
         EnsureDirectory(chapterDir);
+        var chapterDirInfo = new DirectoryInfo(chapterDir);
 
         var bookIndexFile = bookIndexOverride ?? new FileInfo(Path.Combine(workDirPath, "book-index.json"));
         EnsureDirectory(bookIndexFile.DirectoryName);
@@ -156,6 +776,9 @@ public static class PipelineCommand
         var txFile = new FileInfo(Path.Combine(chapterDir, $"{chapterStem}.align.tx.json"));
         var hydrateFile = new FileInfo(Path.Combine(chapterDir, $"{chapterStem}.align.hydrate.json"));
         var treatedWav = new FileInfo(Path.Combine(chapterDir, $"{chapterStem}.treated.wav"));
+        var textGridFile = new FileInfo(Path.Combine(chapterDir, "alignment", "mfa", $"{chapterStem}.TextGrid"));
+
+        forceIndex |= force;
 
         Log.Info("=== AMS Pipeline ===");
         Log.Info("Book={BookFile}", bookFile.FullName);
@@ -164,7 +787,9 @@ public static class PipelineCommand
         Log.Info("Chapter={Chapter}", chapterStem);
         Log.Info("ChapterDir={ChapterDir}", chapterDir);
 
-        if (forceIndex || !bookIndexFile.Exists)
+        bool bookIndexExists = bookIndexFile.Exists;
+
+        if (forceIndex || !bookIndexExists)
         {
             Log.Info(forceIndex ? "Rebuilding book index at {BookIndexFile}" : "Building book index at {BookIndexFile}", bookIndexFile.FullName);
             await BuildIndexCommand.BuildBookIndexAsync(
@@ -173,54 +798,141 @@ public static class PipelineCommand
                 forceIndex,
                 new BookIndexOptions { AverageWpm = avgWpm },
                 noCache: false);
+            bookIndexExists = bookIndexFile.Exists;
         }
         else
         {
             Log.Info("Using cached book index at {BookIndexFile}", bookIndexFile.FullName);
         }
 
-        if (!bookIndexFile.Exists)
+        if (!bookIndexExists)
         {
-            throw new InvalidOperationException($"Book index file missing after build: {bookIndexFile.FullName}");
+            throw new InvalidOperationException($"Book index file missing or inaccessible: {bookIndexFile.FullName}");
         }
 
-        Log.Info("Running ASR stage");
         EnsureDirectory(asrFile.DirectoryName);
-        await AsrCommand.RunAsrAsync(audioFile, asrFile, asrService, asrModel, asrLanguage);
+        asrFile.Refresh();
+        if (!force && asrFile.Exists)
+        {
+            Log.Info("Skipping ASR stage; {AsrFile} already exists (pass --force to rerun)", asrFile.FullName);
+        }
+        else
+        {
+            Log.Info("Running ASR stage");
+            await AsrCommand.RunAsrAsync(audioFile, asrFile, asrService, asrModel, asrLanguage);
+            asrFile.Refresh();
+        }
 
-        Log.Info("Selecting anchors");
-        await AlignCommand.RunAnchorsAsync(
-            bookIndexFile,
-            asrFile,
-            anchorsFile,
-            detectSection: true,
-            ngram: 3,
-            targetPerTokens: 50,
-            minSeparation: 100,
-            crossSentences: false,
-            domainStopwords: true,
-            asrPrefixTokens: 8,
-            emitWindows: false);
+        anchorsFile.Refresh();
+        if (!force && anchorsFile.Exists)
+        {
+            Log.Info("Skipping anchor selection; {AnchorsFile} already exists (pass --force to rerun)", anchorsFile.FullName);
+        }
+        else
+        {
+            Log.Info("Selecting anchors");
+            asrFile.Refresh();
+            await AlignCommand.RunAnchorsAsync(
+                bookIndexFile,
+                asrFile,
+                anchorsFile,
+                detectSection: true,
+                ngram: 3,
+                targetPerTokens: 50,
+                minSeparation: 100,
+                crossSentences: false,
+                domainStopwords: true,
+                asrPrefixTokens: 8,
+                emitWindows: false);
+            anchorsFile.Refresh();
+        }
 
-        Log.Info("Generating transcript index");
-        await AlignCommand.RunTranscriptIndexAsync(
-            bookIndexFile,
-            asrFile,
-            audioFile,
-            txFile,
-            detectSection: true,
-            asrPrefixTokens: 8,
-            ngram: 3,
-            targetPerTokens: 50,
-            minSeparation: 100,
-            crossSentences: false,
-            domainStopwords: true);
+        txFile.Refresh();
+        if (!force && txFile.Exists)
+        {
+            Log.Info("Skipping transcript index; {TranscriptFile} already exists (pass --force to rerun)", txFile.FullName);
+        }
+        else
+        {
+            Log.Info("Generating transcript index");
+            asrFile.Refresh();
+            await AlignCommand.RunTranscriptIndexAsync(
+                bookIndexFile,
+                asrFile,
+                audioFile,
+                txFile,
+                detectSection: true,
+                asrPrefixTokens: 8,
+                ngram: 3,
+                targetPerTokens: 50,
+                minSeparation: 100,
+                crossSentences: false,
+                domainStopwords: true);
+            txFile.Refresh();
+        }
 
-        Log.Info("Hydrating transcript");
-        await AlignCommand.RunHydrateTxAsync(bookIndexFile, asrFile, txFile, hydrateFile);
+        hydrateFile.Refresh();
+        if (!force && hydrateFile.Exists)
+        {
+            Log.Info("Skipping hydrate stage; {HydratedFile} already exists (pass --force to rerun)", hydrateFile.FullName);
+        }
+        else
+        {
+            Log.Info("Hydrating transcript");
+            asrFile.Refresh();
+            txFile.Refresh();
+            await AlignCommand.RunHydrateTxAsync(bookIndexFile, asrFile, txFile, hydrateFile);
+            hydrateFile.Refresh();
+        }
 
-        Log.Info("Rendering roomtone");
-        await AudioCommand.RunRenderAsync(txFile, treatedWav, sampleRate, bitDepth, fadeMs, toneDb, emitDiagnostics, adaptiveGain, verbose: false);
+        cancellationToken.ThrowIfCancellationRequested();
+
+        textGridFile.Refresh();
+        if (!force && textGridFile.Exists)
+        {
+            Log.Info("Skipping MFA alignment; {TextGridFile} already exists (pass --force to rerun)", textGridFile.FullName);
+        }
+        else
+        {
+            Log.Info("Running MFA alignment workflow");
+            hydrateFile.Refresh();
+            await MfaWorkflow.RunChapterAsync(audioFile, hydrateFile, chapterStem, chapterDirInfo, cancellationToken);
+            textGridFile.Refresh();
+        }
+
+        if (textGridFile.Exists)
+        {
+            try
+            {
+                MfaTimingMerger.MergeTimings(hydrateFile, asrFile, textGridFile);
+                hydrateFile.Refresh();
+                var fallbackTexts = MfaTimingMerger.BuildFallbackTextMap(hydrateFile);
+                MfaTimingMerger.MergeTimings(txFile, asrFile, textGridFile, fallbackTexts);
+            }
+            catch (Exception ex)
+            {
+                Log.Warn("Failed to merge MFA timings: {0}", ex);
+            }
+        }
+        else
+        {
+            Log.Warn("Skipping MFA timing merge because TextGrid not found at {TextGridFile}", textGridFile.FullName);
+        }
+
+        treatedWav.Refresh();
+        if (!force && treatedWav.Exists)
+        {
+            Log.Info("Skipping roomtone render; {RoomtoneFile} already exists (pass --force to rerun)", treatedWav.FullName);
+        }
+        else
+        {
+            Log.Info("Rendering roomtone");
+            txFile.Refresh();
+            await AudioCommand.RunRenderAsync(txFile, treatedWav, sampleRate, bitDepth, fadeMs, toneDb, emitDiagnostics, adaptiveGain, verbose, gapLeftThresholdDb, gapRightThresholdDb, gapStepMs, gapBackoffMs);
+            treatedWav.Refresh();
+        }
+
+        await RunValidateTimingHeadlessAsync(txFile, hydrateFile, bookIndexFile, toneDb, cancellationToken).ConfigureAwait(false);
 
         Log.Info("=== Outputs ===");
         Log.Info("Book index : {BookIndex}", bookIndexFile.FullName);
@@ -230,6 +942,1153 @@ public static class PipelineCommand
         Log.Info("Hydrated   : {HydratedFile}", hydrateFile.FullName);
         Log.Info("Roomtone   : {RoomtoneFile}", treatedWav.FullName);
     }
+
+    private static async Task RunValidateTimingHeadlessAsync(
+        FileInfo txFile,
+        FileInfo hydrateFile,
+        FileInfo bookIndexFile,
+        double toneGainDb,
+        CancellationToken cancellationToken)
+    {
+        if (!txFile.Exists || !hydrateFile.Exists)
+        {
+            Log.Warn("Skipping validate timing headless: required artifacts missing (Transcript/Hydrate).");
+            return;
+        }
+
+        if (!bookIndexFile.Exists)
+        {
+            Log.Warn("Skipping validate timing headless: book-index not found at {Path}", bookIndexFile.FullName);
+            return;
+        }
+
+        try
+        {
+            Log.Info("Running validate timing headless to apply pause policy defaults");
+            var session = new ValidateTimingSession(txFile, bookIndexFile, hydrateFile, runProsodyAnalysis: true);
+            var headlessResult = await session.RunHeadlessAsync(cancellationToken).ConfigureAwait(false);
+            if (!headlessResult.HasAdjustments)
+            {
+                Log.Info("validate timing headless produced no adjustments; skipping timing-apply.");
+                return;
+            }
+
+            Log.Info("validate timing headless produced {Count} adjustment(s); applying timing updates", headlessResult.AdjustmentCount);
+            var exitCode = ValidateCommand.RunTimingApplyCore(
+                txFile,
+                hydrateFile,
+                headlessResult.AdjustmentsFile,
+                outWavOverride: null,
+                roomtoneOverride: null,
+                bookIndexOverride: bookIndexFile,
+                toneGainDb: toneGainDb,
+                overwriteOutputs: true,
+                useAdjusted: false,
+                cancellationToken: cancellationToken);
+
+            if (exitCode != 0)
+            {
+                Log.Warn("timing-apply exited with code {ExitCode}", exitCode);
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            Log.Warn("validate timing headless cancelled");
+            throw;
+        }
+        catch (Exception ex)
+        {
+            Log.Error(ex, "validate timing headless failed; continuing without pause-adjusted outputs");
+        }
+    }
+
+    private static void PerformSoftReset(DirectoryInfo root, CancellationToken cancellationToken)
+    {
+        var defaultBatchPath = Path.Combine(root.FullName, DefaultBatchFolderName);
+        var skipBatch = NormalizeDirectoryPath(defaultBatchPath);
+
+        var deleted = 0;
+        foreach (var directory in root.EnumerateDirectories("*", SearchOption.TopDirectoryOnly))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            var normalized = NormalizeDirectoryPath(directory.FullName);
+            if (normalized.Equals(skipBatch, PathComparison))
+            {
+                continue;
+            }
+
+            if (!LooksLikeChapterDirectory(directory))
+            {
+                continue;
+            }
+
+            try
+            {
+                directory.Delete(recursive: true);
+                deleted++;
+                Log.Info("Deleted chapter directory {Directory}", directory.FullName);
+            }
+            catch (Exception ex)
+            {
+                Log.Warn("Failed to delete {Directory}: {Message}", directory.FullName, ex.Message);
+            }
+        }
+
+        Log.Info("Soft reset complete. Removed {Count} chapter directorie(s).", deleted);
+    }
+
+    private static void PerformHardReset(DirectoryInfo root, CancellationToken cancellationToken)
+    {
+        // Delete directories first
+        foreach (var directory in root.EnumerateDirectories())
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            try
+            {
+                directory.Delete(recursive: true);
+                Log.Info("Deleted directory {Directory}", directory.FullName);
+            }
+            catch (Exception ex)
+            {
+                Log.Warn("Failed to delete {Directory}: {Message}", directory.FullName, ex.Message);
+            }
+        }
+
+        // Delete files except DOCX
+        foreach (var file in root.EnumerateFiles())
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            if (file.Extension.Equals(".docx", StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            try
+            {
+                file.Delete();
+                Log.Info("Deleted file {File}", file.FullName);
+            }
+            catch (Exception ex)
+            {
+                Log.Warn("Failed to delete {File}: {Message}", file.FullName, ex.Message);
+            }
+        }
+
+        Log.Info("Hard reset complete for {Root}", root.FullName);
+    }
+
+    private static void RunStats(DirectoryInfo? workDirOption, FileInfo? bookIndexOption, string? chapterName, bool analyzeAll, CancellationToken cancellationToken)
+    {
+        var root = CommandInputResolver.ResolveDirectory(workDirOption);
+        root.Refresh();
+        if (!root.Exists)
+        {
+            Log.Error("Work directory not found: {Directory}", root.FullName);
+            return;
+        }
+
+        FileInfo? bookIndexFile = bookIndexOption ?? new FileInfo(Path.Combine(root.FullName, "book-index.json"));
+        if (bookIndexFile is not null && !bookIndexFile.Exists)
+        {
+            if (bookIndexOption is not null)
+            {
+                Log.Warn("Book index not found at {Path}", bookIndexFile.FullName);
+            }
+            bookIndexFile = null;
+        }
+
+        BookIndex? bookIndex = null;
+        if (bookIndexFile is not null)
+        {
+            try
+            {
+                bookIndex = LoadJson<BookIndex>(bookIndexFile);
+            }
+            catch (Exception ex)
+            {
+                Log.Warn("Failed to load book index {Path}: {Message}", bookIndexFile.FullName, ex.Message);
+                bookIndexFile = null;
+            }
+        }
+
+        if (bookIndex is null)
+        {
+            Log.Warn("Book index unavailable; prosody statistics will be skipped.");
+        }
+
+        var chapterDirs = ResolveChapterDirectories(root, chapterName, analyzeAll);
+        if (chapterDirs.Count == 0)
+        {
+            Log.Warn("No chapter directories found under {Root}", root.FullName);
+            return;
+        }
+
+        var statsList = new List<ChapterStats>();
+        double totalAudioSec = 0;
+
+        foreach (var chapterDir in chapterDirs)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            try
+            {
+                var stats = ComputeChapterStats(chapterDir, bookIndex, bookIndexFile);
+                if (stats is null)
+                {
+                    continue;
+                }
+
+                statsList.Add(stats);
+                totalAudioSec += stats.Audio.LengthSec;
+            }
+            catch (Exception ex)
+            {
+                Log.Warn("Failed to compute stats for {Chapter}: {Message}", chapterDir.Name, ex.Message);
+            }
+        }
+
+        if (statsList.Count == 0)
+        {
+            Log.Warn("No statistics could be generated.");
+            return;
+        }
+
+        PrintStatsReport(root, bookIndexFile, bookIndex, statsList, totalAudioSec);
+    }
+
+    private static List<FileInfo> ResolveRenameTargets(DirectoryInfo root)
+    {
+        var repl = ReplContext.Current;
+        if (repl is not null && PathsEqual(repl.WorkingDirectory, root.FullName))
+        {
+            if (repl.RunAllChapters)
+            {
+                return repl.Chapters.ToList();
+            }
+
+            if (repl.ActiveChapter is not null)
+            {
+                return new List<FileInfo> { repl.ActiveChapter };
+            }
+
+            return new List<FileInfo>();
+        }
+
+        return Directory.EnumerateFiles(root.FullName, "*.wav", SearchOption.TopDirectoryOnly)
+            .Where(path => !string.Equals(Path.GetFileName(path), "roomtone.wav", StringComparison.OrdinalIgnoreCase))
+            .Select(path => new FileInfo(path))
+            .OrderBy(file => file.Name, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+    }
+
+    private static string ApplyRenamePattern(string pattern, int index)
+    {
+        var result = PatternTokenRegex.Replace(pattern, match =>
+        {
+            var token = match.Groups[1].Value.ToLowerInvariant();
+            var offsetGroup = match.Groups[2];
+            var offset = offsetGroup.Success ? int.Parse(offsetGroup.Value, CultureInfo.InvariantCulture) : 0;
+            var value = index + offset;
+            return token.Length > 1
+                ? value.ToString("D" + token.Length, CultureInfo.InvariantCulture)
+                : value.ToString(CultureInfo.InvariantCulture);
+        });
+
+        if (result.IndexOf('{') >= 0 || result.IndexOf('}') >= 0)
+        {
+            throw new InvalidOperationException($"Pattern contains unsupported token: {pattern}");
+        }
+
+        return result;
+    }
+
+    private static ChapterRenamePlan BuildRenamePlan(FileInfo chapter, string oldStem, string newStem)
+    {
+        var root = chapter.Directory?.FullName
+                   ?? throw new InvalidOperationException($"Cannot resolve directory for {chapter.FullName}");
+
+        var directoryOps = new List<RenameOp>();
+        var fileOps = new List<RenameOp>();
+        CollectRenameOperations(root, root, root, oldStem, newStem, directoryOps, fileOps);
+
+        return new ChapterRenamePlan(chapter, oldStem, newStem, directoryOps, fileOps);
+    }
+
+    private static void CollectRenameOperations(
+        string root,
+        string currentDirOldPath,
+        string currentDirNewPath,
+        string oldStem,
+        string newStem,
+        List<RenameOp> directoryOps,
+        List<RenameOp> fileOps)
+    {
+        foreach (var subDir in Directory.EnumerateDirectories(currentDirOldPath))
+        {
+            var dirName = Path.GetFileName(subDir)!;
+            var newDirName = ReplaceStem(dirName, oldStem, newStem);
+            var targetDir = Path.Combine(currentDirNewPath, newDirName);
+
+            if (!PathsEqual(subDir, targetDir))
+            {
+                directoryOps.Add(new RenameOp(subDir, targetDir));
+            }
+
+            CollectRenameOperations(root, subDir, targetDir, oldStem, newStem, directoryOps, fileOps);
+        }
+
+        foreach (var filePath in Directory.EnumerateFiles(currentDirOldPath))
+        {
+            var fileName = Path.GetFileName(filePath)!;
+            var newFileName = ReplaceStem(fileName, oldStem, newStem);
+            var targetFile = Path.Combine(currentDirOldPath, newFileName);
+
+            if (!PathsEqual(filePath, targetFile))
+            {
+                fileOps.Add(new RenameOp(filePath, targetFile));
+            }
+        }
+    }
+
+    private static void ValidateRenamePlans(IEnumerable<ChapterRenamePlan> plans)
+    {
+        var dirOps = plans.SelectMany(p => p.DirectoryOps).ToList();
+        var fileOps = plans.SelectMany(p => p.FileOps).ToList();
+
+        var dirTargets = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var op in dirOps)
+        {
+            if (PathsEqual(op.Source, op.Target))
+            {
+                continue;
+            }
+
+            if ((Directory.Exists(op.Target) || File.Exists(op.Target)) && !PathsEqual(op.Source, op.Target))
+            {
+                throw new InvalidOperationException($"Target already exists: {op.Target}");
+            }
+
+            dirTargets.Add(Path.GetFullPath(op.Target));
+        }
+
+        var orderedDirOps = dirOps.OrderByDescending(op => op.Source.Length).ToList();
+        var fileTargets = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var op in fileOps)
+        {
+            if (PathsEqual(op.Source, op.Target))
+            {
+                continue;
+            }
+
+            if (File.Exists(op.Target) && !PathsEqual(op.Source, op.Target))
+            {
+                throw new InvalidOperationException($"Target already exists: {op.Target}");
+            }
+
+            var finalPath = ProjectPath(op.Target, orderedDirOps);
+
+            if (!fileTargets.Add(Path.GetFullPath(finalPath)))
+            {
+                throw new InvalidOperationException($"Multiple items would be renamed to {finalPath}");
+            }
+        }
+    }
+
+    private static string ProjectPath(string path, IReadOnlyList<RenameOp> directoryOps)
+    {
+        var projected = path;
+        foreach (var op in directoryOps)
+        {
+            var source = EnsureTrailingSeparator(op.Source);
+            if (projected.StartsWith(source, PathComparison))
+            {
+                projected = EnsureTrailingSeparator(op.Target) + projected[source.Length..];
+                continue;
+            }
+
+            if (PathsEqual(projected, op.Source))
+            {
+                projected = op.Target;
+            }
+        }
+
+        return projected;
+    }
+
+    private static string EnsureTrailingSeparator(string path)
+    {
+        if (path.EndsWith(Path.DirectorySeparatorChar) || path.EndsWith(Path.AltDirectorySeparatorChar))
+        {
+            return path;
+        }
+
+        return path + Path.DirectorySeparatorChar;
+    }
+
+    private static string ReplaceStem(string name, string oldStem, string newStem)
+    {
+        return name.StartsWith(oldStem, StringComparison.OrdinalIgnoreCase)
+            ? newStem + name[oldStem.Length..]
+            : name;
+    }
+
+    private static bool PathsEqual(string? left, string? right)
+    {
+        if (left is null || right is null)
+        {
+            return false;
+        }
+
+        return string.Equals(Path.GetFullPath(left), Path.GetFullPath(right), PathComparison);
+    }
+
+    private sealed record RenameOp(string Source, string Target);
+
+    private sealed record ChapterRenamePlan(
+        FileInfo ChapterFile,
+        string OldStem,
+        string NewStem,
+        List<RenameOp> DirectoryOps,
+        List<RenameOp> FileOps);
+
+    private static List<DirectoryInfo> ResolveChapterDirectories(DirectoryInfo root, string? chapterName, bool analyzeAll)
+    {
+        var chapters = new List<DirectoryInfo>();
+
+        if (!string.IsNullOrWhiteSpace(chapterName))
+        {
+            var explicitDir = new DirectoryInfo(Path.Combine(root.FullName, chapterName));
+            if (!explicitDir.Exists)
+            {
+                Log.Warn("Chapter directory not found: {Directory}", explicitDir.FullName);
+            }
+            else
+            {
+                chapters.Add(explicitDir);
+            }
+
+            return chapters;
+        }
+
+        var candidates = root.EnumerateDirectories("*", SearchOption.TopDirectoryOnly)
+            .Where(LooksLikeChapterDirectory)
+            .OrderBy(directory => directory.Name, PathComparer)
+            .ToList();
+
+        if (candidates.Count == 0)
+        {
+            return chapters;
+        }
+
+        if (analyzeAll || candidates.Count == 1)
+        {
+            chapters.AddRange(candidates);
+            return chapters;
+        }
+
+        Log.Warn("Multiple chapter directories detected under {Root}. Use --chapter <name> or --all.", root.FullName);
+        return chapters;
+    }
+
+    private static ChapterStats? ComputeChapterStats(DirectoryInfo chapterDir, BookIndex? bookIndex, FileInfo? bookIndexFile)
+    {
+        var txFile = chapterDir.EnumerateFiles("*.align.tx.json", SearchOption.TopDirectoryOnly).FirstOrDefault();
+        if (txFile is null)
+        {
+            Log.Warn("Skipping {Chapter}: transcript index not found", chapterDir.FullName);
+            return null;
+        }
+
+        var stem = ExtractChapterStem(Path.GetFileNameWithoutExtension(txFile.Name));
+        var hydrateFile = new FileInfo(Path.Combine(chapterDir.FullName, $"{stem}.align.hydrate.json"));
+        var textGridFile = new FileInfo(Path.Combine(chapterDir.FullName, "alignment", "mfa", $"{stem}.TextGrid"));
+
+        var audioCandidates = new[]
+        {
+            new FileInfo(Path.Combine(chapterDir.FullName, $"{stem}.treated.pause-adjusted.wav")),
+            new FileInfo(Path.Combine(chapterDir.FullName, $"{stem}.pause-adjusted.wav")),
+            new FileInfo(Path.Combine(chapterDir.FullName, $"{stem}.treated.wav")),
+            new FileInfo(Path.Combine(chapterDir.FullName, $"{stem}.wav"))
+        };
+
+        var audioFile = audioCandidates.FirstOrDefault(file => file.Exists);
+        if (audioFile is null)
+        {
+            Log.Warn("Skipping {Chapter}: treated audio not found", chapterDir.FullName);
+            return null;
+        }
+
+        var audioStats = ComputeAudioStats(audioFile);
+
+        PauseStatsSet? prosodyStats = null;
+        if (bookIndex is not null && hydrateFile.Exists)
+        {
+            try
+            {
+                var transcript = LoadJson<TranscriptIndex>(txFile);
+                var hydrated = LoadJson<HydratedTranscript>(hydrateFile);
+                var silences = LoadMfaSilences(textGridFile);
+                var (policy, policyPath) = PausePolicyResolver.Resolve(txFile);
+                if (!string.IsNullOrWhiteSpace(policyPath))
+                {
+                    Log.Info("Pause policy loaded for {Chapter} from {Path}", chapterDir.Name, policyPath);
+                }
+                var pauseMap = PauseMapBuilder.Build(transcript, bookIndex, hydrated, policy, silences, includeAllIntraSentenceGaps: true);
+                prosodyStats = pauseMap.Stats;
+            }
+            catch (Exception ex)
+            {
+                Log.Warn("Failed to compute prosody stats for {Chapter}: {Message}", chapterDir.FullName, ex.Message);
+            }
+        }
+
+        return new ChapterStats(chapterDir.Name, audioStats, prosodyStats);
+    }
+
+    private static void PrintStatsReport(DirectoryInfo root, FileInfo? bookIndexFile, BookIndex? bookIndex, IReadOnlyList<ChapterStats> chapters, double totalAudioSec)
+    {
+        AnsiConsole.MarkupLine($"[bold]Pipeline Statistics[/] ({root.FullName})");
+
+        if (bookIndexFile is not null)
+        {
+            AnsiConsole.MarkupLine($"Book Index: {bookIndexFile.FullName}");
+        }
+
+        if (bookIndex is not null)
+        {
+            var totals = bookIndex.Totals;
+            var bookTable = new Table().AddColumn("Metric").AddColumn("Value");
+            bookTable.AddRow("Words", totals.Words.ToString("N0", CultureInfo.InvariantCulture));
+            bookTable.AddRow("Sentences", totals.Sentences.ToString("N0", CultureInfo.InvariantCulture));
+            bookTable.AddRow("Paragraphs", totals.Paragraphs.ToString("N0", CultureInfo.InvariantCulture));
+            bookTable.AddRow("Estimated Duration", FormatDuration(totals.EstimatedDurationSec));
+            bookTable.AddRow("Total Audio (analyzed)", FormatDuration(totalAudioSec));
+
+            if (totals.EstimatedDurationSec > 0)
+            {
+                var delta = totalAudioSec - totals.EstimatedDurationSec;
+                bookTable.AddRow("Audio - Estimate", $"{FormatDuration(delta)} ({delta:+0.##;-0.##;0} s)");
+            }
+
+            AnsiConsole.Write(bookTable);
+        }
+        else
+        {
+            AnsiConsole.MarkupLine("[yellow]Book index not available; book-level statistics omitted.[/]");
+        }
+
+        AnsiConsole.MarkupLine($"Chapters analyzed: {chapters.Count}");
+
+        foreach (var chapter in chapters.OrderBy(c => c.Chapter, StringComparer.OrdinalIgnoreCase))
+        {
+            AnsiConsole.MarkupLine($"\n[bold yellow]{chapter.Chapter}[/]");
+
+            var audioTable = CreateAudioTable(chapter.Audio);
+            AnsiConsole.MarkupLine("[bold]Audio[/]");
+            AnsiConsole.Write(audioTable);
+
+            if (chapter.Prosody is not null)
+            {
+                var prosodyTable = CreateProsodyTable(chapter.Prosody);
+                if (prosodyTable is not null)
+                {
+                    AnsiConsole.MarkupLine("[bold]Prosody[/]");
+                    AnsiConsole.Write(prosodyTable);
+                }
+                else
+                {
+                    AnsiConsole.MarkupLine("[yellow]No pause intervals detected for this chapter.[/]");
+                }
+            }
+            else
+            {
+                AnsiConsole.MarkupLine("[yellow]Prosody statistics unavailable (book index missing or failed to load).[/]");
+            }
+        }
+    }
+
+    private static void RunVerify(
+        DirectoryInfo root,
+        DirectoryInfo? reportDir,
+        string? chapterName,
+        bool verifyAll,
+        VerificationReportFormat format,
+        AudioIntegrityVerifierOptions options,
+        CancellationToken cancellationToken)
+    {
+        var rawTargets = ResolveVerifyTargets(root, chapterName, verifyAll);
+        if (rawTargets.Count == 0)
+        {
+            Log.Warn("No chapter WAV files found under {Root}", root.FullName);
+            return;
+        }
+
+        int processed = 0;
+        int withMismatches = 0;
+
+        foreach (var raw in rawTargets)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            var stem = Path.GetFileNameWithoutExtension(raw.Name);
+            var chapterDir = new DirectoryInfo(Path.Combine(root.FullName, stem));
+            chapterDir.Refresh();
+
+            try
+            {
+                bool usedPauseAdjusted = false;
+                var treated = ResolveTreatedAudio(root, chapterDir, stem, out usedPauseAdjusted);
+                if (treated is null)
+                {
+                    Log.Warn("Skipping {Chapter}: treated WAV not found", stem);
+                    continue;
+                }
+
+                TranscriptIndex? transcript = null;
+                HydratedTranscript? hydrated = null;
+
+                var txFile = new FileInfo(Path.Combine(chapterDir.FullName, $"{stem}.align.tx.json"));
+                if (txFile.Exists)
+                {
+                    try
+                    {
+                        transcript = LoadJson<TranscriptIndex>(txFile);
+                    }
+                    catch (Exception ex)
+                    {
+                        Log.Warn("Failed to load transcript for {Chapter}: {Message}", stem, ex.Message);
+                    }
+                }
+
+                var hydrateFile = new FileInfo(Path.Combine(chapterDir.FullName, $"{stem}.align.hydrate.json"));
+                if (hydrateFile.Exists)
+                {
+                    try
+                    {
+                        hydrated = LoadJson<HydratedTranscript>(hydrateFile);
+                    }
+                    catch (Exception ex)
+                    {
+                        Log.Warn("Failed to load hydrate for {Chapter}: {Message}", stem, ex.Message);
+                    }
+                }
+
+                var sentenceSpans = BuildSentenceSpans(transcript, hydrated);
+
+                var rawBuffer = WavIo.ReadPcmOrFloat(raw.FullName);
+                var treatedBuffer = WavIo.ReadPcmOrFloat(treated.FullName);
+
+                var result = AudioIntegrityVerifier.Verify(
+                    stem,
+                    raw.FullName,
+                    rawBuffer,
+                    treated.FullName,
+                    treatedBuffer,
+                    options,
+                    sentenceSpans);
+
+                var outputDir = reportDir ?? chapterDir;
+                EnsureDirectory(outputDir.FullName);
+
+                var artifacts = new List<string>();
+
+                if (format is VerificationReportFormat.Json or VerificationReportFormat.Both)
+                {
+                    var jsonPath = Path.Combine(outputDir.FullName, $"{stem}.verify.json");
+                    using (var stream = File.Create(jsonPath))
+                    {
+                        JsonSerializer.Serialize(stream, result, VerifyJsonOptions);
+                    }
+
+                    artifacts.Add(jsonPath);
+                }
+
+                if (format is VerificationReportFormat.Csv or VerificationReportFormat.Both)
+                {
+                    var csvPath = Path.Combine(outputDir.FullName, $"{stem}.verify.csv");
+                    WriteVerificationCsv(csvPath, result);
+                    artifacts.Add(csvPath);
+                }
+
+                Log.Info(
+                    usedPauseAdjusted
+                        ? "Verified {Chapter}: mismatches={Count} missing={Missing:F3}s extra={Extra:F3}s suppressedBreaths={Suppressed} (pause-adjusted WAV). Reports: {Reports}"
+                        : "Verified {Chapter}: mismatches={Count} missing={Missing:F3}s extra={Extra:F3}s suppressedBreaths={Suppressed}. Reports: {Reports}",
+                    stem,
+                    result.Mismatches.Count,
+                    result.MissingSpeechDurationSec,
+                    result.ExtraSpeechDurationSec,
+                    result.MissingBreathSuppressedCount,
+                    artifacts.ToArray());
+
+                processed++;
+                if (result.Mismatches.Count > 0)
+                {
+                    withMismatches++;
+                }
+            }
+            catch (Exception ex)
+            {
+                Log.Error(ex, "Verification failed for {Chapter}", stem);
+            }
+        }
+
+        Log.Info("Verification complete. Processed {Processed} chapter(s); {WithIssues} with mismatches.", processed, withMismatches);
+    }
+
+    private static List<FileInfo> ResolveVerifyTargets(DirectoryInfo root, string? chapterName, bool verifyAll)
+    {
+        if (!string.IsNullOrWhiteSpace(chapterName))
+        {
+            var candidateName = chapterName.EndsWith(".wav", StringComparison.OrdinalIgnoreCase)
+                ? chapterName
+                : chapterName + ".wav";
+            var explicitPath = Path.Combine(root.FullName, candidateName);
+            if (!File.Exists(explicitPath))
+            {
+                Log.Warn("Chapter WAV not found: {Path}", explicitPath);
+                return new List<FileInfo>();
+            }
+
+            return new List<FileInfo> { new FileInfo(explicitPath) };
+        }
+
+        var repl = ReplContext.Current;
+        if (repl is not null && PathsEqual(repl.WorkingDirectory, root.FullName))
+        {
+            if (verifyAll || repl.RunAllChapters)
+            {
+                return repl.Chapters.ToList();
+            }
+
+            if (repl.ActiveChapter is not null)
+            {
+                return new List<FileInfo> { repl.ActiveChapter };
+            }
+
+            return new List<FileInfo>();
+        }
+
+        var allChapters = Directory.EnumerateFiles(root.FullName, "*.wav", SearchOption.TopDirectoryOnly)
+            .Where(path => !string.Equals(Path.GetFileName(path), "roomtone.wav", StringComparison.OrdinalIgnoreCase))
+            .Select(path => new FileInfo(path))
+            .OrderBy(file => file.Name, PathComparer)
+            .ToList();
+
+        if (verifyAll)
+        {
+            return allChapters;
+        }
+
+        return allChapters.Count > 0 ? new List<FileInfo> { allChapters[0] } : new List<FileInfo>();
+    }
+
+    private static FileInfo? ResolveTreatedAudio(DirectoryInfo root, DirectoryInfo chapterDir, string stem, out bool usedPauseAdjusted)
+    {
+        usedPauseAdjusted = false;
+
+        var treatedCandidates = new[]
+        {
+            new FileInfo(Path.Combine(chapterDir.FullName, $"{stem}.treated.wav")),
+            new FileInfo(Path.Combine(root.FullName, $"{stem}.treated.wav"))
+        };
+
+        foreach (var candidate in treatedCandidates)
+        {
+            if (candidate.Exists)
+            {
+                return candidate;
+            }
+        }
+
+        var pauseAdjustedCandidates = new[]
+        {
+            new FileInfo(Path.Combine(chapterDir.FullName, $"{stem}.pause-adjusted.wav")),
+            new FileInfo(Path.Combine(root.FullName, $"{stem}.pause-adjusted.wav"))
+        };
+
+        foreach (var candidate in pauseAdjustedCandidates)
+        {
+            if (candidate.Exists)
+            {
+                usedPauseAdjusted = true;
+                return candidate;
+            }
+        }
+
+        return null;
+    }
+
+    private static IReadOnlyList<SentenceSpan> BuildSentenceSpans(TranscriptIndex? transcript, HydratedTranscript? hydrated)
+    {
+        var map = new Dictionary<int, SentenceSpan>();
+
+        if (transcript?.Sentences is not null)
+        {
+            foreach (var sentence in transcript.Sentences)
+            {
+                if (sentence.Timing is not { Duration: > 0 })
+                {
+                    continue;
+                }
+
+                map[sentence.Id] = new SentenceSpan(
+                    sentence.Id,
+                    sentence.Timing.StartSec,
+                    sentence.Timing.EndSec,
+                    null,
+                    null);
+            }
+        }
+
+        if (hydrated?.Sentences is not null)
+        {
+            foreach (var sentence in hydrated.Sentences)
+            {
+                if (sentence.Timing is not { } timing || timing.Duration <= 0)
+                {
+                    continue;
+                }
+
+                map[sentence.Id] = new SentenceSpan(
+                    sentence.Id,
+                    timing.StartSec,
+                    timing.EndSec,
+                    TrimText(sentence.BookText),
+                    TrimText(sentence.ScriptText));
+            }
+        }
+
+        return map.Values
+            .Where(span => span.EndSec > span.StartSec)
+            .OrderBy(span => span.StartSec)
+            .ToList();
+    }
+
+    private static string? TrimText(string? value, int maxLength = 160)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return null;
+        }
+
+        var normalized = value.Trim();
+        if (normalized.Length <= maxLength)
+        {
+            return normalized;
+        }
+
+        return normalized[..maxLength] + "…";
+    }
+
+    private static void WriteVerificationCsv(string path, AudioVerificationResult result)
+    {
+        using var writer = new StreamWriter(path, false, Encoding.UTF8);
+        writer.WriteLine("chapter,type,startSec,endSec,rawDb,treatedDb,deltaDb,sentenceIds");
+
+        foreach (var mismatch in result.Mismatches)
+        {
+            var sentenceIds = mismatch.Sentences.Count > 0
+                ? string.Join('|', mismatch.Sentences.Select(span => span.SentenceId))
+                : string.Empty;
+
+            writer.WriteLine(string.Join(
+                ',',
+                EscapeCsv(result.ChapterId),
+                mismatch.Type.ToString(),
+                mismatch.StartSec.ToString("F6", CultureInfo.InvariantCulture),
+                mismatch.EndSec.ToString("F6", CultureInfo.InvariantCulture),
+                mismatch.RawDb.ToString("F2", CultureInfo.InvariantCulture),
+                mismatch.TreatedDb.ToString("F2", CultureInfo.InvariantCulture),
+                mismatch.DeltaDb.ToString("F2", CultureInfo.InvariantCulture),
+                EscapeCsv(sentenceIds)));
+        }
+    }
+
+    private static string EscapeCsv(string value)
+    {
+        if (string.IsNullOrEmpty(value))
+        {
+            return string.Empty;
+        }
+
+        bool requiresQuotes = value.IndexOfAny(new[] { ',', '"', '\n', '\r' }) >= 0;
+        if (!requiresQuotes)
+        {
+            return value;
+        }
+
+        var escaped = value.Replace("\"", "\"\"", StringComparison.Ordinal);
+        return "\"" + escaped + "\"";
+    }
+
+    private enum VerificationReportFormat
+    {
+        Json,
+        Csv,
+        Both
+    }
+
+    private static Table CreateAudioTable(AudioStats audio)
+    {
+        var table = new Table().AddColumn("Metric").AddColumn("Value");
+        table.AddRow("Length", FormatDuration(audio.LengthSec));
+        table.AddRow("Sample Peak", FormatDb(audio.SamplePeak));
+        table.AddRow("True Peak", FormatDb(audio.TruePeak));
+        table.AddRow("Overall RMS", FormatDb(audio.OverallRms));
+        table.AddRow("Window RMS Max (0.5s)", FormatDb(audio.MaxWindowRms));
+        table.AddRow("Window RMS Min (0.5s)", FormatDb(audio.MinWindowRms));
+        return table;
+    }
+
+    private static Table? CreateProsodyTable(PauseStatsSet stats)
+    {
+        var table = new Table()
+            .AddColumn("Class")
+            .AddColumn("Count")
+            .AddColumn("Min (s)")
+            .AddColumn("Median (s)")
+            .AddColumn("Max (s)")
+            .AddColumn("Mean (s)")
+            .AddColumn("Total (s)");
+
+        var hasRows = false;
+        foreach (var (pauseClass, pauseStats) in EnumerateStats(stats))
+        {
+            if (pauseStats.Count == 0)
+            {
+                continue;
+            }
+
+            hasRows = true;
+            table.AddRow(
+                pauseClass.ToString(),
+                pauseStats.Count.ToString(CultureInfo.InvariantCulture),
+                pauseStats.Min.ToString("F3", CultureInfo.InvariantCulture),
+                pauseStats.Median.ToString("F3", CultureInfo.InvariantCulture),
+                pauseStats.Max.ToString("F3", CultureInfo.InvariantCulture),
+                pauseStats.Mean.ToString("F3", CultureInfo.InvariantCulture),
+                pauseStats.Total.ToString("F3", CultureInfo.InvariantCulture));
+        }
+
+        return hasRows ? table : null;
+    }
+
+    private static IEnumerable<(PauseClass Class, PauseStats Stats)> EnumerateStats(PauseStatsSet stats)
+    {
+        yield return (PauseClass.Comma, stats.Comma);
+        yield return (PauseClass.Sentence, stats.Sentence);
+        yield return (PauseClass.Paragraph, stats.Paragraph);
+        yield return (PauseClass.ChapterHead, stats.ChapterHead);
+        yield return (PauseClass.PostChapterRead, stats.PostChapterRead);
+        yield return (PauseClass.Tail, stats.Tail);
+        yield return (PauseClass.Other, stats.Other);
+    }
+
+    private static string FormatDuration(double seconds)
+    {
+        var ts = TimeSpan.FromSeconds(seconds);
+        return ts.ToString(@"hh\:mm\:ss\.fff", CultureInfo.InvariantCulture);
+    }
+
+    private static string FormatDb(double amplitude)
+    {
+        if (amplitude <= 0)
+        {
+            return "-∞ dBFS";
+        }
+
+        var db = 20.0 * Math.Log10(amplitude);
+        return db.ToString("F2", CultureInfo.InvariantCulture) + " dBFS";
+    }
+
+    private static AudioStats ComputeAudioStats(FileInfo audioFile)
+    {
+        var buffer = WavIo.ReadPcmOrFloat(audioFile.FullName);
+        var totalSamples = buffer.Length;
+        var channels = buffer.Channels;
+        if (totalSamples == 0 || channels == 0)
+        {
+            return new AudioStats(0, 0, 0, 0, 0, 0);
+        }
+
+        var sampleRate = buffer.SampleRate;
+        var channelData = buffer.Planar;
+
+        var perSampleMeanSquare = new double[totalSamples];
+        double totalSquares = 0;
+        double samplePeak = 0;
+        double truePeak = 0;
+
+        for (int ch = 0; ch < channels; ch++)
+        {
+            var samples = channelData[ch];
+            double previous = 0;
+            for (int i = 0; i < totalSamples; i++)
+            {
+                double sample = samples[i];
+                double abs = Math.Abs(sample);
+                if (abs > samplePeak)
+                {
+                    samplePeak = abs;
+                }
+
+                double square = sample * sample;
+                perSampleMeanSquare[i] += square;
+                totalSquares += square;
+
+                if (i > 0)
+                {
+                    double s0 = previous;
+                    double s1 = sample;
+                    for (int step = 1; step <= 3; step++)
+                    {
+                        double t = step / 4.0;
+                        double interp = s0 + (s1 - s0) * t;
+                        double interpAbs = Math.Abs(interp);
+                        if (interpAbs > truePeak)
+                        {
+                            truePeak = interpAbs;
+                        }
+                    }
+                }
+
+                previous = sample;
+            }
+        }
+
+        truePeak = Math.Max(truePeak, samplePeak);
+
+        for (int i = 0; i < totalSamples; i++)
+        {
+            perSampleMeanSquare[i] /= channels;
+        }
+
+        double overallRms = Math.Sqrt(totalSquares / (channels * (double)totalSamples));
+
+        int windowSamples = Math.Max(1, (int)Math.Round(sampleRate * 0.5));
+        if (windowSamples > totalSamples)
+        {
+            windowSamples = totalSamples;
+        }
+
+        double minWindowRms = double.PositiveInfinity;
+        double maxWindowRms = double.NegativeInfinity;
+
+        for (int start = 0; start < totalSamples; start += windowSamples)
+        {
+            int end = Math.Min(totalSamples, start + windowSamples);
+            if (end <= start)
+            {
+                continue;
+            }
+
+            double sum = 0;
+            for (int i = start; i < end; i++)
+            {
+                sum += perSampleMeanSquare[i];
+            }
+
+            double meanSquare = sum / (end - start);
+            double rms = Math.Sqrt(meanSquare);
+            if (rms < minWindowRms)
+            {
+                minWindowRms = rms;
+            }
+            if (rms > maxWindowRms)
+            {
+                maxWindowRms = rms;
+            }
+        }
+
+        if (double.IsPositiveInfinity(minWindowRms))
+        {
+            minWindowRms = overallRms;
+        }
+        if (double.IsNegativeInfinity(maxWindowRms))
+        {
+            maxWindowRms = overallRms;
+        }
+
+        double lengthSec = totalSamples / (double)sampleRate;
+
+        return new AudioStats(lengthSec, samplePeak, truePeak, overallRms, minWindowRms, maxWindowRms);
+    }
+
+    private static IReadOnlyList<(double Start, double End)> LoadMfaSilences(FileInfo textGridFile)
+    {
+        if (!textGridFile.Exists)
+        {
+            return Array.Empty<(double, double)>();
+        }
+
+        try
+        {
+            return TextGridParser.ParseWordIntervals(textGridFile.FullName)
+                .Where(interval => IsSilenceLabel(interval.Text) && interval.End > interval.Start)
+                .Select(interval => (interval.Start, interval.End))
+                .ToList();
+        }
+        catch (Exception ex)
+        {
+            Log.Warn("Failed to parse TextGrid for silences {Path}: {Message}", textGridFile.FullName, ex.Message);
+            return Array.Empty<(double, double)>();
+        }
+    }
+
+    private static bool IsSilenceLabel(string? text)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            return true;
+        }
+
+        text = text.Trim();
+        return text.Length switch
+        {
+            0 => true,
+            2 when text.Equals("sp", StringComparison.OrdinalIgnoreCase) => true,
+            3 when text.Equals("sil", StringComparison.OrdinalIgnoreCase) => true,
+            _ => text.Equals("<sil>", StringComparison.OrdinalIgnoreCase)
+        };
+    }
+
+    private static string ExtractChapterStem(string nameWithoutExtension)
+    {
+        var stem = nameWithoutExtension;
+
+        const string alignTxSuffix = ".align.tx";
+        if (stem.EndsWith(alignTxSuffix, StringComparison.OrdinalIgnoreCase))
+        {
+            stem = stem[..^alignTxSuffix.Length];
+        }
+        else if (stem.EndsWith(".tx", StringComparison.OrdinalIgnoreCase))
+        {
+            stem = stem[..^3];
+        }
+
+        if (stem.EndsWith(".align", StringComparison.OrdinalIgnoreCase))
+        {
+            stem = stem[..^".align".Length];
+        }
+
+        return stem;
+    }
+
+    private static T LoadJson<T>(FileInfo file)
+    {
+        using var stream = file.OpenRead();
+        var payload = JsonSerializer.Deserialize<T>(stream, StatsJsonOptions);
+        return payload ?? throw new InvalidOperationException($"Failed to deserialize {typeof(T).Name} from {file.FullName}");
+    }
+
+    private sealed record AudioStats(double LengthSec, double SamplePeak, double TruePeak, double OverallRms, double MinWindowRms, double MaxWindowRms);
+
+    private sealed record ChapterStats(string Chapter, AudioStats Audio, PauseStatsSet? Prosody);
 
     private static void EnsureDirectory(string? dir)
     {
@@ -256,5 +2115,73 @@ public static class PipelineCommand
 
         var result = builder.ToString().Trim();
         return string.IsNullOrEmpty(result) ? fallback : result;
+    }
+
+    private static bool LooksLikeChapterDirectory(DirectoryInfo directory)
+    {
+        if (directory.Name.Equals(DefaultBatchFolderName, PathComparison))
+        {
+            return false;
+        }
+
+        if (directory.Name.StartsWith(".", StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        // Quick heuristic: presence of common pipeline artifacts
+        var patterns = new[]
+        {
+            "*.treated.wav",
+            "*.asr.json",
+            "*.align.*",
+            "*.validate.*",
+            "*.tx.json",
+            "*.wav"
+        };
+
+        foreach (var pattern in patterns)
+        {
+            if (directory.EnumerateFiles(pattern, SearchOption.TopDirectoryOnly).Any())
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static string NormalizeDirectoryPath(string path)
+    {
+        var full = Path.GetFullPath(path);
+        return full.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) + Path.DirectorySeparatorChar;
+    }
+
+    private static bool IsWithinDirectory(string candidatePath, string directoryNormalized)
+    {
+        var candidateFull = Path.GetFullPath(candidatePath);
+        return candidateFull.StartsWith(directoryNormalized, PathComparison);
+    }
+
+    private static string GetStagedFileName(FileInfo source)
+    {
+        var stem = Path.GetFileNameWithoutExtension(source.Name);
+        var markers = new[] { ".pause-adjusted", ".treated" };
+
+        foreach (var marker in markers)
+        {
+            while (stem.EndsWith(marker, PathComparison) || stem.EndsWith(marker.TrimStart('.'), PathComparison))
+            {
+                var toTrim = stem.EndsWith(marker, PathComparison) ? marker.Length : marker.TrimStart('.').Length;
+                if (stem.Length <= toTrim)
+                {
+                    break;
+                }
+
+                stem = stem[..^toTrim];
+            }
+        }
+
+        return stem + source.Extension;
     }
 }

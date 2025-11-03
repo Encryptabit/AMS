@@ -64,13 +64,13 @@ public class RoomToneStageTests
         Assert.True(gaps.GetArrayLength() > 0);
 
         double preGapSec = AggregateGapDuration(gaps, previousSentenceId: null, nextSentenceId: FirstSentenceId);
-        Assert.InRange(preGapSec, 0.70, 0.80);
+        Assert.InRange(preGapSec, 0.90, 1.00);
 
         double interGapSec = AggregateGapDuration(gaps, previousSentenceId: FirstSentenceId, nextSentenceId: SecondSentenceId);
-        Assert.InRange(interGapSec, 1.45, 1.55);
+        Assert.InRange(interGapSec, 1.65, 1.80);
 
         double tailGapSec = AggregateGapDuration(gaps, previousSentenceId: SecondSentenceId, nextSentenceId: null);
-        Assert.InRange(tailGapSec, 2.90, 3.10);
+        Assert.InRange(tailGapSec, 3.80, 4.10);
 
         double durationSec = planRoot.GetProperty("audioDurationSec").GetDouble();
 
@@ -86,7 +86,7 @@ public class RoomToneStageTests
         double secondStart = second.GetProperty("startSec").GetDouble();
         double secondEnd = second.GetProperty("endSec").GetDouble();
 
-        Assert.InRange(firstStart, 0.70, 0.80);
+        Assert.InRange(firstStart, 0.90, 1.00);
         Assert.True(firstEnd > firstStart);
 
         Assert.InRange(secondStart - firstEnd, 1.45, 1.55);
@@ -116,8 +116,8 @@ public class RoomToneStageTests
 
         var gaps = new List<RoomtonePlanGap>
         {
-            new RoomtonePlanGap(0.0, 0.18, 0.18, null, 1, -70, -60, -65, 1.0),
-            new RoomtonePlanGap(0.42, 0.80, 0.38, 1, null, -70, -60, -65, 1.0)
+            new RoomtonePlanGap(0.0, 0.18, 0.18, null, 1, -70, -60, -65, 1.0, Array.Empty<RoomtoneBreathRegion>()),
+            new RoomtonePlanGap(0.42, 0.80, 0.38, 1, null, -70, -60, -65, 1.0, Array.Empty<RoomtoneBreathRegion>())
         };
 
         var output = RoomtoneRenderer.RenderWithSentenceMasks(
