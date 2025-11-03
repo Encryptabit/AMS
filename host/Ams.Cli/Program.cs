@@ -19,6 +19,7 @@ internal static class Program
         AsrProcessSupervisor.TriggerBackgroundWarmup(defaultAsrUrl);
 
         MfaProcessSupervisor.RegisterForShutdown();
+        MfaProcessSupervisor.TriggerBackgroundWarmup();
 
         var rootCommand = new RootCommand("AMS - Audio Management System CLI");
 

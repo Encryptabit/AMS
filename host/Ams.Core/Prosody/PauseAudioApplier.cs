@@ -75,17 +75,24 @@ internal static class PauseAudioApplier
                 continue;
             }
 
+            var hasIntraGaps = intraLookup.TryGetValue(sentence.Id, out var gapList) && gapList is { Count: > 0 };
+            var gaps = hasIntraGaps ? gapList! : EmptyIntraGaps;
+
+            double exitThresholdDb = hasIntraGaps ? -55.0 : -60.0;
+            double postRollMs = hasIntraGaps ? 6.0 : 10.0;
+            double hangoverMs = hasIntraGaps ? 16.0 : 30.0;
+
             var seed = new TimingRange(sentence.Timing.StartSec, sentence.Timing.EndSec);
             var energy = analyzer.SnapToEnergy(
                 seed,
                 enterThresholdDb: -48.0,
-                exitThresholdDb: -60.0,
+                exitThresholdDb: exitThresholdDb,
                 searchWindowSec: 1.0,
                 windowMs: 25.0,
                 stepMs: 5.0,
                 preRollMs: 10.0,
-                postRollMs: 10.0,
-                hangoverMs: 30.0);
+                postRollMs: postRollMs,
+                hangoverMs: hangoverMs);
 
             if (energy.EndSec <= energy.StartSec)
             {
@@ -109,10 +116,6 @@ internal static class PauseAudioApplier
                     seed.EndSec,
                     sourceEndSec);
             }
-
-            var gaps = intraLookup.TryGetValue(sentence.Id, out var list)
-                ? list
-                : EmptyIntraGaps;
 
             if (gaps.Count > 0)
             {

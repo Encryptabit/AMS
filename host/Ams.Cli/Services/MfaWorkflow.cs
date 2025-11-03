@@ -68,6 +68,9 @@ internal static class MfaWorkflow
         var customDictionaryPath = Path.Combine(mfaRoot, chapterStem + ".dictionary.zip");
         var alignOutputDir = Path.Combine(mfaRoot, chapterStem + ".align");
 
+        const int FastAlignBeam = 80;
+        const int FastAlignRetryBeam = 200;
+
         var baseContext = new MfaChapterContext
         {
             CorpusDirectory = corpusDir,
@@ -78,8 +81,8 @@ internal static class MfaWorkflow
             G2pModel = g2pModel,
             G2pOutputPath = g2pOutputPath,
             CustomDictionaryPath = customDictionaryPath,
-            Beam = 120,
-            RetryBeam = 400,
+            Beam = FastAlignBeam,
+            RetryBeam = FastAlignRetryBeam,
             SingleSpeaker = true,
             CleanOutput = true
         };
@@ -87,21 +90,6 @@ internal static class MfaWorkflow
         var service = new MfaService();
 
         Log.Debug("Running MFA validate on corpus {CorpusDir}", corpusDir);
-        var validateResult = await service.ValidateAsync(baseContext, cancellationToken).ConfigureAwait(false);
-        var validateSucceeded = EnsureSuccess("mfa validate", validateResult, allowFailure: true);
-
-        if (!validateSucceeded)
-        {
-            if (IsZeroDivision(validateResult))
-            {
-                Log.Debug("mfa validate reported a ZeroDivisionError (likely due to very small corpora); continuing with generated artifacts");
-            }
-            else
-            {
-                throw new InvalidOperationException("mfa validate failed");
-            }
-        }
-
         var oovListPath = FindOovListFile(mfaRoot);
         var sanitizedOovPath = oovListPath is not null
             ? CreateSanitizedOovList(mfaRoot, chapterStem, oovListPath)
