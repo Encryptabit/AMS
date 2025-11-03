@@ -2099,115 +2099,199 @@ public static class PipelineCommand
 
         int processed = 0;
         int withMismatches = 0;
+        int skipped = 0;
 
-        foreach (var raw in rawTargets)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
+        var table = new Table()
+            .Border(TableBorder.Rounded)
+            .Title("[bold]Pipeline Verify[/]")
+            .AddColumn("Chapter")
+            .AddColumn("Result")
+            .AddColumn("Mismatches")
+            .AddColumn("Missing (s)")
+            .AddColumn("Extra (s)")
+            .AddColumn("Breaths")
+            .AddColumn("Reports");
 
-            var stem = Path.GetFileNameWithoutExtension(raw.Name);
-            var chapterDir = new DirectoryInfo(Path.Combine(root.FullName, stem));
-            chapterDir.Refresh();
-
-            try
+        AnsiConsole.Live(table)
+            .AutoClear(false)
+            .Overflow(VerticalOverflow.Ellipsis)
+            .Cropping(VerticalOverflowCropping.Top)
+            .Start(ctx =>
             {
-                bool usedPauseAdjusted = false;
-                var treated = ResolveTreatedAudio(root, chapterDir, stem, out usedPauseAdjusted);
-                if (treated is null)
+                foreach (var raw in rawTargets)
                 {
-                    Log.Debug("Skipping {Chapter}: treated WAV not found", stem);
-                    continue;
-                }
+                    cancellationToken.ThrowIfCancellationRequested();
 
-                TranscriptIndex? transcript = null;
-                HydratedTranscript? hydrated = null;
+                    var stem = Path.GetFileNameWithoutExtension(raw.Name);
+                    var chapterDir = new DirectoryInfo(Path.Combine(root.FullName, stem));
+                    chapterDir.Refresh();
 
-                var txFile = new FileInfo(Path.Combine(chapterDir.FullName, $"{stem}.align.tx.json"));
-                if (txFile.Exists)
-                {
+                    string statusMarkup;
+                    string mismatchText = "-";
+                    string missingText = "-";
+                    string extraText = "-";
+                    string breathText = "-";
+                    string reportText = string.Empty;
+
                     try
                     {
-                        transcript = LoadJson<TranscriptIndex>(txFile);
+                        bool usedPauseAdjusted = false;
+                        var treated = ResolveTreatedAudio(root, chapterDir, stem, out usedPauseAdjusted);
+                        if (treated is null)
+                        {
+                            skipped++;
+                            statusMarkup = "[yellow]Skipped (no treated wav)[/]";
+                            mismatchText = "-";
+                            missingText = "-";
+                            extraText = "-";
+                            breathText = "-";
+                            reportText = "[grey]-[/]";
+                            table.AddRow(
+                                Markup.Escape(stem),
+                                statusMarkup,
+                                mismatchText,
+                                missingText,
+                                extraText,
+                                breathText,
+                                reportText);
+                            ctx.Refresh();
+                            Log.Debug("Skipping {Chapter}: treated WAV not found", stem);
+                            continue;
+                        }
+
+                        TranscriptIndex? transcript = null;
+                        HydratedTranscript? hydrated = null;
+
+                        var txFile = new FileInfo(Path.Combine(chapterDir.FullName, $"{stem}.align.tx.json"));
+                        if (txFile.Exists)
+                        {
+                            try
+                            {
+                                transcript = LoadJson<TranscriptIndex>(txFile);
+                            }
+                            catch (Exception ex)
+                            {
+                                Log.Debug("Failed to load transcript for {Chapter}: {Message}", stem, ex.Message);
+                            }
+                        }
+
+                        var hydrateFile = new FileInfo(Path.Combine(chapterDir.FullName, $"{stem}.align.hydrate.json"));
+                        if (hydrateFile.Exists)
+                        {
+                            try
+                            {
+                                hydrated = LoadJson<HydratedTranscript>(hydrateFile);
+                            }
+                            catch (Exception ex)
+                            {
+                                Log.Debug("Failed to load hydrate for {Chapter}: {Message}", stem, ex.Message);
+                            }
+                        }
+
+                        var sentenceSpans = BuildSentenceSpans(transcript, hydrated);
+
+                        var rawBuffer = WavIo.ReadPcmOrFloat(raw.FullName);
+                        var treatedBuffer = WavIo.ReadPcmOrFloat(treated.FullName);
+
+                        var result = AudioIntegrityVerifier.Verify(
+                            stem,
+                            raw.FullName,
+                            rawBuffer,
+                            treated.FullName,
+                            treatedBuffer,
+                            options,
+                            sentenceSpans);
+
+                        var outputDir = reportDir ?? chapterDir;
+                        EnsureDirectory(outputDir.FullName);
+
+                        var artifacts = new List<string>();
+
+                        if (format is VerificationReportFormat.Json or VerificationReportFormat.Both)
+                        {
+                            var jsonPath = Path.Combine(outputDir.FullName, $"{stem}.verify.json");
+                            using (var stream = File.Create(jsonPath))
+                            {
+                                JsonSerializer.Serialize(stream, result, VerifyJsonOptions);
+                            }
+
+                            artifacts.Add(jsonPath);
+                        }
+
+                        if (format is VerificationReportFormat.Csv or VerificationReportFormat.Both)
+                        {
+                            var csvPath = Path.Combine(outputDir.FullName, $"{stem}.verify.csv");
+                            WriteVerificationCsv(csvPath, result);
+                            artifacts.Add(csvPath);
+                        }
+
+                        Log.Debug(
+                            usedPauseAdjusted
+                                ? "Verified {Chapter}: mismatches={Count} missing={Missing:F3}s extra={Extra:F3}s suppressedBreaths={Suppressed} (pause-adjusted WAV). Reports: {Reports}"
+                                : "Verified {Chapter}: mismatches={Count} missing={Missing:F3}s extra={Extra:F3}s suppressedBreaths={Suppressed}. Reports: {Reports}",
+                            stem,
+                            result.Mismatches.Count,
+                            result.MissingSpeechDurationSec,
+                            result.ExtraSpeechDurationSec,
+                            result.MissingBreathSuppressedCount,
+                            artifacts.ToArray());
+
+                        processed++;
+                        bool hasIssues = result.Mismatches.Count > 0;
+                        if (hasIssues)
+                        {
+                            withMismatches++;
+                        }
+
+                        statusMarkup = hasIssues
+                            ? $"[red]Issues ({result.Mismatches.Count})[/]"
+                            : "[green]OK[/]";
+                        mismatchText = hasIssues ? result.Mismatches.Count.ToString(CultureInfo.InvariantCulture) : "0";
+                        missingText = result.MissingSpeechDurationSec.ToString("F3", CultureInfo.InvariantCulture);
+                        extraText = result.ExtraSpeechDurationSec.ToString("F3", CultureInfo.InvariantCulture);
+                        breathText = result.MissingBreathSuppressedCount.ToString(CultureInfo.InvariantCulture);
+                        reportText = artifacts.Count == 0
+                            ? "[grey]-[/]"
+                            : string.Join("\n", artifacts.Select(path => $"[grey]{Markup.Escape(Path.GetFileName(path))}[/]"));
+
+                        table.AddRow(
+                            Markup.Escape(stem),
+                            statusMarkup,
+                            mismatchText,
+                            missingText,
+                            extraText,
+                            breathText,
+                            reportText);
+                        ctx.Refresh();
                     }
                     catch (Exception ex)
                     {
-                        Log.Debug("Failed to load transcript for {Chapter}: {Message}", stem, ex.Message);
+                        Log.Error(ex, "Verification failed for {Chapter}", stem);
+                        statusMarkup = "[red]Error[/]";
+                        table.AddRow(
+                            Markup.Escape(stem),
+                            statusMarkup,
+                            "-",
+                            "-",
+                            "-",
+                            "-",
+                            "[grey]-[/]");
+                        ctx.Refresh();
                     }
                 }
+            });
 
-                var hydrateFile = new FileInfo(Path.Combine(chapterDir.FullName, $"{stem}.align.hydrate.json"));
-                if (hydrateFile.Exists)
-                {
-                    try
-                    {
-                        hydrated = LoadJson<HydratedTranscript>(hydrateFile);
-                    }
-                    catch (Exception ex)
-                    {
-                        Log.Debug("Failed to load hydrate for {Chapter}: {Message}", stem, ex.Message);
-                    }
-                }
+        Log.Debug(
+            "Verification complete. Processed {Processed} chapter(s); {WithIssues} with mismatches; {Skipped} skipped.",
+            processed,
+            withMismatches,
+            skipped);
 
-                var sentenceSpans = BuildSentenceSpans(transcript, hydrated);
-
-                var rawBuffer = WavIo.ReadPcmOrFloat(raw.FullName);
-                var treatedBuffer = WavIo.ReadPcmOrFloat(treated.FullName);
-
-                var result = AudioIntegrityVerifier.Verify(
-                    stem,
-                    raw.FullName,
-                    rawBuffer,
-                    treated.FullName,
-                    treatedBuffer,
-                    options,
-                    sentenceSpans);
-
-                var outputDir = reportDir ?? chapterDir;
-                EnsureDirectory(outputDir.FullName);
-
-                var artifacts = new List<string>();
-
-                if (format is VerificationReportFormat.Json or VerificationReportFormat.Both)
-                {
-                    var jsonPath = Path.Combine(outputDir.FullName, $"{stem}.verify.json");
-                    using (var stream = File.Create(jsonPath))
-                    {
-                        JsonSerializer.Serialize(stream, result, VerifyJsonOptions);
-                    }
-
-                    artifacts.Add(jsonPath);
-                }
-
-                if (format is VerificationReportFormat.Csv or VerificationReportFormat.Both)
-                {
-                    var csvPath = Path.Combine(outputDir.FullName, $"{stem}.verify.csv");
-                    WriteVerificationCsv(csvPath, result);
-                    artifacts.Add(csvPath);
-                }
-
-                Log.Debug(
-                    usedPauseAdjusted
-                        ? "Verified {Chapter}: mismatches={Count} missing={Missing:F3}s extra={Extra:F3}s suppressedBreaths={Suppressed} (pause-adjusted WAV). Reports: {Reports}"
-                        : "Verified {Chapter}: mismatches={Count} missing={Missing:F3}s extra={Extra:F3}s suppressedBreaths={Suppressed}. Reports: {Reports}",
-                    stem,
-                    result.Mismatches.Count,
-                    result.MissingSpeechDurationSec,
-                    result.ExtraSpeechDurationSec,
-                    result.MissingBreathSuppressedCount,
-                    artifacts.ToArray());
-
-                processed++;
-                if (result.Mismatches.Count > 0)
-                {
-                    withMismatches++;
-                }
-            }
-            catch (Exception ex)
-            {
-                Log.Error(ex, "Verification failed for {Chapter}", stem);
-            }
-        }
-
-        Log.Debug("Verification complete. Processed {Processed} chapter(s); {WithIssues} with mismatches.", processed, withMismatches);
+        AnsiConsole.MarkupLine(
+            "[bold]Verification Summary:[/] processed={0}, issues={1}, skipped={2}",
+            processed.ToString(CultureInfo.InvariantCulture),
+            withMismatches.ToString(CultureInfo.InvariantCulture),
+            skipped.ToString(CultureInfo.InvariantCulture));
     }
 
     private static List<FileInfo> ResolveVerifyTargets(DirectoryInfo root, string? chapterName, bool verifyAll)
