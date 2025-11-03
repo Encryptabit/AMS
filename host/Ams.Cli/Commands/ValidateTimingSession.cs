@@ -43,11 +43,11 @@ internal sealed class ValidateTimingSession
         (_policy, _policySourcePath) = PausePolicyResolver.Resolve(_transcriptFile);
         if (!string.IsNullOrWhiteSpace(_policySourcePath))
         {
-            Log.Info("Loaded pause policy from {Path}", _policySourcePath);
+            Log.Debug("Loaded pause policy from {Path}", _policySourcePath);
         }
         else
         {
-            Log.Info("Using default pause policy preset (house).");
+            Log.Debug("Using default pause policy preset (house).");
         }
 
         var baseName = Path.GetFileNameWithoutExtension(_transcriptFile.Name);
@@ -128,7 +128,7 @@ internal sealed class ValidateTimingSession
         if (hasAdjustments)
         {
             var relativePath = GetRelativePathSafe(_pauseAdjustmentsFile.FullName);
-            Log.Info(
+            Log.Debug(
                 "validate timing headless saved {Count} adjustment(s) to {Path} (compression total={Total}, within={Within}, downstream={Downstream})",
                 adjustments.Count,
                 relativePath,
@@ -138,7 +138,7 @@ internal sealed class ValidateTimingSession
         }
         else
         {
-            Log.Warn("validate timing headless produced no adjustments; skipping pause-adjustments file");
+            Log.Debug("validate timing headless produced no adjustments; skipping pause-adjustments file");
         }
 
         return new HeadlessResult(

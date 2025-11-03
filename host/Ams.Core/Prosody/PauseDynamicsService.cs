@@ -172,7 +172,7 @@ public sealed class PauseDynamicsService : IPauseDynamicsService
 
                 if (Math.Abs(clampedTarget - target) > TargetEpsilon)
                 {
-                    Log.Info(
+                    Log.Debug(
                         "PauseDynamics clamped intra-sentence pause target for sentence {SentenceId} from {Original:F3}s to {Clamped:F3}s",
                         span.LeftSentenceId,
                         target,
@@ -304,7 +304,7 @@ public sealed class PauseDynamicsService : IPauseDynamicsService
 
             if (span.Class == PauseClass.Comma)
             {
-                Log.Info("PauseDynamics comma span from script: sentence {SentenceId} start={Start:F3}s end={End:F3}s", left.Id, span.StartSec, span.EndSec);
+                Log.Debug("PauseDynamics comma span from script: sentence {SentenceId} start={Start:F3}s end={End:F3}s", left.Id, span.StartSec, span.EndSec);
             }
         }
 
@@ -418,7 +418,7 @@ public sealed class PauseDynamicsService : IPauseDynamicsService
             var punctuationTimes = GetPunctuationTimes(sentence, bookIndex, hydratedSentence);
             if (punctuationTimes.Count == 0)
             {
-                Log.Info("PauseDynamics punctuation count zero for sentence {SentenceId}", sentence.Id);
+                Log.Debug("PauseDynamics punctuation count zero for sentence {SentenceId}", sentence.Id);
                 continue;
             }
 
@@ -443,7 +443,7 @@ public sealed class PauseDynamicsService : IPauseDynamicsService
                     CrossesChapterHead: false,
                     Provenance: provenance);
 
-                Log.Info("PauseDynamics comma span (script/textgrid) sentence {SentenceId} start={Start:F3}s end={End:F3}s provenance={Prov}",
+                Log.Debug("PauseDynamics comma span (script/textgrid) sentence {SentenceId} start={Start:F3}s end={End:F3}s provenance={Prov}",
                     sentence.Id,
                     start,
                     end,
@@ -511,7 +511,7 @@ public sealed class PauseDynamicsService : IPauseDynamicsService
                 CrossesChapterHead: false,
                 Provenance: PauseProvenance.TextGridSilence);
 
-            Log.Info("PauseDynamics comma span from TextGrid: sentence {SentenceId} start={Start:F3}s end={End:F3}s", sentence.Id, safeStart, safeEnd);
+            Log.Debug("PauseDynamics comma span from TextGrid: sentence {SentenceId} start={Start:F3}s end={End:F3}s", sentence.Id, safeStart, safeEnd);
             yield return span;
         }
         }
@@ -574,7 +574,7 @@ public sealed class PauseDynamicsService : IPauseDynamicsService
             times.Add(sentenceStart + ratio * duration);
         }
 
-        Log.Info(
+        Log.Debug(
             "PauseDynamics {Source} punctuation count {Count} for sentence {SentenceId}",
             sourceLabel,
             times.Count,
@@ -676,10 +676,10 @@ public sealed class PauseDynamicsService : IPauseDynamicsService
 
         if (results.Count < punctuationTimes.Count)
         {
-            Log.Info("PauseDynamics matched {Matched} of {Expected} punctuation-driven pauses for sentence {SentenceId}",
-                results.Count,
-                punctuationTimes.Count,
-                sentenceId);
+        Log.Debug("PauseDynamics matched {Matched} of {Expected} punctuation-driven pauses for sentence {SentenceId}",
+            results.Count,
+            punctuationTimes.Count,
+            sentenceId);
         }
 
         return results;

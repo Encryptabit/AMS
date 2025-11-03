@@ -121,23 +121,23 @@ public static class ValidateCommand
                     var adjustedTx = TryResolveAdjustedArtifact(tx, ".pause-adjusted.align.tx.json");
                     if (adjustedTx is not null)
                     {
-                        Log.Info("validate timing loading pause-adjusted transcript: {0}", adjustedTx.FullName);
+                        Log.Debug("validate timing loading pause-adjusted transcript: {0}", adjustedTx.FullName);
                         tx = adjustedTx;
                     }
                     else
                     {
-                        Log.Warn("Pause-adjusted transcript not found; falling back to {0}", tx.FullName);
+                        Log.Debug("Pause-adjusted transcript not found; falling back to {0}", tx.FullName);
                     }
 
                     var adjustedHydrate = TryResolveAdjustedArtifact(hydrate, ".pause-adjusted.align.hydrate.json");
                     if (adjustedHydrate is not null)
                     {
-                        Log.Info("validate timing loading pause-adjusted hydrate: {0}", adjustedHydrate.FullName);
+                        Log.Debug("validate timing loading pause-adjusted hydrate: {0}", adjustedHydrate.FullName);
                         hydrate = adjustedHydrate;
                     }
                     else
                     {
-                        Log.Warn("Pause-adjusted hydrate not found; falling back to {0}", hydrate.FullName);
+                        Log.Debug("Pause-adjusted hydrate not found; falling back to {0}", hydrate.FullName);
                     }
                 }
 
@@ -172,7 +172,7 @@ public static class ValidateCommand
                         return;
                     }
 
-                    Log.Info(
+                    Log.Debug(
                         "validate timing headless committed {Adjustments} adjustment(s); invoking timing-apply",
                         headlessResult.AdjustmentCount);
 
@@ -196,7 +196,7 @@ public static class ValidateCommand
             }
             catch (OperationCanceledException)
             {
-                Log.Warn("validate timing cancelled");
+                Log.Debug("validate timing cancelled");
                 context.ExitCode = 1;
             }
             catch (Exception ex)
@@ -281,7 +281,7 @@ public static class ValidateCommand
 
             if (File.Exists(targetPath) && !force)
             {
-                Log.Warn("pause-policy.json already exists at {Path}. Re-run with --force to overwrite.", targetPath);
+                Log.Debug("pause-policy.json already exists at {Path}. Re-run with --force to overwrite.", targetPath);
                 context.ExitCode = 0;
                 return;
             }
@@ -290,7 +290,7 @@ public static class ValidateCommand
             {
                 var policy = PausePolicyPresets.House();
                 PausePolicyStorage.Save(targetPath, policy);
-                Log.Info("pause-policy.json written to {Path}", targetPath);
+                Log.Debug("pause-policy.json written to {Path}", targetPath);
                 context.ExitCode = 0;
             }
             catch (Exception ex)
@@ -338,23 +338,23 @@ public static class ValidateCommand
             var adjustedTx = TryResolveAdjustedArtifact(txFile, ".pause-adjusted.align.tx.json");
             if (adjustedTx is not null)
             {
-                Log.Info("timing-apply loading pause-adjusted transcript: {0}", adjustedTx.FullName);
+                Log.Debug("timing-apply loading pause-adjusted transcript: {0}", adjustedTx.FullName);
                 effectiveTx = adjustedTx;
             }
             else
             {
-                Log.Warn("Pause-adjusted transcript not found; using {0}", effectiveTx.FullName);
+                Log.Debug("Pause-adjusted transcript not found; using {0}", effectiveTx.FullName);
             }
 
             var adjustedHydrate = TryResolveAdjustedArtifact(hydrateFile, ".pause-adjusted.align.hydrate.json");
             if (adjustedHydrate is not null)
             {
-                Log.Info("timing-apply loading pause-adjusted hydrate: {0}", adjustedHydrate.FullName);
+                Log.Debug("timing-apply loading pause-adjusted hydrate: {0}", adjustedHydrate.FullName);
                 effectiveHydrate = adjustedHydrate;
             }
             else
             {
-                Log.Warn("Pause-adjusted hydrate not found; using {0}", effectiveHydrate.FullName);
+                Log.Debug("Pause-adjusted hydrate not found; using {0}", effectiveHydrate.FullName);
             }
         }
 
@@ -378,7 +378,7 @@ public static class ValidateCommand
 
         if (adjustments.Adjustments.Count == 0)
         {
-            Log.Warn("No pause adjustments found in {Path}. Nothing to apply.", adjustmentsFile.FullName);
+            Log.Debug("No pause adjustments found in {Path}. Nothing to apply.", adjustmentsFile.FullName);
             return 0;
         }
 
@@ -444,7 +444,7 @@ public static class ValidateCommand
         double toneDuration = roomtoneBuffer.SampleRate > 0 ? roomtoneBuffer.Length / (double)roomtoneBuffer.SampleRate : 0.0;
         var toneStats = toneAnalyzer.AnalyzeGap(0.0, toneDuration);
         double toneGainLinear = 1.0;
-        Log.Info(
+        Log.Debug(
             "timing-apply using roomtone seed {0} (stageFade={1}, stageGain={2}, measuredRms={3:F2} dB, targetRms={4:F2} dB)",
             roomtonePath,
             stageFadeMs,
@@ -487,9 +487,9 @@ public static class ValidateCommand
         SaveJson(transcriptOut, updatedTranscript);
         SaveJson(hydrateOut, updatedHydrate);
 
-        Log.Info("Pause-adjusted audio saved to {Output}", outWav.FullName);
-        Log.Info("Updated transcript timings saved to {Output}", transcriptOut.FullName);
-        Log.Info("Updated hydrate timings saved to {Output}", hydrateOut.FullName);
+        Log.Debug("Pause-adjusted audio saved to {Output}", outWav.FullName);
+        Log.Debug("Updated transcript timings saved to {Output}", transcriptOut.FullName);
+        Log.Debug("Updated hydrate timings saved to {Output}", hydrateOut.FullName);
 
         return 0;
     }
@@ -574,7 +574,7 @@ public static class ValidateCommand
             }
             catch (OperationCanceledException)
             {
-                Log.Warn("timing-apply cancelled");
+                Log.Debug("timing-apply cancelled");
                 context.ExitCode = 1;
             }
             catch (Exception ex)
@@ -619,9 +619,9 @@ public static class ValidateCommand
                 return;
             }
             
-            Log.Info("Starting validation report viewer...");
-            Log.Info("Base directory: {BaseDir}", baseDir);
-            Log.Info("Server will run at: http://localhost:{Port}", port);
+            Log.Debug("Starting validation report viewer...");
+            Log.Debug("Base directory: {BaseDir}", baseDir);
+            Log.Debug("Server will run at: http://localhost:{Port}", port);
             
             var pythonScript = Path.Combine(
                 AppContext.BaseDirectory, 
@@ -631,7 +631,7 @@ public static class ValidateCommand
             if (!File.Exists(pythonScript))
             {
                 Log.Error("Validation viewer script not found at: {Path}", pythonScript);
-                Log.Info("Expected location: {Path}", pythonScript);
+                Log.Debug("Expected location: {Path}", pythonScript);
                 context.ExitCode = 1;
                 return;
             }
@@ -655,7 +655,7 @@ public static class ValidateCommand
                 return;
             }
             
-            Log.Info("Validation viewer started. Press Ctrl+C to stop.");
+            Log.Debug("Validation viewer started. Press Ctrl+C to stop.");
             
             try
             {
@@ -664,7 +664,7 @@ public static class ValidateCommand
             }
             catch (OperationCanceledException)
             {
-                Log.Info("Shutting down validation viewer...");
+                Log.Debug("Shutting down validation viewer...");
                 if (!process.HasExited)
                 {
                     process.Kill(entireProcessTree: true);
@@ -746,7 +746,7 @@ public static class ValidateCommand
 
                 Directory.CreateDirectory(targetFile.DirectoryName ?? Directory.GetCurrentDirectory());
                 await File.WriteAllTextAsync(targetFile.FullName, result.Report, Encoding.UTF8);
-                Log.Info("Validation report written to {Output}", targetFile.FullName);
+                Log.Debug("Validation report written to {Output}", targetFile.FullName);
             }
             catch (Exception ex)
             {
@@ -1647,7 +1647,7 @@ public static class ValidateCommand
         {
             foreach (var (adjust, start, end, rms) in rejected)
             {
-                Log.Warn(
+                Log.Debug(
                     "Breath guard rejected intra-sentence adjustment for sentence {SentenceId}: span=[{Start:F3},{End:F3}] original={Original:F3}s target={Target:F3}s rms={Rms:F2} dB",
                     adjust.LeftSentenceId,
                     start,
@@ -1657,7 +1657,7 @@ public static class ValidateCommand
                     rms);
             }
 
-            Log.Warn(
+            Log.Debug(
                 "Breath guard removed {Rejected} of {Total} planned adjustment(s).",
                 rejected.Count,
                 plannedAdjustments.Count);
