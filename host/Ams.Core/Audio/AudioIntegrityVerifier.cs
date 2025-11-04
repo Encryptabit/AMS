@@ -1,737 +1,335 @@
 using System;
+using System.Buffers;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Linq;
-using System.Text.Json.Serialization;
-using Ams.Core.Artifacts;
 
-namespace Ams.Core.Audio;
+public enum AudioMismatchType { MissingSpeech, ExtraSpeech }
 
-public sealed record AudioIntegrityVerifierOptions
-{
-    /// <summary>
-    /// Analysis window length in milliseconds when computing RMS.
-    /// </summary>
-    public double WindowMs { get; init; } = 30.0;
-
-    /// <summary>
-    /// Hop size in milliseconds between RMS windows.
-    /// </summary>
-    public double StepMs { get; init; } = 15.0;
-
-    /// <summary>
-    /// Minimum duration (milliseconds) a mismatch must span to be reported.
-    /// </summary>
-    public double MinMismatchDurationMs { get; init; } = 60.0;
-
-    /// <summary>
-    /// Minimum dB delta between raw and treated audio required to classify a mismatch.
-    /// </summary>
-    public double MinDeltaDb { get; init; } = 12.0;
-
-    /// <summary>
-    /// Optional manual override for the raw speech threshold (dBFS). If null the threshold is inferred.
-    /// </summary>
-    public double? RawSpeechThresholdDb { get; init; }
-
-    /// <summary>
-    /// Optional manual override for the treated speech threshold (dBFS). If null the threshold is inferred.
-    /// </summary>
-    public double? TreatedSpeechThresholdDb { get; init; }
-}
-
-[JsonConverter(typeof(JsonStringEnumConverter))]
-public enum AudioMismatchType
-{
-    MissingSpeech,
-    ExtraSpeech
-}
-
-public sealed record SentenceSpan(
-    int SentenceId,
-    double StartSec,
-    double EndSec,
-    string? BookText,
-    string? ScriptText);
-
+public sealed record SentenceTiming(double StartSec, double EndSec);
+public sealed record SentenceSpan(int SentenceId, double StartSec, double EndSec);
 public sealed record AudioMismatch(
-    double StartSec,
-    double EndSec,
+    double StartSec, double EndSec,
     AudioMismatchType Type,
-    double RawDb,
-    double TreatedDb,
-    double DeltaDb,
+    double RawDb, double TreatedDb, double DeltaDb,
     IReadOnlyList<SentenceSpan> Sentences);
 
 public sealed record AudioVerificationResult(
-    string ChapterId,
-    string RawPath,
-    string TreatedPath,
-    int SampleRate,
-    double WindowMs,
-    double StepMs,
-    double RawSpeechThresholdDb,
-    double TreatedSpeechThresholdDb,
-    double TotalAudioDurationSec,
-    double RawSpeechDurationSec,
-    double TreatedSpeechDurationSec,
-    double MissingSpeechDurationSec,
-    double ExtraSpeechDurationSec,
-    int MissingBreathSuppressedCount,
+    double WindowMs, double StepMs,
+    double RawSpeechThresholdDb, double TreatedSpeechThresholdDb,
+    double DurationSec,
+    double RawSpeechSec, double TreatedSpeechSec,
+    double MissingSpeechSec, double ExtraSpeechSec,
     IReadOnlyList<AudioMismatch> Mismatches);
 
-public static class AudioIntegrityVerifier
+public static class FastAudioIntegrityVerifier
 {
     private const double MinDb = -120.0;
-    private static readonly FrameBreathDetectorOptions BreathDetectorOptions = new()
-    {
-        ApplyEnergyGate = false,
-        ScoreHigh = 0.55,
-        ScoreLow = 0.16,
-        MinRunMs = 10,
-        MergeGapMs = 90,
-        GuardLeftMs = 2,
-        GuardRightMs = 2,
-        FricativeGuardMs = 5,
-        Aggressiveness = 10 
-    };
-
-    private sealed record SegmentWindow(int StartIndex, int EndIndex, AudioMismatchType Type);
 
     public static AudioVerificationResult Verify(
-        string chapterId,
-        string rawPath,
-        AudioBuffer rawBuffer,
-        string treatedPath,
-        AudioBuffer treatedBuffer,
-        AudioIntegrityVerifierOptions? options = null,
-        IReadOnlyList<SentenceSpan>? sentences = null)
+        float[] rawMono, int sampleRateRaw,
+        float[] treatedMono, int sampleRateTreated,
+        IReadOnlyDictionary<int, SentenceTiming> rawTimingsById,
+        IReadOnlyDictionary<int, SentenceTiming> treatedTimingsById,
+        double windowMs = 30.0, double stepMs = 15.0,
+        double minMismatchMs = 60.0, double minGapToMergeMs = 40.0)
     {
-        if (rawBuffer is null) throw new ArgumentNullException(nameof(rawBuffer));
-        if (treatedBuffer is null) throw new ArgumentNullException(nameof(treatedBuffer));
+        if (sampleRateRaw != sampleRateTreated)
+            throw new InvalidOperationException($"Sample rate mismatch: raw={sampleRateRaw}, treated={sampleRateTreated}");
 
-        var opt = options ?? new AudioIntegrityVerifierOptions();
+        int sr = sampleRateRaw;
+        double windowSec = windowMs / 1000.0;
+        double stepSec   = stepMs   / 1000.0;
 
-        if (rawBuffer.SampleRate <= 0 || treatedBuffer.SampleRate <= 0)
+        // 1) Build chapter‑level series
+        var (rawDb, treatedDb) = (ComputeDbSeries(rawMono, sr, windowSec, stepSec),
+                                  ComputeDbSeries(treatedMono, sr, windowSec, stepSec));
+
+        double durationSec = Math.Max((rawMono.Length - 1) / (double)sr, (treatedMono.Length - 1) / (double)sr);
+        int frames = treatedDb.Length;
+
+        // 2) Infer thresholds + speech masks
+        double rawThr     = InferSpeechThreshold(rawDb);
+        double treatedThr = InferSpeechThreshold(treatedDb);
+        var rawMask     = BuildSpeechMask(rawDb, rawThr);
+        var treatedMask = BuildSpeechMask(treatedDb, treatedThr);
+
+        // 3) Build treated→raw time map (piecewise linear by sentence)
+        var map = BuildPiecewiseMap(rawTimingsById, treatedTimingsById); // sorted by treated start
+
+        // 4) Align raw onto treated timeline in O(N)
+        var alignedRawDb     = new double[frames];
+        var alignedRawSpeech = new bool[frames];
+        for (int i = 0; i < frames; i++)
         {
-            throw new ArgumentException("Both buffers must provide valid sample rates.");
+            double t = i * stepSec;
+            double tr = MapToRaw(map, t);
+            alignedRawDb[i]     = SampleSeries(rawDb,     stepSec, tr);
+            alignedRawSpeech[i] = SampleMask  (rawMask,   stepSec, tr);
         }
 
-        int sampleRate = rawBuffer.SampleRate;
-        if (treatedBuffer.SampleRate != sampleRate)
+        // 5) Find mismatch runs (missing / extra)
+        var missingMask = new bool[frames];
+        var extraMask   = new bool[frames];
+        for (int i = 0; i < frames; i++)
         {
-            throw new InvalidOperationException(
-                $"Sample rate mismatch between raw ({rawBuffer.SampleRate} Hz) and treated ({treatedBuffer.SampleRate} Hz) buffers.");
+            missingMask[i] = alignedRawSpeech[i] && !treatedMask[i];
+            extraMask[i]   = !alignedRawSpeech[i] && treatedMask[i];
         }
 
-        var rawSamples = DownmixToMono(rawBuffer);
-        var treatedSamples = DownmixToMono(treatedBuffer);
+        var missing = CollectRuns(missingMask, stepSec, windowSec, minMismatchMs / 1000.0, AudioMismatchType.MissingSpeech);
+        var extra   = CollectRuns(extraMask,   stepSec, windowSec, minMismatchMs / 1000.0, AudioMismatchType.ExtraSpeech);
 
-        int windowSamples = Math.Max(32, (int)Math.Round(opt.WindowMs * 0.001 * sampleRate));
-        int stepSamples = Math.Max(1, (int)Math.Round(opt.StepMs * 0.001 * sampleRate));
+        // Merge runs that are close
+        var merged = MergeRuns(missing.Concat(extra).ToList(), (int)Math.Round((minGapToMergeMs/1000.0)/stepSec));
 
-        int maxSamples = Math.Max(rawSamples.Length, treatedSamples.Length);
-        int frameCount = Math.Max(1, (int)Math.Ceiling((maxSamples - 1) / (double)stepSamples)) + 1;
+        // 6) Aggregate each run to averages and attach sentence context (no full scans)
+        // Prebuild an index: time -> sentences covering that time
+        var sentenceIndex = BuildSentenceIndex(treatedTimingsById);
 
-        var rawDb = ComputeDbSeries(rawSamples, windowSamples, stepSamples, frameCount);
-        var treatedDb = ComputeDbSeries(treatedSamples, windowSamples, stepSamples, frameCount);
-
-        double rawThreshold = opt.RawSpeechThresholdDb ?? InferSpeechThreshold(rawDb);
-        double treatedThreshold = opt.TreatedSpeechThresholdDb ?? InferSpeechThreshold(treatedDb);
-
-        var rawSpeechMask = BuildSpeechMask(rawDb, rawThreshold);
-        var treatedSpeechMask = BuildSpeechMask(treatedDb, treatedThreshold);
-
-        var missingMask = new bool[frameCount];
-        var extraMask = new bool[frameCount];
-
-        for (int i = 0; i < frameCount; i++)
+        var mismatches = new List<AudioMismatch>(merged.Count);
+        double missingSec = 0, extraSec = 0;
+        foreach (var seg in merged)
         {
-            bool rawOn = rawSpeechMask[i];
-            bool treatedOn = treatedSpeechMask[i];
-            double delta = rawDb[i] - treatedDb[i];
+            int i0 = Math.Max(0, seg.StartIndex);
+            int i1 = Math.Min(treatedDb.Length - 1, seg.EndIndex);
+            if (i0 > i1) continue;
 
-            if (rawOn && !treatedOn && delta >= opt.MinDeltaDb)
+            // mean over the run (no allocations)
+            double rawSum = 0, treatedSum = 0; int count = 0;
+            for (int i = i0; i <= i1; i++)
             {
-                missingMask[i] = true;
-            }
-            else if (treatedOn && !rawOn && -delta >= opt.MinDeltaDb)
-            {
-                extraMask[i] = true;
-            }
-        }
-
-        double stepSec = stepSamples / (double)sampleRate;
-        double windowSec = windowSamples / (double)sampleRate;
-        double minMismatchSec = opt.MinMismatchDurationMs * 0.001;
-
-        var missingSegments = CollectSegments(
-            missingMask,
-            stepSec,
-            windowSec,
-            minMismatchSec,
-            AudioMismatchType.MissingSpeech);
-
-        var (filteredMissingSegments, missingSuppressed) = FilterMissingSpeechWithBreath(
-            missingSegments,
-            rawSamples,
-            sampleRate,
-            rawDb,
-            rawThreshold,
-            stepSec,
-            windowSec,
-            minMismatchSec);
-
-        var extraSegments = CollectSegments(
-            extraMask,
-            stepSec,
-            windowSec,
-            minMismatchSec,
-            AudioMismatchType.ExtraSpeech);
-
-        int mergeGapFrames = Math.Max(0, (int)Math.Round(0.05 / Math.Max(stepSec, 1e-6)));
-
-        var mergedMissingSegments = MergeSegmentWindows(filteredMissingSegments, mergeGapFrames);
-        var mergedExtraSegments = MergeSegmentWindows(extraSegments, mergeGapFrames);
-
-        var missingMismatches = BuildMismatches(mergedMissingSegments, rawDb, treatedDb, stepSec, windowSec, sentences);
-        var extraMismatches = BuildMismatches(mergedExtraSegments, rawDb, treatedDb, stepSec, windowSec, sentences);
-
-        var mismatches = ConsolidateBySentence(
-                missingMismatches
-                    .Concat(extraMismatches)
-                    .OrderBy(m => m.StartSec)
-                    .ToList(),
-                stepSec)
-            .ToList();
-
-        double totalAudioDurationSec = maxSamples / (double)sampleRate;
-        double rawSpeechDurationSec = rawSpeechMask.Count(on => on) * stepSec;
-        double treatedSpeechDurationSec = treatedSpeechMask.Count(on => on) * stepSec;
-        double missingDuration = missingMismatches.Sum(m => m.EndSec - m.StartSec);
-        double extraDuration = extraMismatches.Sum(m => m.EndSec - m.StartSec);
-
-        return new AudioVerificationResult(
-            chapterId,
-            rawPath,
-            treatedPath,
-            sampleRate,
-            opt.WindowMs,
-            opt.StepMs,
-            rawThreshold,
-            treatedThreshold,
-            totalAudioDurationSec,
-            rawSpeechDurationSec,
-            treatedSpeechDurationSec,
-            missingDuration,
-            extraDuration,
-            missingSuppressed,
-            mismatches);
-    }
-
-    private static float[] DownmixToMono(AudioBuffer buffer)
-    {
-        if (buffer.Channels == 1)
-        {
-            return buffer.Planar[0];
-        }
-
-        var mono = new float[buffer.Length];
-        for (int ch = 0; ch < buffer.Channels; ch++)
-        {
-            var channel = buffer.Planar[ch];
-            for (int i = 0; i < buffer.Length; i++)
-            {
-                mono[i] += channel[i];
-            }
-        }
-
-        float scale = 1f / buffer.Channels;
-        for (int i = 0; i < mono.Length; i++)
-        {
-            mono[i] *= scale;
-        }
-
-        return mono;
-    }
-
-    private static double[] ComputeDbSeries(float[] samples, int windowSamples, int stepSamples, int frameCount)
-    {
-        var series = new double[frameCount];
-        for (int i = 0; i < frameCount; i++)
-        {
-            int start = i * stepSamples;
-            if (start >= samples.Length)
-            {
-                series[i] = MinDb;
-                continue;
-            }
-
-            int end = Math.Min(samples.Length, start + windowSamples);
-            int length = Math.Max(1, end - start);
-
-            double sum = 0d;
-            for (int j = start; j < end; j++)
-            {
-                double s = samples[j];
-                sum += s * s;
-            }
-
-            double rms = Math.Sqrt(sum / length);
-            series[i] = rms > 0d ? 20.0 * Math.Log10(rms) : MinDb;
-        }
-
-        return series;
-    }
-
-    private static double InferSpeechThreshold(double[] dbSeries)
-    {
-        var valid = dbSeries.Where(v => v > MinDb + 1).ToArray();
-        if (valid.Length == 0)
-        {
-            return MinDb + 6;
-        }
-
-        Array.Sort(valid);
-
-        double noise = Percentile(valid, 0.15);
-        double speech = Percentile(valid, 0.85);
-
-        double threshold = Math.Max(noise + 6.0, speech - 16.0);
-        threshold = Math.Min(threshold, speech - 3.0);
-        threshold = Math.Max(threshold, MinDb + 6.0);
-
-        return threshold;
-    }
-
-    private static bool[] BuildSpeechMask(double[] dbSeries, double thresholdDb)
-    {
-        var mask = new bool[dbSeries.Length];
-        for (int i = 0; i < dbSeries.Length; i++)
-        {
-            mask[i] = dbSeries[i] >= thresholdDb;
-        }
-
-        return mask;
-    }
-
-    private static List<SegmentWindow> CollectSegments(
-        bool[] mask,
-        double stepSec,
-        double windowSec,
-        double minDurationSec,
-        AudioMismatchType type)
-    {
-        var segments = new List<SegmentWindow>();
-
-        int i = 0;
-        while (i < mask.Length)
-        {
-            if (!mask[i])
-            {
-                i++;
-                continue;
-            }
-
-            int startIndex = i;
-            while (i < mask.Length && mask[i]) i++;
-            int endIndex = i - 1;
-
-            double startSec = Math.Max(0d, startIndex * stepSec);
-            double endSec = Math.Max(startSec, endIndex * stepSec + windowSec);
-            double duration = endSec - startSec;
-            if (duration < minDurationSec)
-            {
-                continue;
-            }
-
-            segments.Add(new SegmentWindow(startIndex, endIndex, type));
-        }
-
-        return segments;
-    }
-
-    private static IReadOnlyList<SentenceSpan> ResolveSentenceSpans(
-        IReadOnlyList<SentenceSpan>? sentences,
-        double startSec,
-        double endSec)
-    {
-        if (sentences is null || sentences.Count == 0)
-        {
-            return Array.Empty<SentenceSpan>();
-        }
-
-        var result = new List<SentenceSpan>();
-        foreach (var sentence in sentences)
-        {
-            if (sentence.EndSec <= startSec || sentence.StartSec >= endSec)
-            {
-                continue;
-            }
-
-            result.Add(sentence);
-        }
-
-        return result;
-    }
-
-    private static List<AudioMismatch> BuildMismatches(
-        IReadOnlyList<SegmentWindow> segments,
-        double[] rawDb,
-        double[] treatedDb,
-        double stepSec,
-        double windowSec,
-        IReadOnlyList<SentenceSpan>? sentences)
-    {
-        var mismatches = new List<AudioMismatch>(segments.Count);
-        foreach (var segment in segments)
-        {
-            int startIndex = Math.Max(0, segment.StartIndex);
-            int endIndex = Math.Min(treatedDb.Length - 1, Math.Max(segment.StartIndex, segment.EndIndex));
-            if (startIndex > endIndex)
-            {
-                continue;
-            }
-
-            double startSec = Math.Max(0d, startIndex * stepSec);
-            double endSec = Math.Max(startSec, endIndex * stepSec + windowSec);
-            double duration = endSec - startSec;
-            if (duration <= 0)
-            {
-                continue;
-            }
-
-            double rawSum = 0d;
-            double treatedSum = 0d;
-            int count = 0;
-            for (int idx = startIndex; idx <= endIndex && idx < rawDb.Length; idx++)
-            {
-                rawSum += rawDb[idx];
-                treatedSum += treatedDb[idx];
+                rawSum     += alignedRawDb[i];
+                treatedSum += treatedDb[i];
                 count++;
             }
+            if (count == 0) continue;
 
-            if (count == 0)
-            {
-                continue;
-            }
-
-            double rawMean = rawSum / count;
+            double rawMean     = rawSum / count;
             double treatedMean = treatedSum / count;
-            double delta = segment.Type == AudioMismatchType.MissingSpeech
-                ? rawMean - treatedMean
-                : treatedMean - rawMean;
+            double delta       = seg.Type == AudioMismatchType.MissingSpeech
+                               ? rawMean - treatedMean
+                               : treatedMean - rawMean;
 
-            var context = ResolveSentenceSpans(sentences, startSec, endSec);
+            double startSec = i0*stepSec;
+            double endSec   = i1*stepSec + windowSec;
+
+            var context = LookupSentenceContext(sentenceIndex, startSec, endSec);
 
             mismatches.Add(new AudioMismatch(
-                startSec,
-                endSec,
-                segment.Type,
-                rawMean,
-                treatedMean,
-                delta,
-                context));
+                StartSec: startSec,
+                EndSec:   endSec,
+                Type:     seg.Type,
+                RawDb:    rawMean,
+                TreatedDb:treatedMean,
+                DeltaDb:  delta,
+                Sentences: context));
+
+            double dur = endSec - startSec;
+            if (seg.Type == AudioMismatchType.MissingSpeech) missingSec += dur;
+            else                                             extraSec   += dur;
         }
 
-        return mismatches;
+        double rawSpeechSec     = SumMask(alignedRawSpeech, stepSec, windowSec);
+        double treatedSpeechSec = SumMask(treatedMask,      stepSec, windowSec);
+
+        return new AudioVerificationResult(
+            WindowMs: windowMs,
+            StepMs:   stepMs,
+            RawSpeechThresholdDb: rawThr,
+            TreatedSpeechThresholdDb: treatedThr,
+            DurationSec: durationSec,
+            RawSpeechSec: rawSpeechSec,
+            TreatedSpeechSec: treatedSpeechSec,
+            MissingSpeechSec: missingSec,
+            ExtraSpeechSec: extraSec,
+            Mismatches: mismatches);
     }
 
-    private static List<SegmentWindow> MergeSegmentWindows(
-        IReadOnlyList<SegmentWindow> segments,
-        int maxGapFrames)
+    // ---- helpers (tight loops; all O(N)) ------------------------------------
+
+    private static double[] ComputeDbSeries(float[] samples, int sr, double windowSec, double stepSec)
     {
-        if (segments.Count <= 1)
+        int win  = Math.Max(32, (int)Math.Round(windowSec*sr));
+        int step = Math.Max(1,  (int)Math.Round(stepSec  *sr));
+        int frames = Math.Max(1, (samples.Length + step - 1)/step);
+
+        var db = new double[frames];
+        for (int f=0; f<frames; f++)
         {
-            return segments.ToList();
+            int start = f*step;
+            if (start >= samples.Length) { db[f] = MinDb; continue; }
+            int end   = Math.Min(samples.Length, start + win);
+            double sum = 0.0;
+            for (int i=start; i<end; i++) { double s = samples[i]; sum += s*s; }
+            double rms = Math.Sqrt(sum / Math.Max(1, end - start));
+            db[f] = rms > 0 ? 20.0*Math.Log10(rms) : MinDb;
         }
-
-        var merged = new List<SegmentWindow>(segments.Count);
-
-        foreach (var segment in segments.OrderBy(s => s.StartIndex))
-        {
-            if (merged.Count == 0)
-            {
-                merged.Add(segment);
-                continue;
-            }
-
-            var last = merged[^1];
-            int gapFrames = segment.StartIndex - last.EndIndex - 1;
-
-            if (segment.Type == last.Type && gapFrames >= 0 && gapFrames <= maxGapFrames)
-            {
-                merged[^1] = new SegmentWindow(last.StartIndex, Math.Max(last.EndIndex, segment.EndIndex), last.Type);
-            }
-            else
-            {
-                merged.Add(segment);
-            }
-        }
-
-        return merged;
+        return db;
     }
 
-    private static List<AudioMismatch> ConsolidateBySentence(
-        List<AudioMismatch> mismatches,
-        double stepSec)
+    private static double InferSpeechThreshold(double[] db)
     {
-        if (mismatches.Count <= 1)
-        {
-            return mismatches;
-        }
-
-        var grouped = new Dictionary<(AudioMismatchType Type, int SentenceId), AudioMismatch>();
-        var extras = new List<AudioMismatch>();
-
-        foreach (var mismatch in mismatches)
-        {
-            if (mismatch.Sentences.Count == 0)
-            {
-                extras.Add(mismatch);
-                continue;
-            }
-
-            var key = (mismatch.Type, mismatch.Sentences[0].SentenceId);
-
-            if (!grouped.TryGetValue(key, out var existing))
-            {
-                grouped[key] = mismatch;
-                continue;
-            }
-
-            double start = Math.Min(existing.StartSec, mismatch.StartSec);
-            double end = Math.Max(existing.EndSec, mismatch.EndSec);
-            double rawDb = Math.Max(existing.RawDb, mismatch.RawDb);
-            double treatedDb = Math.Min(existing.TreatedDb, mismatch.TreatedDb);
-            double deltaDb = rawDb - treatedDb;
-            var combinedSentences = MergeSentenceContexts(existing.Sentences, mismatch.Sentences);
-
-            grouped[key] = new AudioMismatch(
-                start,
-                end,
-                existing.Type,
-                rawDb,
-                treatedDb,
-                deltaDb,
-                combinedSentences);
-        }
-
-        var results = grouped.Values
-            .Concat(extras)
-            .OrderBy(m => m.StartSec)
-            .ToList();
-
-        return results;
+        // Robust, cheap: 30th percentile of values above absolute floor
+        var vals = new List<double>(db.Length);
+        for (int i=0;i<db.Length;i++) if (db[i] > MinDb+1) vals.Add(db[i]);
+        if (vals.Count==0) return MinDb + 6;
+        vals.Sort();
+        return Percentile(vals, 0.30);
     }
 
-    private static IReadOnlyList<SentenceSpan> MergeSentenceContexts(
-        IReadOnlyList<SentenceSpan> left,
-        IReadOnlyList<SentenceSpan> right)
+    private static bool[] BuildSpeechMask(double[] db, double thr)
     {
-        if (left.Count == 0) return right;
-        if (right.Count == 0) return left;
-
-        var map = new Dictionary<int, SentenceSpan>();
-
-        foreach (var span in left.Concat(right))
-        {
-            if (!map.TryGetValue(span.SentenceId, out var existing))
-            {
-                map[span.SentenceId] = span;
-                continue;
-            }
-
-            double start = Math.Min(existing.StartSec, span.StartSec);
-            double end = Math.Max(existing.EndSec, span.EndSec);
-
-            map[span.SentenceId] = existing with { StartSec = start, EndSec = end };
-        }
-
-        return map.Values.OrderBy(span => span.StartSec).ToList();
+        var m = new bool[db.Length];
+        for (int i=0;i<db.Length;i++) m[i] = db[i] >= thr;
+        return m;
     }
 
-    private static (List<SegmentWindow> Segments, int SuppressedCount) FilterMissingSpeechWithBreath(
-        IReadOnlyList<SegmentWindow> segments,
-        float[] rawSamples,
-        int sampleRate,
-        double[] rawDb,
-        double rawThreshold,
-        double stepSec,
-        double windowSec,
-        double minDurationSec)
+    private static double SampleSeries(double[] series, double stepSec, double t)
     {
-        if (segments.Count == 0 || rawSamples.Length == 0 || sampleRate <= 0)
-        {
-            return (segments.ToList(), 0);
-        }
-
-        double audioDurationSec = rawSamples.Length / (double)sampleRate;
-        var filtered = new List<SegmentWindow>(segments.Count);
-        int suppressedCount = 0;
-
-        const double BreathMarginSec = 0.15;
-        const double QuietBreathMarginDb = 8.0;
-        const double QuietBreathDurationSec = 0.45;
-        const double MaxQuietBreathDbMargin = 10.0;
-
-        foreach (var segment in segments)
-        {
-            double segStart = Math.Max(0d, segment.StartIndex * stepSec);
-            double segEnd = Math.Min(audioDurationSec, segment.EndIndex * stepSec + windowSec);
-            if (segEnd <= segStart)
-            {
-                continue;
-            }
-
-            double detectStart = Math.Max(0d, segStart - BreathMarginSec);
-            double detectEnd = Math.Min(audioDurationSec, segEnd + BreathMarginSec);
-            double segmentDuration = segEnd - segStart;
-
-            double maxRawDb = double.NegativeInfinity;
-            double sumRawDb = 0d;
-            int frameCount = 0;
-            for (int idx = segment.StartIndex; idx <= segment.EndIndex && idx < rawDb.Length; idx++)
-            {
-                maxRawDb = Math.Max(maxRawDb, rawDb[idx]);
-                sumRawDb += rawDb[idx];
-                frameCount++;
-            }
-
-            double meanRawDb = frameCount > 0 ? sumRawDb / frameCount : double.NegativeInfinity;
-
-            IReadOnlyList<Region> breathRegions;
-            try
-            {
-                breathRegions = FeatureExtraction.Detect(
-                    rawSamples,
-                    sampleRate,
-                    detectStart,
-                    detectEnd,
-                    BreathDetectorOptions);
-            }
-            catch
-            {
-                breathRegions = Array.Empty<Region>();
-            }
-
-            if (breathRegions.Count == 0)
-            {
-                if (segmentDuration <= QuietBreathDurationSec
-                    && meanRawDb <= rawThreshold + QuietBreathMarginDb
-                    && maxRawDb <= rawThreshold + MaxQuietBreathDbMargin)
-                {
-                    suppressedCount++;
-                    continue;
-                }
-
-                filtered.Add(segment);
-                continue;
-            }
-
-            frameCount = segment.EndIndex - segment.StartIndex + 1;
-            if (frameCount <= 0)
-            {
-                continue;
-            }
-
-            var keep = new bool[frameCount];
-            Array.Fill(keep, true);
-            bool anyOverlap = false;
-
-            foreach (var region in breathRegions)
-            {
-                double regionStart = Math.Max(segStart, region.StartSec);
-                double regionEnd = Math.Min(segEnd, region.EndSec);
-                if (regionEnd <= regionStart)
-                {
-                    continue;
-                }
-
-                for (int idx = segment.StartIndex; idx <= segment.EndIndex; idx++)
-                {
-                    double frameStart = idx * stepSec;
-                    double frameEnd = frameStart + windowSec;
-                    if (frameEnd <= regionStart || frameStart >= regionEnd)
-                    {
-                        continue;
-                    }
-
-                    keep[idx - segment.StartIndex] = false;
-                    anyOverlap = true;
-                }
-            }
-
-            if (!anyOverlap)
-            {
-                filtered.Add(segment);
-                continue;
-            }
-
-            bool removedAny = false;
-            int localIndex = 0;
-            while (localIndex < keep.Length)
-            {
-                while (localIndex < keep.Length && !keep[localIndex])
-                {
-                    removedAny = true;
-                    localIndex++;
-                }
-
-                if (localIndex >= keep.Length)
-                {
-                    break;
-                }
-
-                int startOffset = localIndex;
-                while (localIndex < keep.Length && keep[localIndex]) localIndex++;
-                int endOffset = localIndex - 1;
-
-                int startIndex = segment.StartIndex + startOffset;
-                int endIndex = segment.StartIndex + endOffset;
-
-                double startSec = Math.Max(0d, startIndex * stepSec);
-                double endSec = Math.Max(startSec, endIndex * stepSec + windowSec);
-                if (endSec - startSec < minDurationSec)
-                {
-                    removedAny = true;
-                    continue;
-                }
-
-                filtered.Add(new SegmentWindow(startIndex, endIndex, segment.Type));
-            }
-
-            if (removedAny)
-            {
-                suppressedCount++;
-            }
-            else
-            {
-                filtered.Add(segment);
-            }
-        }
-
-        return (filtered, suppressedCount);
+        if (series.Length == 0) return MinDb;
+        if (t <= 0) return series[0];
+        double idx = t / Math.Max(stepSec, 1e-9);
+        int i0 = Math.Clamp((int)Math.Floor(idx), 0, series.Length-1);
+        int i1 = Math.Min(series.Length-1, i0+1);
+        double frac = idx - i0;
+        return series[i0] + (series[i1]-series[i0])*frac;
     }
 
-    private static double Percentile(IReadOnlyList<double> sortedValues, double fraction)
+    private static bool SampleMask(bool[] mask, double stepSec, double t)
     {
-        if (sortedValues.Count == 0)
+        if (mask.Length == 0) return false;
+        int i = (int)Math.Round(t / Math.Max(stepSec, 1e-9));
+        i = Math.Clamp(i, 0, mask.Length-1);
+        return mask[i];
+    }
+
+    private sealed record Segment(int StartIndex, int EndIndex, AudioMismatchType Type);
+
+    private static List<Segment> CollectRuns(bool[] mask, double stepSec, double windowSec, double minDurSec, AudioMismatchType type)
+    {
+        var list = new List<Segment>();
+        int i=0, n=mask.Length;
+        int minLen = Math.Max(1, (int)Math.Ceiling((minDurSec - windowSec) / stepSec));
+        while (i<n)
         {
-            return MinDb;
+            if (!mask[i]) { i++; continue; }
+            int start = i;
+            while (i<n && mask[i]) i++;
+            int end = i-1;
+            if (end-start+1 >= minLen) list.Add(new Segment(start,end,type));
         }
+        return list;
+    }
 
-        fraction = Math.Clamp(fraction, 0d, 1d);
-
-        double index = fraction * (sortedValues.Count - 1);
-        int lower = (int)Math.Floor(index);
-        int upper = (int)Math.Ceiling(index);
-
-        if (lower == upper)
+    private static List<Segment> MergeRuns(IReadOnlyList<Segment> runs, int maxGapFrames)
+    {
+        if (runs.Count == 0) return new List<Segment>();
+        var outp = new List<Segment>();
+        foreach (var g in runs.GroupBy(r => r.Type))
         {
-            return sortedValues[lower];
+            foreach (var r in g.OrderBy(r => r.StartIndex))
+            {
+                if (outp.Count == 0 || outp[^1].Type != r.Type || r.StartIndex - outp[^1].EndIndex > maxGapFrames)
+                    outp.Add(r);
+                else
+                    outp[^1] = new Segment(outp[^1].StartIndex, Math.Max(outp[^1].EndIndex, r.EndIndex), r.Type);
+            }
         }
+        // keep type ordering separated
+        return outp.OrderBy(s => s.StartIndex).ToList();
+    }
 
-        double weight = index - lower;
-        return sortedValues[lower] + (sortedValues[upper] - sortedValues[lower]) * weight;
+    private static double SumMask(bool[] mask, double stepSec, double windowSec)
+    {
+        double total = 0;
+        for (int i=0;i<mask.Length;i++) if (mask[i]) total += stepSec;
+        // include last window tail
+        return total + windowSec;
+    }
+
+    // ---- treated → raw mapping ------------------------------------------------
+
+    private sealed record MapSeg(double T0, double T1, double A, double B);
+    private static List<MapSeg> BuildPiecewiseMap(
+        IReadOnlyDictionary<int, SentenceTiming> rawById,
+        IReadOnlyDictionary<int, SentenceTiming> treatedById)
+    {
+        var ids = rawById.Keys.Intersect(treatedById.Keys).OrderBy(id => id);
+        var map = new List<MapSeg>();
+        foreach (var id in ids)
+        {
+            var r = rawById[id];
+            var t = treatedById[id];
+            double t0 = t.StartSec, t1 = Math.Max(t.StartSec, t.EndSec);
+            double r0 = r.StartSec, r1 = Math.Max(r.StartSec, r.EndSec);
+            double a  = (t1>t0) ? (r1-r0)/(t1-t0) : 0.0;
+            double b  = r0 - a*t0;
+            map.Add(new MapSeg(t0,t1,a,b));
+        }
+        // ensure sorted by treated time
+        return map.OrderBy(m => m.T0).ToList();
+    }
+
+    private static double MapToRaw(IReadOnlyList<MapSeg> map, double t)
+    {
+        if (map.Count == 0) return t;
+        // binary search on T0
+        int lo=0, hi=map.Count-1, idx=0;
+        while (lo<=hi)
+        {
+            int mid = (lo+hi)>>1;
+            if (map[mid].T0 <= t) { idx = mid; lo = mid+1; }
+            else hi = mid-1;
+        }
+        var s = map[idx];
+        return s.A*t + s.B;
+    }
+
+    // ---- sentence context -----------------------------------------------------
+
+    private static List<(double Start, double End, int SentenceId)> BuildSentenceIndex(
+        IReadOnlyDictionary<int, SentenceTiming> treatedById)
+    {
+        var list = new List<(double,double,int)>(treatedById.Count);
+        foreach (var kv in treatedById)
+            list.Add((kv.Value.StartSec, kv.Value.EndSec, kv.Key));
+        list.Sort((a,b) => a.Item1.CompareTo(b.Item1));
+        return list;
+    }
+
+    private static IReadOnlyList<SentenceSpan> LookupSentenceContext(
+        List<(double Start, double End, int SentenceId)> index,
+        double startSec, double endSec)
+    {
+        // linear probe from lower bound; this is fast because we call this only per-run (dozens),
+        // not per frame.
+        var spans = new List<SentenceSpan>(2);
+        int i = LowerBound(index, startSec);
+        for (; i<index.Count && index[i].Start < endSec; i++)
+        {
+            if (index[i].End <= startSec) continue;
+            spans.Add(new SentenceSpan(index[i].SentenceId, index[i].Start, index[i].End));
+        }
+        return spans;
+    }
+
+    private static int LowerBound(List<(double Start, double End, int SentenceId)> a, double x)
+    {
+        int lo=0, hi=a.Count;
+        while (lo<hi) { int mid=(lo+hi)>>1; if (a[mid].Start < x) lo=mid+1; else hi=mid; }
+        return lo;
+    }
+
+    private static double Percentile(List<double> sorted, double p)
+    {
+        if (sorted.Count == 0) return MinDb;
+        p = Math.Clamp(p, 0.0, 1.0);
+        double idx = p * (sorted.Count - 1);
+        int    i0  = (int)Math.Floor(idx);
+        int    i1  = Math.Min(sorted.Count - 1, i0 + 1);
+        if (i0 == i1) return sorted[i0];
+        double f = idx - i0;
+        return sorted[i0] + (sorted[i1]-sorted[i0]) * f;
     }
 }

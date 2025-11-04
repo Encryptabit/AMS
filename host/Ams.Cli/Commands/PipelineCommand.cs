@@ -1,4 +1,4 @@
-﻿using System.Collections.Concurrent;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.CommandLine;
 using System.CommandLine.Invocation;
@@ -471,47 +471,47 @@ public static class PipelineCommand
             "Report format: json, csv, or both");
         formatOption.FromAmong("json", "csv", "both");
 
-        var windowOption = new Option<double>(
-            "--window-ms",
-            () => 30.0,
-            "RMS window length in milliseconds");
+        var targetSrOption = new Option<int>(
+            "--target-sr",
+            () => 16_000,
+            "Resample audio to this sample rate before analysis (Hz)");
 
-        var stepOption = new Option<double>(
-            "--step-ms",
-            () => 15.0,
-            "RMS hop length in milliseconds");
+        var frameOption = new Option<double>(
+            "--frame-ms",
+            () => 25.0,
+            "Frame length for MFCC extraction (ms)");
 
-        var minDurationOption = new Option<double>(
-            "--min-duration-ms",
-            () => 60.0,
-            "Minimum duration (ms) a mismatch must span to be reported");
+        var hopOption = new Option<double>(
+            "--hop-ms",
+            () => 10.0,
+            "Hop size for MFCC extraction (ms)");
 
-        var minDeltaOption = new Option<double>(
-            "--min-delta-db",
-            () => 12.0,
-            "Minimum dB delta between raw and treated audio required to flag a mismatch");
+        var passThresholdOption = new Option<double>(
+            "--pass-threshold",
+            () => 0.30,
+            "Maximum normalized DTW cost allowed for a sentence to pass");
 
-        var rawThresholdOption = new Option<double?>(
-            "--raw-threshold-db",
-            () => null,
-            "Optional override for the raw speech threshold (dBFS)");
+        var passFractionOption = new Option<double>(
+            "--pass-fraction",
+            () => 0.95,
+            "Fraction of comparable sentences that must pass");
 
-        var treatedThresholdOption = new Option<double?>(
-            "--treated-threshold-db",
-            () => null,
-            "Optional override for the treated speech threshold (dBFS)");
+        var worstCountOption = new Option<int>(
+            "--worst",
+            () => 10,
+            "Include this many worst sentences in the report");
 
         cmd.AddOption(rootOption);
         cmd.AddOption(chapterOption);
         cmd.AddOption(allOption);
         cmd.AddOption(reportDirOption);
         cmd.AddOption(formatOption);
-        cmd.AddOption(windowOption);
-        cmd.AddOption(stepOption);
-        cmd.AddOption(minDurationOption);
-        cmd.AddOption(minDeltaOption);
-        cmd.AddOption(rawThresholdOption);
-        cmd.AddOption(treatedThresholdOption);
+        cmd.AddOption(targetSrOption);
+        cmd.AddOption(frameOption);
+        cmd.AddOption(hopOption);
+        cmd.AddOption(passThresholdOption);
+        cmd.AddOption(passFractionOption);
+        cmd.AddOption(worstCountOption);
 
         cmd.SetHandler(context =>
         {
@@ -544,14 +544,14 @@ public static class PipelineCommand
                 _ => throw new InvalidOperationException($"Unsupported report format: {formatToken}")
             };
 
-            var options = new AudioIntegrityVerifierOptions
+            var options = new AudioVerifierOptions
             {
-                WindowMs = context.ParseResult.GetValueForOption(windowOption),
-                StepMs = context.ParseResult.GetValueForOption(stepOption),
-                MinMismatchDurationMs = context.ParseResult.GetValueForOption(minDurationOption),
-                MinDeltaDb = context.ParseResult.GetValueForOption(minDeltaOption),
-                RawSpeechThresholdDb = context.ParseResult.GetValueForOption(rawThresholdOption),
-                TreatedSpeechThresholdDb = context.ParseResult.GetValueForOption(treatedThresholdOption)
+                TargetSampleRateHz = context.ParseResult.GetValueForOption(targetSrOption),
+                FrameMs = context.ParseResult.GetValueForOption(frameOption),
+                HopMs = context.ParseResult.GetValueForOption(hopOption),
+                PassThreshold = context.ParseResult.GetValueForOption(passThresholdOption),
+                PassFraction = context.ParseResult.GetValueForOption(passFractionOption),
+                WorstCount = context.ParseResult.GetValueForOption(worstCountOption)
             };
 
             try
@@ -2087,7 +2087,7 @@ public static class PipelineCommand
         string? chapterName,
         bool verifyAll,
         VerificationReportFormat format,
-        AudioIntegrityVerifierOptions options,
+        AudioVerifierOptions options,
         CancellationToken cancellationToken)
     {
         var rawTargets = ResolveVerifyTargets(root, chapterName, verifyAll);
@@ -2104,12 +2104,12 @@ public static class PipelineCommand
         var table = new Table()
             .Border(TableBorder.Rounded)
             .Title("[bold]Pipeline Verify[/]")
-            .AddColumn("Chapter")
-            .AddColumn("Result")
-            .AddColumn("Mismatches")
-            .AddColumn("Missing (s)")
-            .AddColumn("Extra (s)")
-            .AddColumn("Breaths")
+            .AddColumn("Variant")
+            .AddColumn("Status")
+            .AddColumn("Comparable")
+            .AddColumn("Pass %")
+            .AddColumn("Fails")
+            .AddColumn("Worst Cost")
             .AddColumn("Reports");
 
         AnsiConsole.Live(table)
@@ -2126,151 +2126,140 @@ public static class PipelineCommand
                     var chapterDir = new DirectoryInfo(Path.Combine(root.FullName, stem));
                     chapterDir.Refresh();
 
-                    string statusMarkup;
-                    string mismatchText = "-";
-                    string missingText = "-";
-                    string extraText = "-";
-                    string breathText = "-";
-                    string reportText = string.Empty;
-
                     try
                     {
-                        bool usedPauseAdjusted = false;
-                        var treated = ResolveTreatedAudio(root, chapterDir, stem, out usedPauseAdjusted);
-                        if (treated is null)
+                        var hydrateFile = new FileInfo(Path.Combine(chapterDir.FullName, $"{stem}.align.hydrate.json"));
+                        string? referenceHydratePath = null;
+                        if (hydrateFile.Exists)
+                        {
+                            referenceHydratePath = hydrateFile.FullName;
+                        }
+
+                        if (referenceHydratePath is null)
                         {
                             skipped++;
-                            statusMarkup = "[yellow]Skipped (no treated wav)[/]";
-                            mismatchText = "-";
-                            missingText = "-";
-                            extraText = "-";
-                            breathText = "-";
-                            reportText = "[grey]-[/]";
                             table.AddRow(
                                 Markup.Escape(stem),
-                                statusMarkup,
-                                mismatchText,
-                                missingText,
-                                extraText,
-                                breathText,
-                                reportText);
+                                "[yellow]Skipped (no hydrate)[/]",
+                                "-",
+                                "-",
+                                "-",
+                                "-",
+                                "[grey]-[/]");
                             ctx.Refresh();
-                            Log.Debug("Skipping {Chapter}: treated WAV not found", stem);
+                            Log.Debug("Skipping {Chapter}: hydrate JSON not found", stem);
                             continue;
                         }
 
-                        TranscriptIndex? transcript = null;
-                        HydratedTranscript? hydrated = null;
-
-                        var txFile = new FileInfo(Path.Combine(chapterDir.FullName, $"{stem}.align.tx.json"));
-                        if (txFile.Exists)
+                        var variants = ResolveProcessedVariants(root, chapterDir, stem, referenceHydratePath);
+                        if (variants.Count == 0)
                         {
-                            try
-                            {
-                                transcript = LoadJson<TranscriptIndex>(txFile);
-                            }
-                            catch (Exception ex)
-                            {
-                                Log.Debug("Failed to load transcript for {Chapter}: {Message}", stem, ex.Message);
-                            }
+                            skipped++;
+                            var status = "[yellow]Skipped (no processed WAV)[/]";
+                            table.AddRow(
+                                Markup.Escape(stem),
+                                status,
+                                "-",
+                                "-",
+                                "-",
+                                "-",
+                                "[grey]-[/]");
+                            ctx.Refresh();
+                            Log.Debug("Skipping {Chapter}: no treated or pause-adjusted WAV found", stem);
+                            continue;
                         }
 
-                        var hydrateFile = new FileInfo(Path.Combine(chapterDir.FullName, $"{stem}.align.hydrate.json"));
-                        if (hydrateFile.Exists)
+                        foreach (var variant in variants)
                         {
-                            try
+                            var rowLabel = variants.Count > 1
+                                ? $"{stem} ({variant.Variant})"
+                                : stem;
+
+                            var report = AudioIntegrityVerifier.Verify(
+                                referenceWav: raw.FullName,
+                                variantWav: variant.File.FullName,
+                                referenceHydrateJson: referenceHydratePath,
+                                variantHydrateJson: variant.HydratePath,
+                                options: options);
+
+                            report.VariantLabel = variant.Variant;
+
+                            var outputDir = reportDir ?? chapterDir;
+                            EnsureDirectory(outputDir.FullName);
+
+                            var artifacts = new List<string>();
+                            var variantToken = NormalizeVariantToken(variant.Variant);
+
+                            if (format is VerificationReportFormat.Json or VerificationReportFormat.Both)
                             {
-                                hydrated = LoadJson<HydratedTranscript>(hydrateFile);
-                            }
-                            catch (Exception ex)
-                            {
-                                Log.Debug("Failed to load hydrate for {Chapter}: {Message}", stem, ex.Message);
-                            }
-                        }
+                                var jsonPath = Path.Combine(outputDir.FullName, $"{stem}.verify.{variantToken}.json");
+                                using (var stream = File.Create(jsonPath))
+                                {
+                                    JsonSerializer.Serialize(stream, report, VerifyJsonOptions);
+                                }
 
-                        var sentenceSpans = BuildSentenceSpans(transcript, hydrated);
-
-                        var rawBuffer = WavIo.ReadPcmOrFloat(raw.FullName);
-                        var treatedBuffer = WavIo.ReadPcmOrFloat(treated.FullName);
-
-                        var result = AudioIntegrityVerifier.Verify(
-                            stem,
-                            raw.FullName,
-                            rawBuffer,
-                            treated.FullName,
-                            treatedBuffer,
-                            options,
-                            sentenceSpans);
-
-                        var outputDir = reportDir ?? chapterDir;
-                        EnsureDirectory(outputDir.FullName);
-
-                        var artifacts = new List<string>();
-
-                        if (format is VerificationReportFormat.Json or VerificationReportFormat.Both)
-                        {
-                            var jsonPath = Path.Combine(outputDir.FullName, $"{stem}.verify.json");
-                            using (var stream = File.Create(jsonPath))
-                            {
-                                JsonSerializer.Serialize(stream, result, VerifyJsonOptions);
+                                artifacts.Add(jsonPath);
                             }
 
-                            artifacts.Add(jsonPath);
-                        }
+                            if (format is VerificationReportFormat.Csv or VerificationReportFormat.Both)
+                            {
+                                var csvPath = Path.Combine(outputDir.FullName, $"{stem}.verify.{variantToken}.csv");
+                                WriteVerificationCsv(csvPath, report);
+                                artifacts.Add(csvPath);
+                            }
 
-                        if (format is VerificationReportFormat.Csv or VerificationReportFormat.Both)
-                        {
-                            var csvPath = Path.Combine(outputDir.FullName, $"{stem}.verify.csv");
-                            WriteVerificationCsv(csvPath, result);
-                            artifacts.Add(csvPath);
-                        }
+                            int comparable = report.TotalComparableSentences;
+                            int failCount = report.Sentences.Count(s => !double.IsNaN(s.NormalizedCost) && !s.Passed);
+                            double passPercent = report.PassFractionObserved * 100.0;
+                            double worstCost = report.WorstByCost.FirstOrDefault()?.NormalizedCost ?? double.NaN;
+
+                            bool hasIssues = !report.Passed;
+                            var statusMarkup = hasIssues
+                                ? "[red]Issues[/]"
+                                : "[green]OK[/]";
+
+                            var comparableText = comparable.ToString(CultureInfo.InvariantCulture);
+                            var passText = passPercent.ToString("F1", CultureInfo.InvariantCulture) + "%";
+                            var failText = failCount.ToString(CultureInfo.InvariantCulture);
+                            var worstText = double.IsNaN(worstCost)
+                                ? "-"
+                                : worstCost.ToString("F3", CultureInfo.InvariantCulture);
+                            var reportText = artifacts.Count == 0
+                                ? "[grey]-[/]"
+                                : string.Join("\n", artifacts.Select(path => $"[grey]{Markup.Escape(Path.GetFileName(path))}[/]"));
+
+                        table.AddRow(
+                            Markup.Escape(rowLabel),
+                            statusMarkup,
+                            comparableText,
+                            passText,
+                            failText,
+                            worstText,
+                            reportText);
+                        ctx.Refresh();
 
                         Log.Debug(
-                            usedPauseAdjusted
-                                ? "Verified {Chapter}: mismatches={Count} missing={Missing:F3}s extra={Extra:F3}s suppressedBreaths={Suppressed} (pause-adjusted WAV). Reports: {Reports}"
-                                : "Verified {Chapter}: mismatches={Count} missing={Missing:F3}s extra={Extra:F3}s suppressedBreaths={Suppressed}. Reports: {Reports}",
-                            stem,
-                            result.Mismatches.Count,
-                            result.MissingSpeechDurationSec,
-                            result.ExtraSpeechDurationSec,
-                            result.MissingBreathSuppressedCount,
-                            artifacts.ToArray());
+                                "Verified {Chapter} ({Variant}): comparable={Comparable} passFraction={PassFraction:P2} fails={Fails}. Reports: {Reports}",
+                                stem,
+                                variant.Variant,
+                                comparable,
+                                report.PassFractionObserved,
+                                failCount,
+                                artifacts.ToArray());
 
                         processed++;
-                        bool hasIssues = result.Mismatches.Count > 0;
                         if (hasIssues)
                         {
                             withMismatches++;
                         }
-
-                        statusMarkup = hasIssues
-                            ? $"[red]Issues ({result.Mismatches.Count})[/]"
-                            : "[green]OK[/]";
-                        mismatchText = hasIssues ? result.Mismatches.Count.ToString(CultureInfo.InvariantCulture) : "0";
-                        missingText = result.MissingSpeechDurationSec.ToString("F3", CultureInfo.InvariantCulture);
-                        extraText = result.ExtraSpeechDurationSec.ToString("F3", CultureInfo.InvariantCulture);
-                        breathText = result.MissingBreathSuppressedCount.ToString(CultureInfo.InvariantCulture);
-                        reportText = artifacts.Count == 0
-                            ? "[grey]-[/]"
-                            : string.Join("\n", artifacts.Select(path => $"[grey]{Markup.Escape(Path.GetFileName(path))}[/]"));
-
-                        table.AddRow(
-                            Markup.Escape(stem),
-                            statusMarkup,
-                            mismatchText,
-                            missingText,
-                            extraText,
-                            breathText,
-                            reportText);
-                        ctx.Refresh();
+                        }
                     }
                     catch (Exception ex)
                     {
                         Log.Error(ex, "Verification failed for {Chapter}", stem);
-                        statusMarkup = "[red]Error[/]";
                         table.AddRow(
                             Markup.Escape(stem),
-                            statusMarkup,
+                            "[red]Error[/]",
                             "-",
                             "-",
                             "-",
@@ -2282,7 +2271,7 @@ public static class PipelineCommand
             });
 
         Log.Debug(
-            "Verification complete. Processed {Processed} chapter(s); {WithIssues} with mismatches; {Skipped} skipped.",
+            "Verification complete. Processed {Processed} comparison(s); {WithIssues} with issues; {Skipped} skipped.",
             processed,
             withMismatches,
             skipped);
@@ -2341,125 +2330,157 @@ public static class PipelineCommand
         return allChapters.Count > 0 ? new List<FileInfo> { allChapters[0] } : new List<FileInfo>();
     }
 
-    private static FileInfo? ResolveTreatedAudio(DirectoryInfo root, DirectoryInfo chapterDir, string stem, out bool usedPauseAdjusted)
+    private sealed record ProcessedVariant(string Variant, FileInfo File, bool IsPauseAdjusted, string HydratePath);
+
+    private static IReadOnlyList<ProcessedVariant> ResolveProcessedVariants(DirectoryInfo root, DirectoryInfo chapterDir, string stem, string referenceHydratePath)
     {
-        usedPauseAdjusted = false;
+        var variants = new List<ProcessedVariant>();
+        var seenPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
-        var treatedCandidates = new[]
+        void AddVariant(string variant, FileInfo file, bool isPauseAdjusted, string hydratePath)
         {
-            new FileInfo(Path.Combine(chapterDir.FullName, $"{stem}.treated.wav")),
-            new FileInfo(Path.Combine(root.FullName, $"{stem}.treated.wav"))
-        };
-
-        foreach (var candidate in treatedCandidates)
-        {
-            if (candidate.Exists)
+            if (!file.Exists)
             {
-                return candidate;
+                return;
             }
+
+            var fullPath = file.FullName;
+            if (!seenPaths.Add(fullPath))
+            {
+                return;
+            }
+
+            var effectiveHydrate = !string.IsNullOrEmpty(hydratePath) && File.Exists(hydratePath)
+                ? hydratePath
+                : referenceHydratePath;
+
+            variants.Add(new ProcessedVariant(variant, file, isPauseAdjusted, effectiveHydrate!));
         }
 
-        var pauseAdjustedCandidates = new[]
+        void TryAddVariant(string variant, bool isPauseAdjusted, IEnumerable<string> candidatePaths, Func<string, string?> hydrateResolver)
         {
-            new FileInfo(Path.Combine(chapterDir.FullName, $"{stem}.pause-adjusted.wav")),
-            new FileInfo(Path.Combine(root.FullName, $"{stem}.pause-adjusted.wav"))
-        };
-
-        foreach (var candidate in pauseAdjustedCandidates)
-        {
-            if (candidate.Exists)
+            foreach (var path in candidatePaths)
             {
-                usedPauseAdjusted = true;
-                return candidate;
-            }
-        }
-
-        return null;
-    }
-
-    private static IReadOnlyList<SentenceSpan> BuildSentenceSpans(TranscriptIndex? transcript, HydratedTranscript? hydrated)
-    {
-        var map = new Dictionary<int, SentenceSpan>();
-
-        if (transcript?.Sentences is not null)
-        {
-            foreach (var sentence in transcript.Sentences)
-            {
-                if (sentence.Timing is not { Duration: > 0 })
+                if (string.IsNullOrWhiteSpace(path))
                 {
                     continue;
                 }
 
-                map[sentence.Id] = new SentenceSpan(
-                    sentence.Id,
-                    sentence.Timing.StartSec,
-                    sentence.Timing.EndSec,
-                    null,
-                    null);
-            }
-        }
-
-        if (hydrated?.Sentences is not null)
-        {
-            foreach (var sentence in hydrated.Sentences)
-            {
-                if (sentence.Timing is not { } timing || timing.Duration <= 0)
+                try
                 {
-                    continue;
+                    var file = new FileInfo(path);
+                    var hydrate = hydrateResolver(path) ?? referenceHydratePath;
+                    AddVariant(variant, file, isPauseAdjusted, hydrate);
+                    if (variants.Any(v => v.Variant == variant))
+                    {
+                        break;
+                    }
                 }
-
-                map[sentence.Id] = new SentenceSpan(
-                    sentence.Id,
-                    timing.StartSec,
-                    timing.EndSec,
-                    TrimText(sentence.BookText),
-                    TrimText(sentence.ScriptText));
+                catch
+                {
+                    // ignore invalid paths
+                }
             }
         }
 
-        return map.Values
-            .Where(span => span.EndSec > span.StartSec)
-            .OrderBy(span => span.StartSec)
-            .ToList();
+        string treatedFileName = $"{stem}.treated.wav";
+        TryAddVariant("treated", false, new[]
+        {
+            Path.Combine(chapterDir.FullName, treatedFileName),
+            Path.Combine(root.FullName, treatedFileName)
+        }, _ => referenceHydratePath);
+
+        if (!variants.Any(v => v.Variant == "treated") && Directory.Exists(chapterDir.FullName))
+        {
+            var extraTreated = Directory.EnumerateFiles(chapterDir.FullName, "*.treated.wav", SearchOption.AllDirectories);
+            TryAddVariant("treated", false, extraTreated, _ => referenceHydratePath);
+        }
+
+        string adjustedFileName = $"{stem}.pause-adjusted.wav";
+        TryAddVariant("pause-adjusted", true, new[]
+        {
+            Path.Combine(chapterDir.FullName, adjustedFileName),
+            Path.Combine(root.FullName, adjustedFileName)
+        }, _ => ResolveVariantHydrate(chapterDir, stem) ?? referenceHydratePath);
+
+        if (!variants.Any(v => v.Variant == "pause-adjusted") && Directory.Exists(chapterDir.FullName))
+        {
+            var extraAdjusted = Directory.EnumerateFiles(chapterDir.FullName, "*.pause-adjusted.wav", SearchOption.AllDirectories);
+            TryAddVariant("pause-adjusted", true, extraAdjusted, _ => ResolveVariantHydrate(chapterDir, stem) ?? referenceHydratePath);
+        }
+
+        return variants;
     }
 
-    private static string? TrimText(string? value, int maxLength = 160)
+    private static string? ResolveVariantHydrate(DirectoryInfo chapterDir, string stem)
     {
-        if (string.IsNullOrWhiteSpace(value))
+        if (!chapterDir.Exists)
         {
             return null;
         }
 
-        var normalized = value.Trim();
-        if (normalized.Length <= maxLength)
+        var candidates = new[]
         {
-            return normalized;
+            Path.Combine(chapterDir.FullName, $"{stem}.pause-adjusted.hydrate.json"),
+            Path.Combine(chapterDir.FullName, $"{stem}.pause-adjusted.align.hydrate.json"),
+            Path.Combine(chapterDir.FullName, $"{stem}.pause-adjusted.timeline.hydrate.json")
+        };
+
+        foreach (var path in candidates)
+        {
+            if (File.Exists(path))
+            {
+                return path;
+            }
         }
 
-        return normalized[..maxLength] + "…";
+        // Fallback: look for any pause-adjusted hydrate under the chapter directory
+        var match = Directory.EnumerateFiles(chapterDir.FullName, "*.pause-adjusted.hydrate.json", SearchOption.AllDirectories)
+            .FirstOrDefault();
+        return match;
     }
 
-    private static void WriteVerificationCsv(string path, AudioVerificationResult result)
+    private static string NormalizeVariantToken(string variant)
+    {
+        if (string.IsNullOrWhiteSpace(variant))
+        {
+            return "variant";
+        }
+
+        var chars = variant.ToLowerInvariant()
+            .Select(ch => char.IsLetterOrDigit(ch) ? ch : '-')
+            .ToArray();
+
+        var token = new string(chars).Trim('-');
+        return string.IsNullOrEmpty(token) ? "variant" : token;
+    }
+
+    private static void WriteVerificationCsv(string path, AudioIntegrityReport report)
     {
         using var writer = new StreamWriter(path, false, Encoding.UTF8);
-        writer.WriteLine("chapter,type,startSec,endSec,rawDb,treatedDb,deltaDb,sentenceIds");
+        writer.WriteLine("chapter,variant,sentenceId,passed,cost,refStart,refEnd,varStart,varEnd,refDuration,varDuration,note");
 
-        foreach (var mismatch in result.Mismatches)
+        var chapterLabel = Path.GetFileNameWithoutExtension(report.ReferencePath);
+        var variantLabel = string.IsNullOrEmpty(report.VariantLabel)
+            ? Path.GetFileNameWithoutExtension(report.VariantPath)
+            : report.VariantLabel;
+
+        foreach (var sentence in report.Sentences)
         {
-            var sentenceIds = mismatch.Sentences.Count > 0
-                ? string.Join('|', mismatch.Sentences.Select(span => span.SentenceId))
-                : string.Empty;
-
             writer.WriteLine(string.Join(
                 ',',
-                EscapeCsv(result.ChapterId),
-                mismatch.Type.ToString(),
-                mismatch.StartSec.ToString("F6", CultureInfo.InvariantCulture),
-                mismatch.EndSec.ToString("F6", CultureInfo.InvariantCulture),
-                mismatch.RawDb.ToString("F2", CultureInfo.InvariantCulture),
-                mismatch.TreatedDb.ToString("F2", CultureInfo.InvariantCulture),
-                mismatch.DeltaDb.ToString("F2", CultureInfo.InvariantCulture),
-                EscapeCsv(sentenceIds)));
+                EscapeCsv(chapterLabel),
+                EscapeCsv(variantLabel),
+                sentence.SentenceId.ToString(CultureInfo.InvariantCulture),
+                sentence.Passed ? "true" : "false",
+                double.IsNaN(sentence.NormalizedCost) ? "" : sentence.NormalizedCost.ToString("F4", CultureInfo.InvariantCulture),
+                sentence.RefBounds.start.ToString("F6", CultureInfo.InvariantCulture),
+                sentence.RefBounds.end.ToString("F6", CultureInfo.InvariantCulture),
+                sentence.VarBounds.start.ToString("F6", CultureInfo.InvariantCulture),
+                sentence.VarBounds.end.ToString("F6", CultureInfo.InvariantCulture),
+                sentence.RefDuration.ToString("F6", CultureInfo.InvariantCulture),
+                sentence.VarDuration.ToString("F6", CultureInfo.InvariantCulture),
+                EscapeCsv(sentence.Note ?? string.Empty)));
         }
     }
 
