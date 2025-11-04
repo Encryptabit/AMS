@@ -69,7 +69,7 @@ public static class BuildIndexCommand
         BookIndexOptions options,
         bool noCache)
     {
-        Log.Info("Building book index for {BookFile} -> {OutputFile}", bookFile.FullName, outputFile.FullName);
+        Log.Debug("Building book index for {BookFile} -> {OutputFile}", bookFile.FullName, outputFile.FullName);
 
         if (!bookFile.Exists)
         {
@@ -94,12 +94,12 @@ public static class BuildIndexCommand
             var cachedIndex = await cache.GetAsync(bookFile.FullName);
             if (cachedIndex != null)
             {
-                Log.Info("Cache hit for {BookFile}", bookFile.FullName);
+                Log.Debug("Cache hit for {BookFile}", bookFile.FullName);
                 bookIndex = cachedIndex;
             }
             else
             {
-                Log.Info("Cache miss for {BookFile}; rebuilding", bookFile.FullName);
+                Log.Debug("Cache miss for {BookFile}; rebuilding", bookFile.FullName);
                 bookIndex = await ProcessBookFromScratch(parser, indexer, cache, bookFile.FullName, options);
             }
         }
@@ -107,11 +107,11 @@ public static class BuildIndexCommand
         {
             if (forceRefresh)
             {
-                Log.Info("Force refresh requested for {BookFile}", bookFile.FullName);
+                Log.Debug("Force refresh requested for {BookFile}", bookFile.FullName);
             }
             else if (noCache)
             {
-                Log.Info("Cache disabled for {BookFile}", bookFile.FullName);
+                Log.Debug("Cache disabled for {BookFile}", bookFile.FullName);
             }
 
             bookIndex = await ProcessBookFromScratch(parser, indexer, cache, bookFile.FullName, options);
@@ -126,7 +126,7 @@ public static class BuildIndexCommand
         var json = JsonSerializer.Serialize(bookIndex, jsonOptions);
         await File.WriteAllTextAsync(outputFile.FullName, json);
 
-        Log.Info(
+        Log.Debug(
             "Book indexed: {SourceFile} (Words={WordCount:n0}, Sentences={SentenceCount:n0}, Paragraphs={ParagraphCount:n0}, Sections={SectionCount}, EstimatedDuration={EstimatedDuration})",
             bookIndex.SourceFile,
             bookIndex.Totals.Words,
@@ -135,7 +135,7 @@ public static class BuildIndexCommand
             bookIndex.Sections.Length,
             FormatDuration(bookIndex.Totals.EstimatedDurationSec));
 
-        Log.Info("Book index saved to {OutputFile}", outputFile.FullName);
+        Log.Debug("Book index saved to {OutputFile}", outputFile.FullName);
     }
     
     private static async Task<BookIndex> ProcessBookFromScratch(
@@ -145,11 +145,11 @@ public static class BuildIndexCommand
         string bookFilePath,
         BookIndexOptions options)
     {
-        Log.Info("Parsing book file {BookFile}", bookFilePath);
+        Log.Debug("Parsing book file {BookFile}", bookFilePath);
         var parseResult = await parser.ParseAsync(bookFilePath);
         Log.Debug("Parsed {CharacterCount:n0} characters from {BookFile}", parseResult.Text.Length, bookFilePath);
         
-        Log.Info("Building index for {BookFile}", bookFilePath);
+        Log.Debug("Building index for {BookFile}", bookFilePath);
         var bookIndex = await indexer.CreateIndexAsync(parseResult, bookFilePath, options);
         Log.Debug("Index build complete for {BookFile}", bookFilePath);
         

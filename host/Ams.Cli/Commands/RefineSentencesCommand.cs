@@ -63,7 +63,7 @@ public static class RefineSentencesCommand
 
     private static async Task RunAsync(FileInfo txFile, FileInfo asrFile, FileInfo audioFile, FileInfo outFile, string language, bool withSilence, double silenceDb, double silenceMin)
     {
-        Log.Info("Refining sentences for {TranscriptIndex} using audio {AudioFile}", txFile.FullName, audioFile.FullName);
+        Log.Debug("Refining sentences for {TranscriptIndex} using audio {AudioFile}", txFile.FullName, audioFile.FullName);
 
         var jsonOptions = new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
         var tx = JsonSerializer.Deserialize<TranscriptIndex>(await File.ReadAllTextAsync(txFile.FullName), jsonOptions)
@@ -77,7 +77,7 @@ public static class RefineSentencesCommand
         var outJson = JsonSerializer.Serialize(refined, new JsonSerializerOptions { WriteIndented = true, PropertyNamingPolicy = JsonNamingPolicy.CamelCase });
         Directory.CreateDirectory(outFile.DirectoryName!);
         await File.WriteAllTextAsync(outFile.FullName, outJson);
-        Log.Info("Refined sentences written to {OutputFile}", outFile.FullName);
+        Log.Debug("Refined sentences written to {OutputFile}", outFile.FullName);
     }
 }
 

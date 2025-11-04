@@ -96,7 +96,7 @@ public sealed class RoomToneInsertionStage
             appliedGainDb  = ToDb(toneGainLinear);
             if (_verbose)
             {
-                Log.Info($"[Roomtone] Seed RMS {roomtoneSeedStats.MeanRmsDb:F2} dB, target {_toneGainDb:F2} dB, applied gain {appliedGainDb:F2} dB");
+                Log.Debug($"[Roomtone] Seed RMS {roomtoneSeedStats.MeanRmsDb:F2} dB, target {_toneGainDb:F2} dB, applied gain {appliedGainDb:F2} dB");
             }
         }
         else
@@ -105,7 +105,7 @@ public sealed class RoomToneInsertionStage
             appliedGainDb  = 0.0;
             if (_verbose)
             {
-                Log.Info($"[Roomtone] Seed RMS {roomtoneSeedStats.MeanRmsDb:F2} dB, adaptive gain disabled (unity gain)");
+                Log.Debug($"[Roomtone] Seed RMS {roomtoneSeedStats.MeanRmsDb:F2} dB, adaptive gain disabled (unity gain)");
             }
         }
 
@@ -114,7 +114,7 @@ public sealed class RoomToneInsertionStage
         var timelineEntries = SentenceTimelineBuilder.Build(transcript.Sentences, analyzer, asr);
         if (_verbose)
         {
-            Log.Info($"[Roomtone] Timeline built on source audio: {timelineEntries.Count} sentences.");
+            Log.Debug($"[Roomtone] Timeline built on source audio: {timelineEntries.Count} sentences.");
         }
 
         double audioDurationSec = inputAudio.SampleRate > 0 ? inputAudio.Length / (double)inputAudio.SampleRate : 0.0;
@@ -132,17 +132,17 @@ public sealed class RoomToneInsertionStage
                     textGridHintList.Sort((a, b) => a.StartSec.CompareTo(b.StartSec));
                     if (_verbose)
                     {
-                        Log.Info("[Roomtone] Loaded {Count} TextGrid gap hints from {Path}", textGridHintList.Count, manifest.TextGridPath);
+                        Log.Debug("[Roomtone] Loaded {Count} TextGrid gap hints from {Path}", textGridHintList.Count, manifest.TextGridPath);
                     }
                 }
                 catch (Exception ex)
                 {
-                    Log.Warn("[Roomtone] Failed to parse TextGrid {Path}: {Message}", manifest.TextGridPath, ex.Message);
+                    Log.Debug("[Roomtone] Failed to parse TextGrid {Path}: {Message}", manifest.TextGridPath, ex.Message);
                 }
             }
             else if (_verbose)
             {
-                Log.Warn("[Roomtone] TextGrid not found at {Path}", manifest.TextGridPath);
+                Log.Debug("[Roomtone] TextGrid not found at {Path}", manifest.TextGridPath);
             }
         }
 
@@ -161,7 +161,7 @@ public sealed class RoomToneInsertionStage
             _gapBackoffSec,
             textGridHints,
             phoneMap);
-        Log.Info($"[Roomtone] Gap candidates: {gapSummary.Candidates}, retained: {gapSummary.Retained}, collapsed: {gapSummary.Collapsed}");
+        Log.Debug($"[Roomtone] Gap candidates: {gapSummary.Candidates}, retained: {gapSummary.Retained}, collapsed: {gapSummary.Collapsed}");
 
         // Update transcript timings from the (shifted) entries
         var entryMap = timelineEntries.ToDictionary(e => e.SentenceId);
@@ -715,7 +715,7 @@ public sealed class RoomToneInsertionStage
 
         if (audioDurationSec <= epsilon)
         {
-            Log.Warn("[Roomtone] Audio too short for gap analysis.");
+            Log.Debug("[Roomtone] Audio too short for gap analysis.");
             summary = new GapSummary(0, 0, 0);
             return gaps;
         }
@@ -727,7 +727,7 @@ public sealed class RoomToneInsertionStage
 
         if (orderedEntries.Count == 0)
         {
-            Log.Warn("[Roomtone] No sentence timings; treating entire chapter as a single gap.");
+            Log.Debug("[Roomtone] No sentence timings; treating entire chapter as a single gap.");
             var stats = analyzer.AnalyzeGap(0.0, audioDurationSec);
         if (TryValidateBreathSafety(audio, analyzer, 0.0, audioDurationSec, Math.Min(leftThresholdDb, rightThresholdDb), verbose, null, null, out var breathRegions))
             {
@@ -738,7 +738,7 @@ public sealed class RoomToneInsertionStage
             {
                 if (verbose)
                 {
-                    Log.Info("[Roomtone]   breath guard rejected chapter-wide gap.");
+                    Log.Debug("[Roomtone]   breath guard rejected chapter-wide gap.");
                 }
                 summary = new GapSummary(1, 0, 1);
             }
@@ -828,7 +828,7 @@ public sealed class RoomToneInsertionStage
             if (verbose)
             {
                 string label = $"prev={(leftEntry?.SentenceId.ToString() ?? "null")} next={(rightEntry?.SentenceId.ToString() ?? "null")}";
-                Log.Info($"[Roomtone] Gap candidate {label} base=({initialStart:F3},{initialEnd:F3}) dur={(initialEnd - initialStart):F3}");
+                Log.Debug($"[Roomtone] Gap candidate {label} base=({initialStart:F3},{initialEnd:F3}) dur={(initialEnd - initialStart):F3}");
             }
 
             double midpoint = (initialStart + initialEnd) / 2.0;
@@ -838,7 +838,7 @@ public sealed class RoomToneInsertionStage
             {
                 if (verbose)
                 {
-                    Log.Info("[Roomtone]   midpoint collapsed; skipping gap.");
+                    Log.Debug("[Roomtone]   midpoint collapsed; skipping gap.");
                 }
                 return produced;
             }
@@ -860,7 +860,7 @@ public sealed class RoomToneInsertionStage
                     {
                         if (verbose)
                         {
-                            Log.Info($"[Roomtone]   left rejected [{safeLeftStart:F3},{midpoint:F3}] maxRms={stats.MaxRmsDb:F2} dB > threshold {leftThresholdDb:F2} dB");
+                            Log.Debug($"[Roomtone]   left rejected [{safeLeftStart:F3},{midpoint:F3}] maxRms={stats.MaxRmsDb:F2} dB > threshold {leftThresholdDb:F2} dB");
                         }
                     }
                     else
@@ -868,18 +868,18 @@ public sealed class RoomToneInsertionStage
                         leftGap = CreateGap(safeLeftStart, midpoint, leftEntry?.SentenceId, rightEntry?.SentenceId, stats);
                         if (verbose)
                         {
-                            Log.Info($"[Roomtone]   left accepted [{safeLeftStart:F3},{midpoint:F3}] meanRms={stats.MeanRmsDb:F2} dB");
+                            Log.Debug($"[Roomtone]   left accepted [{safeLeftStart:F3},{midpoint:F3}] meanRms={stats.MeanRmsDb:F2} dB");
                         }
                     }
                 }
                 else if (verbose)
                 {
-                    Log.Info("[Roomtone]   left collapsed after safety clamp.");
+                    Log.Debug("[Roomtone]   left collapsed after safety clamp.");
                 }
             }
             else if (verbose)
             {
-                Log.Info("[Roomtone]   left rejected or collapsed.");
+                Log.Debug("[Roomtone]   left rejected or collapsed.");
             }
 
             if (rightAccepted && rightEnd - midpoint > epsilon)
@@ -893,23 +893,23 @@ public sealed class RoomToneInsertionStage
                     {
                         if (verbose)
                         {
-                        Log.Info($"[Roomtone]   right rejected [{midpoint:F3},{safeRightEnd:F3}] maxRms={stats.MaxRmsDb:F2} dB > threshold {rightThresholdDb:F2} dB");
+                        Log.Debug($"[Roomtone]   right rejected [{midpoint:F3},{safeRightEnd:F3}] maxRms={stats.MaxRmsDb:F2} dB > threshold {rightThresholdDb:F2} dB");
                         }
                     }
                     else
                     {
-                        Log.Info($"[Roomtone]   right accepted [{midpoint:F3},{safeRightEnd:F3}] meanRms={stats.MeanRmsDb:F2} dB");
+                        Log.Debug($"[Roomtone]   right accepted [{midpoint:F3},{safeRightEnd:F3}] meanRms={stats.MeanRmsDb:F2} dB");
                         rightGap = CreateGap(midpoint, safeRightEnd, leftEntry?.SentenceId, rightEntry?.SentenceId, stats);
                     }
                 }
                 else if (verbose)
                 {
-                    Log.Info("[Roomtone]   right collapsed after safety clamp.");
+                    Log.Debug("[Roomtone]   right collapsed after safety clamp.");
                 }
             }
             else if (verbose)
             {
-                Log.Info("[Roomtone]   right rejected or collapsed.");
+                Log.Debug("[Roomtone]   right rejected or collapsed.");
             }
 
             if (leftGap is not null && rightGap is not null)
@@ -920,7 +920,7 @@ public sealed class RoomToneInsertionStage
                 {
                     if (verbose)
                     {
-                        Log.Info("[Roomtone]   final collapsed after clamps.");
+                        Log.Debug("[Roomtone]   final collapsed after clamps.");
                     }
                     return produced;
                 }
@@ -931,7 +931,7 @@ public sealed class RoomToneInsertionStage
                 {
                     if (verbose && stats.MaxRmsDb > combinedThreshold)
                     {
-                        Log.Info($"[Roomtone]   final rejected [{finalStart:F3},{finalEnd:F3}] maxRms={stats.MaxRmsDb:F2} dB > threshold {combinedThreshold:F2} dB");
+                        Log.Debug($"[Roomtone]   final rejected [{finalStart:F3},{finalEnd:F3}] maxRms={stats.MaxRmsDb:F2} dB > threshold {combinedThreshold:F2} dB");
                     }
                 }
             }
@@ -946,7 +946,7 @@ public sealed class RoomToneInsertionStage
                         var stats = analyzer.AnalyzeGap(start, end);
                         if (!TryAddGapWithBreath(start, end, leftEntry?.SentenceId, rightEntry?.SentenceId, leftPhones, rightPhones, stats, leftThresholdDb, "left-only", leftClamp, rightClamp) && verbose && stats.MaxRmsDb > leftThresholdDb)
                         {
-                            Log.Info($"[Roomtone]   left-only rejected [{start:F3},{end:F3}] maxRms={stats.MaxRmsDb:F2} dB > threshold {leftThresholdDb:F2} dB");
+                            Log.Debug($"[Roomtone]   left-only rejected [{start:F3},{end:F3}] maxRms={stats.MaxRmsDb:F2} dB > threshold {leftThresholdDb:F2} dB");
                         }
                     }
                 }
@@ -959,7 +959,7 @@ public sealed class RoomToneInsertionStage
                         var stats = analyzer.AnalyzeGap(start, end);
                         if (!TryAddGapWithBreath(start, end, leftEntry?.SentenceId, rightEntry?.SentenceId, leftPhones, rightPhones, stats, rightThresholdDb, "right-only", leftClamp, rightClamp) && verbose && stats.MaxRmsDb > rightThresholdDb)
                         {
-                            Log.Info($"[Roomtone]   right-only rejected [{start:F3},{end:F3}] maxRms={stats.MaxRmsDb:F2} dB > threshold {rightThresholdDb:F2} dB");
+                            Log.Debug($"[Roomtone]   right-only rejected [{start:F3},{end:F3}] maxRms={stats.MaxRmsDb:F2} dB > threshold {rightThresholdDb:F2} dB");
                         }
                     }
                 }
@@ -985,7 +985,7 @@ public sealed class RoomToneInsertionStage
                 {
                     if (verbose)
                     {
-                        Log.Info("[Roomtone]   hint collapsed after clamping; skipping.");
+                        Log.Debug("[Roomtone]   hint collapsed after clamping; skipping.");
                     }
                     return;
                 }
@@ -996,7 +996,7 @@ public sealed class RoomToneInsertionStage
                 {
                     if (verbose)
                     {
-                        Log.Info($"[Roomtone]   hint rejected [{start:F3},{end:F3}] maxRms={stats.MaxRmsDb:F2} dB > threshold {hintThreshold:F2} dB");
+                        Log.Debug($"[Roomtone]   hint rejected [{start:F3},{end:F3}] maxRms={stats.MaxRmsDb:F2} dB > threshold {hintThreshold:F2} dB");
                     }
                     return;
                 }
@@ -1037,7 +1037,7 @@ public sealed class RoomToneInsertionStage
                 {
                     if (verbose)
                     {
-                        Log.Info($"[Roomtone]   {context} rejected by breath guard [{start:F3},{end:F3}]");
+                        Log.Debug($"[Roomtone]   {context} rejected by breath guard [{start:F3},{end:F3}]");
                     }
                     return false;
                 }
@@ -1060,7 +1060,7 @@ public sealed class RoomToneInsertionStage
                 {
                     if (verbose)
                     {
-                        Log.Info($"[Roomtone]   {context} collapsed after breath expansion");
+                        Log.Debug($"[Roomtone]   {context} collapsed after breath expansion");
                     }
                     return false;
                 }
@@ -1085,7 +1085,7 @@ public sealed class RoomToneInsertionStage
 
                 if (verbose && stats.MaxRmsDb > thresholdDb)
                 {
-                    Log.Info($"[Roomtone]   {context} accepted despite maxRms={stats.MaxRmsDb:F2} dB > threshold {thresholdDb:F2} dB (breath regions {finalBreaths.Count})");
+                    Log.Debug($"[Roomtone]   {context} accepted despite maxRms={stats.MaxRmsDb:F2} dB > threshold {thresholdDb:F2} dB (breath regions {finalBreaths.Count})");
                 }
 
                 produced.Add(CreateGap(adjustedStart, adjustedEnd, prevId, nextId, finalStats, finalBreaths));
@@ -1102,7 +1102,7 @@ public sealed class RoomToneInsertionStage
                 double rms = analyzer.MeasureRms(boundary, end);
                 if (verbose)
                 {
-                    Log.Info($"[Roomtone]     test left [{boundary:F3},{end:F3}] rms={rms:F2} dB");
+                    Log.Debug($"[Roomtone]     test left [{boundary:F3},{end:F3}] rms={rms:F2} dB");
                 }
                 if (rms <= thresholdDb)
                 {
@@ -1133,7 +1133,7 @@ public sealed class RoomToneInsertionStage
                 double rms = analyzer.MeasureRms(start, boundary);
                 if (verbose)
                 {
-                    Log.Info($"[Roomtone]     test right [{start:F3},{boundary:F3}] rms={rms:F2} dB");
+                    Log.Debug($"[Roomtone]     test right [{start:F3},{boundary:F3}] rms={rms:F2} dB");
                 }
                 if (rms <= thresholdDb)
                 {
@@ -1308,14 +1308,14 @@ public sealed class RoomToneInsertionStage
             {
                 if (verbose)
                 {
-                    Log.Info($"[Roomtone]   breath guard: detected speech energy {rms:F2} dB in [{startSec:F3},{endSec:F3}]");
+                    Log.Debug($"[Roomtone]   breath guard: detected speech energy {rms:F2} dB in [{startSec:F3},{endSec:F3}]");
                 }
                 return false;
             }
 
             if (verbose)
             {
-                Log.Info(
+                Log.Debug(
                     "[Roomtone]   breath guard: FeatureExtraction yielded no regions; accepted via snap-to-energy fallback [{Start:F3},{End:F3}] rms={Rms:F2} dB <= {Threshold:F2} dB",
                     startSec,
                     endSec,
@@ -1338,7 +1338,7 @@ public sealed class RoomToneInsertionStage
                 {
                     if (verbose)
                     {
-                        Log.Info($"[Roomtone]   breath guard: speech energy {rms:F2} dB in [{segmentStart:F3},{segmentEnd:F3}]");
+                        Log.Debug($"[Roomtone]   breath guard: speech energy {rms:F2} dB in [{segmentStart:F3},{segmentEnd:F3}]");
                     }
                     return false;
                 }
@@ -1354,7 +1354,7 @@ public sealed class RoomToneInsertionStage
             {
                 if (verbose)
                 {
-                    Log.Info($"[Roomtone]   breath guard: speech energy {rms:F2} dB in [{cursor:F3},{endSec:F3}]");
+                    Log.Debug($"[Roomtone]   breath guard: speech energy {rms:F2} dB in [{cursor:F3},{endSec:F3}]");
                 }
                 return false;
             }
@@ -1362,7 +1362,7 @@ public sealed class RoomToneInsertionStage
 
         if (verbose)
         {
-            Log.Info(
+            Log.Debug(
                 "[Roomtone]   breath guard: FeatureExtraction accepted {RegionCount} region(s) for [{Start:F3},{End:F3}]",
                 mapped.Count,
                 startSec,

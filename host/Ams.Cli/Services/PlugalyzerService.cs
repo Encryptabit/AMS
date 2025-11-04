@@ -85,8 +85,8 @@ internal static class PlugalyzerService
         var stdoutTcs = new TaskCompletionSource<object?>();
         var stderrTcs = new TaskCompletionSource<object?>();
 
-        onStdOut ??= line => Log.Info("plugalyzer> {Line}", line);
-        onStdErr ??= line => Log.Warn("plugalyzer! {Line}", line);
+        onStdOut ??= line => Log.Debug("plugalyzer> {Line}", line);
+        onStdErr ??= line => Log.Debug("plugalyzer! {Line}", line);
 
         process.OutputDataReceived += (_, e) =>
         {

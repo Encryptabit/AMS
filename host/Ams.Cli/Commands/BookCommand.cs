@@ -115,11 +115,11 @@ public static class BookCommand
 
         if (populated <= 0)
         {
-            Log.Warn("No new phoneme entries were populated (missing before={Before}, after={After}).", missingBefore, missingAfter);
+            Log.Debug("No new phoneme entries were populated (missing before={Before}, after={After}).", missingBefore, missingAfter);
         }
         else
         {
-            Log.Info("Populated phonemes for {Count} words (remaining without phonemes: {Remaining}).", populated, missingAfter);
+            Log.Debug("Populated phonemes for {Count} words (remaining without phonemes: {Remaining}).", populated, missingAfter);
         }
 
         var destination = outputFile ?? indexFile;
@@ -131,11 +131,11 @@ public static class BookCommand
 
         if (outputFile == null)
         {
-            Log.Info("Overwriting index in-place at {Path}", outputPath);
+            Log.Debug("Overwriting index in-place at {Path}", outputPath);
         }
         else
         {
-            Log.Info("Writing enriched index to {Path}", outputPath);
+            Log.Debug("Writing enriched index to {Path}", outputPath);
         }
 
         var outputJson = JsonSerializer.Serialize(enriched, new JsonSerializerOptions
@@ -149,7 +149,7 @@ public static class BookCommand
 
     private static async Task RunVerifyAsync(FileInfo indexFile)
     {
-        Log.Info("Verifying BookIndex (non-mutating)...");
+        Log.Debug("Verifying BookIndex (non-mutating)...");
         if (!indexFile.Exists)
             throw new FileNotFoundException($"Index file not found: {indexFile.FullName}");
 
@@ -348,33 +348,33 @@ public static class BookCommand
         var stableHash = Sha256Hex(Encoding.UTF8.GetBytes(canonical));
 
         // Emit results
-        Log.Info("=== Book Verify Results ===");
-        Log.Info("Source file: {SourceFile}", idx.SourceFile);
-        Log.Info("Words/Sentences/Paragraphs: {WordCount}/{SentenceCount}/{ParagraphCount}", wordsCount, sentencesCount, paragraphsCount);
-        Log.Info("Counts parity: {Status}", failures.Any(f => f.Contains("Totals")) ? "FAIL" : "OK");
-        Log.Info("Ordering/coverage: {Status}", failures.Except(failures.Where(f=>f.Contains("Totals"))).Any() ? "FAIL" : "OK");
-        Log.Info("Warnings: {WarningCount}", warnings.Count == 0 ? "none" : warnings.Count.ToString());
-        Log.Info("Determinism hash (canonical JSON): {StableHash}", stableHash);
+        Log.Debug("=== Book Verify Results ===");
+        Log.Debug("Source file: {SourceFile}", idx.SourceFile);
+        Log.Debug("Words/Sentences/Paragraphs: {WordCount}/{SentenceCount}/{ParagraphCount}", wordsCount, sentencesCount, paragraphsCount);
+        Log.Debug("Counts parity: {Status}", failures.Any(f => f.Contains("Totals")) ? "FAIL" : "OK");
+        Log.Debug("Ordering/coverage: {Status}", failures.Except(failures.Where(f=>f.Contains("Totals"))).Any() ? "FAIL" : "OK");
+        Log.Debug("Warnings: {WarningCount}", warnings.Count == 0 ? "none" : warnings.Count.ToString());
+        Log.Debug("Determinism hash (canonical JSON): {StableHash}", stableHash);
 
         if (warnings.Count > 0)
         {
-            Log.Warn("Warning details:");
+            Log.Debug("Warning details:");
             foreach (var w in warnings)
-                Log.Warn("  - {Warning}", w);
+                Log.Debug("  - {Warning}", w);
         }
 
         if (failures.Count > 0)
         {
-            Log.Warn("Failures:");
+            Log.Debug("Failures:");
             foreach (var f in failures)
-                Log.Warn("  - {Failure}", f);
-            Log.Warn("Keep BookIndex canonical — do not normalize to fix.");
-            Log.Warn("Adjust decoder tokenization and paragraph style classification (DocX) instead.");
+                Log.Debug("  - {Failure}", f);
+            Log.Debug("Keep BookIndex canonical — do not normalize to fix.");
+            Log.Debug("Adjust decoder tokenization and paragraph style classification (DocX) instead.");
             Environment.ExitCode = 2; // Non-zero for CI
         }
         else
         {
-            Log.Info("OK: BookIndex is consistent and canonical.");
+            Log.Debug("OK: BookIndex is consistent and canonical.");
         }
     }
 

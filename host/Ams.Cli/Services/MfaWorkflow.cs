@@ -50,7 +50,7 @@ internal static class MfaWorkflow
             }
             catch (Exception ex)
             {
-                Log.Warn("Failed to delete existing TextGrid copy {Path}: {Message}", textGridCopyPath, ex.Message);
+                Log.Debug("Failed to delete existing TextGrid copy {Path}: {Message}", textGridCopyPath, ex.Message);
             }
         }
 
@@ -68,6 +68,9 @@ internal static class MfaWorkflow
         var customDictionaryPath = Path.Combine(mfaRoot, chapterStem + ".dictionary.zip");
         var alignOutputDir = Path.Combine(mfaRoot, chapterStem + ".align");
 
+        const int FastAlignBeam = 80;
+        const int FastAlignRetryBeam = 200;
+
         var baseContext = new MfaChapterContext
         {
             CorpusDirectory = corpusDir,
@@ -78,100 +81,78 @@ internal static class MfaWorkflow
             G2pModel = g2pModel,
             G2pOutputPath = g2pOutputPath,
             CustomDictionaryPath = customDictionaryPath,
-            Beam = 120,
-            RetryBeam = 400,
+            Beam = FastAlignBeam,
+            RetryBeam = FastAlignRetryBeam,
             SingleSpeaker = true,
             CleanOutput = true
         };
 
         var service = new MfaService();
 
-        try
+        Log.Debug("Running MFA validate on corpus {CorpusDir}", corpusDir);
+        var oovListPath = FindOovListFile(mfaRoot);
+        var sanitizedOovPath = oovListPath is not null
+            ? CreateSanitizedOovList(mfaRoot, chapterStem, oovListPath)
+            : null;
+
+        var hasRealOovs = sanitizedOovPath is not null;
+
+        bool customDictionaryAvailable = false;
+
+        if (hasRealOovs)
         {
-            Log.Info("Running MFA validate on corpus {CorpusDir}", corpusDir);
-            var validateResult = await service.ValidateAsync(baseContext, cancellationToken).ConfigureAwait(false);
-            var validateSucceeded = EnsureSuccess("mfa validate", validateResult, allowFailure: true);
+            Log.Debug("Generating pronunciations for OOV terms ({OovFile})", sanitizedOovPath);
+            var g2pContext = baseContext with { OovListPath = sanitizedOovPath };
+            var g2pResult = await service.GeneratePronunciationsAsync(g2pContext, cancellationToken).ConfigureAwait(false);
+            EnsureSuccess("mfa g2p", g2pResult);
 
-            if (!validateSucceeded)
+            if (!File.Exists(g2pOutputPath) || new FileInfo(g2pOutputPath).Length == 0)
             {
-                if (IsZeroDivision(validateResult))
-                {
-                    Log.Warn("mfa validate reported a ZeroDivisionError (likely due to very small corpora); continuing with generated artifacts");
-                }
-                else
-                {
-                    throw new InvalidOperationException("mfa validate failed");
-                }
-            }
-
-            var oovListPath = FindOovListFile(mfaRoot);
-            var sanitizedOovPath = oovListPath is not null
-                ? CreateSanitizedOovList(mfaRoot, chapterStem, oovListPath)
-                : null;
-
-            var hasRealOovs = sanitizedOovPath is not null;
-
-            bool customDictionaryAvailable = false;
-
-            if (hasRealOovs)
-            {
-                Log.Info("Generating pronunciations for OOV terms ({OovFile})", sanitizedOovPath);
-                var g2pContext = baseContext with { OovListPath = sanitizedOovPath };
-                var g2pResult = await service.GeneratePronunciationsAsync(g2pContext, cancellationToken).ConfigureAwait(false);
-                EnsureSuccess("mfa g2p", g2pResult);
-
-                if (!File.Exists(g2pOutputPath) || new FileInfo(g2pOutputPath).Length == 0)
-                {
-                    Log.Warn("G2P output missing or empty ({Path}); skipping custom dictionary stage", g2pOutputPath);
-                }
-                else
-                {
-                    Log.Info("Adding pronunciations to dictionary ({DictionaryOutput})", customDictionaryPath);
-                    var addWordsContext = baseContext with { OovListPath = sanitizedOovPath };
-                    var addWordsResult = await service.AddWordsAsync(addWordsContext, cancellationToken).ConfigureAwait(false);
-                    EnsureSuccess("mfa model add_words", addWordsResult);
-
-                    customDictionaryAvailable = File.Exists(customDictionaryPath);
-                }
+                Log.Debug("G2P output missing or empty ({Path}); skipping custom dictionary stage", g2pOutputPath);
             }
             else
             {
-                Log.Info("No substantive OOV entries detected; skipping G2P/add_words");
+                Log.Debug("Adding pronunciations to dictionary ({DictionaryOutput})", customDictionaryPath);
+                var addWordsContext = baseContext with { OovListPath = sanitizedOovPath };
+                var addWordsResult = await service.AddWordsAsync(addWordsContext, cancellationToken).ConfigureAwait(false);
+                EnsureSuccess("mfa model add_words", addWordsResult);
+
+                customDictionaryAvailable = File.Exists(customDictionaryPath);
             }
-
-            var alignContext = customDictionaryAvailable
-                ? baseContext
-                : baseContext with { CustomDictionaryPath = null };
-
-            Log.Info("Running MFA align for chapter {Chapter}", chapterStem);
-            var alignResult = await service.AlignAsync(alignContext, cancellationToken).ConfigureAwait(false);
-            EnsureSuccess("mfa align", alignResult);
-
-            CopyIfExists(Path.Combine(mfaRoot, chapterStem + ".g2p.txt"), Path.Combine(mfaCopyDir, chapterStem + ".g2p.txt"));
-            CopyIfExists(Path.Combine(mfaRoot, chapterStem + ".oov.cleaned.txt"), Path.Combine(mfaCopyDir, chapterStem + ".oov.cleaned.txt"));
-            CopyIfExists(Path.Combine(mfaRoot, chapterStem + ".dictionary.zip"), Path.Combine(mfaCopyDir, chapterStem + ".dictionary.zip"));
-
-            var textGridCandidates = new[]
-            {
-                Path.Combine(alignOutputDir, "alignment", "mfa", chapterStem + ".TextGrid"),
-                Path.Combine(alignOutputDir, chapterStem + ".TextGrid")
-            };
-            foreach (var candidate in textGridCandidates)
-            {
-                if (File.Exists(candidate))
-                {
-                    CopyIfExists(candidate, textGridCopyPath);
-                    break;
-                }
-            }
-
-            CopyIfExists(Path.Combine(alignOutputDir, "alignment", "mfa", "alignment_analysis.csv"),
-                Path.Combine(mfaCopyDir, "alignment_analysis.csv"));
         }
-        finally
+        else
         {
-            MfaProcessSupervisor.Shutdown();
+            Log.Debug("No substantive OOV entries detected; skipping G2P/add_words");
         }
+
+        var alignContext = customDictionaryAvailable
+            ? baseContext
+            : baseContext with { CustomDictionaryPath = null };
+
+        Log.Debug("Running MFA align for chapter {Chapter}", chapterStem);
+        var alignResult = await service.AlignAsync(alignContext, cancellationToken).ConfigureAwait(false);
+        EnsureSuccess("mfa align", alignResult);
+
+        CopyIfExists(Path.Combine(mfaRoot, chapterStem + ".g2p.txt"), Path.Combine(mfaCopyDir, chapterStem + ".g2p.txt"));
+        CopyIfExists(Path.Combine(mfaRoot, chapterStem + ".oov.cleaned.txt"), Path.Combine(mfaCopyDir, chapterStem + ".oov.cleaned.txt"));
+        CopyIfExists(Path.Combine(mfaRoot, chapterStem + ".dictionary.zip"), Path.Combine(mfaCopyDir, chapterStem + ".dictionary.zip"));
+
+        var textGridCandidates = new[]
+        {
+            Path.Combine(alignOutputDir, "alignment", "mfa", chapterStem + ".TextGrid"),
+            Path.Combine(alignOutputDir, chapterStem + ".TextGrid")
+        };
+        foreach (var candidate in textGridCandidates)
+        {
+            if (File.Exists(candidate))
+            {
+                CopyIfExists(candidate, textGridCopyPath);
+                break;
+            }
+        }
+
+        CopyIfExists(Path.Combine(alignOutputDir, "alignment", "mfa", "alignment_analysis.csv"),
+            Path.Combine(mfaCopyDir, "alignment_analysis.csv"));
     }
 
     private static string EnsureDirectory(string path)
@@ -275,15 +256,15 @@ internal static class MfaWorkflow
     {
         foreach (var line in result.StdOut)
         {
-            Log.Info("{Stage}> {Line}", stage, line);
+            Log.Debug("{Stage}> {Line}", stage, line);
         }
 
         foreach (var line in result.StdErr)
         {
-            Log.Warn("{Stage}! {Line}", stage, line);
+            Log.Debug("{Stage}! {Line}", stage, line);
         }
 
-        Log.Info("{Stage} command: {Command}", stage, result.Command);
+        Log.Debug("{Stage} command: {Command}", stage, result.Command);
 
         if (result.ExitCode != 0)
         {
@@ -292,6 +273,7 @@ internal static class MfaWorkflow
                 throw new InvalidOperationException($"{stage} failed with exit code {result.ExitCode} (command: {result.Command})");
             }
 
+            Log.Debug("{Stage} returned exit code {ExitCode}; ignoring due to allowFailure", stage, result.ExitCode);
             return false;
         }
 
@@ -313,7 +295,7 @@ internal static class MfaWorkflow
         }
         catch (Exception ex)
         {
-            Log.Warn("Failed to probe for OOV list: {Message}", ex.Message);
+            Log.Debug("Failed to probe for OOV list: {Message}", ex.Message);
             return null;
         }
     }
@@ -355,7 +337,7 @@ internal static class MfaWorkflow
         }
         catch (Exception ex)
         {
-            Log.Warn("Unable to sanitize OOV list {Path}: {Message}", rawOovPath, ex.Message);
+            Log.Debug("Unable to sanitize OOV list {Path}: {Message}", rawOovPath, ex.Message);
             return null;
         }
     }
@@ -378,7 +360,7 @@ internal static class MfaWorkflow
             }
             catch (Exception ex)
             {
-                Log.Warn("Failed to delete stale MFA artifact {Path}: {Message}", path, ex.Message);
+                Log.Debug("Failed to delete stale MFA artifact {Path}: {Message}", path, ex.Message);
             }
         }
 
@@ -406,7 +388,7 @@ internal static class MfaWorkflow
         }
         catch (Exception ex)
         {
-            Log.Warn("Failed to delete stale MFA directory {Path}: {Message}", path, ex.Message);
+            Log.Debug("Failed to delete stale MFA directory {Path}: {Message}", path, ex.Message);
         }
     }
 
@@ -443,7 +425,7 @@ internal static class MfaWorkflow
         }
         catch (Exception ex)
         {
-            Log.Warn("Failed to copy MFA artifact from {Source} to {Destination}: {Message}", sourcePath, destinationPath, ex.Message);
+            Log.Debug("Failed to copy MFA artifact from {Source} to {Destination}: {Message}", sourcePath, destinationPath, ex.Message);
         }
     }
 }
