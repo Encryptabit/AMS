@@ -25,6 +25,7 @@ public sealed record FrameBreathDetectorOptions
     public double WInvNacf { get; init; } = 0.20;
     public double WSlope { get; init; } = 0.10;
 
+    public double ScoreCenter { get; init; } = 0.5;
     public double ScoreHigh { get; init; } = 0.45;
     public double ScoreLow { get; init; } = 0.25;
     public int MinRunMs { get; init; } = 60;
@@ -129,14 +130,22 @@ public static class FeatureExtraction
         double rmsGate = Math.Max(opt.AbsFloorDb, baseDb + opt.AmpMarginDb);
 
         var flatZ = ZNorm(features.Flat);
-        var hfZ = ZNorm(Log10Shift(features.HfLf));
+        var hfZ = ZNorm(Log1p(features.HfLf));
         var zcrZ = ZNorm(features.Zcr);
         var invN = features.Nacf.Select(v => 1.0 - v).ToArray();
         var invNZ = ZNorm(invN);
         var slopeZ = ZNorm(features.Slope);
-        for (int i = 0; i < slopeZ.Length; i++) slopeZ[i] = -slopeZ[i];
 
         var score = new double[features.Times.Length];
+        double halfFrameSec = Math.Max(0.0, opt.FrameMs * 0.001 * 0.5);
+        double weightSum =
+            opt.WFlat +
+            opt.WHfRatio +
+            opt.WZcr +
+            opt.WInvNacf +
+            opt.WSlope;
+        if (weightSum <= 0) weightSum = 1.0;
+
         for (int i = 0; i < score.Length; i++)
         {
             double s = 0;
@@ -145,8 +154,18 @@ public static class FeatureExtraction
             s += opt.WZcr * Clamp01(zcrZ[i]);
             s += opt.WInvNacf * Clamp01(invNZ[i]);
             s += opt.WSlope * Clamp01(slopeZ[i]);
-            if (opt.ApplyEnergyGate && features.Db[i] < rmsGate) s *= 0.25;
-            score[i] = Sigmoid((s - 0.5) * 3.0 * opt.Aggressiveness);
+            s /= weightSum;
+
+            if (opt.ApplyEnergyGate && features.Db[i] < rmsGate)
+            {
+                double deficit = features.Db[i] - rmsGate; // negative when below gate
+                double atten = deficit >= 0
+                    ? 1.0
+                    : 0.25 + 0.75 * Math.Clamp((deficit + 6.0) / 6.0, 0.0, 1.0);
+                s *= atten;
+            }
+
+            score[i] = Sigmoid((s - opt.ScoreCenter) * 3.0 * opt.Aggressiveness);
         }
 
         var protect = BuildProtectionMask(features.Times, startSec, endSec, opt, leftPhones, rightPhones);
@@ -187,8 +206,8 @@ public static class FeatureExtraction
         void AddRegion(int a, int b)
         {
             if (a < 0 || b < a) return;
-            double t0 = features.Times[a];
-            double t1 = features.Times[b];
+            double t0 = features.Times[a] - halfFrameSec;
+            double t1 = features.Times[b] + halfFrameSec;
             regions.Add(new Region(Math.Max(startSec, t0), Math.Min(endSec, t1)));
         }
     }
@@ -248,7 +267,7 @@ public static class FeatureExtraction
 
             double rms = 0.0;
             int zeroCrossings = 0;
-            double previous = segment[start];
+            double previous = segment[start] * window[0];
 
             for (int j = 0; j < frame; j++)
             {
@@ -380,10 +399,11 @@ public static class FeatureExtraction
 
         if (rightPhones != null)
         {
+            double fricativeGuardSec = options.FricativeGuardMs / 1000.0;
             foreach (var ph in rightPhones)
             {
                 if (!IsFricativeLike(ph.Label)) continue;
-                double guardStart = ph.StartSec - guardLeftSec;
+                double guardStart = ph.StartSec - fricativeGuardSec;
                 for (int i = 0; i < protect.Length; i++)
                 {
                     double t = times[i];
@@ -428,9 +448,15 @@ public static class FeatureExtraction
     private static double[] Hann(int n)
     {
         var window = new double[n];
+        if (n == 1)
+        {
+            window[0] = 1.0;
+            return window;
+        }
+
         for (int i = 0; i < n; i++)
         {
-            window[i] = 0.5 * (1 - Math.Cos(2 * Math.PI * i / n));
+            window[i] = 0.5 * (1 - Math.Cos(2 * Math.PI * i / (n - 1)));
         }
 
         return window;
@@ -441,17 +467,6 @@ public static class FeatureExtraction
         int p = 1;
         while (p < n) p <<= 1;
         return p;
-    }
-
-    private static double[] Log10Shift(double[] values)
-    {
-        var result = new double[values.Length];
-        for (int i = 0; i < values.Length; i++)
-        {
-            result[i] = Math.Log10(values[i] + 1e-3);
-        }
-
-        return result;
     }
 
     private static double[] ZNorm(double[] values)
@@ -485,27 +500,51 @@ public static class FeatureExtraction
     {
         int lagMin = Math.Max(1, sampleRate / 400);
         int lagMax = Math.Min(length - 1, sampleRate / 80);
-        double denom = 1e-9;
+        if (lagMin >= lagMax || length <= 1)
+        {
+            return 0.0;
+        }
+
+        double mean = 0.0;
         for (int i = 0; i < length; i++)
         {
-            denom += source[start + i] * source[start + i];
+            mean += source[start + i];
         }
+        mean /= length;
 
         double best = 0.0;
         for (int lag = lagMin; lag <= lagMax; lag++)
         {
+            int n = length - lag;
             double numerator = 0.0;
-            int limit = length - lag;
-            for (int i = 0; i < limit; i++)
+            double e0 = 1e-12;
+            double e1 = 1e-12;
+            for (int i = 0; i < n; i++)
             {
-                numerator += source[start + i] * source[start + i + lag];
+                double a = source[start + i] - mean;
+                double b = source[start + i + lag] - mean;
+                numerator += a * b;
+                e0 += a * a;
+                e1 += b * b;
             }
 
-            double value = numerator / denom;
+            double value = numerator / Math.Sqrt(e0 * e1);
             if (value > best) best = value;
         }
 
         return Math.Clamp(best, 0, 1);
+    }
+
+    private static double[] Log1p(double[] values)
+    {
+        var result = new double[values.Length];
+        for (int i = 0; i < values.Length; i++)
+        {
+            double v = values[i];
+            result[i] = v <= -1 ? 0.0 : Math.Log(1.0 + Math.Max(-0.999, v));
+        }
+
+        return result;
     }
 
     private static void FFT(Complex[] buffer, bool forward)

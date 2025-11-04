@@ -15,6 +15,7 @@ using Ams.Cli.Repl;
 using Ams.Cli.Utilities;
 using Spectre.Console;
 using Spectre.Console.Rendering;
+using SentenceTiming = Ams.Core.Artifacts.SentenceTiming;
 
 namespace Ams.Cli.Commands;
 
@@ -27,27 +28,29 @@ internal sealed class ValidateTimingSession
     private readonly FileInfo _hydrateFile;
     private readonly bool _runProsodyAnalysis;
     private readonly bool _includeAllIntraSentenceGaps;
+    private readonly bool _interSentenceOnly;
     private readonly PausePolicy _policy;
     private readonly string? _policySourcePath;
     private readonly FileInfo _pauseAdjustmentsFile;
     private PauseAnalysisReport? _prosodyAnalysis;
 
     public ValidateTimingSession(FileInfo transcriptFile, FileInfo bookIndexFile, FileInfo hydrateFile,
-        bool runProsodyAnalysis, bool includeAllIntraSentenceGaps = false)
+        bool runProsodyAnalysis, bool includeAllIntraSentenceGaps = false, bool interSentenceOnly = true)
     {
         _transcriptFile = transcriptFile ?? throw new ArgumentNullException(nameof(transcriptFile));
         _bookIndexFile = bookIndexFile ?? throw new ArgumentNullException(nameof(bookIndexFile));
         _hydrateFile = hydrateFile ?? throw new ArgumentNullException(nameof(hydrateFile));
         _runProsodyAnalysis = runProsodyAnalysis;
         _includeAllIntraSentenceGaps = includeAllIntraSentenceGaps;
+        _interSentenceOnly = interSentenceOnly;
         (_policy, _policySourcePath) = PausePolicyResolver.Resolve(_transcriptFile);
         if (!string.IsNullOrWhiteSpace(_policySourcePath))
         {
-            Log.Info("Loaded pause policy from {Path}", _policySourcePath);
+            Log.Debug("Loaded pause policy from {Path}", _policySourcePath);
         }
         else
         {
-            Log.Info("Using default pause policy preset (house).");
+            Log.Debug("Using default pause policy preset (house).");
         }
 
         var baseName = Path.GetFileNameWithoutExtension(_transcriptFile.Name);
@@ -83,7 +86,6 @@ internal sealed class ValidateTimingSession
         }
 
         RenderIntro(context.Transcript, context.BookIndex, context.Analysis.Spans.Count);
-
         var sessionState = new InteractiveState(
             context.PauseMap,
             context.Analysis,
@@ -128,7 +130,7 @@ internal sealed class ValidateTimingSession
         if (hasAdjustments)
         {
             var relativePath = GetRelativePathSafe(_pauseAdjustmentsFile.FullName);
-            Log.Info(
+            Log.Debug(
                 "validate timing headless saved {Count} adjustment(s) to {Path} (compression total={Total}, within={Within}, downstream={Downstream})",
                 adjustments.Count,
                 relativePath,
@@ -138,7 +140,7 @@ internal sealed class ValidateTimingSession
         }
         else
         {
-            Log.Warn("validate timing headless produced no adjustments; skipping pause-adjustments file");
+            Log.Debug("validate timing headless produced no adjustments; skipping pause-adjustments file");
         }
 
         return new HeadlessResult(
@@ -474,6 +476,7 @@ internal sealed class ValidateTimingSession
     {
         var dynamicAdjustments = state.GetCommittedAdjustments()
             .Where(adjust => !IsStructuralClass(adjust.Class))
+            .Where(adjust => !_interSentenceOnly || adjust.LeftSentenceId != adjust.RightSentenceId)
             .ToList();
 
         var structural = BuildStaticBufferAdjustments(state, dynamicAdjustments);

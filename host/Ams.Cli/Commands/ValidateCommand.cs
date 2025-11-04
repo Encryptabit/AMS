@@ -15,6 +15,7 @@ using Ams.Core.Hydrate;
 using Ams.Core.Prosody;
 using Ams.Cli.Repl;
 using Ams.Cli.Utilities;
+using SentenceTiming = Ams.Core.Artifacts.SentenceTiming;
 
 namespace Ams.Cli.Commands;
 
@@ -64,6 +65,11 @@ public static class ValidateCommand
             "Include all detected intra-sentence gaps (TextGrid silences) instead of only script punctuation.");
         includeAllIntraOption.AddAlias("-A");
 
+        var interOnlyOption = new Option<bool>(
+            "--inter-only",
+            () => false,
+            "Only allow inter-sentence (between sentences) pause edits; ignore intra-sentence adjustments.");
+
         var headlessOption = new Option<bool>(
             "--headless",
             () => false,
@@ -80,6 +86,7 @@ public static class ValidateCommand
         cmd.AddOption(prosodyAnalyzeOption);
         cmd.AddOption(useAdjustedOption);
         cmd.AddOption(includeAllIntraOption);
+        cmd.AddOption(interOnlyOption);
         cmd.AddOption(headlessOption);
         cmd.AddOption(headlessOverwriteOption);
 
@@ -121,23 +128,23 @@ public static class ValidateCommand
                     var adjustedTx = TryResolveAdjustedArtifact(tx, ".pause-adjusted.align.tx.json");
                     if (adjustedTx is not null)
                     {
-                        Log.Info("validate timing loading pause-adjusted transcript: {0}", adjustedTx.FullName);
+                        Log.Debug("validate timing loading pause-adjusted transcript: {0}", adjustedTx.FullName);
                         tx = adjustedTx;
                     }
                     else
                     {
-                        Log.Warn("Pause-adjusted transcript not found; falling back to {0}", tx.FullName);
+                        Log.Debug("Pause-adjusted transcript not found; falling back to {0}", tx.FullName);
                     }
 
                     var adjustedHydrate = TryResolveAdjustedArtifact(hydrate, ".pause-adjusted.align.hydrate.json");
                     if (adjustedHydrate is not null)
                     {
-                        Log.Info("validate timing loading pause-adjusted hydrate: {0}", adjustedHydrate.FullName);
+                        Log.Debug("validate timing loading pause-adjusted hydrate: {0}", adjustedHydrate.FullName);
                         hydrate = adjustedHydrate;
                     }
                     else
                     {
-                        Log.Warn("Pause-adjusted hydrate not found; falling back to {0}", hydrate.FullName);
+                        Log.Debug("Pause-adjusted hydrate not found; falling back to {0}", hydrate.FullName);
                     }
                 }
 
@@ -159,8 +166,9 @@ public static class ValidateCommand
 
                 var runProsody = context.ParseResult.GetValueForOption(prosodyAnalyzeOption);
                 var includeAllIntra = context.ParseResult.GetValueForOption(includeAllIntraOption);
+                var interOnly = context.ParseResult.GetValueForOption(interOnlyOption);
 
-                var session = new ValidateTimingSession(tx, bookIndex, hydrate, runProsody, includeAllIntra);
+                var session = new ValidateTimingSession(tx, bookIndex, hydrate, runProsody, includeAllIntra, interOnly);
 
                 if (headless)
                 {
@@ -172,7 +180,7 @@ public static class ValidateCommand
                         return;
                     }
 
-                    Log.Info(
+                    Log.Debug(
                         "validate timing headless committed {Adjustments} adjustment(s); invoking timing-apply",
                         headlessResult.AdjustmentCount);
 
@@ -196,7 +204,7 @@ public static class ValidateCommand
             }
             catch (OperationCanceledException)
             {
-                Log.Warn("validate timing cancelled");
+                Log.Debug("validate timing cancelled");
                 context.ExitCode = 1;
             }
             catch (Exception ex)
@@ -281,7 +289,7 @@ public static class ValidateCommand
 
             if (File.Exists(targetPath) && !force)
             {
-                Log.Warn("pause-policy.json already exists at {Path}. Re-run with --force to overwrite.", targetPath);
+                Log.Debug("pause-policy.json already exists at {Path}. Re-run with --force to overwrite.", targetPath);
                 context.ExitCode = 0;
                 return;
             }
@@ -290,7 +298,7 @@ public static class ValidateCommand
             {
                 var policy = PausePolicyPresets.House();
                 PausePolicyStorage.Save(targetPath, policy);
-                Log.Info("pause-policy.json written to {Path}", targetPath);
+                Log.Debug("pause-policy.json written to {Path}", targetPath);
                 context.ExitCode = 0;
             }
             catch (Exception ex)
@@ -338,23 +346,23 @@ public static class ValidateCommand
             var adjustedTx = TryResolveAdjustedArtifact(txFile, ".pause-adjusted.align.tx.json");
             if (adjustedTx is not null)
             {
-                Log.Info("timing-apply loading pause-adjusted transcript: {0}", adjustedTx.FullName);
+                Log.Debug("timing-apply loading pause-adjusted transcript: {0}", adjustedTx.FullName);
                 effectiveTx = adjustedTx;
             }
             else
             {
-                Log.Warn("Pause-adjusted transcript not found; using {0}", effectiveTx.FullName);
+                Log.Debug("Pause-adjusted transcript not found; using {0}", effectiveTx.FullName);
             }
 
             var adjustedHydrate = TryResolveAdjustedArtifact(hydrateFile, ".pause-adjusted.align.hydrate.json");
             if (adjustedHydrate is not null)
             {
-                Log.Info("timing-apply loading pause-adjusted hydrate: {0}", adjustedHydrate.FullName);
+                Log.Debug("timing-apply loading pause-adjusted hydrate: {0}", adjustedHydrate.FullName);
                 effectiveHydrate = adjustedHydrate;
             }
             else
             {
-                Log.Warn("Pause-adjusted hydrate not found; using {0}", effectiveHydrate.FullName);
+                Log.Debug("Pause-adjusted hydrate not found; using {0}", effectiveHydrate.FullName);
             }
         }
 
@@ -378,7 +386,7 @@ public static class ValidateCommand
 
         if (adjustments.Adjustments.Count == 0)
         {
-            Log.Warn("No pause adjustments found in {Path}. Nothing to apply.", adjustmentsFile.FullName);
+            Log.Debug("No pause adjustments found in {Path}. Nothing to apply.", adjustmentsFile.FullName);
             return 0;
         }
 
@@ -444,7 +452,7 @@ public static class ValidateCommand
         double toneDuration = roomtoneBuffer.SampleRate > 0 ? roomtoneBuffer.Length / (double)roomtoneBuffer.SampleRate : 0.0;
         var toneStats = toneAnalyzer.AnalyzeGap(0.0, toneDuration);
         double toneGainLinear = 1.0;
-        Log.Info(
+        Log.Debug(
             "timing-apply using roomtone seed {0} (stageFade={1}, stageGain={2}, measuredRms={3:F2} dB, targetRms={4:F2} dB)",
             roomtonePath,
             stageFadeMs,
@@ -453,7 +461,9 @@ public static class ValidateCommand
             targetToneDb);
 
         var baselineTimings = BuildBaselineTimings(transcript, hydrated);
-        var timelineResult = PauseTimelineApplier.Apply(baselineTimings, adjustments.Adjustments);
+
+        var vettedAdjustments = VetPauseAdjustments(adjustments.Adjustments, transcript, audioBuffer);
+        var timelineResult = PauseTimelineApplier.Apply(baselineTimings, vettedAdjustments);
 
         var adjustedAudio = PauseAudioApplier.Apply(
             audioBuffer,
@@ -465,7 +475,7 @@ public static class ValidateCommand
             intraSentenceGaps: timelineResult.IntraSentenceGaps);
         WavIo.WriteFloat32(outWav.FullName, adjustedAudio);
 
-        var updatedTranscript = UpdateTranscriptTimings(transcript, timelineResult.Timeline);
+    var updatedTranscript = UpdateTranscriptTimings(transcript, timelineResult.Timeline);
         var updatedHydrate = UpdateHydratedTimings(hydrated, timelineResult.Timeline);
 
         var transcriptOut = BuildOutputJsonPath(effectiveTx, ".pause-adjusted.align.tx.json");
@@ -485,9 +495,9 @@ public static class ValidateCommand
         SaveJson(transcriptOut, updatedTranscript);
         SaveJson(hydrateOut, updatedHydrate);
 
-        Log.Info("Pause-adjusted audio saved to {Output}", outWav.FullName);
-        Log.Info("Updated transcript timings saved to {Output}", transcriptOut.FullName);
-        Log.Info("Updated hydrate timings saved to {Output}", hydrateOut.FullName);
+        Log.Debug("Pause-adjusted audio saved to {Output}", outWav.FullName);
+        Log.Debug("Updated transcript timings saved to {Output}", transcriptOut.FullName);
+        Log.Debug("Updated hydrate timings saved to {Output}", hydrateOut.FullName);
 
         return 0;
     }
@@ -572,7 +582,7 @@ public static class ValidateCommand
             }
             catch (OperationCanceledException)
             {
-                Log.Warn("timing-apply cancelled");
+                Log.Debug("timing-apply cancelled");
                 context.ExitCode = 1;
             }
             catch (Exception ex)
@@ -617,9 +627,9 @@ public static class ValidateCommand
                 return;
             }
             
-            Log.Info("Starting validation report viewer...");
-            Log.Info("Base directory: {BaseDir}", baseDir);
-            Log.Info("Server will run at: http://localhost:{Port}", port);
+            Log.Debug("Starting validation report viewer...");
+            Log.Debug("Base directory: {BaseDir}", baseDir);
+            Log.Debug("Server will run at: http://localhost:{Port}", port);
             
             var pythonScript = Path.Combine(
                 AppContext.BaseDirectory, 
@@ -629,7 +639,7 @@ public static class ValidateCommand
             if (!File.Exists(pythonScript))
             {
                 Log.Error("Validation viewer script not found at: {Path}", pythonScript);
-                Log.Info("Expected location: {Path}", pythonScript);
+                Log.Debug("Expected location: {Path}", pythonScript);
                 context.ExitCode = 1;
                 return;
             }
@@ -653,7 +663,7 @@ public static class ValidateCommand
                 return;
             }
             
-            Log.Info("Validation viewer started. Press Ctrl+C to stop.");
+            Log.Debug("Validation viewer started. Press Ctrl+C to stop.");
             
             try
             {
@@ -662,7 +672,7 @@ public static class ValidateCommand
             }
             catch (OperationCanceledException)
             {
-                Log.Info("Shutting down validation viewer...");
+                Log.Debug("Shutting down validation viewer...");
                 if (!process.HasExited)
                 {
                     process.Kill(entireProcessTree: true);
@@ -744,7 +754,7 @@ public static class ValidateCommand
 
                 Directory.CreateDirectory(targetFile.DirectoryName ?? Directory.GetCurrentDirectory());
                 await File.WriteAllTextAsync(targetFile.FullName, result.Report, Encoding.UTF8);
-                Log.Info("Validation report written to {Output}", targetFile.FullName);
+                Log.Debug("Validation report written to {Output}", targetFile.FullName);
             }
             catch (Exception ex)
             {
@@ -1564,6 +1574,174 @@ public static class ValidateCommand
 
         var root = baseDirectory ?? Environment.CurrentDirectory;
         return Path.GetFullPath(Path.Combine(root, path));
+    }
+
+    private static readonly FrameBreathDetectorOptions BreathGuardOptions = new()
+    {
+        FrameMs = 25,
+        HopMs = 10,
+        HiSplitHz = 4000.0,
+        ScoreHigh = 0.45,
+        ScoreLow = 0.25,
+        MinRunMs = 60,
+        MergeGapMs = 40,
+        GuardLeftMs = 12,
+        GuardRightMs = 12,
+        FricativeGuardMs = 15,
+        ApplyEnergyGate = true
+    };
+
+    private const double BreathGuardMinSpanSec = 0.03;
+    private const double BreathGuardSpeechThresholdDb = -34.0;
+
+    private static IReadOnlyList<PauseAdjust> VetPauseAdjustments(
+        IReadOnlyList<PauseAdjust> plannedAdjustments,
+        TranscriptIndex transcript,
+        AudioBuffer audio)
+    {
+        if (plannedAdjustments is null || plannedAdjustments.Count == 0)
+        {
+            return plannedAdjustments ?? Array.Empty<PauseAdjust>();
+        }
+
+        if (audio is null || audio.SampleRate <= 0 || audio.Length == 0)
+        {
+            return plannedAdjustments;
+        }
+
+        double audioDurationSec = audio.Length / (double)audio.SampleRate;
+        if (audioDurationSec <= 0)
+        {
+            return plannedAdjustments;
+        }
+
+        var sentenceLookup = transcript?.Sentences?
+            .Where(s => s is not null)
+            .ToDictionary(s => s.Id) ?? new Dictionary<int, SentenceAlign>();
+
+        var analyzer = new AudioAnalysisService(audio);
+
+        var accepted = new List<PauseAdjust>(plannedAdjustments.Count);
+        var rejected = new List<(PauseAdjust Adjust, double Start, double End, double RmsDb)>();
+
+        foreach (var adjust in plannedAdjustments)
+        {
+            if (!ShouldVet(adjust, sentenceLookup))
+            {
+                accepted.Add(adjust);
+                continue;
+            }
+
+            double spanStart = Math.Clamp(adjust.StartSec, 0.0, audioDurationSec);
+            double spanEnd = Math.Clamp(adjust.EndSec, spanStart, audioDurationSec);
+            if (spanEnd - spanStart < BreathGuardMinSpanSec)
+            {
+                accepted.Add(adjust);
+                continue;
+            }
+
+            if (IsBreathSafe(audio, analyzer, spanStart, spanEnd))
+            {
+                accepted.Add(adjust);
+            }
+            else
+            {
+                double rms = analyzer.MeasureRms(spanStart, spanEnd);
+                rejected.Add((adjust, spanStart, spanEnd, rms));
+            }
+        }
+
+        if (rejected.Count > 0)
+        {
+            foreach (var (adjust, start, end, rms) in rejected)
+            {
+                Log.Debug(
+                    "Breath guard rejected intra-sentence adjustment for sentence {SentenceId}: span=[{Start:F3},{End:F3}] original={Original:F3}s target={Target:F3}s rms={Rms:F2} dB",
+                    adjust.LeftSentenceId,
+                    start,
+                    end,
+                    adjust.OriginalDurationSec,
+                    adjust.TargetDurationSec,
+                    rms);
+            }
+
+            Log.Debug(
+                "Breath guard removed {Rejected} of {Total} planned adjustment(s).",
+                rejected.Count,
+                plannedAdjustments.Count);
+        }
+
+        return accepted;
+    }
+
+    private static bool ShouldVet(PauseAdjust adjust, IReadOnlyDictionary<int, SentenceAlign> sentences)
+    {
+        if (adjust is null || !adjust.IsIntraSentence)
+        {
+            return false;
+        }
+
+        if (adjust.TargetDurationSec >= adjust.OriginalDurationSec)
+        {
+            return false;
+        }
+
+        if (!sentences.TryGetValue(adjust.LeftSentenceId, out var sentence))
+        {
+            return false;
+        }
+
+        return string.Equals(sentence.Status, "ok", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsBreathSafe(AudioBuffer audio, AudioAnalysisService analyzer, double startSec, double endSec)
+    {
+        if (endSec - startSec <= 0)
+        {
+            return true;
+        }
+
+        var regions = FeatureExtraction.Detect(audio, startSec, endSec, BreathGuardOptions)
+            .OrderBy(region => region.StartSec)
+            .Select(region => new Region(
+                Math.Clamp(region.StartSec, startSec, endSec),
+                Math.Clamp(region.EndSec, startSec, endSec)))
+            .Where(region => region.DurationSec > 0)
+            .ToList();
+
+        if (regions.Count == 0)
+        {
+            double rms = analyzer.MeasureRms(startSec, endSec);
+            return rms <= BreathGuardSpeechThresholdDb;
+        }
+
+        double cursor = startSec;
+        foreach (var region in regions)
+        {
+            double gapStart = cursor;
+            double gapEnd = region.StartSec;
+            if (gapEnd - gapStart >= BreathGuardMinSpanSec)
+            {
+                double rms = analyzer.MeasureRms(gapStart, gapEnd);
+                if (rms > BreathGuardSpeechThresholdDb)
+                {
+                    return false;
+                }
+            }
+
+            cursor = Math.Max(cursor, region.EndSec);
+        }
+
+        if (endSec - cursor >= BreathGuardMinSpanSec)
+        {
+            double rms = analyzer.MeasureRms(cursor, endSec);
+            if (rms > BreathGuardSpeechThresholdDb)
+            {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     private static string TrimText(string text, int? maxLength = null)

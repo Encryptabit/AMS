@@ -5,6 +5,7 @@ using System.Collections.ObjectModel;
 using Ams.Core.Artifacts;
 using Ams.Core.Book;
 using Ams.Core.Hydrate;
+using SentenceTiming = Ams.Core.Artifacts.SentenceTiming;
 
 namespace Ams.Core.Prosody;
 

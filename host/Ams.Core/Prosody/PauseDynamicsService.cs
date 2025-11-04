@@ -6,6 +6,7 @@ using Ams.Core.Artifacts;
 using Ams.Core.Book;
 using Ams.Core.Common;
 using Ams.Core.Hydrate;
+using SentenceTiming = Ams.Core.Artifacts.SentenceTiming;
 
 namespace Ams.Core.Prosody;
 
@@ -44,12 +45,11 @@ public sealed record PauseDynamicsResult(
 
 public sealed class PauseDynamicsService : IPauseDynamicsService
 {
-    
     private const double TargetEpsilon = 0.002;
-    private const double IntraSentenceFloorDuration = 0.010;
+    private const double IntraSentenceFloorDuration = 0.005;
     private const double IntraSentenceMaxShrinkSeconds = 0.050;
-    private const double IntraSentenceEdgeGuardSeconds = 0.020;
-    private const double IntraSentenceMinRatio = 0.15;
+    private const double IntraSentenceEdgeGuardSeconds = 0.002;
+    private const double IntraSentenceMinRatio = 0.005;
     public PauseAnalysisReport AnalyzeChapter(
         TranscriptIndex transcript,
         BookIndex bookIndex,
@@ -173,7 +173,7 @@ public sealed class PauseDynamicsService : IPauseDynamicsService
 
                 if (Math.Abs(clampedTarget - target) > TargetEpsilon)
                 {
-                    Log.Info(
+                    Log.Debug(
                         "PauseDynamics clamped intra-sentence pause target for sentence {SentenceId} from {Original:F3}s to {Clamped:F3}s",
                         span.LeftSentenceId,
                         target,
@@ -305,7 +305,7 @@ public sealed class PauseDynamicsService : IPauseDynamicsService
 
             if (span.Class == PauseClass.Comma)
             {
-                Log.Info("PauseDynamics comma span from script: sentence {SentenceId} start={Start:F3}s end={End:F3}s", left.Id, span.StartSec, span.EndSec);
+                Log.Debug("PauseDynamics comma span from script: sentence {SentenceId} start={Start:F3}s end={End:F3}s", left.Id, span.StartSec, span.EndSec);
             }
         }
 
@@ -320,7 +320,7 @@ public sealed class PauseDynamicsService : IPauseDynamicsService
         HashSet<int> headingSentenceIds,
         bool includeAllIntraSentenceGaps)
     {
-        const double MinGapSeconds = 0.05;
+        const double MinGapSeconds = 0.005;
         const double Tolerance = 0.002;
 
         var sentences = transcript.Sentences
@@ -419,11 +419,11 @@ public sealed class PauseDynamicsService : IPauseDynamicsService
             var punctuationTimes = GetPunctuationTimes(sentence, bookIndex, hydratedSentence);
             if (punctuationTimes.Count == 0)
             {
-                Log.Info("PauseDynamics punctuation count zero for sentence {SentenceId}", sentence.Id);
+                Log.Debug("PauseDynamics punctuation count zero for sentence {SentenceId}", sentence.Id);
                 continue;
             }
 
-            var selectedGaps = MatchSilencesToPunctuation(gaps, punctuationTimes, sentence.Id);
+            var selectedGaps = MatchSilencesToPunctuation(gaps, punctuationTimes, sentence, bookIndex);
             foreach (var (start, end, provenance) in selectedGaps)
             {
                 double duration = end - start;
@@ -444,7 +444,7 @@ public sealed class PauseDynamicsService : IPauseDynamicsService
                     CrossesChapterHead: false,
                     Provenance: provenance);
 
-                Log.Info("PauseDynamics comma span (script/textgrid) sentence {SentenceId} start={Start:F3}s end={End:F3}s provenance={Prov}",
+                Log.Debug("PauseDynamics comma span (script/textgrid) sentence {SentenceId} start={Start:F3}s end={End:F3}s provenance={Prov}",
                     sentence.Id,
                     start,
                     end,
@@ -512,7 +512,7 @@ public sealed class PauseDynamicsService : IPauseDynamicsService
                 CrossesChapterHead: false,
                 Provenance: PauseProvenance.TextGridSilence);
 
-            Log.Info("PauseDynamics comma span from TextGrid: sentence {SentenceId} start={Start:F3}s end={End:F3}s", sentence.Id, safeStart, safeEnd);
+            Log.Debug("PauseDynamics comma span from TextGrid: sentence {SentenceId} start={Start:F3}s end={End:F3}s", sentence.Id, safeStart, safeEnd);
             yield return span;
         }
         }
@@ -575,7 +575,7 @@ public sealed class PauseDynamicsService : IPauseDynamicsService
             times.Add(sentenceStart + ratio * duration);
         }
 
-        Log.Info(
+        Log.Debug(
             "PauseDynamics {Source} punctuation count {Count} for sentence {SentenceId}",
             sourceLabel,
             times.Count,
@@ -629,61 +629,207 @@ public sealed class PauseDynamicsService : IPauseDynamicsService
     private static IReadOnlyList<(double Start, double End, PauseProvenance Provenance)> MatchSilencesToPunctuation(
         List<(double Start, double End)> gaps,
         IReadOnlyList<double> punctuationTimes,
-        int sentenceId)
+        SentenceAlign sentence,
+        BookIndex bookIndex)
     {
         var results = new List<(double, double, PauseProvenance)>();
-        if (gaps.Count == 0 || punctuationTimes.Count == 0)
+        int punctuationCount = punctuationTimes.Count;
+        int gapCount = gaps.Count;
+
+        if (gapCount == 0 || punctuationCount == 0)
         {
             return results;
         }
 
-        int gapIndex = 0;
+        // Build ordered word centers for gap selection
+        var wordCenters = BuildWordCenters(sentence, bookIndex);
 
-        foreach (var punctuationTime in punctuationTimes)
+        var dp = new double[punctuationCount, gapCount];
+        var prev = new int[punctuationCount, gapCount];
+
+        for (int i = 0; i < punctuationCount; i++)
         {
-            if (gapIndex >= gaps.Count)
+            for (int j = 0; j < gapCount; j++)
             {
+                dp[i, j] = double.PositiveInfinity;
+                prev[i, j] = -1;
+            }
+        }
+
+        for (int j = 0; j < gapCount; j++)
+        {
+            var (start, end) = gaps[j];
+            double cost = DistanceToInterval(punctuationTimes[0], start, end);
+
+            if (wordCenters.Count > 0)
+            {
+                double wordCenter = wordCenters[0];
+                if (wordCenter < start)
+                {
+                    cost += (start - wordCenter) * 0.05;
+                }
+            }
+
+            dp[0, j] = cost;
+        }
+
+        for (int i = 1; i < punctuationCount; i++)
+        {
+            double bestPrevCost = double.PositiveInfinity;
+            int bestPrevIndex = -1;
+
+            for (int j = 0; j < gapCount; j++)
+            {
+                if (j > 0)
+                {
+                    double previous = dp[i - 1, j - 1];
+                    if (double.IsFinite(previous) && previous < bestPrevCost)
+                    {
+                        bestPrevCost = previous;
+                        bestPrevIndex = j - 1;
+                    }
+                }
+
+                if (j < i || bestPrevIndex == -1)
+                {
+                    continue;
+                }
+
+                var (start, end) = gaps[j];
+                double cost = DistanceToInterval(punctuationTimes[i], start, end);
+
+                if (wordCenters.Count > i)
+                {
+                    double wordCenter = wordCenters[i];
+                    if (wordCenter < start)
+                    {
+                        cost += (start - wordCenter) * 0.05;
+                    }
+                }
+
+                double total = bestPrevCost + cost;
+                if (total < dp[i, j])
+                {
+                    dp[i, j] = total;
+                    prev[i, j] = bestPrevIndex;
+                }
+            }
+        }
+
+        int matchedPunctuationIndex = -1;
+        int matchedGapIndex = -1;
+        for (int i = punctuationCount - 1; i >= 0; i--)
+        {
+            double bestCost = double.PositiveInfinity;
+            int bestGap = -1;
+
+            for (int j = 0; j < gapCount; j++)
+            {
+                double cost = dp[i, j];
+                if (!double.IsFinite(cost) || cost >= bestCost)
+                {
+                    continue;
+                }
+
+                bestCost = cost;
+                bestGap = j;
+            }
+
+            if (bestGap >= 0)
+            {
+                matchedPunctuationIndex = i;
+                matchedGapIndex = bestGap;
                 break;
             }
+        }
 
-            int bestIndex = -1;
-            double bestScore = double.MaxValue;
+        if (matchedPunctuationIndex == -1)
+        {
+            Log.Debug("PauseDynamics could not map punctuation to gaps for sentence {SentenceId}", sentence.Id);
+            return results;
+        }
 
-            for (int j = gapIndex; j < gaps.Count; j++)
-            {
-                var gap = gaps[j];
-                double center = (gap.Start + gap.End) * 0.5d;
-                double score = Math.Abs(center - punctuationTime);
+        var assignment = new Stack<int>(matchedPunctuationIndex + 1);
+        int currentGap = matchedGapIndex;
+        for (int i = matchedPunctuationIndex; i >= 0 && currentGap >= 0; i--)
+        {
+            assignment.Push(currentGap);
+            currentGap = prev[i, currentGap];
+        }
 
-                if (score < bestScore)
-                {
-                    bestScore = score;
-                    bestIndex = j;
-                }
+        if (assignment.Count != matchedPunctuationIndex + 1)
+        {
+            Log.Debug("PauseDynamics mismatch in punctuation mapping for sentence {SentenceId}", sentence.Id);
+            return results;
+        }
 
-                if (center >= punctuationTime && score > bestScore)
-                {
-                    break;
-                }
-            }
-
-            if (bestIndex >= 0)
-            {
-                var gap = gaps[bestIndex];
-                results.Add((gap.Start, gap.End, PauseProvenance.ScriptAndTextGrid));
-                gapIndex = bestIndex + 1;
-            }
+        foreach (var gapIndex in assignment)
+        {
+            var gap = gaps[gapIndex];
+            results.Add((gap.Start, gap.End, PauseProvenance.ScriptAndTextGrid));
         }
 
         if (results.Count < punctuationTimes.Count)
         {
-            Log.Info("PauseDynamics matched {Matched} of {Expected} punctuation-driven pauses for sentence {SentenceId}",
+            Log.Debug("PauseDynamics matched {Matched} of {Expected} punctuation-driven pauses for sentence {SentenceId}",
                 results.Count,
                 punctuationTimes.Count,
-                sentenceId);
+                sentence.Id);
         }
 
         return results;
+    }
+
+    private static IReadOnlyList<double> BuildWordCenters(SentenceAlign sentence, BookIndex bookIndex)
+    {
+        var centers = new List<double>();
+        int start = Math.Clamp(sentence.BookRange.Start, 0, bookIndex.Words.Length - 1);
+        int end = Math.Clamp(sentence.BookRange.End, start, bookIndex.Words.Length - 1);
+
+        double sentenceStart = sentence.Timing.StartSec;
+        double sentenceEnd = sentence.Timing.EndSec;
+        double duration = Math.Max(0d, sentenceEnd - sentenceStart);
+        if (duration <= 0)
+        {
+            return centers;
+        }
+
+        int wordCount = end - start + 1;
+        if (wordCount <= 0)
+        {
+            return centers;
+        }
+
+        double step = duration / Math.Max(1, wordCount);
+        for (int i = start; i <= end; i++)
+        {
+            var token = bookIndex.Words[i].Text;
+            if (string.IsNullOrEmpty(token))
+            {
+                continue;
+            }
+
+            double wordStart = sentenceStart + step * (i - start);
+            double wordEnd = (i == end) ? sentenceEnd : sentenceStart + step * (i - start + 1);
+            centers.Add((wordStart + wordEnd) * 0.5d);
+        }
+
+        return centers;
+    }
+
+    private static double DistanceToInterval(double value, double start, double end)
+    {
+        if (value < start)
+        {
+            return start - value;
+        }
+
+        if (value > end)
+        {
+            return value - end;
+        }
+
+        return 0d;
     }
 
     private static bool IsReliableSentence(SentenceAlign sentence)

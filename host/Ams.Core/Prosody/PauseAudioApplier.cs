@@ -5,6 +5,7 @@ using Ams.Core.Alignment.Tx;
 using Ams.Core.Artifacts;
 using Ams.Core.Audio;
 using Ams.Core.Common;
+using SentenceTiming = Ams.Core.Artifacts.SentenceTiming;
 
 namespace Ams.Core.Prosody;
 
@@ -33,7 +34,7 @@ internal static class PauseAudioApplier
             return audio;
         }
 
-        Log.Info("PauseAudioApplier starting: sampleRate={0}, timelineCount={1}", audio.SampleRate, updatedTimeline.Count);
+        Log.Debug("PauseAudioApplier starting: sampleRate={SampleRate}, timelineCount={TimelineCount}", audio.SampleRate, updatedTimeline.Count);
 
         var analyzer = new AudioAnalysisService(audio);
         var finalTimeline = new Dictionary<int, SentenceTiming>(updatedTimeline);
@@ -75,17 +76,24 @@ internal static class PauseAudioApplier
                 continue;
             }
 
+            var hasIntraGaps = intraLookup.TryGetValue(sentence.Id, out var gapList) && gapList is { Count: > 0 };
+            var gaps = hasIntraGaps ? gapList! : EmptyIntraGaps;
+
+            double exitThresholdDb = hasIntraGaps ? -55.0 : -60.0;
+            double postRollMs = hasIntraGaps ? 6.0 : 10.0;
+            double hangoverMs = hasIntraGaps ? 16.0 : 30.0;
+
             var seed = new TimingRange(sentence.Timing.StartSec, sentence.Timing.EndSec);
             var energy = analyzer.SnapToEnergy(
                 seed,
                 enterThresholdDb: -48.0,
-                exitThresholdDb: -60.0,
+                exitThresholdDb: exitThresholdDb,
                 searchWindowSec: 1.0,
                 windowMs: 25.0,
                 stepMs: 5.0,
                 preRollMs: 10.0,
-                postRollMs: 10.0,
-                hangoverMs: 30.0);
+                postRollMs: postRollMs,
+                hangoverMs: hangoverMs);
 
             if (energy.EndSec <= energy.StartSec)
             {
@@ -103,27 +111,23 @@ internal static class PauseAudioApplier
 
             if (!IsApproximatelyEqual(sourceEndSec, seed.EndSec))
             {
-                Log.Info(
-                    "PauseAudioApplier energy-adjusted sentence {0}: seedEnd={1:F3}s energyEnd={2:F3}s",
+                Log.Debug(
+                    "PauseAudioApplier energy-adjusted sentence {SentenceId}: seedEnd={SeedEnd:F3}s energyEnd={EnergyEnd:F3}s",
                     sentence.Id,
                     seed.EndSec,
                     sourceEndSec);
             }
 
-            var gaps = intraLookup.TryGetValue(sentence.Id, out var list)
-                ? list
-                : EmptyIntraGaps;
-
             if (gaps.Count > 0)
             {
-                Log.Info(
+                Log.Debug(
                     "PauseAudioApplier using feature-derived intra-gaps for sentence {SentenceId}: {GapCount} gap(s).",
                     sentence.Id,
                     gaps.Count);
             }
             else
             {
-                Log.Info(
+                Log.Debug(
                     "PauseAudioApplier using SnapToEnergy fallback for sentence {SentenceId} (no intra-gap timeline).",
                     sentence.Id);
             }

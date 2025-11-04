@@ -63,24 +63,24 @@ public static class AsrCommand
             throw new FileNotFoundException($"Audio file not found: {audioFile.FullName}");
         }
 
-        Log.Info("Running ASR for {AudioFile} -> {OutputFile} via {ServiceUrl}", audioFile.FullName, outputFile.FullName, serviceUrl);
-        Log.Info("ASR parameters: Language={Language}, Model={Model}", language, model ?? "(default)");
+        Log.Debug("Running ASR for {AudioFile} -> {OutputFile} via {ServiceUrl}", audioFile.FullName, outputFile.FullName, serviceUrl);
+        Log.Debug("ASR parameters: Language={Language}, Model={Model}", language, model ?? "(default)");
 
         await AsrProcessSupervisor.EnsureServiceReadyAsync(serviceUrl, CancellationToken.None);
 
         using var client = new AsrClient(serviceUrl);
 
-        Log.Info("Checking ASR service health at {ServiceUrl}", serviceUrl);
+        Log.Debug("Checking ASR service health at {ServiceUrl}", serviceUrl);
         var isHealthy = await client.IsHealthyAsync();
         if (!isHealthy)
         {
             throw new InvalidOperationException($"ASR service at {serviceUrl} is not healthy or unreachable");
         }
-        Log.Info("ASR service responded healthy");
+        Log.Debug("ASR service responded healthy");
 
-        Log.Info("Submitting audio for transcription");
+        Log.Debug("Submitting audio for transcription");
         var response = await client.TranscribeAsync(audioFile.FullName, model, language);
-        Log.Info("Transcription complete");
+        Log.Debug("Transcription complete");
 
         var json = JsonSerializer.Serialize(response, new JsonSerializerOptions
         {
@@ -90,7 +90,7 @@ public static class AsrCommand
 
         await File.WriteAllTextAsync(outputFile.FullName, json);
 
-        Log.Info("ASR results written to {OutputFile}", outputFile.FullName);
-        Log.Info("ASR summary: ModelVersion={ModelVersion}, Tokens={TokenCount}", response.ModelVersion, response.Tokens.Length);
+        Log.Debug("ASR results written to {OutputFile}", outputFile.FullName);
+        Log.Debug("ASR summary: ModelVersion={ModelVersion}, Tokens={TokenCount}", response.ModelVersion, response.Tokens.Length);
     }
 }

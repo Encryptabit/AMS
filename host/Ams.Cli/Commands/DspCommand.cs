@@ -123,7 +123,7 @@ public static class DspCommand
                     if (defaultChain.Exists)
                     {
                         chainFile = defaultChain;
-                        Log.Info("[dsp] Using default chain file {File}", chainFile.FullName);
+                        Log.Debug("[dsp] Using default chain file {File}", chainFile.FullName);
                     }
                 }
 
@@ -247,7 +247,7 @@ public static class DspCommand
             var updated = chain with { Nodes = nodes };
 
             await SaveChainAsync(chainFile, updated, token).ConfigureAwait(false);
-            Log.Info("[dsp] Appended node '{Name}'", node.Name ?? Path.GetFileNameWithoutExtension(node.Plugin));
+            Log.Debug("[dsp] Appended node '{Name}'", node.Name ?? Path.GetFileNameWithoutExtension(node.Plugin));
         });
 
         return cmd;
@@ -276,7 +276,7 @@ public static class DspCommand
             var updated = chain with { Nodes = nodes };
 
             await SaveChainAsync(chainFile, updated, token).ConfigureAwait(false);
-            Log.Info("[dsp] Prepended node '{Name}'", node.Name ?? Path.GetFileNameWithoutExtension(node.Plugin));
+            Log.Debug("[dsp] Prepended node '{Name}'", node.Name ?? Path.GetFileNameWithoutExtension(node.Plugin));
         });
 
         return cmd;
@@ -314,7 +314,7 @@ public static class DspCommand
             var updated = chain with { Nodes = nodes };
 
             await SaveChainAsync(chainFile, updated, token).ConfigureAwait(false);
-            Log.Info("[dsp] Inserted node '{Name}' at index {Index}", node.Name ?? Path.GetFileNameWithoutExtension(node.Plugin), index);
+            Log.Debug("[dsp] Inserted node '{Name}' at index {Index}", node.Name ?? Path.GetFileNameWithoutExtension(node.Plugin), index);
         });
 
         return cmd;
@@ -340,7 +340,7 @@ public static class DspCommand
 
             if (chain.Nodes.Count == 0)
             {
-                Log.Warn("[dsp] Chain is already empty");
+                Log.Debug("[dsp] Chain is already empty");
                 return;
             }
 
@@ -383,7 +383,7 @@ public static class DspCommand
 
             var updated = chain with { Nodes = nodes };
             await SaveChainAsync(chainFile, updated, token).ConfigureAwait(false);
-            Log.Info("[dsp] Removed node '{Name}'", removedNode.Name ?? Path.GetFileNameWithoutExtension(removedNode.Plugin));
+            Log.Debug("[dsp] Removed node '{Name}'", removedNode.Name ?? Path.GetFileNameWithoutExtension(removedNode.Plugin));
         });
 
         return cmd;
@@ -649,14 +649,14 @@ public static class DspCommand
 
             if (added.Count == 0)
             {
-                Log.Info("[dsp] No new directories added (duplicates ignored)");
+                Log.Debug("[dsp] No new directories added (duplicates ignored)");
                 return;
             }
 
             await DspConfigService.SaveAsync(config, token).ConfigureAwait(false);
             foreach (var dir in added.OrderBy(d => d, StringComparer.OrdinalIgnoreCase))
             {
-                Log.Info("[dsp] Added plugin directory {Directory}", dir);
+                Log.Debug("[dsp] Added plugin directory {Directory}", dir);
             }
         });
 
@@ -692,14 +692,14 @@ public static class DspCommand
 
             if (removed.Count == 0)
             {
-                Log.Info("[dsp] No directories removed");
+                Log.Debug("[dsp] No directories removed");
                 return;
             }
 
             await DspConfigService.SaveAsync(config, token).ConfigureAwait(false);
             foreach (var dir in removed.OrderBy(d => d, StringComparer.OrdinalIgnoreCase))
             {
-                Log.Info("[dsp] Removed plugin directory {Directory}", dir);
+                Log.Debug("[dsp] Removed plugin directory {Directory}", dir);
             }
         });
 
@@ -719,7 +719,7 @@ public static class DspCommand
 
             if (!confirm)
             {
-                Log.Warn("Use --yes to confirm clearing all directories");
+                Log.Debug("Use --yes to confirm clearing all directories");
                 context.ExitCode = 1;
                 return;
             }
@@ -727,13 +727,13 @@ public static class DspCommand
             var config = await DspConfigService.LoadAsync(token).ConfigureAwait(false);
             if (config.PluginDirectories.Count == 0)
             {
-                Log.Info("[dsp] No directories to clear");
+                Log.Debug("[dsp] No directories to clear");
                 return;
             }
 
             config.PluginDirectories.Clear();
             await DspConfigService.SaveAsync(config, token).ConfigureAwait(false);
-            Log.Info("[dsp] Cleared all plugin directories");
+            Log.Debug("[dsp] Cleared all plugin directories");
         });
 
         return cmd;
@@ -782,7 +782,7 @@ public static class DspCommand
                     {
                         if (!Directory.Exists(directory))
                         {
-                            Log.Warn("[dsp] Directory missing, skipping: {Directory}", directory);
+                            Log.Debug("[dsp] Directory missing, skipping: {Directory}", directory);
                             continue;
                         }
 
@@ -809,14 +809,14 @@ public static class DspCommand
                         }
                         if (missing.Count > 0)
                         {
-                            Log.Info("[dsp] Removed {Count} cached plugin entries that no longer exist", missing.Count);
+                            Log.Debug("[dsp] Removed {Count} cached plugin entries that no longer exist", missing.Count);
                         }
                     }
                 }
 
                 if (targets.Count == 0)
                 {
-                    Log.Warn("[dsp] No plugins found to scan");
+                    Log.Debug("[dsp] No plugins found to scan");
                     await DspConfigService.SaveAsync(config, token).ConfigureAwait(false);
                     return;
                 }
@@ -872,11 +872,11 @@ public static class DspCommand
                     config.Plugins[pluginPath] = metadata;
                     scanned++;
 
-                    Log.Info("[dsp] Cached metadata for {Plugin}", pluginName ?? pluginPath);
+                    Log.Debug("[dsp] Cached metadata for {Plugin}", pluginName ?? pluginPath);
                 }
 
                 await DspConfigService.SaveAsync(config, token).ConfigureAwait(false);
-                Log.Info("[dsp] Scan complete. Scanned {Scanned}, skipped {Skipped}, failed {Failed}", scanned, skipped, failed);
+                Log.Debug("[dsp] Scan complete. Scanned {Scanned}, skipped {Skipped}, failed {Failed}", scanned, skipped, failed);
             }
             catch (Exception ex)
             {
@@ -1060,7 +1060,7 @@ public static class DspCommand
                     overrideOutChannels,
                     overrideBitDepth);
 
-                Log.Info("[dsp] Node {Index}/{Total}: {Name}", index + 1, chain.Nodes.Count, nodeName);
+                Log.Debug("[dsp] Node {Index}/{Total}: {Name}", index + 1, chain.Nodes.Count, nodeName);
 
                 var exitCode = await PlugalyzerService.RunAsync(args, chainBaseDirectory, cancellationToken).ConfigureAwait(false);
                 if (exitCode != 0)
@@ -1083,7 +1083,7 @@ public static class DspCommand
                 File.Copy(finalSource, outputPath, overwrite: false);
             }
 
-            Log.Info("[dsp] Chain complete. Output -> {Output}", outputPath);
+            Log.Debug("[dsp] Chain complete. Output -> {Output}", outputPath);
         }
         finally
         {
@@ -1103,7 +1103,7 @@ public static class DspCommand
             }
             else
             {
-                Log.Info("[dsp] Intermediate files kept at {Path}", workRoot);
+                Log.Debug("[dsp] Intermediate files kept at {Path}", workRoot);
             }
         }
     }
@@ -1577,7 +1577,7 @@ public static class DspCommand
         }
         catch (Exception ex)
         {
-            Log.Warn("Failed to delete temporary directory {Path}", path);
+            Log.Debug("Failed to delete temporary directory {Path}", path);
         }
     }
 
@@ -1592,7 +1592,7 @@ public static class DspCommand
         }
         catch (Exception ex)
         {
-            Log.Warn("Failed to delete temporary file {Path}", path);
+            Log.Debug("Failed to delete temporary file {Path}", path);
         }
     }
 

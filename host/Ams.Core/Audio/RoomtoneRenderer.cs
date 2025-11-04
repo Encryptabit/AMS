@@ -401,7 +401,7 @@ namespace Ams.Core.Audio
             }
             catch (Exception ex)
             {
-                Log.Warn("[Roomtone] Debug write failed for {Suffix}: {Message}", suffix, ex.Message);
+                Log.Debug("[Roomtone] Debug write failed for {Suffix}: {Message}", suffix, ex.Message);
             }
         }
 

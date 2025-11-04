@@ -24,7 +24,7 @@ public static class TextCommand
         normalizeCommand.SetHandler((text, expandContractions, removeNumbers) =>
         {
             var result = TextNormalizer.Normalize(text, expandContractions, removeNumbers);
-            Log.Info("Normalized text: {NormalizedText}", result);
+            Log.Debug("Normalized text: {NormalizedText}", result);
         }, textArgument, expandContractionsOption, removeNumbersOption);
         
         textCommand.AddCommand(normalizeCommand);

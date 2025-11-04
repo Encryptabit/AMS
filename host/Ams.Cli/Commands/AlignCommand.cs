@@ -263,7 +263,7 @@ public static class AlignCommand
 
         var outJson = JsonSerializer.Serialize(hydrated, new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase, WriteIndented = true });
         await File.WriteAllTextAsync(outFile.FullName, outJson);
-        Log.Info("Hydrated TranscriptIndex written to: {OutputFile}", outFile.FullName);
+        Log.Debug("Hydrated TranscriptIndex written to: {OutputFile}", outFile.FullName);
     }
 
     internal static async Task RunTranscriptIndexAsync(
@@ -324,7 +324,7 @@ public static class AlignCommand
         sectionOverride = SectionLocator.ResolveSectionByTitle(book, candidate);
         if (sectionOverride is not null)
         {
-            Log.Info("Resolved chapter '{Chapter}' to section {SectionId}: {SectionTitle}",
+            Log.Debug("Resolved chapter '{Chapter}' to section {SectionId}: {SectionTitle}",
                 candidate,
                 sectionOverride.Id,
                 sectionOverride.Title);
@@ -341,7 +341,7 @@ public static class AlignCommand
         var detected = SectionLocator.DetectSection(book, prefixTokens, asrPrefixTokens);
         if (detected is not null && detected.Id != sectionOverride.Id)
         {
-            Log.Warn("ASR prefix suggests section {Detected} ({DetectedTitle}) but filename resolved to {Resolved} ({ResolvedTitle}).", detected.Id, detected.Title, sectionOverride.Id, sectionOverride.Title);
+            Log.Debug("ASR prefix suggests section {Detected} ({DetectedTitle}) but filename resolved to {Resolved} ({ResolvedTitle}).", detected.Id, detected.Title, sectionOverride.Id, sectionOverride.Title);
         }
     }
 
@@ -461,11 +461,11 @@ public static class AlignCommand
             secStartWord = Math.Max(0, secStartWord);
             secEndWord = Math.Min(book.Words.Length - 1, Math.Max(secStartWord, secEndWord));
 
-            Log.Warn("Section detection fallback: restricting to book words [{StartWord}, {EndWord}] (approx {TokenCount} aligned tokens).", secStartWord, secEndWord, matchedBookIdx.Count);
+            Log.Debug("Section detection fallback: restricting to book words [{StartWord}, {EndWord}] (approx {TokenCount} aligned tokens).", secStartWord, secEndWord, matchedBookIdx.Count);
         }
         else
         {
-            Log.Warn("No aligned book tokens found; falling back to full book range.");
+            Log.Debug("No aligned book tokens found; falling back to full book range.");
         }
     }
 
@@ -501,7 +501,7 @@ public static class AlignCommand
 
     var outJson = JsonSerializer.Serialize(tx, new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase, WriteIndented = true });
     await File.WriteAllTextAsync(outFile.FullName, outJson);
-    Log.Info("TranscriptIndex written to: {OutputFile}", outFile.FullName);
+    Log.Debug("TranscriptIndex written to: {OutputFile}", outFile.FullName);
 }
 
     private static string[][] BuildBookPhonemeView(BookIndex book, IReadOnlyList<int> filteredToOriginal, int filteredCount)
@@ -672,12 +672,12 @@ public static class AlignCommand
         var outputJson = JsonSerializer.Serialize(payload, new JsonSerializerOptions { WriteIndented = true });
         if (outFile == null)
         {
-            Log.Info("{AnchorSummary}", outputJson);
+            Log.Debug("{AnchorSummary}", outputJson);
         }
         else
         {
             await File.WriteAllTextAsync(outFile.FullName, outputJson);
-            Log.Info("Anchors written to: {OutputFile}", outFile.FullName);
+            Log.Debug("Anchors written to: {OutputFile}", outFile.FullName);
         }
     }
 }

@@ -83,7 +83,7 @@ namespace Ams.Core.Audio
             double stepMs           = 5.0,
             double preRollMs        = 10.0,
             double postRollMs       = 10.0,
-            double hangoverMs       = 30.0)
+            double hangoverMs       = 90.0)
         {
             int sr    = _buffer.SampleRate;
             int step  = Math.Max(1, (int)Math.Round(stepMs * 0.001 * sr));
