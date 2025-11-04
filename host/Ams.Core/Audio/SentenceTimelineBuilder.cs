@@ -5,7 +5,9 @@ using Ams.Core.Artifacts;
 
 namespace Ams.Core.Audio
 {
-    public sealed record SentenceTimelineEntry(int SentenceId, SentenceTiming Timing, bool HasTiming, SentenceTiming Window);
+    using ArtifactSentenceTiming = Ams.Core.Artifacts.SentenceTiming;
+
+    public sealed record SentenceTimelineEntry(int SentenceId, ArtifactSentenceTiming Timing, bool HasTiming, ArtifactSentenceTiming Window);
 
     public static class SentenceTimelineBuilder
     {
@@ -29,11 +31,11 @@ namespace Ams.Core.Audio
             bool isUnreliable = string.Equals(sentence.Status, "unreliable", StringComparison.OrdinalIgnoreCase);
 
             var baseTiming = fragments != null && fragments.TryGetValue(sentence.Id, out var fragment)
-                ? new SentenceTiming(fragment, fragmentBacked: true)
-                : new SentenceTiming(sentence.Timing);
+                ? new ArtifactSentenceTiming(fragment, fragmentBacked: true)
+                : new ArtifactSentenceTiming(sentence.Timing);
 
             var windowTiming = isUnreliable
-                ? new SentenceTiming(TimingRange.Empty)
+                ? new ArtifactSentenceTiming(TimingRange.Empty)
                 : ComputeWindowFromScript(sentence, asr);
 
             if (!isUnreliable && windowTiming.Duration > 0)
@@ -41,7 +43,7 @@ namespace Ams.Core.Audio
                 const double ReliableWindowPad = 0.08; // add small buffer around scripted window
                 double start = Math.Min(windowTiming.StartSec, baseTiming.StartSec) - ReliableWindowPad;
                 double end = Math.Max(windowTiming.EndSec, baseTiming.EndSec) + ReliableWindowPad;
-                windowTiming = new SentenceTiming(Math.Max(0.0, start), end);
+                windowTiming = new ArtifactSentenceTiming(Math.Max(0.0, start), end);
             }
 
             double effectiveRms = isUnreliable ? rmsThresholdDb + 2.0 : rmsThresholdDb;
@@ -106,7 +108,7 @@ namespace Ams.Core.Audio
                 continue;
             }
 
-            var adjustedTiming = new SentenceTiming(
+            var adjustedTiming = new ArtifactSentenceTiming(
                 entry.Timing.StartSec - extendLeft,
                 entry.Timing.EndSec + extendRight,
                 entry.Timing.FragmentBacked,
@@ -118,10 +120,10 @@ namespace Ams.Core.Audio
         return entries;
     }
 
-        private static SentenceTiming CalculateEnergyTiming(
+        private static ArtifactSentenceTiming CalculateEnergyTiming(
             AudioAnalysisService analyzer,
-            SentenceTiming windowTiming,
-            SentenceTiming baseTiming,
+            ArtifactSentenceTiming windowTiming,
+            ArtifactSentenceTiming baseTiming,
             double rmsThresholdDb,
             double searchWindowSec,
             double stepMs)
@@ -168,11 +170,11 @@ namespace Ams.Core.Audio
                 end = Math.Max(end, baseTiming.EndSec);
             }
 
-            return new SentenceTiming(start, end, baseTiming.FragmentBacked, baseTiming.Confidence);
+            return new ArtifactSentenceTiming(start, end, baseTiming.FragmentBacked, baseTiming.Confidence);
 
         }
 
-        private static TimingRange ClampToWindow(TimingRange range, SentenceTiming window)
+        private static TimingRange ClampToWindow(TimingRange range, ArtifactSentenceTiming window)
         {
             if (window.Duration <= 0) return range;
 
@@ -186,7 +188,7 @@ namespace Ams.Core.Audio
             return new TimingRange(start, end);
         }
 
-        private static SentenceTiming ComputeWindowFromScript(SentenceAlign sentence, AsrResponse asr)
+        private static ArtifactSentenceTiming ComputeWindowFromScript(SentenceAlign sentence, AsrResponse asr)
         {
             if (sentence.ScriptRange is { Start: { } startIdx, End: { } endIdx } && asr.Tokens.Length > 0)
             {
@@ -197,11 +199,11 @@ namespace Ams.Core.Audio
                 var range = new TimingRange(startToken.StartTime, endToken.StartTime + endToken.Duration);
                 if (range.Duration > 0)
                 {
-                    return new SentenceTiming(range);
+                    return new ArtifactSentenceTiming(range);
                 }
             }
 
-            return new SentenceTiming(sentence.Timing);
+            return new ArtifactSentenceTiming(sentence.Timing);
         }
     }
 }

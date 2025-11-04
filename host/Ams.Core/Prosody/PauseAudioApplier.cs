@@ -5,6 +5,7 @@ using Ams.Core.Alignment.Tx;
 using Ams.Core.Artifacts;
 using Ams.Core.Audio;
 using Ams.Core.Common;
+using SentenceTiming = Ams.Core.Artifacts.SentenceTiming;
 
 namespace Ams.Core.Prosody;
 
