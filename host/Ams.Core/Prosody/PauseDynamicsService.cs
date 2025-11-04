@@ -6,6 +6,7 @@ using Ams.Core.Artifacts;
 using Ams.Core.Book;
 using Ams.Core.Common;
 using Ams.Core.Hydrate;
+using SentenceTiming = Ams.Core.Artifacts.SentenceTiming;
 
 namespace Ams.Core.Prosody;
 

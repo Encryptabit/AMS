@@ -15,6 +15,7 @@ using Ams.Core.Hydrate;
 using Ams.Core.Prosody;
 using Ams.Cli.Repl;
 using Ams.Cli.Utilities;
+using SentenceTiming = Ams.Core.Artifacts.SentenceTiming;
 
 namespace Ams.Cli.Commands;
 
@@ -64,6 +65,11 @@ public static class ValidateCommand
             "Include all detected intra-sentence gaps (TextGrid silences) instead of only script punctuation.");
         includeAllIntraOption.AddAlias("-A");
 
+        var interOnlyOption = new Option<bool>(
+            "--inter-only",
+            () => false,
+            "Only allow inter-sentence (between sentences) pause edits; ignore intra-sentence adjustments.");
+
         var headlessOption = new Option<bool>(
             "--headless",
             () => false,
@@ -80,6 +86,7 @@ public static class ValidateCommand
         cmd.AddOption(prosodyAnalyzeOption);
         cmd.AddOption(useAdjustedOption);
         cmd.AddOption(includeAllIntraOption);
+        cmd.AddOption(interOnlyOption);
         cmd.AddOption(headlessOption);
         cmd.AddOption(headlessOverwriteOption);
 
@@ -159,8 +166,9 @@ public static class ValidateCommand
 
                 var runProsody = context.ParseResult.GetValueForOption(prosodyAnalyzeOption);
                 var includeAllIntra = context.ParseResult.GetValueForOption(includeAllIntraOption);
+                var interOnly = context.ParseResult.GetValueForOption(interOnlyOption);
 
-                var session = new ValidateTimingSession(tx, bookIndex, hydrate, runProsody, includeAllIntra);
+                var session = new ValidateTimingSession(tx, bookIndex, hydrate, runProsody, includeAllIntra, interOnly);
 
                 if (headless)
                 {
@@ -467,7 +475,7 @@ public static class ValidateCommand
             intraSentenceGaps: timelineResult.IntraSentenceGaps);
         WavIo.WriteFloat32(outWav.FullName, adjustedAudio);
 
-        var updatedTranscript = UpdateTranscriptTimings(transcript, timelineResult.Timeline);
+    var updatedTranscript = UpdateTranscriptTimings(transcript, timelineResult.Timeline);
         var updatedHydrate = UpdateHydratedTimings(hydrated, timelineResult.Timeline);
 
         var transcriptOut = BuildOutputJsonPath(effectiveTx, ".pause-adjusted.align.tx.json");

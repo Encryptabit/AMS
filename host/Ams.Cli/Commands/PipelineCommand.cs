@@ -22,6 +22,7 @@ using Ams.Core.Common;
 using Ams.Core.Hydrate;
 using Ams.Core.Prosody;
 using Spectre.Console;
+using AudioSentenceTiming = Ams.Core.Artifacts.SentenceTiming;
 
 namespace Ams.Cli.Commands;
 
@@ -471,47 +472,35 @@ public static class PipelineCommand
             "Report format: json, csv, or both");
         formatOption.FromAmong("json", "csv", "both");
 
-        var targetSrOption = new Option<int>(
-            "--target-sr",
-            () => 16_000,
-            "Resample audio to this sample rate before analysis (Hz)");
+        var windowOption = new Option<double>(
+            "--window-ms",
+            () => 30.0,
+            "RMS analysis window length (ms)");
 
-        var frameOption = new Option<double>(
-            "--frame-ms",
-            () => 25.0,
-            "Frame length for MFCC extraction (ms)");
+        var stepOption = new Option<double>(
+            "--step-ms",
+            () => 15.0,
+            "RMS hop length between windows (ms)");
 
-        var hopOption = new Option<double>(
-            "--hop-ms",
-            () => 10.0,
-            "Hop size for MFCC extraction (ms)");
+        var minDurationOption = new Option<double>(
+            "--min-duration-ms",
+            () => 60.0,
+            "Minimum mismatch duration that should be reported (ms)");
 
-        var passThresholdOption = new Option<double>(
-            "--pass-threshold",
-            () => 0.30,
-            "Maximum normalized DTW cost allowed for a sentence to pass");
-
-        var passFractionOption = new Option<double>(
-            "--pass-fraction",
-            () => 0.95,
-            "Fraction of comparable sentences that must pass");
-
-        var worstCountOption = new Option<int>(
-            "--worst",
-            () => 10,
-            "Include this many worst sentences in the report");
+        var mergeGapOption = new Option<double>(
+            "--merge-gap-ms",
+            () => 40.0,
+            "Merge consecutive mismatches separated by at most this gap (ms)");
 
         cmd.AddOption(rootOption);
         cmd.AddOption(chapterOption);
         cmd.AddOption(allOption);
         cmd.AddOption(reportDirOption);
         cmd.AddOption(formatOption);
-        cmd.AddOption(targetSrOption);
-        cmd.AddOption(frameOption);
-        cmd.AddOption(hopOption);
-        cmd.AddOption(passThresholdOption);
-        cmd.AddOption(passFractionOption);
-        cmd.AddOption(worstCountOption);
+        cmd.AddOption(windowOption);
+        cmd.AddOption(stepOption);
+        cmd.AddOption(minDurationOption);
+        cmd.AddOption(mergeGapOption);
 
         cmd.SetHandler(context =>
         {
@@ -544,19 +533,14 @@ public static class PipelineCommand
                 _ => throw new InvalidOperationException($"Unsupported report format: {formatToken}")
             };
 
-            var options = new AudioVerifierOptions
-            {
-                TargetSampleRateHz = context.ParseResult.GetValueForOption(targetSrOption),
-                FrameMs = context.ParseResult.GetValueForOption(frameOption),
-                HopMs = context.ParseResult.GetValueForOption(hopOption),
-                PassThreshold = context.ParseResult.GetValueForOption(passThresholdOption),
-                PassFraction = context.ParseResult.GetValueForOption(passFractionOption),
-                WorstCount = context.ParseResult.GetValueForOption(worstCountOption)
-            };
+            var windowMs = context.ParseResult.GetValueForOption(windowOption);
+            var stepMs = context.ParseResult.GetValueForOption(stepOption);
+            var minDurationMs = context.ParseResult.GetValueForOption(minDurationOption);
+            var mergeGapMs = context.ParseResult.GetValueForOption(mergeGapOption);
 
             try
             {
-                RunVerify(root, reportDir, chapter, verifyAll, format, options, cancellationToken);
+                RunVerify(root, reportDir, chapter, verifyAll, format, windowMs, stepMs, minDurationMs, mergeGapMs, cancellationToken);
             }
             catch (OperationCanceledException)
             {
@@ -2087,7 +2071,10 @@ public static class PipelineCommand
         string? chapterName,
         bool verifyAll,
         VerificationReportFormat format,
-        AudioVerifierOptions options,
+        double windowMs,
+        double stepMs,
+        double minDurationMs,
+        double mergeGapMs,
         CancellationToken cancellationToken)
     {
         var rawTargets = ResolveVerifyTargets(root, chapterName, verifyAll);
@@ -2106,10 +2093,9 @@ public static class PipelineCommand
             .Title("[bold]Pipeline Verify[/]")
             .AddColumn("Variant")
             .AddColumn("Status")
-            .AddColumn("Comparable")
-            .AddColumn("Pass %")
-            .AddColumn("Fails")
-            .AddColumn("Worst Cost")
+            .AddColumn("Missing (s)")
+            .AddColumn("Extra (s)")
+            .AddColumn("Mismatches")
             .AddColumn("Reports");
 
         AnsiConsole.Live(table)
@@ -2144,7 +2130,6 @@ public static class PipelineCommand
                                 "-",
                                 "-",
                                 "-",
-                                "-",
                                 "[grey]-[/]");
                             ctx.Refresh();
                             Log.Debug("Skipping {Chapter}: hydrate JSON not found", stem);
@@ -2162,12 +2147,38 @@ public static class PipelineCommand
                                 "-",
                                 "-",
                                 "-",
-                                "-",
                                 "[grey]-[/]");
                             ctx.Refresh();
                             Log.Debug("Skipping {Chapter}: no treated or pause-adjusted WAV found", stem);
                             continue;
                         }
+
+                        float[] rawMono;
+                        int rawSampleRate;
+                        IReadOnlyDictionary<int, AudioSentenceTiming> rawTimings;
+                        try
+                        {
+                            var rawBuffer = WavIo.ReadPcmOrFloat(raw.FullName);
+                            rawSampleRate = rawBuffer.SampleRate;
+                            rawMono = ToMono(rawBuffer);
+                            rawTimings = LoadSentenceTimings(referenceHydratePath);
+                        }
+                        catch (Exception ex)
+                        {
+                            skipped++;
+                            table.AddRow(
+                                Markup.Escape(stem),
+                                "[red]Error[/]",
+                                "-",
+                                "-",
+                                "-",
+                                "[grey]-[/]");
+                            ctx.Refresh();
+                            Log.Error(ex, "Failed to load raw assets for {Chapter}", stem);
+                            continue;
+                        }
+
+                        var chapterLabel = stem;
 
                         foreach (var variant in variants)
                         {
@@ -2175,14 +2186,41 @@ public static class PipelineCommand
                                 ? $"{stem} ({variant.Variant})"
                                 : stem;
 
-                            var report = AudioIntegrityVerifier.Verify(
-                                referenceWav: raw.FullName,
-                                variantWav: variant.File.FullName,
-                                referenceHydrateJson: referenceHydratePath,
-                                variantHydrateJson: variant.HydratePath,
-                                options: options);
+                            AudioVerificationResult result;
+                            try
+                            {
+                                var variantBuffer = WavIo.ReadPcmOrFloat(variant.File.FullName);
+                                var variantMono = ToMono(variantBuffer);
+                                var variantTimings = string.Equals(variant.HydratePath, referenceHydratePath, StringComparison.OrdinalIgnoreCase)
+                                    ? rawTimings
+                                    : LoadSentenceTimings(variant.HydratePath);
 
-                            report.VariantLabel = variant.Variant;
+                                result = AudioIntegrityVerifier.Verify(
+                                    rawMono,
+                                    rawSampleRate,
+                                    variantMono,
+                                    variantBuffer.SampleRate,
+                                    rawTimings,
+                                    variantTimings,
+                                    windowMs: windowMs,
+                                    stepMs: stepMs,
+                                    minMismatchMs: minDurationMs,
+                                    minGapToMergeMs: mergeGapMs);
+                            }
+                            catch (Exception ex)
+                            {
+                                skipped++;
+                                table.AddRow(
+                                    Markup.Escape(rowLabel),
+                                    "[red]Error[/]",
+                                    "-",
+                                    "-",
+                                    "-",
+                                    "[grey]-[/]");
+                                ctx.Refresh();
+                                Log.Error(ex, "Verification failed for {Chapter} ({Variant})", stem, variant.Variant);
+                                continue;
+                            }
 
                             var outputDir = reportDir ?? chapterDir;
                             EnsureDirectory(outputDir.FullName);
@@ -2195,7 +2233,8 @@ public static class PipelineCommand
                                 var jsonPath = Path.Combine(outputDir.FullName, $"{stem}.verify.{variantToken}.json");
                                 using (var stream = File.Create(jsonPath))
                                 {
-                                    JsonSerializer.Serialize(stream, report, VerifyJsonOptions);
+                                    var payload = new { Chapter = stem, Variant = variant.Variant, Result = result };
+                                    JsonSerializer.Serialize(stream, payload, VerifyJsonOptions);
                                 }
 
                                 artifacts.Add(jsonPath);
@@ -2204,47 +2243,38 @@ public static class PipelineCommand
                             if (format is VerificationReportFormat.Csv or VerificationReportFormat.Both)
                             {
                                 var csvPath = Path.Combine(outputDir.FullName, $"{stem}.verify.{variantToken}.csv");
-                                WriteVerificationCsv(csvPath, report);
+                                WriteVerificationCsv(csvPath, chapterLabel, variant.Variant, result);
                                 artifacts.Add(csvPath);
                             }
 
-                            int comparable = report.TotalComparableSentences;
-                            int failCount = report.Sentences.Count(s => !double.IsNaN(s.NormalizedCost) && !s.Passed);
-                            double passPercent = report.PassFractionObserved * 100.0;
-                            double worstCost = report.WorstByCost.FirstOrDefault()?.NormalizedCost ?? double.NaN;
-
-                            bool hasIssues = !report.Passed;
+                            bool hasIssues = result.Mismatches.Count > 0;
                             var statusMarkup = hasIssues
                                 ? "[red]Issues[/]"
                                 : "[green]OK[/]";
 
-                            var comparableText = comparable.ToString(CultureInfo.InvariantCulture);
-                            var passText = passPercent.ToString("F1", CultureInfo.InvariantCulture) + "%";
-                            var failText = failCount.ToString(CultureInfo.InvariantCulture);
-                            var worstText = double.IsNaN(worstCost)
-                                ? "-"
-                                : worstCost.ToString("F3", CultureInfo.InvariantCulture);
+                            var missingText = result.MissingSpeechSec.ToString("F3", CultureInfo.InvariantCulture);
+                            var extraText = result.ExtraSpeechSec.ToString("F3", CultureInfo.InvariantCulture);
+                            var mismatchText = result.Mismatches.Count.ToString(CultureInfo.InvariantCulture);
                             var reportText = artifacts.Count == 0
                                 ? "[grey]-[/]"
                                 : string.Join("\n", artifacts.Select(path => $"[grey]{Markup.Escape(Path.GetFileName(path))}[/]"));
 
-                        table.AddRow(
-                            Markup.Escape(rowLabel),
-                            statusMarkup,
-                            comparableText,
-                            passText,
-                            failText,
-                            worstText,
-                            reportText);
-                        ctx.Refresh();
+                            table.AddRow(
+                                Markup.Escape(rowLabel),
+                                statusMarkup,
+                                missingText,
+                                extraText,
+                                mismatchText,
+                                reportText);
+                            ctx.Refresh();
 
-                        Log.Debug(
-                                "Verified {Chapter} ({Variant}): comparable={Comparable} passFraction={PassFraction:P2} fails={Fails}. Reports: {Reports}",
+                            Log.Debug(
+                                "Verified {Chapter} ({Variant}): mismatches={Count} missing={Missing:F3}s extra={Extra:F3}s. Reports: {Reports}",
                                 stem,
                                 variant.Variant,
-                                comparable,
-                                report.PassFractionObserved,
-                                failCount,
+                                result.Mismatches.Count,
+                                result.MissingSpeechSec,
+                                result.ExtraSpeechSec,
                                 artifacts.ToArray());
 
                         processed++;
@@ -2455,32 +2485,155 @@ public static class PipelineCommand
         return string.IsNullOrEmpty(token) ? "variant" : token;
     }
 
-    private static void WriteVerificationCsv(string path, AudioIntegrityReport report)
+    private static float[] ToMono(AudioBuffer buffer)
+    {
+        if (buffer.Channels == 1)
+        {
+            return (float[])buffer.Planar[0].Clone();
+        }
+
+        var mono = new float[buffer.Length];
+        float scale = 1f / buffer.Channels;
+        for (int ch = 0; ch < buffer.Channels; ch++)
+        {
+            var src = buffer.Planar[ch];
+            for (int i = 0; i < mono.Length; i++)
+            {
+                mono[i] += src[i] * scale;
+            }
+        }
+
+        return mono;
+    }
+
+    private static IReadOnlyDictionary<int, AudioSentenceTiming> LoadSentenceTimings(string hydratePath)
+    {
+        using var stream = File.OpenRead(hydratePath);
+        using var doc = JsonDocument.Parse(stream);
+
+        if (!doc.RootElement.TryGetProperty("sentences", out var sentences) || sentences.ValueKind != JsonValueKind.Array)
+        {
+            return new Dictionary<int, SentenceTiming>();
+        }
+
+        var timings = new Dictionary<int, AudioSentenceTiming>();
+        foreach (var sentence in sentences.EnumerateArray())
+        {
+            if (!TryGetInt(sentence, "id", out var id))
+            {
+                continue;
+            }
+
+            if (!TryReadTiming(sentence, out var start, out var end))
+            {
+                continue;
+            }
+
+            timings[id] = new AudioSentenceTiming(start, end);
+        }
+
+        return timings;
+    }
+
+    private static bool TryReadTiming(JsonElement sentence, out double start, out double end)
+    {
+        start = double.NaN;
+        end = double.NaN;
+
+        if (sentence.TryGetProperty("timing", out var timingObj) && timingObj.ValueKind == JsonValueKind.Object)
+        {
+            if (TryGetDouble(timingObj, "startSec", out start) && TryGetDouble(timingObj, "endSec", out end))
+            {
+                return true;
+            }
+
+            if (TryGetDouble(timingObj, "start", out start) && TryGetDouble(timingObj, "end", out end))
+            {
+                return true;
+            }
+        }
+
+        if (TryGetDouble(sentence, "startSec", out start) && TryGetDouble(sentence, "endSec", out end))
+        {
+            return true;
+        }
+
+        if (TryGetDouble(sentence, "start", out start) && TryGetDouble(sentence, "end", out end))
+        {
+            return true;
+        }
+
+        start = double.NaN;
+        end = double.NaN;
+        return false;
+    }
+
+    private static bool TryGetDouble(JsonElement element, string propertyName, out double value)
+    {
+        value = double.NaN;
+        if (!element.TryGetProperty(propertyName, out var prop))
+        {
+            return false;
+        }
+
+        if (prop.ValueKind == JsonValueKind.Number)
+        {
+            value = prop.GetDouble();
+            return true;
+        }
+
+        if (prop.ValueKind == JsonValueKind.String && double.TryParse(prop.GetString(), out var parsed))
+        {
+            value = parsed;
+            return true;
+        }
+
+        return false;
+    }
+
+    private static bool TryGetInt(JsonElement element, string propertyName, out int value)
+    {
+        value = 0;
+        if (!element.TryGetProperty(propertyName, out var prop))
+        {
+            return false;
+        }
+
+        if (prop.ValueKind == JsonValueKind.Number && prop.TryGetInt32(out value))
+        {
+            return true;
+        }
+
+        if (prop.ValueKind == JsonValueKind.String && int.TryParse(prop.GetString(), out value))
+        {
+            return true;
+        }
+
+        return false;
+    }
+
+    private static void WriteVerificationCsv(string path, string chapterLabel, string variantLabel, AudioVerificationResult result)
     {
         using var writer = new StreamWriter(path, false, Encoding.UTF8);
-        writer.WriteLine("chapter,variant,sentenceId,passed,cost,refStart,refEnd,varStart,varEnd,refDuration,varDuration,note");
+        writer.WriteLine("chapter,variant,type,startSec,endSec,rawDb,treatedDb,deltaDb,sentenceIds");
 
-        var chapterLabel = Path.GetFileNameWithoutExtension(report.ReferencePath);
-        var variantLabel = string.IsNullOrEmpty(report.VariantLabel)
-            ? Path.GetFileNameWithoutExtension(report.VariantPath)
-            : report.VariantLabel;
-
-        foreach (var sentence in report.Sentences)
+        foreach (var mismatch in result.Mismatches)
         {
+            var sentenceIds = mismatch.Sentences.Count > 0
+                ? string.Join('|', mismatch.Sentences.Select(span => span.SentenceId))
+                : string.Empty;
+
             writer.WriteLine(string.Join(
                 ',',
                 EscapeCsv(chapterLabel),
                 EscapeCsv(variantLabel),
-                sentence.SentenceId.ToString(CultureInfo.InvariantCulture),
-                sentence.Passed ? "true" : "false",
-                double.IsNaN(sentence.NormalizedCost) ? "" : sentence.NormalizedCost.ToString("F4", CultureInfo.InvariantCulture),
-                sentence.RefBounds.start.ToString("F6", CultureInfo.InvariantCulture),
-                sentence.RefBounds.end.ToString("F6", CultureInfo.InvariantCulture),
-                sentence.VarBounds.start.ToString("F6", CultureInfo.InvariantCulture),
-                sentence.VarBounds.end.ToString("F6", CultureInfo.InvariantCulture),
-                sentence.RefDuration.ToString("F6", CultureInfo.InvariantCulture),
-                sentence.VarDuration.ToString("F6", CultureInfo.InvariantCulture),
-                EscapeCsv(sentence.Note ?? string.Empty)));
+                mismatch.Type.ToString(),
+                mismatch.StartSec.ToString("F6", CultureInfo.InvariantCulture),
+                mismatch.EndSec.ToString("F6", CultureInfo.InvariantCulture),
+                mismatch.RawDb.ToString("F2", CultureInfo.InvariantCulture),
+                mismatch.TreatedDb.ToString("F2", CultureInfo.InvariantCulture),
+                mismatch.DeltaDb.ToString("F2", CultureInfo.InvariantCulture),
+                EscapeCsv(sentenceIds)));
         }
     }
 

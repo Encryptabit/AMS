@@ -3,6 +3,7 @@ using Ams.Core.Artifacts;
 using Ams.Core.Audio;
 using Ams.Core.Prosody;
 using Xunit;
+using SentenceTiming = Ams.Core.Artifacts.SentenceTiming;
 
 namespace Ams.Tests.Prosody;
 
