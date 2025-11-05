@@ -4,13 +4,12 @@
     <ProjectReference Include="..\Ams.Dsp.Native\Ams.Dsp.Native.csproj" />
   </ItemGroup>
   
-  <Target Name="CopyMyDirectory" AfterTargets="Build">
-    <ItemGroup>
-      <!-- Include all files within the source directory and its subdirectories -->
-      <SourceFiles Include="ExtTools\ffmpeg\**\*.*" />
-    </ItemGroup>
-    <Copy SourceFiles="@(SourceFiles)" DestinationFolder="$(OutDir)\ExtTools\ffmpeg\%(RecursiveDir)" />
-  </Target>
+  <ItemGroup>
+    <None Include="ExtTools\ffmpeg\**\*">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <Link>ExtTools\ffmpeg\%(RecursiveDir)%(Filename)%(Extension)</Link>
+    </None>
+  </ItemGroup>
 
   <ItemGroup>
     <PackageReference Include="DocX" Version="4.0.25105.5786" />
@@ -29,6 +28,9 @@
     <None Include="ExtTools\Plugalyzer.exe">
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
     </None>
+  </ItemGroup>
+  <ItemGroup>
+    <Folder Include="ExtTools\ffmpeg\" />
   </ItemGroup>
   <Target Name="VerifyPlugalyzerCopy" AfterTargets="CopyFilesOutputgroupOutput">
     <Message Text="Checking for Plugalyzer.exe in output..." Importance="high" />
