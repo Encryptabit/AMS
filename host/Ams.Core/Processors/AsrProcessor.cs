@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using Ams.Core.Artifacts;
@@ -192,38 +193,120 @@ public static class AsrProcessor
 
     private static void AppendTokens(ICollection<AsrToken> tokens, SegmentData segment)
     {
-        if (segment.Tokens is { Length: > 0 })
+        var aggregated = segment.Tokens is { Length: > 0 }
+            ? AggregateTokens(segment.Tokens)
+            : null;
+
+        if (aggregated is { Count: > 0 })
         {
-            foreach (var token in segment.Tokens)
+            foreach (var token in aggregated)
             {
-                var text = token.Text?.Trim();
-                if (string.IsNullOrWhiteSpace(text))
-                {
-                    continue;
-                }
-
-                if (token.Start < 0 || token.End < 0)
-                {
-                    continue;
-                }
-
-                var start = token.Start / 100.0;
-                var duration = Math.Max(0, (token.End - token.Start) / 100.0);
-                tokens.Add(new AsrToken(start, duration, text));
+                tokens.Add(token);
             }
+            return;
         }
-        else
+
+        var text = segment.Text?.Trim();
+        if (string.IsNullOrWhiteSpace(text))
         {
-            var text = segment.Text?.Trim();
-            if (string.IsNullOrWhiteSpace(text))
+            return;
+        }
+
+        var words = text
+            .Split(new[] { ' ', '\t', '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries);
+
+        if (words.Length == 0)
+        {
+            return;
+        }
+
+        var start = segment.Start.TotalSeconds;
+        var end = Math.Max(start, segment.End.TotalSeconds);
+        var durationPerWord = Math.Max(0.05, (end - start) / words.Length);
+
+        for (int i = 0; i < words.Length; i++)
+        {
+            var wordStart = start + i * durationPerWord;
+            tokens.Add(new AsrToken(wordStart, durationPerWord, words[i]));
+        }
+    }
+
+    private static List<AsrToken> AggregateTokens(IReadOnlyList<WhisperToken> rawTokens)
+    {
+        var result = new List<AsrToken>(rawTokens.Count);
+        var builder = new StringBuilder();
+        double wordStart = 0;
+        double wordEnd = 0;
+
+        foreach (var token in rawTokens)
+        {
+            if (token.Start < 0 || token.End < 0)
+            {
+                continue;
+            }
+
+            var raw = token.Text;
+            if (string.IsNullOrEmpty(raw))
+            {
+                continue;
+            }
+
+            if (IsSpecialToken(raw))
+            {
+                continue;
+            }
+
+            var normalized = NormalizeTokenText(raw);
+            if (string.IsNullOrWhiteSpace(normalized))
+            {
+                continue;
+            }
+
+            var leadingSpace = char.IsWhiteSpace(raw[0]);
+            var tokenStart = token.Start / 100.0;
+            var tokenEnd = Math.Max(tokenStart, token.End / 100.0);
+
+            if (builder.Length == 0 || leadingSpace)
+            {
+                Flush();
+                wordStart = tokenStart;
+            }
+
+            builder.Append(normalized);
+            wordEnd = Math.Max(wordEnd, tokenEnd);
+        }
+
+        Flush();
+        return result;
+
+        void Flush()
+        {
+            if (builder.Length == 0)
             {
                 return;
             }
 
-            var start = segment.Start.TotalSeconds;
-            var duration = Math.Max(0, (segment.End - segment.Start).TotalSeconds);
-            tokens.Add(new AsrToken(start, duration, text));
+            var duration = Math.Max(0.05, wordEnd - wordStart);
+            result.Add(new AsrToken(wordStart, duration, builder.ToString()));
+
+            builder.Clear();
+            wordStart = 0;
+            wordEnd = 0;
         }
+    }
+
+    private static bool IsSpecialToken(string text) =>
+        text.StartsWith("[") && text.EndsWith("]", StringComparison.Ordinal);
+
+    private static string NormalizeTokenText(string text)
+    {
+        var normalized = text
+            .Replace("▁", " ")
+            .Replace("Ġ", " ")
+            .Replace("Ċ", " ")
+            .Trim();
+
+        return normalized;
     }
 
     private static float[] ExtractMonoSamples(AudioBuffer buffer)
@@ -267,4 +350,4 @@ public sealed record AsrOptions(
     bool NoSpeechBoost = true,
     int GpuDevice = 0,
     bool UseFlashAttention = false,
-    bool UseDtwTimestamps = false);
+    bool UseDtwTimestamps = true);

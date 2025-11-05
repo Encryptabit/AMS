@@ -39,10 +39,10 @@ public static class AudioProcessor
             throw new NotSupportedException("Sample rate conversion during encode is not implemented yet.");
         }
 
-        var bitDepth = effective.TargetBitDepth ?? 32;
-        if (bitDepth != 32)
+        var bitDepth = effective.TargetBitDepth ?? 16;
+        if (bitDepth != 16)
         {
-            throw new NotSupportedException("Only 32-bit float WAV encoding is supported currently.");
+            throw new NotSupportedException("Only 16-bit PCM WAV encoding is supported currently.");
         }
 
         var directory = Path.GetDirectoryName(Path.GetFullPath(path));
@@ -52,7 +52,7 @@ public static class AudioProcessor
         }
 
         using var stream = File.Create(path);
-        WriteFloatWave(stream, buffer);
+        WritePcm16Wave(stream, buffer);
     }
 
     public static MemoryStream EncodeWavToStream(AudioBuffer buffer, AudioEncodeOptions? options = null)
@@ -68,21 +68,21 @@ public static class AudioProcessor
             throw new NotSupportedException("Sample rate conversion during encode is not implemented yet.");
         }
 
-        if (effective.TargetBitDepth.HasValue && effective.TargetBitDepth.Value != 32)
+        if (effective.TargetBitDepth.HasValue && effective.TargetBitDepth.Value != 16)
         {
-            throw new NotSupportedException("Only 32-bit float WAV encoding is supported currently.");
+            throw new NotSupportedException("Only 16-bit PCM WAV encoding is supported currently.");
         }
 
         var ms = new MemoryStream();
-        WriteFloatWave(ms, buffer);
+        WritePcm16Wave(ms, buffer);
         ms.Position = 0;
         return ms;
     }
 
-    private static void WriteFloatWave(Stream destination, AudioBuffer buffer)
+    private static void WritePcm16Wave(Stream destination, AudioBuffer buffer)
     {
-        const ushort audioFormat = 3; // IEEE float
-        const ushort bitsPerSample = 32;
+        const ushort audioFormat = 1; // PCM
+        const ushort bitsPerSample = 16;
         var channels = (ushort)buffer.Channels;
         var sampleRate = (uint)buffer.SampleRate;
         var blockAlign = (ushort)(channels * (bitsPerSample / 8));
@@ -112,7 +112,7 @@ public static class AudioProcessor
             for (int ch = 0; ch < buffer.Channels; ch++)
             {
                 var value = Math.Clamp(buffer.Planar[ch][sample], -1f, 1f);
-                writer.Write(value);
+                writer.Write((short)Math.Round(value * short.MaxValue, MidpointRounding.AwayFromZero));
             }
         }
 

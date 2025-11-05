@@ -34,7 +34,7 @@ public sealed class FfSession : IDisposable
 
             try
             {
-                // ffmpeg.av_log_set_level(ffmpeg.AV_LOG_WARNING);
+                 ffmpeg.av_log_set_level(ffmpeg.AV_LOG_WARNING);
                 FfUtils.ThrowIfError(ffmpeg.avformat_network_init(), "Failed to initialize FFmpeg network stack");
                 _initialized = true;
             }

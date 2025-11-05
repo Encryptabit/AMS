@@ -14,6 +14,7 @@ namespace Ams.Cli.Commands;
 public static class AsrCommand
 {
     internal const string DefaultServiceUrl = "http://localhost:8000";
+    private const GgmlType DefaultModelType = GgmlType.LargeV3Turbo;
 
     public static Command Create()
     {
@@ -49,7 +50,7 @@ public static class AsrCommand
         var temperatureOption = new Option<double>("--temperature", () => 0.0, "Sampling temperature (0-1) for Whisper");
         var wordTimestampsOption = new Option<bool>("--word-timestamps", () => true, "Emit word-level timestamps (Whisper)");
         var flashAttentionOption = new Option<bool>("--flash-attention", () => false, "Enable FlashAttention kernels when building with support");
-        var dtwOption = new Option<bool>("--dtw-timestamps", () => false, "Enable DTW timestamp refinement (Whisper)");
+        var dtwOption = new Option<bool>("--dtw-timestamps", () => true, "Enable DTW timestamp refinement (Whisper)");
 
         runCommand.AddOption(audioOption);
         runCommand.AddOption(outputOption);
@@ -219,8 +220,8 @@ public static class AsrCommand
         bool flashAttention,
         bool dtwTimestamps)
     {
-        var resolvedModelPath = await ResolveWhisperModelPathAsync(model, modelPath).ConfigureAwait(false);
-        Log.Debug("Whisper model path resolved to {ModelPath}", resolvedModelPath);
+        var (resolvedModelPath, resolvedType) = await ResolveWhisperModelAsync(model, modelPath).ConfigureAwait(false);
+        Log.Debug("Whisper model resolved: Path={ModelPath}, Type={ModelType}", resolvedModelPath, resolvedType);
 
         var options = new AsrOptions(
             ModelPath: resolvedModelPath,
@@ -250,17 +251,20 @@ public static class AsrCommand
         Log.Debug("ASR summary: ModelVersion={ModelVersion}, Tokens={TokenCount}", response.ModelVersion, response.Tokens.Length);
     }
 
-    private static async Task<string> ResolveWhisperModelPathAsync(string? modelOption, FileInfo? modelPath)
+    private static async Task<(string Path, GgmlType Type)> ResolveWhisperModelAsync(string? modelOption, FileInfo? modelPath)
     {
         if (modelPath is not null)
         {
             var fullPath = Path.GetFullPath(modelPath.FullName);
             if (!File.Exists(fullPath))
             {
-                var type = ParseModelAlias(modelOption) ?? ParseModelAlias(Path.GetFileName(fullPath)) ?? GgmlType.Base;
-                await DownloadModelIfMissingAsync(fullPath, type).ConfigureAwait(false);
+                var type = ParseModelAlias(modelOption) ?? ParseModelAlias(Path.GetFileName(fullPath)) ?? DefaultModelType;
+                var downloaded = await DownloadModelIfMissingAsync(fullPath, type).ConfigureAwait(false);
+                return (downloaded, type);
             }
-            return fullPath;
+
+            var inferred = ParseModelAlias(Path.GetFileName(fullPath)) ?? DefaultModelType;
+            return (fullPath, inferred);
         }
 
         if (!string.IsNullOrWhiteSpace(modelOption))
@@ -268,12 +272,14 @@ public static class AsrCommand
             var trimmed = modelOption.Trim();
             if (File.Exists(trimmed))
             {
-                return Path.GetFullPath(trimmed);
+                var inferred = ParseModelAlias(Path.GetFileName(trimmed)) ?? DefaultModelType;
+                return (Path.GetFullPath(trimmed), inferred);
             }
 
             if (TryParseModelAlias(trimmed, out var aliasType))
             {
-                return await DownloadModelIfMissingAsync(null, aliasType).ConfigureAwait(false);
+                var downloaded = await DownloadModelIfMissingAsync(null, aliasType).ConfigureAwait(false);
+                return (downloaded, aliasType);
             }
         }
 
@@ -283,20 +289,22 @@ public static class AsrCommand
             var envPath = Path.GetFullPath(envModel);
             if (File.Exists(envPath))
             {
-                return envPath;
+                var inferred = ParseModelAlias(Path.GetFileName(envPath)) ?? DefaultModelType;
+                return (envPath, inferred);
             }
 
-            var envType = ParseModelAlias(Path.GetFileName(envPath)) ?? ParseModelAlias(envModel) ?? GgmlType.Base;
-            await DownloadModelIfMissingAsync(envPath, envType).ConfigureAwait(false);
-            return envPath;
+            var envType = ParseModelAlias(Path.GetFileName(envPath)) ?? ParseModelAlias(envModel) ?? DefaultModelType;
+            var downloaded = await DownloadModelIfMissingAsync(envPath, envType).ConfigureAwait(false);
+            return (downloaded, envType);
         }
 
-        return await DownloadModelIfMissingAsync(null, GgmlType.Base).ConfigureAwait(false);
+        var defaultPath = await DownloadModelIfMissingAsync(null, DefaultModelType).ConfigureAwait(false);
+        return (defaultPath, DefaultModelType);
     }
 
     private static bool TryParseModelAlias(string? value, out GgmlType type)
     {
-        type = GgmlType.Base;
+        type = DefaultModelType;
         if (string.IsNullOrWhiteSpace(value))
         {
             return false;
@@ -345,8 +353,11 @@ public static class AsrCommand
                 return true;
             case "large":
             case "large-v3":
-            case "large-v3-q5_0": // common alias
+            case "large-v3-q5_0":
                 type = GgmlType.LargeV3;
+                return true;
+            case "large-v3-turbo":
+                type = GgmlType.LargeV3Turbo;
                 return true;
             case "large-v1":
                 type = GgmlType.LargeV1;
@@ -409,7 +420,8 @@ public static class AsrCommand
             GgmlType.LargeV1 => "ggml-large-v1.bin",
             GgmlType.LargeV2 => "ggml-large-v2.bin",
             GgmlType.LargeV3 => "ggml-large-v3.bin",
-            _ => "ggml-base.bin"
+            GgmlType.LargeV3Turbo => "ggml-large-v3-turbo.bin",
+            _ => "ggml-large-v3-turbo.bin"
         };
 
     private static async Task RunNemoAsync(FileInfo audioFile, FileInfo outputFile, string serviceUrl, string? model, string language)
