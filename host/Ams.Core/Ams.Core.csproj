@@ -3,6 +3,14 @@
   <ItemGroup>
     <ProjectReference Include="..\Ams.Dsp.Native\Ams.Dsp.Native.csproj" />
   </ItemGroup>
+  
+  <Target Name="CopyMyDirectory" AfterTargets="Build">
+    <ItemGroup>
+      <!-- Include all files within the source directory and its subdirectories -->
+      <SourceFiles Include="ExtTools\ffmpeg\**\*.*" />
+    </ItemGroup>
+    <Copy SourceFiles="@(SourceFiles)" DestinationFolder="$(OutDir)\ExtTools\ffmpeg\%(RecursiveDir)" />
+  </Target>
 
   <ItemGroup>
     <PackageReference Include="DocX" Version="4.0.25105.5786" />
@@ -14,6 +22,7 @@
     <PackageReference Include="Serilog.Sinks.Console" Version="5.0.1" />
     <PackageReference Include="Serilog.Sinks.File" Version="5.0.0" />
     <PackageReference Include="System.Text.Json" Version="9.0.0" />
+    <PackageReference Include="Whisper.net" Version="1.8.1" />
     <PackageReference Include="Whisper.net.Runtime.Cuda" Version="1.8.1" />
   </ItemGroup>
   <ItemGroup>
@@ -32,6 +41,7 @@
     <TargetFramework>net9.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
   </PropertyGroup>
 
 </Project>
