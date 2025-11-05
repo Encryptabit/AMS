@@ -1,5 +1,6 @@
 ﻿using System.CommandLine;
 using System.Text;
+using Ams.Core.Asr;
 using Ams.Core.Common;
 using Ams.Cli.Repl;
 using Ams.Cli.Commands;
@@ -15,8 +16,17 @@ internal static class Program
         Log.Debug("Structured logging initialized. Console + file at {LogFile}", Log.LogFilePath ?? "(unknown)");
 
         AsrProcessSupervisor.RegisterForShutdown();
-        var defaultAsrUrl = ResolveDefaultAsrUrl();
-        AsrProcessSupervisor.TriggerBackgroundWarmup(defaultAsrUrl);
+        var configuredEngine = AsrEngineConfig.Resolve();
+        Log.Debug("ASR engine configured as {Engine}", configuredEngine);
+        if (configuredEngine == AsrEngine.Nemo)
+        {
+            var defaultAsrUrl = ResolveDefaultAsrUrl();
+            AsrProcessSupervisor.TriggerBackgroundWarmup(defaultAsrUrl);
+        }
+        else
+        {
+            Log.Debug("Whisper.NET in-process ASR selected; skipping external service warmup.");
+        }
 
         MfaProcessSupervisor.RegisterForShutdown();
         MfaProcessSupervisor.TriggerBackgroundWarmup();

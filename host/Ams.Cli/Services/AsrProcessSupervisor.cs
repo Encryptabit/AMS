@@ -32,32 +32,67 @@ internal static class AsrProcessSupervisor
     private static readonly string PowerShellEnv = "AMS_ASR_POWERSHELL";
     private static readonly string PythonEnv = "AMS_ASR_PYTHON";
 
-    internal static string StatusLabel => _state switch
-    {
-        SupervisorState.Ready => "ASR:ready",
-        SupervisorState.Starting => "ASR:starting",
-        SupervisorState.Faulted => "ASR:fault",
-        _ => "ASR:idle"
-    };
+    private static bool NemoEnabled => AsrEngineConfig.IsNemo();
 
-    internal static string StatusDescription => _state switch
+    internal static string StatusLabel
     {
-        SupervisorState.Ready => "ready",
-        SupervisorState.Starting => "starting",
-        SupervisorState.Faulted => "faulted",
-        _ => "idle"
-    };
+        get
+        {
+            if (!NemoEnabled)
+            {
+                return "ASR:whisper";
+            }
 
-    internal static string? BaseUrl => _managedBaseUrl;
+            return _state switch
+            {
+                SupervisorState.Ready => "ASR:ready",
+                SupervisorState.Starting => "ASR:starting",
+                SupervisorState.Faulted => "ASR:fault",
+                _ => "ASR:idle"
+            };
+        }
+    }
+
+    internal static string StatusDescription
+    {
+        get
+        {
+            if (!NemoEnabled)
+            {
+                return "in-process";
+            }
+
+            return _state switch
+            {
+                SupervisorState.Ready => "ready",
+                SupervisorState.Starting => "starting",
+                SupervisorState.Faulted => "faulted",
+                _ => "idle"
+            };
+        }
+    }
+
+    internal static string? BaseUrl => NemoEnabled ? _managedBaseUrl : null;
 
     internal static void RegisterForShutdown()
     {
+        if (!NemoEnabled)
+        {
+            return;
+        }
+
         AppDomain.CurrentDomain.ProcessExit += (_, _) => Shutdown();
         Console.CancelKeyPress += (_, _) => Shutdown();
     }
 
     internal static void TriggerBackgroundWarmup(string baseUrl)
     {
+        if (!NemoEnabled)
+        {
+            _state = SupervisorState.Ready;
+            return;
+        }
+
         _managedBaseUrl = baseUrl;
 
         if (IsAutoStartDisabled())
@@ -89,6 +124,12 @@ internal static class AsrProcessSupervisor
 
     internal static async Task EnsureServiceReadyAsync(string baseUrl, CancellationToken cancellationToken)
     {
+        if (!NemoEnabled)
+        {
+            _state = SupervisorState.Ready;
+            return;
+        }
+
         cancellationToken.ThrowIfCancellationRequested();
 
         await Gate.WaitAsync(cancellationToken).ConfigureAwait(false);
@@ -145,6 +186,11 @@ internal static class AsrProcessSupervisor
 
     internal static void Shutdown()
     {
+        if (!NemoEnabled)
+        {
+            return;
+        }
+
         lock (ShutdownLock)
         {
             if (_process is null)
@@ -180,6 +226,11 @@ internal static class AsrProcessSupervisor
 
     private static async Task<bool> IsHealthyAsync(string baseUrl, CancellationToken cancellationToken)
     {
+        if (!NemoEnabled)
+        {
+            return true;
+        }
+
         try
         {
             using var client = new AsrClient(baseUrl);
@@ -193,6 +244,12 @@ internal static class AsrProcessSupervisor
 
     private static async Task<bool> WaitForHealthyAsync(string baseUrl, CancellationToken cancellationToken)
     {
+        if (!NemoEnabled)
+        {
+            _state = SupervisorState.Ready;
+            return true;
+        }
+
         var start = DateTime.UtcNow;
         while (DateTime.UtcNow - start < StartupTimeout)
         {
