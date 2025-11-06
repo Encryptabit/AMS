@@ -74,13 +74,15 @@ public static class AudioProcessor
         }
 
         var ms = new MemoryStream();
-        WritePcm16Wave(ms, buffer);
+        FfEncoder.AudioBufferToWavStream(buffer, ms, PcmEncoding.Pcm16);
         ms.Position = 0;
         return ms;
     }
 
     private static void WritePcm16Wave(Stream destination, AudioBuffer buffer)
     {
+        //FfEncoder.Encode(new AudioEncodeOptions { TargetBitDepth = 16, TargetSampleRate = DefaultAsrSampleRate}, buffer, destination);
+        
         const ushort audioFormat = 1; // PCM
         const ushort bitsPerSample = 16;
         var channels = (ushort)buffer.Channels;

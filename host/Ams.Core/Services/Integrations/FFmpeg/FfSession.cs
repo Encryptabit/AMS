@@ -49,48 +49,10 @@ public sealed class FfSession : IDisposable
 
     private static void TrySetRootPath()
     {
-        if (TrySetFromExtTools())
-        {
-            return;
-        }
-
-        var probable = Path.Combine(AppContext.BaseDirectory, "runtimes");
-        TrySetLocal(probable);
-        
-        
-
-        return;
-
-        static bool TrySetLocal(string? path)
-        {
-            if (string.IsNullOrWhiteSpace(path))
-            {
-                return false;
-            }
-
-            if (!Directory.Exists(path))
-            {
-                return false;
-            }
-
-            ffmpeg.RootPath = path;
-            return true;
-        }
+        var probable = Path.Combine(AppContext.BaseDirectory, "ExtTools", "ffmpeg", "bin");
+        TrySet(probable);
     }
 
-    private static bool TrySetFromExtTools()
-    {
-        var dir = new DirectoryInfo(AppContext.BaseDirectory);
-        while (dir is not null)
-        {
-            var extToolsBin = Path.Combine(dir.FullName, "ExtTools", "ffmpeg", "bin");
-            if (TrySet(extToolsBin))
-                return true;
-
-            dir = dir.Parent;
-        }
-        return false;
-    }
 
     private static bool TrySet(string? path)
     {
