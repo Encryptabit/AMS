@@ -7,6 +7,7 @@ using Ams.Core.Alignment.Mfa;
 using Ams.Core.Artifacts;
 using Ams.Core.Common;
 using Ams.Core.Audio;
+using Ams.Core.Processors;
 using Ams.Core.Runtime.Documents;
 using Ams.Core.Hydrate;
 
@@ -80,8 +81,8 @@ public sealed class RoomToneInsertionStage
         if (!File.Exists(manifest.AudioPath))
             throw new FileNotFoundException("Audio file not found", manifest.AudioPath);
 
-        var inputAudio   = WavIo.ReadPcmOrFloat(manifest.AudioPath);
-        var roomtoneSeed = WavIo.ReadPcmOrFloat(roomtonePath);
+        var inputAudio   = AudioProcessor.Decode(manifest.AudioPath);
+        var roomtoneSeed = AudioProcessor.Decode(roomtonePath);
 
         var seedAnalyzer = new AudioAnalysisService(roomtoneSeed);
         var roomtoneSeedStats = seedAnalyzer.AnalyzeGap(
@@ -207,7 +208,7 @@ public sealed class RoomToneInsertionStage
                 debugDirectory: _emitDiagnostics ? stageDir : null);                                  // :contentReference[oaicite:7]{index=7}
 
             wavPath = Path.Combine(stageDir, "roomtone.wav");
-            WavIo.WriteFloat32(wavPath, rendered);
+            AudioProcessor.EncodeWav(wavPath, rendered, new AudioEncodeOptions { TargetBitDepth = 32 });
         }
 
         var audioTargetPath = wavPath ?? manifest.AudioPath;
@@ -1476,4 +1477,3 @@ public sealed class RoomToneInsertionStage
         Directory.CreateDirectory(dir);
     }
 }
-

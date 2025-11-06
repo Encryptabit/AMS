@@ -17,6 +17,7 @@ using Ams.Cli.Repl;
 using Ams.Core.Alignment.Mfa;
 using Ams.Core.Artifacts;
 using Ams.Core.Audio;
+using Ams.Core.Processors;
 using Ams.Core.Runtime.Documents;
 using Ams.Core.Common;
 using Ams.Core.Hydrate;
@@ -2158,7 +2159,7 @@ public static class PipelineCommand
                         IReadOnlyDictionary<int, AudioSentenceTiming> rawTimings;
                         try
                         {
-                            var rawBuffer = WavIo.ReadPcmOrFloat(raw.FullName);
+                            var rawBuffer = AudioProcessor.Decode(raw.FullName);
                             rawSampleRate = rawBuffer.SampleRate;
                             rawMono = ToMono(rawBuffer);
                             rawTimings = LoadSentenceTimings(referenceHydratePath);
@@ -2189,7 +2190,7 @@ public static class PipelineCommand
                             AudioVerificationResult result;
                             try
                             {
-                                var variantBuffer = WavIo.ReadPcmOrFloat(variant.File.FullName);
+                                var variantBuffer = AudioProcessor.Decode(variant.File.FullName);
                                 var variantMono = ToMono(variantBuffer);
                                 var variantTimings = string.Equals(variant.HydratePath, referenceHydratePath, StringComparison.OrdinalIgnoreCase)
                                     ? rawTimings
@@ -2736,7 +2737,7 @@ public static class PipelineCommand
 
     private static AudioStats ComputeAudioStats(FileInfo audioFile)
     {
-        var buffer = WavIo.ReadPcmOrFloat(audioFile.FullName);
+        var buffer = AudioProcessor.Decode(audioFile.FullName);
         var totalSamples = buffer.Length;
         var channels = buffer.Channels;
         if (totalSamples == 0 || channels == 0)

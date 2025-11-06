@@ -12,6 +12,8 @@ public sealed class FfSession : IDisposable
 {
     private static readonly object InitLock = new();
     private static bool _initialized;
+    private static bool _filtersChecked;
+    private static bool _filtersAvailable;
 
     /// <summary>
     /// Ensures FFmpeg has been initialized for the current process.
@@ -44,6 +46,26 @@ public sealed class FfSession : IDisposable
                 throw new InvalidOperationException(
                     $"FFmpeg native libraries could not be loaded. {hint}", ex);
             }
+        }
+    }
+
+    public static void EnsureFiltersAvailable()
+    {
+        EnsureInitialized();
+        EnsureFilterProbe();
+        if (!_filtersAvailable)
+        {
+            throw new NotSupportedException("FFmpeg filter graph support (libavfilter) is not available. Install FFmpeg builds that include avfilter and place the DLLs under ExtTools/ffmpeg/bin.");
+        }
+    }
+
+    public static bool FiltersAvailable
+    {
+        get
+        {
+            EnsureInitialized();
+            EnsureFilterProbe();
+            return _filtersAvailable;
         }
     }
 
@@ -84,7 +106,8 @@ public sealed class FfSession : IDisposable
             {
                 "avcodec",
                 "avformat",
-                "avutil"
+                "avutil",
+                "avfilter"
             };
 
             foreach (var file in Directory.EnumerateFiles(directory, "*.*", SearchOption.TopDirectoryOnly))
@@ -118,6 +141,54 @@ public sealed class FfSession : IDisposable
 
     private static bool IsBindingException(Exception ex) =>
         ex is DllNotFoundException or EntryPointNotFoundException or NotSupportedException;
+
+    private static void EnsureFilterProbe()
+    {
+        if (_filtersChecked)
+        {
+            return;
+        }
+
+        lock (InitLock)
+        {
+            if (_filtersChecked)
+            {
+                return;
+            }
+
+            try
+            {
+                unsafe
+                {
+                    AVFilterGraph* graph = null;
+                    try
+                    {
+                        graph = ffmpeg.avfilter_graph_alloc();
+                        _filtersAvailable = graph != null;
+                    }
+                    catch (EntryPointNotFoundException)
+                    {
+                        _filtersAvailable = false;
+                    }
+                    catch (NotSupportedException)
+                    {
+                        _filtersAvailable = false;
+                    }
+                    finally
+                    {
+                        if (graph != null)
+                        {
+                            ffmpeg.avfilter_graph_free(&graph);
+                        }
+                    }
+                }
+            }
+            finally
+            {
+                _filtersChecked = true;
+            }
+        }
+    }
 
     private static string BuildFailureHint()
     {
