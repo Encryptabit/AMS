@@ -9,6 +9,7 @@ using System.IO;
 using System.Threading;
 using Ams.Core.Artifacts;
 using Ams.Core.Audio;
+using Ams.Core.Processors;
 using Ams.Core.Runtime.Documents;
 using Ams.Core.Common;
 using Ams.Core.Hydrate;
@@ -443,8 +444,8 @@ public static class ValidateCommand
 
         cancellationToken.ThrowIfCancellationRequested();
 
-        var audioBuffer = WavIo.ReadPcmOrFloat(audioPath);
-        var roomtoneBuffer = WavIo.ReadPcmOrFloat(roomtonePath);
+        var audioBuffer = AudioProcessor.Decode(audioPath);
+        var roomtoneBuffer = AudioProcessor.Decode(roomtonePath);
         double fadeMs = stageFadeMs ?? 5.0;
 
         double targetToneDb = toneGainDb;
@@ -473,7 +474,7 @@ public static class ValidateCommand
             toneGainLinear,
             fadeMs: fadeMs,
             intraSentenceGaps: timelineResult.IntraSentenceGaps);
-        WavIo.WriteFloat32(outWav.FullName, adjustedAudio);
+        AudioProcessor.EncodeWav(outWav.FullName, adjustedAudio, new AudioEncodeOptions { TargetBitDepth = 32 });
 
     var updatedTranscript = UpdateTranscriptTimings(transcript, timelineResult.Timeline);
         var updatedHydrate = UpdateHydratedTimings(hydrated, timelineResult.Timeline);

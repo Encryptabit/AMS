@@ -5,6 +5,7 @@ using System.Linq;
 using Ams.Core.Asr;
 using Ams.Core.Common;
 using Ams.Core.Artifacts;
+using Ams.Core.Processors;
 
 namespace Ams.Core.Audio
 {
@@ -397,7 +398,7 @@ namespace Ams.Core.Audio
             {
                 Directory.CreateDirectory(directory);
                 var path = Path.Combine(directory, $"roomtone.{suffix}.wav");
-                WavIo.WriteFloat32(path, buffer);
+                AudioProcessor.EncodeWav(path, buffer, new AudioEncodeOptions { TargetBitDepth = 32 });
             }
             catch (Exception ex)
             {
@@ -427,4 +428,3 @@ namespace Ams.Core.Audio
 
     }
 }
-
