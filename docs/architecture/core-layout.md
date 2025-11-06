@@ -7,7 +7,7 @@
 
 ## Domain Namespaces
 
-### `Ams.Core.Book`
+### `Ams.Core.Runtime.Documents`
 - Book parsing, indexing, caching, and related models.
 - Responsible for emitting `book-index.json` and validating source manuscripts.
 

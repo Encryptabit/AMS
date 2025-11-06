@@ -9,7 +9,7 @@ using System.IO;
 using System.Threading;
 using Ams.Core.Artifacts;
 using Ams.Core.Audio;
-using Ams.Core.Book;
+using Ams.Core.Runtime.Documents;
 using Ams.Core.Common;
 using Ams.Core.Hydrate;
 using Ams.Core.Prosody;

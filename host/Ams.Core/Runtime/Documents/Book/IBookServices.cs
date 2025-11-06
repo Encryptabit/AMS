@@ -1,4 +1,4 @@
-namespace Ams.Core.Book;
+namespace Ams.Core.Runtime.Documents;
 
 /// <summary>
 /// Interface for parsing book content from various file formats.

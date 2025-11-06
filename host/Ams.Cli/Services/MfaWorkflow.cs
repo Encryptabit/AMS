@@ -8,7 +8,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Ams.Core.Alignment.Mfa;
 using Ams.Core.Common;
-using Ams.Core.Book;
+using Ams.Core.Runtime.Documents;
 using System.Text.RegularExpressions;
 
 namespace Ams.Cli.Services;

@@ -3,8 +3,9 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Text;
 using Ams.Core.Artifacts;
-using Ams.Core.Book;
+using Ams.Core.Runtime.Documents;
 using Ams.Core.Asr;
+using Ams.Core.Common;
 
 namespace Ams.Core.Alignment.Tx;
 
@@ -281,36 +282,11 @@ public static class TranscriptAligner
                 return 0.0;
             }
 
-            var dist = Levenshtein(a, b);
-            var maxLen = Math.Max(a.Length, b.Length);
-            return maxLen == 0 ? 1.0 : 1.0 - (double)dist / maxLen;
+            return LevenshteinMetrics.Similarity(a.AsSpan(), b.AsSpan(), StringComparison.OrdinalIgnoreCase);
         }
 
         private static string Normalize(string value)
             => string.Join(' ', Tokenize(value));
-
-        private static int Levenshtein(string[] a, string[] b)
-        {
-            var m = a.Length;
-            var n = b.Length;
-            var dp = new int[m + 1, n + 1];
-
-            for (int i = 0; i <= m; i++) dp[i, 0] = i;
-            for (int j = 0; j <= n; j++) dp[0, j] = j;
-
-            for (int i = 1; i <= m; i++)
-            {
-                for (int j = 1; j <= n; j++)
-                {
-                    var cost = string.Equals(a[i - 1], b[j - 1], StringComparison.OrdinalIgnoreCase) ? 0 : 1;
-                    dp[i, j] = Math.Min(
-                        Math.Min(dp[i - 1, j] + 1, dp[i, j - 1] + 1),
-                        dp[i - 1, j - 1] + cost);
-                }
-            }
-
-            return dp[m, n];
-        }
     }
     // (3.3) Sentence/Paragraph rollups from word ops
     public static (List<SentenceAlign> sents, List<ParagraphAlign> paras) Rollup(
@@ -880,7 +856,7 @@ public static class TranscriptAligner
             return hypothesis.Length == 0 ? 0.0 : 1.0;
         }
 
-        int distance = LevenshteinDistance(reference.AsSpan(), hypothesis.AsSpan());
+        int distance = LevenshteinMetrics.Distance(reference.AsSpan(), hypothesis.AsSpan());
         return distance / Math.Max(1.0, reference.Length);
     }
 
@@ -937,25 +913,4 @@ public static class TranscriptAligner
         }
     }
 
-    private static int LevenshteinDistance(ReadOnlySpan<char> a, ReadOnlySpan<char> b)
-    {
-        var dp = new int[a.Length + 1, b.Length + 1];
-
-        for (int i = 0; i <= a.Length; i++) dp[i, 0] = i;
-        for (int j = 0; j <= b.Length; j++) dp[0, j] = j;
-
-        for (int i = 1; i <= a.Length; i++)
-        {
-            for (int j = 1; j <= b.Length; j++)
-            {
-                int cost = a[i - 1] == b[j - 1] ? 0 : 1;
-                int delete = dp[i - 1, j] + 1;
-                int insert = dp[i, j - 1] + 1;
-                int substitute = dp[i - 1, j - 1] + cost;
-                dp[i, j] = Math.Min(Math.Min(delete, insert), substitute);
-            }
-        }
-
-        return dp[a.Length, b.Length];
-    }
 }

@@ -3,7 +3,7 @@ using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Linq;
 using Ams.Core.Artifacts;
-using Ams.Core.Book;
+using Ams.Core.Runtime.Documents;
 using Ams.Core.Common;
 using Ams.Core.Hydrate;
 using SentenceTiming = Ams.Core.Artifacts.SentenceTiming;

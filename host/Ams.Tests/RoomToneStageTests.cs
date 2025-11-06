@@ -8,7 +8,7 @@ using Ams.Core;
 using Ams.Core.Artifacts;
 using Ams.Core.Asr;
 using Ams.Core.Audio;
-using Ams.Core.Book;
+using Ams.Core.Runtime.Documents;
 using Ams.Core.Pipeline;
 using Xunit;
 

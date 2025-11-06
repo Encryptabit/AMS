@@ -1,6 +1,6 @@
 using System.Text.Json.Serialization;
 
-namespace Ams.Core.Book;
+namespace Ams.Core.Runtime.Documents;
 
 /// <summary>
 /// Canonical word token from the source, with exact text preserved.
