@@ -55,7 +55,7 @@ public static class AudioProcessor
         var effective = options ?? new AudioEncodeOptions();
 
         var ms = new MemoryStream();
-        FfEncoder.EncodeToDynamicBuffer(buffer, ms, effective);
+        FfEncoder.EncodeToCustomStream(buffer, ms, effective);
         ms.Position = 0;
         return ms;
     }
