@@ -2,7 +2,7 @@ using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
 
-namespace Ams.Core.Book;
+namespace Ams.Core.Runtime.Documents;
 
 public interface IPronunciationProvider
 {

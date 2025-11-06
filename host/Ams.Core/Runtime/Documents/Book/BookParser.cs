@@ -2,7 +2,7 @@ using System.Text;
 using System.Text.RegularExpressions;
 using Xceed.Words.NET;
 
-namespace Ams.Core.Book;
+namespace Ams.Core.Runtime.Documents;
 
 /// <summary>
 /// Book parser implementation using Xceed Document .NET for DOCX files

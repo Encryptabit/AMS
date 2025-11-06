@@ -96,7 +96,7 @@ Risks/Notes
 - DOCX style: using `Paragraph.StyleId` to avoid API obsolescence; style/kind are best‑effort.
 - Tokenization: whitespace-only preserves punctuation with tokens (e.g., `test.”`), which is intentional for canonical fidelity.
 - Determinism: cache JSON settings are stable; ensure environment does not inject non-deterministic timestamps beyond `indexedAt`.
- - Verification scope: `book verify` depends on the canonical schema (`Ams.Core.BookIndex`). If schema evolves, update the doctor to maintain stable hashing and checks.
+ - Verification scope: `book verify` depends on the canonical schema (`Ams.Core.Runtime.Documents.BookIndex`). If schema evolves, update the doctor to maintain stable hashing and checks.
  - Anchors: relaxation currently ignores `AllowDuplicates` flag and uses separation-based allowance; revisit API if duplicate policy needs to be explicit.
  - Alignment complexity: n-gram indexing is linear in tokens; LIS is `O(k log k)` on candidate anchors `k`—fast for chapter-scale windows.
   - Index spaces: Anchor pipeline/CLI operate in filtered token spaces. Output maps `bp` back to original book `wordIndex` (`bpWordIndex`). ASR timing and original token index are derivable from `AsrResponse.Tokens[ap]` and may be emitted later behind flags.
@@ -118,7 +118,7 @@ Scope legend
 Per Book
 - Build Index: `build-index` → canonical `book-index.json`.
   - Command: `dotnet run --project host/Ams.Cli -- build-index -b <book.docx|.txt|.md|.rtf> -o <book-index.json>`
-  - Files: `host/Ams.Cli/Commands/BuildIndexCommand.cs`, `host/Ams.Core/BookParser.cs`, `host/Ams.Core/BookIndexer.cs`.
+  - Files: `host/Ams.Cli/Commands/BuildIndexCommand.cs`, `host/Ams.Core/Runtime/Documents/Book/BookParser.cs`, `host/Ams.Core/Runtime/Documents/Book/BookIndexer.cs`.
 - Verify (optional): `book verify` to sanity‑check `book-index.json`.
   - Files: `host/Ams.Cli/Commands/BookCommand.cs`.
 - Services (once per machine): ensure ASR and Aeneas/FFmpeg are available.

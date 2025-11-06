@@ -5,7 +5,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Ams.Core.Common;
 
-namespace Ams.Core.Book;
+namespace Ams.Core.Runtime.Documents;
 
 public static class BookPhonemePopulator
 {

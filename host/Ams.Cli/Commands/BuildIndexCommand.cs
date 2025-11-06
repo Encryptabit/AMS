@@ -1,10 +1,12 @@
 using System.CommandLine;
 using System.Text.Json;
 using Ams.Core;
-using Ams.Core.Book;
+using Ams.Core.Runtime.Documents;
+using Ams.Core.Processors;
 using Ams.Core.Common;
 using Ams.Cli.Utilities;
 using Ams.Cli.Services;
+using Ams.Core.Processors.DocumentProcessor;
 
 namespace Ams.Cli.Commands;
 
@@ -76,13 +78,11 @@ public static class BuildIndexCommand
             throw new FileNotFoundException($"Book file not found: {bookFile.FullName}");
         }
 
-        var parser = new BookParser();
-        var indexer = new BookIndexer();
-        var cache = noCache ? null : new BookCache();
+        var cache = noCache ? null : DocumentProcessor.CreateBookCache();
 
-        if (!parser.CanParse(bookFile.FullName))
+        if (!DocumentProcessor.CanParseBook(bookFile.FullName))
         {
-            var supportedExts = string.Join(", ", parser.SupportedExtensions);
+            var supportedExts = string.Join(", ", DocumentProcessor.GetSupportedBookExtensions());
             throw new InvalidOperationException($"Unsupported file format. Supported formats: {supportedExts}");
         }
 
@@ -100,7 +100,7 @@ public static class BuildIndexCommand
             else
             {
                 Log.Debug("Cache miss for {BookFile}; rebuilding", bookFile.FullName);
-                bookIndex = await ProcessBookFromScratch(parser, indexer, cache, bookFile.FullName, options);
+                bookIndex = await ProcessBookFromScratch(cache, bookFile.FullName, options);
             }
         }
         else
@@ -114,7 +114,7 @@ public static class BuildIndexCommand
                 Log.Debug("Cache disabled for {BookFile}", bookFile.FullName);
             }
 
-            bookIndex = await ProcessBookFromScratch(parser, indexer, cache, bookFile.FullName, options);
+            bookIndex = await ProcessBookFromScratch(cache, bookFile.FullName, options);
         }
 
         var jsonOptions = new JsonSerializerOptions
@@ -139,27 +139,26 @@ public static class BuildIndexCommand
     }
     
     private static async Task<BookIndex> ProcessBookFromScratch(
-        IBookParser parser,
-        IBookIndexer indexer,
         IBookCache? cache,
         string bookFilePath,
-        BookIndexOptions options)
+        BookIndexOptions options,
+        CancellationToken cancellationToken = default)
     {
         Log.Debug("Parsing book file {BookFile}", bookFilePath);
-        var parseResult = await parser.ParseAsync(bookFilePath);
+        var parseResult = await DocumentProcessor.ParseBookAsync(bookFilePath, cancellationToken);
         Log.Debug("Parsed {CharacterCount:n0} characters from {BookFile}", parseResult.Text.Length, bookFilePath);
-        
+
         Log.Debug("Building index for {BookFile}", bookFilePath);
-        var bookIndex = await indexer.CreateIndexAsync(parseResult, bookFilePath, options);
+        var bookIndex = await DocumentProcessor.BuildBookIndexAsync(parseResult, bookFilePath, options, cancellationToken: cancellationToken);
         Log.Debug("Index build complete for {BookFile}", bookFilePath);
-        
+
         if (cache != null)
         {
             Log.Debug("Caching index for {BookFile}", bookFilePath);
-            await cache.SetAsync(bookIndex);
+            await cache.SetAsync(bookIndex, cancellationToken);
             Log.Debug("Cache updated for {BookFile}", bookFilePath);
         }
-        
+
         return bookIndex;
     }
     

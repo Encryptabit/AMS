@@ -3,7 +3,7 @@ using System.Linq;
 using System.Security.Cryptography;
 using System.Text.RegularExpressions;
 
-namespace Ams.Core.Book;
+namespace Ams.Core.Runtime.Documents;
 
 /// <summary>
 /// Canonical indexer: preserves exact token text, builds sentence/paragraph ranges only.

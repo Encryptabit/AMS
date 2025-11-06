@@ -7,7 +7,7 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Ams.Core;
-using Ams.Core.Book;
+using Ams.Core.Runtime.Documents;
 using Ams.Cli.Utilities;
 using Ams.Cli.Services;
 
@@ -170,7 +170,7 @@ public static class BookCommand
         }
         catch (Exception ex)
         {
-            throw new InvalidOperationException("Failed to parse BookIndex JSON as canonical schema. Ensure schema matches Ams.Core.BookIndex.", ex);
+            throw new InvalidOperationException("Failed to parse BookIndex JSON as canonical schema. Ensure schema matches Ams.Core.Runtime.Documents.BookIndex.", ex);
         }
 
         if (idx == null)
@@ -407,4 +407,3 @@ public static class BookCommand
         return Convert.ToHexString(hash);
     }
 }
-

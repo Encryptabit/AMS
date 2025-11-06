@@ -4,7 +4,9 @@ using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Ams.Core;
-using Ams.Core.Book;
+using Ams.Core.Runtime.Documents;
+using Ams.Core.Processors;
+using Ams.Core.Processors.DocumentProcessor;
 
 namespace Ams.Tests;
 
@@ -13,24 +15,22 @@ public class BookParsingTests
     [Fact]
     public void BookParser_CanParse_Extensions()
     {
-        var parser = new BookParser();
-        Assert.True(parser.CanParse("test.docx"));
-        Assert.True(parser.CanParse("test.txt"));
-        Assert.True(parser.CanParse("test.md"));
-        Assert.True(parser.CanParse("test.rtf"));
-        Assert.False(parser.CanParse("test.pdf"));
+        Assert.True(DocumentProcessor.CanParseBook("test.docx"));
+        Assert.True(DocumentProcessor.CanParseBook("test.txt"));
+        Assert.True(DocumentProcessor.CanParseBook("test.md"));
+        Assert.True(DocumentProcessor.CanParseBook("test.rtf"));
+        Assert.False(DocumentProcessor.CanParseBook("test.pdf"));
     }
 
     [Fact]
     public async Task Parser_Text_NoNormalization()
     {
-        var parser = new BookParser();
         var tmp = Path.GetTempFileName() + ".txt";
-        var content = "Title Line\r\n\r\n“Odin’” can’ end—of—line test.\r\nNext—para with ‘quotes’ and hyphen‑minus - and ellipsis…";
+        var content = "Title Line\r\n\r\n“Odin’” can’ end—of—line test.\r\nNext—para with ‘quotes’ and hyphen‑minus - and ellipsis…”";
         try
         {
             await File.WriteAllTextAsync(tmp, content);
-            var result = await parser.ParseAsync(tmp);
+            var result = await DocumentProcessor.ParseBookAsync(tmp);
             Assert.Equal("Title Line", result.Title);
             Assert.Contains("“Odin’” can’ end—of—line test.", result.Text);
             Assert.NotNull(result.Paragraphs);
@@ -42,12 +42,11 @@ public class BookParsingTests
     [Fact]
     public async Task Parser_Unsupported_Throws()
     {
-        var parser = new BookParser();
         var tmp = Path.GetTempFileName() + ".xyz";
         try
         {
             await File.WriteAllTextAsync(tmp, "x");
-            await Assert.ThrowsAsync<InvalidOperationException>(() => parser.ParseAsync(tmp));
+            await Assert.ThrowsAsync<InvalidOperationException>(() => DocumentProcessor.ParseBookAsync(tmp));
         }
         finally { if (File.Exists(tmp)) File.Delete(tmp); }
     }
@@ -65,16 +64,14 @@ public class BookIndexAcceptanceTests
     [Fact]
     public async Task Canonical_RoundTrip_DeterministicBytes_WithCache()
     {
-        var parser = new BookParser();
-        var indexer = new BookIndexer();
         var cacheDir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString());
-        var cache = new BookCache(cacheDir);
+        var cache = DocumentProcessor.CreateBookCache(cacheDir);
         var source = Path.GetTempFileName() + ".txt";
         try
         {
             await File.WriteAllTextAsync(source, "A title\n\nHello “Odin’” can’ world. Next line.");
-            var parsed = await parser.ParseAsync(source);
-            var idx1 = await indexer.CreateIndexAsync(parsed, source, new BookIndexOptions { AverageWpm = 240 });
+            var parsed = await DocumentProcessor.ParseBookAsync(source);
+            var idx1 = await DocumentProcessor.BuildBookIndexAsync(parsed, source, new BookIndexOptions { AverageWpm = 240 });
             await cache.SetAsync(idx1);
 
             var cached = await cache.GetAsync(source);
@@ -94,15 +91,13 @@ public class BookIndexAcceptanceTests
     [Fact]
     public async Task NoNormalization_WordsPreserveExactText()
     {
-        var parser = new BookParser();
-        var indexer = new BookIndexer();
         var source = Path.GetTempFileName() + ".txt";
         var line = "“Odin’” can’ end—of—line test.”";
         try
         {
             await File.WriteAllTextAsync(source, line);
-            var parsed = await parser.ParseAsync(source);
-            var idx = await indexer.CreateIndexAsync(parsed, source);
+            var parsed = await DocumentProcessor.ParseBookAsync(source);
+            var idx = await DocumentProcessor.BuildBookIndexAsync(parsed, source);
 
             var texts = idx.Words.Select(w => w.Text).ToArray();
             Assert.Contains("“Odin’”", texts);
@@ -116,14 +111,12 @@ public class BookIndexAcceptanceTests
     [Fact]
     public async Task Slimness_WordsContainOnlyCanonicalFields()
     {
-        var parser = new BookParser();
-        var indexer = new BookIndexer();
         var source = Path.GetTempFileName() + ".txt";
         try
         {
             await File.WriteAllTextAsync(source, "Hello world.");
-            var parsed = await parser.ParseAsync(source);
-            var idx = await indexer.CreateIndexAsync(parsed, source);
+            var parsed = await DocumentProcessor.ParseBookAsync(source);
+            var idx = await DocumentProcessor.BuildBookIndexAsync(parsed, source);
 
             var json = JsonSerializer.Serialize(idx, deterministic);
             using var doc = JsonDocument.Parse(json);
@@ -139,14 +132,12 @@ public class BookIndexAcceptanceTests
     [Fact]
     public async Task StructureRanges_CoverAllWords_NoGaps()
     {
-        var parser = new BookParser();
-        var indexer = new BookIndexer();
         var source = Path.GetTempFileName() + ".txt";
         try
         {
             await File.WriteAllTextAsync(source, "Hello world. This is a test.\n\nNew para here.");
-            var parsed = await parser.ParseAsync(source);
-            var idx = await indexer.CreateIndexAsync(parsed, source);
+            var parsed = await DocumentProcessor.ParseBookAsync(source);
+            var idx = await DocumentProcessor.BuildBookIndexAsync(parsed, source);
             var total = idx.Words.Length;
 
             var orderedSents = idx.Sentences.OrderBy(s => s.Start).ToArray();
@@ -167,16 +158,14 @@ public class BookIndexAcceptanceTests
     [Fact]
     public async Task CacheReuse_InvalidatedOnSourceChange()
     {
-        var parser = new BookParser();
-        var indexer = new BookIndexer();
         var cacheDir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString());
-        var cache = new BookCache(cacheDir);
+        var cache = DocumentProcessor.CreateBookCache(cacheDir);
         var source = Path.GetTempFileName() + ".txt";
         try
         {
             await File.WriteAllTextAsync(source, "Hello world");
-            var parsed = await parser.ParseAsync(source);
-            var idx = await indexer.CreateIndexAsync(parsed, source);
+            var parsed = await DocumentProcessor.ParseBookAsync(source);
+            var idx = await DocumentProcessor.BuildBookIndexAsync(parsed, source);
             await cache.SetAsync(idx);
 
             var found = await cache.GetAsync(source);
@@ -211,12 +200,11 @@ public class BookModelsTests
     [Fact]
     public async Task BookPhonemePopulator_PopulatesPhonemes()
     {
-        var parser = new BookParser();
         var source = Path.GetTempFileName() + ".txt";
         try
         {
             await File.WriteAllTextAsync(source, "Hello world.\n");
-            var parsed = await parser.ParseAsync(source);
+            var parsed = await DocumentProcessor.ParseBookAsync(source);
 
             var pronunciations = new Dictionary<string, string[]>(StringComparer.OrdinalIgnoreCase)
             {
@@ -224,8 +212,7 @@ public class BookModelsTests
                 ["world"] = new[] { "W ER1 L D", "W ER1 L D" }
             };
 
-            var indexer = new BookIndexer();
-            var index = await indexer.CreateIndexAsync(parsed, source);
+            var index = await DocumentProcessor.BuildBookIndexAsync(parsed, source);
             var enriched = await BookPhonemePopulator.PopulateMissingAsync(index, new StubPronunciationProvider(pronunciations));
 
             Assert.Contains(enriched.Words, w => w.Text == "Hello" && w.Phonemes is { Length: >0 } phon && phon.Contains("HH AH0 L OW1"));

@@ -17,7 +17,7 @@ using Ams.Cli.Repl;
 using Ams.Core.Alignment.Mfa;
 using Ams.Core.Artifacts;
 using Ams.Core.Audio;
-using Ams.Core.Book;
+using Ams.Core.Runtime.Documents;
 using Ams.Core.Common;
 using Ams.Core.Hydrate;
 using Ams.Core.Prosody;

@@ -6,7 +6,7 @@ using System.Text;
 using System.Text.RegularExpressions;
 using Ams.Core.Common;
 
-namespace Ams.Core.Book;
+namespace Ams.Core.Runtime.Documents;
 
 public static class PronunciationHelper
 {

@@ -9,7 +9,7 @@ using Ams.Core.Alignment.Tx;
 using Ams.Core.Artifacts;
 using Ams.Core.Alignment.Anchors;
 using Ams.Core;
-using Ams.Core.Book;
+using Ams.Core.Runtime.Documents;
 using Ams.Core.Validation;
 using Ams.Cli.Utilities;
 using Ams.Cli.Services;
