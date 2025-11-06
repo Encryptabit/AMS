@@ -268,9 +268,44 @@ internal static class MfaWorkflow
 
         if (result.ExitCode != 0)
         {
+            static string FormatLines(IEnumerable<string> lines, int limit)
+            {
+                var builder = new StringBuilder();
+                int count = 0;
+                foreach (var line in lines)
+                {
+                    if (count >= limit)
+                    {
+                        builder.AppendLine("... (truncated)");
+                        break;
+                    }
+
+                    builder.AppendLine(line);
+                    count++;
+                }
+
+                return builder.ToString();
+            }
+
             if (!allowFailure)
             {
-                throw new InvalidOperationException($"{stage} failed with exit code {result.ExitCode} (command: {result.Command})");
+                var stdoutSnippet = FormatLines(result.StdOut, 20);
+                var stderrSnippet = FormatLines(result.StdErr, 20);
+
+                var message = new StringBuilder();
+                message.AppendLine($"{stage} failed with exit code {result.ExitCode} (command: {result.Command})");
+                if (stdoutSnippet.Length > 0)
+                {
+                    message.AppendLine("Stdout:");
+                    message.Append(stdoutSnippet);
+                }
+                if (stderrSnippet.Length > 0)
+                {
+                    message.AppendLine("Stderr:");
+                    message.Append(stderrSnippet);
+                }
+
+                throw new InvalidOperationException(message.ToString().TrimEnd());
             }
 
             Log.Debug("{Stage} returned exit code {ExitCode}; ignoring due to allowFailure", stage, result.ExitCode);

@@ -236,16 +236,7 @@ internal static class FfFilterGraphRunner
 
             FfUtils.ThrowIfError(ffmpeg.av_opt_set(src, "sample_fmt", sampleFmtName, 0), nameof(ffmpeg.av_opt_set));
 
-            AVChannelLayout* srcLayoutPtr = stackalloc AVChannelLayout[1];
-            ffmpeg.av_channel_layout_default(srcLayoutPtr, buffer.Channels);
-            try
-            {
-                FfUtils.ThrowIfError(ffmpeg.av_opt_set_chlayout(src, "ch_layout", srcLayoutPtr, 0), nameof(ffmpeg.av_opt_set_chlayout));
-            }
-            finally
-            {
-                ffmpeg.av_channel_layout_uninit(srcLayoutPtr);
-            }
+            FfUtils.ThrowIfError(ffmpeg.av_opt_set_int(src, "channel_layout", unchecked((long)ffmpeg.AV_CH_LAYOUT_MONO), 0), nameof(ffmpeg.av_opt_set_int));
 
             FfUtils.ThrowIfError(ffmpeg.avfilter_init_str(src, null), nameof(ffmpeg.avfilter_init_str));
 
