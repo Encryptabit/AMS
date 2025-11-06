@@ -1,196 +1,521 @@
+using System;
+using System.IO;
 using System.Runtime.InteropServices;
 using Ams.Core.Artifacts;
 using Ams.Core.Processors;
 using FFmpeg.AutoGen;
+using static FFmpeg.AutoGen.ffmpeg;
+using static Ams.Core.Services.Integrations.FFmpeg.FfUtils;
 
 namespace Ams.Core.Services.Integrations.FFmpeg;
 
 /// <summary>
-/// Placeholder for FFmpeg-backed encoding helpers.
+/// FFmpeg-backed encoding helpers.
 /// </summary>
 internal static unsafe class FfEncoder
 {
-     public static void AudioBufferToWavStream(AudioBuffer buf, Stream output, PcmEncoding encoding = PcmEncoding.Pcm32)
+    private const int DefaultChunkSamples = 4096;
+    private const int CustomIoBufferSize = 32 * 1024;
+
+    public static void EncodeToDynamicBuffer(AudioBuffer buffer, Stream output, AudioEncodeOptions? options = null)
     {
-        // 1) Find encoder (PCM F32LE or PCM F16LE) and muxer (WAV)
-        ffmpeg.av_get_pcm_codec(AVSampleFormat.AV_SAMPLE_FMT_FLT, 0);
-        AVCodec* codec = ffmpeg.avcodec_find_encoder(ffmpeg.av_get_pcm_codec(AVSampleFormat.AV_SAMPLE_FMT_FLT, 0));
-        if (codec == null) throw new InvalidOperationException("PCM_F32LE encoder not found");
+        Encode(buffer, output, options ?? new AudioEncodeOptions(), EncoderSink.DynamicBuffer);
+    }
+
+    public static void EncodeToCustomStream(AudioBuffer buffer, Stream output, AudioEncodeOptions? options = null)
+    {
+        Encode(buffer, output, options ?? new AudioEncodeOptions(), EncoderSink.CustomStream);
+    }
+
+    private static void Encode(AudioBuffer buffer, Stream output, AudioEncodeOptions options, EncoderSink sink)
+    {
+        if (buffer is null)
+        {
+            throw new ArgumentNullException(nameof(buffer));
+        }
+
+        if (output is null)
+        {
+            throw new ArgumentNullException(nameof(output));
+        }
+
+        FfSession.EnsureInitialized();
+
+        var targetSampleRate = options.TargetSampleRate ?? buffer.SampleRate;
+        var bitDepth = options.TargetBitDepth ?? 16;
+
+        var (codecId, sampleFormat) = ResolveEncoding(bitDepth);
+
+        AVCodec* codec = avcodec_find_encoder(codecId);
+        if (codec == null)
+        {
+            throw new InvalidOperationException($"FFmpeg encoder for {codecId} not found.");
+        }
 
         AVFormatContext* fmt = null;
-        ffmpeg.avformat_alloc_output_context2(&fmt, null, "wav", null);
-        if (fmt == null) throw new InvalidOperationException("WAV muxer not available");
+        ThrowIfError(avformat_alloc_output_context2(&fmt, null, "wav", null), nameof(avformat_alloc_output_context2));
+        if (fmt == null)
+        {
+            throw new InvalidOperationException("FFmpeg could not create a WAV format context.");
+        }
 
-        // 2) New stream + codec context
-        AVStream* st = ffmpeg.avformat_new_stream(fmt, codec);
-        if (st == null) throw new InvalidOperationException("avformat_new_stream failed");
+        AVCodecContext* cc = null;
+        AVStream* stream = null;
+        AVIOContext* customIo = null;
+        SwrContext* resampler = null;
+        AVFrame* frame = null;
+        GCHandle streamHandle = default;
+        avio_alloc_context_write_packet? writeCallback = null;
+        var pinnedChannels = Array.Empty<GCHandle>();
+        var pinnedPointers = Array.Empty<IntPtr>();
+        AVChannelLayout inputLayout = default;
+        var inputLayoutInitialized = false;
 
-        AVCodecContext* cc = ffmpeg.avcodec_alloc_context3(codec);
-        if (cc == null) throw new InvalidOperationException("avcodec_alloc_context3 failed");
+        try
+        {
+            stream = avformat_new_stream(fmt, codec);
+            if (stream == null)
+            {
+                throw new InvalidOperationException("avformat_new_stream failed");
+            }
 
-        cc->codec_id = codec->id;
-        cc->codec_type = AVMediaType.AVMEDIA_TYPE_AUDIO;
-        cc->sample_fmt = AVSampleFormat.AV_SAMPLE_FMT_FLT; // float32 PCM
-        cc->sample_rate = buf.SampleRate;
-        cc->time_base = new AVRational { num = 1, den = buf.SampleRate };
+            cc = avcodec_alloc_context3(codec);
+            if (cc == null)
+            {
+                throw new InvalidOperationException("avcodec_alloc_context3 failed");
+            }
 
-        vectors.av_channel_layout_uninit(&cc->ch_layout);
-        vectors.av_channel_layout_default(&cc->ch_layout, buf.Channels);
+            cc->codec_id = codec->id;
+            cc->codec_type = AVMediaType.AVMEDIA_TYPE_AUDIO;
+            cc->sample_fmt = sampleFormat;
+            cc->sample_rate = targetSampleRate;
+            cc->time_base = new AVRational { num = 1, den = targetSampleRate };
 
-        int ret;
-        if ((ret = ffmpeg.avcodec_open2(cc, codec, null)) < 0) throw new ApplicationException($"avcodec_open2: {ret}");
+            av_channel_layout_uninit(&cc->ch_layout);
+            av_channel_layout_default(&cc->ch_layout, buffer.Channels);
 
-        // Copy codec params to stream
-        ret = ffmpeg.avcodec_parameters_from_context(st->codecpar, cc);
-        if (ret < 0) throw new ApplicationException($"avcodec_parameters_from_context: {ret}");
-        st->time_base = cc->time_base;
+            ThrowIfError(avcodec_open2(cc, codec, null), nameof(avcodec_open2));
+            avcodec_parameters_from_context(stream->codecpar, cc);
+            stream->time_base = cc->time_base;
 
-        // 3) Use dynamic avio buffer
-        byte* dynBuf = null;
-        AVIOContext* pb = null;
-        pb = ffmpeg.avio_alloc_context(null, 0, 1, null, null, null, null); // dummy; will be replaced by open_dyn_buf
-        if (pb == null) throw new ApplicationException("avio_alloc_context failed");
-        ret = ffmpeg.avio_open_dyn_buf(&fmt->pb);
-        if (ret < 0) throw new ApplicationException($"avio_open_dyn_buf: {ret}");
+            SetupIo(fmt, output, sink, ref customIo, ref streamHandle, ref writeCallback);
+            ThrowIfError(avformat_write_header(fmt, null), nameof(avformat_write_header));
 
-        // 4) Write header
-        ret = ffmpeg.avformat_write_header(fmt, null);
-        if (ret < 0) throw new ApplicationException($"avformat_write_header: {ret}");
+            inputLayout = CreateDefaultChannelLayout(buffer.Channels);
+            inputLayoutInitialized = true;
 
-        // 5) Encode & write packets
-        // We’ll feed frames of N samples until we exhaust buffer length.
-        const int frameSamples = 1024; // any reasonable block size
-        int totalSamples = buf.Length; // samples per channel
+            resampler = swr_alloc();
+            if (resampler == null)
+            {
+                throw new InvalidOperationException("Failed to allocate FFmpeg resampler.");
+            }
+
+            var resamplerPtr = resampler;
+            ThrowIfError(
+                swr_alloc_set_opts2(
+                    &resamplerPtr,
+                    &cc->ch_layout,
+                    cc->sample_fmt,
+                    cc->sample_rate,
+                    &inputLayout,
+                    AVSampleFormat.AV_SAMPLE_FMT_FLTP,
+                    buffer.SampleRate,
+                    0,
+                    null),
+                nameof(swr_alloc_set_opts2));
+            resampler = resamplerPtr;
+            ThrowIfError(swr_init(resampler), nameof(swr_init));
+
+            (pinnedChannels, pinnedPointers) = PinChannels(buffer);
+
+            frame = AllocateFrame(cc);
+
+            EncodeBuffer(buffer, cc, stream, fmt, resampler, frame, pinnedPointers, targetSampleRate);
+
+            ThrowIfError(avcodec_send_frame(cc, null), nameof(avcodec_send_frame));
+            DrainEncoder(cc, stream, fmt);
+
+            ThrowIfError(av_write_trailer(fmt), nameof(av_write_trailer));
+
+            FinalizeIo(fmt, output, sink, ref customIo);
+        }
+        finally
+        {
+            UnpinChannels(pinnedChannels);
+
+            if (resampler != null)
+            {
+                swr_free(&resampler);
+            }
+
+            if (inputLayoutInitialized)
+            {
+                av_channel_layout_uninit(&inputLayout);
+            }
+
+            if (frame != null)
+            {
+                av_frame_free(&frame);
+            }
+
+            if (cc != null)
+            {
+                av_channel_layout_uninit(&cc->ch_layout);
+                avcodec_free_context(&cc);
+            }
+
+            CleanupIo(fmt, sink, ref customIo, ref streamHandle, writeCallback);
+
+            if (fmt != null)
+            {
+                avformat_free_context(fmt);
+            }
+        }
+    }
+
+    private static unsafe void EncodeBuffer(
+        AudioBuffer buffer,
+        AVCodecContext* cc,
+        AVStream* stream,
+        AVFormatContext* fmt,
+        SwrContext* resampler,
+        AVFrame* frame,
+        IntPtr[] channelPointers,
+        int targetSampleRate)
+    {
+        var totalSamples = buffer.Length;
+        var channels = buffer.Channels;
+        var cursor = 0;
         long pts = 0;
 
-        // Allocate one AVFrame
-        AVFrame* frame = ffmpeg.av_frame_alloc();
-        frame->nb_samples = frameSamples;
-        frame->format = (int)cc->sample_fmt;
-        frame->sample_rate = cc->sample_rate;
-
-        ffmpeg.av_channel_layout_copy(&frame->ch_layout, &cc->ch_layout);
-        
-        if ((ret = ffmpeg.av_frame_get_buffer(frame, 0)) < 0) throw new ApplicationException($"av_frame_get_buffer: {ret}");
-
-        int cursor = 0;
         while (cursor < totalSamples)
         {
-            int n = Math.Min(frameSamples, totalSamples - cursor);
-
-            // Make sure frame has writable buffers sized for n samples
-            if (frame->nb_samples != n)
+            var chunk = Math.Min(DefaultChunkSamples, totalSamples - cursor);
+            var dstCapacity = ComputeResampleOutputSamples(resampler, buffer.SampleRate, targetSampleRate, chunk);
+            if (dstCapacity <= 0)
             {
-                frame->nb_samples = n;
-                ffmpeg.av_frame_unref(frame);
-                if ((ret = ffmpeg.av_frame_get_buffer(frame, 0)) < 0) throw new ApplicationException($"av_frame_get_buffer: {ret}");
+                dstCapacity = chunk;
             }
 
-            // Write planar floats into frame->extended_data[c]
-            for (int ch = 0; ch < buf.Channels; ch++)
+            EnsureFrameCapacity(frame, cc, dstCapacity);
+            ThrowIfError(av_frame_make_writable(frame), nameof(av_frame_make_writable));
+
+            var src = stackalloc byte*[channels];
+            for (int ch = 0; ch < channels; ch++)
             {
-                float* dst = (float*)frame->extended_data[ch];
-                var src = buf.Planar[ch];
-                for (int i = 0; i < n; i++)
-                    dst[i] = src[cursor + i];
+                var basePtr = (float*)channelPointers[ch];
+                src[ch] = (byte*)(basePtr + cursor);
             }
 
-            frame->pts = pts;
-            pts += n;
-
-            // Send & receive packets
-            if ((ret = ffmpeg.avcodec_send_frame(cc, frame)) < 0) throw new ApplicationException($"avcodec_send_frame: {ret}");
-
-            while (true)
+            var produced = swr_convert(resampler, frame->extended_data, dstCapacity, src, chunk);
+            ThrowIfError(produced, nameof(swr_convert));
+            if (produced > 0)
             {
-                AVPacket* pkt = ffmpeg.av_packet_alloc();
-                ret = ffmpeg.avcodec_receive_packet(cc, pkt);
-                if (ret == ffmpeg.AVERROR(ffmpeg.EAGAIN) || ret == ffmpeg.AVERROR_EOF)
-                {
-                    ffmpeg.av_packet_free(&pkt);
-                    break;
-                }
+                frame->nb_samples = produced;
+                frame->pts = pts;
+                pts += produced;
 
-                if (ret < 0)
-                {
-                    ffmpeg.av_packet_free(&pkt);
-                    throw new ApplicationException($"receive_packet: {ret}");
-                }
-
-                pkt->stream_index = st->index;
-                // rescale PTS/DTS if needed
-                ffmpeg.av_packet_rescale_ts(pkt, cc->time_base, st->time_base);
-
-                if ((ret = ffmpeg.av_write_frame(fmt, pkt)) < 0)
-                {
-                    ffmpeg.av_packet_free(&pkt);
-                    throw new ApplicationException($"av_write_frame: {ret}");
-                }
-
-                ffmpeg.av_packet_free(&pkt);
+                ThrowIfError(avcodec_send_frame(cc, frame), nameof(avcodec_send_frame));
+                DrainEncoder(cc, stream, fmt);
             }
 
-            cursor += n;
+            cursor += chunk;
         }
 
-        // Flush encoder
-        if ((ret = ffmpeg.avcodec_send_frame(cc, null)) == 0)
-        {
-            // Send & receive packets
-            while (true)
-            {
-                AVPacket* pkt = ffmpeg.av_packet_alloc();
-                ret = ffmpeg.avcodec_receive_packet(cc, pkt);
-                if (ret == ffmpeg.AVERROR(ffmpeg.EAGAIN) || ret == ffmpeg.AVERROR_EOF)
-                {
-                    ffmpeg.av_packet_free(&pkt);
-                    break;
-                }
-
-                if (ret < 0)
-                {
-                    ffmpeg.av_packet_free(&pkt);
-                    throw new ApplicationException($"flush receive_packet: {ret}");
-                }
-
-                pkt->stream_index = st->index;
-                ffmpeg.av_packet_rescale_ts(pkt, cc->time_base, st->time_base);
-                if ((ret = ffmpeg.av_write_frame(fmt, pkt)) < 0)
-                {
-                    ffmpeg.av_packet_free(&pkt);
-                    throw new ApplicationException($"av_write_frame (flush): {ret}");
-                }
-
-                ffmpeg.av_packet_free(&pkt);
-            }
-        }
-
-        // Trailer
-        if ((ret = ffmpeg.av_write_trailer(fmt)) < 0) throw new ApplicationException($"av_write_trailer: {ret}");
-
-        // 6) Grab FFmpeg's dyn buffer and copy into Stream
-        int dynSize = ffmpeg.avio_close_dyn_buf(fmt->pb, &dynBuf);
-        if (dynSize < 0) throw new ApplicationException($"avio_close_dyn_buf: {dynSize}");
-
-        // Copy to managed Stream
-        byte[] managed = new byte[dynSize];
-        Marshal.Copy((IntPtr)dynBuf, managed, 0, dynSize);
-        output.Write(managed, 0, managed.Length);
-
-        // Free FFmpeg buffer
-        ffmpeg.av_free(dynBuf);
-
-        // Cleanup
-        ffmpeg.av_frame_free(&frame);
-        ffmpeg.avcodec_free_context(&cc);
-        ffmpeg.avformat_free_context(fmt);
-        vectors.av_channel_layout_uninit(&frame->ch_layout);
+        FlushResampler(buffer.SampleRate, targetSampleRate, resampler, frame, cc, stream, fmt, ref pts);
     }
-}
 
+    private static unsafe void FlushResampler(
+        int sourceSampleRate,
+        int targetSampleRate,
+        SwrContext* resampler,
+        AVFrame* frame,
+        AVCodecContext* cc,
+        AVStream* stream,
+        AVFormatContext* fmt,
+        ref long pts)
+    {
+        while (true)
+        {
+            var dstCapacity = ComputeResampleOutputSamples(resampler, sourceSampleRate, targetSampleRate, 0);
+            if (dstCapacity <= 0)
+            {
+                if (cc->frame_size > 0)
+                {
+                    dstCapacity = cc->frame_size;
+                }
+                else
+                {
+                    break;
+                }
+            }
 
-public enum PcmEncoding
-{
-    Pcm16,
-    Pcm32,
+            EnsureFrameCapacity(frame, cc, dstCapacity);
+            ThrowIfError(av_frame_make_writable(frame), nameof(av_frame_make_writable));
+
+            var produced = swr_convert(resampler, frame->extended_data, dstCapacity, null, 0);
+            ThrowIfError(produced, nameof(swr_convert));
+            if (produced <= 0)
+            {
+                break;
+            }
+
+            frame->nb_samples = produced;
+            frame->pts = pts;
+            pts += produced;
+
+            ThrowIfError(avcodec_send_frame(cc, frame), nameof(avcodec_send_frame));
+            DrainEncoder(cc, stream, fmt);
+        }
+    }
+
+    private static unsafe void DrainEncoder(AVCodecContext* cc, AVStream* stream, AVFormatContext* fmt)
+    {
+        while (true)
+        {
+            AVPacket* packet = av_packet_alloc();
+            if (packet == null)
+            {
+                throw new InvalidOperationException("av_packet_alloc failed");
+            }
+
+            var receive = avcodec_receive_packet(cc, packet);
+            if (receive == AVERROR(EAGAIN) || receive == AVERROR_EOF)
+            {
+                av_packet_free(&packet);
+                break;
+            }
+
+            ThrowIfError(receive, nameof(avcodec_receive_packet));
+
+            packet->stream_index = stream->index;
+            av_packet_rescale_ts(packet, cc->time_base, stream->time_base);
+            ThrowIfError(av_write_frame(fmt, packet), nameof(av_write_frame));
+
+            av_packet_free(&packet);
+        }
+    }
+
+    private static unsafe void EnsureFrameCapacity(AVFrame* frame, AVCodecContext* cc, int requiredSamples)
+    {
+        if (requiredSamples <= 0)
+        {
+            requiredSamples = cc->frame_size > 0 ? cc->frame_size : DefaultChunkSamples;
+        }
+
+        if (frame->nb_samples == requiredSamples && frame->data[0] != null)
+        {
+            return;
+        }
+
+        av_frame_unref(frame);
+        frame->format = (int)cc->sample_fmt;
+        frame->sample_rate = cc->sample_rate;
+        ThrowIfError(av_channel_layout_copy(&frame->ch_layout, &cc->ch_layout), nameof(av_channel_layout_copy));
+        frame->nb_samples = requiredSamples;
+        ThrowIfError(av_frame_get_buffer(frame, 0), nameof(av_frame_get_buffer));
+    }
+
+    private static unsafe AVFrame* AllocateFrame(AVCodecContext* cc)
+    {
+        AVFrame* frame = av_frame_alloc();
+        if (frame == null)
+        {
+            throw new InvalidOperationException("av_frame_alloc failed");
+        }
+
+        frame->format = (int)cc->sample_fmt;
+        frame->sample_rate = cc->sample_rate;
+        ThrowIfError(av_channel_layout_copy(&frame->ch_layout, &cc->ch_layout), nameof(av_channel_layout_copy));
+        frame->nb_samples = 0;
+        return frame;
+    }
+
+    private static (GCHandle[] Handles, IntPtr[] Pointers) PinChannels(AudioBuffer buffer)
+    {
+        var handles = new GCHandle[buffer.Channels];
+        var pointers = new IntPtr[buffer.Channels];
+
+        for (int ch = 0; ch < buffer.Channels; ch++)
+        {
+            var channel = buffer.Planar[ch];
+            if (channel == null)
+            {
+                throw new InvalidOperationException($"Audio channel {ch} is null.");
+            }
+
+            handles[ch] = GCHandle.Alloc(channel, GCHandleType.Pinned);
+            pointers[ch] = handles[ch].AddrOfPinnedObject();
+        }
+
+        return (handles, pointers);
+    }
+
+    private static void UnpinChannels(GCHandle[] handles)
+    {
+        if (handles.Length == 0)
+        {
+            return;
+        }
+
+        foreach (var handle in handles)
+        {
+            if (handle.IsAllocated)
+            {
+                handle.Free();
+            }
+        }
+    }
+
+    private static (AVCodecID CodecId, AVSampleFormat SampleFormat) ResolveEncoding(int bitDepth)
+    {
+        return bitDepth switch
+        {
+            16 => (AVCodecID.AV_CODEC_ID_PCM_S16LE, AVSampleFormat.AV_SAMPLE_FMT_S16),
+            32 => (AVCodecID.AV_CODEC_ID_PCM_F32LE, AVSampleFormat.AV_SAMPLE_FMT_FLT),
+            _ => throw new NotSupportedException($"Unsupported PCM bit depth {bitDepth}."),
+        };
+    }
+
+    private static unsafe void SetupIo(
+        AVFormatContext* fmt,
+        Stream output,
+        EncoderSink sink,
+        ref AVIOContext* customIo,
+        ref GCHandle handle,
+        ref avio_alloc_context_write_packet? writeCallback)
+    {
+        if (sink == EncoderSink.DynamicBuffer)
+        {
+            ThrowIfError(avio_open_dyn_buf(&fmt->pb), nameof(avio_open_dyn_buf));
+            return;
+        }
+
+        var ioBuffer = (byte*)av_malloc((nuint)CustomIoBufferSize);
+        if (ioBuffer == null)
+        {
+            throw new OutOfMemoryException("av_malloc failed for AVIO buffer");
+        }
+
+        handle = GCHandle.Alloc(output, GCHandleType.Normal);
+        writeCallback = AvioWritePacket;
+
+        var handlePtr = GCHandle.ToIntPtr(handle);
+
+        customIo = avio_alloc_context(
+            ioBuffer,
+            CustomIoBufferSize,
+            1,
+            (void*)handlePtr,
+            null,
+            writeCallback,
+            null);
+
+        if (customIo == null)
+        {
+            av_free(ioBuffer);
+            handle.Free();
+            throw new InvalidOperationException("avio_alloc_context failed");
+        }
+
+        fmt->pb = customIo;
+        fmt->flags |= AVFMT_FLAG_CUSTOM_IO;
+    }
+
+    private static unsafe void FinalizeIo(AVFormatContext* fmt, Stream output, EncoderSink sink,
+        ref AVIOContext* customIo)
+    {
+        if (sink == EncoderSink.DynamicBuffer)
+        {
+            byte* raw = null;
+            var size = avio_close_dyn_buf(fmt->pb, &raw);
+            ThrowIfError(size, nameof(avio_close_dyn_buf));
+
+            try
+            {
+                var managed = new byte[size];
+                Marshal.Copy((IntPtr)raw, managed, 0, size);
+                output.Write(managed, 0, managed.Length);
+            }
+            finally
+            {
+                av_free(raw);
+            }
+
+            fmt->pb = null;
+            return;
+        }
+
+        if (customIo != null)
+        {
+            avio_flush(customIo);
+        }
+    }
+
+    private static unsafe void CleanupIo(
+        AVFormatContext* fmt,
+        EncoderSink sink,
+        ref AVIOContext* customIo,
+        ref GCHandle handle,
+        avio_alloc_context_write_packet? writeCallback)
+    {
+        if (sink == EncoderSink.CustomStream)
+        {
+            if (customIo != null)
+            {
+                if (customIo->buffer != null)
+                {
+                    av_free(customIo->buffer);
+                    customIo->buffer = null;
+                }
+
+                var localIo = customIo;
+                avio_context_free(&localIo);
+                customIo = null;
+            }
+
+            if (handle.IsAllocated)
+            {
+                handle.Free();
+            }
+
+            if (writeCallback != null)
+            {
+                GC.KeepAlive(writeCallback);
+            }
+        }
+
+        if (sink == EncoderSink.DynamicBuffer && fmt != null && fmt->pb != null)
+        {
+            byte* raw = null;
+            avio_close_dyn_buf(fmt->pb, &raw);
+            if (raw != null)
+            {
+                av_free(raw);
+            }
+
+            fmt->pb = null;
+        }
+    }
+
+    private static unsafe int AvioWritePacket(void* opaque, byte* buf, int bufSize)
+    {
+        try
+        {
+            var handle = GCHandle.FromIntPtr((IntPtr)opaque);
+            var stream = (Stream)handle.Target!;
+            stream.Write(new ReadOnlySpan<byte>(buf, bufSize));
+            return bufSize;
+        }
+        catch
+        {
+            return AVERROR_EOF;
+        }
+    }
+
+    private enum EncoderSink
+    {
+        DynamicBuffer,
+        CustomStream,
+    }
 }
