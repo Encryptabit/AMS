@@ -206,7 +206,7 @@ public static class AsrProcessor
             return;
         }
 
-        var text = segment.Text?.Trim();
+        /*var text = segment.Text?.Trim();
         if (string.IsNullOrWhiteSpace(text))
         {
             return;
@@ -227,8 +227,8 @@ public static class AsrProcessor
         for (int i = 0; i < words.Length; i++)
         {
             var wordStart = start + i * durationPerWord;
-            tokens.Add(new AsrToken(wordStart, durationPerWord, words[i]));
-        }
+            tokens.Add(new AsrToken(segment.Words, durationPerWord, words[i]));
+        }*/
     }
 
     private static List<AsrToken> AggregateTokens(IReadOnlyList<WhisperToken> rawTokens)

@@ -52,19 +52,10 @@ public static class MfaTimingMerger
         }
 
         var asr = JsonSerializer.Deserialize<AsrResponse>(File.ReadAllText(asrFile.FullName), SerializerOptions);
-        if (asr?.Tokens is null || asr.Tokens.Length == 0)
-        {
-            Log.Debug("ASR file missing tokens; skipping MFA timing merge ({File})", asrFile.FullName);
-            return;
-        }
-
-        var asrTokens = asr.Tokens;
-        var timingMap = BuildTimingMap(asrTokens, textGridIntervals);
-        if (timingMap.Count == 0)
-        {
-            Log.Debug("Unable to map any MFA timings to ASR tokens for {File}", hydrateFile.Name);
-            return;
-        }
+        var asrTokens = asr?.Tokens ?? Array.Empty<AsrToken>();
+        var timingMap = asrTokens.Length > 0
+            ? BuildTimingMap(asrTokens, textGridIntervals)
+            : new Dictionary<int, (double start, double end)>();
 
         var intervalTokens = BuildIntervalTokens(textGridIntervals);
         var intervalCursor = 0;
@@ -100,7 +91,6 @@ public static class MfaTimingMerger
             var timings = new List<(double start, double end)>();
             int totalTokenCount = 0;
             int mfaTokenCount = 0;
-            int asrTokenCount = 0;
 
             if (!useBookForTiming && startIdx >= 0 && endIdx < asrTokens.Length && startIdx <= endIdx)
             {
@@ -114,11 +104,8 @@ public static class MfaTimingMerger
                     }
                     else
                     {
-                        var token = asrTokens[idx];
-                        double startTime = token.StartTime;
-                        double endTime = token.StartTime + token.Duration;
-                        timings.Add((startTime, endTime));
-                        asrTokenCount++;
+                        // Skip ASR fallback to avoid degrading MFA timings
+                        // and rely on interval-based fallback instead.
                     }
                 }
             }
@@ -198,11 +185,10 @@ public static class MfaTimingMerger
 
             if (!useBookForTiming && totalTokenCount > 0)
             {
-                Log.Debug("MFA merge sentence {SentenceId}: tokens={Total} mfa={Mfa} asr={Asr}{Fallback}",
+                Log.Debug("MFA merge sentence {SentenceId}: tokens={Total} mfa={Mfa}{Fallback}",
                     sentenceNode["id"]?.GetValue<int?>(),
                     totalTokenCount,
                     mfaTokenCount,
-                    asrTokenCount,
                     fallbackApplied ? " fallbackApplied" : string.Empty);
             }
             else if (useBookForTiming && fallbackApplied)
