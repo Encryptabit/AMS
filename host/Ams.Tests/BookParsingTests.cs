@@ -213,7 +213,7 @@ public class BookModelsTests
             };
 
             var index = await DocumentProcessor.BuildBookIndexAsync(parsed, source);
-            var enriched = await BookPhonemePopulator.PopulateMissingAsync(index, new StubPronunciationProvider(pronunciations));
+            var enriched = await DocumentProcessor.PopulateMissingPhonemesAsync(index, new StubPronunciationProvider(pronunciations));
 
             Assert.Contains(enriched.Words, w => w.Text == "Hello" && w.Phonemes is { Length: >0 } phon && phon.Contains("HH AH0 L OW1"));
             Assert.Contains(enriched.Words, w => w.Text == "world." && w.Phonemes is { Length: 1 or >1 } phon && phon.Contains("W ER1 L D"));
