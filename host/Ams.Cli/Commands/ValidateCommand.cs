@@ -449,9 +449,10 @@ public static class ValidateCommand
         double fadeMs = stageFadeMs ?? 5.0;
 
         double targetToneDb = toneGainDb;
-        var toneAnalyzer = new AudioAnalysisService(roomtoneBuffer);
-        double toneDuration = roomtoneBuffer.SampleRate > 0 ? roomtoneBuffer.Length / (double)roomtoneBuffer.SampleRate : 0.0;
-        var toneStats = toneAnalyzer.AnalyzeGap(0.0, toneDuration);
+        double toneDuration = roomtoneBuffer.SampleRate > 0
+            ? roomtoneBuffer.Length / (double)roomtoneBuffer.SampleRate
+            : 0.0;
+        var toneStats = AudioProcessor.AnalyzeGap(roomtoneBuffer, 0.0, toneDuration);
         double toneGainLinear = 1.0;
         Log.Debug(
             "timing-apply using roomtone seed {0} (stageFade={1}, stageGain={2}, measuredRms={3:F2} dB, targetRms={4:F2} dB)",
@@ -1620,8 +1621,6 @@ public static class ValidateCommand
             .Where(s => s is not null)
             .ToDictionary(s => s.Id) ?? new Dictionary<int, SentenceAlign>();
 
-        var analyzer = new AudioAnalysisService(audio);
-
         var accepted = new List<PauseAdjust>(plannedAdjustments.Count);
         var rejected = new List<(PauseAdjust Adjust, double Start, double End, double RmsDb)>();
 
@@ -1641,13 +1640,13 @@ public static class ValidateCommand
                 continue;
             }
 
-            if (IsBreathSafe(audio, analyzer, spanStart, spanEnd))
+            if (IsBreathSafe(audio, spanStart, spanEnd))
             {
                 accepted.Add(adjust);
             }
             else
             {
-                double rms = analyzer.MeasureRms(spanStart, spanEnd);
+                double rms = AudioProcessor.MeasureRms(audio, spanStart, spanEnd);
                 rejected.Add((adjust, spanStart, spanEnd, rms));
             }
         }
@@ -1695,7 +1694,7 @@ public static class ValidateCommand
         return string.Equals(sentence.Status, "ok", StringComparison.OrdinalIgnoreCase);
     }
 
-    private static bool IsBreathSafe(AudioBuffer audio, AudioAnalysisService analyzer, double startSec, double endSec)
+    private static bool IsBreathSafe(AudioBuffer audio, double startSec, double endSec)
     {
         if (endSec - startSec <= 0)
         {
@@ -1712,7 +1711,7 @@ public static class ValidateCommand
 
         if (regions.Count == 0)
         {
-            double rms = analyzer.MeasureRms(startSec, endSec);
+            double rms = AudioProcessor.MeasureRms(audio, startSec, endSec);
             return rms <= BreathGuardSpeechThresholdDb;
         }
 
@@ -1723,7 +1722,7 @@ public static class ValidateCommand
             double gapEnd = region.StartSec;
             if (gapEnd - gapStart >= BreathGuardMinSpanSec)
             {
-                double rms = analyzer.MeasureRms(gapStart, gapEnd);
+                double rms = AudioProcessor.MeasureRms(audio, gapStart, gapEnd);
                 if (rms > BreathGuardSpeechThresholdDb)
                 {
                     return false;
@@ -1735,7 +1734,7 @@ public static class ValidateCommand
 
         if (endSec - cursor >= BreathGuardMinSpanSec)
         {
-            double rms = analyzer.MeasureRms(cursor, endSec);
+            double rms = AudioProcessor.MeasureRms(audio, cursor, endSec);
             if (rms > BreathGuardSpeechThresholdDb)
             {
                 return false;

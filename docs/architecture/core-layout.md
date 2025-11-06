@@ -21,7 +21,7 @@
 
 ### `Ams.Core.Audio`
 - DSP utilities, audio analysis, and room-tone rendering.
-- Hosts `AudioAnalysisService` and upcoming sentence-level RMS heuristics.
+- Energy/silence heuristics now live on `Ams.Core.Processors.AudioProcessor` (FFmpeg-backed primitives) replacing the legacy `AudioAnalysisService`.
 
 ### `Ams.Core.Pipeline`
 - Stage orchestration, manifest handling, and CLI-facing workflow glue.

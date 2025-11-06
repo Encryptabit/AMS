@@ -4,6 +4,7 @@ using System.Linq;
 using Ams.Core.Alignment.Tx;
 using Ams.Core.Artifacts;
 using Ams.Core.Audio;
+using Ams.Core.Processors;
 using Ams.Core.Common;
 using SentenceTiming = Ams.Core.Artifacts.SentenceTiming;
 
@@ -13,7 +14,6 @@ internal static class PauseAudioApplier
 {
     private const double DurationEpsilon = 1e-6;
     private const double SegmentFadeMs = 60.0;
-    private const double LoopTransitionMs = 6.0;
     private static readonly IReadOnlyList<PauseIntraGap> EmptyIntraGaps = Array.Empty<PauseIntraGap>();
 
     public static AudioBuffer Apply(
@@ -36,7 +36,6 @@ internal static class PauseAudioApplier
 
         Log.Debug("PauseAudioApplier starting: sampleRate={SampleRate}, timelineCount={TimelineCount}", audio.SampleRate, updatedTimeline.Count);
 
-        var analyzer = new AudioAnalysisService(audio);
         var finalTimeline = new Dictionary<int, SentenceTiming>(updatedTimeline);
 
         bool hasTail = finalTimeline.TryGetValue(PauseTimelineApplier.TailSentinelSentenceId, out var tailTiming);
@@ -84,7 +83,8 @@ internal static class PauseAudioApplier
             double hangoverMs = hasIntraGaps ? 16.0 : 30.0;
 
             var seed = new TimingRange(sentence.Timing.StartSec, sentence.Timing.EndSec);
-            var energy = analyzer.SnapToEnergy(
+            var energy = AudioProcessor.SnapToEnergy(
+                audio,
                 seed,
                 enterThresholdDb: -48.0,
                 exitThresholdDb: exitThresholdDb,
@@ -171,7 +171,7 @@ internal static class PauseAudioApplier
 
         var tone = roomtone.SampleRate == sampleRate
             ? roomtone
-            : RoomtoneUtils.ResampleLinear(roomtone, sampleRate);
+            : AudioProcessor.Resample(roomtone, sampleRate);
         if (tone.Length == 0)
         {
             throw new InvalidOperationException("Roomtone seed must contain samples.");
@@ -180,9 +180,8 @@ internal static class PauseAudioApplier
         RoomtoneUtils.MakeLoopable(tone, seamMs: 60);
 
         int targetLength = Math.Max((int)Math.Ceiling(totalDurationSec * sampleRate), 1);
-        var output = BuildRoomtoneBed(tone, audio.Channels, sampleRate, targetLength, toneGainLinear);
-
         double segmentFadeMs = Math.Clamp(fadeMs, 1.0, SegmentFadeMs);
+        var output = BuildRoomtoneBed(tone, audio.Channels, sampleRate, targetLength, toneGainLinear, segmentFadeMs);
         int fadeSamples = Math.Max(1, (int)Math.Round(segmentFadeMs * 0.001 * sampleRate));
 
         foreach (var segments in overlays)
@@ -193,76 +192,11 @@ internal static class PauseAudioApplier
         return output;
     }
 
-    private static AudioBuffer BuildRoomtoneBed(AudioBuffer tone, int channels, int sampleRate, int length, double gain)
+    private static AudioBuffer BuildRoomtoneBed(AudioBuffer tone, int channels, int sampleRate, int length, double gain, double fadeMs)
     {
-        var bed = new AudioBuffer(channels, sampleRate, length);
-        if (tone.Length == 0)
-        {
-            return bed;
-        }
-
-        int toneLength = tone.Planar[0].Length;
-        int toneIndex = FindBestStartIndex(tone.Planar[0]);
-
-        int transitionSamples = Math.Max(8, (int)Math.Round(LoopTransitionMs * 0.001 * sampleRate));
-        var prevSamples = new float[channels];
-        var transitionStart = new float[channels];
-        int transitionLength = 0;
-        int transitionIndex = 0;
-        float prevReferenceSample = 0f;
-
-        for (int i = 0; i < length; i++)
-        {
-            if (toneIndex >= toneLength)
-            {
-                toneIndex = FindBestWrapIndex(tone.Planar[0], prevReferenceSample, gain);
-                if (transitionSamples > 0)
-                {
-                    Array.Copy(prevSamples, transitionStart, channels);
-                    transitionLength = transitionSamples;
-                    transitionIndex = 0;
-                }
-            }
-
-            double blendProgress = transitionLength > 0
-                ? Math.Min(1.0, (transitionIndex + 1) / (double)transitionLength)
-                : 1.0;
-
-            for (int ch = 0; ch < channels; ch++)
-            {
-                var src = tone.Planar[ch % tone.Channels];
-                var dst = bed.Planar[ch];
-
-                double raw = gain * src[toneIndex];
-                if (transitionLength > 0)
-                {
-                    double startVal = transitionStart[ch];
-                    raw = startVal + (raw - startVal) * blendProgress;
-                }
-
-                float sample = (float)raw;
-                dst[i] = sample;
-                prevSamples[ch] = sample;
-
-                if (ch == 0)
-                {
-                    prevReferenceSample = sample;
-                }
-            }
-
-            if (transitionLength > 0)
-            {
-                transitionIndex++;
-                if (transitionIndex >= transitionLength)
-                {
-                    transitionLength = 0;
-                    transitionIndex = 0;
-                }
-            }
-            toneIndex++;
-        }
-
-        return bed;
+        var baseBuffer = new AudioBuffer(channels, sampleRate, length);
+        double endSec = length / (double)sampleRate;
+        return AudioProcessor.OverlayRoomtone(baseBuffer, tone, 0.0, endSec, gain, fadeMs);
     }
 
     private static IReadOnlyList<SentenceSegment> BuildSentenceSegments(
@@ -383,60 +317,6 @@ internal static class PauseAudioApplier
     private static bool IsApproximatelyEqual(double left, double right)
     {
         return Math.Abs(left - right) < DurationEpsilon;
-    }
-
-    private static int FindBestStartIndex(float[] samples)
-    {
-        if (samples.Length == 0)
-        {
-            return 0;
-        }
-
-        int bestIndex = 0;
-        float bestAbs = Math.Abs(samples[0]);
-
-        for (int i = 1; i < samples.Length; i++)
-        {
-            float abs = Math.Abs(samples[i]);
-            if (abs < bestAbs)
-            {
-                bestAbs = abs;
-                bestIndex = i;
-                if (bestAbs <= 1e-6f)
-                {
-                    break;
-                }
-            }
-        }
-
-        return bestIndex;
-    }
-
-    private static int FindBestWrapIndex(float[] samples, float prevSample, double gain)
-    {
-        if (samples.Length == 0)
-        {
-            return 0;
-        }
-
-        int bestIndex = 0;
-        float bestDiff = Math.Abs((float)(gain * samples[0]) - prevSample);
-
-        for (int i = 1; i < samples.Length; i++)
-        {
-            float diff = Math.Abs((float)(gain * samples[i]) - prevSample);
-            if (diff < bestDiff)
-            {
-                bestDiff = diff;
-                bestIndex = i;
-                if (bestDiff <= 1e-6f)
-                {
-                    break;
-                }
-            }
-        }
-
-        return bestIndex;
     }
 
     private readonly struct SentenceSegment
