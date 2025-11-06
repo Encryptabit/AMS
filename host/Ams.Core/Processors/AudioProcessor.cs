@@ -1,6 +1,5 @@
 using System;
 using System.IO;
-using System.Text;
 using Ams.Core.Artifacts;
 using Ams.Core.Services.Integrations.FFmpeg;
 
@@ -34,16 +33,6 @@ public static class AudioProcessor
         }
 
         var effective = options ?? new AudioEncodeOptions();
-        if (effective.TargetSampleRate.HasValue && effective.TargetSampleRate.Value != buffer.SampleRate)
-        {
-            throw new NotSupportedException("Sample rate conversion during encode is not implemented yet.");
-        }
-
-        var bitDepth = effective.TargetBitDepth ?? 16;
-        if (bitDepth != 16)
-        {
-            throw new NotSupportedException("Only 16-bit PCM WAV encoding is supported currently.");
-        }
 
         var directory = Path.GetDirectoryName(Path.GetFullPath(path));
         if (!string.IsNullOrEmpty(directory))
@@ -52,7 +41,8 @@ public static class AudioProcessor
         }
 
         using var stream = File.Create(path);
-        WritePcm16Wave(stream, buffer);
+        FfEncoder.EncodeToCustomStream(buffer, stream, effective);
+        stream.Flush();
     }
 
     public static MemoryStream EncodeWavToStream(AudioBuffer buffer, AudioEncodeOptions? options = null)
@@ -63,62 +53,11 @@ public static class AudioProcessor
         }
 
         var effective = options ?? new AudioEncodeOptions();
-        if (effective.TargetSampleRate.HasValue && effective.TargetSampleRate.Value != buffer.SampleRate)
-        {
-            throw new NotSupportedException("Sample rate conversion during encode is not implemented yet.");
-        }
-
-        if (effective.TargetBitDepth.HasValue && effective.TargetBitDepth.Value != 16)
-        {
-            throw new NotSupportedException("Only 16-bit PCM WAV encoding is supported currently.");
-        }
 
         var ms = new MemoryStream();
-        FfEncoder.AudioBufferToWavStream(buffer, ms, PcmEncoding.Pcm16);
+        FfEncoder.EncodeToDynamicBuffer(buffer, ms, effective);
         ms.Position = 0;
         return ms;
-    }
-
-    private static void WritePcm16Wave(Stream destination, AudioBuffer buffer)
-    {
-        //FfEncoder.Encode(new AudioEncodeOptions { TargetBitDepth = 16, TargetSampleRate = DefaultAsrSampleRate}, buffer, destination);
-        
-        const ushort audioFormat = 1; // PCM
-        const ushort bitsPerSample = 16;
-        var channels = (ushort)buffer.Channels;
-        var sampleRate = (uint)buffer.SampleRate;
-        var blockAlign = (ushort)(channels * (bitsPerSample / 8));
-        var byteRate = sampleRate * blockAlign;
-        var dataSize = (uint)(buffer.Length * blockAlign);
-        var riffSize = 4 + (8 + 16) + (8 + dataSize);
-
-        using var writer = new BinaryWriter(destination, Encoding.ASCII, leaveOpen: true);
-        writer.Write(Encoding.ASCII.GetBytes("RIFF"));
-        writer.Write(riffSize);
-        writer.Write(Encoding.ASCII.GetBytes("WAVE"));
-
-        writer.Write(Encoding.ASCII.GetBytes("fmt "));
-        writer.Write(16u);
-        writer.Write(audioFormat);
-        writer.Write(channels);
-        writer.Write(sampleRate);
-        writer.Write(byteRate);
-        writer.Write(blockAlign);
-        writer.Write(bitsPerSample);
-
-        writer.Write(Encoding.ASCII.GetBytes("data"));
-        writer.Write(dataSize);
-
-        for (int sample = 0; sample < buffer.Length; sample++)
-        {
-            for (int ch = 0; ch < buffer.Channels; ch++)
-            {
-                var value = Math.Clamp(buffer.Planar[ch][sample], -1f, 1f);
-                writer.Write((short)Math.Round(value * short.MaxValue, MidpointRounding.AwayFromZero));
-            }
-        }
-
-        writer.Flush();
     }
 }
 

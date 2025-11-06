@@ -5,6 +5,8 @@ using System.Runtime.InteropServices;
 using Ams.Core.Artifacts;
 using Ams.Core.Processors;
 using FFmpeg.AutoGen;
+using static FFmpeg.AutoGen.ffmpeg;
+using static Ams.Core.Services.Integrations.FFmpeg.FfUtils;
 
 namespace Ams.Core.Services.Integrations.FFmpeg;
 
@@ -22,10 +24,10 @@ internal static unsafe class FfDecoder
         AVFormatContext* formatContext = null;
         try
         {
-            FfUtils.ThrowIfError(ffmpeg.avformat_open_input(&formatContext, path, null, null), $"Failed to open '{path}'");
-            FfUtils.ThrowIfError(ffmpeg.avformat_find_stream_info(formatContext, null), $"Failed to determine stream info for '{path}'");
+            ThrowIfError(avformat_open_input(&formatContext, path, null, null), $"{nameof(avformat_open_input)}({path})");
+            ThrowIfError(avformat_find_stream_info(formatContext, null), $"{nameof(avformat_find_stream_info)}({path})");
 
-            int streamIndex = ffmpeg.av_find_best_stream(formatContext, AVMediaType.AVMEDIA_TYPE_AUDIO, -1, -1, null, 0);
+            int streamIndex = av_find_best_stream(formatContext, AVMediaType.AVMEDIA_TYPE_AUDIO, -1, -1, null, 0);
             if (streamIndex < 0)
             {
                 throw new InvalidOperationException($"No audio stream found in '{path}'");
@@ -48,11 +50,11 @@ internal static unsafe class FfDecoder
             double durationSeconds = 0;
             if (stream->duration > 0 && stream->time_base.den != 0)
             {
-                durationSeconds = stream->duration * ffmpeg.av_q2d(stream->time_base);
+                durationSeconds = stream->duration * av_q2d(stream->time_base);
             }
-            else if (formatContext->duration != ffmpeg.AV_NOPTS_VALUE)
+            else if (formatContext->duration != AV_NOPTS_VALUE)
             {
-                durationSeconds = formatContext->duration / (double)ffmpeg.AV_TIME_BASE;
+                durationSeconds = formatContext->duration / (double)AV_TIME_BASE;
             }
 
             return new AudioInfo(
@@ -65,7 +67,7 @@ internal static unsafe class FfDecoder
         {
             if (formatContext != null)
             {
-                ffmpeg.avformat_close_input(&formatContext);
+                avformat_close_input(&formatContext);
             }
         }
     }
@@ -97,23 +99,23 @@ internal static unsafe class FfDecoder
         AVFormatContext* formatContext = null;
         try
         {
-            FfUtils.ThrowIfError(ffmpeg.avformat_open_input(&formatContext, path, null, null), $"Failed to open '{path}'");
-            FfUtils.ThrowIfError(ffmpeg.avformat_find_stream_info(formatContext, null), $"Failed to determine stream info for '{path}'");
+            ThrowIfError(avformat_open_input(&formatContext, path, null, null), $"{nameof(avformat_open_input)}({path})");
+            ThrowIfError(avformat_find_stream_info(formatContext, null), $"{nameof(avformat_find_stream_info)}({path})");
 
-            int streamIndex = ffmpeg.av_find_best_stream(formatContext, AVMediaType.AVMEDIA_TYPE_AUDIO, -1, -1, null, 0);
+            int streamIndex = av_find_best_stream(formatContext, AVMediaType.AVMEDIA_TYPE_AUDIO, -1, -1, null, 0);
             if (streamIndex < 0)
             {
                 throw new InvalidOperationException($"No audio stream found in '{path}'");
             }
 
             var stream = formatContext->streams[streamIndex];
-            var codec = ffmpeg.avcodec_find_decoder(stream->codecpar->codec_id);
+            var codec = avcodec_find_decoder(stream->codecpar->codec_id);
             if (codec == null)
             {
                 throw new InvalidOperationException($"Unsupported codec for '{path}'");
             }
 
-            AVCodecContext* codecContext = ffmpeg.avcodec_alloc_context3(codec);
+            AVCodecContext* codecContext = avcodec_alloc_context3(codec);
             if (codecContext == null)
             {
                 throw new InvalidOperationException("Failed to allocate codec context.");
@@ -121,8 +123,8 @@ internal static unsafe class FfDecoder
 
             try
             {
-                FfUtils.ThrowIfError(ffmpeg.avcodec_parameters_to_context(codecContext, stream->codecpar), "Failed to copy codec parameters");
-                FfUtils.ThrowIfError(ffmpeg.avcodec_open2(codecContext, codec, null), "Failed to open codec");
+                ThrowIfError(avcodec_parameters_to_context(codecContext, stream->codecpar), nameof(avcodec_parameters_to_context));
+                ThrowIfError(avcodec_open2(codecContext, codec, null), nameof(avcodec_open2));
 
                 var sourceSampleRate = codecContext->sample_rate;
                 if (sourceSampleRate <= 0)
@@ -151,10 +153,10 @@ internal static unsafe class FfDecoder
                 }
 
                 var targetFormat = AVSampleFormat.AV_SAMPLE_FMT_FLTP;
-                var sourceLayout = FfUtils.CloneOrDefault(&codecContext->ch_layout, sourceChannels);
-                var targetLayout = FfUtils.CreateDefaultChannelLayout(targetChannels);
+                var sourceLayout = CloneOrDefault(&codecContext->ch_layout, sourceChannels);
+                var targetLayout = CreateDefaultChannelLayout(targetChannels);
 
-                SwrContext* resampler = ffmpeg.swr_alloc();
+                SwrContext* resampler = swr_alloc();
                 if (resampler == null)
                 {
                     throw new InvalidOperationException("Failed to allocate FFmpeg resampler.");
@@ -163,7 +165,7 @@ internal static unsafe class FfDecoder
                 try
                 {
                     var resamplerPtr = resampler;
-                    var configureResult = ffmpeg.swr_alloc_set_opts2(
+                    var configureResult = swr_alloc_set_opts2(
                         &resamplerPtr,
                         &targetLayout,
                         targetFormat,
@@ -173,10 +175,10 @@ internal static unsafe class FfDecoder
                         sourceSampleRate,
                         0,
                         null);
-                    FfUtils.ThrowIfError(configureResult, "Failed to configure resampler");
+                    ThrowIfError(configureResult, nameof(swr_alloc_set_opts2));
                     resampler = resamplerPtr;
 
-                    FfUtils.ThrowIfError(ffmpeg.swr_init(resampler), "Failed to initialize resampler");
+                    ThrowIfError(swr_init(resampler), nameof(swr_init));
 
                     using var packet = new FfPacket();
                     using var frame = new FfFrame();
@@ -189,13 +191,13 @@ internal static unsafe class FfDecoder
 
                     while (true)
                     {
-                        var readResult = ffmpeg.av_read_frame(formatContext, packet.Pointer);
-                        if (readResult == ffmpeg.AVERROR_EOF)
+                        var readResult = av_read_frame(formatContext, packet.Pointer);
+                        if (readResult == AVERROR_EOF)
                         {
                             break;
                         }
 
-                        FfUtils.ThrowIfError(readResult, "Failed to read audio frame");
+                        ThrowIfError(readResult, nameof(av_read_frame));
 
                         if (packet.Pointer->stream_index != streamIndex)
                         {
@@ -203,33 +205,33 @@ internal static unsafe class FfDecoder
                             continue;
                         }
 
-                        FfUtils.ThrowIfError(ffmpeg.avcodec_send_packet(codecContext, packet.Pointer), "Failed to send packet for decoding");
+                        ThrowIfError(avcodec_send_packet(codecContext, packet.Pointer), nameof(avcodec_send_packet));
                         packet.Unref();
 
                         while (true)
                         {
-                            var receive = ffmpeg.avcodec_receive_frame(codecContext, frame.Pointer);
-                            if (receive == ffmpeg.AVERROR(ffmpeg.EAGAIN) || receive == ffmpeg.AVERROR_EOF)
+                            var receive = avcodec_receive_frame(codecContext, frame.Pointer);
+                            if (receive == AVERROR(EAGAIN) || receive == AVERROR_EOF)
                             {
                                 break;
                             }
 
-                            FfUtils.ThrowIfError(receive, "Failed to receive decoded frame");
+                            ThrowIfError(receive, nameof(avcodec_receive_frame));
                             ResampleInto(resampler, sourceSampleRate, frame.Pointer, targetChannels, targetSampleRate, targetFormat, channelSamples);
                         }
                     }
 
                     // Flush decoder
-                    FfUtils.ThrowIfError(ffmpeg.avcodec_send_packet(codecContext, null), "Failed to flush decoder");
+                    ThrowIfError(avcodec_send_packet(codecContext, null), nameof(avcodec_send_packet));
                     while (true)
                     {
-                        var receive = ffmpeg.avcodec_receive_frame(codecContext, frame.Pointer);
-                        if (receive == ffmpeg.AVERROR(ffmpeg.EAGAIN) || receive == ffmpeg.AVERROR_EOF)
+                        var receive = avcodec_receive_frame(codecContext, frame.Pointer);
+                        if (receive == AVERROR(EAGAIN) || receive == AVERROR_EOF)
                         {
                             break;
                         }
 
-                        FfUtils.ThrowIfError(receive, "Failed to receive decoded frame during flush");
+                        ThrowIfError(receive, nameof(avcodec_receive_frame));
                         ResampleInto(resampler, sourceSampleRate, frame.Pointer, targetChannels, targetSampleRate, targetFormat, channelSamples);
                     }
 
@@ -249,21 +251,21 @@ internal static unsafe class FfDecoder
                 }
                 finally
                 {
-                    ffmpeg.swr_free(&resampler);
-                    ffmpeg.av_channel_layout_uninit(&sourceLayout);
-                    ffmpeg.av_channel_layout_uninit(&targetLayout);
+                    swr_free(&resampler);
+                    av_channel_layout_uninit(&sourceLayout);
+                    av_channel_layout_uninit(&targetLayout);
                 }
             }
             finally
             {
-                ffmpeg.avcodec_free_context(&codecContext);
+                avcodec_free_context(&codecContext);
             }
         }
         finally
         {
             if (formatContext != null)
             {
-                ffmpeg.avformat_close_input(&formatContext);
+                avformat_close_input(&formatContext);
             }
         }
     }
@@ -277,21 +279,16 @@ internal static unsafe class FfDecoder
         AVSampleFormat targetFormat,
         IList<List<float>> channelSamples)
     {
-        var delay = ffmpeg.swr_get_delay(resampler, sourceSampleRate);
-        var dstNbSamples = (int)ffmpeg.av_rescale_rnd(
-            delay + frame->nb_samples,
-            targetSampleRate,
-            sourceSampleRate,
-            AVRounding.AV_ROUND_UP);
+        var dstNbSamples = ComputeResampleOutputSamples(resampler, sourceSampleRate, targetSampleRate, frame->nb_samples);
 
         byte** converted = null;
         try
         {
-            var ret = ffmpeg.av_samples_alloc_array_and_samples(&converted, null, targetChannels, dstNbSamples, targetFormat, 0);
-            FfUtils.ThrowIfError(ret, "Failed to allocate resample buffer");
+            var ret = av_samples_alloc_array_and_samples(&converted, null, targetChannels, dstNbSamples, targetFormat, 0);
+            ThrowIfError(ret, nameof(av_samples_alloc_array_and_samples));
 
-            var samples = ffmpeg.swr_convert(resampler, converted, dstNbSamples, frame->extended_data, frame->nb_samples);
-            FfUtils.ThrowIfError(samples, "Failed to convert samples");
+            var samples = swr_convert(resampler, converted, dstNbSamples, frame->extended_data, frame->nb_samples);
+            ThrowIfError(samples, nameof(swr_convert));
 
             for (int ch = 0; ch < targetChannels; ch++)
             {
@@ -307,8 +304,8 @@ internal static unsafe class FfDecoder
         {
             if (converted != null)
             {
-                ffmpeg.av_freep(&converted[0]);
-                ffmpeg.av_free(converted);
+                av_freep(&converted[0]);
+                av_free(converted);
             }
         }
     }
@@ -320,7 +317,7 @@ internal static unsafe class FfDecoder
 
         public FfPacket()
         {
-            _pointer = ffmpeg.av_packet_alloc();
+            _pointer = av_packet_alloc();
             if (_pointer == null)
             {
                 throw new InvalidOperationException("Failed to allocate packet.");
@@ -331,7 +328,7 @@ internal static unsafe class FfDecoder
         {
             if (_pointer != null)
             {
-                ffmpeg.av_packet_unref(_pointer);
+                av_packet_unref(_pointer);
             }
         }
 
@@ -340,7 +337,7 @@ internal static unsafe class FfDecoder
             if (_pointer != null)
             {
                 var local = _pointer;
-                ffmpeg.av_packet_free(&local);
+                av_packet_free(&local);
                 _pointer = null;
             }
         }
@@ -353,7 +350,7 @@ internal static unsafe class FfDecoder
 
         public FfFrame()
         {
-            _pointer = ffmpeg.av_frame_alloc();
+            _pointer = av_frame_alloc();
             if (_pointer == null)
             {
                 throw new InvalidOperationException("Failed to allocate frame.");
@@ -365,7 +362,7 @@ internal static unsafe class FfDecoder
             if (_pointer != null)
             {
                 var local = _pointer;
-                ffmpeg.av_frame_free(&local);
+                av_frame_free(&local);
                 _pointer = null;
             }
         }
