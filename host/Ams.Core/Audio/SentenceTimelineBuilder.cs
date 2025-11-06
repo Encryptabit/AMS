@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using Ams.Core.Asr;
 using Ams.Core.Artifacts;
+using Ams.Core.Processors;
 
 namespace Ams.Core.Audio
 {
@@ -13,7 +14,7 @@ namespace Ams.Core.Audio
     {
         public static IReadOnlyList<SentenceTimelineEntry> Build(
             IReadOnlyList<SentenceAlign> sentences,
-            AudioAnalysisService analyzer,
+            AudioBuffer audio,
             AsrResponse asr,
             IReadOnlyDictionary<int, FragmentTiming>? fragments = null,
             double rmsThresholdDb = -35.0,
@@ -21,7 +22,7 @@ namespace Ams.Core.Audio
             double stepMs = 10.0)
         {
             if (sentences is null) throw new ArgumentNullException(nameof(sentences));
-            if (analyzer is null) throw new ArgumentNullException(nameof(analyzer));
+            if (audio is null) throw new ArgumentNullException(nameof(audio));
             if (asr is null) throw new ArgumentNullException(nameof(asr));
 
         var entries = new List<SentenceTimelineEntry>(sentences.Count);
@@ -50,7 +51,7 @@ namespace Ams.Core.Audio
             double effectiveSearch = isUnreliable ? Math.Max(searchWindowSec, 0.8) : searchWindowSec;
 
             var energyTiming = CalculateEnergyTiming(
-                analyzer,
+                audio,
                 windowTiming,
                 baseTiming,
                 effectiveRms,
@@ -121,7 +122,7 @@ namespace Ams.Core.Audio
     }
 
         private static ArtifactSentenceTiming CalculateEnergyTiming(
-            AudioAnalysisService analyzer,
+            AudioBuffer audio,
             ArtifactSentenceTiming windowTiming,
             ArtifactSentenceTiming baseTiming,
             double rmsThresholdDb,
@@ -135,7 +136,8 @@ namespace Ams.Core.Audio
             }
             double exitThresholdDb = rmsThresholdDb - 8.0;
             
-            var snapped = analyzer.SnapToEnergy(
+            var snapped = AudioProcessor.SnapToEnergy(
+                audio,
                 seed,
                 enterThresholdDb: rmsThresholdDb,
                 exitThresholdDb: exitThresholdDb,
@@ -145,7 +147,7 @@ namespace Ams.Core.Audio
                 postRollMs: 10.0,
                 hangoverMs: 30.0);
 
-          //var snapped = analyzer.SnapToEnergyAuto(seed: seed, AutoTuneStyle.Tight);
+          //var snapped = AudioProcessor.SnapToEnergyAuto(audio, seed, AutoTuneStyle.Tight);
             if (windowTiming.Duration > 0)
             {
                 snapped = ClampToWindow(snapped, windowTiming);

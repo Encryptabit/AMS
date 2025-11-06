@@ -13,7 +13,7 @@ namespace Ams.Core.Processors;
 /// <summary>
 /// Central place for FFmpeg-backed audio primitives.
 /// </summary>
-public static class AudioProcessor
+public static partial class AudioProcessor
 {
     public const int DefaultAsrSampleRate = 16_000;
 
@@ -63,6 +63,27 @@ public static class AudioProcessor
         FfEncoder.EncodeToCustomStream(buffer, ms, effective);
         ms.Position = 0;
         return ms;
+    }
+
+    public static AudioBuffer Resample(AudioBuffer buffer, int targetSampleRate)
+    {
+        if (buffer is null)
+        {
+            throw new ArgumentNullException(nameof(buffer));
+        }
+
+        if (targetSampleRate <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(targetSampleRate));
+        }
+
+        if (buffer.SampleRate == targetSampleRate)
+        {
+            return buffer;
+        }
+
+        var filter = FormattableString.Invariant($"aresample={targetSampleRate}");
+        return FfFilterGraphRunner.Apply(buffer, filter);
     }
 
     public static IReadOnlyList<SilenceInterval> DetectSilence(AudioBuffer buffer, SilenceDetectOptions? options = null)

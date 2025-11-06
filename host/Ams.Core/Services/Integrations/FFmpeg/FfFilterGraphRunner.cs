@@ -7,6 +7,8 @@ namespace Ams.Core.Services.Integrations.FFmpeg;
 
 internal static class FfFilterGraphRunner
 {
+    internal readonly record struct GraphInput(string Label, AudioBuffer Buffer);
+
     internal enum FilterExecutionMode
     {
         ReturnAudio,
@@ -15,17 +17,39 @@ internal static class FfFilterGraphRunner
 
     public static AudioBuffer Apply(AudioBuffer input, string filterSpec)
     {
-        return ExecuteInternal(input, filterSpec, FilterExecutionMode.ReturnAudio) ?? throw new InvalidOperationException("FFmpeg filter graph did not produce audio output.");
+        var inputs = new[] { new GraphInput("main", input) };
+        return ExecuteInternal(inputs, filterSpec, FilterExecutionMode.ReturnAudio) ?? throw new InvalidOperationException("FFmpeg filter graph did not produce audio output.");
+    }
+
+    public static AudioBuffer Apply(IReadOnlyList<GraphInput> inputs, string filterSpec)
+    {
+        if (inputs is null || inputs.Count == 0)
+        {
+            throw new ArgumentException("At least one input is required.", nameof(inputs));
+        }
+
+        return ExecuteInternal(inputs, filterSpec, FilterExecutionMode.ReturnAudio) ?? throw new InvalidOperationException("FFmpeg filter graph did not produce audio output.");
     }
 
     public static void Execute(AudioBuffer input, string filterSpec, FilterExecutionMode mode)
     {
-        ExecuteInternal(input, filterSpec, mode);
+        var inputs = new[] { new GraphInput("main", input) };
+        ExecuteInternal(inputs, filterSpec, mode);
     }
 
-    private static AudioBuffer? ExecuteInternal(AudioBuffer input, string filterSpec, FilterExecutionMode mode)
+    public static void Execute(IReadOnlyList<GraphInput> inputs, string filterSpec, FilterExecutionMode mode)
     {
-        using var executor = new FilterGraphExecutor(input, filterSpec, mode);
+        if (inputs is null || inputs.Count == 0)
+        {
+            throw new ArgumentException("At least one input is required.", nameof(inputs));
+        }
+
+        ExecuteInternal(inputs, filterSpec, mode);
+    }
+
+    private static AudioBuffer? ExecuteInternal(IReadOnlyList<GraphInput> inputs, string filterSpec, FilterExecutionMode mode)
+    {
+        using var executor = new FilterGraphExecutor(inputs, filterSpec, mode);
         executor.Process();
         return executor.BuildOutput();
     }
@@ -34,23 +58,20 @@ internal static class FfFilterGraphRunner
     {
         private const int ChunkSamples = 4096;
 
-        private readonly AudioBuffer _input;
+        private readonly GraphInputState[] _inputs;
         private readonly string _filterSpec;
         private readonly FilterExecutionMode _mode;
 
         private AVFilterGraph* _graph;
-        private AVFilterContext* _src;
         private AVFilterContext* _sink;
-        private AVFrame* _inputFrame;
         private AVFrame* _outputFrame;
         private AudioAccumulator? _accumulator;
         private readonly int _channels;
         private readonly int _sampleRate;
 
-        public FilterGraphExecutor(AudioBuffer input, string filterSpec, FilterExecutionMode mode)
+        public FilterGraphExecutor(IReadOnlyList<GraphInput> inputs, string filterSpec, FilterExecutionMode mode)
         {
             FfSession.EnsureFiltersAvailable();
-            _input = input ?? throw new ArgumentNullException(nameof(input));
             _filterSpec = string.IsNullOrWhiteSpace(filterSpec) ? "anull" : filterSpec;
             _mode = mode;
             _graph = ffmpeg.avfilter_graph_alloc();
@@ -59,18 +80,17 @@ internal static class FfFilterGraphRunner
                 throw new InvalidOperationException("Failed to allocate FFmpeg filter graph.");
             }
 
-            _channels = input.Channels;
-            _sampleRate = input.SampleRate;
+            _inputs = CreateInputs(inputs);
+            if (_inputs.Length == 0)
+            {
+                throw new ArgumentException("At least one input is required.");
+            }
 
-            SetupSource();
+            _channels = _inputs[0].Channels;
+            _sampleRate = _inputs[0].SampleRate;
+
             SetupSink();
             ConfigureGraph();
-
-            _inputFrame = ffmpeg.av_frame_alloc();
-            if (_inputFrame == null)
-            {
-                throw new InvalidOperationException("Failed to allocate FFmpeg frame.");
-            }
 
             _outputFrame = ffmpeg.av_frame_alloc();
             if (_outputFrame == null)
@@ -86,20 +106,12 @@ internal static class FfFilterGraphRunner
 
         public void Process()
         {
-            int totalSamples = _input.Length;
-            int offset = 0;
-            long pts = 0;
-
-            while (offset < totalSamples)
+            foreach (var input in _inputs)
             {
-                int chunk = Math.Min(ChunkSamples, totalSamples - offset);
-                SendFrame(offset, chunk, pts);
-                pts += chunk;
-                Drain();
-                offset += chunk;
+                SendAllFrames(input);
+                FfUtils.ThrowIfError(ffmpeg.av_buffersrc_add_frame(input.Source, null), nameof(ffmpeg.av_buffersrc_add_frame));
             }
 
-            FfUtils.ThrowIfError(ffmpeg.av_buffersrc_add_frame(_src, null), nameof(ffmpeg.av_buffersrc_add_frame));
             Drain(final: true);
         }
 
@@ -108,29 +120,45 @@ internal static class FfFilterGraphRunner
             return _accumulator?.ToBuffer();
         }
 
-        private void SendFrame(int offset, int sampleCount, long pts)
+        private void SendAllFrames(GraphInputState state)
         {
-            ffmpeg.av_frame_unref(_inputFrame);
-            _inputFrame->nb_samples = sampleCount;
-            _inputFrame->format = (int)AVSampleFormat.AV_SAMPLE_FMT_FLT;
-            _inputFrame->sample_rate = _sampleRate;
-            ffmpeg.av_channel_layout_uninit(&_inputFrame->ch_layout);
-            ffmpeg.av_channel_layout_default(&_inputFrame->ch_layout, _channels);
-            FfUtils.ThrowIfError(ffmpeg.av_frame_get_buffer(_inputFrame, 0), nameof(ffmpeg.av_frame_get_buffer));
-            _inputFrame->pts = pts;
+            int totalSamples = state.Buffer.Length;
+            int offset = 0;
+            long pts = 0;
 
-            var planar = _input.Planar;
-            float* destination = (float*)_inputFrame->data[0];
+            while (offset < totalSamples)
+            {
+                int chunk = Math.Min(ChunkSamples, totalSamples - offset);
+                SendFrame(state, offset, chunk, pts);
+                pts += chunk;
+                offset += chunk;
+                Drain();
+            }
+        }
+
+        private void SendFrame(GraphInputState state, int offset, int sampleCount, long pts)
+        {
+            ffmpeg.av_frame_unref(state.Frame);
+            state.Frame->nb_samples = sampleCount;
+            state.Frame->format = (int)AVSampleFormat.AV_SAMPLE_FMT_FLT;
+            state.Frame->sample_rate = state.SampleRate;
+            ffmpeg.av_channel_layout_uninit(&state.Frame->ch_layout);
+            ffmpeg.av_channel_layout_default(&state.Frame->ch_layout, state.Channels);
+            FfUtils.ThrowIfError(ffmpeg.av_frame_get_buffer(state.Frame, 0), nameof(ffmpeg.av_frame_get_buffer));
+            state.Frame->pts = pts;
+
+            var planar = state.Buffer.Planar;
+            float* destination = (float*)state.Frame->data[0];
             for (int sample = 0; sample < sampleCount; sample++)
             {
-                int baseIndex = sample * _channels;
-                for (int ch = 0; ch < _channels; ch++)
+                int baseIndex = sample * state.Channels;
+                for (int ch = 0; ch < state.Channels; ch++)
                 {
                     destination[baseIndex + ch] = planar[ch][offset + sample];
                 }
             }
 
-            FfUtils.ThrowIfError(ffmpeg.av_buffersrc_add_frame(_src, _inputFrame), nameof(ffmpeg.av_buffersrc_add_frame));
+            FfUtils.ThrowIfError(ffmpeg.av_buffersrc_add_frame(state.Source, state.Frame), nameof(ffmpeg.av_buffersrc_add_frame));
         }
 
         private void Drain(bool final = false)
@@ -164,7 +192,25 @@ internal static class FfFilterGraphRunner
             }
         }
 
-        private void SetupSource()
+        private GraphInputState[] CreateInputs(IReadOnlyList<GraphInput> inputs)
+        {
+            var result = new GraphInputState[inputs.Count];
+            for (int i = 0; i < inputs.Count; i++)
+            {
+                var input = inputs[i];
+                if (input.Buffer is null)
+                {
+                    throw new ArgumentNullException(nameof(inputs), "Input buffer cannot be null.");
+                }
+
+                string label = string.IsNullOrWhiteSpace(input.Label) ? $"in{i}" : input.Label;
+                result[i] = SetupSource(label, input.Buffer);
+            }
+
+            return result;
+        }
+
+        private GraphInputState SetupSource(string label, AudioBuffer buffer)
         {
             var abuffer = ffmpeg.avfilter_get_by_name("abuffer");
             if (abuffer == null)
@@ -172,15 +218,15 @@ internal static class FfFilterGraphRunner
                 throw new InvalidOperationException("FFmpeg 'abuffer' filter not found.");
             }
 
-            _src = ffmpeg.avfilter_graph_alloc_filter(_graph, abuffer, "src");
-            if (_src == null)
+            var src = ffmpeg.avfilter_graph_alloc_filter(_graph, abuffer, label);
+            if (src == null)
             {
                 throw new InvalidOperationException("Failed to allocate audio buffer source filter.");
             }
 
-            var timeBase = new AVRational { num = 1, den = _sampleRate };
-            FfUtils.ThrowIfError(ffmpeg.av_opt_set_q(_src, "time_base", timeBase, 0), nameof(ffmpeg.av_opt_set_q));
-            FfUtils.ThrowIfError(ffmpeg.av_opt_set_int(_src, "sample_rate", _sampleRate, 0), nameof(ffmpeg.av_opt_set_int));
+            var timeBase = new AVRational { num = 1, den = buffer.SampleRate };
+            FfUtils.ThrowIfError(ffmpeg.av_opt_set_q(src, "time_base", timeBase, 0), nameof(ffmpeg.av_opt_set_q));
+            FfUtils.ThrowIfError(ffmpeg.av_opt_set_int(src, "sample_rate", buffer.SampleRate, 0), nameof(ffmpeg.av_opt_set_int));
 
             var sampleFmtName = ffmpeg.av_get_sample_fmt_name(AVSampleFormat.AV_SAMPLE_FMT_FLT);
             if (sampleFmtName == null)
@@ -188,20 +234,28 @@ internal static class FfFilterGraphRunner
                 throw new InvalidOperationException("Failed to resolve sample format name.");
             }
 
-            FfUtils.ThrowIfError(ffmpeg.av_opt_set(_src, "sample_fmt", sampleFmtName, 0), nameof(ffmpeg.av_opt_set));
+            FfUtils.ThrowIfError(ffmpeg.av_opt_set(src, "sample_fmt", sampleFmtName, 0), nameof(ffmpeg.av_opt_set));
 
             AVChannelLayout* srcLayoutPtr = stackalloc AVChannelLayout[1];
-            ffmpeg.av_channel_layout_default(srcLayoutPtr, _channels);
+            ffmpeg.av_channel_layout_default(srcLayoutPtr, buffer.Channels);
             try
             {
-                FfUtils.ThrowIfError(ffmpeg.av_opt_set_chlayout(_src, "ch_layout", srcLayoutPtr, 0), nameof(ffmpeg.av_opt_set_chlayout));
+                FfUtils.ThrowIfError(ffmpeg.av_opt_set_chlayout(src, "ch_layout", srcLayoutPtr, 0), nameof(ffmpeg.av_opt_set_chlayout));
             }
             finally
             {
                 ffmpeg.av_channel_layout_uninit(srcLayoutPtr);
             }
 
-            FfUtils.ThrowIfError(ffmpeg.avfilter_init_str(_src, null), nameof(ffmpeg.avfilter_init_str));
+            FfUtils.ThrowIfError(ffmpeg.avfilter_init_str(src, null), nameof(ffmpeg.avfilter_init_str));
+
+            var frame = ffmpeg.av_frame_alloc();
+            if (frame == null)
+            {
+                throw new InvalidOperationException("Failed to allocate FFmpeg frame.");
+            }
+
+            return new GraphInputState(label, buffer, src, frame);
         }
 
         private void SetupSink()
@@ -237,20 +291,30 @@ internal static class FfFilterGraphRunner
 
         private void ConfigureGraph()
         {
-            AVFilterInOut* outputs = ffmpeg.avfilter_inout_alloc();
+            AVFilterInOut* outputs = null;
             AVFilterInOut* inputs = ffmpeg.avfilter_inout_alloc();
 
             try
             {
-                if (outputs == null || inputs == null)
+                if (inputs == null)
                 {
                     throw new InvalidOperationException("Failed to allocate FFmpeg filter in/out structures.");
                 }
 
-                outputs->name = ffmpeg.av_strdup("in");
-                outputs->filter_ctx = _src;
-                outputs->pad_idx = 0;
-                outputs->next = null;
+                for (int i = _inputs.Length - 1; i >= 0; i--)
+                {
+                    var inout = ffmpeg.avfilter_inout_alloc();
+                    if (inout == null)
+                    {
+                        throw new InvalidOperationException("Failed to allocate FFmpeg filter in/out structures.");
+                    }
+
+                    inout->name = ffmpeg.av_strdup(_inputs[i].Label);
+                    inout->filter_ctx = _inputs[i].Source;
+                    inout->pad_idx = 0;
+                    inout->next = outputs;
+                    outputs = inout;
+                }
 
                 inputs->name = ffmpeg.av_strdup("out");
                 inputs->filter_ctx = _sink;
@@ -262,9 +326,11 @@ internal static class FfFilterGraphRunner
             }
             finally
             {
-                if (outputs != null)
+                while (outputs != null)
                 {
+                    var next = outputs->next;
                     ffmpeg.avfilter_inout_free(&outputs);
+                    outputs = next;
                 }
 
                 if (inputs != null)
@@ -283,18 +349,23 @@ internal static class FfFilterGraphRunner
                 _outputFrame = frame;
             }
 
-            if (_inputFrame != null)
-            {
-                var frame = _inputFrame;
-                ffmpeg.av_frame_free(&frame);
-                _inputFrame = frame;
-            }
-
             if (_graph != null)
             {
                 var graph = _graph;
                 ffmpeg.avfilter_graph_free(&graph);
                 _graph = graph;
+            }
+
+            if (_inputs != null)
+            {
+                foreach (var input in _inputs)
+                {
+                    if (input.Frame != null)
+                    {
+                        var frame = input.Frame;
+                        ffmpeg.av_frame_free(&frame);
+                    }
+                }
             }
         }
     }
@@ -355,5 +426,25 @@ internal static class FfFilterGraphRunner
 
             return buffer;
         }
+    }
+
+    private unsafe sealed class GraphInputState
+    {
+        public GraphInputState(string label, AudioBuffer buffer, AVFilterContext* source, AVFrame* frame)
+        {
+            Label = label;
+            Buffer = buffer;
+            Source = source;
+            Frame = frame;
+            SampleRate = buffer.SampleRate;
+            Channels = buffer.Channels;
+        }
+
+        public string Label { get; }
+        public AudioBuffer Buffer { get; }
+        public AVFilterContext* Source { get; }
+        public AVFrame* Frame { get; }
+        public int SampleRate { get; }
+        public int Channels { get; }
     }
 }

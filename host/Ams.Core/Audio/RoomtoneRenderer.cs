@@ -43,10 +43,10 @@ namespace Ams.Core.Audio
             if (targetSampleRate <= 0) throw new ArgumentOutOfRangeException(nameof(targetSampleRate));
 
             // Resample to a common rate
-            var src = input.SampleRate == targetSampleRate ? input : RoomtoneUtils.ResampleLinear(input, targetSampleRate);
+            var src = input.SampleRate == targetSampleRate ? input : AudioProcessor.Resample(input, targetSampleRate);
             var tone = roomtoneSeed.SampleRate == targetSampleRate
                 ? roomtoneSeed
-                : RoomtoneUtils.ResampleLinear(roomtoneSeed, targetSampleRate);
+                : AudioProcessor.Resample(roomtoneSeed, targetSampleRate);
             if (tone.Length == 0) throw new InvalidOperationException("Roomtone seed must contain samples.");
 
             MakeLoopable(tone, seamMs: 75); // make roomtone seed loopable
@@ -108,18 +108,16 @@ namespace Ams.Core.Audio
             WriteMaskDebug(debugDirectory, "step0d_gaps_final", finalGaps, src);
 
             // 5) Out starts as a full copy of source (prevents accidental silence)
-            var outBuf = RoomtoneUtils.CopyBuffer(src);
-
-            // 6) Replace gaps with room tone, with in-gap crossfades
-            int fadeSamples = fadeMs <= 0 ? 0 : (int)Math.Round(fadeMs * 0.001 * src.SampleRate);
-            long toneCursor = 0;
+            var working = src;
             foreach (var (g0, g1) in finalGaps)
             {
-                RoomtoneUtils.ReplaceGapWithRoomtone(outBuf, src, tone, g0, g1, toneGainLinear, fadeSamples, ref toneCursor);
+                double startSec = g0 / (double)src.SampleRate;
+                double endSec = g1 / (double)src.SampleRate;
+                working = AudioProcessor.OverlayRoomtone(working, tone, startSec, endSec, toneGainLinear, fadeMs);
             }
 
-            WriteDebug(debugDirectory, "step1_fill_gaps", outBuf);
-            return outBuf;
+            WriteDebug(debugDirectory, "step1_fill_gaps", working);
+            return working;
         }
 
         // ---------------------------------------------------------------------------------
@@ -128,21 +126,6 @@ namespace Ams.Core.Audio
 
         // Call once when loading roomtoneSeed (before RenderWithSentenceMasks)
         private static void MakeLoopable(AudioBuffer tone, int seamMs = 20) => RoomtoneUtils.MakeLoopable(tone, seamMs);
-
-        /// <summary>
-        /// Replace [g0,g1) with roomtone. If fadeSamples > 0, crossfade from src→tone at the head
-        /// and tone→src at the tail, both inside the gap. toneCursor advances continuously.
-        /// </summary>
-        private static void ReplaceGapWithRoomtone(
-            AudioBuffer dst,
-            AudioBuffer src,
-            AudioBuffer tone,
-            int g0,
-            int g1,
-            double gain,
-            int fadeSamples,
-            ref long toneCursor) => RoomtoneUtils.ReplaceGapWithRoomtone(dst, src, tone, g0, g1, gain, fadeSamples, ref toneCursor);
-
 
         // ---------------------------------------------------------------------------------
         // Keep detection (global, adaptive) with micro-guards for false positives

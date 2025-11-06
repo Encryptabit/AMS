@@ -84,10 +84,13 @@ public sealed class RoomToneInsertionStage
         var inputAudio   = AudioProcessor.Decode(manifest.AudioPath);
         var roomtoneSeed = AudioProcessor.Decode(roomtonePath);
 
-        var seedAnalyzer = new AudioAnalysisService(roomtoneSeed);
-        var roomtoneSeedStats = seedAnalyzer.AnalyzeGap(
+        double roomtoneDurationSec = roomtoneSeed.SampleRate > 0
+            ? roomtoneSeed.Length / (double)roomtoneSeed.SampleRate
+            : 0.0;
+        var roomtoneSeedStats = AudioProcessor.AnalyzeGap(
+            roomtoneSeed,
             0.0,
-            roomtoneSeed.SampleRate > 0 ? roomtoneSeed.Length / (double)roomtoneSeed.SampleRate : 0.0);
+            roomtoneDurationSec);
 
         double toneGainLinear;
         double appliedGainDb;
@@ -111,8 +114,7 @@ public sealed class RoomToneInsertionStage
         }
 
         // Build timeline on the original audio (no structural normalization)
-        var analyzer = new AudioAnalysisService(inputAudio);
-        var timelineEntries = SentenceTimelineBuilder.Build(transcript.Sentences, analyzer, asr);
+        var timelineEntries = SentenceTimelineBuilder.Build(transcript.Sentences, inputAudio, asr);
         if (_verbose)
         {
             Log.Debug($"[Roomtone] Timeline built on source audio: {timelineEntries.Count} sentences.");
@@ -152,7 +154,6 @@ public sealed class RoomToneInsertionStage
         var gaps = BuildGaps(
             inputAudio,
             timelineEntries,
-            analyzer,
             audioDurationSec,
             _verbose,
             out var gapSummary,
@@ -697,7 +698,6 @@ public sealed class RoomToneInsertionStage
     private static IReadOnlyList<RoomtonePlanGap> BuildGaps(
         AudioBuffer audio,
         IReadOnlyList<SentenceTimelineEntry> entries,
-        AudioAnalysisService analyzer,
         double audioDurationSec,
         bool verbose,
         out GapSummary summary,
@@ -729,8 +729,8 @@ public sealed class RoomToneInsertionStage
         if (orderedEntries.Count == 0)
         {
             Log.Debug("[Roomtone] No sentence timings; treating entire chapter as a single gap.");
-            var stats = analyzer.AnalyzeGap(0.0, audioDurationSec);
-        if (TryValidateBreathSafety(audio, analyzer, 0.0, audioDurationSec, Math.Min(leftThresholdDb, rightThresholdDb), verbose, null, null, out var breathRegions))
+            var stats = AudioProcessor.AnalyzeGap(audio, 0.0, audioDurationSec);
+            if (TryValidateBreathSafety(audio, 0.0, audioDurationSec, Math.Min(leftThresholdDb, rightThresholdDb), verbose, null, null, out var breathRegions))
             {
                 gaps.Add(CreateGap(0.0, audioDurationSec, null, null, stats, breathRegions));
                 summary = new GapSummary(1, gaps.Count, 0);
@@ -856,7 +856,7 @@ public sealed class RoomToneInsertionStage
 
                 if (midpoint - safeLeftStart > epsilon)
                 {
-                    var stats = analyzer.AnalyzeGap(safeLeftStart, midpoint);
+                    var stats = AudioProcessor.AnalyzeGap(audio, safeLeftStart, midpoint);
                     if (stats.MaxRmsDb > leftThresholdDb)
                     {
                         if (verbose)
@@ -889,7 +889,7 @@ public sealed class RoomToneInsertionStage
 
                 if (safeRightEnd - midpoint > epsilon)
                 {
-                    var stats = analyzer.AnalyzeGap(midpoint, safeRightEnd);
+                    var stats = AudioProcessor.AnalyzeGap(audio, midpoint, safeRightEnd);
                     if (stats.MaxRmsDb > rightThresholdDb)
                     {
                         if (verbose)
@@ -926,7 +926,7 @@ public sealed class RoomToneInsertionStage
                     return produced;
                 }
 
-                var stats = analyzer.AnalyzeGap(finalStart, finalEnd);
+                var stats = AudioProcessor.AnalyzeGap(audio, finalStart, finalEnd);
                 double combinedThreshold = Math.Min(leftThresholdDb, rightThresholdDb);
                 if (!TryAddGapWithBreath(finalStart, finalEnd, leftEntry?.SentenceId, rightEntry?.SentenceId, leftPhones, rightPhones, stats, combinedThreshold, "final", leftClamp, rightClamp))
                 {
@@ -944,7 +944,7 @@ public sealed class RoomToneInsertionStage
                     double end = Math.Min(leftGap.EndSec, rightClamp);
                     if (end - start > epsilon)
                     {
-                        var stats = analyzer.AnalyzeGap(start, end);
+                        var stats = AudioProcessor.AnalyzeGap(audio, start, end);
                         if (!TryAddGapWithBreath(start, end, leftEntry?.SentenceId, rightEntry?.SentenceId, leftPhones, rightPhones, stats, leftThresholdDb, "left-only", leftClamp, rightClamp) && verbose && stats.MaxRmsDb > leftThresholdDb)
                         {
                             Log.Debug($"[Roomtone]   left-only rejected [{start:F3},{end:F3}] maxRms={stats.MaxRmsDb:F2} dB > threshold {leftThresholdDb:F2} dB");
@@ -957,7 +957,7 @@ public sealed class RoomToneInsertionStage
                     double end = Math.Min(rightGap.EndSec, rightClamp);
                     if (end - start > epsilon)
                     {
-                        var stats = analyzer.AnalyzeGap(start, end);
+                        var stats = AudioProcessor.AnalyzeGap(audio, start, end);
                         if (!TryAddGapWithBreath(start, end, leftEntry?.SentenceId, rightEntry?.SentenceId, leftPhones, rightPhones, stats, rightThresholdDb, "right-only", leftClamp, rightClamp) && verbose && stats.MaxRmsDb > rightThresholdDb)
                         {
                             Log.Debug($"[Roomtone]   right-only rejected [{start:F3},{end:F3}] maxRms={stats.MaxRmsDb:F2} dB > threshold {rightThresholdDb:F2} dB");
@@ -991,7 +991,7 @@ public sealed class RoomToneInsertionStage
                     return;
                 }
 
-                var stats = analyzer.AnalyzeGap(start, end);
+                var stats = AudioProcessor.AnalyzeGap(audio, start, end);
                 double hintThreshold = Math.Min(leftThresholdDb, rightThresholdDb);
                 if (stats.MaxRmsDb > hintThreshold)
                 {
@@ -1034,7 +1034,7 @@ public sealed class RoomToneInsertionStage
                 var leftList = leftOverride ?? GetPhones(prevId);
                 var rightList = rightOverride ?? GetPhones(nextId);
 
-                if (!TryValidateBreathSafety(audio, analyzer, start, end, thresholdDb, verbose, leftList, rightList, out var breathRegions))
+                if (!TryValidateBreathSafety(audio, start, end, thresholdDb, verbose, leftList, rightList, out var breathRegions))
                 {
                     if (verbose)
                     {
@@ -1069,7 +1069,7 @@ public sealed class RoomToneInsertionStage
                 GapRmsStats finalStats = stats;
                 if (!NearlyEqual(adjustedStart, start) || !NearlyEqual(adjustedEnd, end))
                 {
-                    finalStats = analyzer.AnalyzeGap(adjustedStart, adjustedEnd);
+                    finalStats = AudioProcessor.AnalyzeGap(audio, adjustedStart, adjustedEnd);
                 }
 
                 IReadOnlyList<RoomtoneBreathRegion> finalBreaths = breathRegions;
@@ -1100,7 +1100,7 @@ public sealed class RoomToneInsertionStage
             result = double.NaN;
             while (boundary + epsilon < end)
             {
-                double rms = analyzer.MeasureRms(boundary, end);
+                double rms = AudioProcessor.MeasureRms(audio, boundary, end);
                 if (verbose)
                 {
                     Log.Debug($"[Roomtone]     test left [{boundary:F3},{end:F3}] rms={rms:F2} dB");
@@ -1111,7 +1111,7 @@ public sealed class RoomToneInsertionStage
                     double backoff = Math.Max(initialStart, candidate - backoffSec);
                     if (backoff < candidate)
                     {
-                        double backoffRms = analyzer.MeasureRms(backoff, end);
+                        double backoffRms = AudioProcessor.MeasureRms(audio, backoff, end);
                         if (backoffRms <= thresholdDb)
                         {
                             candidate = backoff;
@@ -1131,7 +1131,7 @@ public sealed class RoomToneInsertionStage
             result = double.NaN;
             while (boundary - epsilon > start)
             {
-                double rms = analyzer.MeasureRms(start, boundary);
+                double rms = AudioProcessor.MeasureRms(audio, start, boundary);
                 if (verbose)
                 {
                     Log.Debug($"[Roomtone]     test right [{start:F3},{boundary:F3}] rms={rms:F2} dB");
@@ -1142,7 +1142,7 @@ public sealed class RoomToneInsertionStage
                     double backoff = Math.Min(initialEnd, candidate + backoffSec);
                     if (backoff > candidate)
                     {
-                        double backoffRms = analyzer.MeasureRms(start, backoff);
+                        double backoffRms = AudioProcessor.MeasureRms(audio, start, backoff);
                         if (backoffRms <= thresholdDb)
                         {
                             candidate = backoff;
@@ -1158,7 +1158,7 @@ public sealed class RoomToneInsertionStage
     }
 
     private static double ExpandLeft(
-        AudioAnalysisService analyzer,
+        AudioBuffer audio,
         double startSec,
         double limitSec,
         double stepSec,
@@ -1179,7 +1179,7 @@ public sealed class RoomToneInsertionStage
             double windowEnd = windowStart + stepSec;
             if (windowEnd <= windowStart) break;
 
-            double rmsDb = analyzer.MeasureRms(windowStart, windowEnd);
+            double rmsDb = AudioProcessor.MeasureRms(audio, windowStart, windowEnd);
             if (rmsDb <= speechThresholdDb)
             {
                 best = windowStart;
@@ -1195,7 +1195,7 @@ public sealed class RoomToneInsertionStage
     }
 
     private static double ExpandRight(
-        AudioAnalysisService analyzer,
+        AudioBuffer audio,
         double endSec,
         double limitSec,
         double stepSec,
@@ -1216,7 +1216,7 @@ public sealed class RoomToneInsertionStage
             if (windowStart >= audioDurationSec) break;
             travelled += stepSec;
 
-            double rmsDb = analyzer.MeasureRms(windowStart, windowEnd);
+            double rmsDb = AudioProcessor.MeasureRms(audio, windowStart, windowEnd);
             if (rmsDb <= speechThresholdDb)
             {
                 best = windowEnd;
@@ -1274,7 +1274,6 @@ public sealed class RoomToneInsertionStage
 
     private static bool TryValidateBreathSafety(
         AudioBuffer audio,
-        AudioAnalysisService analyzer,
         double startSec,
         double endSec,
         double thresholdDb,
@@ -1304,7 +1303,7 @@ public sealed class RoomToneInsertionStage
 
         if (mapped.Count == 0)
         {
-            double rms = analyzer.MeasureRms(startSec, endSec);
+            double rms = AudioProcessor.MeasureRms(audio, startSec, endSec);
             if (rms > thresholdDb)
             {
                 if (verbose)
@@ -1334,7 +1333,7 @@ public sealed class RoomToneInsertionStage
             double segmentEnd = region.StartSec;
             if (segmentEnd - segmentStart >= MinNonBreathDurationSec)
             {
-                double rms = analyzer.MeasureRms(segmentStart, segmentEnd);
+                double rms = AudioProcessor.MeasureRms(audio, segmentStart, segmentEnd);
                 if (rms > thresholdDb)
                 {
                     if (verbose)
@@ -1350,7 +1349,7 @@ public sealed class RoomToneInsertionStage
 
         if (endSec - cursor >= MinNonBreathDurationSec)
         {
-            double rms = analyzer.MeasureRms(cursor, endSec);
+            double rms = AudioProcessor.MeasureRms(audio, cursor, endSec);
             if (rms > thresholdDb)
             {
                 if (verbose)
