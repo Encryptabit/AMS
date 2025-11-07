@@ -1,4 +1,3 @@
-
 using System;
 using System.Collections.Generic;
 using Ams.Core.Artifacts;
@@ -46,7 +45,8 @@ namespace Ams.Core.Services.Integrations.FFmpeg
             ExecuteInternal(inputs, filterSpec, mode);
         }
 
-        private static AudioBuffer? ExecuteInternal(IReadOnlyList<GraphInput> inputs, string filterSpec, FilterExecutionMode mode)
+        private static AudioBuffer? ExecuteInternal(IReadOnlyList<GraphInput> inputs, string filterSpec,
+            FilterExecutionMode mode)
         {
             using var executor = new FilterGraphExecutor(inputs, filterSpec, mode);
             executor.Process();
@@ -61,6 +61,7 @@ namespace Ams.Core.Services.Integrations.FFmpeg
             private readonly GraphInputState[] _inputs;
             private readonly string _filterSpec;
             private readonly FilterExecutionMode _mode;
+            private readonly AudioBufferMetadata? _primaryMetadata;
 
             private AVFilterGraph* _graph;
             private AVFilterContext* _sink;
@@ -86,6 +87,8 @@ namespace Ams.Core.Services.Integrations.FFmpeg
                 if (_inputs.Length == 0)
                     throw new ArgumentException("At least one input is required.");
 
+                _primaryMetadata = inputs.Count > 0 ? inputs[0].Buffer.Metadata : null;
+
                 _channels = _inputs[0].Channels;
                 _sampleRate = _inputs[0].SampleRate;
 
@@ -106,13 +109,14 @@ namespace Ams.Core.Services.Integrations.FFmpeg
                 {
                     SendAllFrames(input);
                     // signal EOF on this source
-                    FfUtils.ThrowIfError(ffmpeg.av_buffersrc_add_frame(input.Source, null), nameof(ffmpeg.av_buffersrc_add_frame));
+                    FfUtils.ThrowIfError(ffmpeg.av_buffersrc_add_frame(input.Source, null),
+                        nameof(ffmpeg.av_buffersrc_add_frame));
                 }
 
                 Drain(final: true);
             }
 
-            public AudioBuffer? BuildOutput() => _accumulator?.ToBuffer();
+            public AudioBuffer? BuildOutput() => _accumulator?.ToBuffer(_primaryMetadata);
 
             private void SendAllFrames(GraphInputState state)
             {
@@ -132,25 +136,42 @@ namespace Ams.Core.Services.Integrations.FFmpeg
 
             private void SendFrame(GraphInputState state, int offset, int sampleCount, long pts)
             {
-                // Reuse a single buffer per input: allocate once, then only make-writable per chunk.
-                FfUtils.ThrowIfError(ffmpeg.av_frame_make_writable(state.Frame), nameof(ffmpeg.av_frame_make_writable));
+                var frame = ffmpeg.av_frame_alloc();
+                if (frame == null)
+                    throw new InvalidOperationException("Failed to allocate FFmpeg frame for source input.");
 
-                state.Frame->nb_samples = sampleCount;
-                state.Frame->pts = pts;
-
-                // Interleave from planar -> interleaved float
-                float* dst = (float*)state.Frame->data[0];
-                var planar = state.Buffer.Planar;
-
-                // interleave: [L0,R0, L1,R1, ...]
-                for (int i = 0; i < sampleCount; i++)
+                try
                 {
-                    int baseIndex = i * state.Channels;
-                    for (int ch = 0; ch < state.Channels; ch++)
-                        dst[baseIndex + ch] = planar[ch][offset + i];
-                }
+                    frame->format = (int)AVSampleFormat.AV_SAMPLE_FMT_FLT;
+                    frame->sample_rate = state.Buffer.SampleRate;
+                    frame->nb_samples = sampleCount;
+                    frame->pts = pts;
 
-                FfUtils.ThrowIfError(ffmpeg.av_buffersrc_add_frame(state.Source, state.Frame), nameof(ffmpeg.av_buffersrc_add_frame));
+                    ffmpeg.av_channel_layout_uninit(&frame->ch_layout);
+                    fixed (AVChannelLayout* layoutPtr = &state.Layout)
+                    {
+                        ffmpeg.av_channel_layout_copy(&frame->ch_layout, layoutPtr);
+                    }
+
+                    FfUtils.ThrowIfError(ffmpeg.av_frame_get_buffer(frame, 0), nameof(ffmpeg.av_frame_get_buffer));
+
+                    float* dst = (float*)frame->data[0];
+                    var planar = state.Buffer.Planar;
+
+                    for (int i = 0; i < sampleCount; i++)
+                    {
+                        int baseIndex = i * state.Channels;
+                        for (int ch = 0; ch < state.Channels; ch++)
+                            dst[baseIndex + ch] = planar[ch][offset + i];
+                    }
+
+                    FfUtils.ThrowIfError(ffmpeg.av_buffersrc_add_frame(state.Source, frame),
+                        nameof(ffmpeg.av_buffersrc_add_frame));
+                }
+                finally
+                {
+                    ffmpeg.av_frame_free(&frame);
+                }
             }
 
             private void Drain(bool final = false)
@@ -185,6 +206,7 @@ namespace Ams.Core.Services.Integrations.FFmpeg
                     string label = string.IsNullOrWhiteSpace(input.Label) ? $"in{i}" : input.Label;
                     result[i] = SetupSource(label, input.Buffer);
                 }
+
                 return result;
             }
 
@@ -201,30 +223,20 @@ namespace Ams.Core.Services.Integrations.FFmpeg
                 if (src == null)
                     throw new InvalidOperationException("Failed to allocate audio buffer source filter.");
 
-                // --- Initialize abuffer via args string for maximum compatibility (FFmpeg 7.1.1) ---
-                AVChannelLayout layout = FfUtils.CreateDefaultChannelLayout(1);
-                long mask = ffmpeg.av_buffersink_get_ch_layout(_sink, &layout);
                 var fmtName = ffmpeg.av_get_sample_fmt_name(AVSampleFormat.AV_SAMPLE_FMT_FLT)
-                             ?? throw new InvalidOperationException("Failed to resolve sample format name.");
+                              ?? throw new InvalidOperationException("Failed to resolve sample format name.");
 
+                var layoutName = buffer.Metadata?.CurrentChannelLayout ??
+                                 AudioBufferMetadata.DescribeDefaultLayout(buffer.Channels);
                 string args =
-                    $"time_base=1/{buffer.SampleRate}:sample_rate={buffer.SampleRate}:sample_fmt={fmtName}:channel_layout=0x{mask:X}";
+                    $"time_base=1/{buffer.SampleRate}:sample_rate={buffer.SampleRate}:sample_fmt={fmtName}:channel_layout={layoutName}";
 
                 FfUtils.ThrowIfError(ffmpeg.avfilter_init_str(src, args), nameof(ffmpeg.avfilter_init_str));
 
-                // --- Preallocate a reusable frame once per input (interleaved float, capacity = ChunkSamples) ---
-                var frame = ffmpeg.av_frame_alloc(); 
-                frame->format = (int)AVSampleFormat.AV_SAMPLE_FMT_FLT;
-                frame->sample_rate = buffer.SampleRate;
-                frame->nb_samples = ChunkSamples;
-
-                ffmpeg.av_channel_layout_uninit(&frame->ch_layout);
-                ffmpeg.av_channel_layout_default(&frame->ch_layout, buffer.Channels);
-
-                FfUtils.ThrowIfError(ffmpeg.av_frame_get_buffer(frame, 0), nameof(ffmpeg.av_frame_get_buffer));
-
-                return new GraphInputState(label, buffer, src, frame);
+                var layout = FfUtils.CloneOrDefault(null, buffer.Channels);
+                return new GraphInputState(label, buffer, src, layout);
             }
+
 
             private void SetupSink()
             {
@@ -233,36 +245,9 @@ namespace Ams.Core.Services.Integrations.FFmpeg
                     throw new InvalidOperationException("FFmpeg 'abuffersink' filter not found.");
 
                 _sink = ffmpeg.avfilter_graph_alloc_filter(_graph, abuffersink, "sink");
+                if (_sink == null)
+                    throw new InvalidOperationException("Failed to allocate audio buffer sink filter.");
 
-                const int O = ffmpeg.AV_OPT_SEARCH_CHILDREN;
-
-                // --- Constrain the sink via lists (must be set BEFORE init) ---
-
-                // sample_fmts (prefer interleaved float)
-                int* fmts = stackalloc int[2];
-                fmts[0] = (int)AVSampleFormat.AV_SAMPLE_FMT_FLT;
-                fmts[1] = (int)AVSampleFormat.AV_SAMPLE_FMT_NONE;
-                FfUtils.ThrowIfError(
-                    ffmpeg.av_opt_set_int(_sink, "sample_fmts", fmts, AVSampleFormat.AV_SAMPLE_FMT_NONE, O),
-                    "av_opt_set_int_list(sample_fmts)");
-
-                // channel_layouts (mask list matching the first input's channel count)
-                long* layouts = stackalloc long[2];
-                layouts[0] = ffmpeg.av_get_default_channel_layout(_channels);
-                layouts[1] = -1;
-                FfUtils.ThrowIfError(
-                    ffmpeg.av_opt_set_int_list(_sink, "channel_layouts", layouts, -1, O),
-                    "av_opt_set_int_list(channel_layouts)");
-
-                // sample_rates
-                int* rates = stackalloc int[2];
-                rates[0] = _sampleRate;
-                rates[1] = -1;
-                FfUtils.ThrowIfError(
-                    ffmpeg.av_opt_set_int_list(_sink, "sample_rates", rates, -1, O),
-                    "av_opt_set_int_list(sample_rates)");
-
-                // Now init the sink
                 FfUtils.ThrowIfError(ffmpeg.avfilter_init_str(_sink, null), nameof(ffmpeg.avfilter_init_str));
             }
 
@@ -297,9 +282,19 @@ namespace Ams.Core.Services.Integrations.FFmpeg
                     inputs->next = null;
 
                     // Parse user graph and connect our endpoints
-                    FfUtils.ThrowIfError(ffmpeg.avfilter_graph_parse_ptr(_graph, _filterSpec, &inputs, &outputs, null),
-                                         nameof(ffmpeg.avfilter_graph_parse_ptr));
-                    FfUtils.ThrowIfError(ffmpeg.avfilter_graph_config(_graph, null), nameof(ffmpeg.avfilter_graph_config));
+                    var parseCode = ffmpeg.avfilter_graph_parse_ptr(_graph, _filterSpec, &inputs, &outputs, null);
+                    if (parseCode < 0)
+                    {
+                        var msg = FfUtils.FormatError(parseCode);
+                        throw new InvalidOperationException($"Failed to parse filter graph '{_filterSpec}': {msg}");
+                    }
+
+                    var configCode = ffmpeg.avfilter_graph_config(_graph, null);
+                    if (configCode < 0)
+                    {
+                        var msg = FfUtils.FormatError(configCode);
+                        throw new InvalidOperationException($"Failed to configure filter graph '{_filterSpec}': {msg}");
+                    }
                 }
                 finally
                 {
@@ -335,10 +330,9 @@ namespace Ams.Core.Services.Integrations.FFmpeg
                 {
                     foreach (var input in _inputs)
                     {
-                        if (input.Frame != null)
+                        fixed (AVChannelLayout* layoutPtr = &input.Layout)
                         {
-                            var frame = input.Frame;
-                            ffmpeg.av_frame_free(&frame);
+                            ffmpeg.av_channel_layout_uninit(layoutPtr);
                         }
                     }
                 }
@@ -382,29 +376,48 @@ namespace Ams.Core.Services.Integrations.FFmpeg
                 }
             }
 
-            public AudioBuffer ToBuffer()
+            public AudioBuffer ToBuffer(AudioBufferMetadata? templateMetadata = null)
             {
                 if (!_sampleRateSet)
                     throw new InvalidOperationException("FFmpeg filter graph did not report an output sample rate.");
 
-                int length = _channels.Length > 0 ? _channels[0].Count : 0;
-                var buffer = new AudioBuffer(_channels.Length, _sampleRate, length);
+                int channelCount = _channels.Length;
+                int length = channelCount > 0 ? _channels[0].Count : 0;
 
-                for (int ch = 0; ch < _channels.Length; ch++)
+                AudioBufferMetadata metadata;
+                if (templateMetadata is not null)
+                {
+                    var layout = templateMetadata.CurrentChannelLayout ??
+                                 AudioBufferMetadata.DescribeDefaultLayout(channelCount);
+                    metadata = templateMetadata.WithCurrentStream(_sampleRate, channelCount, "fltp", layout);
+                }
+                else
+                {
+                    metadata = AudioBufferMetadata.CreateDefault(_sampleRate, channelCount);
+                }
+
+                var buffer = new AudioBuffer(channelCount, _sampleRate, length, metadata);
+
+                for (int ch = 0; ch < channelCount; ch++)
                     _channels[ch].CopyTo(buffer.Planar[ch], 0);
 
                 return buffer;
             }
+
         }
 
-        private unsafe sealed class GraphInputState
+        private sealed unsafe class GraphInputState
         {
-            public GraphInputState(string label, AudioBuffer buffer, AVFilterContext* source, AVFrame* frame)
+            public GraphInputState(
+                string label,
+                AudioBuffer buffer,
+                AVFilterContext* source,
+                AVChannelLayout layout)
             {
                 Label = label;
                 Buffer = buffer;
                 Source = source;
-                Frame = frame;
+                Layout = layout;
                 SampleRate = buffer.SampleRate;
                 Channels = buffer.Channels;
             }
@@ -412,7 +425,7 @@ namespace Ams.Core.Services.Integrations.FFmpeg
             public string Label { get; }
             public AudioBuffer Buffer { get; }
             public AVFilterContext* Source { get; }
-            public AVFrame* Frame { get; }
+            public AVChannelLayout Layout;
             public int SampleRate { get; }
             public int Channels { get; }
         }
