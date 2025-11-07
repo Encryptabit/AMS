@@ -17,11 +17,16 @@ internal static unsafe class FfUtils
             return;
         }
 
+        var message = FormatError(errorCode);
+        throw new InvalidOperationException(
+            $"ffmpeg: {where} failed: {message} ({errorCode})");
+    }
+
+    public static unsafe string FormatError(int errorCode)
+    {
         var buffer = stackalloc byte[ErrorBufferSize];
         av_strerror(errorCode, buffer, (ulong)ErrorBufferSize);
-        var message = Marshal.PtrToStringAnsi((IntPtr)buffer);
-        throw new InvalidOperationException(
-            $"ffmpeg: {where} failed: {message ?? errorCode.ToString(CultureInfo.InvariantCulture)} ({errorCode})");
+        return Marshal.PtrToStringAnsi((IntPtr)buffer) ?? errorCode.ToString(CultureInfo.InvariantCulture);
     }
 
     public static void CleanupThrowIfError(string message, AVFormatContext* fmt, AVCodecContext* cc, AVIOContext* avio,

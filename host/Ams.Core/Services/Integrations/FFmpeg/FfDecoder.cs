@@ -25,6 +25,7 @@ internal static unsafe class FfDecoder
         try
         {
             ThrowIfError(avformat_open_input(&formatContext, path, null, null), $"{nameof(avformat_open_input)}({path})");
+            var tags = ReadTags(formatContext->metadata);
             ThrowIfError(avformat_find_stream_info(formatContext, null), $"{nameof(avformat_find_stream_info)}({path})");
 
             int streamIndex = av_find_best_stream(formatContext, AVMediaType.AVMEDIA_TYPE_AUDIO, -1, -1, null, 0);
@@ -35,6 +36,7 @@ internal static unsafe class FfDecoder
 
             var stream = formatContext->streams[streamIndex];
             var codecParameters = stream->codecpar;
+            var codecName = codecParameters != null ? avcodec_get_name(codecParameters->codec_id) : null;
 
             var container = formatContext->iformat != null
                 ? PtrToStringUtf8(formatContext->iformat->name)
@@ -56,6 +58,9 @@ internal static unsafe class FfDecoder
             {
                 durationSeconds = formatContext->duration / (double)AV_TIME_BASE;
             }
+            double? startSeconds = stream->start_time != AV_NOPTS_VALUE
+                ? stream->start_time * av_q2d(stream->time_base)
+                : null;
 
             return new AudioInfo(
                 container,
@@ -100,6 +105,10 @@ internal static unsafe class FfDecoder
         try
         {
             ThrowIfError(avformat_open_input(&formatContext, path, null, null), $"{nameof(avformat_open_input)}({path})");
+            var container = formatContext->iformat != null
+                ? PtrToStringUtf8(formatContext->iformat->name)
+                : null;
+            var tags = ReadTags(formatContext->metadata);
             ThrowIfError(avformat_find_stream_info(formatContext, null), $"{nameof(avformat_find_stream_info)}({path})");
 
             int streamIndex = av_find_best_stream(formatContext, AVMediaType.AVMEDIA_TYPE_AUDIO, -1, -1, null, 0);
@@ -114,6 +123,7 @@ internal static unsafe class FfDecoder
             {
                 throw new InvalidOperationException($"Unsupported codec for '{path}'");
             }
+            var codecName = PtrToStringUtf8(codec->name);
 
             AVCodecContext* codecContext = avcodec_alloc_context3(codec);
             if (codecContext == null)
@@ -155,6 +165,9 @@ internal static unsafe class FfDecoder
                 var targetFormat = AVSampleFormat.AV_SAMPLE_FMT_FLTP;
                 var sourceLayout = CloneOrDefault(&codecContext->ch_layout, sourceChannels);
                 var targetLayout = CreateDefaultChannelLayout(targetChannels);
+                var sourceSampleFormat = GetSampleFormatName((AVSampleFormat)codecContext->sample_fmt) ?? "unknown";
+                var sourceChannelLayout = AudioBufferMetadata.DescribeDefaultLayout(sourceChannels);
+                var targetChannelLayout = AudioBufferMetadata.DescribeDefaultLayout(targetChannels);
 
                 SwrContext* resampler = swr_alloc();
                 if (resampler == null)
@@ -247,6 +260,30 @@ internal static unsafe class FfDecoder
                         channelSamples[ch].CopyTo(buffer.Planar[ch], 0);
                     }
 
+                    var durationSeconds = stream->duration > 0 && stream->time_base.den != 0
+                        ? stream->duration * av_q2d(stream->time_base)
+                        : (formatContext->duration != AV_NOPTS_VALUE ? formatContext->duration / (double)AV_TIME_BASE : 0);
+                    double? startSeconds = stream->start_time != AV_NOPTS_VALUE
+                        ? stream->start_time * av_q2d(stream->time_base)
+                        : null;
+                    var metadata = new AudioBufferMetadata
+                    {
+                        SourcePath = Path.GetFullPath(path),
+                        ContainerFormat = container,
+                        CodecName = codecName,
+                        SourceDurationSeconds = durationSeconds,
+                        SourceStartSeconds = startSeconds,
+                        SourceSampleRate = sourceSampleRate,
+                        CurrentSampleRate = targetSampleRate,
+                        SourceChannels = sourceChannels,
+                        CurrentChannels = targetChannels,
+                        SourceSampleFormat = sourceSampleFormat,
+                        CurrentSampleFormat = "fltp",
+                        SourceChannelLayout = sourceChannelLayout,
+                        CurrentChannelLayout = targetChannelLayout,
+                        Tags = tags
+                    };
+                    buffer.UpdateMetadata(metadata);
                     return buffer;
                 }
                 finally
@@ -308,6 +345,34 @@ internal static unsafe class FfDecoder
                 av_free(converted);
             }
         }
+    }
+
+    private static string? GetSampleFormatName(AVSampleFormat format)
+    {
+        var name = ffmpeg.av_get_sample_fmt_name(format);
+        return string.IsNullOrWhiteSpace(name) ? null : name;
+    }
+
+    private static IReadOnlyDictionary<string, string>? ReadTags(AVDictionary* metadata)
+    {
+        if (metadata == null)
+        {
+            return null;
+        }
+
+        var dict = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        AVDictionaryEntry* entry = null;
+        while ((entry = ffmpeg.av_dict_get(metadata, string.Empty, entry, ffmpeg.AV_DICT_IGNORE_SUFFIX)) != null)
+        {
+            var key = Marshal.PtrToStringUTF8((nint)entry->key);
+            var value = Marshal.PtrToStringUTF8((nint)entry->value);
+            if (!string.IsNullOrWhiteSpace(key))
+            {
+                dict[key] = value ?? string.Empty;
+            }
+        }
+
+        return dict.Count == 0 ? null : dict;
     }
 
     private sealed class FfPacket : IDisposable

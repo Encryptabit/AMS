@@ -46,11 +46,13 @@ public static partial class AudioProcessor
         var invariant = CultureInfo.InvariantCulture;
         var builder = new StringBuilder();
 
-        builder.AppendLine(FormattableString.Invariant(
-            $"[main]atrim=0:{gapStartSec.ToString("F6", invariant)},asetpts=PTS-STARTPTS[head];"));
+        builder.AppendLine("[main]asplit=2[main_head_in][main_tail_in];");
 
         builder.AppendLine(FormattableString.Invariant(
-            $"[main]atrim={gapEndSec.ToString("F6", invariant)},asetpts=PTS-STARTPTS[tail];"));
+            $"[main_head_in]atrim=0:{gapStartSec.ToString("F6", invariant)},asetpts=PTS-STARTPTS[head];"));
+
+        builder.AppendLine(FormattableString.Invariant(
+            $"[main_tail_in]atrim={gapEndSec.ToString("F6", invariant)},asetpts=PTS-STARTPTS[tail];"));
 
         builder.Append(FormattableString.Invariant(
             $"[tone]aloop=-1:size={tone.Length},asetpts=PTS-STARTPTS,atrim=0:{toneDuration.ToString("F6", invariant)}"));
