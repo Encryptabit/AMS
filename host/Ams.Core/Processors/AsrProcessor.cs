@@ -54,29 +54,6 @@ public static class AsrProcessor
         return await TranscribeBufferInternalAsync(buffer, options, cancellationToken).ConfigureAwait(false);
     }
 
-    public static async Task<string> DetectLanguageAsync(
-        string audioPath,
-        AsrOptions options,
-        CancellationToken cancellationToken = default)
-    {
-        ArgumentException.ThrowIfNullOrWhiteSpace(audioPath);
-        if (!File.Exists(audioPath))
-        {
-            throw new FileNotFoundException($"Audio file not found: {audioPath}", audioPath);
-        }
-
-        options = options ?? throw new ArgumentNullException(nameof(options));
-        EnsureModelPath(options.ModelPath);
-        cancellationToken.ThrowIfCancellationRequested();
-
-        var decodeOptions = new AudioDecodeOptions(
-            TargetSampleRate: AudioProcessor.DefaultAsrSampleRate,
-            TargetChannels: 1);
-
-        var buffer = AudioProcessor.Decode(audioPath, decodeOptions);
-        return await DetectLanguageInternalAsync(buffer, options, cancellationToken).ConfigureAwait(false);
-    }
-
     private static async Task<AsrResponse> TranscribeBufferInternalAsync(
         AudioBuffer buffer,
         AsrOptions options,
@@ -86,20 +63,19 @@ public static class AsrProcessor
         var factoryOptions = CreateFactoryOptions(options);
 
         using var factory = WhisperFactory.FromPath(options.ModelPath, factoryOptions);
-        var builder = ConfigureBuilder(factory, options, enableTokenTimestamps: true);
+        var builder = ConfigureBuilder(factory, options, enableTokenTimestamps: options.EnableWordTimestamps);
 
         await using var processor = builder.Build();
         using var wavStream = AudioProcessor.EncodeWavToStream(buffer);
         wavStream.Position = 0;
 
-        var tokens = new List<AsrToken>(buffer.Length);
-        await foreach (var segment in processor.ProcessAsync(wavStream, cancellationToken))
+        var tokens = new List<AsrToken>();
+        await foreach (var segment in processor.ProcessAsync(wavStream, cancellationToken).ConfigureAwait(false))
         {
             cancellationToken.ThrowIfCancellationRequested();
             AppendTokens(tokens, segment);
         }
 
-        tokens.Sort(static (a, b) => a.StartTime.CompareTo(b.StartTime));
         var modelVersion = Path.GetFileName(options.ModelPath) ?? "whisper";
         return new AsrResponse(modelVersion, tokens.ToArray());
     }
@@ -171,8 +147,6 @@ public static class AsrProcessor
             builder.WithTemperature(options.Temperature);
         }
 
-        builder.WithProbabilities();
-
         if (options.BeamSize > 1)
         {
             if (builder.WithBeamSearchSamplingStrategy() is BeamSearchSamplingStrategyBuilder beamBuilder)
@@ -191,7 +165,7 @@ public static class AsrProcessor
         return builder;
     }
 
-    private static void AppendTokens(ICollection<AsrToken> tokens, SegmentData segment)
+    private static void AppendTokens(List<AsrToken> tokens, SegmentData segment)
     {
         var aggregated = segment.Tokens is { Length: > 0 }
             ? AggregateTokens(segment.Tokens)
@@ -231,9 +205,9 @@ public static class AsrProcessor
         }*/
     }
 
-    private static List<AsrToken> AggregateTokens(IReadOnlyList<WhisperToken> rawTokens)
+    private static List<AsrToken> AggregateTokens(WhisperToken[] rawTokens)
     {
-        var result = new List<AsrToken>(rawTokens.Count);
+        var result = new List<AsrToken>();
         var builder = new StringBuilder();
         double wordStart = 0;
         double wordEnd = 0;
@@ -296,7 +270,7 @@ public static class AsrProcessor
     }
 
     private static bool IsSpecialToken(string text) =>
-        text.StartsWith("[") && text.EndsWith("]", StringComparison.Ordinal);
+        text.StartsWith('[') && text.EndsWith(']');
 
     private static string NormalizeTokenText(string text)
     {
@@ -349,5 +323,5 @@ public sealed record AsrOptions(
     float Temperature = 0.0f,
     bool NoSpeechBoost = true,
     int GpuDevice = 0,
-    bool UseFlashAttention = false,
+    bool UseFlashAttention = true,
     bool UseDtwTimestamps = true);

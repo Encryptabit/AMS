@@ -29,15 +29,9 @@ internal static unsafe class FfEncoder
 
     private static void Encode(AudioBuffer buffer, Stream output, AudioEncodeOptions options, EncoderSink sink)
     {
-        if (buffer is null)
-        {
-            throw new ArgumentNullException(nameof(buffer));
-        }
+        ArgumentNullException.ThrowIfNull(buffer);
 
-        if (output is null)
-        {
-            throw new ArgumentNullException(nameof(output));
-        }
+        ArgumentNullException.ThrowIfNull(output);
 
         FfSession.EnsureInitialized();
 
