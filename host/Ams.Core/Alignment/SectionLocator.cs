@@ -378,16 +378,9 @@ public static class SectionLocator
             }
         }
 
-        for (int i = 0; i < tokens.Count; i++)
+        if (TryParseFullNumber(tokens, 0, out var fallbackValue, out _))
         {
-            if (TryParseFullNumber(tokens, i, out var value, out var consumed))
-            {
-                return value;
-            }
-            if (consumed > 1)
-            {
-                i += consumed - 1;
-            }
+            return fallbackValue;
         }
 
         return null;
@@ -519,4 +512,3 @@ public static class SectionLocator
         Dictionary<int, List<SectionCandidate>> ByNumber,
         Dictionary<string, List<SectionCandidate>> ByNormalized);
 }
-

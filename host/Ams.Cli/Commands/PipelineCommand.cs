@@ -93,7 +93,7 @@ public static class PipelineCommand
         Converters = { new JsonStringEnumConverter() }
     };
 
-    private static readonly Regex PatternTokenRegex = new(@"\{(d{1,2})([+-]\d+)?\}", RegexOptions.Compiled | RegexOptions.CultureInvariant | RegexOptions.IgnoreCase);
+    private static readonly Regex PatternTokenRegex = new(@"\{(d{1,2}|um\d+-\d+|um\d+|um\*)([+-]\d+)?\}", RegexOptions.Compiled | RegexOptions.CultureInvariant | RegexOptions.IgnoreCase);
 
     private static Command CreatePrepCommand()
     {
@@ -649,7 +649,7 @@ public static class PipelineCommand
         var patternOption = new Option<string>
         (
             "--pattern",
-            description: "Naming template. Use {d} or {dd} tokens with optional +/- offsets (e.g., {dd}, {d+1}, {dd-1})."
+            description: "Naming template. Use {d}/{dd} (with optional +/- offsets) and {um#} for unmatched text segments."
         )
         {
             IsRequired = true
@@ -663,15 +663,24 @@ public static class PipelineCommand
             "Preview the planned renames without touching the filesystem."
         );
 
+        var allOption = new Option<bool>
+        (
+            "--all",
+            () => false,
+            "Force rename across every detected chapter, ignoring the REPL's active chapter scope."
+        );
+
         cmd.AddOption(rootOption);
         cmd.AddOption(patternOption);
         cmd.AddOption(dryRunOption);
+        cmd.AddOption(allOption);
 
         cmd.SetHandler(context =>
         {
             var rootOverride = context.ParseResult.GetValueForOption(rootOption);
             var pattern = context.ParseResult.GetValueForOption(patternOption);
             var dryRun = context.ParseResult.GetValueForOption(dryRunOption);
+            var forceAll = context.ParseResult.GetValueForOption(allOption);
 
             if (string.IsNullOrWhiteSpace(pattern))
             {
@@ -700,7 +709,7 @@ public static class PipelineCommand
                 return;
             }
 
-            var chapters = ResolveRenameTargets(root);
+            var chapters = ResolveRenameTargets(root, forceAll);
             if (chapters.Count == 0)
             {
                 Log.Debug("No chapter WAV files detected under {Root}", root.FullName);
@@ -714,7 +723,8 @@ public static class PipelineCommand
             {
                 var chapter = chapters[i];
                 var oldStem = Path.GetFileNameWithoutExtension(chapter.Name);
-                var newStem = ApplyRenamePattern(pattern, i).Trim();
+                var unmatchedParts = ExtractUnmatchedParts(oldStem);
+                var newStem = ApplyRenamePattern(pattern, i, unmatchedParts).Trim();
 
                 if (string.IsNullOrEmpty(newStem))
                 {
@@ -939,13 +949,11 @@ public static class PipelineCommand
             var maxWorkers = context.ParseResult.GetValueForOption(maxWorkersOption);
             var maxMfa = context.ParseResult.GetValueForOption(maxMfaOption);
             var showProgress = context.ParseResult.GetValueForOption(progressOption);
-#if DEBUG
-            if (showProgress)
+            if (showProgress && Log.IsDebugLoggingEnabled())
             {
-                Log.Debug("Progress UI disabled in Debug builds to keep console output readable.");
+                Log.Debug("Progress UI disabled while AMS_LOG_LEVEL requests Debug-level logging.");
+                showProgress = false;
             }
-            showProgress = false;
-#endif
 
             var repl = ReplContext.Current;
             if (repl?.RunAllChapters == true && repl.Chapters.Count > 0)
@@ -960,7 +968,7 @@ public static class PipelineCommand
                             .StartAsync(async progressContext =>
                             {
                                 await RunPipelineForMultipleChaptersAsync(
-                                    bookFile,
+                                bookFile,
                                     workDir,
                                     bookIndex,
                                     forceIndex,
@@ -1541,22 +1549,30 @@ public static class PipelineCommand
         PrintStatsReport(root, bookIndexFile, bookIndex, statsList, totalAudioSec);
     }
 
-    private static List<FileInfo> ResolveRenameTargets(DirectoryInfo root)
+    private static List<FileInfo> ResolveRenameTargets(DirectoryInfo root, bool forceAll = false)
     {
-        var repl = ReplContext.Current;
-        if (repl is not null && PathsEqual(repl.WorkingDirectory, root.FullName))
+        if (!forceAll)
         {
-            if (repl.RunAllChapters)
+            var repl = ReplContext.Current;
+            if (repl is not null && PathsEqual(repl.WorkingDirectory, root.FullName))
             {
-                return repl.Chapters.ToList();
-            }
+                if (repl.RunAllChapters)
+                {
+                    if (repl.ActiveChapter is not null)
+                    {
+                        return new List<FileInfo> { repl.ActiveChapter };
+                    }
 
-            if (repl.ActiveChapter is not null)
-            {
-                return new List<FileInfo> { repl.ActiveChapter };
-            }
+                    return repl.Chapters.ToList();
+                }
 
-            return new List<FileInfo>();
+                if (repl.ActiveChapter is not null)
+                {
+                    return new List<FileInfo> { repl.ActiveChapter };
+                }
+
+                return new List<FileInfo>();
+            }
         }
 
         return Directory.EnumerateFiles(root.FullName, "*.wav", SearchOption.TopDirectoryOnly)
@@ -1565,17 +1581,70 @@ public static class PipelineCommand
             .ToList();
     }
 
-    private static string ApplyRenamePattern(string pattern, int index)
+    private static string ApplyRenamePattern(string pattern, int index, IReadOnlyList<string> unmatchedParts)
     {
         var result = PatternTokenRegex.Replace(pattern, match =>
         {
             var token = match.Groups[1].Value.ToLowerInvariant();
             var offsetGroup = match.Groups[2];
-            var offset = offsetGroup.Success ? int.Parse(offsetGroup.Value, CultureInfo.InvariantCulture) : 0;
-            var value = index + offset;
-            return token.Length > 1
-                ? value.ToString("D" + token.Length, CultureInfo.InvariantCulture)
-                : value.ToString(CultureInfo.InvariantCulture);
+            if (token.StartsWith("um", StringComparison.Ordinal))
+            {
+                if (offsetGroup.Success)
+                {
+                    throw new InvalidOperationException($"Token '{match.Value}' does not support +/- offsets.");
+                }
+
+                if (token.Equals("um*", StringComparison.Ordinal))
+                {
+                    return unmatchedParts.Count == 0
+                        ? string.Empty
+                        : string.Join("_", unmatchedParts);
+                }
+
+                if (token.Contains('-'))
+                {
+                    var rangeParts = token[2..].Split('-', StringSplitOptions.RemoveEmptyEntries);
+                    if (rangeParts.Length != 2 ||
+                        !int.TryParse(rangeParts[0], NumberStyles.Integer, CultureInfo.InvariantCulture, out var startIndex) ||
+                        !int.TryParse(rangeParts[1], NumberStyles.Integer, CultureInfo.InvariantCulture, out var endIndex) ||
+                        startIndex <= 0 || endIndex < startIndex)
+                    {
+                        throw new InvalidOperationException($"Invalid unmatched range token '{match.Value}'.");
+                    }
+
+                    int startZero = startIndex - 1;
+                    int endZero = Math.Min(endIndex - 1, unmatchedParts.Count - 1);
+                    if (startZero >= unmatchedParts.Count || startZero > endZero)
+                    {
+                        return string.Empty;
+                    }
+
+                    var slice = unmatchedParts
+                        .Skip(startZero)
+                        .Take(endZero - startZero + 1);
+                    return string.Join("_", slice);
+                }
+                else
+                {
+                    if (!int.TryParse(token.AsSpan(2), NumberStyles.Integer, CultureInfo.InvariantCulture, out var partIndex) || partIndex <= 0)
+                    {
+                        throw new InvalidOperationException($"Invalid unmatched token '{match.Value}'.");
+                    }
+
+                    var zeroIndex = partIndex - 1;
+                    return zeroIndex >= 0 && zeroIndex < unmatchedParts.Count
+                        ? unmatchedParts[zeroIndex]
+                        : string.Empty;
+                }
+            }
+            else
+            {
+                var offset = offsetGroup.Success ? int.Parse(offsetGroup.Value, CultureInfo.InvariantCulture) : 0;
+                var value = index + offset;
+                return token.Length > 1
+                    ? value.ToString("D" + token.Length, CultureInfo.InvariantCulture)
+                    : value.ToString(CultureInfo.InvariantCulture);
+            }
         });
 
         if (result.IndexOf('{') >= 0 || result.IndexOf('}') >= 0)
@@ -1584,6 +1653,29 @@ public static class PipelineCommand
         }
 
         return result;
+    }
+
+    private static readonly Regex UnmatchedTokenRegex = new(@"[A-Za-z]+[A-Za-z0-9]*", RegexOptions.Compiled);
+
+    private static string[] ExtractUnmatchedParts(string stem)
+    {
+        if (string.IsNullOrWhiteSpace(stem))
+        {
+            return Array.Empty<string>();
+        }
+
+        var matches = UnmatchedTokenRegex.Matches(stem);
+        if (matches.Count == 0)
+        {
+            return Array.Empty<string>();
+        }
+
+        var parts = new string[matches.Count];
+        for (int i = 0; i < matches.Count; i++)
+        {
+            parts[i] = matches[i].Value;
+        }
+        return parts;
     }
 
     private static ChapterRenamePlan BuildRenamePlan(FileInfo chapter, string oldStem, string newStem)

@@ -16,6 +16,7 @@ internal sealed class MfaPronunciationProvider : IPronunciationProvider
 {
     private readonly IMfaService _mfaService;
     private readonly string _g2pModel;
+    private const int MaxPronunciationsPerLexeme = 32;
 
     public MfaPronunciationProvider(IMfaService? mfaService = null, string? g2pModel = null)
     {
@@ -210,18 +211,29 @@ internal sealed class MfaPronunciationProvider : IPronunciationProvider
                     variants = new List<string> { component };
                 }
 
-                combinations = ExpandCombinations(combinations, variants);
+                combinations = ExpandCombinations(combinations, variants, MaxPronunciationsPerLexeme);
             }
 
-            result[lexeme] = combinations.Select(c => c.Trim()).Where(s => s.Length > 0).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+            result[lexeme] = combinations
+                .Select(c => c.Trim())
+                .Where(s => s.Length > 0)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .Take(MaxPronunciationsPerLexeme)
+                .ToArray();
         }
 
         return result;
     }
 
-    private static List<string> ExpandCombinations(List<string> basePronunciations, List<string> variants)
+    private static List<string> ExpandCombinations(List<string> basePronunciations, List<string> variants, int maxCount)
     {
-        var expanded = new List<string>(basePronunciations.Count * variants.Count);
+        if (maxCount <= 0)
+        {
+            return new List<string>();
+        }
+
+        var capacity = basePronunciations.Count * Math.Max(variants.Count, 1);
+        var expanded = new List<string>(Math.Min(maxCount, capacity));
         foreach (var prefix in basePronunciations)
         {
             foreach (var variant in variants)
@@ -234,6 +246,11 @@ internal sealed class MfaPronunciationProvider : IPronunciationProvider
                 }
                 builder.Append(variant.Trim());
                 expanded.Add(builder.ToString());
+
+                if (expanded.Count >= maxCount)
+                {
+                    return expanded;
+                }
             }
         }
 
