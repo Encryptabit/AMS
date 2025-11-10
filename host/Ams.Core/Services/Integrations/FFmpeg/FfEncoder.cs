@@ -194,7 +194,7 @@ internal static unsafe class FfEncoder
             EnsureFrameCapacity(frame, cc, dstCapacity);
             ThrowIfError(av_frame_make_writable(frame), nameof(av_frame_make_writable));
 
-            var src = stackalloc byte*[channels];
+            byte** src = stackalloc byte*[channels];
             for (int ch = 0; ch < channels; ch++)
             {
                 var basePtr = (float*)channelPointers[ch];

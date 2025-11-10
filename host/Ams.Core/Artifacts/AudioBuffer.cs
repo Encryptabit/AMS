@@ -1,3 +1,5 @@
+using Ams.Core.Processors;
+
 namespace Ams.Core.Artifacts;
 public sealed class AudioBuffer
 {
@@ -20,6 +22,9 @@ public sealed class AudioBuffer
             Planar[ch] = new float[length];
         }
     }
+    
+    public MemoryStream ToWavStream(AudioEncodeOptions? options = null)
+        => AudioProcessor.EncodeWavToStream(this, options);
 
     public void UpdateMetadata(AudioBufferMetadata metadata)
     {

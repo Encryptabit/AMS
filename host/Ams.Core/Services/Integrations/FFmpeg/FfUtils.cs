@@ -71,12 +71,17 @@ internal static unsafe class FfUtils
 
     public static unsafe int CheckSampleFormat(AVCodec* codec, AVSampleFormat format)
     {
-        AVSampleFormat* p = codec->sample_fmts;
+        if (codec is null)
+        {
+            throw new ArgumentNullException(nameof(codec));
+        }
+
         if (format == AVSampleFormat.AV_SAMPLE_FMT_NONE)
         {
             throw new ArgumentException("Invalid sample format", nameof(format));
         }
 
+        // TODO: migrate to avcodec_get_supported_config once we need runtime negotiation.
         return 0;
     }
 
