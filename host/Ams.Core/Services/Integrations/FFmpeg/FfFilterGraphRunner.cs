@@ -57,6 +57,7 @@ namespace Ams.Core.Services.Integrations.FFmpeg
         {
             // Tuneable: larger chunk = fewer calls, smaller chunk = lower latency.
             private const int ChunkSamples = 4096;
+            private const int BufferSrcFlagKeepRef = 8;
 
             private readonly GraphInputState[] _inputs;
             private readonly string _filterSpec;
@@ -136,42 +137,27 @@ namespace Ams.Core.Services.Integrations.FFmpeg
 
             private void SendFrame(GraphInputState state, int offset, int sampleCount, long pts)
             {
-                var frame = ffmpeg.av_frame_alloc();
+                var frame = state.Frame;
                 if (frame == null)
-                    throw new InvalidOperationException("Failed to allocate FFmpeg frame for source input.");
+                    throw new InvalidOperationException("Input frame has not been initialized.");
 
-                try
+                FfUtils.ThrowIfError(ffmpeg.av_frame_make_writable(frame), nameof(ffmpeg.av_frame_make_writable));
+
+                frame->nb_samples = sampleCount;
+                frame->pts = pts;
+
+                float* dst = (float*)frame->data[0];
+                var planar = state.Buffer.Planar;
+
+                for (int i = 0; i < sampleCount; i++)
                 {
-                    frame->format = (int)AVSampleFormat.AV_SAMPLE_FMT_FLT;
-                    frame->sample_rate = state.Buffer.SampleRate;
-                    frame->nb_samples = sampleCount;
-                    frame->pts = pts;
-
-                    ffmpeg.av_channel_layout_uninit(&frame->ch_layout);
-                    fixed (AVChannelLayout* layoutPtr = &state.Layout)
-                    {
-                        ffmpeg.av_channel_layout_copy(&frame->ch_layout, layoutPtr);
-                    }
-
-                    FfUtils.ThrowIfError(ffmpeg.av_frame_get_buffer(frame, 0), nameof(ffmpeg.av_frame_get_buffer));
-
-                    float* dst = (float*)frame->data[0];
-                    var planar = state.Buffer.Planar;
-
-                    for (int i = 0; i < sampleCount; i++)
-                    {
-                        int baseIndex = i * state.Channels;
-                        for (int ch = 0; ch < state.Channels; ch++)
-                            dst[baseIndex + ch] = planar[ch][offset + i];
-                    }
-
-                    FfUtils.ThrowIfError(ffmpeg.av_buffersrc_add_frame(state.Source, frame),
-                        nameof(ffmpeg.av_buffersrc_add_frame));
+                    int baseIndex = i * state.Channels;
+                    for (int ch = 0; ch < state.Channels; ch++)
+                        dst[baseIndex + ch] = planar[ch][offset + i];
                 }
-                finally
-                {
-                    ffmpeg.av_frame_free(&frame);
-                }
+
+                FfUtils.ThrowIfError(ffmpeg.av_buffersrc_add_frame_flags(state.Source, frame, BufferSrcFlagKeepRef),
+                    nameof(ffmpeg.av_buffersrc_add_frame_flags));
             }
 
             private void Drain(bool final = false)
@@ -234,7 +220,30 @@ namespace Ams.Core.Services.Integrations.FFmpeg
                 FfUtils.ThrowIfError(ffmpeg.avfilter_init_str(src, args), nameof(ffmpeg.avfilter_init_str));
 
                 var layout = FfUtils.CloneOrDefault(null, buffer.Channels);
-                return new GraphInputState(label, buffer, src, layout);
+                var frame = ffmpeg.av_frame_alloc();
+                if (frame == null)
+                    throw new InvalidOperationException("Failed to allocate reusable FFmpeg frame.");
+
+                try
+                {
+                    frame->format = (int)AVSampleFormat.AV_SAMPLE_FMT_FLT;
+                    frame->sample_rate = buffer.SampleRate;
+                    frame->nb_samples = ChunkSamples;
+
+                    ffmpeg.av_channel_layout_uninit(&frame->ch_layout);
+                    FfUtils.ThrowIfError(ffmpeg.av_channel_layout_copy(&frame->ch_layout, &layout),
+                        nameof(ffmpeg.av_channel_layout_copy));
+
+                    FfUtils.ThrowIfError(ffmpeg.av_frame_get_buffer(frame, 0), nameof(ffmpeg.av_frame_get_buffer));
+                }
+                catch
+                {
+                    ffmpeg.av_frame_free(&frame);
+                    ffmpeg.av_channel_layout_uninit(&layout);
+                    throw;
+                }
+
+                return new GraphInputState(label, buffer, src, layout, frame);
             }
 
 
@@ -248,7 +257,29 @@ namespace Ams.Core.Services.Integrations.FFmpeg
                 if (_sink == null)
                     throw new InvalidOperationException("Failed to allocate audio buffer sink filter.");
 
+                ConfigureSinkFormat();
+
                 FfUtils.ThrowIfError(ffmpeg.avfilter_init_str(_sink, null), nameof(ffmpeg.avfilter_init_str));
+            }
+
+            private void ConfigureSinkFormat()
+            {
+                int* sampleFmts = stackalloc int[2];
+                sampleFmts[0] = (int)AVSampleFormat.AV_SAMPLE_FMT_FLT;
+                sampleFmts[1] = -1;
+
+                var result = ffmpeg.av_opt_set_bin(
+                    _sink,
+                    "sample_fmts",
+                    (byte*)sampleFmts,
+                    sizeof(int) * 2,
+                    ffmpeg.AV_OPT_SEARCH_CHILDREN);
+
+                if (result < 0)
+                {
+                    var msg = FfUtils.FormatError(result);
+                    throw new InvalidOperationException($"Failed to configure sink sample format: {msg}");
+                }
             }
 
             private void ConfigureGraph()
@@ -330,10 +361,7 @@ namespace Ams.Core.Services.Integrations.FFmpeg
                 {
                     foreach (var input in _inputs)
                     {
-                        fixed (AVChannelLayout* layoutPtr = &input.Layout)
-                        {
-                            ffmpeg.av_channel_layout_uninit(layoutPtr);
-                        }
+                        input.Dispose();
                     }
                 }
             }
@@ -412,7 +440,8 @@ namespace Ams.Core.Services.Integrations.FFmpeg
                 string label,
                 AudioBuffer buffer,
                 AVFilterContext* source,
-                AVChannelLayout layout)
+                AVChannelLayout layout,
+                AVFrame* frame)
             {
                 Label = label;
                 Buffer = buffer;
@@ -420,6 +449,7 @@ namespace Ams.Core.Services.Integrations.FFmpeg
                 Layout = layout;
                 SampleRate = buffer.SampleRate;
                 Channels = buffer.Channels;
+                Frame = frame;
             }
 
             public string Label { get; }
@@ -428,6 +458,22 @@ namespace Ams.Core.Services.Integrations.FFmpeg
             public AVChannelLayout Layout;
             public int SampleRate { get; }
             public int Channels { get; }
+            public AVFrame* Frame { get; private set; }
+
+            public void Dispose()
+            {
+                if (Frame != null)
+                {
+                    var frame = Frame;
+                    ffmpeg.av_frame_free(&frame);
+                    Frame = null;
+                }
+
+                fixed (AVChannelLayout* layoutPtr = &Layout)
+                {
+                    ffmpeg.av_channel_layout_uninit(layoutPtr);
+                }
+            }
         }
     }
 }

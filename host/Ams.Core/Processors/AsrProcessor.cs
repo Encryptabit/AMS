@@ -66,7 +66,7 @@ public static class AsrProcessor
         var builder = ConfigureBuilder(factory, options, enableTokenTimestamps: options.EnableWordTimestamps);
 
         await using var processor = builder.Build();
-        using var wavStream = AudioProcessor.EncodeWavToStream(buffer);
+        using var wavStream = buffer.ToWavStream();
         wavStream.Position = 0;
 
         var tokens = new List<AsrToken>();
