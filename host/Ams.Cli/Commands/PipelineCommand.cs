@@ -38,9 +38,7 @@ public static class PipelineCommand
         Transcript = 4,
         Hydrate = 5,
         Mfa = 6,
-        Roomtone = 7,
-        Validate = 8,
-        Complete = 9
+        Complete = 7
     }
 
     private const int PipelineStageCount = (int)PipelineStage.Complete;
@@ -158,8 +156,6 @@ public static class PipelineCommand
             [PipelineStage.Transcript] = ("Transcript", "deepskyblue1"),
             [PipelineStage.Hydrate] = ("Hydrate", "deepskyblue1"),
             [PipelineStage.Mfa] = ("MFA", "lightseagreen"),
-            [PipelineStage.Roomtone] = ("Roomtone", "gold1"),
-            [PipelineStage.Validate] = ("Validate", "mediumvioletred"),
             [PipelineStage.Complete] = ("Done", "green")
         };
 
@@ -256,16 +252,6 @@ public static class PipelineCommand
         string asrService,
         string? asrModel,
         string asrLanguage,
-        int sampleRate,
-        int bitDepth,
-        double fadeMs,
-        double toneDb,
-        bool emitDiagnostics,
-        bool adaptiveGain,
-        double gapLeftThresholdDb,
-        double gapRightThresholdDb,
-        double gapStepMs,
-        double gapBackoffMs,
         bool verbose,
         IReadOnlyList<FileInfo> chapterFiles,
         int maxWorkers,
@@ -343,16 +329,6 @@ public static class PipelineCommand
                     asrService,
                     asrModel,
                     asrLanguage,
-                    sampleRate,
-                    bitDepth,
-                    fadeMs,
-                    toneDb,
-                    emitDiagnostics,
-                    adaptiveGain,
-                    gapLeftThresholdDb,
-                    gapRightThresholdDb,
-                    gapStepMs,
-                    gapBackoffMs,
                     verbose,
                     reporter,
                     concurrency,
@@ -903,7 +879,7 @@ public static class PipelineCommand
 
     private static Command CreateRun()
     {
-        var cmd = new Command("run", "Build index, run ASR, align, hydrate, and apply roomtone in one pass");
+        var cmd = new Command("run", "Build index, run ASR, align, and hydrate in one pass");
 
         var bookOption = new Option<FileInfo?>("--book", "Path to the book manuscript (DOCX/TXT/etc.)");
         bookOption.AddAlias("-b");
@@ -926,17 +902,7 @@ public static class PipelineCommand
         var asrLanguageOption = new Option<string>("--language", () => "en", "ASR language code");
         asrLanguageOption.AddAlias("-l");
 
-        var sampleRateOption = new Option<int>("--sample-rate", () => 44100, "Roomtone output sample rate (Hz)");
-        var bitDepthOption = new Option<int>("--bit-depth", () => 32, "Roomtone output bit depth");
-        var fadeMsOption = new Option<double>("--fade-ms", () => 10.0, "Crossfade length for roomtone boundaries (ms)");
-        var toneDbOption = new Option<double>("--tone-gain-db", () => -60.0, "Target RMS level for roomtone (dBFS)");
-        var diagnosticsOption = new Option<bool>("--emit-diagnostics", () => false, "Emit diagnostic WAVs during roomtone rendering");
-        var adaptiveGainOption = new Option<bool>("--adaptive-gain", () => false, "Scale roomtone seed to match target RMS");
-        var gapLeftThresholdOption = new Option<double>("--gap-left-threshold-db", () => -30.0, "RMS threshold (dBFS) used to detect silence on the left side of gaps");
-        var gapRightThresholdOption = new Option<double>("--gap-right-threshold-db", () => -30.0, "RMS threshold (dBFS) used to detect silence on the right side of gaps");
-        var gapStepOption = new Option<double>("--gap-step-ms", () => 5.0, "Step size (ms) when probing gap boundaries");
-        var gapBackoffOption = new Option<double>("--gap-backoff-ms", () => 5.0, "Backoff amount (ms) applied after a silent window is detected");
-        var verboseOption = new Option<bool>("--verbose", () => false, "Enable verbose logging for pipeline stages (roomtone gap analysis, ASR, etc.)");
+        var verboseOption = new Option<bool>("--verbose", () => false, "Enable verbose logging for pipeline stages.");
         var maxWorkersOption = new Option<int>("--max-workers", () => Math.Max(1, Environment.ProcessorCount), "Maximum number of chapters to process in parallel once ASR is complete");
         var maxMfaOption = new Option<int>("--max-mfa", () => Math.Max(1, Environment.ProcessorCount / 2), "Maximum number of concurrent MFA alignment jobs");
         var progressOption = new Option<bool>("--progress", () => true, "Display live progress UI while running the pipeline");
@@ -952,16 +918,6 @@ public static class PipelineCommand
         cmd.AddOption(asrServiceOption);
         cmd.AddOption(asrModelOption);
         cmd.AddOption(asrLanguageOption);
-        cmd.AddOption(sampleRateOption);
-        cmd.AddOption(bitDepthOption);
-        cmd.AddOption(fadeMsOption);
-        cmd.AddOption(toneDbOption);
-        cmd.AddOption(diagnosticsOption);
-        cmd.AddOption(adaptiveGainOption);
-        cmd.AddOption(gapLeftThresholdOption);
-        cmd.AddOption(gapRightThresholdOption);
-        cmd.AddOption(gapStepOption);
-        cmd.AddOption(gapBackoffOption);
         cmd.AddOption(verboseOption);
         cmd.AddOption(maxWorkersOption);
         cmd.AddOption(maxMfaOption);
@@ -979,16 +935,6 @@ public static class PipelineCommand
             var asrService = context.ParseResult.GetValueForOption(asrServiceOption) ?? "http://localhost:8000";
             var asrModel = context.ParseResult.GetValueForOption(asrModelOption);
             var asrLanguage = context.ParseResult.GetValueForOption(asrLanguageOption) ?? "en";
-            var sampleRate = context.ParseResult.GetValueForOption(sampleRateOption);
-            var bitDepth = context.ParseResult.GetValueForOption(bitDepthOption);
-            var fadeMs = context.ParseResult.GetValueForOption(fadeMsOption);
-            var toneDb = context.ParseResult.GetValueForOption(toneDbOption);
-            var emitDiagnostics = context.ParseResult.GetValueForOption(diagnosticsOption);
-            var adaptiveGain = context.ParseResult.GetValueForOption(adaptiveGainOption);
-            var gapLeftThreshold = context.ParseResult.GetValueForOption(gapLeftThresholdOption);
-            var gapRightThreshold = context.ParseResult.GetValueForOption(gapRightThresholdOption);
-            var gapStep = context.ParseResult.GetValueForOption(gapStepOption);
-            var gapBackoff = context.ParseResult.GetValueForOption(gapBackoffOption);
             var verbose = context.ParseResult.GetValueForOption(verboseOption);
             var maxWorkers = context.ParseResult.GetValueForOption(maxWorkersOption);
             var maxMfa = context.ParseResult.GetValueForOption(maxMfaOption);
@@ -1016,16 +962,6 @@ public static class PipelineCommand
                                     asrService,
                                     asrModel,
                                     asrLanguage,
-                                    sampleRate,
-                                    bitDepth,
-                                    fadeMs,
-                                    toneDb,
-                                    emitDiagnostics,
-                                    adaptiveGain,
-                                    gapLeftThreshold,
-                                    gapRightThreshold,
-                                    gapStep,
-                                    gapBackoff,
                                     verbose,
                                     repl.Chapters,
                                     maxWorkers,
@@ -1046,16 +982,6 @@ public static class PipelineCommand
                             asrService,
                             asrModel,
                             asrLanguage,
-                            sampleRate,
-                            bitDepth,
-                            fadeMs,
-                            toneDb,
-                            emitDiagnostics,
-                            adaptiveGain,
-                            gapLeftThreshold,
-                            gapRightThreshold,
-                            gapStep,
-                            gapBackoff,
                             verbose,
                             repl.Chapters,
                             maxWorkers,
@@ -1103,16 +1029,6 @@ public static class PipelineCommand
                                     asrService,
                                     asrModel,
                                     asrLanguage,
-                                    sampleRate,
-                                    bitDepth,
-                                    fadeMs,
-                                    toneDb,
-                                    emitDiagnostics,
-                                    adaptiveGain,
-                                    gapLeftThreshold,
-                                    gapRightThreshold,
-                                    gapStep,
-                                    gapBackoff,
                                     verbose,
                                     reporter,
                                     concurrency,
@@ -1147,16 +1063,6 @@ public static class PipelineCommand
                         asrService,
                         asrModel,
                         asrLanguage,
-                        sampleRate,
-                        bitDepth,
-                        fadeMs,
-                        toneDb,
-                        emitDiagnostics,
-                        adaptiveGain,
-                        gapLeftThreshold,
-                        gapRightThreshold,
-                        gapStep,
-                        gapBackoff,
                         verbose,
                         progress: null,
                         concurrency,
@@ -1189,16 +1095,6 @@ public static class PipelineCommand
         string asrService,
         string? asrModel,
         string asrLanguage,
-        int sampleRate,
-        int bitDepth,
-        double fadeMs,
-        double toneDb,
-        bool emitDiagnostics,
-        bool adaptiveGain,
-        double gapLeftThresholdDb,
-        double gapRightThresholdDb,
-        double gapStepMs,
-        double gapBackoffMs,
         bool verbose,
         PipelineProgressReporter? progress,
         PipelineConcurrencyControl concurrency,
@@ -1461,28 +1357,16 @@ public static class PipelineCommand
         progress?.ReportStage(chapterStem, PipelineStage.Mfa, mfaMessage);
 
         treatedWav.Refresh();
-        bool roomtoneRendered;
         if (!force && treatedWav.Exists)
         {
-            LogStageInfo(logInfo, "Skipping roomtone render; {RoomtoneFile} already exists (pass --force to rerun)", treatedWav.FullName);
-            roomtoneRendered = false;
+            LogStageInfo(logInfo, "Skipping treated copy; {TreatedFile} already exists (pass --force to overwrite)", treatedWav.FullName);
         }
         else
         {
-            LogStageInfo(logInfo, "Rendering roomtone");
-            txFile.Refresh();
-            await AudioCommand.RunRenderAsync(txFile, treatedWav, sampleRate, bitDepth, fadeMs, toneDb, emitDiagnostics, adaptiveGain, verbose, gapLeftThresholdDb, gapRightThresholdDb, gapStepMs, gapBackoffMs);
+            LogStageInfo(logInfo, "Copying source audio to treated output");
+            File.Copy(audioFile.FullName, treatedWav.FullName, overwrite: true);
             treatedWav.Refresh();
-            roomtoneRendered = true;
         }
-
-        var roomtoneMessage = treatedWav.Exists
-            ? (roomtoneRendered ? "Roomtone rendered" : "Roomtone cached")
-            : "Roomtone missing";
-        progress?.ReportStage(chapterStem, PipelineStage.Roomtone, roomtoneMessage);
-
-        bool validateSuccess = await RunValidateTimingHeadlessAsync(txFile, hydrateFile, bookIndexFile, toneDb, logInfo, cancellationToken).ConfigureAwait(false);
-        progress?.ReportStage(chapterStem, PipelineStage.Validate, validateSuccess ? "Timing updated" : "Timing skipped");
 
         LogStageInfo(logInfo, "=== Outputs ===");
         LogStageInfo(logInfo, "Book index : {BookIndex}", bookIndexFile.FullName);
@@ -1490,71 +1374,7 @@ public static class PipelineCommand
         LogStageInfo(logInfo, "Anchors    : {AnchorsFile}", anchorsFile.FullName);
         LogStageInfo(logInfo, "Transcript : {TranscriptFile}", txFile.FullName);
         LogStageInfo(logInfo, "Hydrated   : {HydratedFile}", hydrateFile.FullName);
-        LogStageInfo(logInfo, "Roomtone   : {RoomtoneFile}", treatedWav.FullName);
-    }
-
-    private static async Task<bool> RunValidateTimingHeadlessAsync(
-        FileInfo txFile,
-        FileInfo hydrateFile,
-        FileInfo bookIndexFile,
-        double toneGainDb,
-        bool logInfo,
-        CancellationToken cancellationToken)
-    {
-        if (!txFile.Exists || !hydrateFile.Exists)
-        {
-            Log.Debug("Skipping validate timing headless: required artifacts missing (Transcript/Hydrate).");
-            return false;
-        }
-
-        if (!bookIndexFile.Exists)
-        {
-            Log.Debug("Skipping validate timing headless: book-index not found at {Path}", bookIndexFile.FullName);
-            return false;
-        }
-
-        try
-        {
-            LogStageInfo(logInfo, "Running validate timing headless to apply pause policy defaults");
-            var session = new ValidateTimingSession(txFile, bookIndexFile, hydrateFile, runProsodyAnalysis: true);
-            var headlessResult = await session.RunHeadlessAsync(cancellationToken).ConfigureAwait(false);
-            if (!headlessResult.HasAdjustments)
-            {
-                LogStageInfo(logInfo, "validate timing headless produced no adjustments; skipping timing-apply.");
-                return false;
-            }
-
-            LogStageInfo(logInfo, "validate timing headless produced {Count} adjustment(s); applying timing updates", headlessResult.AdjustmentCount);
-            var exitCode = ValidateCommand.RunTimingApplyCore(
-                txFile,
-                hydrateFile,
-                headlessResult.AdjustmentsFile,
-                outWavOverride: null,
-                roomtoneOverride: null,
-                bookIndexOverride: bookIndexFile,
-                toneGainDb: toneGainDb,
-                overwriteOutputs: true,
-                useAdjusted: false,
-                cancellationToken: cancellationToken);
-
-            if (exitCode != 0)
-            {
-                Log.Debug("timing-apply exited with code {ExitCode}", exitCode);
-                return false;
-            }
-
-            return true;
-        }
-        catch (OperationCanceledException)
-        {
-            Log.Debug("validate timing headless cancelled");
-            throw;
-        }
-        catch (Exception ex)
-        {
-            Log.Error(ex, "validate timing headless failed; continuing without pause-adjusted outputs");
-            return false;
-        }
+        LogStageInfo(logInfo, "Treated    : {TreatedFile}", treatedWav.FullName);
     }
 
     private static void PerformSoftReset(DirectoryInfo root, CancellationToken cancellationToken)
@@ -1733,7 +1553,6 @@ public static class PipelineCommand
         }
 
         return Directory.EnumerateFiles(root.FullName, "*.wav", SearchOption.TopDirectoryOnly)
-            .Where(path => !string.Equals(Path.GetFileName(path), "roomtone.wav", StringComparison.OrdinalIgnoreCase))
             .Select(path => new FileInfo(path))
             .OrderBy(file => file.Name, StringComparer.OrdinalIgnoreCase)
             .ToList();
@@ -2348,7 +2167,6 @@ public static class PipelineCommand
         }
 
         var allChapters = Directory.EnumerateFiles(root.FullName, "*.wav", SearchOption.TopDirectoryOnly)
-            .Where(path => !string.Equals(Path.GetFileName(path), "roomtone.wav", StringComparison.OrdinalIgnoreCase))
             .Select(path => new FileInfo(path))
             .OrderBy(file => file.Name, PathComparer)
             .ToList();

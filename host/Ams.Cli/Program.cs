@@ -39,7 +39,6 @@ internal static class Program
         rootCommand.AddCommand(BuildIndexCommand.Create());
         rootCommand.AddCommand(BookCommand.Create());
         rootCommand.AddCommand(AlignCommand.Create());
-        rootCommand.AddCommand(AudioCommand.Create());
         rootCommand.AddCommand(RefineSentencesCommand.Create());
         rootCommand.AddCommand(PipelineCommand.Create());
         rootCommand.AddCommand(DspCommand.Create());
