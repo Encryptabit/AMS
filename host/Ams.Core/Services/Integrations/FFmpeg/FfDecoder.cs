@@ -163,24 +163,29 @@ internal static unsafe class FfDecoder
                 }
 
                 var targetFormat = AVSampleFormat.AV_SAMPLE_FMT_FLTP;
+                var sourceFormatName = GetSampleFormatName((AVSampleFormat)codecContext->sample_fmt) ?? "unknown";
                 var sourceLayout = CloneOrDefault(&codecContext->ch_layout, sourceChannels);
-                var targetLayout = CreateDefaultChannelLayout(targetChannels);
-                var sourceSampleFormat = GetSampleFormatName((AVSampleFormat)codecContext->sample_fmt) ?? "unknown";
-                var sourceChannelLayout = AudioBufferMetadata.DescribeDefaultLayout(sourceChannels);
-                var targetChannelLayout = AudioBufferMetadata.DescribeDefaultLayout(targetChannels);
+                AVChannelLayout? targetLayout = null;
+                SwrContext* resampler = null;
 
-                SwrContext* resampler = swr_alloc();
-                if (resampler == null)
-                {
-                    throw new InvalidOperationException("Failed to allocate FFmpeg resampler.");
-                }
+                var needsResample = targetSampleRate != sourceSampleRate
+                                    || targetChannels != sourceChannels
+                                    || (AVSampleFormat)codecContext->sample_fmt != targetFormat;
 
-                try
+                if (needsResample)
                 {
+                    targetLayout = CreateDefaultChannelLayout(targetChannels);
+                    resampler = swr_alloc();
+                    if (resampler == null)
+                    {
+                        throw new InvalidOperationException("Failed to allocate FFmpeg resampler.");
+                    }
+
+                    var layoutValue = targetLayout.Value;
                     var resamplerPtr = resampler;
                     var configureResult = swr_alloc_set_opts2(
                         &resamplerPtr,
-                        &targetLayout,
+                        &layoutValue,
                         targetFormat,
                         targetSampleRate,
                         &sourceLayout,
@@ -192,7 +197,10 @@ internal static unsafe class FfDecoder
                     resampler = resamplerPtr;
 
                     ThrowIfError(swr_init(resampler), nameof(swr_init));
+                }
 
+                try
+                {
                     using var packet = new FfPacket();
                     using var frame = new FfFrame();
 
@@ -230,7 +238,7 @@ internal static unsafe class FfDecoder
                             }
 
                             ThrowIfError(receive, nameof(avcodec_receive_frame));
-                            ResampleInto(resampler, sourceSampleRate, frame.Pointer, targetChannels, targetSampleRate, targetFormat, channelSamples);
+                            AppendSamples(frame.Pointer, resampler, needsResample, sourceSampleRate, targetChannels, targetSampleRate, targetFormat, channelSamples);
                         }
                     }
 
@@ -245,7 +253,7 @@ internal static unsafe class FfDecoder
                         }
 
                         ThrowIfError(receive, nameof(avcodec_receive_frame));
-                        ResampleInto(resampler, sourceSampleRate, frame.Pointer, targetChannels, targetSampleRate, targetFormat, channelSamples);
+                        AppendSamples(frame.Pointer, resampler, needsResample, sourceSampleRate, targetChannels, targetSampleRate, targetFormat, channelSamples);
                     }
 
                     var length = channelSamples.Count > 0 ? channelSamples[0].Count : 0;
@@ -277,10 +285,10 @@ internal static unsafe class FfDecoder
                         CurrentSampleRate = targetSampleRate,
                         SourceChannels = sourceChannels,
                         CurrentChannels = targetChannels,
-                        SourceSampleFormat = sourceSampleFormat,
+                        SourceSampleFormat = sourceFormatName,
                         CurrentSampleFormat = "fltp",
-                        SourceChannelLayout = sourceChannelLayout,
-                        CurrentChannelLayout = targetChannelLayout,
+                        SourceChannelLayout = AudioBufferMetadata.DescribeDefaultLayout(sourceChannels),
+                        CurrentChannelLayout = AudioBufferMetadata.DescribeDefaultLayout(targetChannels),
                         Tags = tags
                     };
                     buffer.UpdateMetadata(metadata);
@@ -288,9 +296,17 @@ internal static unsafe class FfDecoder
                 }
                 finally
                 {
-                    swr_free(&resampler);
+                    if (resampler != null)
+                    {
+                        swr_free(&resampler);
+                    }
+
                     av_channel_layout_uninit(&sourceLayout);
-                    av_channel_layout_uninit(&targetLayout);
+                    if (targetLayout.HasValue)
+                    {
+                        var layout = targetLayout.Value;
+                        av_channel_layout_uninit(&layout);
+                    }
                 }
             }
             finally
@@ -343,6 +359,34 @@ internal static unsafe class FfDecoder
             {
                 av_freep(&converted[0]);
                 av_free(converted);
+            }
+        }
+    }
+
+    private static unsafe void AppendSamples(
+        AVFrame* frame,
+        SwrContext* resampler,
+        bool needsResample,
+        int sourceSampleRate,
+        int targetChannels,
+        int targetSampleRate,
+        AVSampleFormat targetFormat,
+        IList<List<float>> channelSamples)
+    {
+        if (needsResample)
+        {
+            ResampleInto(resampler, sourceSampleRate, frame, targetChannels, targetSampleRate, targetFormat, channelSamples);
+            return;
+        }
+
+        var samples = frame->nb_samples;
+        for (int ch = 0; ch < targetChannels; ch++)
+        {
+            var source = (float*)frame->extended_data[ch];
+            var list = channelSamples[ch];
+            for (int i = 0; i < samples; i++)
+            {
+                list.Add(source[i]);
             }
         }
     }

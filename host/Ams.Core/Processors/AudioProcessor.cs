@@ -96,10 +96,9 @@ public static partial class AudioProcessor
         var opts = options ?? new SilenceDetectOptions();
         var filter = FormattableString.Invariant($"silencedetect=noise={opts.NoiseDb:F2}dB:d={opts.MinimumDuration.TotalSeconds:F3}");
 
-        var logs = FfLogCapture.Capture(() =>
-        {
-            FfFilterGraphRunner.Execute(buffer, filter, FfFilterGraphRunner.FilterExecutionMode.DiscardOutput);
-        });
+        var logs = FfFilterGraph.FromBuffer(buffer)
+            .Custom(filter)
+            .CaptureLogs();
 
         return SilenceLogParser.Parse(logs);
     }
@@ -172,16 +171,15 @@ public static partial class AudioProcessor
 
         var opts = options ?? new LoudnessNormalizeOptions();
         var firstPassFilter = BuildLoudnessFirstPassFilter(opts);
+        var measurements = FfFilterGraph
+            .FromBuffer(buffer)
+            .Custom(firstPassFilter)
+            .Measure(LoudnessLogParser.Parse);
 
-        LoudnessMeasurements measurements;
-        var logs = FfLogCapture.Capture(() =>
-        {
-            FfFilterGraphRunner.Execute(buffer, firstPassFilter, FfFilterGraphRunner.FilterExecutionMode.DiscardOutput);
-        });
-
-        measurements = LoudnessLogParser.Parse(logs);
         var secondPassFilter = BuildLoudnessSecondPassFilter(opts, measurements);
-        var normalized = FfFilterGraphRunner.Apply(buffer, secondPassFilter);
+        var normalized = FfFilterGraph.FromBuffer(buffer)
+            .Custom(secondPassFilter)
+            .ToBuffer();
         return new LoudnessNormalizationResult(normalized, measurements, opts);
     }
 

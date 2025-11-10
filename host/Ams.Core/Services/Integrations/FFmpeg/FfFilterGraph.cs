@@ -254,6 +254,28 @@ public sealed class FfFilterGraph
         FfFilterGraphRunner.Execute(BuildInputs(), spec, FfFilterGraphRunner.FilterExecutionMode.DiscardOutput);
     }
 
+    /// <summary>
+    /// Run the graph while capturing FFmpeg log output (via <see cref="FfLogCapture"/>).
+    /// </summary>
+    public IReadOnlyList<string> CaptureLogs()
+    {
+        var spec = BuildSpec();
+        return FfLogCapture.Capture(() =>
+        {
+            FfFilterGraphRunner.Execute(BuildInputs(), spec, FfFilterGraphRunner.FilterExecutionMode.DiscardOutput);
+        });
+    }
+
+    /// <summary>
+    /// Execute the graph in measurement mode and parse the collected logs.
+    /// </summary>
+    public T Measure<T>(Func<IReadOnlyList<string>, T> parser)
+    {
+        ArgumentNullException.ThrowIfNull(parser);
+        var logs = CaptureLogs();
+        return parser(logs);
+    }
+
     private IReadOnlyList<FfFilterGraphRunner.GraphInput> BuildInputs()
     {
         if (_inputs.Count == 0)
