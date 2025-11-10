@@ -145,7 +145,6 @@ internal sealed class ReplState
         try
         {
             Chapters = Directory.EnumerateFiles(WorkingDirectory, "*.wav", SearchOption.TopDirectoryOnly)
-                .Where(path => !string.Equals(Path.GetFileName(path), "roomtone.wav", StringComparison.OrdinalIgnoreCase))
                 .Select(path => new FileInfo(path))
                 .OrderBy(file => file, ChapterFileComparer.Instance)
                 .ToList();

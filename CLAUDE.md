@@ -30,11 +30,8 @@ The pipeline uses **Nemo ASR** for initial speech recognition and **Montreal For
    - Merges MFA TextGrid timings into hydrate and tx JSON files
    - Replaces initial ASR timings with more accurate forced-alignment timings
 
-5. **Roomtone Rendering** (`host/Ams.Core/Pipeline/RoomToneInsertionStage.cs`)
-   - Uses TextGrid gap hints for improved silence detection
-   - Fills gaps between sentences with generated room tone
-   - Configurable gap detection parameters (thresholds, step, backoff)
-   - Outputs: `{chapter}.treated.wav`
+5. **Treated Copy**
+   - Pipeline currently copies the source chapter WAV to `{chapter}.treated.wav` for downstream verification/staging.
 
 ### Key Models & Services
 
@@ -47,7 +44,7 @@ The pipeline uses **Nemo ASR** for initial speech recognition and **Montreal For
 ### Usage (PowerShell)
 
 ```powershell
-# Run full pipeline (ASR → Alignment → MFA → Roomtone)
+# Run full pipeline (ASR → Alignment → MFA)
 dotnet .\host\Ams.Cli\bin\Debug\net9.0\Ams.Cli.dll pipeline run `
   --book "C:\Books\MyBook.md" `
   --audio "C:\Audio\Chapter01.wav" `
@@ -67,18 +64,10 @@ dotnet .\host\Ams.Cli\bin\Debug\net9.0\Ams.Cli.dll align hydrate `
   --transcript "C:\Work\Chapter01.align.tx.json" `
   --output "C:\Work\Chapter01.align.hydrate.json"
 
-# 3. Roomtone rendering with custom gap parameters
-dotnet .\host\Ams.Cli\bin\Debug\net9.0\Ams.Cli.dll audio render `
-  --tx "C:\Work\Chapter01.align.tx.json" `
-  --output "C:\Work\Chapter01.treated.wav" `
-  --gap-left-threshold-db -30 `
-  --gap-right-threshold-db -30 `
-  --gap-step-ms 5 `
-  --gap-backoff-ms 5
+# 3. (Treated audio is currently a direct copy of the source WAV after alignment/MFA)
 ```
 
 ### Notes
 - MFA runs in a persistent PowerShell session with conda environment activated (via `MfaProcessSupervisor`)
 - TextGrid files provide phone-level timing precision for improved gap detection
-- Gap calibration steps inward until RMS drops below silence threshold
-- All gaps are clamped to neighboring sentence timings to prevent overlap with speech
+- Roomtone-specific calibration is temporarily disabled while audio processing is simplified
