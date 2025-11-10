@@ -97,6 +97,12 @@ public static class Log
         return factory;
     }
 
+    public static bool IsDebugLoggingEnabled()
+    {
+        var resolvedLevel = ResolveMinimumLevelFromEnvironment();
+        return resolvedLevel <= LogEventLevel.Debug;
+    }
+
     public static void Configure(ILoggerFactory factory, string? category = null)
     {
         if (factory is null)

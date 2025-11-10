@@ -102,7 +102,7 @@ internal static class CommandInputResolver
         }
 
         var searchRoot = ReplContext.Current?.WorkingDirectory ?? Directory.GetCurrentDirectory();
-        var patterns = new[] { "*.docx", "*.txt", "*.md", "*.rtf" };
+        var patterns = new[] { "*.docx", "*.txt", "*.md", "*.rtf", "*.pdf" };
         foreach (var pattern in patterns)
         {
             var match = Directory.EnumerateFiles(searchRoot, pattern, SearchOption.TopDirectoryOnly)

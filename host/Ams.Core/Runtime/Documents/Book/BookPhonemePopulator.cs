@@ -9,6 +9,8 @@ namespace Ams.Core.Runtime.Documents;
 
 public static class BookPhonemePopulator
 {
+    private const int MaxPhonemeVariantsPerWord = 32;
+
     public static async Task<BookIndex> PopulateMissingAsync(
         BookIndex index,
         IPronunciationProvider pronunciationProvider,
@@ -81,35 +83,42 @@ public static class BookPhonemePopulator
     private static string[] MergeVariants(string[]? current, string[] incoming)
     {
         var comparer = StringComparer.OrdinalIgnoreCase;
-        var list = new List<string>();
+        var set = new HashSet<string>(comparer);
 
-        void AddUnique(string? variant)
+        void AddRange(IEnumerable<string>? source)
         {
-            if (string.IsNullOrWhiteSpace(variant))
+            if (source is null)
             {
                 return;
             }
 
-            var trimmed = variant.Trim();
-            if (!list.Any(existing => comparer.Equals(existing, trimmed)))
+            foreach (var variant in source)
             {
-                list.Add(trimmed);
+                if (string.IsNullOrWhiteSpace(variant))
+                {
+                    continue;
+                }
+
+                var trimmed = variant.Trim();
+                if (trimmed.Length == 0)
+                {
+                    continue;
+                }
+
+                set.Add(trimmed);
+                if (set.Count >= MaxPhonemeVariantsPerWord)
+                {
+                    break;
+                }
             }
         }
 
-        if (current is { Length: >0 })
+        AddRange(current);
+        if (set.Count < MaxPhonemeVariantsPerWord)
         {
-            foreach (var existing in current)
-            {
-                AddUnique(existing);
-            }
+            AddRange(incoming);
         }
 
-        foreach (var variant in incoming)
-        {
-            AddUnique(variant);
-        }
-
-        return list.ToArray();
+        return set.ToArray();
     }
 }

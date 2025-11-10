@@ -1,6 +1,9 @@
 using System.Text;
 using System.Text.RegularExpressions;
 using Xceed.Words.NET;
+using UglyToad.PdfPig;
+using UglyToad.PdfPig.Content;
+using UglyToad.PdfPig.DocumentLayoutAnalysis.TextExtractor;
 
 namespace Ams.Core.Runtime.Documents;
 
@@ -13,7 +16,7 @@ public class BookParser : IBookParser
 {
     private static readonly HashSet<string> _supportedExtensions = new(StringComparer.OrdinalIgnoreCase)
     {
-        ".docx", ".txt", ".md", ".rtf"
+        ".docx", ".txt", ".md", ".rtf", ".pdf"
     };
 
     private static readonly Regex _paragraphBreakRegex = new(@"(\r?\n){2,}", RegexOptions.Compiled);
@@ -57,6 +60,7 @@ public class BookParser : IBookParser
                 ".txt" => await ParseTextAsync(filePath, cancellationToken),
                 ".md" => await ParseMarkdownAsync(filePath, cancellationToken),
                 ".rtf" => await ParseRtfAsync(filePath, cancellationToken),
+                ".pdf" => await ParsePdfAsync(filePath, cancellationToken),
                 _ => throw new InvalidOperationException($"Unsupported file format: {extension}")
             };
         }
@@ -308,6 +312,66 @@ public class BookParser : IBookParser
         catch (Exception ex) when (!(ex is OperationCanceledException))
         {
             throw new BookParseException($"Failed to parse RTF file '{filePath}': {ex.Message}", ex);
+        }
+    }
+
+    private async Task<BookParseResult> ParsePdfAsync(string filePath, CancellationToken cancellationToken)
+    {
+        try
+        {
+            return await Task.Run(() =>
+            {
+                using var document = PdfDocument.Open(filePath);
+                var parsedParagraphs = new List<ParsedParagraph>();
+                var metadata = new Dictionary<string, object>();
+
+                if (!string.IsNullOrWhiteSpace(document.Information.Title))
+                {
+                    metadata["title"] = document.Information.Title;
+                }
+                if (!string.IsNullOrWhiteSpace(document.Information.Author))
+                {
+                    metadata["author"] = document.Information.Author;
+                }
+
+                var sb = new StringBuilder();
+                foreach (var page in document.GetPages())
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    var text = ContentOrderTextExtractor.GetText(page);
+                    if (string.IsNullOrWhiteSpace(text))
+                    {
+                        continue;
+                    }
+
+                    var lines = text.Split('\n');
+                    foreach (var line in lines)
+                    {
+                        var trimmed = line.Trim('\r');
+                        if (string.IsNullOrWhiteSpace(trimmed))
+                        {
+                            sb.AppendLine();
+                            continue;
+                        }
+
+                        parsedParagraphs.Add(new ParsedParagraph(trimmed, null, "Body"));
+                        sb.AppendLine(trimmed);
+                        sb.AppendLine();
+                    }
+                }
+
+                return new BookParseResult(
+                    Text: sb.ToString(),
+                    Title: metadata.TryGetValue("title", out var titleObj) ? titleObj?.ToString() : null,
+                    Author: metadata.TryGetValue("author", out var authorObj) ? authorObj?.ToString() : null,
+                    Metadata: metadata.Count > 0 ? metadata : null,
+                    Paragraphs: parsedParagraphs
+                );
+            }, cancellationToken);
+        }
+        catch (Exception ex)
+        {
+            throw new BookParseException($"Failed to parse PDF file '{filePath}': {ex.Message}", ex);
         }
     }
 }
