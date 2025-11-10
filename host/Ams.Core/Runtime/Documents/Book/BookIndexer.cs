@@ -33,6 +33,7 @@ public class BookIndexer : IBookIndexer
         options ??= new BookIndexOptions();
 
         var paragraphTexts = BuildParagraphTexts(parseResult);
+        paragraphTexts = FoldAdjacentHeadings(paragraphTexts);
         var lexicalTokens = CollectLexicalTokens(paragraphTexts);
         IReadOnlyDictionary<string, string[]> pronunciations;
 
@@ -522,6 +523,79 @@ public class BookIndexer : IBookIndexer
             .Where(s => !string.IsNullOrEmpty(s))
             .Select(t => (Text: t.TrimEnd('\r', '\n'), Style: "Unknown", Kind: "Body"))
             .ToList();
+    }
+
+    private static List<(string Text, string Style, string Kind)> FoldAdjacentHeadings(List<(string Text, string Style, string Kind)> paragraphs)
+    {
+        if (paragraphs.Count == 0)
+        {
+            return paragraphs;
+        }
+
+        var folded = new List<(string Text, string Style, string Kind)>(paragraphs.Count);
+        int index = 0;
+        while (index < paragraphs.Count)
+        {
+            var current = paragraphs[index];
+            var trimmed = current.Text?.Trim() ?? string.Empty;
+            bool isHeading = ContainsLexicalContent(trimmed) && ShouldStartSection(trimmed, current.Style, current.Kind);
+            if (!isHeading)
+            {
+                folded.Add(current);
+                index++;
+                continue;
+            }
+
+            string combinedTitle = trimmed;
+            int nextIndex = index + 1;
+
+            while (nextIndex < paragraphs.Count)
+            {
+                var next = paragraphs[nextIndex];
+                var nextTrimmed = next.Text?.Trim() ?? string.Empty;
+
+                bool nextIsHeading = ContainsLexicalContent(nextTrimmed) && ShouldStartSection(nextTrimmed, next.Style, next.Kind);
+
+                if (!nextIsHeading)
+                {
+                    break;
+                }
+
+                combinedTitle = CombineHeadingTitles(combinedTitle, nextTrimmed);
+                nextIndex++;
+            }
+
+            folded.Add((combinedTitle, current.Style, current.Kind));
+            index = nextIndex;
+        }
+
+        return folded;
+    }
+
+    private static string CombineHeadingTitles(string first, string second)
+    {
+        if (string.IsNullOrWhiteSpace(first)) return second;
+        if (string.IsNullOrWhiteSpace(second)) return first;
+
+        var a = first.Trim();
+        var b = second.Trim();
+
+        if (string.Equals(a, b, StringComparison.OrdinalIgnoreCase))
+        {
+            return b;
+        }
+
+        if (b.StartsWith(a, StringComparison.OrdinalIgnoreCase))
+        {
+            return b;
+        }
+
+        if (a.EndsWith(b, StringComparison.OrdinalIgnoreCase))
+        {
+            return a;
+        }
+
+        return $"{a} — {b}";
     }
 
     private static IEnumerable<string> CollectLexicalTokens(List<(string Text, string Style, string Kind)> paragraphs)

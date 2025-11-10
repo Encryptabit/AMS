@@ -354,25 +354,90 @@ public static class SectionLocator
 
     private static int? ExtractLeadingNumber(IReadOnlyList<string> tokens)
     {
+        if (tokens == null || tokens.Count == 0)
+        {
+            return null;
+        }
+
         for (int i = 0; i < tokens.Count; i++)
         {
             var token = tokens[i];
-            if (TryParseIntToken(token, out var intVal)) return intVal;
-            if (TryParseRoman(token, out var romanVal)) return romanVal;
-            if (SpelledOrdinals.TryGetValue(token, out var ordVal)) return ordVal;
-            if (SpelledUnits.TryGetValue(token, out var unitVal)) return unitVal;
-            if (SpelledTens.TryGetValue(token, out var tensVal))
+
+            if (LeadingChapterKeywords.Contains(token))
             {
-                int total = tensVal;
-                if (i + 1 < tokens.Count && SpelledUnits.TryGetValue(tokens[i + 1], out var unit) && unit < 10)
+                if (i + 1 < tokens.Count && TryParseFullNumber(tokens, i + 1, out var keywordNumber, out _))
                 {
-                    total += unit;
+                    return keywordNumber;
                 }
-                return total;
+                continue;
+            }
+
+            if (TryParseEmbeddedChapterNumber(token, out var embeddedValue))
+            {
+                return embeddedValue;
+            }
+        }
+
+        for (int i = 0; i < tokens.Count; i++)
+        {
+            if (TryParseFullNumber(tokens, i, out var value, out var consumed))
+            {
+                return value;
+            }
+            if (consumed > 1)
+            {
+                i += consumed - 1;
             }
         }
 
         return null;
+    }
+
+    private static bool TryParseEmbeddedChapterNumber(string token, out int value)
+    {
+        foreach (var keyword in LeadingChapterKeywords)
+        {
+            if (token.StartsWith(keyword, StringComparison.Ordinal) && token.Length > keyword.Length)
+            {
+                var suffix = token[keyword.Length..];
+                if (TryParseIntToken(suffix, out value))
+                {
+                    return true;
+                }
+            }
+        }
+
+        value = 0;
+        return false;
+    }
+
+    private static bool TryParseFullNumber(IReadOnlyList<string> tokens, int index, out int value, out int consumed)
+    {
+        consumed = 1;
+        value = 0;
+        if (index >= tokens.Count)
+        {
+            return false;
+        }
+
+        var token = tokens[index];
+        if (TryParseIntToken(token, out value)) return true;
+        if (TryParseRoman(token, out value)) return true;
+        if (SpelledOrdinals.TryGetValue(token, out value)) return true;
+        if (SpelledUnits.TryGetValue(token, out value)) return true;
+
+        if (SpelledTens.TryGetValue(token, out var tensVal))
+        {
+            value = tensVal;
+            if (index + 1 < tokens.Count && SpelledUnits.TryGetValue(tokens[index + 1], out var unit) && unit < 10)
+            {
+                value += unit;
+                consumed = 2;
+            }
+            return true;
+        }
+
+        return false;
     }
 
     private static SectionLookup BuildSectionLookup(IReadOnlyList<SectionRange> sections)
@@ -454,5 +519,4 @@ public static class SectionLocator
         Dictionary<int, List<SectionCandidate>> ByNumber,
         Dictionary<string, List<SectionCandidate>> ByNormalized);
 }
-
 

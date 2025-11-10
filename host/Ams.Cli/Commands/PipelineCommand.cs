@@ -939,6 +939,13 @@ public static class PipelineCommand
             var maxWorkers = context.ParseResult.GetValueForOption(maxWorkersOption);
             var maxMfa = context.ParseResult.GetValueForOption(maxMfaOption);
             var showProgress = context.ParseResult.GetValueForOption(progressOption);
+#if DEBUG
+            if (showProgress)
+            {
+                Log.Debug("Progress UI disabled in Debug builds to keep console output readable.");
+            }
+            showProgress = false;
+#endif
 
             var repl = ReplContext.Current;
             if (repl?.RunAllChapters == true && repl.Chapters.Count > 0)
