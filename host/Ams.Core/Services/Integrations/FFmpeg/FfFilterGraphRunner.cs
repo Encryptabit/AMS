@@ -9,6 +9,13 @@ namespace Ams.Core.Services.Integrations.FFmpeg
     {
         internal readonly record struct GraphInput(string Label, AudioBuffer Buffer);
 
+        internal unsafe interface IAudioFrameSink : IDisposable
+        {
+            void Initialize(AudioBufferMetadata? templateMetadata, int sampleRate, int channels);
+            void Consume(AVFrame* frame);
+            void Complete();
+        }
+
         internal enum FilterExecutionMode
         {
             ReturnAudio,
@@ -18,7 +25,7 @@ namespace Ams.Core.Services.Integrations.FFmpeg
         public static AudioBuffer Apply(AudioBuffer input, string filterSpec)
         {
             var inputs = new[] { new GraphInput("main", input) };
-            return ExecuteInternal(inputs, filterSpec, FilterExecutionMode.ReturnAudio)
+            return ExecuteInternal(inputs, filterSpec, FilterExecutionMode.ReturnAudio, null)
                    ?? throw new InvalidOperationException("FFmpeg filter graph did not produce audio output.");
         }
 
@@ -27,14 +34,14 @@ namespace Ams.Core.Services.Integrations.FFmpeg
             if (inputs is null || inputs.Count == 0)
                 throw new ArgumentException("At least one input is required.", nameof(inputs));
 
-            return ExecuteInternal(inputs, filterSpec, FilterExecutionMode.ReturnAudio)
+            return ExecuteInternal(inputs, filterSpec, FilterExecutionMode.ReturnAudio, null)
                    ?? throw new InvalidOperationException("FFmpeg filter graph did not produce audio output.");
         }
 
         public static void Execute(AudioBuffer input, string filterSpec, FilterExecutionMode mode)
         {
             var inputs = new[] { new GraphInput("main", input) };
-            ExecuteInternal(inputs, filterSpec, mode);
+            ExecuteInternal(inputs, filterSpec, mode, null);
         }
 
         public static void Execute(IReadOnlyList<GraphInput> inputs, string filterSpec, FilterExecutionMode mode)
@@ -42,13 +49,24 @@ namespace Ams.Core.Services.Integrations.FFmpeg
             if (inputs is null || inputs.Count == 0)
                 throw new ArgumentException("At least one input is required.", nameof(inputs));
 
-            ExecuteInternal(inputs, filterSpec, mode);
+            ExecuteInternal(inputs, filterSpec, mode, null);
+        }
+
+        public static void Stream(IReadOnlyList<GraphInput> inputs, string filterSpec, IAudioFrameSink sink)
+        {
+            if (inputs is null || inputs.Count == 0)
+                throw new ArgumentException("At least one input is required.", nameof(inputs));
+
+            if (sink is null)
+                throw new ArgumentNullException(nameof(sink));
+
+            ExecuteInternal(inputs, filterSpec, FilterExecutionMode.DiscardOutput, sink);
         }
 
         private static AudioBuffer? ExecuteInternal(IReadOnlyList<GraphInput> inputs, string filterSpec,
-            FilterExecutionMode mode)
+            FilterExecutionMode mode, IAudioFrameSink? frameSink)
         {
-            using var executor = new FilterGraphExecutor(inputs, filterSpec, mode);
+            using var executor = new FilterGraphExecutor(inputs, filterSpec, mode, frameSink);
             executor.Process();
             return executor.BuildOutput();
         }
@@ -63,6 +81,7 @@ namespace Ams.Core.Services.Integrations.FFmpeg
             private readonly string _filterSpec;
             private readonly FilterExecutionMode _mode;
             private readonly AudioBufferMetadata? _primaryMetadata;
+            private readonly IAudioFrameSink? _frameSink;
 
             private AVFilterGraph* _graph;
             private AVFilterContext* _sink;
@@ -72,13 +91,14 @@ namespace Ams.Core.Services.Integrations.FFmpeg
             private readonly int _channels;
             private readonly int _sampleRate;
 
-            public FilterGraphExecutor(IReadOnlyList<GraphInput> inputs, string filterSpec, FilterExecutionMode mode)
+            public FilterGraphExecutor(IReadOnlyList<GraphInput> inputs, string filterSpec, FilterExecutionMode mode, IAudioFrameSink? frameSink)
             {
                 FfSession.EnsureFiltersAvailable();
 
                 // Let parse/connect wire sources->spec->sink. If empty, use a no-op.
                 _filterSpec = string.IsNullOrWhiteSpace(filterSpec) ? "anull" : filterSpec;
                 _mode = mode;
+                _frameSink = frameSink;
 
                 _graph = ffmpeg.avfilter_graph_alloc();
                 if (_graph == null)
@@ -100,7 +120,12 @@ namespace Ams.Core.Services.Integrations.FFmpeg
                 if (_outputFrame == null)
                     throw new InvalidOperationException("Failed to allocate FFmpeg frame.");
 
-                if (_mode == FilterExecutionMode.ReturnAudio)
+                if (_frameSink != null)
+                {
+                    _frameSink.Initialize(_primaryMetadata, _sampleRate, _channels);
+                }
+
+                if (_mode == FilterExecutionMode.ReturnAudio && _frameSink is null)
                     _accumulator = new AudioAccumulator(_channels, _sampleRate);
             }
 
@@ -115,6 +140,7 @@ namespace Ams.Core.Services.Integrations.FFmpeg
                 }
 
                 Drain(final: true);
+                _frameSink?.Complete();
             }
 
             public AudioBuffer? BuildOutput() => _accumulator?.ToBuffer(_primaryMetadata);
@@ -170,7 +196,9 @@ namespace Ams.Core.Services.Integrations.FFmpeg
 
                     FfUtils.ThrowIfError(ret, nameof(ffmpeg.av_buffersink_get_frame));
 
-                    if (_accumulator is not null)
+                    if (_frameSink is not null)
+                        _frameSink.Consume(_outputFrame);
+                    else if (_accumulator is not null)
                         _accumulator.Add(_outputFrame);
 
                     ffmpeg.av_frame_unref(_outputFrame);
@@ -364,6 +392,8 @@ namespace Ams.Core.Services.Integrations.FFmpeg
                         input.Dispose();
                     }
                 }
+
+                _frameSink?.Dispose();
             }
         }
 

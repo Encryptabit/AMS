@@ -7,6 +7,7 @@ using System.Threading.Tasks;
 using Ams.Core.Artifacts;
 using Ams.Core.Asr;
 using Whisper.net;
+using Ams.Core.Services.Integrations.FFmpeg;
 
 namespace Ams.Core.Processors;
 
@@ -66,7 +67,13 @@ public static class AsrProcessor
         var builder = ConfigureBuilder(factory, options, enableTokenTimestamps: options.EnableWordTimestamps);
 
         await using var processor = builder.Build();
-        using var wavStream = buffer.ToWavStream();
+        using var wavStream = new MemoryStream();
+        FfFilterGraph.FromBuffer(buffer)
+            .StreamToWave(wavStream, new AudioEncodeOptions
+            {
+                TargetSampleRate = AudioProcessor.DefaultAsrSampleRate,
+                TargetBitDepth = 16
+            });
         wavStream.Position = 0;
 
         var tokens = new List<AsrToken>();

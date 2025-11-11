@@ -27,6 +27,12 @@ internal static unsafe class FfEncoder
         Encode(buffer, output, options ?? new AudioEncodeOptions(), EncoderSink.CustomStream);
     }
 
+    internal static FfFilterGraphRunner.IAudioFrameSink CreateStreamingSink(Stream output, AudioEncodeOptions? options = null)
+    {
+        ArgumentNullException.ThrowIfNull(output);
+        return new StreamingEncoderSink(output, options ?? new AudioEncodeOptions());
+    }
+
     private static void Encode(AudioBuffer buffer, Stream output, AudioEncodeOptions options, EncoderSink sink)
     {
         ArgumentNullException.ThrowIfNull(buffer);
@@ -504,6 +510,213 @@ internal static unsafe class FfEncoder
         catch
         {
             return AVERROR_EOF;
+        }
+    }
+
+    private sealed unsafe class StreamingEncoderSink : FfFilterGraphRunner.IAudioFrameSink
+    {
+        private readonly Stream _output;
+        private readonly AudioEncodeOptions _options;
+        private AVFormatContext* _formatContext;
+        private AVCodecContext* _codecContext;
+        private AVStream* _stream;
+        private AVIOContext* _customIo;
+        private SwrContext* _resampler;
+        private AVFrame* _frame;
+        private GCHandle _streamHandle;
+        private avio_alloc_context_write_packet? _writeCallback;
+        private int _inputSampleRate;
+        private int _inputChannels;
+        private int _targetSampleRate;
+        private long _pts;
+        private bool _initialized;
+        private bool _completed;
+
+        public StreamingEncoderSink(Stream output, AudioEncodeOptions options)
+        {
+            _output = output ?? throw new ArgumentNullException(nameof(output));
+            _options = options ?? throw new ArgumentNullException(nameof(options));
+        }
+
+        public void Initialize(AudioBufferMetadata? templateMetadata, int sampleRate, int channels)
+        {
+            if (_initialized)
+            {
+                throw new InvalidOperationException("Streaming encoder sink already initialized.");
+            }
+
+            FfSession.EnsureInitialized();
+
+            _inputSampleRate = sampleRate;
+            _inputChannels = channels;
+            _targetSampleRate = _options.TargetSampleRate ?? sampleRate;
+            var bitDepth = _options.TargetBitDepth ?? 16;
+            var (codecId, sampleFormat) = ResolveEncoding(bitDepth);
+
+            var codec = avcodec_find_encoder(codecId);
+            if (codec == null)
+            {
+                throw new InvalidOperationException($"FFmpeg encoder for {codecId} not found.");
+            }
+
+            AVFormatContext* formatContext = null;
+            ThrowIfError(avformat_alloc_output_context2(&formatContext, null, "wav", null), nameof(avformat_alloc_output_context2));
+            if (formatContext == null)
+            {
+                throw new InvalidOperationException("FFmpeg could not create a WAV format context.");
+            }
+            _formatContext = formatContext;
+
+            _stream = avformat_new_stream(_formatContext, codec);
+            if (_stream == null)
+            {
+                throw new InvalidOperationException("avformat_new_stream failed");
+            }
+
+            var codecContext = avcodec_alloc_context3(codec);
+            if (codecContext == null)
+            {
+                throw new InvalidOperationException("avcodec_alloc_context3 failed");
+            }
+            _codecContext = codecContext;
+
+            _codecContext->codec_id = codec->id;
+            _codecContext->codec_type = AVMediaType.AVMEDIA_TYPE_AUDIO;
+            _codecContext->sample_fmt = sampleFormat;
+            _codecContext->sample_rate = _targetSampleRate;
+            _codecContext->time_base = new AVRational { num = 1, den = _targetSampleRate };
+
+            av_channel_layout_uninit(&_codecContext->ch_layout);
+            av_channel_layout_default(&_codecContext->ch_layout, _inputChannels);
+
+            ThrowIfError(avcodec_open2(_codecContext, codec, null), nameof(avcodec_open2));
+            avcodec_parameters_from_context(_stream->codecpar, _codecContext);
+            _stream->time_base = _codecContext->time_base;
+
+            SetupIo(_formatContext, _output, EncoderSink.CustomStream, ref _customIo, ref _streamHandle, ref _writeCallback);
+            ThrowIfError(avformat_write_header(_formatContext, null), nameof(avformat_write_header));
+
+            var inputLayout = CreateDefaultChannelLayout(_inputChannels);
+
+            var resampler = swr_alloc();
+            if (resampler == null)
+            {
+                throw new InvalidOperationException("Failed to allocate FFmpeg resampler.");
+            }
+
+            var resamplerPtr = resampler;
+            var codecContextPtr = _codecContext;
+            AVChannelLayout* inputLayoutPtr = stackalloc AVChannelLayout[1];
+            *inputLayoutPtr = inputLayout;
+            ThrowIfError(
+                swr_alloc_set_opts2(
+                    &resamplerPtr,
+                    &codecContextPtr->ch_layout,
+                    codecContextPtr->sample_fmt,
+                    codecContextPtr->sample_rate,
+                    inputLayoutPtr,
+                    AVSampleFormat.AV_SAMPLE_FMT_FLT,
+                    _inputSampleRate,
+                    0,
+                    null),
+                nameof(swr_alloc_set_opts2));
+            av_channel_layout_uninit(&inputLayout);
+            _resampler = resamplerPtr;
+            ThrowIfError(swr_init(_resampler), nameof(swr_init));
+
+            _frame = AllocateFrame(_codecContext);
+            _initialized = true;
+        }
+
+        public void Consume(AVFrame* frame)
+        {
+            if (!_initialized)
+            {
+                throw new InvalidOperationException("Streaming encoder sink has not been initialized.");
+            }
+
+            if (frame == null || frame->nb_samples <= 0)
+            {
+                return;
+            }
+
+            var dstCapacity = ComputeResampleOutputSamples(_resampler, _inputSampleRate, _targetSampleRate, frame->nb_samples);
+            if (dstCapacity <= 0)
+            {
+                dstCapacity = frame->nb_samples;
+            }
+
+            EnsureFrameCapacity(_frame, _codecContext, dstCapacity);
+            ThrowIfError(av_frame_make_writable(_frame), nameof(av_frame_make_writable));
+
+            byte** src = stackalloc byte*[1];
+            src[0] = frame->data[0];
+
+            var produced = swr_convert(_resampler, _frame->extended_data, dstCapacity, src, frame->nb_samples);
+            ThrowIfError(produced, nameof(swr_convert));
+            if (produced <= 0)
+            {
+                return;
+            }
+
+            _frame->nb_samples = produced;
+            _frame->pts = _pts;
+            _pts += produced;
+
+            ThrowIfError(avcodec_send_frame(_codecContext, _frame), nameof(avcodec_send_frame));
+            DrainEncoder(_codecContext, _stream, _formatContext);
+        }
+
+        public void Complete()
+        {
+            if (!_initialized || _completed)
+            {
+                return;
+            }
+
+            FlushResampler(_inputSampleRate, _targetSampleRate, _resampler, _frame, _codecContext, _stream, _formatContext, ref _pts);
+
+            ThrowIfError(avcodec_send_frame(_codecContext, null), nameof(avcodec_send_frame));
+            DrainEncoder(_codecContext, _stream, _formatContext);
+
+            ThrowIfError(av_write_trailer(_formatContext), nameof(av_write_trailer));
+            FinalizeIo(_formatContext, _output, EncoderSink.CustomStream, ref _customIo);
+
+            _completed = true;
+        }
+
+        public void Dispose()
+        {
+            Complete();
+
+            if (_frame != null)
+            {
+                var frame = _frame;
+                av_frame_free(&frame);
+                _frame = null;
+            }
+
+            if (_resampler != null)
+            {
+                var resampler = _resampler;
+                swr_free(&resampler);
+                _resampler = null;
+            }
+
+            if (_codecContext != null)
+            {
+                var codecContext = _codecContext;
+                av_channel_layout_uninit(&codecContext->ch_layout);
+                avcodec_free_context(&codecContext);
+                _codecContext = null;
+            }
+
+            if (_formatContext != null)
+            {
+                CleanupIo(_formatContext, EncoderSink.CustomStream, ref _customIo, ref _streamHandle, _writeCallback);
+                avformat_free_context(_formatContext);
+                _formatContext = null;
+            }
         }
     }
 
