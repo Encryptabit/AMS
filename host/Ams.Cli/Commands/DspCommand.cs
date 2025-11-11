@@ -25,6 +25,10 @@ public static class DspCommand
         ("lowpass", g => g.LowPass(new LowPassFilterParams(Frequency: 14000, Poles: 1))),
         ("deesser", g => g.DeEsser(new DeEsserFilterParams(NormalizedFrequency: 0.4, Intensity: 0.2, MaxReduction: 0.5, OutputMode: "o"))),
         ("denoise", g => g.FftDenoise(new FftDenoiseFilterParams(NoiseReductionDb: 6))),
+        ("ndenoise", g => g.NeuralDenoise()),
+        ("aspectralstats", g => g.AspectralStats()),
+        ("dynaudnorm", g => g.DynaudNorm()),
+        ("astats", g => g.AStats(new AStatsFilterParams(EmitMetadata: true, ResetInterval: 1))),
         ("compressor", g => g.ACompressor(new ACompressorFilterParams(ThresholdDb: -24, Ratio: 1.3, AttackMilliseconds: 5, ReleaseMilliseconds: 120, MakeupDb: 0.5))),
         ("limiter", g => g.ALimiter(new ALimiterFilterParams(LimitDb: -1.0, AttackMilliseconds: 5, ReleaseMilliseconds: 60))),
         ("loudnorm", g => g.LoudNorm(new LoudNormFilterParams(TargetI: -18, TargetLra: 7, TargetTp: -2, DualMono: true))),
@@ -218,7 +222,10 @@ public static class DspCommand
         var cmd = new Command("filter-chain", "Apply built-in FFmpeg filters to an input file");
 
         var inputOption = new Option<FileInfo?>("--input", "Input audio file (defaults to active chapter)");
-        var filtersOption = new Option<string[]>("--filters", () => Array.Empty<string>(), "Filters to apply (see dsp filters)");
+        var filtersOption = new Option<string[]>("--filters", () => Array.Empty<string>(), "Filters to apply (see dsp filters)")
+        {
+            AllowMultipleArgumentsPerToken = true
+        };
         var saveOption = new Option<bool>("--save", () => false, "Write filtered audio to disk");
         var outputOption = new Option<FileInfo?>("--output", "Optional output path when using --save");
 
@@ -1282,6 +1289,22 @@ public static class DspCommand
         if (explicitOutput is not null)
         {
             return explicitOutput;
+        }
+
+        var chapterArtifact = CommandInputResolver.TryResolveChapterArtifact(
+            provided: null,
+            suffix: "dsp.filtered.wav",
+            mustExist: false);
+
+        if (chapterArtifact is not null)
+        {
+            var artifactDirectory = chapterArtifact.DirectoryName;
+            if (!string.IsNullOrEmpty(artifactDirectory))
+            {
+                Directory.CreateDirectory(artifactDirectory);
+            }
+
+            return chapterArtifact;
         }
 
         var directory = inputFile.DirectoryName ?? Directory.GetCurrentDirectory();
