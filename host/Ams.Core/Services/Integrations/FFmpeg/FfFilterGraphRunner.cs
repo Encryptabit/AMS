@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Text;
 using Ams.Core.Artifacts;
 using FFmpeg.AutoGen;
 
@@ -292,21 +293,50 @@ namespace Ams.Core.Services.Integrations.FFmpeg
 
             private void ConfigureSinkFormat()
             {
-                int* sampleFmts = stackalloc int[2];
-                sampleFmts[0] = (int)AVSampleFormat.AV_SAMPLE_FMT_FLT;
-                sampleFmts[1] = -1;
+                ConfigureIntOption("sample_fmts", (int)AVSampleFormat.AV_SAMPLE_FMT_FLT);
+                ConfigureIntOption("sample_rates", _sampleRate);
+                ConfigureChannelLayouts();
+            }
+
+            private void ConfigureChannelLayouts()
+            {
+                var layoutName = _primaryMetadata?.CurrentChannelLayout
+                                 ?? AudioBufferMetadata.DescribeDefaultLayout(_channels);
+                if (string.IsNullOrWhiteSpace(layoutName))
+                {
+                    layoutName = "mono";
+                }
+
+                var layoutResult = ffmpeg.av_opt_set(
+                    _sink,
+                    "ch_layouts",
+                    layoutName,
+                    ffmpeg.AV_OPT_SEARCH_CHILDREN);
+
+                if (layoutResult < 0)
+                {
+                    var msg = FfUtils.FormatError(layoutResult);
+                    throw new InvalidOperationException($"Failed to configure sink channel layout: {msg}");
+                }
+            }
+
+            private void ConfigureIntOption(string optionName, int value)
+            {
+                int* buffer = stackalloc int[2];
+                buffer[0] = value;
+                buffer[1] = -1;
 
                 var result = ffmpeg.av_opt_set_bin(
                     _sink,
-                    "sample_fmts",
-                    (byte*)sampleFmts,
+                    optionName,
+                    (byte*)buffer,
                     sizeof(int) * 2,
                     ffmpeg.AV_OPT_SEARCH_CHILDREN);
 
                 if (result < 0)
                 {
                     var msg = FfUtils.FormatError(result);
-                    throw new InvalidOperationException($"Failed to configure sink sample format: {msg}");
+                    throw new InvalidOperationException($"Failed to configure sink option '{optionName}': {msg}");
                 }
             }
 

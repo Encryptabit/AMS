@@ -188,6 +188,8 @@ internal static unsafe class FfEncoder
         var cursor = 0;
         long pts = 0;
 
+        byte** src = stackalloc byte*[channels];
+
         while (cursor < totalSamples)
         {
             var chunk = Math.Min(DefaultChunkSamples, totalSamples - cursor);
@@ -200,7 +202,6 @@ internal static unsafe class FfEncoder
             EnsureFrameCapacity(frame, cc, dstCapacity);
             ThrowIfError(av_frame_make_writable(frame), nameof(av_frame_make_writable));
 
-            byte** src = stackalloc byte*[channels];
             for (int ch = 0; ch < channels; ch++)
             {
                 var basePtr = (float*)channelPointers[ch];

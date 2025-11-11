@@ -203,6 +203,7 @@ internal static unsafe class FfDecoder
                 {
                     using var packet = new FfPacket();
                     using var frame = new FfFrame();
+                    using var resampleScratch = new ResampleScratch();
 
                     var channelSamples = new List<List<float>>(targetChannels);
                     for (int i = 0; i < targetChannels; i++)
@@ -238,7 +239,7 @@ internal static unsafe class FfDecoder
                             }
 
                             ThrowIfError(receive, nameof(avcodec_receive_frame));
-                            AppendSamples(frame.Pointer, resampler, needsResample, sourceSampleRate, targetChannels, targetSampleRate, targetFormat, channelSamples);
+                            AppendSamples(frame.Pointer, resampler, needsResample, sourceSampleRate, targetChannels, targetSampleRate, targetFormat, channelSamples, resampleScratch);
                         }
                     }
 
@@ -253,7 +254,7 @@ internal static unsafe class FfDecoder
                         }
 
                         ThrowIfError(receive, nameof(avcodec_receive_frame));
-                        AppendSamples(frame.Pointer, resampler, needsResample, sourceSampleRate, targetChannels, targetSampleRate, targetFormat, channelSamples);
+                        AppendSamples(frame.Pointer, resampler, needsResample, sourceSampleRate, targetChannels, targetSampleRate, targetFormat, channelSamples, resampleScratch);
                     }
 
                     var length = channelSamples.Count > 0 ? channelSamples[0].Count : 0;
@@ -330,35 +331,22 @@ internal static unsafe class FfDecoder
         int targetChannels,
         int targetSampleRate,
         AVSampleFormat targetFormat,
-        IList<List<float>> channelSamples)
+        IList<List<float>> channelSamples,
+        ResampleScratch scratch)
     {
         var dstNbSamples = ComputeResampleOutputSamples(resampler, sourceSampleRate, targetSampleRate, frame->nb_samples);
+        var converted = scratch.Rent(targetChannels, dstNbSamples, targetFormat);
 
-        byte** converted = null;
-        try
+        var samples = swr_convert(resampler, converted, dstNbSamples, frame->extended_data, frame->nb_samples);
+        ThrowIfError(samples, nameof(swr_convert));
+
+        for (int ch = 0; ch < targetChannels; ch++)
         {
-            var ret = av_samples_alloc_array_and_samples(&converted, null, targetChannels, dstNbSamples, targetFormat, 0);
-            ThrowIfError(ret, nameof(av_samples_alloc_array_and_samples));
-
-            var samples = swr_convert(resampler, converted, dstNbSamples, frame->extended_data, frame->nb_samples);
-            ThrowIfError(samples, nameof(swr_convert));
-
-            for (int ch = 0; ch < targetChannels; ch++)
+            var dst = (float*)converted[ch];
+            var list = channelSamples[ch];
+            for (int i = 0; i < samples; i++)
             {
-                var dst = (float*)converted[ch];
-                var list = channelSamples[ch];
-                for (int i = 0; i < samples; i++)
-                {
-                    list.Add(dst[i]);
-                }
-            }
-        }
-        finally
-        {
-            if (converted != null)
-            {
-                av_freep(&converted[0]);
-                av_free(converted);
+                list.Add(dst[i]);
             }
         }
     }
@@ -371,11 +359,12 @@ internal static unsafe class FfDecoder
         int targetChannels,
         int targetSampleRate,
         AVSampleFormat targetFormat,
-        IList<List<float>> channelSamples)
+        IList<List<float>> channelSamples,
+        ResampleScratch scratch)
     {
         if (needsResample)
         {
-            ResampleInto(resampler, sourceSampleRate, frame, targetChannels, targetSampleRate, targetFormat, channelSamples);
+            ResampleInto(resampler, sourceSampleRate, frame, targetChannels, targetSampleRate, targetFormat, channelSamples, scratch);
             return;
         }
 
@@ -417,6 +406,57 @@ internal static unsafe class FfDecoder
         }
 
         return dict.Count == 0 ? null : dict;
+    }
+
+    private sealed unsafe class ResampleScratch : IDisposable
+    {
+        private byte** _buffers;
+        private int _channels;
+        private int _capacity;
+        private AVSampleFormat _format;
+
+        public byte** Rent(int channels, int samples, AVSampleFormat format)
+        {
+            if (_buffers == null || _channels != channels || _capacity < samples || _format != format)
+            {
+                Release();
+                _channels = channels;
+                _capacity = samples;
+                _format = format;
+
+                byte** buffers = null;
+                var ret = av_samples_alloc_array_and_samples(&buffers, null, channels, samples, format, 0);
+                ThrowIfError(ret, nameof(av_samples_alloc_array_and_samples));
+                _buffers = buffers;
+            }
+
+            return _buffers;
+        }
+
+        public void Dispose() => Release();
+
+        private void Release()
+        {
+            if (_buffers == null)
+            {
+                return;
+            }
+
+            for (int ch = 0; ch < _channels; ch++)
+            {
+                if (_buffers[ch] != null)
+                {
+                    ffmpeg.av_free(_buffers[ch]);
+                    _buffers[ch] = null;
+                }
+            }
+
+            ffmpeg.av_free(_buffers);
+            _buffers = null;
+            _channels = 0;
+            _capacity = 0;
+            _format = AVSampleFormat.AV_SAMPLE_FMT_NONE;
+        }
     }
 
     private sealed class FfPacket : IDisposable
