@@ -263,8 +263,11 @@ public sealed class FfFilterGraph
         return AddFilter("dynaudnorm", args);
     }
 
-    public FfFilterGraph Resample(ResampleFilterParams? parameters) =>
-        AddRawFilter("aresample", $"{parameters.SampleRate}");
+    public FfFilterGraph Resample(ResampleFilterParams? parameters)
+    {
+        var p = parameters ?? new ResampleFilterParams();
+        return AddRawFilter("aresample", $"{p.SampleRate}");
+    }
 
     /// <summary>
     /// Silence trimming (libavfilter <c>silenceremove</c>).
@@ -284,6 +287,30 @@ public sealed class FfFilterGraph
 
     public FfFilterGraph AStats(AStatsFilterParams parameters)
         => AddRawFilter("astats", $"metadata={(parameters.EmitMetadata ? 1 : 0)}:reset={parameters.ResetInterval}");
+
+    /// <summary>
+    /// Enforce fixed-size analysis windows (libavfilter <c>asetnsamples</c>).
+    /// </summary>
+    public FfFilterGraph ASetNSamples(int sampleCount, bool padIncompleteWindows = true)
+    {
+        var clamped = Math.Max(sampleCount, 1);
+        return AddFilter("asetnsamples",
+            ("n", FormatDouble(clamped)),
+            ("pad", padIncompleteWindows ? "1" : "0"));
+    }
+
+    /// <summary>
+    /// Emit per-frame debug info (libavfilter <c>ashowinfo</c>).
+    /// </summary>
+    public FfFilterGraph AShowInfo(string? level = null)
+    {
+        if (string.IsNullOrWhiteSpace(level))
+        {
+            return AddFilter("ashowinfo");
+        }
+
+        return AddFilter("ashowinfo", ("level", level));
+    }
 
     /// <summary>
     /// Spectral statistics analyzer (libavfilter <c>aspectralstats</c>).

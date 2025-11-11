@@ -120,15 +120,11 @@ internal static unsafe class FfUtils
 
     public static unsafe AVChannelLayout SelectChannelLayout(AVCodecContext* ctx)
     {
-        // short circuit for now, we dont have to support this yet
-        return CreateDefaultChannelLayout(1);
+        if (ctx == null)
+            throw new ArgumentNullException(nameof(ctx));
 
-        ulong* p;
-        AVChannelLayout* chLayouts;
-        int numChLayouts = 0;
-
-        avcodec_get_supported_config(ctx, null, AVCodecConfig.AV_CODEC_CONFIG_CHANNEL_LAYOUT,
-            0, (void**)&chLayouts, &numChLayouts);
+        var channels = ctx->ch_layout.nb_channels > 0 ? ctx->ch_layout.nb_channels : 1;
+        return CreateDefaultChannelLayout(channels);
     }
 
     public static unsafe int ComputeResampleOutputSamples(SwrContext* resampler, int sourceSampleRate,
