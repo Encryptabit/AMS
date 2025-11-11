@@ -17,7 +17,28 @@ public sealed record DeEsserFilterParams(
 
 public sealed record FftDenoiseFilterParams(double NoiseReductionDb = 12);
 
-public sealed record NeuralDenoiseFilterParams(string Model = "rnnoise");
+public sealed record NeuralDenoiseFilterParams(string Model = "rnnoise", double Mix = 0.6);
+
+public sealed record AspectralStatsFilterParams(
+    int WindowSize = 4096,
+    string WindowFunction = "hann",
+    double Overlap = 0.5,
+    string Measure = "all");
+
+public sealed record DynaudNormFilterParams(
+    double FrameLengthMilliseconds = 500,
+    int GaussSize = 31,
+    double Peak = 0.95,
+    double MaxGain = 10,
+    double TargetRms = 0.0,
+    bool Coupling = true,
+    bool CorrectDc = false,
+    bool AltBoundary = false,
+    double Compress = 0.0,
+    double Threshold = 0.0,
+    string? Channels = null,
+    double Overlap = 0.0,
+    string? Curve = null);
 
 public sealed record ACompressorFilterParams(
     double ThresholdDb = -18,

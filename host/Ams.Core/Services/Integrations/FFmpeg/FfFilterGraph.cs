@@ -167,13 +167,18 @@ public sealed class FfFilterGraph
     /// <summary>
     /// Neural denoiser (libavfilter <c>arnndn</c>).
     /// </summary>
-    public FfFilterGraph NeuralDenoise(string model = "rnnoise") =>
+    public FfFilterGraph NeuralDenoise(string model = "models/sh.rnnn") =>
         NeuralDenoise(new NeuralDenoiseFilterParams(model));
 
     public FfFilterGraph NeuralDenoise(NeuralDenoiseFilterParams? parameters)
     {
         var p = parameters ?? new NeuralDenoiseFilterParams();
-        return AddFilter("arnndn", ("model", p.Model));
+        var resolvedModel = ResolveFilterAssetPath(p.Model);
+        var normalizedModel = NormalizeFilterPathArgument(resolvedModel);
+        var formattedArg = FormatFilterPathArgument(normalizedModel);
+        var mix = Math.Clamp(p.Mix, 0, 1);
+        var rawArgs = $"model={formattedArg}:mix={FormatDouble(mix)}";
+        return AddRawFilter("arnndn", rawArgs);
     }
 
     /// <summary>
@@ -224,6 +229,40 @@ public sealed class FfFilterGraph
             ("dual_mono", p.DualMono ? "1" : "0"));
     }
 
+    /// <summary>
+    /// Dynamic audio normalization (libavfilter <c>dynaudnorm</c>).
+    /// </summary>
+    public FfFilterGraph DynaudNorm(DynaudNormFilterParams? parameters = null)
+    {
+        var p = parameters ?? new DynaudNormFilterParams();
+        var args = new List<(string Key, string? Value)>
+        {
+            ("framelen", FormatDouble(Math.Max(p.FrameLengthMilliseconds, 10))),
+            ("gausssize", FormatDouble(Math.Max(p.GaussSize, 1))),
+            ("peak", FormatFraction(p.Peak)),
+            ("maxgain", FormatDouble(Math.Max(p.MaxGain, 1))),
+            ("targetrms", FormatDouble(p.TargetRms)),
+            ("coupling", p.Coupling ? "1" : "0"),
+            ("correctdc", p.CorrectDc ? "1" : "0"),
+            ("altboundary", p.AltBoundary ? "1" : "0"),
+            ("compress", FormatDouble(Math.Max(p.Compress, 0))),
+            ("threshold", FormatDouble(p.Threshold)),
+            ("overlap", FormatFraction(p.Overlap))
+        };
+
+        if (!string.IsNullOrWhiteSpace(p.Channels))
+        {
+            args.Add(("channels", p.Channels));
+        }
+
+        if (!string.IsNullOrWhiteSpace(p.Curve))
+        {
+            args.Add(("curve", p.Curve));
+        }
+
+        return AddFilter("dynaudnorm", args);
+    }
+
     public FfFilterGraph Resample(ResampleFilterParams? parameters) =>
         AddRawFilter("aresample", $"{parameters.SampleRate}");
 
@@ -245,6 +284,19 @@ public sealed class FfFilterGraph
 
     public FfFilterGraph AStats(AStatsFilterParams parameters)
         => AddRawFilter("astats", $"metadata={(parameters.EmitMetadata ? 1 : 0)}:reset={parameters.ResetInterval}");
+
+    /// <summary>
+    /// Spectral statistics analyzer (libavfilter <c>aspectralstats</c>).
+    /// </summary>
+    public FfFilterGraph AspectralStats(AspectralStatsFilterParams? parameters = null)
+    {
+        var p = parameters ?? new AspectralStatsFilterParams();
+        return AddFilter("aspectralstats",
+            ("win_size", FormatDouble(Math.Max(p.WindowSize, 32))),
+            ("win_func", string.IsNullOrWhiteSpace(p.WindowFunction) ? "hann" : p.WindowFunction),
+            ("overlap", FormatFraction(p.Overlap)),
+            ("measure", string.IsNullOrWhiteSpace(p.Measure) ? "all" : p.Measure));
+    }
 
     /// <summary>
     /// Measurement helper (libavfilter <c>ebur128</c>).
@@ -440,6 +492,86 @@ public sealed class FfFilterGraph
             .Replace("'", @"\'");
     }
 
+    private static string ResolveFilterAssetPath(string? model)
+    {
+        var trimmed = model?.Trim();
+        if (string.IsNullOrEmpty(trimmed))
+        {
+            return string.Empty;
+        }
+
+        if (Path.IsPathRooted(trimmed))
+        {
+            return trimmed;
+        }
+
+        var normalized = trimmed
+            .Replace('\\', Path.DirectorySeparatorChar)
+            .Replace('/', Path.DirectorySeparatorChar);
+        var candidate = Path.Combine(AppContext.BaseDirectory, normalized);
+        if (File.Exists(candidate))
+        {
+            var fullPath = Path.GetFullPath(candidate);
+            var relative = TryGetRelativePathSafe(Directory.GetCurrentDirectory(), fullPath);
+            if (!string.IsNullOrEmpty(relative))
+            {
+                return relative;
+            }
+
+            return CopyFilterAssetToWorkingDirectory(fullPath);
+        }
+
+        return trimmed;
+    }
+
+    private static string NormalizeFilterPathArgument(string path)
+    {
+        var target = string.IsNullOrWhiteSpace(path) ? "rnnoise" : path;
+        return target
+            .Replace('\\', '/')
+            .Replace('\r', '/')
+            .Replace('\n', '/');
+    }
+
+    private static string FormatFilterPathArgument(string path)
+    {
+        var sanitized = string.IsNullOrWhiteSpace(path) ? "rnnoise" : path;
+        var escapedQuotes = sanitized.Replace("'", @"\'");
+        return $@"\'{escapedQuotes}\'";
+    }
+
+    private static string CopyFilterAssetToWorkingDirectory(string sourcePath)
+    {
+        var cacheRoot = Path.Combine(Directory.GetCurrentDirectory(), ".ams-dsp-models");
+        Directory.CreateDirectory(cacheRoot);
+        var destination = Path.Combine(cacheRoot, Path.GetFileName(sourcePath));
+
+        var sourceTimestamp = File.GetLastWriteTimeUtc(sourcePath);
+        var destinationTimestamp = File.Exists(destination)
+            ? File.GetLastWriteTimeUtc(destination)
+            : DateTime.MinValue;
+
+        if (destinationTimestamp < sourceTimestamp)
+        {
+            File.Copy(sourcePath, destination, overwrite: true);
+        }
+
+        return Path.Combine(".ams-dsp-models", Path.GetFileName(sourcePath));
+    }
+
+    private static string? TryGetRelativePathSafe(string basePath, string targetPath)
+    {
+        try
+        {
+            var relative = Path.GetRelativePath(basePath, targetPath);
+            return relative.Contains(':') ? null : relative;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
     private static string FormatDouble(double value) => FfUtils.FormatNumber(value);
     private static string FormatDecibels(double value) => FfUtils.FormatDecibels(value);
     private static string FormatFraction(double value) => FfUtils.FormatFraction(value);
@@ -455,4 +587,3 @@ public sealed class FfFilterGraph
         _formatPinned = true;
     }
 }
-

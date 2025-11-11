@@ -12,6 +12,14 @@
   </ItemGroup>
 
   <ItemGroup>
+    <None Include="Services\Integrations\FFmpeg\models\**\*">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+      <Link>models\%(RecursiveDir)%(Filename)%(Extension)</Link>
+    </None>
+  </ItemGroup>
+
+  <ItemGroup>
     <PackageReference Include="DocX" Version="4.0.25105.5786" />
     <PackageReference Include="FFmpeg.AutoGen" Version="7.1.1" />
     <PackageReference Include="Microsoft.Extensions.Logging" Version="9.0.0" />
@@ -33,6 +41,7 @@
   </ItemGroup>
   <ItemGroup>
     <Folder Include="ExtTools\ffmpeg\" />
+    <Folder Include="Services\Integrations\FFmpeg\models\" />
   </ItemGroup>
   <Target Name="VerifyPlugalyzerCopy" AfterTargets="CopyFilesOutputgroupOutput">
     <Message Text="Checking for Plugalyzer.exe in output..." Importance="high" />

@@ -21,4 +21,12 @@
     <PackageReference Include="Spectre.Console" Version="0.47.0" />
     <PackageReference Include="Whisper.net.AllRuntimes" Version="1.8.1" />
   </ItemGroup>
+
+  <ItemGroup>
+    <None Include="..\Ams.Core\Services\Integrations\FFmpeg\models\**\*">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+      <Link>models\%(RecursiveDir)%(Filename)%(Extension)</Link>
+    </None>
+  </ItemGroup>
 </Project>

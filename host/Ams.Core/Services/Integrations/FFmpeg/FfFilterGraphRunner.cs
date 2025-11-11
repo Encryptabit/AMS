@@ -71,7 +71,7 @@ namespace Ams.Core.Services.Integrations.FFmpeg
             return executor.BuildOutput();
         }
 
-        private unsafe sealed class FilterGraphExecutor : IDisposable
+        private sealed unsafe class FilterGraphExecutor : IDisposable
         {
             // Tuneable: larger chunk = fewer calls, smaller chunk = lower latency.
             private const int ChunkSamples = 4096;
