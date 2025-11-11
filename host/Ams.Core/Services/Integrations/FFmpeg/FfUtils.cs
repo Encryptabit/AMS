@@ -137,4 +137,19 @@ internal static unsafe class FfUtils
         var delay = swr_get_delay(resampler, sourceSampleRate);
         return (int)av_rescale_rnd(delay + sourceSamples, targetSampleRate, sourceSampleRate, AVRounding.AV_ROUND_UP);
     }
+
+    public static string FormatNumber(double value, string format = "0.####")
+        => value.ToString(format, CultureInfo.InvariantCulture);
+
+    public static string FormatDecibels(double value)
+        => $"{FormatNumber(value)}dB";
+
+    public static string FormatMilliseconds(double value)
+        => FormatNumber(value);
+
+    public static string FormatFraction(double value, double min = 0d, double max = 1d)
+    {
+        var clamped = Math.Clamp(value, min, max);
+        return FormatNumber(clamped);
+    }
 }

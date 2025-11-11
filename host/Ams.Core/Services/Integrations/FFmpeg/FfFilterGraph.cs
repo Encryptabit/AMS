@@ -1,9 +1,11 @@
 using System;
 using System.Collections.Generic;
 using System.Globalization;
+using System.IO;
 using System.Linq;
 using System.Text;
 using Ams.Core.Artifacts;
+using Ams.Core.Processors;
 
 namespace Ams.Core.Services.Integrations.FFmpeg;
 
@@ -101,7 +103,7 @@ public sealed class FfFilterGraph
         }
         if (sampleRate.HasValue)
         {
-            args.Add(("sample_rates", sampleRate.Value.ToString(CultureInfo.InvariantCulture)));
+            args.Add(("sample_rates", FormatDouble(sampleRate.Value)));
         }
         return AddFilter("aformat", args, markFormatPinned: true);
     }
@@ -110,68 +112,120 @@ public sealed class FfFilterGraph
     /// High-pass filter (libavfilter <c>highpass</c>, ffmpeg <c>-af highpass=f=...</c>).
     /// </summary>
     public FfFilterGraph HighPass(double frequencyHz = 70, double poles = 2) =>
-        AddFilter("highpass",
-            ("f", FormatFloat(frequencyHz)),
-            ("poles", FormatFloat(poles)));
+        HighPass(new HighPassFilterParams(frequencyHz, poles));
+
+    public FfFilterGraph HighPass(HighPassFilterParams? parameters)
+    {
+        var p = parameters ?? new HighPassFilterParams();
+        return AddFilter("highpass",
+            ("frequency", FormatDouble(p.Frequency)),
+            ("poles", FormatDouble(Math.Clamp(p.Poles, 1, 2))));
+    }
 
     /// <summary>
     /// Low-pass filter (libavfilter <c>lowpass</c>).
     /// </summary>
     public FfFilterGraph LowPass(double frequencyHz = 12000, double poles = 2) =>
-        AddFilter("lowpass",
-            ("f", FormatFloat(frequencyHz)),
-            ("poles", FormatFloat(poles)));
+        LowPass(new LowPassFilterParams(frequencyHz, poles));
+
+    public FfFilterGraph LowPass(LowPassFilterParams? parameters)
+    {
+        var p = parameters ?? new LowPassFilterParams();
+        return AddFilter("lowpass",
+            ("frequency", FormatDouble(p.Frequency)),
+            ("poles", FormatDouble(Math.Clamp(p.Poles, 1, 2))));
+    }
 
     /// <summary>
     /// Simple de-esser (libavfilter <c>deesser</c>).
     /// </summary>
-    public FfFilterGraph DeEsser(double frequencyHz = 6500, double width = 1000, double threshold = -20) =>
-        AddFilter("deesser",
-            ("f", FormatFloat(frequencyHz)),
-            ("w", FormatFloat(width)),
-            ("t", $"{FormatFloat(threshold)}dB"));
+    public FfFilterGraph DeEsser(double normalizedFrequency = 0.5, double intensity = 0, double maxReduction = 0.5, string outputMode = "o") =>
+        DeEsser(new DeEsserFilterParams(normalizedFrequency, intensity, maxReduction, outputMode));
+
+    public FfFilterGraph DeEsser(DeEsserFilterParams? parameters)
+    {
+        var p = parameters ?? new DeEsserFilterParams();
+        return AddFilter("deesser",
+            ("f", FormatFraction(p.NormalizedFrequency)),
+            ("i", FormatFraction(p.Intensity)),
+            ("m", FormatFraction(p.MaxReduction)),
+            ("s", p.OutputMode));
+    }
 
     /// <summary>
     /// Frequency-domain denoise (libavfilter <c>afftdn</c>).
     /// </summary>
     public FfFilterGraph FftDenoise(double noiseReductionDb = 12) =>
-        AddFilter("afftdn", ("nr", FormatFloat(noiseReductionDb)));
+        FftDenoise(new FftDenoiseFilterParams(noiseReductionDb));
+
+    public FfFilterGraph FftDenoise(FftDenoiseFilterParams? parameters)
+    {
+        var p = parameters ?? new FftDenoiseFilterParams();
+        return AddFilter("afftdn", ("nr", FormatDouble(p.NoiseReductionDb)));
+    }
 
     /// <summary>
     /// Neural denoiser (libavfilter <c>arnndn</c>).
     /// </summary>
     public FfFilterGraph NeuralDenoise(string model = "rnnoise") =>
-        AddFilter("arnndn", ("model", model));
+        NeuralDenoise(new NeuralDenoiseFilterParams(model));
+
+    public FfFilterGraph NeuralDenoise(NeuralDenoiseFilterParams? parameters)
+    {
+        var p = parameters ?? new NeuralDenoiseFilterParams();
+        return AddFilter("arnndn", ("model", p.Model));
+    }
 
     /// <summary>
     /// Gentle compressor (libavfilter <c>acompressor</c>).
     /// </summary>
     public FfFilterGraph ACompressor(double thresholdDb = -18, double ratio = 2.0, double attackMs = 10, double releaseMs = 100, double makeupDb = 2.0) =>
-        AddFilter("acompressor",
-            ("threshold", $"{FormatFloat(thresholdDb)}dB"),
-            ("ratio", FormatFloat(ratio)),
-            ("attack", FormatFloat(attackMs)),
-            ("release", FormatFloat(releaseMs)),
-            ("makeup", FormatFloat(makeupDb)));
+        ACompressor(new ACompressorFilterParams(thresholdDb, ratio, attackMs, releaseMs, makeupDb));
+
+    public FfFilterGraph ACompressor(ACompressorFilterParams? parameters)
+    {
+        var p = parameters ?? new ACompressorFilterParams();
+        return AddFilter("acompressor",
+            ("threshold", FormatDecibels(p.ThresholdDb)),
+            ("ratio", FormatDouble(p.Ratio)),
+            ("attack", FormatDouble(p.AttackMilliseconds)),
+            ("release", FormatDouble(p.ReleaseMilliseconds)),
+            ("makeup", FormatDecibels(p.MakeupDb)));
+    }
 
     /// <summary>
     /// Safety limiter (libavfilter <c>alimiter</c>).
     /// </summary>
     public FfFilterGraph ALimiter(double limitDb = -3, double attack = 5, double release = 50) =>
-        AddFilter("alimiter",
-            ("limit", $"{FormatFloat(limitDb)}dB"),
-            ("attack", FormatFloat(attack)),
-            ("release", FormatFloat(release)));
+        ALimiter(new ALimiterFilterParams(limitDb, attack, release));
+
+    public FfFilterGraph ALimiter(ALimiterFilterParams? parameters)
+    {
+        var p = parameters ?? new ALimiterFilterParams();
+        return AddFilter("alimiter",
+            ("limit", FormatDecibels(p.LimitDb)),
+            ("attack", FormatDouble(p.AttackMilliseconds)),
+            ("release", FormatDouble(p.ReleaseMilliseconds)));
+    }
 
     /// <summary>
     /// Loudness normalization (libavfilter <c>loudnorm</c>).
     /// </summary>
     public FfFilterGraph LoudNorm(double targetI = -18, double targetLra = 7, double targetTp = -2, bool dualMono = true) =>
-        AddFilter("loudnorm",
-            ("I", FormatFloat(targetI)),
-            ("LRA", FormatFloat(targetLra)),
-            ("TP", FormatFloat(targetTp)),
-            ("dual_mono", dualMono ? "1" : "0"));
+        LoudNorm(new LoudNormFilterParams(targetI, targetLra, targetTp, dualMono));
+
+    public FfFilterGraph LoudNorm(LoudNormFilterParams? parameters)
+    {
+        var p = parameters ?? new LoudNormFilterParams();
+        return AddFilter("loudnorm",
+            ("I", FormatDouble(p.TargetI)),
+            ("LRA", FormatDouble(p.TargetLra)),
+            ("TP", FormatDouble(p.TargetTp)),
+            ("dual_mono", p.DualMono ? "1" : "0"));
+    }
+
+    public FfFilterGraph Resample(ResampleFilterParams? parameters) =>
+        AddRawFilter("aresample", $"{parameters.SampleRate}");
 
     /// <summary>
     /// Silence trimming (libavfilter <c>silenceremove</c>).
@@ -179,17 +233,27 @@ public sealed class FfFilterGraph
     public FfFilterGraph SilenceRemove(string args = "start_periods=0:start_threshold=-50dB:stop_periods=0:stop_threshold=-50dB") =>
         AddRawFilter("silenceremove", args);
 
+    public FfFilterGraph SilenceRemove(SilenceRemoveFilterParams parameters)
+        => AddRawFilter("silenceremove",
+            $"start_periods={parameters.StartPeriods}:start_threshold={parameters.StartThreshold}:stop_periods={parameters.StopPeriods}:stop_threshold={parameters.StopThreshold}");
+
     /// <summary>
     /// Measurement helper (libavfilter <c>astats</c>).
     /// </summary>
     public FfFilterGraph AStats(string args = "metadata=1:reset=1") =>
         AddRawFilter("astats", args);
 
+    public FfFilterGraph AStats(AStatsFilterParams parameters)
+        => AddRawFilter("astats", $"metadata={(parameters.EmitMetadata ? 1 : 0)}:reset={parameters.ResetInterval}");
+
     /// <summary>
     /// Measurement helper (libavfilter <c>ebur128</c>).
     /// </summary>
     public FfFilterGraph EbuR128(string args = "framelog=verbose") =>
         AddRawFilter("ebur128", args);
+
+    public FfFilterGraph EbuR128(EbuR128FilterParams parameters)
+        => AddRawFilter("ebur128", $"framelog={parameters.FrameLog}");
 
     /// <summary>
     /// Inject a raw filter clause when fluent helpers are insufficient.
@@ -276,6 +340,23 @@ public sealed class FfFilterGraph
         return parser(logs);
     }
 
+    public void StreamToWave(Stream output, AudioEncodeOptions? options = null)
+    {
+        ArgumentNullException.ThrowIfNull(output);
+        var spec = BuildSpec();
+        using var sink = FfEncoder.CreateStreamingSink(output, options ?? new AudioEncodeOptions());
+        FfFilterGraphRunner.Stream(BuildInputs(), spec, sink);
+    }
+
+    public FfFilterGraph Gain(double multiplier = 1.0) =>
+        Gain(new GainFilterParams(multiplier));
+
+    public FfFilterGraph Gain(GainFilterParams? parameters)
+    {
+        var p = parameters ?? new GainFilterParams();
+        return AddFilter("volume", ("volume", FormatDouble(p.Multiplier)));
+    }
+
     private IReadOnlyList<FfFilterGraphRunner.GraphInput> BuildInputs()
     {
         if (_inputs.Count == 0)
@@ -359,8 +440,9 @@ public sealed class FfFilterGraph
             .Replace("'", @"\'");
     }
 
-    private static string FormatFloat(double value) =>
-        value.ToString("0.####", CultureInfo.InvariantCulture);
+    private static string FormatDouble(double value) => FfUtils.FormatNumber(value);
+    private static string FormatDecibels(double value) => FfUtils.FormatDecibels(value);
+    private static string FormatFraction(double value) => FfUtils.FormatFraction(value);
 
     private void EnsureDefaultFormatClause()
     {
@@ -373,3 +455,4 @@ public sealed class FfFilterGraph
         _formatPinned = true;
     }
 }
+
