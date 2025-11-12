@@ -12,7 +12,7 @@ using Ams.Core.Audio;
 using Ams.Core.Processors;
 using Ams.Core.Runtime.Documents;
 using Ams.Core.Common;
-using Ams.Core.Hydrate;
+using Ams.Core.Artifacts.Hydrate;
 using Ams.Core.Prosody;
 using Ams.Cli.Repl;
 using Ams.Cli.Utilities;
@@ -409,7 +409,9 @@ public static class ValidateCommand
 
             try
             {
-                var result = await GenerateReportAsync(txFile, hydrateFile, allErrors, topSentences, topParagraphs, includeWords, includeAllFlagged);
+                var bookIndexFile = CommandInputResolver.ResolveBookIndex(null);
+                using var handle = ChapterContextFactory.Create(bookIndexFile, transcriptFile: txFile, hydrateFile: hydrateFile);
+                var result = GenerateReport(handle.Chapter.Documents.Transcript, handle.Chapter.Documents.HydratedTranscript, allErrors, topSentences, topParagraphs, includeWords, includeAllFlagged);
 
                 var summarySentences = result.Sentences.Count;
                 var summarySentencesFlagged = result.Sentences.Count(s => !string.Equals(s.Status, "ok", StringComparison.OrdinalIgnoreCase));
@@ -426,7 +428,8 @@ public static class ValidateCommand
                     ?? new FileInfo(Path.Combine(Directory.GetCurrentDirectory(), "validate.report.txt"));
 
                 Directory.CreateDirectory(targetFile.DirectoryName ?? Directory.GetCurrentDirectory());
-                await File.WriteAllTextAsync(targetFile.FullName, result.Report, Encoding.UTF8);
+                await File.WriteAllTextAsync(targetFile.FullName, result.Report, Encoding.UTF8, context.GetCancellationToken());
+                handle.Save();
                 Log.Debug("Validation report written to {Output}", targetFile.FullName);
             }
             catch (Exception ex)
@@ -439,46 +442,15 @@ public static class ValidateCommand
         return cmd;
     }
 
-    private static async Task<ReportResult> GenerateReportAsync(FileInfo? txFile,
-        FileInfo? hydrateFile,
+    private static ReportResult GenerateReport(
+        TranscriptIndex? tx,
+        HydratedTranscript? hydrated,
         bool allErrors,
         int topSentences,
         int topParagraphs,
         bool includeWordTallies,
         bool includeAllFlagged)
     {
-        TranscriptIndex? tx = null;
-        HydratedTranscript? hydrated = null;
-
-        var jsonOptions = new JsonSerializerOptions
-        {
-            PropertyNameCaseInsensitive = true
-        };
-
-        if (txFile is not null)
-        {
-            if (!txFile.Exists)
-            {
-                throw new FileNotFoundException($"TranscriptIndex file not found: {txFile.FullName}");
-            }
-
-            var txJson = await File.ReadAllTextAsync(txFile.FullName);
-            tx = JsonSerializer.Deserialize<TranscriptIndex>(txJson, jsonOptions)
-                 ?? throw new InvalidOperationException("Failed to deserialize TranscriptIndex JSON");
-        }
-
-        if (hydrateFile is not null)
-        {
-            if (!hydrateFile.Exists)
-            {
-                throw new FileNotFoundException($"Hydrated transcript file not found: {hydrateFile.FullName}");
-            }
-
-            var hydrateJson = await File.ReadAllTextAsync(hydrateFile.FullName);
-            hydrated = JsonSerializer.Deserialize<HydratedTranscript>(hydrateJson, jsonOptions)
-                        ?? throw new InvalidOperationException("Failed to deserialize hydrated transcript JSON");
-        }
-
         if (tx is null && hydrated is null)
         {
             throw new InvalidOperationException("No transcript artifacts could be loaded");

@@ -4,7 +4,7 @@ using System.Linq;
 using System.Text.Json;
 using Ams.Core;
 
-namespace Ams.Core.Alignment.Anchors;
+namespace Ams.Core.Processors.Alignment.Anchors;
 
 public sealed record SectionDetectOptions(bool Detect = true, int AsrPrefixTokens = 8);
 

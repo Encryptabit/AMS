@@ -4,7 +4,7 @@ using System.Linq;
 using System.Collections.ObjectModel;
 using Ams.Core.Artifacts;
 using Ams.Core.Runtime.Documents;
-using Ams.Core.Hydrate;
+using Ams.Core.Artifacts.Hydrate;
 using SentenceTiming = Ams.Core.Artifacts.SentenceTiming;
 
 namespace Ams.Core.Prosody;

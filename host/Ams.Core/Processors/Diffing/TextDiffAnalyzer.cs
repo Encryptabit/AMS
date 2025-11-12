@@ -4,10 +4,10 @@ using System.Linq;
 using System.Text;
 using Ams.Core.Artifacts;
 using Ams.Core.Common;
-using Ams.Core.Hydrate;
+using Ams.Core.Artifacts.Hydrate;
 using DiffMatchPatch;
 
-namespace Ams.Core.Diffing;
+namespace Ams.Core.Processors.Diffing;
 
 public static class TextDiffAnalyzer
 {

@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using Ams.Core.Runtime.Artifacts;
 using Ams.Core.Runtime.Chapter;
 
 namespace Ams.Core.Runtime.Book;
@@ -70,48 +71,14 @@ public sealed record BookDescriptor
     public IReadOnlyDictionary<string, string>? Documents { get; }
 }
 
-public sealed class BookDocumentManager
-{
-    private readonly Dictionary<string, string> _documents;
-
-    public BookDocumentManager(IReadOnlyDictionary<string, string>? initial = null)
-    {
-        _documents = initial != null
-            ? new Dictionary<string, string>(initial, StringComparer.OrdinalIgnoreCase)
-            : new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-    }
-
-    public IReadOnlyDictionary<string, string> Documents => _documents;
-
-    public void Register(string key, string path)
-    {
-        ArgumentException.ThrowIfNullOrEmpty(key);
-        ArgumentException.ThrowIfNullOrEmpty(path);
-        _documents[key] = path;
-    }
-
-    public bool TryGet(string key, out string path)
-    {
-        ArgumentException.ThrowIfNullOrEmpty(key);
-        return _documents.TryGetValue(key, out path!);
-    }
-
-    public bool Remove(string key)
-    {
-        ArgumentException.ThrowIfNullOrEmpty(key);
-        return _documents.Remove(key);
-    }
-
-    public void Clear() => _documents.Clear();
-}
-
 public sealed class BookManager
 {
     private readonly IReadOnlyList<BookDescriptor> _descriptors;
     private readonly Dictionary<string, BookContext> _cache;
+    private readonly IArtifactResolver _artifactResolver;
     private int _cursor;
 
-    public BookManager(IReadOnlyList<BookDescriptor> descriptors)
+    public BookManager(IReadOnlyList<BookDescriptor> descriptors, IArtifactResolver? resolver = null)
     {
         _descriptors = descriptors ?? throw new ArgumentNullException(nameof(descriptors));
         if (descriptors.Count == 0)
@@ -120,6 +87,7 @@ public sealed class BookManager
         }
 
         _cache = new Dictionary<string, BookContext>(StringComparer.OrdinalIgnoreCase);
+        _artifactResolver = resolver ?? FileArtifactResolver.Instance;
         _cursor = 0;
     }
 
@@ -188,6 +156,7 @@ public sealed class BookManager
 
         if (_cache.Remove(bookId, out var context))
         {
+            context.Save();
             context.Chapters.DeallocateAll();
         }
     }
@@ -196,6 +165,7 @@ public sealed class BookManager
     {
         foreach (var context in _cache.Values)
         {
+            context.Save();
             context.Chapters.DeallocateAll();
         }
 
@@ -206,7 +176,7 @@ public sealed class BookManager
     {
         if (!_cache.TryGetValue(descriptor.BookId, out var context))
         {
-            context = new BookContext(descriptor);
+            context = new BookContext(descriptor, _artifactResolver);
             _cache[descriptor.BookId] = context;
         }
 

@@ -1,5 +1,5 @@
 using System.Collections.Generic;
-using Ams.Core.Alignment.Anchors;
+using Ams.Core.Processors.Alignment.Anchors;
 using Ams.Core;
 using Xunit;
 

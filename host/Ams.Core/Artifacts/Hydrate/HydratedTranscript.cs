@@ -2,9 +2,9 @@ using System;
 using System.Collections.Generic;
 using System.Text.Json.Serialization;
 using Ams.Core.Artifacts;
-using Ams.Core.Alignment.Tx;
+using Ams.Core.Processors.Alignment.Tx;
 
-namespace Ams.Core.Hydrate;
+namespace Ams.Core.Artifacts.Hydrate;
 
 public sealed record HydratedTranscript(
     [property: JsonPropertyName("audioPath")] string AudioPath,

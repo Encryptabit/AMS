@@ -6,7 +6,8 @@ using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
-using Ams.Core.Alignment.Mfa;
+using Ams.Core.Artifacts.Alignment;
+using Ams.Core.Artifacts.Alignment.Mfa;
 using Ams.Core.Runtime.Documents;
 using Ams.Core.Common;
 

@@ -1,7 +1,8 @@
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
-using Ams.Core.Alignment.Mfa;
+using Ams.Core.Artifacts.Alignment;
+using Ams.Core.Artifacts.Alignment.Mfa;
 
 namespace Ams.Cli.Services;
 

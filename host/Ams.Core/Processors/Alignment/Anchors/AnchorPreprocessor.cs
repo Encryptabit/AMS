@@ -3,7 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using Ams.Core;
 
-namespace Ams.Core.Alignment.Anchors;
+namespace Ams.Core.Processors.Alignment.Anchors;
 
 public sealed record BookAnchorView(
     IReadOnlyList<string> Tokens,
