@@ -23,7 +23,7 @@ public static class ValidationReportBuilder
         var info = ExtractSourceInfo(transcript, hydrated);
         var sentences = BuildSentenceViews(transcript, hydrated);
         var paragraphs = BuildParagraphViews(transcript, hydrated);
-        var tallies = options.IncludeWordTallies ? BuildWordTallies(transcript) : null;
+        var tallies = options.IncludeWordTallies ? BuildWordTallies(sentences) : null;
 
         var report = BuildTextReport(info, sentences, paragraphs, tallies, options, hydrated);
         return new ReportResult(report, sentences, paragraphs, tallies);
@@ -131,35 +131,29 @@ public static class ValidationReportBuilder
             .ToList();
     }
 
-    private static WordTallies? BuildWordTallies(TranscriptIndex? tx)
+    private static WordTallies? BuildWordTallies(IReadOnlyList<SentenceView> sentences)
     {
-        if (tx is null)
+        if (sentences.Count == 0)
         {
             return null;
         }
 
-        int match = 0, substitution = 0, insertion = 0, deletion = 0;
-
-        foreach (var word in tx.Words)
+        var totals = AggregateDiffStats(sentences.Select(s => s.Diff?.Stats));
+        if (!totals.HasAny)
         {
-            switch (word.Op)
-            {
-                case AlignOp.Match:
-                    match++;
-                    break;
-                case AlignOp.Sub:
-                    substitution++;
-                    break;
-                case AlignOp.Ins:
-                    insertion++;
-                    break;
-                case AlignOp.Del:
-                    deletion++;
-                    break;
-            }
+            return null;
         }
 
-        return new WordTallies(match, substitution, insertion, deletion, tx.Words.Count);
+        var substitution = Math.Min(totals.Insertions, totals.Deletions);
+        var insertionsOnly = totals.Insertions - substitution;
+        var deletionsOnly = totals.Deletions - substitution;
+
+        return new WordTallies(
+            Match: ClampToInt(totals.Matches),
+            Substitution: ClampToInt(substitution),
+            Insertion: ClampToInt(insertionsOnly),
+            Deletion: ClampToInt(deletionsOnly),
+            Total: ClampToInt(totals.ReferenceTokens));
     }
 
     private static string BuildTextReport(
@@ -364,4 +358,78 @@ public static class ValidationReportBuilder
     private static bool HasSentenceDiffIssues(SentenceView sentence)
     {
         var stats = sentence.Diff?.Stats;
-        if (stat
+        if (stats is null)
+        {
+            return !string.Equals(sentence.Status, "ok", StringComparison.OrdinalIgnoreCase);
+        }
+
+        return stats.Insertions > 0 || stats.Deletions > 0;
+    }
+
+    private static bool HasParagraphDiffIssues(ParagraphView paragraph)
+    {
+        var stats = paragraph.Diff?.Stats;
+        if (stats is null)
+        {
+            return !string.Equals(paragraph.Status, "ok", StringComparison.OrdinalIgnoreCase);
+        }
+
+        return stats.Insertions > 0 || stats.Deletions > 0;
+    }
+
+    private static void AppendDiffOps(StringBuilder builder, HydratedDiff? diff, string indent, int maxOps = 5)
+    {
+        if (diff?.Ops is not { Count: > 0 } ops)
+        {
+            builder.AppendLine($"{indent}Diff ops: (none)");
+            return;
+        }
+
+        var interesting = ops
+            .Where(op => !string.Equals(op.Operation, "equal", StringComparison.OrdinalIgnoreCase))
+            .Take(maxOps)
+            .ToList();
+
+        if (interesting.Count == 0)
+        {
+            builder.AppendLine($"{indent}Diff ops: (only equal segments)");
+            return;
+        }
+
+        foreach (var op in interesting)
+        {
+            builder.AppendLine($"{indent}{op.Operation.ToUpperInvariant(),-7} {FormatTokens(op.Tokens)}");
+        }
+
+        if (ops.Count > interesting.Count)
+        {
+            builder.AppendLine($"{indent}... ({ops.Count - interesting.Count} more op(s))");
+        }
+    }
+
+    private static string FormatTokens(IReadOnlyList<string> tokens)
+    {
+        if (tokens.Count == 0)
+        {
+            return "(empty)";
+        }
+
+        var joined = string.Join(' ', tokens);
+        return TrimText(joined, 80);
+    }
+
+    private static string TrimText(string text, int? maxLength = null)
+    {
+        var normalized = text.Replace('\n', ' ').Replace('\r', ' ').Trim();
+        if (maxLength is null || normalized.Length <= maxLength.Value)
+        {
+            return normalized;
+        }
+
+        return normalized[..maxLength.Value].TrimEnd() + "…";
+    }
+
+    private static int ClampToInt(long value)
+        => value > int.MaxValue ? int.MaxValue : (int)value;
+
+}

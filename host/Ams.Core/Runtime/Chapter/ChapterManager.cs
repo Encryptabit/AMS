@@ -10,7 +10,7 @@ public sealed class ChapterManager
     private const int DefaultMaxCachedContexts = 5;
 
     private readonly BookContext _bookContext;
-    private readonly IReadOnlyList<ChapterDescriptor> _descriptors;
+    private readonly List<ChapterDescriptor> _descriptors;
     private readonly Dictionary<string, ChapterContext> _cache;
     private readonly Dictionary<string, LinkedListNode<string>> _usageNodes;
     private readonly LinkedList<string> _usageOrder;
@@ -20,7 +20,7 @@ public sealed class ChapterManager
     internal ChapterManager(BookContext bookContext, int maxCachedContexts = DefaultMaxCachedContexts)
     {
         _bookContext = bookContext ?? throw new ArgumentNullException(nameof(bookContext));
-        _descriptors = bookContext.Descriptor.Chapters;
+        _descriptors = new List<ChapterDescriptor>(bookContext.Descriptor.Chapters);
         _cache = new Dictionary<string, ChapterContext>(StringComparer.OrdinalIgnoreCase);
         _usageNodes = new Dictionary<string, LinkedListNode<string>>(StringComparer.OrdinalIgnoreCase);
         _usageOrder = new LinkedList<string>();
@@ -29,6 +29,7 @@ public sealed class ChapterManager
     }
 
     public int Count => _descriptors.Count;
+    public IReadOnlyList<ChapterDescriptor> Descriptors => _descriptors;
 
     public ChapterContext Current
     {
@@ -67,6 +68,38 @@ public sealed class ChapterManager
         }
 
         throw new KeyNotFoundException($"Chapter '{chapterId}' was not found in book '{_bookContext.Descriptor.BookId}'.");
+    }
+
+    public bool Contains(string chapterId)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(chapterId);
+        for (int i = 0; i < _descriptors.Count; i++)
+        {
+            if (string.Equals(_descriptors[i].ChapterId, chapterId, StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    public ChapterDescriptor UpsertDescriptor(ChapterDescriptor descriptor)
+    {
+        ArgumentNullException.ThrowIfNull(descriptor);
+
+        for (int i = 0; i < _descriptors.Count; i++)
+        {
+            if (string.Equals(_descriptors[i].ChapterId, descriptor.ChapterId, StringComparison.OrdinalIgnoreCase))
+            {
+                var merged = MergeDescriptors(_descriptors[i], descriptor);
+                _descriptors[i] = merged;
+                return merged;
+            }
+        }
+
+        _descriptors.Add(descriptor);
+        return descriptor;
     }
 
     public bool TryMoveNext(out ChapterContext context)
@@ -177,5 +210,20 @@ public sealed class ChapterManager
                 context.Audio.DeallocateAll();
             }
         }
+    }
+
+    private static ChapterDescriptor MergeDescriptors(ChapterDescriptor existing, ChapterDescriptor incoming)
+    {
+        var aliasSet = new HashSet<string>(existing.Aliases, StringComparer.OrdinalIgnoreCase);
+        foreach (var alias in incoming.Aliases)
+        {
+            aliasSet.Add(alias);
+        }
+
+        var rootPath = string.IsNullOrWhiteSpace(incoming.RootPath) ? existing.RootPath : incoming.RootPath;
+        var audioBuffers = incoming.AudioBuffers.Count > 0 ? incoming.AudioBuffers : existing.AudioBuffers;
+        var documents = incoming.Documents ?? existing.Documents;
+
+        return new ChapterDescriptor(existing.ChapterId, rootPath, audioBuffers, documents, aliasSet.ToArray());
     }
 }
