@@ -7,6 +7,7 @@
   <ItemGroup>
     <None Include="ExtTools\ffmpeg\**\*">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+        <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
       <Link>ExtTools\ffmpeg\%(RecursiveDir)%(Filename)%(Extension)</Link>
     </None>
   </ItemGroup>
@@ -41,15 +42,47 @@
     </None>
   </ItemGroup>
   <ItemGroup>
-    <Folder Include="ExtTools\ffmpeg\" />
     <Folder Include="Services\Integrations\FFmpeg\models\" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Update="ExtTools\ffmpeg\binaries\avcodec-61.dll">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </None>
+    <None Update="ExtTools\ffmpeg\binaries\avdevice-61.dll">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </None>
+    <None Update="ExtTools\ffmpeg\binaries\avfilter-10.dll">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </None>
+    <None Update="ExtTools\ffmpeg\binaries\avformat-61.dll">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </None>
+    <None Update="ExtTools\ffmpeg\binaries\avutil-59.dll">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </None>
+    <None Update="ExtTools\ffmpeg\binaries\ffmpeg.exe">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </None>
+    <None Update="ExtTools\ffmpeg\binaries\ffplay.exe">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </None>
+    <None Update="ExtTools\ffmpeg\binaries\ffprobe.exe">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </None>
+    <None Update="ExtTools\ffmpeg\binaries\postproc-58.dll">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </None>
+    <None Update="ExtTools\ffmpeg\binaries\swresample-5.dll">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </None>
+    <None Update="ExtTools\ffmpeg\binaries\swscale-8.dll">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </None>
   </ItemGroup>
   <Target Name="VerifyPlugalyzerCopy" AfterTargets="CopyFilesOutputgroupOutput">
     <Message Text="Checking for Plugalyzer.exe in output..." Importance="high" />
-    <Message Text="File exists: $(OutputPath)ExtTools\Plugalyzer.exe" Importance="high"
-             Condition="Exists('$(OutputPath)ExtTools\Plugalyzer.exe')" />
-    <Warning Text="Plugalyzer.exe was not copied to output directory!"
-             Condition="!Exists('$(OutputPath)ExtTools\Plugalyzer.exe')" />
+    <Message Text="File exists: $(OutputPath)ExtTools\Plugalyzer.exe" Importance="high" Condition="Exists('$(OutputPath)ExtTools\Plugalyzer.exe')" />
+    <Warning Text="Plugalyzer.exe was not copied to output directory!" Condition="!Exists('$(OutputPath)ExtTools\Plugalyzer.exe')" />
   </Target>
   <PropertyGroup>
     <TargetFramework>net9.0</TargetFramework>

@@ -18,6 +18,7 @@ using Ams.Core.Processors.Alignment.Mfa;
 using Ams.Core.Services.Alignment;
 using Ams.Core.Artifacts;
 using Ams.Core.Audio;
+using Ams.Core.Services;
 using Ams.Core.Processors;
 using Ams.Core.Runtime.Documents;
 using Ams.Core.Common;
@@ -63,10 +64,13 @@ public static class PipelineCommand
         Log.Debug(message, args);
     }
 
-    public static Command Create()
+    public static Command Create(IChapterContextFactory chapterFactory, IAsrService asrServiceClient)
     {
+        ArgumentNullException.ThrowIfNull(chapterFactory);
+        ArgumentNullException.ThrowIfNull(asrServiceClient);
+
         var pipeline = new Command("pipeline", "Run the end-to-end chapter pipeline");
-        pipeline.AddCommand(CreateRun());
+        pipeline.AddCommand(CreateRun(chapterFactory, asrServiceClient));
         pipeline.AddCommand(CreatePrepCommand());
         pipeline.AddCommand(CreateVerifyCommand());
         pipeline.AddCommand(CreateStatsCommand());
@@ -244,13 +248,15 @@ public static class PipelineCommand
     }
 
     private static async Task RunPipelineForMultipleChaptersAsync(
+        IChapterContextFactory chapterFactory,
+        IAsrService asrServiceClient,
         FileInfo bookFile,
         DirectoryInfo? workDirOption,
         FileInfo? bookIndexOverride,
         bool forceIndex,
         bool force,
         double avgWpm,
-        string asrService,
+        string asrServiceUrl,
         string? asrModel,
         string asrLanguage,
         bool verbose,
@@ -260,6 +266,9 @@ public static class PipelineCommand
         ProgressContext? progressContext,
         CancellationToken cancellationToken)
     {
+        ArgumentNullException.ThrowIfNull(chapterFactory);
+        ArgumentNullException.ThrowIfNull(asrServiceClient);
+
         if (chapterFiles is null || chapterFiles.Count == 0)
         {
             Log.Debug("No chapters available for pipeline run.");
@@ -319,6 +328,8 @@ public static class PipelineCommand
                 cancellationToken.ThrowIfCancellationRequested();
 
                 await RunPipelineAsync(
+                    chapterFactory,
+                    asrServiceClient,
                     bookFile,
                     chapter,
                     workDirOption,
@@ -327,7 +338,7 @@ public static class PipelineCommand
                     forceIndex,
                     force,
                     avgWpm,
-                    asrService,
+                    asrServiceUrl,
                     asrModel,
                     asrLanguage,
                     verbose,
@@ -888,8 +899,11 @@ public static class PipelineCommand
         return cmd;
     }
 
-    private static Command CreateRun()
+    private static Command CreateRun(IChapterContextFactory chapterFactory, IAsrService asrServiceClient)
     {
+        ArgumentNullException.ThrowIfNull(chapterFactory);
+        ArgumentNullException.ThrowIfNull(asrServiceClient);
+
         var cmd = new Command("run", "Build index, run ASR, align, and hydrate in one pass");
 
         var bookOption = new Option<FileInfo?>("--book", "Path to the book manuscript (DOCX/TXT/etc.)");
@@ -943,7 +957,7 @@ public static class PipelineCommand
             var forceAll = context.ParseResult.GetValueForOption(forceOption);
             var forceIndex = context.ParseResult.GetValueForOption(forceIndexOption);
             var avgWpm = context.ParseResult.GetValueForOption(avgWpmOption);
-            var asrService = context.ParseResult.GetValueForOption(asrServiceOption) ?? "http://localhost:8000";
+            var asrServiceUrl = context.ParseResult.GetValueForOption(asrServiceOption) ?? "http://localhost:8000";
             var asrModel = context.ParseResult.GetValueForOption(asrModelOption);
             var asrLanguage = context.ParseResult.GetValueForOption(asrLanguageOption) ?? "en";
             var verbose = context.ParseResult.GetValueForOption(verboseOption);
@@ -969,13 +983,15 @@ public static class PipelineCommand
                             .StartAsync(async progressContext =>
                             {
                                 await RunPipelineForMultipleChaptersAsync(
-                                bookFile,
+                                    chapterFactory,
+                                    asrServiceClient,
+                                    bookFile,
                                     workDir,
                                     bookIndex,
                                     forceIndex,
                                     forceAll,
                                     avgWpm,
-                                    asrService,
+                                    asrServiceUrl,
                                     asrModel,
                                     asrLanguage,
                                     verbose,
@@ -989,13 +1005,15 @@ public static class PipelineCommand
                     else
                     {
                         await RunPipelineForMultipleChaptersAsync(
+                            chapterFactory,
+                            asrServiceClient,
                             bookFile,
                             workDir,
                             bookIndex,
                             forceIndex,
                             forceAll,
                             avgWpm,
-                            asrService,
+                            asrServiceUrl,
                             asrModel,
                             asrLanguage,
                             verbose,
@@ -1034,6 +1052,8 @@ public static class PipelineCommand
                             try
                             {
                                 await RunPipelineAsync(
+                                    chapterFactory,
+                                    asrServiceClient,
                                     bookFile,
                                     audioFile,
                                     workDir,
@@ -1042,7 +1062,7 @@ public static class PipelineCommand
                                     forceIndex,
                                     forceAll,
                                     avgWpm,
-                                    asrService,
+                                    asrServiceUrl,
                                     asrModel,
                                     asrLanguage,
                                     verbose,
@@ -1068,6 +1088,8 @@ public static class PipelineCommand
                 {
                     using var concurrency = PipelineConcurrencyControl.CreateSingle();
                     await RunPipelineAsync(
+                        chapterFactory,
+                        asrServiceClient,
                         bookFile,
                         audioFile,
                         workDir,
@@ -1076,7 +1098,7 @@ public static class PipelineCommand
                         forceIndex,
                         forceAll,
                         avgWpm,
-                        asrService,
+                        asrServiceUrl,
                         asrModel,
                         asrLanguage,
                         verbose,
@@ -1100,6 +1122,8 @@ public static class PipelineCommand
     }
 
     private static async Task RunPipelineAsync(
+        IChapterContextFactory chapterFactory,
+        IAsrService asrServiceClient,
         FileInfo bookFile,
         FileInfo audioFile,
         DirectoryInfo? workDirOption,
@@ -1108,7 +1132,7 @@ public static class PipelineCommand
         bool forceIndex,
         bool force,
         double avgWpm,
-        string asrService,
+        string asrServiceUrl,
         string? asrModel,
         string asrLanguage,
         bool verbose,
@@ -1116,6 +1140,9 @@ public static class PipelineCommand
         PipelineConcurrencyControl concurrency,
         CancellationToken cancellationToken)
     {
+        ArgumentNullException.ThrowIfNull(chapterFactory);
+        ArgumentNullException.ThrowIfNull(asrServiceClient);
+
         bool quiet = progress is not null;
         bool logInfo = !quiet || verbose;
         if (!bookFile.Exists)
@@ -1223,12 +1250,12 @@ public static class PipelineCommand
                 else
                 {
                     LogStageInfo(logInfo, "Running ASR stage");
-                    using var asrHandle = ChapterContextFactory.Create(
+                    using var asrHandle = chapterFactory.Create(
                         bookIndexFile,
                         audioFile: audioFile,
                         chapterId: chapterStem);
 
-                    await AsrCommand.RunAsrAsync(asrHandle, asrFile, asrService, asrModel, asrLanguage).ConfigureAwait(false);
+                    await AsrCommand.RunAsrAsync(asrHandle, asrFile, asrServiceClient, asrServiceUrl, asrModel, asrLanguage).ConfigureAwait(false);
                     asrHandle.Save();
                     asrFile.Refresh();
                     asrRan = true;
@@ -1265,6 +1292,7 @@ public static class PipelineCommand
             LogStageInfo(logInfo, "Selecting anchors");
             asrFile.Refresh();
             await AlignCommand.RunAnchorsAsync(
+                chapterFactory,
                 bookIndexFile,
                 asrFile,
                 anchorsFile,
@@ -1288,6 +1316,7 @@ public static class PipelineCommand
             LogStageInfo(logInfo, "Generating transcript index");
             asrFile.Refresh();
             await AlignCommand.RunTranscriptIndexAsync(
+                chapterFactory,
                 bookIndexFile,
                 asrFile,
                 audioFile,
@@ -1312,7 +1341,7 @@ public static class PipelineCommand
             LogStageInfo(logInfo, "Hydrating transcript");
             asrFile.Refresh();
             txFile.Refresh();
-            await AlignCommand.RunHydrateTxAsync(bookIndexFile, asrFile, txFile, hydrateFile, cancellationToken);
+            await AlignCommand.RunHydrateTxAsync(chapterFactory, bookIndexFile, asrFile, txFile, hydrateFile, cancellationToken);
             hydrateFile.Refresh();
             hydrateRan = true;
         }

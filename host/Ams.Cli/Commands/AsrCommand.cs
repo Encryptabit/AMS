@@ -19,8 +19,11 @@ public static class AsrCommand
     internal const string DefaultServiceUrl = "http://localhost:8000";
     private const GgmlType DefaultModelType = GgmlType.LargeV3Turbo;
 
-    public static Command Create()
+    public static Command Create(IChapterContextFactory chapterFactory, IAsrService asrService)
     {
+        ArgumentNullException.ThrowIfNull(chapterFactory);
+        ArgumentNullException.ThrowIfNull(asrService);
+
         var asrCommand = new Command("asr", "ASR (Automatic Speech Recognition) operations");
 
         var runCommand = new Command("run", "Run ASR on an audio file");
@@ -106,11 +109,12 @@ public static class AsrCommand
                 var outputFile = CommandInputResolver.ResolveOutput(output, "asr.json");
                 var engine = AsrEngineConfig.Resolve(engineText);
 
-                using var handle = ChapterContextFactory.Create(bookIndexFile, audioFile: audioFile, chapterId: chapterId);
+                using var handle = chapterFactory.Create(bookIndexFile, audioFile: audioFile, chapterId: chapterId);
 
                 await RunAsrAsync(
                     handle,
                     outputFile,
+                    asrService,
                     engine,
                     serviceUrl,
                     model,
@@ -142,6 +146,7 @@ public static class AsrCommand
     internal static async Task RunAsrAsync(
         ChapterContextHandle handle,
         FileInfo outputFile,
+        IAsrService asrService,
         AsrEngine engine,
         string serviceUrl,
         string? model,
@@ -165,7 +170,6 @@ public static class AsrCommand
 
         if (engine == AsrEngine.Nemo)
         {
-            var asrService = new AsrService();
             var buffer = asrService.ResolveAsrReadyBuffer(chapter);
             var tempFile = ExportBufferToTempFile(buffer);
             try
@@ -192,6 +196,7 @@ public static class AsrCommand
         await RunWhisperAsync(
             chapter,
             outputFile,
+            asrService,
             model,
             modelPath,
             language,
@@ -206,7 +211,13 @@ public static class AsrCommand
             dtwTimestamps);
     }
 
-    internal static Task RunAsrAsync(ChapterContextHandle handle, FileInfo outputFile, string serviceUrl, string? model, string language)
+    internal static Task RunAsrAsync(
+        ChapterContextHandle handle,
+        FileInfo outputFile,
+        IAsrService asrService,
+        string serviceUrl,
+        string? model,
+        string language)
     {
         var engine = AsrEngineConfig.Resolve();
         FileInfo? modelPath = null;
@@ -218,6 +229,7 @@ public static class AsrCommand
         return RunAsrAsync(
             handle,
             outputFile,
+            asrService,
             engine,
             serviceUrl,
             model,
@@ -237,6 +249,7 @@ public static class AsrCommand
     private static async Task RunWhisperAsync(
         ChapterContext chapter,
         FileInfo outputFile,
+        IAsrService asrService,
         string? model,
         FileInfo? modelPath,
         string language,
@@ -267,15 +280,13 @@ public static class AsrCommand
             UseFlashAttention: flashAttention,
             UseDtwTimestamps: dtwTimestamps);
 
-        var service = new AsrService();
-
         Log.Debug("Submitting audio to Whisper.NET (threads={Threads}, gpu={UseGpu}, beam={BeamSize}, bestOf={BestOf})",
             options.Threads,
             options.UseGpu,
             options.BeamSize,
             options.BestOf);
 
-        var response = await service.TranscribeAsync(chapter, options, CancellationToken.None);
+        var response = await asrService.TranscribeAsync(chapter, options, CancellationToken.None);
         chapter.Documents.Asr = response;
 
         await WriteResponseAsync(outputFile, response);
