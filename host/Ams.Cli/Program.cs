@@ -5,6 +5,9 @@ using Ams.Core.Common;
 using Ams.Cli.Repl;
 using Ams.Cli.Commands;
 using Ams.Cli.Services;
+using Ams.Core.Runtime.Book;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
 
 namespace Ams.Cli;
 
@@ -12,6 +15,11 @@ internal static class Program
 {
     private static async Task<int> Main(string[] args)
     {
+        HostApplicationBuilder builder = Host.CreateApplicationBuilder(args);
+
+        builder.Services.AddSingleton<IBookManager, BookManager>();
+        using IHost host = builder.Build();
+        
         using var loggerFactory = Log.ConfigureDefaults(logFileName: "ams-log.txt");
         Log.Debug("Structured logging initialized. Console + file at {LogFile}", Log.LogFilePath ?? "(unknown)");
 
@@ -46,6 +54,7 @@ internal static class Program
         var replCommand = new Command("repl", "Start interactive REPL");
         replCommand.SetHandler(async () => await StartRepl(rootCommand));
         rootCommand.AddCommand(replCommand);
+        await host.StartAsync();
 
         // if no args , repl by default
         if (args.Length == 0)

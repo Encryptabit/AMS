@@ -1458,7 +1458,7 @@ public static class PipelineCommand
         {
             cancellationToken.ThrowIfCancellationRequested();
 
-            if (file.Extension.Equals(".docx", StringComparison.OrdinalIgnoreCase))
+            if (file.Extension.Equals(".docx", StringComparison.OrdinalIgnoreCase) || file.Extension.Equals(".pdf", StringComparison.OrdinalIgnoreCase))
             {
                 continue;
             }

@@ -15,32 +15,28 @@ namespace Ams.Cli.Utilities;
 
 internal sealed class ChapterContextHandle : IDisposable
 {
-    private readonly BookManager _manager;
-    private readonly BookContext _book;
-    private readonly string _chapterId;
+    private readonly IBookManager _bookManager;
+    private string ChapterId => _bookManager.Current.Chapters.Current.Descriptor.ChapterId;
     private bool _disposed;
 
-    internal ChapterContextHandle(BookManager manager, BookContext book, ChapterContext chapter)
+    internal ChapterContextHandle(IBookManager bookManager)
     {
-        _manager = manager;
-        _book = book;
-        Chapter = chapter;
-        _chapterId = chapter.Descriptor.ChapterId;
+        _bookManager = bookManager;
     }
 
-    public BookContext Book => _book;
-    public ChapterContext Chapter { get; }
+    public BookContext Book => _bookManager.Current;
+    public ChapterContext Chapter => _bookManager.Current.Chapters.Current;
 
     public void Save()
     {
         Chapter.Save();
-        _book.Save();
+        Book.Save();
     }
 
     public void Dispose()
     {
         if (_disposed) return;
-        _manager.Deallocate(_chapterId);
+        _bookManager.Deallocate(ChapterId);
         _disposed = true;
     }
 }
@@ -113,7 +109,7 @@ internal static class ChapterContextFactory
             chapter.Documents.HydratedTranscript = LoadJson<HydratedTranscript>(hydrateFile.FullName);
         }
 
-        return new ChapterContextHandle(manager, book, chapter);
+        return new ChapterContextHandle(manager);
     }
 
     private static ChapterDescriptor EnsureChapterDescriptor(

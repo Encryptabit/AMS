@@ -8,7 +8,7 @@ using Ams.Core.Runtime.Book;
 
 namespace Ams.Core.Runtime.Audio;
 
-public sealed class AudioBufferManager
+public sealed class AudioBufferManager : IAudioBufferManager
 {
     private readonly IReadOnlyList<AudioBufferDescriptor> _descriptors;
     private readonly Dictionary<string, AudioBufferContext> _cache;

@@ -75,7 +75,7 @@ public sealed record BookDescriptor
     public IReadOnlyDictionary<string, string>? Documents { get; }
 }
 
-public sealed class BookManager
+public sealed class BookManager : IBookManager
 {
     private readonly IReadOnlyList<BookDescriptor> _descriptors;
     private readonly Dictionary<string, BookContext> _cache;

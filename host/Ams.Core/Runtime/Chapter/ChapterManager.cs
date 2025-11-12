@@ -6,7 +6,7 @@ using Ams.Core.Runtime.Book;
 
 namespace Ams.Core.Runtime.Chapter;
 
-public sealed class ChapterManager
+public sealed class ChapterManager : IChapterManager
 {
     private const int DefaultMaxCachedContexts = 5;
 
