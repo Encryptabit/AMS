@@ -1,4 +1,5 @@
 using Ams.Core.Artifacts;
+using Ams.Core.Common;
 using Ams.Core.Runtime.Book;
 
 namespace Ams.Core.Runtime.Audio;
@@ -26,6 +27,10 @@ public sealed class AudioBufferContext
             {
                 _buffer = _loader(_descriptor);
                 _loaded = true;
+                Log.Debug(
+                    "AudioBufferContext loaded buffer {BufferId} (has data: {HasData})",
+                    _descriptor.BufferId,
+                    _buffer is not null);
             }
 
             return _buffer;
@@ -38,5 +43,6 @@ public sealed class AudioBufferContext
     {
         _buffer = null;
         _loaded = false;
+        Log.Debug("AudioBufferContext unloaded buffer {BufferId}", _descriptor.BufferId);
     }
 }

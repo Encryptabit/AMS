@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using Ams.Core.Common;
 using Ams.Core.Runtime.Artifacts;
 using Ams.Core.Runtime.Chapter;
 
@@ -161,6 +162,7 @@ public sealed class BookManager
         {
             context.Save();
             context.Chapters.DeallocateAll();
+            Log.Debug("BookManager deallocated context {BookId}", bookId);
         }
     }
 
@@ -170,6 +172,7 @@ public sealed class BookManager
         {
             context.Save();
             context.Chapters.DeallocateAll();
+            Log.Debug("BookManager flushed context {BookId}", context.Descriptor.BookId);
         }
 
         _cache.Clear();
@@ -181,6 +184,11 @@ public sealed class BookManager
         {
             context = new BookContext(descriptor, _artifactResolver);
             _cache[descriptor.BookId] = context;
+            Log.Debug("BookManager created context {BookId}", descriptor.BookId);
+        }
+        else
+        {
+            Log.Debug("BookManager reused context {BookId}", descriptor.BookId);
         }
 
         return context;

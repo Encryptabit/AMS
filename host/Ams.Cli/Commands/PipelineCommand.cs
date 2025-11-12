@@ -1223,7 +1223,13 @@ public static class PipelineCommand
                 else
                 {
                     LogStageInfo(logInfo, "Running ASR stage");
-                    await AsrCommand.RunAsrAsync(audioFile, asrFile, asrService, asrModel, asrLanguage).ConfigureAwait(false);
+                    using var asrHandle = ChapterContextFactory.Create(
+                        bookIndexFile,
+                        audioFile: audioFile,
+                        chapterId: chapterStem);
+
+                    await AsrCommand.RunAsrAsync(asrHandle, asrFile, asrService, asrModel, asrLanguage).ConfigureAwait(false);
+                    asrHandle.Save();
                     asrFile.Refresh();
                     asrRan = true;
                 }

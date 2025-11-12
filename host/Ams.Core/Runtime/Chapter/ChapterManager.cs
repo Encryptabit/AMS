@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using Ams.Core.Common;
 using Ams.Core.Runtime.Audio;
 using Ams.Core.Runtime.Book;
 
@@ -140,6 +141,12 @@ public sealed class ChapterManager
             context.Save();
             context.Audio.DeallocateAll();
             RemoveUsageNode(chapterId);
+            Log.Debug(
+                "ChapterManager[{BookId}] deallocated context {ChapterId} (cache {CacheCount}/{Max})",
+                _bookContext.Descriptor.BookId,
+                chapterId,
+                _cache.Count,
+                _maxCachedContexts);
         }
     }
 
@@ -163,11 +170,23 @@ public sealed class ChapterManager
             context = new ChapterContext(_bookContext, descriptor);
             _cache[descriptor.ChapterId] = context;
             TrackUsage(descriptor.ChapterId);
+            Log.Debug(
+                "ChapterManager[{BookId}] created context {ChapterId} (cache {CacheCount}/{Max})",
+                _bookContext.Descriptor.BookId,
+                descriptor.ChapterId,
+                _cache.Count,
+                _maxCachedContexts);
             EnsureCapacity();
         }
         else
         {
             TrackUsage(descriptor.ChapterId);
+            Log.Debug(
+                "ChapterManager[{BookId}] reused context {ChapterId} (cache {CacheCount}/{Max})",
+                _bookContext.Descriptor.BookId,
+                descriptor.ChapterId,
+                _cache.Count,
+                _maxCachedContexts);
         }
 
         return context;
@@ -208,6 +227,12 @@ public sealed class ChapterManager
             {
                 context.Save();
                 context.Audio.DeallocateAll();
+                Log.Debug(
+                    "ChapterManager[{BookId}] evicted LRU context {ChapterId} (cache {CacheCount}/{Max})",
+                    _bookContext.Descriptor.BookId,
+                    lruId,
+                    _cache.Count,
+                    _maxCachedContexts);
             }
         }
     }

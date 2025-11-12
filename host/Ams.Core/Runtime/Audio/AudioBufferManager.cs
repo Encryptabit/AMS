@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using Ams.Core.Artifacts;
+using Ams.Core.Common;
 using Ams.Core.Processors;
 using Ams.Core.Runtime.Book;
 
@@ -105,6 +106,10 @@ public sealed class AudioBufferManager
         if (_cache.Remove(bufferId, out var context))
         {
             context.Unload();
+            Log.Debug(
+                "AudioBufferManager deallocated buffer {BufferId} (cache {CacheCount})",
+                bufferId,
+                _cache.Count);
         }
     }
 
@@ -113,6 +118,11 @@ public sealed class AudioBufferManager
         foreach (var context in _cache.Values)
         {
             context.Unload();
+        }
+
+        if (_cache.Count > 0)
+        {
+            Log.Debug("AudioBufferManager flushed {Count} buffer(s)", _cache.Count);
         }
 
         _cache.Clear();
@@ -124,6 +134,17 @@ public sealed class AudioBufferManager
         {
             context = new AudioBufferContext(descriptor, _loader);
             _cache[descriptor.BufferId] = context;
+            Log.Debug(
+                "AudioBufferManager created buffer context {BufferId} (cache {CacheCount})",
+                descriptor.BufferId,
+                _cache.Count);
+        }
+        else
+        {
+            Log.Debug(
+                "AudioBufferManager reused buffer context {BufferId} (cache {CacheCount})",
+                descriptor.BufferId,
+                _cache.Count);
         }
 
         return context;
@@ -144,8 +165,9 @@ public sealed class AudioBufferManager
                 TargetChannels = descriptor.Channels
             });
         }
-        catch
+        catch (Exception ex)
         {
+            Log.Warn("AudioBufferManager failed to decode {Path}: {Message}", descriptor.Path, ex.Message);
             return null;
         }
     }
