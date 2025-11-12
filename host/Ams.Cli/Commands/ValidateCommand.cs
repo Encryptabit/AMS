@@ -556,6 +556,7 @@ public static class ValidateCommand
             string? bookText = hydSentence?.BookText;
             string? scriptText = hydSentence?.ScriptText;
             var timing = hydSentence?.Timing ?? txSentence?.Timing;
+            var diff = hydSentence?.Diff;
 
             views.Add(new SentenceView(
                 id,
@@ -565,7 +566,8 @@ public static class ValidateCommand
                 status,
                 string.IsNullOrWhiteSpace(bookText) ? null : bookText,
                 string.IsNullOrWhiteSpace(scriptText) ? null : scriptText,
-                timing));
+                timing,
+                diff));
         }
 
         return views.OrderBy(s => s.Id).ToList();
@@ -584,7 +586,8 @@ public static class ValidateCommand
             p.SentenceIds,
             BookText: string.Empty,
             p.Metrics,
-            p.Status)).ToList();
+            p.Status,
+            Diff: null)).ToList();
 
         return paragraphs!
             .Select(p => new ParagraphView(
@@ -592,7 +595,8 @@ public static class ValidateCommand
                 (p.BookRange.Start, p.BookRange.End),
                 p.Metrics,
                 p.Status,
-                string.IsNullOrWhiteSpace(p.BookText) ? null : p.BookText))
+                string.IsNullOrWhiteSpace(p.BookText) ? null : p.BookText,
+                p.Diff))
             .OrderBy(p => p.Id)
             .ToList();
     }
@@ -650,26 +654,22 @@ public static class ValidateCommand
 
         if (sentences.Count > 0)
         {
-            var avgWer = sentences.Average(s => s.Metrics.Wer);
-            var maxWer = sentences.Max(s => s.Metrics.Wer);
-            var flagged = sentences.Count(s => !string.Equals(s.Status, "ok", StringComparison.OrdinalIgnoreCase));
-
-            builder.AppendLine($"Sentences : {sentences.Count} (Avg WER {avgWer:P2}, Max WER {maxWer:P2}, Flagged {flagged})");
+            var totals = AggregateDiffStats(sentences.Select(s => s.Diff?.Stats));
+            builder.AppendLine($"Sentences : {sentences.Count} {FormatDiffTotals(totals)}");
         }
         else
         {
-            builder.AppendLine("Sentences : 0");
+            builder.AppendLine("Sentences : 0 (no diff data)");
         }
 
         if (paragraphs.Count > 0)
         {
-            var avgWer = paragraphs.Average(p => p.Metrics.Wer);
-            var avgCoverage = paragraphs.Average(p => p.Metrics.Coverage);
-            builder.AppendLine($"Paragraphs: {paragraphs.Count} (Avg WER {avgWer:P2}, Avg Coverage {avgCoverage:P2})");
+            var totals = AggregateDiffStats(paragraphs.Select(p => p.Diff?.Stats));
+            builder.AppendLine($"Paragraphs: {paragraphs.Count} {FormatDiffTotals(totals)}");
         }
         else
         {
-            builder.AppendLine("Paragraphs: 0");
+            builder.AppendLine("Paragraphs: 0 (no diff data)");
         }
 
         if (wordTallies is not null)
@@ -679,33 +679,29 @@ public static class ValidateCommand
 
         builder.AppendLine();
 
-        if ( topSentences > 0 && sentences.Count > 0)
+        if (topSentences > 0 && sentences.Count > 0)
         {
-            if (allErrors) builder.AppendLine("All sentences by WER:");
-            else builder.AppendLine($"Top {Math.Min(topSentences, sentences.Count)} sentences by WER:");
+            builder.AppendLine(allErrors
+                ? "All sentences by diff mismatch:"
+                : $"Top {Math.Min(topSentences, sentences.Count)} sentences by diff mismatch:");
 
             var sentencesOrdered = sentences
-                .OrderByDescending(s => s.Metrics.Wer)
-                .ThenByDescending(s => s.Metrics.Cer);
-            
-            var sentenceBucket = allErrors ? sentencesOrdered.Where(s => !s.Status.Equals("ok", StringComparison.OrdinalIgnoreCase)) : sentencesOrdered.Take(topSentences);
+                .OrderByDescending(ComputeSentenceDiffScore)
+                .ThenByDescending(s => s.Diff?.Stats?.ReferenceTokens ?? 0)
+                .ThenBy(s => s.Id);
+
+            var sentenceBucket = allErrors
+                ? sentencesOrdered.Where(HasSentenceDiffIssues).ToList()
+                : sentencesOrdered.Take(topSentences).ToList();
+
+            if (sentenceBucket.Count == 0)
+            {
+                builder.AppendLine("  (no diff issues detected)");
+            }
 
             foreach (var sentence in sentenceBucket)
             {
-                builder.AppendLine($"  #{sentence.Id} | WER {sentence.Metrics.Wer:P1} | CER {sentence.Metrics.Cer:P1} | Status {sentence.Status}");
-                builder.AppendLine($"    Book range: {sentence.BookRange.Start}-{sentence.BookRange.End}");
-
-                if (sentence.ScriptRange is not null)
-                {
-                    builder.AppendLine($"    Script range: {sentence.ScriptRange.Value.Start}-{sentence.ScriptRange.Value.End}");
-                }
-
-                if (sentence.Timing is not null)
-                {
-                    var timing = sentence.Timing;
-                    builder.AppendLine($"    Timing: {timing.StartSec:F3}s → {timing.EndSec:F3}s (Δ {timing.Duration:F3}s)");
-                }
-
+                builder.AppendLine($"  #{sentence.Id} | {FormatDiffStats(sentence.Diff?.Stats)} | Status {sentence.Status}");
                 if (!string.IsNullOrWhiteSpace(sentence.BookText))
                 {
                     builder.AppendLine($"    Book   : {TrimText(sentence.BookText)}");
@@ -716,65 +712,193 @@ public static class ValidateCommand
                     builder.AppendLine($"    Script : {TrimText(sentence.ScriptText)}");
                 }
 
+                AppendDiffOps(builder, sentence.Diff, "    ");
                 builder.AppendLine();
             }
         }
 
-        var paragraphOrdered = paragraphs
-            .OrderByDescending(p => p.Metrics.Wer)
-            .ThenByDescending(p => p.Metrics.Coverage);
-        
-        IEnumerable<ParagraphView> paragraphBucket;
-        
-        if (includeAllFlagged && hydrated?.Paragraphs is not null)
-        {
-            // Build a set of flagged sentence IDs
-            var flaggedSentenceIds = new HashSet<int>(
-                sentences.Where(s => !s.Status.Equals("ok", StringComparison.OrdinalIgnoreCase))
-                        .Select(s => s.Id));
-
-            // Build a set of paragraph IDs that contain flagged sentences
-            var paragraphsWithFlaggedSentences = new HashSet<int>();
-            foreach (var hydratedPara in hydrated.Paragraphs)
-            {
-                if (hydratedPara.SentenceIds.Any(sid => flaggedSentenceIds.Contains(sid)))
-                {
-                    paragraphsWithFlaggedSentences.Add(hydratedPara.Id);
-                }
-            }
-
-            // Include paragraphs that are either flagged OR contain flagged sentences
-            paragraphBucket = allErrors 
-                ? paragraphOrdered.Where(p => !p.Status.Equals("ok", StringComparison.OrdinalIgnoreCase) || paragraphsWithFlaggedSentences.Contains(p.Id))
-                : paragraphOrdered.Take(topParagraphs);
-        }
-        else
-        {
-            paragraphBucket = allErrors 
-                ? paragraphOrdered.Where(p => !p.Status.Equals("ok", StringComparison.OrdinalIgnoreCase)) 
-                : paragraphOrdered.Take(topParagraphs);
-        }
-
         if (topParagraphs > 0 && paragraphs.Count > 0)
         {
-            if (allErrors) builder.AppendLine("All paragraphs by WER:");
-            else builder.AppendLine($"Top {Math.Min(topParagraphs, paragraphs.Count)} paragraphs by WER:");
+            builder.AppendLine(allErrors
+                ? "All paragraphs by diff mismatch:"
+                : $"Top {Math.Min(topParagraphs, paragraphs.Count)} paragraphs by diff mismatch:");
+
+            var paragraphOrdered = paragraphs
+                .OrderByDescending(ComputeParagraphDiffScore)
+                .ThenByDescending(p => p.Diff?.Stats?.ReferenceTokens ?? 0)
+                .ThenBy(p => p.Id);
+
+            HashSet<int>? paragraphsWithFlaggedSentences = null;
+            if (includeAllFlagged && hydrated?.Paragraphs is not null)
+            {
+                var flaggedSentenceIds = new HashSet<int>(
+                    sentences.Where(HasSentenceDiffIssues).Select(s => s.Id));
+
+                paragraphsWithFlaggedSentences = new HashSet<int>(
+                    hydrated.Paragraphs
+                        .Where(p => p.SentenceIds.Any(flaggedSentenceIds.Contains))
+                        .Select(p => p.Id));
+            }
+
+            var paragraphBucket = allErrors
+                ? paragraphOrdered.Where(p =>
+                    HasParagraphDiffIssues(p) ||
+                    (paragraphsWithFlaggedSentences?.Contains(p.Id) ?? false)).ToList()
+                : paragraphOrdered.Take(topParagraphs).ToList();
+
+            if (paragraphBucket.Count == 0)
+            {
+                builder.AppendLine("  (no diff issues detected)");
+            }
 
             foreach (var paragraph in paragraphBucket)
             {
-                builder.AppendLine($"  #{paragraph.Id} | WER {paragraph.Metrics.Wer:P1} | Coverage {paragraph.Metrics.Coverage:P1} | Status {paragraph.Status}");
-                builder.AppendLine($"    Book range: {paragraph.BookRange.Start}-{paragraph.BookRange.End}");
-
+                builder.AppendLine($"  #{paragraph.Id} | {FormatDiffStats(paragraph.Diff?.Stats)} | Status {paragraph.Status}");
                 if (!string.IsNullOrWhiteSpace(paragraph.BookText))
                 {
                     builder.AppendLine($"    Book   : {TrimText(paragraph.BookText)}");
                 }
 
+                AppendDiffOps(builder, paragraph.Diff, "    ");
                 builder.AppendLine();
             }
         }
 
         return builder.ToString().TrimEnd();
+    }
+
+    private sealed record DiffTotals(long ReferenceTokens, long HypothesisTokens, long Matches, long Insertions, long Deletions)
+    {
+        public bool HasAny => ReferenceTokens > 0 || HypothesisTokens > 0 || Insertions > 0 || Deletions > 0;
+    }
+
+    private static DiffTotals AggregateDiffStats(IEnumerable<HydratedDiffStats?> stats)
+    {
+        long refTotal = 0, hypTotal = 0, matches = 0, insertions = 0, deletions = 0;
+
+        foreach (var stat in stats)
+        {
+            if (stat is null)
+            {
+                continue;
+            }
+
+            refTotal += stat.ReferenceTokens;
+            hypTotal += stat.HypothesisTokens;
+            matches += stat.Matches;
+            insertions += stat.Insertions;
+            deletions += stat.Deletions;
+        }
+
+        return new DiffTotals(refTotal, hypTotal, matches, insertions, deletions);
+    }
+
+    private static string FormatDiffTotals(DiffTotals totals)
+    {
+        if (!totals.HasAny)
+        {
+            return "(diff data unavailable)";
+        }
+
+        var matchPct = totals.ReferenceTokens > 0
+            ? (double)totals.Matches / totals.ReferenceTokens
+            : 1.0;
+
+        return $"(ref {totals.ReferenceTokens}, hyp {totals.HypothesisTokens}, match {totals.Matches} ({matchPct:P1}), +{totals.Insertions}, -{totals.Deletions})";
+    }
+
+    private static string FormatDiffStats(HydratedDiffStats? stats)
+    {
+        if (stats is null)
+        {
+            return "diff unavailable";
+        }
+
+        var matchPct = stats.ReferenceTokens > 0
+            ? (double)stats.Matches / stats.ReferenceTokens
+            : 1.0;
+
+        return $"ref {stats.ReferenceTokens}, hyp {stats.HypothesisTokens}, match {stats.Matches} ({matchPct:P1}), +{stats.Insertions}, -{stats.Deletions}";
+    }
+
+    private static double ComputeSentenceDiffScore(SentenceView sentence)
+        => ComputeDiffScore(sentence.Diff?.Stats, sentence.Metrics.Wer);
+
+    private static double ComputeParagraphDiffScore(ParagraphView paragraph)
+        => ComputeDiffScore(paragraph.Diff?.Stats, paragraph.Metrics.Wer);
+
+    private static double ComputeDiffScore(HydratedDiffStats? stats, double fallback)
+    {
+        if (stats is null)
+        {
+            return fallback;
+        }
+
+        var denominator = Math.Max(1, stats.ReferenceTokens);
+        return (double)(stats.Insertions + stats.Deletions) / denominator;
+    }
+
+    private static bool HasSentenceDiffIssues(SentenceView sentence)
+    {
+        var stats = sentence.Diff?.Stats;
+        if (stats is null)
+        {
+            return !string.Equals(sentence.Status, "ok", StringComparison.OrdinalIgnoreCase);
+        }
+
+        return stats.Insertions > 0 || stats.Deletions > 0;
+    }
+
+    private static bool HasParagraphDiffIssues(ParagraphView paragraph)
+    {
+        var stats = paragraph.Diff?.Stats;
+        if (stats is null)
+        {
+            return !string.Equals(paragraph.Status, "ok", StringComparison.OrdinalIgnoreCase);
+        }
+
+        return stats.Insertions > 0 || stats.Deletions > 0;
+    }
+
+    private static void AppendDiffOps(StringBuilder builder, HydratedDiff? diff, string indent, int maxOps = 5)
+    {
+        if (diff?.Ops is not { Count: > 0 } ops)
+        {
+            builder.AppendLine($"{indent}Diff ops: (none)");
+            return;
+        }
+
+        var interesting = ops
+            .Where(op => !string.Equals(op.Operation, "equal", StringComparison.OrdinalIgnoreCase))
+            .Take(maxOps)
+            .ToList();
+
+        if (interesting.Count == 0)
+        {
+            builder.AppendLine($"{indent}Diff ops: (only equal segments)");
+            return;
+        }
+
+        foreach (var op in interesting)
+        {
+            builder.AppendLine($"{indent}{op.Operation.ToUpperInvariant(),-7} {FormatTokens(op.Tokens)}");
+        }
+
+        if (ops.Count > interesting.Count)
+        {
+            builder.AppendLine($"{indent}... ({ops.Count - interesting.Count} more op(s))");
+        }
+    }
+
+    private static string FormatTokens(IReadOnlyList<string> tokens)
+    {
+        if (tokens.Count == 0)
+        {
+            return "(empty)";
+        }
+
+        var joined = string.Join(' ', tokens);
+        return TrimText(joined, 80);
     }
 
     private static FileInfo ResolveAdjustmentsPath(FileInfo txFile, FileInfo? overrideFile)
@@ -1264,14 +1388,16 @@ public static class ValidateCommand
         string Status,
         string? BookText,
         string? ScriptText,
-        TimingRange? Timing);
+        TimingRange? Timing,
+        HydratedDiff? Diff);
 
     private sealed record ParagraphView(
         int Id,
         (int Start, int End) BookRange,
         ParagraphMetrics Metrics,
         string Status,
-        string? BookText);
+        string? BookText,
+        HydratedDiff? Diff);
 
     private sealed record WordTallies(int Match, int Substitution, int Insertion, int Deletion, int Total);
 

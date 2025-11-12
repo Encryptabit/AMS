@@ -9,7 +9,6 @@ using System.Threading.Tasks;
 using Ams.Core.Alignment.Mfa;
 using Ams.Core.Common;
 using Ams.Core.Runtime.Documents;
-using System.Text.RegularExpressions;
 
 namespace Ams.Cli.Services;
 
@@ -193,37 +192,23 @@ internal static class MfaWorkflow
 
         foreach (var sentence in sentencesElement.EnumerateArray())
         {
-            var script = sentence.TryGetProperty("scriptText", out var scriptProp) ? scriptProp.GetString() : null;
-            var book = sentence.TryGetProperty("bookText", out var bookProp) ? bookProp.GetString() : null;
-            var status = sentence.TryGetProperty("status", out var statusProp) ? statusProp.GetString() : null;
-            var metrics = sentence.TryGetProperty("metrics", out var metricsProp) ? metricsProp : default;
+            var canonical = sentence.TryGetProperty("bookText", out var bookProp)
+                ? bookProp.GetString()
+                : null;
 
-            bool isReliable = string.Equals(status, "ok", StringComparison.OrdinalIgnoreCase);
-            if (isReliable && metrics.ValueKind == JsonValueKind.Object)
+            if (string.IsNullOrWhiteSpace(canonical))
             {
-                if (metrics.TryGetProperty("MissingRuns", out var missingRuns) && missingRuns.GetInt32() > 0)
-                {
-                    isReliable = false;
-                }
+                canonical = sentence.TryGetProperty("scriptText", out var scriptProp)
+                    ? scriptProp.GetString()
+                    : null;
             }
 
-            string? chosen = isReliable ? script : null;
-
-            if (string.IsNullOrWhiteSpace(chosen))
-            {
-                chosen = !string.IsNullOrWhiteSpace(book) ? book : script;
-            }
-            else if (!isReliable && !string.IsNullOrWhiteSpace(book))
-            {
-                chosen = book;
-            }
-
-            if (string.IsNullOrWhiteSpace(chosen))
+            if (string.IsNullOrWhiteSpace(canonical))
             {
                 continue;
             }
 
-            var normalized = PrepareLabLine(chosen);
+            var normalized = PrepareLabLine(canonical);
             if (string.IsNullOrWhiteSpace(normalized))
             {
                 continue;

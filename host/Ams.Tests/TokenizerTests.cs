@@ -8,6 +8,7 @@ public class TextNormalizerTests
     [Theory]
     [InlineData("Hello, World!", "hello world")]
     [InlineData("Don't you think it's great?", "do not you think it is great")]
+    [InlineData("He whispered, “Don’t move.”", "he whispered do not move")]
     [InlineData("I can't believe it's 123 degrees!", "i cannot believe it is one hundred twenty three degrees")]
     [InlineData("  Multiple    spaces   ", "multiple spaces")]
     [InlineData("", "")]
@@ -37,6 +38,14 @@ public class TextNormalizerTests
     {
         var result = TextNormalizer.TokenizeWords(input);
         Assert.Equal(expected, result);
+    }
+
+    [Fact]
+    public void NormalizeTypography_ReplacesSmartQuotes()
+    {
+        var input = "“Don’t” ‘quote’";
+        var normalized = TextNormalizer.NormalizeTypography(input);
+        Assert.Equal("\"Don't\" 'quote'", normalized);
     }
 }
 

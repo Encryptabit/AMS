@@ -1351,10 +1351,10 @@ public static class PipelineCommand
         {
             try
             {
-                MfaTimingMerger.MergeTimings(hydrateFile, asrFile, textGridFile);
+                MfaTimingMerger.MergeTimings(hydrateFile, textGridFile);
                 hydrateFile.Refresh();
                 var fallbackTexts = MfaTimingMerger.BuildFallbackTextMap(hydrateFile);
-                MfaTimingMerger.MergeTimings(txFile, asrFile, textGridFile, fallbackTexts);
+                MfaTimingMerger.MergeTimings(txFile, textGridFile, fallbackTexts);
             }
             catch (Exception ex)
             {
