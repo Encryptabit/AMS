@@ -7,7 +7,7 @@ using Ams.Core.Runtime.Documents;
 using Ams.Core.Asr;
 using Ams.Core.Common;
 
-namespace Ams.Core.Alignment.Tx;
+namespace Ams.Core.Processors.Alignment.Tx;
 
 // (3) Cost helpers and windowed DP aligner + rollups
 public static class TranscriptAligner

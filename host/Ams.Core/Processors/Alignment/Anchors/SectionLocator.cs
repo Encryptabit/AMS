@@ -5,7 +5,7 @@ using System.Text;
 using Ams.Core;
 using Ams.Core.Validation;
 
-namespace Ams.Core.Alignment.Anchors;
+namespace Ams.Core.Processors.Alignment.Anchors;
 
 /// <summary>
 /// Detects the most likely book section from the first few ASR tokens

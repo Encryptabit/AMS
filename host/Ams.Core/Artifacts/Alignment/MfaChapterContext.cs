@@ -1,4 +1,4 @@
-namespace Ams.Core.Alignment.Mfa;
+namespace Ams.Core.Artifacts.Alignment.Mfa;
 
 public sealed record class MfaChapterContext
 {

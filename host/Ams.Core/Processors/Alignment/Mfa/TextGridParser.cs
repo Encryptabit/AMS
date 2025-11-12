@@ -3,7 +3,7 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
 
-namespace Ams.Core.Alignment.Mfa;
+namespace Ams.Core.Processors.Alignment.Mfa;
 
 public sealed record TextGridInterval(double Start, double End, string Text);
 

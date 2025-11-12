@@ -5,53 +5,26 @@ using Ams.Core.Runtime.Book;
 
 namespace Ams.Core.Runtime.Chapter;
 
-public sealed class ChapterDocumentManager
-{
-    private readonly Dictionary<string, string> _documents;
-
-    public ChapterDocumentManager(IReadOnlyDictionary<string, string>? initial = null)
-    {
-        _documents = initial != null
-            ? new Dictionary<string, string>(initial, StringComparer.OrdinalIgnoreCase)
-            : new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-    }
-
-    public IReadOnlyDictionary<string, string> Documents => _documents;
-
-    public void Register(string key, string path)
-    {
-        ArgumentException.ThrowIfNullOrEmpty(key);
-        ArgumentException.ThrowIfNullOrEmpty(path);
-        _documents[key] = path;
-    }
-
-    public bool TryGet(string key, out string path)
-    {
-        ArgumentException.ThrowIfNullOrEmpty(key);
-        return _documents.TryGetValue(key, out path!);
-    }
-
-    public bool Remove(string key)
-    {
-        ArgumentException.ThrowIfNullOrEmpty(key);
-        return _documents.Remove(key);
-    }
-
-    public void Clear() => _documents.Clear();
-}
-
 public sealed class ChapterManager
 {
+    private const int DefaultMaxCachedContexts = 5;
+
     private readonly BookContext _bookContext;
     private readonly IReadOnlyList<ChapterDescriptor> _descriptors;
     private readonly Dictionary<string, ChapterContext> _cache;
+    private readonly Dictionary<string, LinkedListNode<string>> _usageNodes;
+    private readonly LinkedList<string> _usageOrder;
+    private readonly int _maxCachedContexts;
     private int _cursor;
 
-    internal ChapterManager(BookContext bookContext)
+    internal ChapterManager(BookContext bookContext, int maxCachedContexts = DefaultMaxCachedContexts)
     {
         _bookContext = bookContext ?? throw new ArgumentNullException(nameof(bookContext));
         _descriptors = bookContext.Descriptor.Chapters;
         _cache = new Dictionary<string, ChapterContext>(StringComparer.OrdinalIgnoreCase);
+        _usageNodes = new Dictionary<string, LinkedListNode<string>>(StringComparer.OrdinalIgnoreCase);
+        _usageOrder = new LinkedList<string>();
+        _maxCachedContexts = Math.Max(1, maxCachedContexts);
         _cursor = 0;
     }
 
@@ -131,7 +104,9 @@ public sealed class ChapterManager
 
         if (_cache.Remove(chapterId, out var context))
         {
+            context.Save();
             context.Audio.DeallocateAll();
+            RemoveUsageNode(chapterId);
         }
     }
 
@@ -139,10 +114,13 @@ public sealed class ChapterManager
     {
         foreach (var context in _cache.Values)
         {
+            context.Save();
             context.Audio.DeallocateAll();
         }
 
         _cache.Clear();
+        _usageNodes.Clear();
+        _usageOrder.Clear();
     }
 
     private ChapterContext GetOrCreate(ChapterDescriptor descriptor)
@@ -151,8 +129,53 @@ public sealed class ChapterManager
         {
             context = new ChapterContext(_bookContext, descriptor);
             _cache[descriptor.ChapterId] = context;
+            TrackUsage(descriptor.ChapterId);
+            EnsureCapacity();
+        }
+        else
+        {
+            TrackUsage(descriptor.ChapterId);
         }
 
         return context;
+    }
+
+    private void TrackUsage(string chapterId)
+    {
+        if (_usageNodes.TryGetValue(chapterId, out var node))
+        {
+            _usageOrder.Remove(node);
+            _usageOrder.AddLast(node);
+        }
+        else
+        {
+            var newNode = _usageOrder.AddLast(chapterId);
+            _usageNodes[chapterId] = newNode;
+        }
+    }
+
+    private void RemoveUsageNode(string chapterId)
+    {
+        if (_usageNodes.TryGetValue(chapterId, out var node))
+        {
+            _usageOrder.Remove(node);
+            _usageNodes.Remove(chapterId);
+        }
+    }
+
+    private void EnsureCapacity()
+    {
+        while (_cache.Count > _maxCachedContexts && _usageOrder.First is { } lru)
+        {
+            var lruId = lru.Value;
+            _usageOrder.RemoveFirst();
+            _usageNodes.Remove(lruId);
+
+            if (_cache.Remove(lruId, out var context))
+            {
+                context.Save();
+                context.Audio.DeallocateAll();
+            }
+        }
     }
 }

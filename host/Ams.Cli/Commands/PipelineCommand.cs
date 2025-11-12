@@ -14,13 +14,14 @@ using System.Threading.Tasks;
 using Ams.Cli.Services;
 using Ams.Cli.Utilities;
 using Ams.Cli.Repl;
-using Ams.Core.Alignment.Mfa;
+using Ams.Core.Processors.Alignment.Mfa;
+using Ams.Core.Services.Alignment;
 using Ams.Core.Artifacts;
 using Ams.Core.Audio;
 using Ams.Core.Processors;
 using Ams.Core.Runtime.Documents;
 using Ams.Core.Common;
-using Ams.Core.Hydrate;
+using Ams.Core.Artifacts.Hydrate;
 using Ams.Core.Prosody;
 using Spectre.Console;
 using AudioSentenceTiming = Ams.Core.Artifacts.SentenceTiming;
@@ -1235,6 +1236,17 @@ public static class PipelineCommand
 
         progress?.ReportStage(chapterStem, PipelineStage.Asr, asrRan ? "ASR complete" : "ASR cached");
 
+        var defaultAnchorOptions = new AnchorComputationOptions
+        {
+            DetectSection = true,
+            AsrPrefixTokens = 8,
+            NGram = 3,
+            TargetPerTokens = 50,
+            MinSeparation = 100,
+            AllowBoundaryCross = false,
+            UseDomainStopwords = true
+        };
+
         anchorsFile.Refresh();
         bool anchorsRan;
         if (!force && anchorsFile.Exists)
@@ -1250,14 +1262,8 @@ public static class PipelineCommand
                 bookIndexFile,
                 asrFile,
                 anchorsFile,
-                detectSection: true,
-                ngram: 3,
-                targetPerTokens: 50,
-                minSeparation: 100,
-                crossSentences: false,
-                domainStopwords: true,
-                asrPrefixTokens: 8,
-                emitWindows: false);
+                defaultAnchorOptions with { EmitWindows = false },
+                cancellationToken);
             anchorsFile.Refresh();
             anchorsRan = true;
         }
@@ -1280,13 +1286,8 @@ public static class PipelineCommand
                 asrFile,
                 audioFile,
                 txFile,
-                detectSection: true,
-                asrPrefixTokens: 8,
-                ngram: 3,
-                targetPerTokens: 50,
-                minSeparation: 100,
-                crossSentences: false,
-                domainStopwords: true);
+                defaultAnchorOptions with { EmitWindows = true },
+                cancellationToken);
             txFile.Refresh();
             transcriptRan = true;
         }
@@ -1305,7 +1306,7 @@ public static class PipelineCommand
             LogStageInfo(logInfo, "Hydrating transcript");
             asrFile.Refresh();
             txFile.Refresh();
-            await AlignCommand.RunHydrateTxAsync(bookIndexFile, asrFile, txFile, hydrateFile);
+            await AlignCommand.RunHydrateTxAsync(bookIndexFile, asrFile, txFile, hydrateFile, cancellationToken);
             hydrateFile.Refresh();
             hydrateRan = true;
         }

@@ -1,0 +1,28 @@
+using System;
+using Ams.Core.Runtime.Artifacts;
+using Ams.Core.Runtime.Common;
+
+namespace Ams.Core.Runtime.Book;
+
+public sealed class BookDocuments
+{
+    private readonly DocumentSlot<BookIndex> _bookIndex;
+
+    internal BookDocuments(BookContext context, IArtifactResolver resolver)
+    {
+        ArgumentNullException.ThrowIfNull(context);
+        ArgumentNullException.ThrowIfNull(resolver);
+
+        _bookIndex = new DocumentSlot<BookIndex>(
+            () => resolver.LoadBookIndex(context),
+            value => resolver.SaveBookIndex(context, value));
+    }
+
+    public BookIndex? BookIndex
+    {
+        get => _bookIndex.GetValue();
+        set => _bookIndex.SetValue(value);
+    }
+
+    internal void SaveChanges() => _bookIndex.Save();
+}

@@ -1,6 +1,6 @@
 using System;
 
-namespace Ams.Core.Alignment.Anchors;
+namespace Ams.Core.Processors.Alignment.Anchors;
 
 /// <summary>
 /// Canonical token normalization for anchor discovery. Lowercase and keep only letters/digits.

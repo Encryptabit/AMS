@@ -3,7 +3,7 @@ using System.Collections.Generic;
 using Ams.Core.Artifacts;
 
 
-namespace Ams.Core.Alignment.Tx;
+namespace Ams.Core.Processors.Alignment.Tx;
 
 // (2) Anchors -> clamped half-open windows builder
 public static class WindowBuilder

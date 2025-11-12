@@ -6,7 +6,7 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using Ams.Core.Common;
 
-namespace Ams.Core.Alignment.Mfa;
+namespace Ams.Core.Processors.Alignment.Mfa;
 
 public static class MfaTimingMerger
 {

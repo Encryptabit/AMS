@@ -3,14 +3,13 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Text;
-using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Ams.Core.Artifacts;
 using Ams.Core.Runtime.Documents;
-using Ams.Core.Hydrate;
+using Ams.Core.Artifacts.Hydrate;
 using Ams.Core.Prosody;
-using Ams.Core.Alignment.Mfa;
+using Ams.Core.Processors.Alignment.Mfa;
 using Ams.Cli.Repl;
 using Ams.Cli.Utilities;
 using Spectre.Console;
@@ -152,13 +151,21 @@ internal sealed class ValidateTimingSession
             compressionSummary.DownstreamCount);
     }
 
-    private async Task<SessionContext> LoadSessionContextAsync(CancellationToken cancellationToken)
+    private Task<SessionContext> LoadSessionContextAsync(CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
 
-        var transcript = await LoadTranscriptAsync(_transcriptFile, cancellationToken).ConfigureAwait(false);
-        var bookIndex = await LoadBookIndexAsync(_bookIndexFile, cancellationToken).ConfigureAwait(false);
-        var hydrated = await LoadHydrateAsync(_hydrateFile, cancellationToken).ConfigureAwait(false);
+        using var handle = ChapterContextFactory.Create(
+            bookIndexFile: _bookIndexFile,
+            transcriptFile: _transcriptFile,
+            hydrateFile: _hydrateFile);
+
+        var bookIndex = handle.Book.Documents.BookIndex
+            ?? throw new InvalidOperationException("BookIndex is not available in the chapter context.");
+        var transcript = handle.Chapter.Documents.Transcript
+            ?? throw new InvalidOperationException("TranscriptIndex is not available in the chapter context.");
+        var hydrated = handle.Chapter.Documents.HydratedTranscript
+            ?? throw new InvalidOperationException("Hydrated transcript is not available in the chapter context.");
         var sentenceLookup = BuildSentenceLookup(bookIndex);
         var (paragraphs, sentenceToParagraph, paragraphSentences) = BuildParagraphData(bookIndex);
 
@@ -180,8 +187,9 @@ internal sealed class ValidateTimingSession
             policy,
             silenceSpans,
             _includeAllIntraSentenceGaps);
+        handle.Save();
 
-        return new SessionContext(
+        var session = new SessionContext(
             transcript,
             bookIndex,
             hydrated,
@@ -191,54 +199,8 @@ internal sealed class ValidateTimingSession
             paragraphSentences,
             analysis,
             pauseMap);
-    }
 
-    private static async Task<TranscriptIndex> LoadTranscriptAsync(FileInfo file, CancellationToken cancellationToken)
-    {
-        if (!file.Exists)
-        {
-            throw new FileNotFoundException("TranscriptIndex not found", file.FullName);
-        }
-
-        await using var stream = file.OpenRead();
-        var payload = await JsonSerializer.DeserializeAsync<TranscriptIndex>(stream, new JsonSerializerOptions
-        {
-            PropertyNameCaseInsensitive = true
-        }, cancellationToken).ConfigureAwait(false);
-
-        return payload ?? throw new InvalidOperationException("Failed to deserialize TranscriptIndex JSON");
-    }
-
-    private static async Task<BookIndex> LoadBookIndexAsync(FileInfo file, CancellationToken cancellationToken)
-    {
-        if (!file.Exists)
-        {
-            throw new FileNotFoundException("book-index.json not found", file.FullName);
-        }
-
-        await using var stream = file.OpenRead();
-        var payload = await JsonSerializer.DeserializeAsync<BookIndex>(stream, new JsonSerializerOptions
-        {
-            PropertyNameCaseInsensitive = true
-        }, cancellationToken).ConfigureAwait(false);
-
-        return payload ?? throw new InvalidOperationException("Failed to deserialize book-index JSON");
-    }
-
-    private static async Task<HydratedTranscript> LoadHydrateAsync(FileInfo file, CancellationToken cancellationToken)
-    {
-        if (!file.Exists)
-        {
-            throw new FileNotFoundException("hydrate JSON not found", file.FullName);
-        }
-
-        await using var stream = file.OpenRead();
-        var payload = await JsonSerializer.DeserializeAsync<HydratedTranscript>(stream, new JsonSerializerOptions
-        {
-            PropertyNameCaseInsensitive = true
-        }, cancellationToken).ConfigureAwait(false);
-
-        return payload ?? throw new InvalidOperationException("Failed to deserialize hydrate JSON");
+        return Task.FromResult(session);
     }
 
     private IReadOnlyList<(double Start, double End)>? TryLoadMfaSilences(TranscriptIndex transcript)

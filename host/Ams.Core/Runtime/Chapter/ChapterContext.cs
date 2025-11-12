@@ -1,3 +1,4 @@
+using Ams.Core.Runtime.Artifacts;
 using Ams.Core.Runtime.Audio;
 using Ams.Core.Runtime.Book;
 
@@ -5,16 +6,24 @@ namespace Ams.Core.Runtime.Chapter;
 
 public sealed class ChapterContext
 {
+    private readonly IArtifactResolver _resolver;
+
     internal ChapterContext(BookContext book, ChapterDescriptor descriptor)
     {
-        Book = book;
-        Descriptor = descriptor;
-        Documents = new ChapterDocumentManager(descriptor.Documents);
+        Book = book ?? throw new ArgumentNullException(nameof(book));
+        Descriptor = descriptor ?? throw new ArgumentNullException(nameof(descriptor));
+        _resolver = book.Resolver;
+        Documents = new ChapterDocuments(this, _resolver);
         Audio = new AudioBufferManager(descriptor.AudioBuffers);
     }
 
     public BookContext Book { get; }
     public ChapterDescriptor Descriptor { get; }
-    public ChapterDocumentManager Documents { get; }
+    public ChapterDocuments Documents { get; }
     public AudioBufferManager Audio { get; }
+
+    public void Save()
+    {
+        Documents.SaveChanges();
+    }
 }

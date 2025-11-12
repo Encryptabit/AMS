@@ -5,22 +5,24 @@ using System.Linq;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
-using Ams.Core.Alignment.Tx;
 using Ams.Core.Artifacts;
-using Ams.Core.Alignment.Anchors;
-using Ams.Core;
-using Ams.Core.Runtime.Documents;
-using Ams.Core.Validation;
-using Ams.Cli.Utilities;
-using Ams.Cli.Services;
-using Ams.Core.Diffing;
-using Ams.Core.Hydrate;
+using Ams.Core.Artifacts.Alignment;
 using Ams.Core.Common;
+using Ams.Core.Processors.Diffing;
+using Ams.Core.Services.Alignment;
+using Ams.Cli.Services;
+using Ams.Cli.Utilities;
 
 namespace Ams.Cli.Commands;
 
 public static class AlignCommand
 {
+    private static readonly JsonSerializerOptions JsonWriteOptions = new()
+    {
+        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+        WriteIndented = true
+    };
+
     public static Command Create()
     {
         var align = new Command("align", "Alignment utilities");
@@ -38,17 +40,17 @@ public static class AlignCommand
         indexOption.AddAlias("-i");
         var asrOption = new Option<FileInfo?>("--asr-json", "Path to ASR JSON");
         asrOption.AddAlias("-j");
-        var outOption = new Option<FileInfo?>("--out", () => null, "Output JSON file (default: derived from chapter)");
+        var outOption = new Option<FileInfo?>("--out", "Output anchors JSON (defaults to <chapter>.align.anchors.json)");
+        outOption.AddAlias("-o");
 
         var detectSectionOption = new Option<bool>("--detect-section", () => true, "Detect section from ASR prefix and restrict window");
         var ngramOption = new Option<int>("--ngram", () => 3, "Anchor n-gram size");
         var targetPerTokensOption = new Option<int>("--target-per-tokens", () => 50, "Approx. 1 anchor per N book tokens");
         var minSeparationOption = new Option<int>("--min-separation", () => 100, "Min token separation when duplicates allowed during relaxation");
         var crossSentencesOption = new Option<bool>("--cross-sentences", () => false, "Allow anchors to cross sentence boundaries");
-        var domainStopwordsOption = new Option<bool>("--domain-stopwords", () => true, "Use English/domain stopwords");
-
+        var domainStopwordsOption = new Option<bool>("--domain-stopwords", () => true, "Use English/domain stopwords for anchors");
         var asrPrefixTokensOption = new Option<int>("--asr-prefix", () => 8, "ASR tokens to consider for section detection");
-        var emitWindowsOption = new Option<bool>("--emit-windows", () => false, "Also emit search windows between anchors");
+        var emitWindowsOption = new Option<bool>("--emit-windows", () => true, "Also emit search windows between anchors");
 
         cmd.AddOption(indexOption);
         cmd.AddOption(asrOption);
@@ -62,23 +64,27 @@ public static class AlignCommand
         cmd.AddOption(asrPrefixTokensOption);
         cmd.AddOption(emitWindowsOption);
 
-        cmd.SetHandler(async (context) =>
+        cmd.SetHandler(async context =>
         {
             var indexFile = CommandInputResolver.ResolveBookIndex(context.ParseResult.GetValueForOption(indexOption));
             var asrFile = CommandInputResolver.ResolveChapterArtifact(context.ParseResult.GetValueForOption(asrOption), "asr.json");
             var outFile = CommandInputResolver.ResolveChapterArtifact(context.ParseResult.GetValueForOption(outOption), "align.anchors.json", mustExist: false);
-            var detectSection = context.ParseResult.GetValueForOption(detectSectionOption);
-            var ngram = context.ParseResult.GetValueForOption(ngramOption);
-            var targetPerTokens = context.ParseResult.GetValueForOption(targetPerTokensOption);
-            var minSeparation = context.ParseResult.GetValueForOption(minSeparationOption);
-            var crossSentences = context.ParseResult.GetValueForOption(crossSentencesOption);
-            var domainStopwords = context.ParseResult.GetValueForOption(domainStopwordsOption);
-            var asrPrefix = context.ParseResult.GetValueForOption(asrPrefixTokensOption);
-            var emitWindows = context.ParseResult.GetValueForOption(emitWindowsOption);
+
+            var options = new AnchorComputationOptions
+            {
+                DetectSection = context.ParseResult.GetValueForOption(detectSectionOption),
+                NGram = context.ParseResult.GetValueForOption(ngramOption),
+                TargetPerTokens = context.ParseResult.GetValueForOption(targetPerTokensOption),
+                MinSeparation = context.ParseResult.GetValueForOption(minSeparationOption),
+                AllowBoundaryCross = context.ParseResult.GetValueForOption(crossSentencesOption),
+                UseDomainStopwords = context.ParseResult.GetValueForOption(domainStopwordsOption),
+                AsrPrefixTokens = context.ParseResult.GetValueForOption(asrPrefixTokensOption),
+                EmitWindows = context.ParseResult.GetValueForOption(emitWindowsOption)
+            };
 
             try
             {
-                await RunAnchorsAsync(indexFile, asrFile, outFile, detectSection, ngram, targetPerTokens, minSeparation, crossSentences, domainStopwords, asrPrefix, emitWindows);
+                await RunAnchorsAsync(indexFile, asrFile, outFile, options, context.GetCancellationToken()).ConfigureAwait(false);
             }
             catch (Exception ex)
             {
@@ -123,23 +129,27 @@ public static class AlignCommand
         cmd.AddOption(crossSentencesOption);
         cmd.AddOption(domainStopwordsOption);
 
-        cmd.SetHandler(async (context) =>
+        cmd.SetHandler(async context =>
         {
             var indexFile = CommandInputResolver.ResolveBookIndex(context.ParseResult.GetValueForOption(indexOption));
             var asrFile = CommandInputResolver.ResolveChapterArtifact(context.ParseResult.GetValueForOption(asrOption), "asr.json");
             var audioFile = CommandInputResolver.RequireAudio(context.ParseResult.GetValueForOption(audioOption));
             var outFile = CommandInputResolver.ResolveChapterArtifact(context.ParseResult.GetValueForOption(outOption), "align.tx.json", mustExist: false);
-            var detectSection = context.ParseResult.GetValueForOption(detectSectionOption);
-            var asrPrefix = context.ParseResult.GetValueForOption(asrPrefixTokensOption);
-            var ngram = context.ParseResult.GetValueForOption(ngramOption);
-            var targetPerTokens = context.ParseResult.GetValueForOption(targetPerTokensOption);
-            var minSeparation = context.ParseResult.GetValueForOption(minSeparationOption);
-            var crossSentences = context.ParseResult.GetValueForOption(crossSentencesOption);
-            var domainStopwords = context.ParseResult.GetValueForOption(domainStopwordsOption);
+
+            var anchorOptions = new AnchorComputationOptions
+            {
+                DetectSection = context.ParseResult.GetValueForOption(detectSectionOption),
+                AsrPrefixTokens = context.ParseResult.GetValueForOption(asrPrefixTokensOption),
+                NGram = context.ParseResult.GetValueForOption(ngramOption),
+                TargetPerTokens = context.ParseResult.GetValueForOption(targetPerTokensOption),
+                MinSeparation = context.ParseResult.GetValueForOption(minSeparationOption),
+                AllowBoundaryCross = context.ParseResult.GetValueForOption(crossSentencesOption),
+                UseDomainStopwords = context.ParseResult.GetValueForOption(domainStopwordsOption)
+            };
 
             try
             {
-                await RunTranscriptIndexAsync(indexFile, asrFile, audioFile, outFile, detectSection, asrPrefix, ngram, targetPerTokens, minSeparation, crossSentences, domainStopwords);
+                await RunTranscriptIndexAsync(indexFile, asrFile, audioFile, outFile, anchorOptions, context.GetCancellationToken()).ConfigureAwait(false);
             }
             catch (Exception ex)
             {
@@ -169,15 +179,16 @@ public static class AlignCommand
         cmd.AddOption(txOption);
         cmd.AddOption(outOption);
 
-        cmd.SetHandler(async (context) =>
+        cmd.SetHandler(async context =>
         {
             var indexFile = CommandInputResolver.ResolveBookIndex(context.ParseResult.GetValueForOption(indexOption));
             var asrFile = CommandInputResolver.ResolveChapterArtifact(context.ParseResult.GetValueForOption(asrOption), "asr.json");
             var txFile = CommandInputResolver.ResolveChapterArtifact(context.ParseResult.GetValueForOption(txOption), "align.tx.json");
             var outFile = CommandInputResolver.ResolveChapterArtifact(context.ParseResult.GetValueForOption(outOption), "align.hydrate.json", mustExist: false);
+
             try
             {
-                await RunHydrateTxAsync(indexFile, asrFile, txFile, outFile);
+                await RunHydrateTxAsync(indexFile, asrFile, txFile, outFile, context.GetCancellationToken()).ConfigureAwait(false);
             }
             catch (Exception ex)
             {
@@ -189,558 +200,72 @@ public static class AlignCommand
         return cmd;
     }
 
-    internal static async Task RunHydrateTxAsync(FileInfo indexFile, FileInfo asrFile, FileInfo txFile, FileInfo outFile)
-    {
-        var jsonOptions = new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
-
-        var indexJson = await File.ReadAllTextAsync(indexFile.FullName);
-        var book = JsonSerializer.Deserialize<BookIndex>(indexJson, jsonOptions) ?? throw new InvalidOperationException("Failed to parse BookIndex JSON");
-
-        var asrJson = await File.ReadAllTextAsync(asrFile.FullName);
-        var asr = JsonSerializer.Deserialize<AsrResponse>(asrJson, jsonOptions) ?? throw new InvalidOperationException("Failed to parse ASR JSON");
-
-        var txJson = await File.ReadAllTextAsync(txFile.FullName);
-        var tx = JsonSerializer.Deserialize<TranscriptIndex>(txJson, jsonOptions) ?? throw new InvalidOperationException("Failed to parse TranscriptIndex JSON");
-
-        // Hydrate words with values (1)
-        var words = tx.Words.Select(w => new HydratedWord(
-            w.BookIdx,
-            w.AsrIdx,
-            w.BookIdx.HasValue && w.BookIdx.Value >= 0 && w.BookIdx.Value < book.Words.Length ? book.Words[w.BookIdx.Value].Text : null,
-            w.AsrIdx.HasValue && w.AsrIdx.Value >= 0 && w.AsrIdx.Value < asr.Tokens.Length ? asr.Tokens[w.AsrIdx.Value].Word : null,
-            w.Op.ToString(),
-            w.Reason,
-            w.Score)).ToList();
-
-        // Helper to slice book/asr strings (2)
-        static string JoinBook(BookIndex b, int start, int end)
-        {
-            if (start < 0 || end >= b.Words.Length || end < start) return string.Empty;
-            var raw = string.Join(" ", b.Words.Skip(start).Take(end - start + 1).Select(x => x.Text));
-            return NormalizeSurface(raw);
-        }
-        static string JoinAsr(AsrResponse a, int? start, int? end)
-        {
-            if (!start.HasValue || !end.HasValue) return string.Empty;
-            int s = start.Value, e = end.Value;
-            if (s < 0 || e >= a.Tokens.Length || e < s) return string.Empty;
-            var raw = string.Join(" ", a.Tokens.Skip(s).Take(e - s + 1).Select(x => x.Word));
-            return NormalizeSurface(raw);
-        }
-
-        // Hydrate sentences (3)
-        static string ResolveSentenceStatus(SentenceMetrics metrics)
-            => metrics.Wer <= 0.10 && metrics.MissingRuns < 3
-                ? "ok"
-                : (metrics.Wer <= 0.25 ? "attention" : "unreliable");
-
-        static string ResolveParagraphStatus(double wer)
-            => wer <= 0.10 ? "ok" : (wer <= 0.25 ? "attention" : "unreliable");
-
-        var sentences = new List<HydratedSentence>(tx.Sentences.Count);
-        foreach (var sentence in tx.Sentences)
-        {
-            var bookText = JoinBook(book, sentence.BookRange.Start, sentence.BookRange.End);
-            var scriptRange = sentence.ScriptRange is null
-                ? null
-                : new HydratedScriptRange(sentence.ScriptRange.Start, sentence.ScriptRange.End);
-            var scriptText = sentence.ScriptRange is null ? string.Empty : JoinAsr(asr, sentence.ScriptRange.Start, sentence.ScriptRange.End);
-
-            var diffResult = TextDiffAnalyzer.Analyze(bookText, scriptText);
-            var status = ResolveSentenceStatus(diffResult.Metrics);
-
-            sentences.Add(new HydratedSentence(
-                sentence.Id,
-                new HydratedRange(sentence.BookRange.Start, sentence.BookRange.End),
-                scriptRange,
-                bookText,
-                scriptText,
-                diffResult.Metrics,
-                status,
-                sentence.Timing,
-                diffResult.Diff));
-        }
-
-        // Hydrate paragraphs (4)
-        var sentenceMap = sentences.ToDictionary(s => s.Id);
-        var paragraphs = new List<HydratedParagraph>(tx.Paragraphs.Count);
-
-        foreach (var paragraph in tx.Paragraphs)
-        {
-            var bookText = JoinBook(book, paragraph.BookRange.Start, paragraph.BookRange.End);
-            var paragraphScript = BuildParagraphScript(paragraph.SentenceIds, sentenceMap);
-            var diffResult = TextDiffAnalyzer.Analyze(bookText, paragraphScript);
-            var status = ResolveParagraphStatus(diffResult.Metrics.Wer);
-            var metrics = new ParagraphMetrics(diffResult.Metrics.Wer, diffResult.Metrics.Cer, diffResult.Coverage);
-
-            paragraphs.Add(new HydratedParagraph(
-                paragraph.Id,
-                new HydratedRange(paragraph.BookRange.Start, paragraph.BookRange.End),
-                paragraph.SentenceIds,
-                bookText,
-                metrics,
-                status,
-                diffResult.Diff));
-        }
-
-        var hydrated = new HydratedTranscript(
-            tx.AudioPath,
-            tx.ScriptPath,
-            tx.BookIndexPath,
-            tx.CreatedAtUtc,
-            tx.NormalizationVersion,
-            words,
-            sentences,
-            paragraphs);
-
-        static string BuildParagraphScript(IReadOnlyList<int> sentenceIds, IReadOnlyDictionary<int, HydratedSentence> sentenceMap)
-        {
-            if (sentenceIds.Count == 0)
-            {
-                return string.Empty;
-            }
-
-            var parts = new List<string>(sentenceIds.Count);
-            foreach (var id in sentenceIds)
-            {
-                if (sentenceMap.TryGetValue(id, out var sentence) && !string.IsNullOrWhiteSpace(sentence.ScriptText))
-                {
-                    parts.Add(sentence.ScriptText);
-                }
-            }
-
-            return parts.Count == 0 ? string.Empty : string.Join(" ", parts);
-        }
-
-        static string NormalizeSurface(string? text)
-        {
-            if (string.IsNullOrWhiteSpace(text))
-            {
-                return string.Empty;
-            }
-
-            var normalized = TextNormalizer.NormalizeTypography(text);
-            return string.IsNullOrWhiteSpace(normalized) ? string.Empty : normalized.Trim();
-        }
-
-        var outJson = JsonSerializer.Serialize(hydrated, new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase, WriteIndented = true });
-        await File.WriteAllTextAsync(outFile.FullName, outJson);
-        Log.Debug("Hydrated TranscriptIndex written to: {OutputFile}", outFile.FullName);
-    }
-
-    internal static async Task RunTranscriptIndexAsync(
-    FileInfo indexFile,
-    FileInfo asrFile,
-    FileInfo audioFile,
-    FileInfo outFile,
-    bool detectSection,
-    int asrPrefixTokens,
-    int ngram,
-    int targetPerTokens,
-    int minSeparation,
-    bool crossSentences,
-    bool domainStopwords)
-{
-    var jsonOptions = new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
-    var indexJson = await File.ReadAllTextAsync(indexFile.FullName);
-    var book = JsonSerializer.Deserialize<BookIndex>(indexJson, jsonOptions) ?? throw new InvalidOperationException("Failed to parse BookIndex JSON");
-
-    var asrJson = await File.ReadAllTextAsync(asrFile.FullName);
-    var asr = JsonSerializer.Deserialize<AsrResponse>(asrJson, jsonOptions) ?? throw new InvalidOperationException("Failed to parse ASR JSON");
-
-    // Build normalized views (1)
-    var bookView = AnchorPreprocessor.BuildBookView(book);
-    var asrView = AnchorPreprocessor.BuildAsrView(asr);
-
-    // Compute anchors & windows (2)
-    var stop = domainStopwords ? StopwordSets.EnglishPlusDomain : new HashSet<string>(StringComparer.Ordinal);
-    var policy = new AnchorPolicy(
-        NGram: ngram,
-        TargetPerTokens: targetPerTokens,
-        AllowDuplicates: false,
-        MinSeparation: minSeparation,
-        Stopwords: stop,
-        DisallowBoundaryCross: !crossSentences
-    );
-    SectionRange? sectionOverride = null;
-    var labelCandidates = new List<string>();
-
-    var audioStem = Path.GetFileNameWithoutExtension(audioFile.Name);
-    if (!string.IsNullOrWhiteSpace(audioStem)) labelCandidates.Add(audioStem);
-
-    var folderName = audioFile.Directory?.Name;
-    if (!string.IsNullOrWhiteSpace(folderName)) labelCandidates.Add(folderName);
-
-    var asrStem = Path.GetFileNameWithoutExtension(asrFile.Name);
-    if (!string.IsNullOrWhiteSpace(asrStem))
-    {
-        if (asrStem.EndsWith(".asr", StringComparison.OrdinalIgnoreCase))
-        {
-            asrStem = asrStem[..^4];
-        }
-        labelCandidates.Add(asrStem);
-    }
-
-    foreach (var candidate in labelCandidates)
-    {
-        sectionOverride = SectionLocator.ResolveSectionByTitle(book, candidate);
-        if (sectionOverride is not null)
-        {
-            Log.Debug("Resolved chapter '{Chapter}' to section {SectionId}: {SectionTitle}",
-                candidate,
-                sectionOverride.Id,
-                sectionOverride.Title);
-            break;
-        }
-    }
-
-    var secOpts = new SectionDetectOptions(Detect: sectionOverride is null && detectSection, AsrPrefixTokens: asrPrefixTokens);
-    var pipe = AnchorPipeline.ComputeAnchors(book, asr, policy, secOpts, includeWindows: true, overrideSection: sectionOverride);
-
-    if (sectionOverride is not null && detectSection)
-    {
-        var prefixTokens = asr.Tokens.Select(t => t.Word).Take(Math.Max(1, asrPrefixTokens)).ToList();
-        var detected = SectionLocator.DetectSection(book, prefixTokens, asrPrefixTokens);
-        if (detected is not null && detected.Id != sectionOverride.Id)
-        {
-            Log.Debug("ASR prefix suggests section {Detected} ({DetectedTitle}) but filename resolved to {Resolved} ({ResolvedTitle}).", detected.Id, detected.Title, sectionOverride.Id, sectionOverride.Title);
-        }
-    }
-
-    var windows = pipe.Windows;
-    if (windows is null || windows.Count == 0)
-    {
-        windows = BuildFallbackWindows(pipe, asrView.Tokens.Count, policy);
-    }
-
-    // Equivalences and fillers (3)
-    var equiv = new Dictionary<string, string>(StringComparer.Ordinal) { };
-    var fillers = new HashSet<string>(new[] { "uh", "um", "erm", "uhh", "hmm", "mm", "huh", "like" }, StringComparer.Ordinal);
-
-    // Align in filtered coordinates (4)
-    var bookPhonemes = BuildBookPhonemeView(book, pipe.BookFilteredToOriginalWord, bookView.Tokens.Count);
-    var asrPhonemes = await BuildAsrPhonemeViewAsync(asr, asrView, CancellationToken.None);
-
-    var opsNm = TranscriptAligner.AlignWindows(
-        bookView.Tokens,
-        asrView.Tokens,
-        windows,
-        equiv,
-        fillers,
-        bookPhonemes,
-        asrPhonemes);
-
-    var anchorOps = new List<WordAlign>(pipe.Anchors.Count * policy.NGram);
-    var anchorSeen = new HashSet<(int BookIdx, int? AsrIdx)>();
-    foreach (var anchor in pipe.Anchors)
-    {
-        for (int k = 0; k < policy.NGram; k++)
-        {
-            int bookFiltered = anchor.Bp + k;
-            if (bookFiltered < 0 || bookFiltered >= pipe.BookFilteredToOriginalWord.Count)
-            {
-                continue;
-            }
-
-            int bookIdx = pipe.BookFilteredToOriginalWord[bookFiltered];
-            if (bookIdx < 0 || bookIdx >= book.Words.Length)
-            {
-                continue;
-            }
-
-            int? asrIdx = null;
-            int asrFiltered = anchor.Ap + k;
-            if (asrFiltered >= 0 && asrFiltered < asrView.FilteredToOriginalToken.Count)
-            {
-                asrIdx = asrView.FilteredToOriginalToken[asrFiltered];
-            }
-
-           if (anchorSeen.Add((bookIdx, asrIdx)))
-           {
-                anchorOps.Add(new WordAlign(bookIdx, asrIdx, AlignOp.Match, "anchor", 0.0));
-            }
-        }
-    }
-
-    var dpOps = new List<WordAlign>(opsNm.Count);
-    foreach (var (bi, aj, op, reason, score) in opsNm)
-    {
-        int? bookIdx = bi.HasValue ? pipe.BookFilteredToOriginalWord[bi.Value] : (int?)null;
-        int? asrIdx = aj.HasValue ? asrView.FilteredToOriginalToken[aj.Value] : (int?)null;
-        dpOps.Add(new WordAlign(bookIdx, asrIdx, op, reason, score));
-    }
-
-    var combinedOps = anchorOps
-        .OrderBy(op => op.BookIdx)
-        .ThenBy(op => op.AsrIdx ?? int.MaxValue)
-        .Concat(dpOps)
-        .ToList();
-
-    var seenOps = new HashSet<(int?, int?, AlignOp)>();
-    var wordOps = new List<WordAlign>(combinedOps.Count);
-    foreach (var op in combinedOps)
-    {
-        if (seenOps.Add((op.BookIdx, op.AsrIdx, op.Op)))
-        {
-            wordOps.Add(op);
-        }
-    }
-
-    // Section range on original indices (6)
-    int secStartWord = 0;
-    int secEndWord = book.Words.Length - 1;
-    if (pipe.Section != null)
-    {
-        secStartWord = Math.Max(0, pipe.Section.StartWord);
-        secEndWord = Math.Min(book.Words.Length - 1, pipe.Section.EndWord);
-    }
-    else
-    {
-        static bool IsAlignedWord(WordAlign op) => op.BookIdx.HasValue && op.AsrIdx.HasValue && op.Op != AlignOp.Del;
-
-        var matchedBookIdx = new List<int>();
-        matchedBookIdx.AddRange(wordOps.Where(IsAlignedWord).Select(o => o.BookIdx!.Value));
-        matchedBookIdx.AddRange(anchorOps.Where(a => a.BookIdx.HasValue).Select(a => a.BookIdx!.Value));
-        matchedBookIdx.Sort();
-
-        if (matchedBookIdx.Count > 0)
-        {
-            secStartWord = matchedBookIdx.First();
-            secEndWord = matchedBookIdx.Last();
-
-            var firstSentence = book.Sentences.FirstOrDefault(s => s.Start <= secStartWord && s.End >= secStartWord);
-            if (firstSentence != null)
-            {
-                secStartWord = firstSentence.Start;
-            }
-
-            var lastSentence = book.Sentences.LastOrDefault(s => s.Start <= secEndWord && s.End >= secEndWord);
-            if (lastSentence != null)
-            {
-                secEndWord = lastSentence.End;
-            }
-
-            secStartWord = Math.Max(0, secStartWord);
-            secEndWord = Math.Min(book.Words.Length - 1, Math.Max(secStartWord, secEndWord));
-
-            Log.Debug("Section detection fallback: restricting to book words [{StartWord}, {EndWord}] (approx {TokenCount} aligned tokens).", secStartWord, secEndWord, matchedBookIdx.Count);
-        }
-        else
-        {
-            Log.Debug("No aligned book tokens found; falling back to full book range.");
-        }
-    }
-
-    var sentTuples = book.Sentences
-        .Where(s => s.Start <= secEndWord && s.End >= secStartWord)
-        .Select(s => (s.Index, Math.Max(secStartWord, s.Start), Math.Min(secEndWord, s.End)))
-        .ToList();
-    var paraTuples = book.Paragraphs
-        .Where(p => p.Start <= secEndWord && p.End >= secStartWord)
-        .Select(p => (p.Index, Math.Max(secStartWord, p.Start), Math.Min(secEndWord, p.End)))
-        .ToList();
-
-    var (sentAlign, paraAlign) = TranscriptAligner.Rollup(
-        wordOps,
-        sentTuples.Select(t => (t.Index, t.Item2, t.Item3)).ToList(),
-        paraTuples.Select(t => (t.Index, t.Item2, t.Item3)).ToList(),
-        book,
-        asr);
-
-    var timedSentences = sentAlign
-        .Select(s => s with { Timing = ComputeTiming(s.ScriptRange, asr) })
-        .ToList();
-
-    var tx = new TranscriptIndex(
-        AudioPath: audioFile.FullName,
-        ScriptPath: asrFile.FullName,
-        BookIndexPath: indexFile.FullName,
-        CreatedAtUtc: DateTime.UtcNow,
-        NormalizationVersion: "v1",
-        Words: wordOps,
-        Sentences: timedSentences,
-        Paragraphs: paraAlign);
-
-    var outJson = JsonSerializer.Serialize(tx, new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase, WriteIndented = true });
-    await File.WriteAllTextAsync(outFile.FullName, outJson);
-    Log.Debug("TranscriptIndex written to: {OutputFile}", outFile.FullName);
-}
-
-    private static string[][] BuildBookPhonemeView(BookIndex book, IReadOnlyList<int> filteredToOriginal, int filteredCount)
-    {
-        var result = new string[filteredCount][];
-        for (int i = 0; i < filteredCount; i++)
-        {
-            var originalIndex = filteredToOriginal[i];
-            if (originalIndex >= 0 && originalIndex < book.Words.Length)
-            {
-                result[i] = book.Words[originalIndex].Phonemes ?? Array.Empty<string>();
-            }
-            else
-            {
-                result[i] = Array.Empty<string>();
-            }
-        }
-
-        return result;
-    }
-
-    private static async Task<string[][]> BuildAsrPhonemeViewAsync(AsrResponse asr, AsrAnchorView asrView, CancellationToken cancellationToken)
-    {
-        var provider = new MfaPronunciationProvider();
-        var pronunciations = await provider.GetPronunciationsAsync(asr.Tokens.Select(t => t.Word), cancellationToken).ConfigureAwait(false);
-
-        var result = new string[asrView.Tokens.Count][];
-        for (int i = 0; i < asrView.Tokens.Count; i++)
-        {
-            var originalIndex = asrView.FilteredToOriginalToken[i];
-            if (originalIndex < 0 || originalIndex >= asr.Tokens.Length)
-            {
-                result[i] = Array.Empty<string>();
-                continue;
-            }
-
-            var lexeme = PronunciationHelper.NormalizeForLookup(asr.Tokens[originalIndex].Word);
-            if (!string.IsNullOrEmpty(lexeme) && pronunciations.TryGetValue(lexeme, out var variants) && variants.Length > 0)
-            {
-                result[i] = variants;
-            }
-            else
-            {
-                result[i] = Array.Empty<string>();
-            }
-        }
-
-        return result;
-    }
-
-    private static TimingRange ComputeTiming(ScriptRange? scriptRange, AsrResponse asr)
-    {
-        if (scriptRange?.Start is not int start || scriptRange.End is not int end || asr.Tokens.Length == 0)
-        {
-            return TimingRange.Empty;
-        }
-
-        start = Math.Clamp(start, 0, asr.Tokens.Length - 1);
-        end = Math.Clamp(end, start, asr.Tokens.Length - 1);
-
-        var startToken = asr.Tokens[start];
-        var endToken = asr.Tokens[end];
-        var startSec = startToken.StartTime;
-        var endSec = endToken.StartTime + endToken.Duration;
-
-        return new TimingRange(startSec, endSec);
-    }
-
-    private static IReadOnlyList<(int bLo, int bHi, int aLo, int aHi)> BuildFallbackWindows(
-        AnchorPipelineResult pipe,
-        int asrTokenCount,
-        AnchorPolicy policy)
-    {
-        if (pipe.Anchors.Count == 0)
-        {
-            return new List<(int, int, int, int)>
-            {
-                (pipe.BookWindowFiltered.bStart, pipe.BookWindowFiltered.bEnd + 1, 0, asrTokenCount)
-            };
-        }
-
-        int minBp = pipe.Anchors.Min(a => a.Bp);
-        int maxBp = pipe.Anchors.Max(a => a.Bp + policy.NGram - 1);
-        int bookSpan = Math.Max(0, maxBp - minBp + 1);
-        int bookPad = Math.Max(64, Math.Min(8192, Math.Max(policy.NGram * 2, bookSpan / 5)));
-        int bookStart = Math.Max(pipe.BookWindowFiltered.bStart, minBp - bookPad);
-        int bookEndExclusive = Math.Min(pipe.BookWindowFiltered.bEnd + 1, maxBp + bookPad + 1);
-
-        int minAp = pipe.Anchors.Min(a => a.Ap);
-        int maxAp = pipe.Anchors.Max(a => a.Ap);
-        int asrSpan = Math.Max(0, maxAp - minAp + 1);
-        int asrPad = Math.Max(32, Math.Min(4096, Math.Max(policy.NGram * 2, asrSpan / 5)));
-        int asrStart = Math.Max(0, minAp - asrPad);
-        int asrEndExclusive = Math.Min(asrTokenCount, maxAp + asrPad + 1);
-
-        if (bookEndExclusive <= bookStart)
-        {
-            bookEndExclusive = Math.Min(pipe.BookWindowFiltered.bEnd + 1, bookStart + Math.Max(1, bookSpan + bookPad));
-        }
-
-        if (asrEndExclusive <= asrStart)
-        {
-            asrEndExclusive = Math.Min(asrTokenCount, asrStart + Math.Max(1, asrSpan + asrPad));
-        }
-
-        return new List<(int, int, int, int)>
-        {
-            (bookStart, bookEndExclusive, asrStart, asrEndExclusive)
-        };
-    }
-
     internal static async Task RunAnchorsAsync(
         FileInfo indexFile,
         FileInfo asrFile,
-        FileInfo? outFile,
-        bool detectSection,
-        int ngram,
-        int targetPerTokens,
-        int minSeparation,
-        bool crossSentences,
-        bool domainStopwords,
-        int asrPrefixTokens,
-        bool emitWindows)
+        FileInfo outFile,
+        AnchorComputationOptions options,
+        CancellationToken cancellationToken = default)
     {
-        if (!indexFile.Exists) throw new FileNotFoundException($"Index file not found: {indexFile.FullName}");
-        if (!asrFile.Exists) throw new FileNotFoundException($"ASR JSON file not found: {asrFile.FullName}");
+        using var handle = ChapterContextFactory.Create(indexFile, asrFile: asrFile);
+        var service = CreateAlignmentService();
+        var anchors = await service.ComputeAnchorsAsync(handle.Chapter, options, cancellationToken).ConfigureAwait(false);
+        await WriteJsonAsync(outFile, anchors, cancellationToken).ConfigureAwait(false);
+        handle.Save();
+    }
 
-        var jsonOptions = new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
+    internal static async Task RunTranscriptIndexAsync(
+        FileInfo indexFile,
+        FileInfo asrFile,
+        FileInfo audioFile,
+        FileInfo outFile,
+        AnchorComputationOptions anchorOptions,
+        CancellationToken cancellationToken = default)
+    {
+        using var handle = ChapterContextFactory.Create(
+            bookIndexFile: indexFile,
+            asrFile: asrFile,
+            audioFile: audioFile);
 
-        var indexJson = await File.ReadAllTextAsync(indexFile.FullName);
-        var book = JsonSerializer.Deserialize<BookIndex>(indexJson, jsonOptions) ?? throw new InvalidOperationException("Failed to parse BookIndex JSON");
-
-        var asrJson = await File.ReadAllTextAsync(asrFile.FullName);
-        var asr = JsonSerializer.Deserialize<AsrResponse>(asrJson, jsonOptions) ?? throw new InvalidOperationException("Failed to parse ASR JSON");
-
-        // Build policy
-        var stop = domainStopwords ? StopwordSets.EnglishPlusDomain : new HashSet<string>(StringComparer.Ordinal);
-        var policy = new AnchorPolicy(
-            NGram: ngram,
-            TargetPerTokens: targetPerTokens,
-            AllowDuplicates: false,
-            MinSeparation: minSeparation,
-            Stopwords: stop,
-            DisallowBoundaryCross: !crossSentences
-        );
-
-        var secOpts = new SectionDetectOptions(Detect: detectSection, AsrPrefixTokens: asrPrefixTokens);
-        var pipe = AnchorPipeline.ComputeAnchors(book, asr, policy, secOpts, includeWindows: emitWindows);
-
-        var anchorsOut = pipe.Anchors.Select(a => new
+        var service = CreateAlignmentService();
+        var transcript = await service.BuildTranscriptIndexAsync(handle.Chapter, new TranscriptBuildOptions
         {
-            bp = a.Bp,
-            bpWordIndex = pipe.BookFilteredToOriginalWord[a.Bp],
-            ap = a.Ap
-        }).ToList();
+            AudioPath = audioFile.FullName,
+            ScriptPath = asrFile.FullName,
+            BookIndexPath = indexFile.FullName,
+            AnchorOptions = anchorOptions
+        }, cancellationToken).ConfigureAwait(false);
 
-        var payload = new
-        {
-            sectionDetected = pipe.SectionDetected,
-            section = pipe.Section == null ? null : new { pipe.Section.Id, pipe.Section.Title, pipe.Section.Level, pipe.Section.Kind, pipe.Section.StartWord, pipe.Section.EndWord },
-            policy = new { ngram, targetPerTokens, minSeparation, disallowBoundaryCross = !crossSentences, stopwords = domainStopwords ? "domain" : "none" },
-            tokens = new { bookCount = pipe.BookTokenCount, bookFilteredCount = pipe.BookFilteredCount, asrCount = pipe.AsrTokenCount, asrFilteredCount = pipe.AsrFilteredCount },
-            window = new { bookStart = pipe.BookWindowFiltered.bStart, bookEnd = pipe.BookWindowFiltered.bEnd },
-            anchors = anchorsOut,
-            windows = pipe.Windows?.Select(w => new { bLo = w.bLo, bHi = w.bHi, aLo = w.aLo, aHi = w.aHi })
-        };
+        await WriteJsonAsync(outFile, transcript, cancellationToken).ConfigureAwait(false);
+        handle.Save();
+    }
 
-        var outputJson = JsonSerializer.Serialize(payload, new JsonSerializerOptions { WriteIndented = true });
-        if (outFile == null)
-        {
-            Log.Debug("{AnchorSummary}", outputJson);
-        }
-        else
-        {
-            await File.WriteAllTextAsync(outFile.FullName, outputJson);
-            Log.Debug("Anchors written to: {OutputFile}", outFile.FullName);
-        }
+    internal static async Task RunHydrateTxAsync(
+        FileInfo indexFile,
+        FileInfo asrFile,
+        FileInfo txFile,
+        FileInfo outFile,
+        CancellationToken cancellationToken = default)
+    {
+        using var handle = ChapterContextFactory.Create(
+            bookIndexFile: indexFile,
+            asrFile: asrFile,
+            transcriptFile: txFile);
+
+        var service = CreateAlignmentService();
+        var hydrated = await service.HydrateTranscriptAsync(handle.Chapter, null, cancellationToken).ConfigureAwait(false);
+        await WriteJsonAsync(outFile, hydrated, cancellationToken).ConfigureAwait(false);
+        handle.Save();
+    }
+
+    private static IAlignmentService CreateAlignmentService()
+        => new AlignmentService(new MfaPronunciationProvider());
+
+    private static async Task WriteJsonAsync<T>(FileInfo target, T payload, CancellationToken cancellationToken)
+    {
+        Directory.CreateDirectory(target.Directory?.FullName ?? Directory.GetCurrentDirectory());
+        var json = JsonSerializer.Serialize(payload, JsonWriteOptions);
+        await File.WriteAllTextAsync(target.FullName, json, cancellationToken).ConfigureAwait(false);
+        Log.Debug("Wrote {Path}", target.FullName);
     }
 }
-
