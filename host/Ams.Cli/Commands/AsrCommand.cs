@@ -1,10 +1,13 @@
 using System.CommandLine;
 using System.IO;
 using System.Text.Json;
+using Ams.Core.Artifacts;
 using Ams.Core.Asr;
 using Ams.Core.Common;
 using Ams.Core.Processors;
+using Ams.Core.Runtime.Chapter;
 using Ams.Core.Services;
+using Ams.Core.Services.Integrations.FFmpeg;
 using Ams.Cli.Utilities;
 using Whisper.net;
 using Whisper.net.Ggml;
@@ -52,6 +55,9 @@ public static class AsrCommand
         var flashAttentionOption = new Option<bool>("--flash-attention", () => false, "Enable FlashAttention kernels when building with support");
         var dtwOption = new Option<bool>("--dtw-timestamps", () => true, "Enable DTW timestamp refinement (Whisper)");
 
+        var bookIndexOption = new Option<FileInfo?>("--book-index", "Path to book-index.json (required for context-aware ASR)");
+        var chapterIdOption = new Option<string?>("--chapter-id", "Override chapter identifier (defaults to audio stem or active chapter)");
+
         runCommand.AddOption(audioOption);
         runCommand.AddOption(outputOption);
         runCommand.AddOption(engineOption);
@@ -68,6 +74,8 @@ public static class AsrCommand
         runCommand.AddOption(wordTimestampsOption);
         runCommand.AddOption(flashAttentionOption);
         runCommand.AddOption(dtwOption);
+        runCommand.AddOption(bookIndexOption);
+        runCommand.AddOption(chapterIdOption);
 
         runCommand.SetHandler(async context =>
         {
@@ -93,11 +101,15 @@ public static class AsrCommand
                 var dtwTimestamps = parse.GetValueForOption(dtwOption);
 
                 var audioFile = CommandInputResolver.RequireAudio(audio);
+                var bookIndexFile = CommandInputResolver.ResolveBookIndex(parse.GetValueForOption(bookIndexOption), mustExist: true);
+                var chapterId = parse.GetValueForOption(chapterIdOption) ?? Path.GetFileNameWithoutExtension(audioFile.Name);
                 var outputFile = CommandInputResolver.ResolveOutput(output, "asr.json");
                 var engine = AsrEngineConfig.Resolve(engineText);
 
+                using var handle = ChapterContextFactory.Create(bookIndexFile, audioFile: audioFile, chapterId: chapterId);
+
                 await RunAsrAsync(
-                    audioFile,
+                    handle,
                     outputFile,
                     engine,
                     serviceUrl,
@@ -113,6 +125,8 @@ public static class AsrCommand
                     wordTimestamps,
                     flashAttention,
                     dtwTimestamps);
+
+                handle.Save();
             }
             catch (Exception ex)
             {
@@ -126,7 +140,7 @@ public static class AsrCommand
     }
 
     internal static async Task RunAsrAsync(
-        FileInfo audioFile,
+        ChapterContextHandle handle,
         FileInfo outputFile,
         AsrEngine engine,
         string serviceUrl,
@@ -143,24 +157,40 @@ public static class AsrCommand
         bool flashAttention,
         bool dtwTimestamps)
     {
-        if (!audioFile.Exists)
-        {
-            throw new FileNotFoundException($"Audio file not found: {audioFile.FullName}");
-        }
-
         serviceUrl ??= DefaultServiceUrl;
         language ??= "en";
 
-        Log.Debug("Running ASR for {AudioFile} -> {OutputFile} via engine {Engine}", audioFile.FullName, outputFile.FullName, engine);
+        var chapter = handle.Chapter;
+        Log.Debug("Running ASR for chapter {ChapterId} -> {OutputFile} via engine {Engine}", chapter.Descriptor.ChapterId, outputFile.FullName, engine);
 
         if (engine == AsrEngine.Nemo)
         {
-            await RunNemoAsync(audioFile, outputFile, serviceUrl, model, language);
+            var asrService = new AsrService();
+            var buffer = asrService.ResolveAsrReadyBuffer(chapter);
+            var tempFile = ExportBufferToTempFile(buffer);
+            try
+            {
+                await RunNemoAsync(tempFile, outputFile, serviceUrl, model, language);
+            }
+            finally
+            {
+                try
+                {
+                    if (tempFile.Exists)
+                    {
+                        tempFile.Delete();
+                    }
+                }
+                catch
+                {
+                    // ignore cleanup failures
+                }
+            }
             return;
         }
 
         await RunWhisperAsync(
-            audioFile,
+            chapter,
             outputFile,
             model,
             modelPath,
@@ -176,7 +206,7 @@ public static class AsrCommand
             dtwTimestamps);
     }
 
-    internal static Task RunAsrAsync(FileInfo audioFile, FileInfo outputFile, string serviceUrl, string? model, string language)
+    internal static Task RunAsrAsync(ChapterContextHandle handle, FileInfo outputFile, string serviceUrl, string? model, string language)
     {
         var engine = AsrEngineConfig.Resolve();
         FileInfo? modelPath = null;
@@ -186,7 +216,7 @@ public static class AsrCommand
         }
 
         return RunAsrAsync(
-            audioFile,
+            handle,
             outputFile,
             engine,
             serviceUrl,
@@ -205,7 +235,7 @@ public static class AsrCommand
     }
 
     private static async Task RunWhisperAsync(
-        FileInfo audioFile,
+        ChapterContext chapter,
         FileInfo outputFile,
         string? model,
         FileInfo? modelPath,
@@ -245,10 +275,27 @@ public static class AsrCommand
             options.BeamSize,
             options.BestOf);
 
-        var response = await service.TranscribeFileAsync(audioFile.FullName, options, CancellationToken.None);
+        var response = await service.TranscribeAsync(chapter, options, CancellationToken.None);
+        chapter.Documents.Asr = response;
 
         await WriteResponseAsync(outputFile, response);
         Log.Debug("ASR summary: ModelVersion={ModelVersion}, Tokens={TokenCount}", response.ModelVersion, response.Tokens.Length);
+    }
+
+    private static FileInfo ExportBufferToTempFile(AudioBuffer buffer)
+    {
+        var tempPath = Path.Combine(Path.GetTempPath(), $"ams-asr-{Guid.NewGuid():N}.wav");
+        using var wavStream = buffer.ToWavStream(new AudioEncodeOptions
+        {
+            TargetSampleRate = AudioProcessor.DefaultAsrSampleRate
+        });
+
+        using (var file = File.Create(tempPath))
+        {
+            wavStream.CopyTo(file);
+        }
+
+        return new FileInfo(tempPath);
     }
 
     private static async Task<(string Path, GgmlType Type)> ResolveWhisperModelAsync(string? modelOption, FileInfo? modelPath)
