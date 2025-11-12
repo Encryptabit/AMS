@@ -37,18 +37,21 @@ public sealed record ChapterDescriptor
         string chapterId,
         string rootPath,
         IReadOnlyList<AudioBufferDescriptor> audioBuffers,
-        IReadOnlyDictionary<string, string>? documents = null)
+        IReadOnlyDictionary<string, string>? documents = null,
+        IReadOnlyCollection<string>? aliases = null)
     {
         ChapterId = chapterId ?? throw new ArgumentNullException(nameof(chapterId));
         RootPath = rootPath ?? throw new ArgumentNullException(nameof(rootPath));
         AudioBuffers = audioBuffers ?? Array.Empty<AudioBufferDescriptor>();
         Documents = documents;
+        Aliases = aliases ?? Array.Empty<string>();
     }
 
     public string ChapterId { get; }
     public string RootPath { get; }
     public IReadOnlyList<AudioBufferDescriptor> AudioBuffers { get; }
     public IReadOnlyDictionary<string, string>? Documents { get; }
+    public IReadOnlyCollection<string> Aliases { get; }
 }
 
 public sealed record BookDescriptor
