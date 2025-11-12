@@ -5,7 +5,7 @@ using Ams.Core.Runtime.Documents;
 
 namespace Ams.Core.Services.Documents;
 
-public sealed class DocumentService
+public sealed class DocumentService : IDocumentService
 {
     private readonly IPronunciationProvider? _pronunciationProvider;
     private readonly IBookCache? _cache;

@@ -14,7 +14,7 @@ namespace Ams.Core.Services;
 /// <summary>
 /// Orchestrates Whisper.NET transcription using the shared processor.
 /// </summary>
-public sealed class AsrService
+public sealed class AsrService : IAsrService
 {
     public Task<AsrResponse> TranscribeAsync(
         ChapterContext chapter,
