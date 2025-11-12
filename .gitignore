@@ -43,3 +43,4 @@ analysis/
 # Zig cache/output
 **/.zig-cache/
 **/zig-out/
+/host/.vs/Ams/FileContentIndex

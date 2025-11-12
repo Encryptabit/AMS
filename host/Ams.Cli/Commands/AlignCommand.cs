@@ -23,17 +23,21 @@ public static class AlignCommand
         WriteIndented = true
     };
 
-    public static Command Create()
+    public static Command Create(IChapterContextFactory chapterFactory)
     {
+        ArgumentNullException.ThrowIfNull(chapterFactory);
+
         var align = new Command("align", "Alignment utilities");
-        align.AddCommand(CreateAnchors());
-        align.AddCommand(CreateTranscriptIndex());
-        align.AddCommand(CreateHydrateTx());
+        align.AddCommand(CreateAnchors(chapterFactory));
+        align.AddCommand(CreateTranscriptIndex(chapterFactory));
+        align.AddCommand(CreateHydrateTx(chapterFactory));
         return align;
     }
 
-    private static Command CreateAnchors()
+    private static Command CreateAnchors(IChapterContextFactory chapterFactory)
     {
+        ArgumentNullException.ThrowIfNull(chapterFactory);
+
         var cmd = new Command("anchors", "Compute n-gram anchors between BookIndex and ASR");
 
         var indexOption = new Option<FileInfo?>("--index", "Path to BookIndex JSON");
@@ -84,7 +88,7 @@ public static class AlignCommand
 
             try
             {
-                await RunAnchorsAsync(indexFile, asrFile, outFile, options, context.GetCancellationToken()).ConfigureAwait(false);
+                await RunAnchorsAsync(chapterFactory, indexFile, asrFile, outFile, options, context.GetCancellationToken()).ConfigureAwait(false);
             }
             catch (Exception ex)
             {
@@ -96,8 +100,10 @@ public static class AlignCommand
         return cmd;
     }
 
-    private static Command CreateTranscriptIndex()
+    private static Command CreateTranscriptIndex(IChapterContextFactory chapterFactory)
     {
+        ArgumentNullException.ThrowIfNull(chapterFactory);
+
         var cmd = new Command("tx", "Validate & compare Book vs ASR using anchors; emit TranscriptIndex (*.tx.json)");
 
         var indexOption = new Option<FileInfo?>("--index", "Path to BookIndex JSON");
@@ -149,7 +155,7 @@ public static class AlignCommand
 
             try
             {
-                await RunTranscriptIndexAsync(indexFile, asrFile, audioFile, outFile, anchorOptions, context.GetCancellationToken()).ConfigureAwait(false);
+                await RunTranscriptIndexAsync(chapterFactory, indexFile, asrFile, audioFile, outFile, anchorOptions, context.GetCancellationToken()).ConfigureAwait(false);
             }
             catch (Exception ex)
             {
@@ -161,8 +167,10 @@ public static class AlignCommand
         return cmd;
     }
 
-    private static Command CreateHydrateTx()
+    private static Command CreateHydrateTx(IChapterContextFactory chapterFactory)
     {
+        ArgumentNullException.ThrowIfNull(chapterFactory);
+
         var cmd = new Command("hydrate", "Hydrate a TranscriptIndex with token values from BookIndex and ASR (for debugging)");
 
         var indexOption = new Option<FileInfo?>("--index", "Path to BookIndex JSON");
@@ -188,7 +196,7 @@ public static class AlignCommand
 
             try
             {
-                await RunHydrateTxAsync(indexFile, asrFile, txFile, outFile, context.GetCancellationToken()).ConfigureAwait(false);
+                await RunHydrateTxAsync(chapterFactory, indexFile, asrFile, txFile, outFile, context.GetCancellationToken()).ConfigureAwait(false);
             }
             catch (Exception ex)
             {
@@ -201,13 +209,16 @@ public static class AlignCommand
     }
 
     internal static async Task RunAnchorsAsync(
+        IChapterContextFactory chapterFactory,
         FileInfo indexFile,
         FileInfo asrFile,
         FileInfo outFile,
         AnchorComputationOptions options,
         CancellationToken cancellationToken = default)
     {
-        using var handle = ChapterContextFactory.Create(indexFile, asrFile: asrFile);
+        ArgumentNullException.ThrowIfNull(chapterFactory);
+
+        using var handle = chapterFactory.Create(indexFile, asrFile: asrFile);
         var service = CreateAlignmentService();
         var anchors = await service.ComputeAnchorsAsync(handle.Chapter, options, cancellationToken).ConfigureAwait(false);
         await WriteJsonAsync(outFile, anchors, cancellationToken).ConfigureAwait(false);
@@ -215,6 +226,7 @@ public static class AlignCommand
     }
 
     internal static async Task RunTranscriptIndexAsync(
+        IChapterContextFactory chapterFactory,
         FileInfo indexFile,
         FileInfo asrFile,
         FileInfo audioFile,
@@ -222,7 +234,9 @@ public static class AlignCommand
         AnchorComputationOptions anchorOptions,
         CancellationToken cancellationToken = default)
     {
-        using var handle = ChapterContextFactory.Create(
+        ArgumentNullException.ThrowIfNull(chapterFactory);
+
+        using var handle = chapterFactory.Create(
             bookIndexFile: indexFile,
             asrFile: asrFile,
             audioFile: audioFile);
@@ -241,13 +255,16 @@ public static class AlignCommand
     }
 
     internal static async Task RunHydrateTxAsync(
+        IChapterContextFactory chapterFactory,
         FileInfo indexFile,
         FileInfo asrFile,
         FileInfo txFile,
         FileInfo outFile,
         CancellationToken cancellationToken = default)
     {
-        using var handle = ChapterContextFactory.Create(
+        ArgumentNullException.ThrowIfNull(chapterFactory);
+
+        using var handle = chapterFactory.Create(
             bookIndexFile: indexFile,
             asrFile: asrFile,
             transcriptFile: txFile);

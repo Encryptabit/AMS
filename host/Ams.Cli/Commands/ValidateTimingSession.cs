@@ -22,6 +22,7 @@ internal sealed class ValidateTimingSession
 {
     private const double StructuralEpsilon = 1e-6;
 
+    private readonly IChapterContextFactory _chapterContextFactory;
     private readonly FileInfo _transcriptFile;
     private readonly FileInfo _bookIndexFile;
     private readonly FileInfo _hydrateFile;
@@ -33,9 +34,14 @@ internal sealed class ValidateTimingSession
     private readonly FileInfo _pauseAdjustmentsFile;
     private PauseAnalysisReport? _prosodyAnalysis;
 
-    public ValidateTimingSession(FileInfo transcriptFile, FileInfo bookIndexFile, FileInfo hydrateFile,
+    public ValidateTimingSession(
+        IChapterContextFactory chapterContextFactory,
+        FileInfo transcriptFile,
+        FileInfo bookIndexFile,
+        FileInfo hydrateFile,
         bool runProsodyAnalysis, bool includeAllIntraSentenceGaps = false, bool interSentenceOnly = true)
     {
+        _chapterContextFactory = chapterContextFactory ?? throw new ArgumentNullException(nameof(chapterContextFactory));
         _transcriptFile = transcriptFile ?? throw new ArgumentNullException(nameof(transcriptFile));
         _bookIndexFile = bookIndexFile ?? throw new ArgumentNullException(nameof(bookIndexFile));
         _hydrateFile = hydrateFile ?? throw new ArgumentNullException(nameof(hydrateFile));
@@ -155,7 +161,7 @@ internal sealed class ValidateTimingSession
     {
         cancellationToken.ThrowIfCancellationRequested();
 
-        using var handle = ChapterContextFactory.Create(
+        using var handle = _chapterContextFactory.Create(
             bookIndexFile: _bookIndexFile,
             transcriptFile: _transcriptFile,
             hydrateFile: _hydrateFile);

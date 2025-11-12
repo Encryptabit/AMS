@@ -13,7 +13,19 @@ using Ams.Core.Runtime.Documents;
 
 namespace Ams.Cli.Utilities;
 
-internal sealed class ChapterContextHandle : IDisposable
+public interface IChapterContextFactory
+{
+    ChapterContextHandle Create(
+        FileInfo bookIndexFile,
+        FileInfo? asrFile = null,
+        FileInfo? transcriptFile = null,
+        FileInfo? hydrateFile = null,
+        FileInfo? audioFile = null,
+        DirectoryInfo? chapterDirectory = null,
+        string? chapterId = null);
+}
+
+public sealed class ChapterContextHandle : IDisposable
 {
     private readonly IBookManager _bookManager;
     private string ChapterId => _bookManager.Current.Chapters.Current.Descriptor.ChapterId;
@@ -41,19 +53,19 @@ internal sealed class ChapterContextHandle : IDisposable
     }
 }
 
-internal static class ChapterContextFactory
+internal sealed class ChapterContextFactory : IChapterContextFactory
 {
     private sealed record ManagerKey(string BookRoot);
 
-    private static readonly Dictionary<ManagerKey, BookManager> _managers = new();
-    private static readonly object _sync = new();
+    private readonly Dictionary<ManagerKey, BookManager> _managers = new();
+    private readonly object _sync = new();
 
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
         PropertyNameCaseInsensitive = true
     };
 
-    public static ChapterContextHandle Create(
+    public ChapterContextHandle Create(
         FileInfo bookIndexFile,
         FileInfo? asrFile = null,
         FileInfo? transcriptFile = null,
@@ -319,7 +331,7 @@ internal static class ChapterContextFactory
         return builder.ToString();
     }
 
-    private static BookManager GetOrCreateManager(BookDescriptor descriptor)
+    private BookManager GetOrCreateManager(BookDescriptor descriptor)
     {
         var key = new ManagerKey(descriptor.RootPath);
         lock (_sync)

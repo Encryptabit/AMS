@@ -5,7 +5,8 @@ using Ams.Core.Common;
 using Ams.Cli.Repl;
 using Ams.Cli.Commands;
 using Ams.Cli.Services;
-using Ams.Core.Runtime.Book;
+using Ams.Cli.Utilities;
+using Ams.Core.Services;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 
@@ -17,8 +18,11 @@ internal static class Program
     {
         HostApplicationBuilder builder = Host.CreateApplicationBuilder(args);
 
-        builder.Services.AddSingleton<IBookManager, BookManager>();
+        builder.Services.AddSingleton<IChapterContextFactory, ChapterContextFactory>();
+        builder.Services.AddSingleton<IAsrService, AsrService>();
         using IHost host = builder.Build();
+        var chapterFactory = host.Services.GetRequiredService<IChapterContextFactory>();
+        var asrService = host.Services.GetRequiredService<IAsrService>();
         
         using var loggerFactory = Log.ConfigureDefaults(logFileName: "ams-log.txt");
         Log.Debug("Structured logging initialized. Console + file at {LogFile}", Log.LogFilePath ?? "(unknown)");
@@ -41,14 +45,14 @@ internal static class Program
 
         var rootCommand = new RootCommand("AMS - Audio Management System CLI");
 
-        rootCommand.AddCommand(AsrCommand.Create());
-        rootCommand.AddCommand(ValidateCommand.Create());
+        rootCommand.AddCommand(AsrCommand.Create(chapterFactory, asrService));
+        rootCommand.AddCommand(ValidateCommand.Create(chapterFactory));
         rootCommand.AddCommand(TextCommand.Create());
         rootCommand.AddCommand(BuildIndexCommand.Create());
         rootCommand.AddCommand(BookCommand.Create());
-        rootCommand.AddCommand(AlignCommand.Create());
+        rootCommand.AddCommand(AlignCommand.Create(chapterFactory));
         rootCommand.AddCommand(RefineSentencesCommand.Create());
-        rootCommand.AddCommand(PipelineCommand.Create());
+        rootCommand.AddCommand(PipelineCommand.Create(chapterFactory, asrService));
         rootCommand.AddCommand(DspCommand.Create());
         
         var replCommand = new Command("repl", "Start interactive REPL");

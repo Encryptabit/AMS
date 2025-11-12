@@ -24,17 +24,21 @@ namespace Ams.Cli.Commands;
 
 public static class ValidateCommand
 {
-    public static Command Create()
+    public static Command Create(IChapterContextFactory chapterFactory)
     {
+        ArgumentNullException.ThrowIfNull(chapterFactory);
+
         var validate = new Command("validate", "Validation utilities");
-        validate.AddCommand(CreateReportCommand());
-        validate.AddCommand(CreateTimingCommand());
+        validate.AddCommand(CreateReportCommand(chapterFactory));
+        validate.AddCommand(CreateTimingCommand(chapterFactory));
         validate.AddCommand(CreateServeCommand());
         return validate;
     }
 
-    private static Command CreateTimingCommand()
+    private static Command CreateTimingCommand(IChapterContextFactory chapterFactory)
     {
+        ArgumentNullException.ThrowIfNull(chapterFactory);
+
         var cmd = new Command("timing", "Interactively review and adjust sentence spacing gaps");
 
         var txOption = new Option<FileInfo?>(
@@ -157,7 +161,7 @@ public static class ValidateCommand
                 var includeAllIntra = context.ParseResult.GetValueForOption(includeAllIntraOption);
                 var interOnly = context.ParseResult.GetValueForOption(interOnlyOption);
 
-                var session = new ValidateTimingSession(tx, bookIndex, hydrate, runProsody, includeAllIntra, interOnly);
+                var session = new ValidateTimingSession(chapterFactory, tx, bookIndex, hydrate, runProsody, includeAllIntra, interOnly);
 
                 await session.RunAsync(cancellationToken).ConfigureAwait(false);
             }
@@ -359,8 +363,10 @@ public static class ValidateCommand
         return serve;
     }
 
-    private static Command CreateReportCommand()
+    private static Command CreateReportCommand(IChapterContextFactory chapterFactory)
     {
+        ArgumentNullException.ThrowIfNull(chapterFactory);
+
         var cmd = new Command("report", "Render a human-friendly view of transcript validation metrics");
 
         var txOption = new Option<FileInfo?>(
@@ -412,7 +418,7 @@ public static class ValidateCommand
             try
             {
                 var bookIndexFile = CommandInputResolver.ResolveBookIndex(null);
-                using var handle = ChapterContextFactory.Create(bookIndexFile, transcriptFile: txFile, hydrateFile: hydrateFile);
+                using var handle = chapterFactory.Create(bookIndexFile, transcriptFile: txFile, hydrateFile: hydrateFile);
                 var options = new ValidationReportOptions(
                     AllErrors: allErrors,
                     TopSentences: topSentences,
