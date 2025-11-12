@@ -33,7 +33,23 @@ public sealed record HydratedSentence(
     [property: JsonPropertyName("scriptText")] string ScriptText,
     [property: JsonPropertyName("metrics")] SentenceMetrics Metrics,
     [property: JsonPropertyName("status")] string Status,
-    [property: JsonPropertyName("timing")] TimingRange? Timing);
+    [property: JsonPropertyName("timing")] TimingRange? Timing,
+    [property: JsonPropertyName("diff")] HydratedDiff? Diff);
+
+public sealed record HydratedDiff(
+    [property: JsonPropertyName("ops")] IReadOnlyList<HydratedDiffOp> Ops,
+    [property: JsonPropertyName("stats")] HydratedDiffStats Stats);
+
+public sealed record HydratedDiffOp(
+    [property: JsonPropertyName("op")] string Operation,
+    [property: JsonPropertyName("tokens")] IReadOnlyList<string> Tokens);
+
+public sealed record HydratedDiffStats(
+    [property: JsonPropertyName("referenceTokens")] int ReferenceTokens,
+    [property: JsonPropertyName("hypothesisTokens")] int HypothesisTokens,
+    [property: JsonPropertyName("matches")] int Matches,
+    [property: JsonPropertyName("insertions")] int Insertions,
+    [property: JsonPropertyName("deletions")] int Deletions);
 
 public sealed record HydratedParagraph(
     [property: JsonPropertyName("id")] int Id,
@@ -41,7 +57,8 @@ public sealed record HydratedParagraph(
     [property: JsonPropertyName("sentenceIds")] IReadOnlyList<int> SentenceIds,
     [property: JsonPropertyName("bookText")] string BookText,
     [property: JsonPropertyName("metrics")] ParagraphMetrics Metrics,
-    [property: JsonPropertyName("status")] string Status);
+    [property: JsonPropertyName("status")] string Status,
+    [property: JsonPropertyName("diff")] HydratedDiff? Diff);
 
 public sealed record HydratedRange(
     [property: JsonPropertyName("start")] int Start,

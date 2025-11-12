@@ -1,9 +1,8 @@
+using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.RegularExpressions;
 using Xceed.Words.NET;
-using UglyToad.PdfPig;
-using UglyToad.PdfPig.Content;
-using UglyToad.PdfPig.DocumentLayoutAnalysis.TextExtractor;
+using PDFiumCore;
 
 namespace Ams.Core.Runtime.Documents;
 
@@ -20,6 +19,9 @@ public class BookParser : IBookParser
     };
 
     private static readonly Regex _paragraphBreakRegex = new(@"(\r?\n){2,}", RegexOptions.Compiled);
+    private static readonly Regex PdfSentenceSplitRegex = new(@"(?<=[\.\!\?…])\s+|\n\s*\n+", RegexOptions.Compiled);
+    private static readonly object PdfInitLock = new();
+    private static bool _pdfiumInitialized;
 
     public IReadOnlyCollection<string> SupportedExtensions => _supportedExtensions;
 
@@ -67,6 +69,25 @@ public class BookParser : IBookParser
         catch (Exception ex) when (!(ex is ArgumentException || ex is FileNotFoundException || ex is InvalidOperationException))
         {
             throw new BookParseException($"Failed to parse file '{filePath}': {ex.Message}", ex);
+        }
+    }
+
+    private static void EnsurePdfiumInitialized()
+    {
+        if (_pdfiumInitialized)
+        {
+            return;
+        }
+
+        lock (PdfInitLock)
+        {
+            if (_pdfiumInitialized)
+            {
+                return;
+            }
+
+            fpdfview.FPDF_InitLibrary();
+            _pdfiumInitialized = true;
         }
     }
 
@@ -321,57 +342,218 @@ public class BookParser : IBookParser
         {
             return await Task.Run(() =>
             {
-                using var document = PdfDocument.Open(filePath);
-                var parsedParagraphs = new List<ParsedParagraph>();
-                var metadata = new Dictionary<string, object>();
+                EnsurePdfiumInitialized();
 
-                if (!string.IsNullOrWhiteSpace(document.Information.Title))
+                var document = fpdfview.FPDF_LoadDocument(filePath, null);
+                if (document == null || document.__Instance == IntPtr.Zero)
                 {
-                    metadata["title"] = document.Information.Title;
-                }
-                if (!string.IsNullOrWhiteSpace(document.Information.Author))
-                {
-                    metadata["author"] = document.Information.Author;
+                    var error = fpdfview.FPDF_GetLastError();
+                    throw new BookParseException($"PDFium failed to load '{filePath}' (error {error}).");
                 }
 
-                var sb = new StringBuilder();
-                foreach (var page in document.GetPages())
+                try
                 {
-                    cancellationToken.ThrowIfCancellationRequested();
-                    var text = ContentOrderTextExtractor.GetText(page);
-                    if (string.IsNullOrWhiteSpace(text))
+                    var metadata = new Dictionary<string, object>
                     {
-                        continue;
+                        ["pageCount"] = fpdfview.FPDF_GetPageCount(document)
+                    };
+
+                    var title = TryGetPdfMetaText(document, "Title");
+                    var author = TryGetPdfMetaText(document, "Author");
+                    var subject = TryGetPdfMetaText(document, "Subject");
+                    var keywords = TryGetPdfMetaText(document, "Keywords");
+                    var creator = TryGetPdfMetaText(document, "Creator");
+                    var producer = TryGetPdfMetaText(document, "Producer");
+
+                    var suppressList = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+                    void AddMeta(string key, string? value)
+                    {
+                        if (string.IsNullOrWhiteSpace(value))
+                        {
+                            return;
+                        }
+
+                        var trimmed = value.Trim();
+                        metadata[key] = trimmed;
+                        suppressList.Add(trimmed);
                     }
 
-                    var lines = text.Split('\n');
-                    foreach (var line in lines)
+                    AddMeta("title", title);
+                    AddMeta("author", author);
+                    AddMeta("subject", subject);
+                    AddMeta("keywords", keywords);
+                    AddMeta("creator", creator);
+                    AddMeta("producer", producer);
+
+                    var parsedParagraphs = new List<ParsedParagraph>();
+                    var sb = new StringBuilder();
+                    var pageCount = (int)metadata["pageCount"];
+
+                    for (int pageIndex = 0; pageIndex < pageCount; pageIndex++)
                     {
-                        var trimmed = line.Trim('\r');
-                        if (string.IsNullOrWhiteSpace(trimmed))
+                        cancellationToken.ThrowIfCancellationRequested();
+
+                        var page = fpdfview.FPDF_LoadPage(document, pageIndex);
+                        if (page == null || page.__Instance == IntPtr.Zero)
                         {
-                            sb.AppendLine();
                             continue;
                         }
 
-                        parsedParagraphs.Add(new ParsedParagraph(trimmed, null, "Body"));
-                        sb.AppendLine(trimmed);
-                        sb.AppendLine();
-                    }
-                }
+                        try
+                        {
+                            var textPage = fpdf_text.FPDFTextLoadPage(page);
+                            if (textPage == null || textPage.__Instance == IntPtr.Zero)
+                            {
+                                continue;
+                            }
 
-                return new BookParseResult(
-                    Text: sb.ToString(),
-                    Title: metadata.TryGetValue("title", out var titleObj) ? titleObj?.ToString() : null,
-                    Author: metadata.TryGetValue("author", out var authorObj) ? authorObj?.ToString() : null,
-                    Metadata: metadata.Count > 0 ? metadata : null,
-                    Paragraphs: parsedParagraphs
-                );
+                            try
+                            {
+                                var charCount = fpdf_text.FPDFTextCountChars(textPage);
+                                if (charCount <= 0)
+                                {
+                                    continue;
+                                }
+
+                                var buffer = new ushort[charCount + 1];
+                                var written = fpdf_text.FPDFTextGetText(textPage, 0, charCount, ref buffer[0]);
+                                if (written <= 1)
+                                {
+                                    continue;
+                                }
+
+                                var actualCount = written - 1;
+                                var chars = new char[actualCount];
+                                for (int i = 0; i < actualCount; i++)
+                                {
+                                    chars[i] = (char)buffer[i];
+                                }
+
+                                var text = new string(chars);
+                                if (string.IsNullOrWhiteSpace(text))
+                                {
+                                    continue;
+                                }
+
+                                foreach (var sentence in SplitPdfSentences(text))
+                                {
+                                    if (string.IsNullOrWhiteSpace(sentence))
+                                    {
+                                        continue;
+                                    }
+
+                                    if (suppressList.Contains(sentence.Trim()))
+                                    {
+                                        continue;
+                                    }
+
+                                    parsedParagraphs.Add(new ParsedParagraph(sentence, null, "Body"));
+                                    sb.AppendLine(sentence);
+                                    sb.AppendLine();
+                                }
+                            }
+                            finally
+                            {
+                                fpdf_text.FPDFTextClosePage(textPage);
+                            }
+                        }
+                        finally
+                        {
+                            fpdfview.FPDF_ClosePage(page);
+                        }
+                    }
+
+                    return new BookParseResult(
+                        Text: sb.ToString(),
+                        Title: metadata.TryGetValue("title", out var titleObj) ? titleObj?.ToString() : null,
+                        Author: metadata.TryGetValue("author", out var authorObj) ? authorObj?.ToString() : null,
+                        Metadata: metadata.Count > 0 ? metadata : null,
+                        Paragraphs: parsedParagraphs
+                    );
+                }
+                finally
+                {
+                    fpdfview.FPDF_CloseDocument(document);
+                }
             }, cancellationToken);
         }
         catch (Exception ex)
         {
             throw new BookParseException($"Failed to parse PDF file '{filePath}': {ex.Message}", ex);
+        }
+    }
+
+    private static string? TryGetPdfMetaText(FpdfDocumentT document, string tag)
+    {
+        try
+        {
+            var length = (int)fpdf_doc.FPDF_GetMetaText(document, tag, IntPtr.Zero, 0);
+            if (length <= 2)
+            {
+                return null;
+            }
+
+            var buffer = Marshal.AllocHGlobal(length);
+            try
+            {
+                var written = (int)fpdf_doc.FPDF_GetMetaText(document, tag, buffer, (uint)length);
+                if (written <= 2)
+                {
+                    return null;
+                }
+
+                var bytes = new byte[written];
+                Marshal.Copy(buffer, bytes, 0, written);
+                var value = Encoding.Unicode.GetString(bytes, 0, written - 2);
+                return string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+            }
+            finally
+            {
+                Marshal.FreeHGlobal(buffer);
+            }
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static IEnumerable<string> SplitPdfSentences(string text)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            yield break;
+        }
+
+        var normalized = text.Replace("\r\n", "\n").Replace('\r', '\n').Trim();
+        if (normalized.Length == 0)
+        {
+            yield break;
+        }
+
+        var segments = PdfSentenceSplitRegex.Split(normalized);
+        if (segments.Length <= 1)
+        {
+            foreach (var line in normalized.Split('\n'))
+            {
+                var candidate = line.Trim();
+                if (candidate.Length > 0)
+                {
+                    yield return candidate;
+                }
+            }
+
+            yield break;
+        }
+
+        foreach (var segment in segments)
+        {
+            var candidate = segment.Trim();
+            if (candidate.Length > 0)
+            {
+                yield return candidate;
+            }
         }
     }
 }

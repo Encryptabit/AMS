@@ -2,6 +2,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Security.Cryptography;
 using System.Text.RegularExpressions;
+using Ams.Core.Common;
 
 namespace Ams.Core.Runtime.Documents;
 
@@ -12,6 +13,7 @@ namespace Ams.Core.Runtime.Documents;
 public class BookIndexer : IBookIndexer
 {
     private static readonly Regex _blankLineSplit = new("(\r?\n){2,}", RegexOptions.Compiled);
+    private static readonly Regex ForcedHyphenBreakRegex = new(@"(?<=\p{L})-\r?\n\s*(?=\p{L})", RegexOptions.Compiled);
     private readonly IPronunciationProvider _pronunciationProvider;
 
     public BookIndexer(IPronunciationProvider? pronunciationProvider = null)
@@ -134,8 +136,9 @@ public class BookIndexer : IBookIndexer
             int paragraphStartWord = globalWord;
             int sentenceStartWord = globalWord;
 
-            foreach (var token in TokenizeByWhitespace(pText))
+            foreach (var rawToken in TokenizeByWhitespace(pText))
             {
+                var token = NormalizeTokenSurface(rawToken);
                 if (!ContainsLexicalContent(token))
                 {
                     continue;
@@ -499,6 +502,43 @@ public class BookIndexer : IBookIndexer
         }
     }
 
+    private static string NormalizeTokenSurface(string token)
+    {
+        if (string.IsNullOrWhiteSpace(token))
+        {
+            return string.Empty;
+        }
+
+        var normalized = TextNormalizer.NormalizeTypography(token).Trim();
+        normalized = TrimOuterQuotes(normalized);
+        return normalized;
+    }
+
+    private static string TrimOuterQuotes(string value)
+    {
+        if (string.IsNullOrEmpty(value))
+        {
+            return string.Empty;
+        }
+
+        int start = 0;
+        int end = value.Length - 1;
+
+        while (start <= end && IsQuoteChar(value[start]))
+        {
+            start++;
+        }
+
+        while (end >= start && IsQuoteChar(value[end]))
+        {
+            end--;
+        }
+
+        return start > end ? string.Empty : value.Substring(start, end - start + 1);
+    }
+
+    private static bool IsQuoteChar(char ch) => ch is '"' or '\'';
+
     private static bool IsSentenceTerminal(string token)
     {
         if (string.IsNullOrEmpty(token)) return false;
@@ -515,14 +555,24 @@ public class BookIndexer : IBookIndexer
         if (parseResult.Paragraphs != null && parseResult.Paragraphs.Count > 0)
         {
             return parseResult.Paragraphs
-                .Select(p => (Text: p.Text, Style: p.Style ?? "Unknown", Kind: p.Kind ?? "Body"))
+                .Select(p => (Text: NormalizeParagraphText(p.Text), Style: p.Style ?? "Unknown", Kind: p.Kind ?? "Body"))
                 .ToList();
         }
 
         return _blankLineSplit.Split(parseResult.Text)
             .Where(s => !string.IsNullOrEmpty(s))
-            .Select(t => (Text: t.TrimEnd('\r', '\n'), Style: "Unknown", Kind: "Body"))
+            .Select(t => (Text: NormalizeParagraphText(t.TrimEnd('\r', '\n')), Style: "Unknown", Kind: "Body"))
             .ToList();
+    }
+
+    private static string NormalizeParagraphText(string text)
+    {
+        if (string.IsNullOrEmpty(text))
+        {
+            return string.Empty;
+        }
+
+        return ForcedHyphenBreakRegex.Replace(text, string.Empty);
     }
 
     private static List<(string Text, string Style, string Kind)> FoldAdjacentHeadings(List<(string Text, string Style, string Kind)> paragraphs)
@@ -603,8 +653,9 @@ public class BookIndexer : IBookIndexer
         var set = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (var (text, _, _) in paragraphs)
         {
-            foreach (var token in TokenizeByWhitespace(text))
+            foreach (var rawToken in TokenizeByWhitespace(text))
             {
+                var token = NormalizeTokenSurface(rawToken);
                 if (!ContainsLexicalContent(token))
                 {
                     continue;

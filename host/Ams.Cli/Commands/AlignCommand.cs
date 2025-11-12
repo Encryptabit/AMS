@@ -13,6 +13,9 @@ using Ams.Core.Runtime.Documents;
 using Ams.Core.Validation;
 using Ams.Cli.Utilities;
 using Ams.Cli.Services;
+using Ams.Core.Diffing;
+using Ams.Core.Hydrate;
+using Ams.Core.Common;
 
 namespace Ams.Cli.Commands;
 
@@ -200,57 +203,87 @@ public static class AlignCommand
         var tx = JsonSerializer.Deserialize<TranscriptIndex>(txJson, jsonOptions) ?? throw new InvalidOperationException("Failed to parse TranscriptIndex JSON");
 
         // Hydrate words with values (1)
-        var words = tx.Words.Select(w => new
-        {
-            bookIdx = w.BookIdx,
-            asrIdx = w.AsrIdx,
-            bookWord = w.BookIdx.HasValue && w.BookIdx.Value >= 0 && w.BookIdx.Value < book.Words.Length ? book.Words[w.BookIdx.Value].Text : null,
-            asrWord = w.AsrIdx.HasValue && w.AsrIdx.Value >= 0 && w.AsrIdx.Value < asr.Tokens.Length ? asr.Tokens[w.AsrIdx.Value].Word : null,
-            op = w.Op.ToString(),
-            reason = w.Reason,
-            score = w.Score
-        }).ToList();
+        var words = tx.Words.Select(w => new HydratedWord(
+            w.BookIdx,
+            w.AsrIdx,
+            w.BookIdx.HasValue && w.BookIdx.Value >= 0 && w.BookIdx.Value < book.Words.Length ? book.Words[w.BookIdx.Value].Text : null,
+            w.AsrIdx.HasValue && w.AsrIdx.Value >= 0 && w.AsrIdx.Value < asr.Tokens.Length ? asr.Tokens[w.AsrIdx.Value].Word : null,
+            w.Op.ToString(),
+            w.Reason,
+            w.Score)).ToList();
 
         // Helper to slice book/asr strings (2)
         static string JoinBook(BookIndex b, int start, int end)
         {
             if (start < 0 || end >= b.Words.Length || end < start) return string.Empty;
-            return string.Join(" ", b.Words.Skip(start).Take(end - start + 1).Select(x => x.Text));
+            var raw = string.Join(" ", b.Words.Skip(start).Take(end - start + 1).Select(x => x.Text));
+            return NormalizeSurface(raw);
         }
         static string JoinAsr(AsrResponse a, int? start, int? end)
         {
             if (!start.HasValue || !end.HasValue) return string.Empty;
             int s = start.Value, e = end.Value;
             if (s < 0 || e >= a.Tokens.Length || e < s) return string.Empty;
-            return string.Join(" ", a.Tokens.Skip(s).Take(e - s + 1).Select(x => x.Word));
+            var raw = string.Join(" ", a.Tokens.Skip(s).Take(e - s + 1).Select(x => x.Word));
+            return NormalizeSurface(raw);
         }
 
         // Hydrate sentences (3)
-        var sentences = tx.Sentences.Select(s => new
+        static string ResolveSentenceStatus(SentenceMetrics metrics)
+            => metrics.Wer <= 0.10 && metrics.MissingRuns < 3
+                ? "ok"
+                : (metrics.Wer <= 0.25 ? "attention" : "unreliable");
+
+        static string ResolveParagraphStatus(double wer)
+            => wer <= 0.10 ? "ok" : (wer <= 0.25 ? "attention" : "unreliable");
+
+        var sentences = new List<HydratedSentence>(tx.Sentences.Count);
+        foreach (var sentence in tx.Sentences)
         {
-            id = s.Id,
-            bookRange = new { start = s.BookRange.Start, end = s.BookRange.End },
-            scriptRange = s.ScriptRange != null ? new { start = s.ScriptRange.Start, end = s.ScriptRange.End } : null,
-            bookText = JoinBook(book, s.BookRange.Start, s.BookRange.End),
-            scriptText = s.ScriptRange != null ? JoinAsr(asr, s.ScriptRange.Start, s.ScriptRange.End) : string.Empty,
-            timing = s.Timing,
-            metrics = s.Metrics,
-            status = s.Status
-        }).ToList();
+            var bookText = JoinBook(book, sentence.BookRange.Start, sentence.BookRange.End);
+            var scriptRange = sentence.ScriptRange is null
+                ? null
+                : new HydratedScriptRange(sentence.ScriptRange.Start, sentence.ScriptRange.End);
+            var scriptText = sentence.ScriptRange is null ? string.Empty : JoinAsr(asr, sentence.ScriptRange.Start, sentence.ScriptRange.End);
+
+            var diffResult = TextDiffAnalyzer.Analyze(bookText, scriptText);
+            var status = ResolveSentenceStatus(diffResult.Metrics);
+
+            sentences.Add(new HydratedSentence(
+                sentence.Id,
+                new HydratedRange(sentence.BookRange.Start, sentence.BookRange.End),
+                scriptRange,
+                bookText,
+                scriptText,
+                diffResult.Metrics,
+                status,
+                sentence.Timing,
+                diffResult.Diff));
+        }
 
         // Hydrate paragraphs (4)
-        var paragraphs = tx.Paragraphs.Select(p => new
-        {
-            id = p.Id,
-            bookRange = new { start = p.BookRange.Start, end = p.BookRange.End },
-            sentenceIds = p.SentenceIds,
-            bookText = JoinBook(book, p.BookRange.Start, p.BookRange.End),
-            metrics = p.Metrics,
-            status = p.Status
-        }).ToList();
+        var sentenceMap = sentences.ToDictionary(s => s.Id);
+        var paragraphs = new List<HydratedParagraph>(tx.Paragraphs.Count);
 
-        var hydrated = new
+        foreach (var paragraph in tx.Paragraphs)
         {
+            var bookText = JoinBook(book, paragraph.BookRange.Start, paragraph.BookRange.End);
+            var paragraphScript = BuildParagraphScript(paragraph.SentenceIds, sentenceMap);
+            var diffResult = TextDiffAnalyzer.Analyze(bookText, paragraphScript);
+            var status = ResolveParagraphStatus(diffResult.Metrics.Wer);
+            var metrics = new ParagraphMetrics(diffResult.Metrics.Wer, diffResult.Metrics.Cer, diffResult.Coverage);
+
+            paragraphs.Add(new HydratedParagraph(
+                paragraph.Id,
+                new HydratedRange(paragraph.BookRange.Start, paragraph.BookRange.End),
+                paragraph.SentenceIds,
+                bookText,
+                metrics,
+                status,
+                diffResult.Diff));
+        }
+
+        var hydrated = new HydratedTranscript(
             tx.AudioPath,
             tx.ScriptPath,
             tx.BookIndexPath,
@@ -258,8 +291,37 @@ public static class AlignCommand
             tx.NormalizationVersion,
             words,
             sentences,
-            paragraphs
-        };
+            paragraphs);
+
+        static string BuildParagraphScript(IReadOnlyList<int> sentenceIds, IReadOnlyDictionary<int, HydratedSentence> sentenceMap)
+        {
+            if (sentenceIds.Count == 0)
+            {
+                return string.Empty;
+            }
+
+            var parts = new List<string>(sentenceIds.Count);
+            foreach (var id in sentenceIds)
+            {
+                if (sentenceMap.TryGetValue(id, out var sentence) && !string.IsNullOrWhiteSpace(sentence.ScriptText))
+                {
+                    parts.Add(sentence.ScriptText);
+                }
+            }
+
+            return parts.Count == 0 ? string.Empty : string.Join(" ", parts);
+        }
+
+        static string NormalizeSurface(string? text)
+        {
+            if (string.IsNullOrWhiteSpace(text))
+            {
+                return string.Empty;
+            }
+
+            var normalized = TextNormalizer.NormalizeTypography(text);
+            return string.IsNullOrWhiteSpace(normalized) ? string.Empty : normalized.Trim();
+        }
 
         var outJson = JsonSerializer.Serialize(hydrated, new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase, WriteIndented = true });
         await File.WriteAllTextAsync(outFile.FullName, outJson);
@@ -681,10 +743,4 @@ public static class AlignCommand
         }
     }
 }
-
-
-
-
-
-
 
