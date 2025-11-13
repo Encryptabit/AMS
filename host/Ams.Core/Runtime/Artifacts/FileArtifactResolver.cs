@@ -58,8 +58,19 @@ public sealed class FileArtifactResolver : IArtifactResolver
     public AsrResponse? LoadAsr(ChapterContext context)
         => LoadJson<AsrResponse>(GetChapterArtifactPath(context, "asr.json"));
 
+    public string? LoadAsrTranscriptText(ChapterContext context)
+        => LoadText(GetChapterArtifactPath(context, "asr.corpus.txt"));
+
     public void SaveAsr(ChapterContext context, AsrResponse asr)
         => SaveJson(GetChapterArtifactPath(context, "asr.json"), asr);
+
+    public void SaveAsrTranscriptText(ChapterContext context, string text)
+    {
+        ArgumentNullException.ThrowIfNull(text);
+        var path = GetChapterArtifactPath(context, "asr.corpus.txt");
+        EnsureDirectory(path);
+        File.WriteAllText(path, text);
+    }
 
     public PausePolicy LoadPausePolicy(ChapterContext context)
     {
@@ -124,6 +135,9 @@ public sealed class FileArtifactResolver : IArtifactResolver
         var json = File.ReadAllText(path);
         return JsonSerializer.Deserialize<T>(json, JsonOptions);
     }
+
+    private static string? LoadText(string path)
+        => File.Exists(path) ? File.ReadAllText(path) : null;
 
     private static void SaveJson<T>(string path, T payload)
         where T : class

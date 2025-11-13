@@ -57,8 +57,9 @@ internal static class MfaWorkflow
         var stagedAudioPath = Path.Combine(corpusDir, chapterStem + ".wav");
         StageAudio(audioFile, stagedAudioPath);
 
+        var corpusSource = new FileInfo(Path.Combine(chapterDirectory.FullName, chapterStem + ".asr.corpus.txt"));
         var labPath = Path.Combine(corpusDir, chapterStem + ".lab");
-        await WriteLabFileAsync(hydrateFile, labPath, cancellationToken).ConfigureAwait(false);
+        await WriteLabFileAsync(hydrateFile, corpusSource, labPath, cancellationToken).ConfigureAwait(false);
 
         var dictionaryModel = MfaService.DefaultDictionaryModel;
         var acousticModel = MfaService.DefaultAcousticModel;
@@ -179,8 +180,21 @@ internal static class MfaWorkflow
         }
     }
 
-    private static async Task WriteLabFileAsync(FileInfo hydrateFile, string labPath, CancellationToken cancellationToken)
+    private static async Task WriteLabFileAsync(FileInfo hydrateFile, FileInfo? asrCorpusFile, string labPath, CancellationToken cancellationToken)
     {
+        if (asrCorpusFile?.Exists == true)
+        {
+            var corpusLines = await File.ReadAllLinesAsync(asrCorpusFile.FullName, cancellationToken).ConfigureAwait(false);
+            var normalized = PrepareLabLines(corpusLines);
+            if (normalized.Count > 0)
+            {
+                await File.WriteAllTextAsync(labPath, string.Join(Environment.NewLine, normalized), Encoding.UTF8, cancellationToken).ConfigureAwait(false);
+                return;
+            }
+
+            Log.Debug("ASR corpus at {Corpus} did not produce usable lines; falling back to hydrate", asrCorpusFile.FullName);
+        }
+
         await using var stream = File.OpenRead(hydrateFile.FullName);
         using var document = await JsonDocument.ParseAsync(stream, cancellationToken: cancellationToken).ConfigureAwait(false);
 
@@ -189,7 +203,8 @@ internal static class MfaWorkflow
             throw new InvalidOperationException("Hydrate JSON is missing sentences array");
         }
 
-        var lines = new List<string>();
+        var rawLines = new List<string>();
+        int skipped = 0;
 
         foreach (var sentence in sentencesElement.EnumerateArray())
         {
@@ -199,27 +214,35 @@ internal static class MfaWorkflow
 
             if (string.IsNullOrWhiteSpace(canonical))
             {
-                canonical = sentence.TryGetProperty("scriptText", out var scriptProp)
-                    ? scriptProp.GetString()
-                    : null;
-            }
-
-            if (string.IsNullOrWhiteSpace(canonical))
-            {
+                skipped++;
                 continue;
             }
-
-            var normalized = PrepareLabLine(canonical);
-            if (string.IsNullOrWhiteSpace(normalized))
-            {
-                continue;
-            }
-
-            lines.Add(normalized);
+            rawLines.Add(canonical);
         }
 
-        var labContent = string.Join(Environment.NewLine, lines);
+        if (skipped > 0)
+        {
+            Log.Warn("Skipped {Count} sentences without canonical book text while building MFA corpus ({File})", skipped, hydrateFile.Name);
+        }
+
+        var normalizedLines = PrepareLabLines(rawLines);
+        var labContent = string.Join(Environment.NewLine, normalizedLines);
         await File.WriteAllTextAsync(labPath, labContent, Encoding.UTF8, cancellationToken).ConfigureAwait(false);
+    }
+
+    private static List<string> PrepareLabLines(IEnumerable<string> rawLines)
+    {
+        var prepared = new List<string>();
+        foreach (var raw in rawLines)
+        {
+            var normalized = PrepareLabLine(raw);
+            if (!string.IsNullOrWhiteSpace(normalized))
+            {
+                prepared.Add(normalized);
+            }
+        }
+
+        return prepared;
     }
 
     private static string PrepareLabLine(string text)

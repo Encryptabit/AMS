@@ -86,14 +86,19 @@ public static class AsrProcessor
         wavStream.Position = 0;
 
         var tokens = new List<AsrToken>();
+        var segments = new List<AsrSegment>();
         await foreach (var segment in processor.ProcessAsync(wavStream, cancellationToken).ConfigureAwait(false))
         {
             cancellationToken.ThrowIfCancellationRequested();
+            segments.Add(new AsrSegment(
+                segment.Start.TotalSeconds,
+                segment.End.TotalSeconds,
+                segment.Text?.Trim() ?? string.Empty));
             AppendTokens(tokens, segment);
         }
 
         var modelVersion = Path.GetFileName(options.ModelPath) ?? "whisper";
-        return new AsrResponse(modelVersion, tokens.ToArray());
+        return new AsrResponse(modelVersion, tokens.ToArray(), segments.ToArray());
     }
 
     private static async Task<string> DetectLanguageInternalAsync(
@@ -193,32 +198,7 @@ public static class AsrProcessor
             {
                 tokens.Add(token);
             }
-            return;
         }
-
-        /*var text = segment.Text?.Trim();
-        if (string.IsNullOrWhiteSpace(text))
-        {
-            return;
-        }
-
-        var words = text
-            .Split(new[] { ' ', '\t', '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries);
-
-        if (words.Length == 0)
-        {
-            return;
-        }
-
-        var start = segment.Start.TotalSeconds;
-        var end = Math.Max(start, segment.End.TotalSeconds);
-        var durationPerWord = Math.Max(0.05, (end - start) / words.Length);
-
-        for (int i = 0; i < words.Length; i++)
-        {
-            var wordStart = start + i * durationPerWord;
-            tokens.Add(new AsrToken(segment.Words, durationPerWord, words[i]));
-        }*/
     }
 
     private static List<AsrToken> AggregateTokens(WhisperToken[] rawTokens)
@@ -331,7 +311,7 @@ public static class AsrProcessor
 public sealed record AsrOptions(
     string ModelPath,
     string Language = "auto",
-    int Threads = 0,
+    int Threads = 8,
     bool UseGpu = true,
     bool EnableWordTimestamps = true,
     int BeamSize = 5,

@@ -191,16 +191,15 @@ public static class MfaTimingMerger
 
     private static List<List<string>> ExtractSentenceTokenCandidates(JsonObject sentenceNode, IReadOnlyDictionary<int, (string? ScriptText, string? BookText)>? fallbackTexts)
     {
-        sentenceNode.TryGetPropertyValue("scriptText", out var scriptNode);
         sentenceNode.TryGetPropertyValue("bookText", out var bookNode);
 
-        var scriptText = scriptNode?.GetValue<string>();
         var bookText = bookNode?.GetValue<string>();
 
         var candidates = new List<List<string>>(2);
-        var prioritized = new List<string?>();
-        prioritized.Add(bookText);
-        prioritized.Add(scriptText);
+        var prioritized = new List<string?>
+        {
+            bookText
+        };
 
         if (fallbackTexts is not null && sentenceNode.TryGetPropertyValue("id", out var idNode) && idNode is not null)
         {
@@ -208,7 +207,6 @@ public static class MfaTimingMerger
             if (fallbackTexts.TryGetValue(id, out var texts))
             {
                 prioritized.Add(texts.BookText);
-                prioritized.Add(texts.ScriptText);
             }
         }
 

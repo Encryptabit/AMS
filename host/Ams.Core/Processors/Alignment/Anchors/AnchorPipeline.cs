@@ -37,7 +37,7 @@ public static class AnchorPipeline
         var asrView = AnchorPreprocessor.BuildAsrView(asr);
 
         // Section detection on raw ASR words (not normalized) to allow number-to-words
-        var asrRawTokens = asr.Tokens.Select(t => t.Word).ToList();
+        var asrRawTokens = asr.Words.ToList();
         SectionRange? section = null;
         (int bStart, int bEnd) bookWindowFiltered = (0, bookView.Tokens.Count - 1);
 
@@ -100,7 +100,7 @@ public static class AnchorPipeline
             BookWindowFiltered: bookWindowFiltered,
             BookTokenCount: book.Words.Length,
             BookFilteredCount: bookView.Tokens.Count,
-            AsrTokenCount: asr.Tokens.Length,
+            AsrTokenCount: asr.WordCount,
             AsrFilteredCount: asrView.Tokens.Count,
             Windows: windows,
             BookFilteredToOriginalWord: bookView.FilteredToOriginalWord

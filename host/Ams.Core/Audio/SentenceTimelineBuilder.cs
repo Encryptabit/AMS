@@ -192,10 +192,16 @@ namespace Ams.Core.Audio
 
         private static ArtifactSentenceTiming ComputeWindowFromScript(SentenceAlign sentence, AsrResponse asr)
         {
-            if (sentence.ScriptRange is { Start: { } startIdx, End: { } endIdx } && asr.Tokens.Length > 0)
+            var tokenCount = asr.Tokens.Length;
+            if (!asr.HasWordTimings || tokenCount == 0)
             {
-                var start = Math.Clamp(startIdx, 0, asr.Tokens.Length - 1);
-                var end = Math.Clamp(endIdx, start, asr.Tokens.Length - 1);
+                return new ArtifactSentenceTiming(sentence.Timing);
+            }
+
+            if (sentence.ScriptRange is { Start: { } startIdx, End: { } endIdx })
+            {
+                var start = Math.Clamp(startIdx, 0, tokenCount - 1);
+                var end = Math.Clamp(endIdx, start, tokenCount - 1);
                 var startToken = asr.Tokens[start];
                 var endToken = asr.Tokens[end];
                 var range = new TimingRange(startToken.StartTime, endToken.StartTime + endToken.Duration);
