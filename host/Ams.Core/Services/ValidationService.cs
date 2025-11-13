@@ -1,11 +1,8 @@
-using System;
-using System.Threading;
-using System.Threading.Tasks;
 using Ams.Core.Artifacts.Validation;
 using Ams.Core.Processors.Validation;
 using Ams.Core.Runtime.Chapter;
 
-namespace Ams.Core.Application.Services;
+namespace Ams.Core.Services;
 
 public sealed class ValidationService
 {

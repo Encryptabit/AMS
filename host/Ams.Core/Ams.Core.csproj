@@ -42,6 +42,7 @@
     </None>
   </ItemGroup>
   <ItemGroup>
+    <Folder Include="Application\Services\" />
     <Folder Include="Services\Integrations\FFmpeg\models\" />
   </ItemGroup>
   <ItemGroup>

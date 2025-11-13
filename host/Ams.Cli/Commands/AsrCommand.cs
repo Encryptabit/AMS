@@ -31,7 +31,7 @@ public static class AsrCommand
         var serviceUrlOption = new Option<string>("--service", () => DefaultServiceUrl, "ASR service URL (Nemo engine)");
         serviceUrlOption.AddAlias("-s");
 
-        var modelOption = new Option<string>("--model", "ASR model identifier (Nemo) or fallback model path (Whisper)");
+        var modelOption = new Option<string>("--model",() => "ASR model identifier (Nemo) or fallback model path (Whisper)");
         modelOption.AddAlias("-m");
 
         var modelPathOption = new Option<FileInfo?>("--model-path", "Path to Whisper model file (.gguf/.bin); falls back to --model or AMS_WHISPER_MODEL_PATH");
@@ -43,7 +43,7 @@ public static class AsrCommand
         var useGpuOption = new Option<bool>("--use-gpu", () => true, "Enable GPU acceleration when supported");
         var gpuDeviceOption = new Option<int>("--gpu-device", () => 0, "GPU device index for Whisper");
         var beamSizeOption = new Option<int>("--beam-size", () => 5, "Beam size for Whisper beam search");
-        var bestOfOption = new Option<int>("--best-of", () => 3, "Best-of sampling count for Whisper greedy search");
+        var bestOfOption = new Option<int>("--best-of", () => 1, "Best-of sampling count for Whisper greedy search");
         var temperatureOption = new Option<double>("--temperature", () => 0.0, "Sampling temperature (0-1) for Whisper");
         var wordTimestampsOption = new Option<bool>("--word-timestamps", () => false, "Emit word-level timestamps (Whisper)");
         var flashAttentionOption = new Option<bool>("--flash-attention", () => false, "Enable FlashAttention kernels when building with support");

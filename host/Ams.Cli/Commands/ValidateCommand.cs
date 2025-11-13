@@ -17,6 +17,7 @@ using Ams.Core.Artifacts.Validation;
 using Ams.Core.Prosody;
 using Ams.Cli.Repl;
 using Ams.Cli.Utilities;
+using Ams.Core.Services;
 using SentenceTiming = Ams.Core.Artifacts.SentenceTiming;
 
 namespace Ams.Cli.Commands;

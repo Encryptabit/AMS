@@ -1,19 +1,11 @@
-using System;
-using System.IO;
 using System.Text.Json;
-using System.Threading;
-using System.Threading.Tasks;
 using Ams.Core.Application.Commands;
 using Ams.Core.Application.Contexts;
 using Ams.Core.Application.Pipeline;
-using Ams.Core.Common;
 using Ams.Core.Processors.DocumentProcessor;
-using Ams.Core.Artifacts;
-using Ams.Core.Runtime.Book;
-using Ams.Core.Runtime.Chapter;
 using Ams.Core.Services.Alignment;
 
-namespace Ams.Core.Application.Services;
+namespace Ams.Core.Services;
 
 public sealed class PipelineService
 {
@@ -63,12 +55,12 @@ public sealed class PipelineService
         var chapter = handle.Chapter;
         var chapterRoot = chapter.Descriptor.RootPath ?? throw new InvalidOperationException("Chapter root path is not configured.");
 
-        var asrFile = chapter.ResolveArtifactFile("asr.json");
-        var anchorsFile = chapter.ResolveArtifactFile("align.anchors.json");
-        var transcriptFile = chapter.ResolveArtifactFile("align.tx.json");
-        var hydrateFile = chapter.ResolveArtifactFile("align.hydrate.json");
-        var treatedFile = options.TreatedCopyFile ?? chapter.ResolveArtifactFile("treated.wav");
-        var textGridFile = options.MfaOptions?.TextGridFile ?? ResolveTextGridFile(chapterRoot, chapter.Descriptor.ChapterId);
+        FileInfo AsrFile() => chapter.ResolveArtifactFile("asr.json");
+        FileInfo AnchorsFile() => chapter.ResolveArtifactFile("align.anchors.json");
+        FileInfo TranscriptFile() => chapter.ResolveArtifactFile("align.tx.json");
+        FileInfo HydrateFile() => chapter.ResolveArtifactFile("align.hydrate.json");
+        FileInfo TreatedFile() => options.TreatedCopyFile ?? chapter.ResolveArtifactFile("treated.wav");
+        var textGridFile = () => options.MfaOptions?.TextGridFile ?? ResolveTextGridFile(chapterRoot, chapter.Descriptor.ChapterId);
 
         bool asrRan = false;
         bool anchorsRan = false;
@@ -76,7 +68,7 @@ public sealed class PipelineService
         bool hydrateRan = false;
         bool mfaRan = false;
 
-        if (IsStageEnabled(PipelineStage.Asr, options) && (options.Force || !asrFile.Exists))
+        if (IsStageEnabled(PipelineStage.Asr, options) && (options.Force || !AsrFile().Exists))
         {
             await WaitAsync(options.Concurrency?.AsrSemaphore, cancellationToken).ConfigureAwait(false);
             try
@@ -90,20 +82,20 @@ public sealed class PipelineService
             }
         }
 
-        if (IsStageEnabled(PipelineStage.Anchors, options) && (options.Force || !anchorsFile.Exists))
+        if (IsStageEnabled(PipelineStage.Anchors, options) && (options.Force || !AnchorsFile().Exists))
         {
             var anchorOptions = (options.AnchorOptions ?? BuildDefaultAnchorOptions()) with { EmitWindows = false };
             await _computeAnchors.ExecuteAsync(chapter, anchorOptions, cancellationToken).ConfigureAwait(false);
             anchorsRan = true;
         }
 
-        if (IsStageEnabled(PipelineStage.Transcript, options) && (options.Force || !transcriptFile.Exists))
+        if (IsStageEnabled(PipelineStage.Transcript, options) && (options.Force || !TranscriptFile().Exists))
         {
             var transcriptOptions = options.TranscriptIndexOptions ?? new BuildTranscriptIndexOptions();
             transcriptOptions = transcriptOptions with
             {
                 AudioFile = options.AudioFile,
-                AsrFile = asrFile,
+                AsrFile = AsrFile(),
                 BookIndexFile = options.BookIndexFile,
                 AnchorOptions = (options.AnchorOptions ?? BuildDefaultAnchorOptions()) with { EmitWindows = true }
             };
@@ -112,7 +104,7 @@ public sealed class PipelineService
             transcriptRan = true;
         }
 
-        if (IsStageEnabled(PipelineStage.Hydrate, options) && (options.Force || !hydrateFile.Exists))
+        if (IsStageEnabled(PipelineStage.Hydrate, options) && (options.Force || !HydrateFile().Exists))
         {
             await _hydrateTranscript.ExecuteAsync(chapter, options.HydrationOptions, cancellationToken).ConfigureAwait(false);
             hydrateRan = true;
@@ -120,7 +112,7 @@ public sealed class PipelineService
 
         if (IsStageEnabled(PipelineStage.Mfa, options))
         {
-            var textGridExists = textGridFile.Exists;
+            var textGridExists = textGridFile().Exists;
             if (options.Force || !textGridExists)
             {
                 await WaitAsync(options.Concurrency?.MfaSemaphore, cancellationToken).ConfigureAwait(false);
@@ -129,12 +121,12 @@ public sealed class PipelineService
                     var mfaOptions = (options.MfaOptions ?? new RunMfaOptions()) with
                     {
                         AudioFile = options.AudioFile,
-                        HydrateFile = hydrateFile,
-                        TextGridFile = textGridFile
+                        HydrateFile = HydrateFile(),
+                        TextGridFile = textGridFile()
                     };
 
                     var result = await _runMfa.ExecuteAsync(chapter, mfaOptions, cancellationToken).ConfigureAwait(false);
-                    textGridFile = result.TextGridFile;
+                    textGridFile = () => result.TextGridFile;
                     mfaRan = true;
                 }
                 finally
@@ -143,14 +135,14 @@ public sealed class PipelineService
                 }
             }
 
-            if (textGridFile.Exists)
+            if (textGridFile().Exists)
             {
                 var mergeOptions = options.MergeOptions ?? new MergeTimingsOptions();
                 mergeOptions = mergeOptions with
                 {
-                    HydrateFile = hydrateFile,
-                    TranscriptFile = transcriptFile,
-                    TextGridFile = textGridFile
+                    HydrateFile = HydrateFile(),
+                    TranscriptFile = TranscriptFile(),
+                    TextGridFile = textGridFile()
                 };
 
                 await _mergeTimings.ExecuteAsync(chapter, mergeOptions, cancellationToken).ConfigureAwait(false);
@@ -159,7 +151,7 @@ public sealed class PipelineService
 
         if (!options.SkipTreatedCopy)
         {
-            CopyTreatedAudio(options.AudioFile, treatedFile, options.Force);
+            CopyTreatedAudio(options.AudioFile, TreatedFile(), options.Force);
         }
 
         handle.Save();
@@ -173,12 +165,12 @@ public sealed class PipelineService
             hydrateRan,
             mfaRan,
             options.BookIndexFile,
-            asrFile,
-            anchorsFile,
-            transcriptFile,
-            hydrateFile,
-            textGridFile,
-            treatedFile);
+            AsrFile(),
+            AnchorsFile(),
+            TranscriptFile(),
+            HydrateFile(),
+            textGridFile(),
+            TreatedFile());
     }
 
     private static bool IsStageEnabled(PipelineStage stage, PipelineRunOptions options)

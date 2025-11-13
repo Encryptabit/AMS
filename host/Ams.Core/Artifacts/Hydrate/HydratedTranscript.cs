@@ -26,15 +26,39 @@ public sealed record HydratedWord(
     [property: JsonPropertyName("score")] double Score);
 
 public sealed record HydratedSentence(
-    [property: JsonPropertyName("id")] int Id,
-    [property: JsonPropertyName("bookRange")] HydratedRange BookRange,
-    [property: JsonPropertyName("scriptRange")] HydratedScriptRange? ScriptRange,
-    [property: JsonPropertyName("bookText")] string BookText,
-    [property: JsonPropertyName("scriptText")] string ScriptText,
-    [property: JsonPropertyName("metrics")] SentenceMetrics Metrics,
-    [property: JsonPropertyName("status")] string Status,
-    [property: JsonPropertyName("timing")] TimingRange? Timing,
-    [property: JsonPropertyName("diff")] HydratedDiff? Diff);
+    int Id,
+    HydratedRange BookRange,
+    HydratedScriptRange? ScriptRange,
+    string BookText,
+    string ScriptText,
+    SentenceMetrics Metrics,
+    string Status,
+    TimingRange? Timing,
+    HydratedDiff? Diff)
+{
+    [JsonPropertyName("timing")]
+    public TimingRange? Timing { get; set; } = Timing;
+
+    [JsonPropertyName("id")] public int Id { get; init; } = Id;
+
+    [JsonPropertyName("bookRange")]
+    public HydratedRange BookRange { get; init; } = BookRange;
+
+    [JsonPropertyName("scriptRange")]
+    public HydratedScriptRange? ScriptRange { get; init; } = ScriptRange;
+
+    [JsonPropertyName("bookText")]
+    public string BookText { get; init; } = BookText;
+
+    [JsonPropertyName("scriptText")]
+    public string ScriptText { get; init; } = ScriptText;
+
+    [JsonPropertyName("metrics")]
+    public SentenceMetrics Metrics { get; init; } = Metrics;
+
+    [JsonPropertyName("status")] public string Status { get; init; } = Status;
+    [JsonPropertyName("diff")] public HydratedDiff? Diff { get; init; } = Diff;
+}
 
 public sealed record HydratedDiff(
     [property: JsonPropertyName("ops")] IReadOnlyList<HydratedDiffOp> Ops,
