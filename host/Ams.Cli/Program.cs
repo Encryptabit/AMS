@@ -4,9 +4,9 @@ using Ams.Core.Asr;
 using Ams.Core.Common;
 using Ams.Cli.Repl;
 using Ams.Cli.Commands;
-using Ams.Cli.Services;
 using Ams.Cli.Utilities;
 using Ams.Core.Services;
+using Ams.Core.Services.Alignment;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 
@@ -20,9 +20,23 @@ internal static class Program
 
         builder.Services.AddSingleton<IChapterContextFactory, ChapterContextFactory>();
         builder.Services.AddSingleton<IAsrService, AsrService>();
+        builder.Services.AddSingleton<IAlignmentService, AlignmentService>();
+        builder.Services.AddSingleton<GenerateTranscriptCommand>();
+        builder.Services.AddSingleton<ComputeAnchorsCommand>();
+        builder.Services.AddSingleton<BuildTranscriptIndexCommand>();
+        builder.Services.AddSingleton<HydrateTranscriptCommand>();
+        builder.Services.AddSingleton<RunMfaCommand>();
+        builder.Services.AddSingleton<MergeTimingsCommand>();
+        builder.Services.AddSingleton<PipelineService>();
+        builder.Services.AddSingleton<ValidationService>();
         using IHost host = builder.Build();
         var chapterFactory = host.Services.GetRequiredService<IChapterContextFactory>();
-        var asrService = host.Services.GetRequiredService<IAsrService>();
+        var generateTranscript = host.Services.GetRequiredService<GenerateTranscriptCommand>();
+        var computeAnchors = host.Services.GetRequiredService<ComputeAnchorsCommand>();
+        var transcriptIndexCommand = host.Services.GetRequiredService<BuildTranscriptIndexCommand>();
+        var hydrateCommand = host.Services.GetRequiredService<HydrateTranscriptCommand>();
+        var pipelineService = host.Services.GetRequiredService<PipelineService>();
+        var validationService = host.Services.GetRequiredService<ValidationService>();
         
         using var loggerFactory = Log.ConfigureDefaults(logFileName: "ams-log.txt");
         Log.Debug("Structured logging initialized. Console + file at {LogFile}", Log.LogFilePath ?? "(unknown)");
@@ -45,14 +59,14 @@ internal static class Program
 
         var rootCommand = new RootCommand("AMS - Audio Management System CLI");
 
-        rootCommand.AddCommand(AsrCommand.Create(chapterFactory, asrService));
-        rootCommand.AddCommand(ValidateCommand.Create(chapterFactory));
+        rootCommand.AddCommand(AsrCommand.Create(chapterFactory, generateTranscript));
+        rootCommand.AddCommand(ValidateCommand.Create(chapterFactory, validationService));
         rootCommand.AddCommand(TextCommand.Create());
         rootCommand.AddCommand(BuildIndexCommand.Create());
         rootCommand.AddCommand(BookCommand.Create());
-        rootCommand.AddCommand(AlignCommand.Create(chapterFactory));
+        rootCommand.AddCommand(AlignCommand.Create(chapterFactory, computeAnchors, transcriptIndexCommand, hydrateCommand));
         rootCommand.AddCommand(RefineSentencesCommand.Create());
-        rootCommand.AddCommand(PipelineCommand.Create(chapterFactory, asrService));
+        rootCommand.AddCommand(PipelineCommand.Create(pipelineService));
         rootCommand.AddCommand(DspCommand.Create());
         
         var replCommand = new Command("repl", "Start interactive REPL");

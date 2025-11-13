@@ -3,6 +3,14 @@
 ## Project Overview
 Audio Management System (AMS) - CLI and core library for audio processing, ASR, forced alignment, and audiobook mastering.
 
+## Application Layer & CLI Host
+
+- `host/Ams.Core/Application` now exposes use-case commands (`GenerateTranscript`, `ComputeAnchors`, `BuildTranscriptIndex`, `HydrateTranscript`, `RunMfa`, `MergeTimings`) plus orchestration services (`PipelineService`, `ValidationService`). Each command implements a single `ExecuteAsync(ChapterContext, Options, CancellationToken)` entry point so hosts (CLI today, future UI/daemon later) can reuse identical business logic.
+- `ChapterContextFactory` lives in Core and is the only way to obtain `BookContext`/`ChapterContext` handles. It wraps `BookManager`/`ChapterManager`, hydrates optional artifacts (ASR, transcript, hydrate), and returns a disposable `ChapterContextHandle` responsible for `Save()`.
+- Pipeline coordination (build index → ASR → anchors → transcript → hydrate → MFA merge) moved out of `Ams.Cli/Commands/PipelineCommand.cs` into `PipelineService`. CLI code now just parses options, resolves a pipeline run (single chapter or batch) and forwards `PipelineRunOptions` + concurrency limits.
+- CLI bootstrapping (see `host/Ams.Cli/Program.cs`) registers all application commands/services through DI. Non-trivial orchestration that previously lived under `Ams.Cli/Services` (e.g., ASR/MFA supervisors, ChapterContextFactory) has been relocated to Core for consistent behavior across future hosts.
+- When authoring new commands, prefer adding a use-case class inside `Ams.Core.Application.Commands` and wiring it through DI. CLI verbs should stay “thin”—parse arguments, resolve handles via `IChapterContextFactory`, invoke the command/service, then persist artifacts.
+
 ## Current Pipeline (MFA-based)
 
 The pipeline uses **Nemo ASR** for initial speech recognition and **Montreal Forced Aligner (MFA)** for precise word/phone-level timing refinement.

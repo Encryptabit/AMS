@@ -6,13 +6,13 @@ using System.Threading.Tasks;
 using Ams.Core.Asr;
 using Ams.Core.Common;
 
-namespace Ams.Cli.Services;
+namespace Ams.Core.Application.Processes;
 
 /// <summary>
 /// Supervises a local asr-nemo host so CLI commands can assume a warm ASR endpoint.
 /// Spawns the service on demand (via the repo's startup scripts) and tears it down when we own it.
 /// </summary>
-internal static class AsrProcessSupervisor
+public static class AsrProcessSupervisor
 {
     private static readonly SemaphoreSlim Gate = new(1, 1);
     private static readonly object ShutdownLock = new();

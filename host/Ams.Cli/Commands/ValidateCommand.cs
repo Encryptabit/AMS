@@ -15,7 +15,6 @@ using Ams.Core.Common;
 using Ams.Core.Artifacts.Hydrate;
 using Ams.Core.Artifacts.Validation;
 using Ams.Core.Prosody;
-using Ams.Core.Processors.Validation;
 using Ams.Cli.Repl;
 using Ams.Cli.Utilities;
 using SentenceTiming = Ams.Core.Artifacts.SentenceTiming;
@@ -24,12 +23,13 @@ namespace Ams.Cli.Commands;
 
 public static class ValidateCommand
 {
-    public static Command Create(IChapterContextFactory chapterFactory)
+    public static Command Create(IChapterContextFactory chapterFactory, ValidationService validationService)
     {
         ArgumentNullException.ThrowIfNull(chapterFactory);
+        ArgumentNullException.ThrowIfNull(validationService);
 
         var validate = new Command("validate", "Validation utilities");
-        validate.AddCommand(CreateReportCommand(chapterFactory));
+        validate.AddCommand(CreateReportCommand(chapterFactory, validationService));
         validate.AddCommand(CreateTimingCommand(chapterFactory));
         validate.AddCommand(CreateServeCommand());
         return validate;
@@ -363,9 +363,10 @@ public static class ValidateCommand
         return serve;
     }
 
-    private static Command CreateReportCommand(IChapterContextFactory chapterFactory)
+    private static Command CreateReportCommand(IChapterContextFactory chapterFactory, ValidationService validationService)
     {
         ArgumentNullException.ThrowIfNull(chapterFactory);
+        ArgumentNullException.ThrowIfNull(validationService);
 
         var cmd = new Command("report", "Render a human-friendly view of transcript validation metrics");
 
@@ -426,10 +427,8 @@ public static class ValidateCommand
                     IncludeWordTallies: includeWords,
                     IncludeAllFlagged: includeAllFlagged);
 
-                var result = ValidationReportBuilder.Build(
-                    handle.Chapter.Documents.Transcript,
-                    handle.Chapter.Documents.HydratedTranscript,
-                    options);
+                var result = await validationService.BuildReportAsync(handle.Chapter, options, context.GetCancellationToken())
+                    .ConfigureAwait(false);
 
                 var summarySentences = result.Sentences.Count;
                 var summarySentencesFlagged = result.Sentences.Count(s => !string.Equals(s.Status, "ok", StringComparison.OrdinalIgnoreCase));

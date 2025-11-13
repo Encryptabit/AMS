@@ -11,7 +11,7 @@ using Ams.Core.Runtime.Book;
 using Ams.Core.Runtime.Chapter;
 using Ams.Core.Runtime.Documents;
 
-namespace Ams.Cli.Utilities;
+namespace Ams.Core.Application.Contexts;
 
 public interface IChapterContextFactory
 {
@@ -53,7 +53,7 @@ public sealed class ChapterContextHandle : IDisposable
     }
 }
 
-internal sealed class ChapterContextFactory : IChapterContextFactory
+public sealed class ChapterContextFactory : IChapterContextFactory
 {
     private sealed record ManagerKey(string BookRoot);
 

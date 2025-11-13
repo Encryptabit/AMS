@@ -12,13 +12,13 @@ using Ams.Core.Artifacts.Alignment;
 using Ams.Core.Artifacts.Alignment.Mfa;
 using Ams.Core.Common;
 
-namespace Ams.Cli.Services;
+namespace Ams.Core.Application.Processes;
 
 /// <summary>
 /// Maintains a warm PowerShell session with the MFA conda environment activated so commands can
 /// be dispatched without incurring startup overhead on each invocation.
 /// </summary>
-internal static class MfaProcessSupervisor
+public static class MfaProcessSupervisor
 {
     private const string ReadyToken = "__MFA_READY__";
     private const string ExitToken = "__MFA_EXIT__";
