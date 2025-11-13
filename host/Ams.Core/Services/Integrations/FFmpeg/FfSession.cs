@@ -55,7 +55,7 @@ public sealed class FfSession : IDisposable
         EnsureFilterProbe();
         if (!_filtersAvailable)
         {
-            throw new NotSupportedException("FFmpeg filter graph support (libavfilter) is not available. Install FFmpeg builds that include avfilter and place the DLLs under ExtTools/ffmpeg/bin.");
+            throw new NotSupportedException("FFmpeg filter graph support (libavfilter) is not available. Install FFmpeg builds that include avfilter and place the DLLs under ExtTools/ffmpeg/binaries.");
         }
     }
 
@@ -71,7 +71,7 @@ public sealed class FfSession : IDisposable
 
     private static void TrySetRootPath()
     {
-        var probable = Path.Combine(AppContext.BaseDirectory, "ExtTools", "ffmpeg", "bin");
+        var probable = Path.Combine(AppContext.BaseDirectory, "ExtTools", "ffmpeg", "binaries");
         TrySet(probable);
     }
 

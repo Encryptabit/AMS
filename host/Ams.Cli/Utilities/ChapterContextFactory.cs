@@ -356,7 +356,8 @@ internal sealed class ChapterContextFactory : IChapterContextFactory
         var candidate = audioFile ?? asrFile;
         if (candidate is not null)
         {
-            return Path.GetFileNameWithoutExtension(candidate.Name);
+            var chopped = candidate.Name.Split('.');
+            return Path.GetFileNameWithoutExtension(chopped[0]);
         }
 
         return "chapter";
