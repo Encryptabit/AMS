@@ -266,7 +266,7 @@ public sealed class FfFilterGraph
     public FfFilterGraph Resample(ResampleFilterParams? parameters)
     {
         var p = parameters ?? new ResampleFilterParams();
-        return AddRawFilter("aresample=osr", $"{p.SampleRate}");
+        return AddRawFilter("aresample", $"{p.SampleRate}");
     }
 
     /// <summary>

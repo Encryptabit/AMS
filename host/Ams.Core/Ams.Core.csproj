@@ -23,7 +23,7 @@
   <ItemGroup>
     <PackageReference Include="DiffMatchPatch" Version="4.0.0" />
     <PackageReference Include="DocX" Version="5.0.0" />
-    <PackageReference Include="FFmpeg.AutoGen" Version="8.0.0" />
+    <PackageReference Include="FFmpeg.AutoGen" Version="7.1.1" />
     <PackageReference Include="Microsoft.Extensions.Logging" Version="10.0.0" />
     <PackageReference Include="Microsoft.Extensions.Logging.Console" Version="10.0.0" />
     <PackageReference Include="PDFiumCore" Version="134.0.6982" />
