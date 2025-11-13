@@ -1,10 +1,15 @@
 using System;
+using System.Collections;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using Ams.Core.Artifacts;
+using Ams.Core.Artifacts.Hydrate;
 using Ams.Core.Common;
+using Ams.Core.Runtime.Book;
+using Ams.Core.Runtime.Chapter;
 
 namespace Ams.Core.Processors.Alignment.Mfa;
 
@@ -46,6 +51,7 @@ public static class MfaTimingMerger
             Log.Debug("TextGrid contained no usable tokens ({File})", textGridFile.FullName);
             return;
         }
+
         var intervalCursor = 0;
         double previousEndSec = 0.0;
 
@@ -101,20 +107,87 @@ public static class MfaTimingMerger
         Log.Debug("Updated {Count} sentences with MFA timings ({File})", updated, hydrateFile.Name);
     }
 
-    private static List<IntervalToken> BuildIntervalTokens(IReadOnlyList<TextGridInterval> intervals)
+    public static void MergeTimings(BookContext bookContext, FileInfo textGridFile, IReadOnlyDictionary<int, (string? ScriptText, string? BookText)>? fallbackTexts = null)
     {
-        var tokens = new List<IntervalToken>(intervals.Count);
-        foreach (var interval in intervals)
+        var hydratedTranscript = bookContext.Chapters.Current.Documents.HydratedTranscript;
+        var book = bookContext.Documents.BookIndex?.Words ?? throw new InvalidOperationException("Book index missing words");
+
+        if (hydratedTranscript is null)
         {
-            var normalized = TextNormalizer.NormalizeTypography(interval.Text);
-            var token = Sanitize(normalized);
-            if (string.IsNullOrEmpty(token))
+            Log.Debug("Hydrate file not found; skipping MFA timing merge");
+            return;
+        }
+
+        if (!textGridFile.Exists)
+        {
+            Log.Debug("TextGrid file not found; skipping MFA timing merge ({File})", textGridFile.FullName);
+            return;
+        }
+
+        var textGridIntervals = TextGridParser.ParseWordIntervals(textGridFile.FullName)
+            .Where(w => !string.IsNullOrWhiteSpace(w.Text))
+            .ToList();
+
+        if (textGridIntervals.Count == 0)
+        {
+            Log.Debug("TextGrid contained no word intervals ({File})", textGridFile.FullName);
+            return;
+        }
+
+        var intervalTokens = BuildIntervalTokens(textGridIntervals);
+        if (intervalTokens.Count == 0)
+        {
+            Log.Debug("TextGrid contained no usable tokens ({File})", textGridFile.FullName);
+            return;
+        }
+
+        var intervalCursor = 0;
+        double previousEndSec = 0.0;
+
+        if (hydratedTranscript.Sentences.Count == 0)
+        {
+            Log.Debug("Hydrate missing sentences array; skipping MFA timing merge");
+            return;
+        }
+
+        var updated = 0;
+        foreach (var sentence in hydratedTranscript.Sentences)
+        {
+            if (!TryFindSentenceTiming2(sentence, intervalTokens, ref intervalCursor, previousEndSec, fallbackTexts, out var start, out var end))
             {
                 continue;
             }
 
-            tokens.Add(new IntervalToken(interval.Start, interval.End, token));
+            if (end <= start)
+            {
+                continue;
+            }
+
+
+            sentence.Timing = new TimingRange(start, end);
+            previousEndSec = end;
+            updated++;
         }
+
+        if (updated == 0)
+        {
+            Log.Debug("No MFA timings applied");
+            return;
+        }
+
+        bookContext.Chapters.Current.Documents.SaveChanges();
+
+        Log.Debug("Updated {Count} sentences with MFA timings for ({id})", updated, bookContext.Chapters.Current.Descriptor.ChapterId);
+    }
+
+    private static List<IntervalToken> BuildIntervalTokens(IReadOnlyList<TextGridInterval> intervals)
+    {
+        var tokens = new List<IntervalToken>(intervals.Count);
+        tokens.AddRange(from interval in intervals
+            let normalized = TextNormalizer.NormalizeTypography(interval.Text)
+            let token = Sanitize(normalized)
+            where !string.IsNullOrEmpty(token)
+            select new IntervalToken(interval.Start, interval.End, token));
 
         return tokens;
     }
@@ -188,6 +261,71 @@ public static class MfaTimingMerger
 
         return false;
     }
+
+    private static bool TryFindSentenceTiming2(
+        HydratedSentence sentenceNode,
+        IReadOnlyList<IntervalToken> intervalTokens,
+        ref int cursor,
+        double minStartSec,
+        IReadOnlyDictionary<int, (string? ScriptText, string? BookText)>? fallbackTexts,
+        out double start,
+        out double end)
+    {
+        start = 0;
+        end = 0;
+
+        if (intervalTokens.Count == 0)
+        {
+            return false;
+        }
+
+        var sentenceTokens = TextNormalizer.Normalize(sentenceNode.BookText).Split(" ");
+
+
+        foreach (var word in sentenceTokens)
+        {
+            if (string.IsNullOrWhiteSpace(word))
+            {
+                continue;
+            }
+
+            var startIndex = Math.Max(0, cursor);
+            for (var i = startIndex; i <= intervalTokens.Count; i++)
+            {
+                if (intervalTokens[i].Start + MinimumStartTolerance < minStartSec)
+                {
+                    continue;
+                }
+
+                if (!string.Equals(intervalTokens[i].Token, word, StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                var matched = true;
+                var localEnd = i;
+
+                for (var k = 1; k < localEnd; k++)
+                {
+                    var nextIndex = i + k;
+                    if (nextIndex >= intervalTokens.Count || !string.Equals(intervalTokens[nextIndex].Token, sentenceTokens[k], StringComparison.OrdinalIgnoreCase))
+                    {
+                        matched = false;
+                        break;
+                    }
+
+                    start = intervalTokens[i].Start;
+                    end = intervalTokens[localEnd].End;
+                    cursor = localEnd + 1;
+                    return end > start;
+                }
+            }
+        }
+
+        return false;
+    }
+
+ 
 
     private static List<List<string>> ExtractSentenceTokenCandidates(JsonObject sentenceNode, IReadOnlyDictionary<int, (string? ScriptText, string? BookText)>? fallbackTexts)
     {
@@ -307,5 +445,4 @@ public static class MfaTimingMerger
 
         return count == 0 ? string.Empty : new string(buffer[..count]);
     }
-
 }

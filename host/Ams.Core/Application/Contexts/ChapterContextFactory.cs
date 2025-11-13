@@ -369,7 +369,9 @@ public sealed class ChapterContextFactory : IChapterContextFactory
             return Path.GetFileNameWithoutExtension(chopped[0]);
         }
 
-        return "chapter";
+        throw new ArgumentException("Chapter identifier must be provided.");
+
+        return string.Empty;
     }
 
     private static string ResolveChapterRoot(

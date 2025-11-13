@@ -255,6 +255,7 @@ public sealed class GenerateTranscriptCommand
             GgmlType.LargeV1 => "large-v1",
             GgmlType.LargeV2 => "large-v2",
             GgmlType.LargeV3 => "large-v3",
+            GgmlType.LargeV3Turbo => "large-v3-turbo",
             _ => "base"
         };
 
@@ -282,6 +283,7 @@ public sealed class GenerateTranscriptCommand
             "large" or "large-v1" => GgmlType.LargeV1,
             "large-v2" => GgmlType.LargeV2,
             "large-v3" => GgmlType.LargeV3,
+            "large-v3-turbo" => GgmlType.LargeV3Turbo,
             _ => null
         };
     }
@@ -304,7 +306,7 @@ public sealed record GenerateTranscriptOptions
 {
     public static string DefaultServiceUrl => "http://127.0.0.1:5000";
     public static GenerateTranscriptOptions Default { get; } = new();
-    public static GgmlType DefaultModelType => GgmlType.SmallEn;
+    public static GgmlType DefaultModelType => GgmlType.LargeV3Turbo;
 
     public AsrEngine? Engine { get; init; }
     public string ServiceUrl { get; init; } = DefaultServiceUrl;
@@ -315,7 +317,7 @@ public sealed record GenerateTranscriptOptions
     public bool UseGpu { get; init; } = true;
     public int GpuDevice { get; init; }
     public int BeamSize { get; init; } = 5;
-    public int BestOf { get; init; } = 3;
+    public int BestOf { get; init; } = 1;
     public double Temperature { get; init; }
     public bool EnableWordTimestamps { get; init; }
     public bool EnableFlashAttention { get; init; }

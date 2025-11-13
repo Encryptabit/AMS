@@ -22,13 +22,13 @@ public sealed class MergeTimingsCommand
 
         if ((options?.ApplyToHydrate ?? true) && textGridFile.Exists)
         {
-            MfaTimingMerger.MergeTimings(hydrateFile, textGridFile);
+            MfaTimingMerger.MergeTimings(chapter.Book, textGridFile);
         }
 
         if (options?.ApplyToTranscript ?? true)
         {
             var fallback = MfaTimingMerger.BuildFallbackTextMap(hydrateFile);
-            MfaTimingMerger.MergeTimings(transcriptFile, textGridFile, fallback);
+            MfaTimingMerger.MergeTimings(chapter.Book, textGridFile);
         }
 
         return Task.CompletedTask;

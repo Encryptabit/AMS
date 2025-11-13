@@ -34,7 +34,7 @@ public sealed class RunMfaCommand
             throw new FileNotFoundException("Audio file not found.", audioFile.FullName);
         }
 
-        await MfaWorkflow.RunChapterAsync(audioFile, hydrateFile, chapterStem, chapterDirectory, cancellationToken)
+        await MfaWorkflow.RunChapterAsync(chapter, audioFile, hydrateFile, chapterStem, chapterDirectory, cancellationToken)
             .ConfigureAwait(false);
 
         var alignmentRoot = options?.AlignmentRootDirectory ?? new DirectoryInfo(Path.Combine(chapterRoot, "alignment"));

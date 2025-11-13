@@ -13,7 +13,6 @@ using System.Threading;
 using System.Threading.Tasks;
 using Ams.Cli.Utilities;
 using Ams.Cli.Repl;
-using Ams.Core.Application.Services;
 using Ams.Core.Artifacts;
 using Ams.Core.Audio;
 using Ams.Core.Asr;
@@ -22,6 +21,7 @@ using Ams.Core.Runtime.Documents;
 using Ams.Core.Common;
 using Ams.Core.Artifacts.Hydrate;
 using Ams.Core.Prosody;
+using Ams.Core.Services;
 using Spectre.Console;
 using AudioSentenceTiming = Ams.Core.Artifacts.SentenceTiming;
 
