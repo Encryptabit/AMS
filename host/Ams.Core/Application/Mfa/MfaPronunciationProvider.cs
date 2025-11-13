@@ -11,9 +11,9 @@ using Ams.Core.Artifacts.Alignment.Mfa;
 using Ams.Core.Runtime.Documents;
 using Ams.Core.Common;
 
-namespace Ams.Cli.Services;
+namespace Ams.Core.Application.Mfa;
 
-internal sealed class MfaPronunciationProvider : IPronunciationProvider
+public sealed class MfaPronunciationProvider : IPronunciationProvider
 {
     private readonly IMfaService _mfaService;
     private readonly string _g2pModel;

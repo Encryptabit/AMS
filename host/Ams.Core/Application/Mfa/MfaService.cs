@@ -1,12 +1,13 @@
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
+using Ams.Core.Application.Processes;
 using Ams.Core.Artifacts.Alignment;
 using Ams.Core.Artifacts.Alignment.Mfa;
 
-namespace Ams.Cli.Services;
+namespace Ams.Core.Application.Mfa;
 
-internal interface IMfaService
+public interface IMfaService
 {
     Task<MfaCommandResult> ValidateAsync(MfaChapterContext context, CancellationToken cancellationToken = default);
 
@@ -17,7 +18,7 @@ internal interface IMfaService
     Task<MfaCommandResult> AlignAsync(MfaChapterContext context, CancellationToken cancellationToken = default);
 }
 
-internal sealed class MfaService : IMfaService
+public sealed class MfaService : IMfaService
 {
     internal const string DefaultDictionaryModel = "english_mfa";
     internal const string DefaultAcousticModel = "english_mfa";

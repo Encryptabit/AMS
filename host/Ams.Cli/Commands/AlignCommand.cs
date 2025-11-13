@@ -1,48 +1,38 @@
-using System.Collections.Generic;
 using System.CommandLine;
 using System.IO;
-using System.Linq;
-using System.Text.Json;
-using System.Threading;
-using System.Threading.Tasks;
-using Ams.Core.Artifacts;
-using Ams.Core.Artifacts.Alignment;
 using Ams.Core.Common;
-using Ams.Core.Processors.Diffing;
-using Ams.Core.Services.Alignment;
-using Ams.Cli.Services;
+using Ams.Core.Processors.Alignment.Anchors;
 using Ams.Cli.Utilities;
 
 namespace Ams.Cli.Commands;
 
 public static class AlignCommand
 {
-    private static readonly JsonSerializerOptions JsonWriteOptions = new()
-    {
-        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
-        WriteIndented = true
-    };
-
-    public static Command Create(IChapterContextFactory chapterFactory)
+    public static Command Create(
+        IChapterContextFactory chapterFactory,
+        ComputeAnchorsCommand anchorsCommand,
+        BuildTranscriptIndexCommand transcriptCommand,
+        HydrateTranscriptCommand hydrateCommand)
     {
         ArgumentNullException.ThrowIfNull(chapterFactory);
+        ArgumentNullException.ThrowIfNull(anchorsCommand);
+        ArgumentNullException.ThrowIfNull(transcriptCommand);
+        ArgumentNullException.ThrowIfNull(hydrateCommand);
 
         var align = new Command("align", "Alignment utilities");
-        align.AddCommand(CreateAnchors(chapterFactory));
-        align.AddCommand(CreateTranscriptIndex(chapterFactory));
-        align.AddCommand(CreateHydrateTx(chapterFactory));
+        align.AddCommand(CreateAnchors(chapterFactory, anchorsCommand));
+        align.AddCommand(CreateTranscriptIndex(chapterFactory, transcriptCommand));
+        align.AddCommand(CreateHydrateTx(chapterFactory, hydrateCommand));
         return align;
     }
 
-    private static Command CreateAnchors(IChapterContextFactory chapterFactory)
+    private static Command CreateAnchors(IChapterContextFactory factory, ComputeAnchorsCommand command)
     {
-        ArgumentNullException.ThrowIfNull(chapterFactory);
-
         var cmd = new Command("anchors", "Compute n-gram anchors between BookIndex and ASR");
 
-        var indexOption = new Option<FileInfo?>("--index", "Path to BookIndex JSON");
+        var indexOption = new Option<FileInfo?>("--index", "Path to BookIndex JSON") { IsRequired = true };
         indexOption.AddAlias("-i");
-        var asrOption = new Option<FileInfo?>("--asr-json", "Path to ASR JSON");
+        var asrOption = new Option<FileInfo?>("--asr-json", "Path to ASR JSON") { IsRequired = true };
         asrOption.AddAlias("-j");
         var outOption = new Option<FileInfo?>("--out", "Output anchors JSON (defaults to <chapter>.align.anchors.json)");
         outOption.AddAlias("-o");
@@ -70,49 +60,51 @@ public static class AlignCommand
 
         cmd.SetHandler(async context =>
         {
-            var indexFile = CommandInputResolver.ResolveBookIndex(context.ParseResult.GetValueForOption(indexOption));
-            var asrFile = CommandInputResolver.ResolveChapterArtifact(context.ParseResult.GetValueForOption(asrOption), "asr.json");
-            var outFile = CommandInputResolver.ResolveChapterArtifact(context.ParseResult.GetValueForOption(outOption), "align.anchors.json", mustExist: false);
-
-            var options = new AnchorComputationOptions
-            {
-                DetectSection = context.ParseResult.GetValueForOption(detectSectionOption),
-                NGram = context.ParseResult.GetValueForOption(ngramOption),
-                TargetPerTokens = context.ParseResult.GetValueForOption(targetPerTokensOption),
-                MinSeparation = context.ParseResult.GetValueForOption(minSeparationOption),
-                AllowBoundaryCross = context.ParseResult.GetValueForOption(crossSentencesOption),
-                UseDomainStopwords = context.ParseResult.GetValueForOption(domainStopwordsOption),
-                AsrPrefixTokens = context.ParseResult.GetValueForOption(asrPrefixTokensOption),
-                EmitWindows = context.ParseResult.GetValueForOption(emitWindowsOption)
-            };
-
             try
             {
-                await RunAnchorsAsync(chapterFactory, indexFile, asrFile, outFile, options, context.GetCancellationToken()).ConfigureAwait(false);
+                var parse = context.ParseResult;
+                var indexFile = CommandInputResolver.ResolveBookIndex(parse.GetValueForOption(indexOption));
+                var asrFile = CommandInputResolver.ResolveChapterArtifact(parse.GetValueForOption(asrOption), "asr.json");
+                var outFile = CommandInputResolver.ResolveChapterArtifact(parse.GetValueForOption(outOption), "align.anchors.json", mustExist: false);
+
+                var options = new AnchorComputationOptions
+                {
+                    DetectSection = parse.GetValueForOption(detectSectionOption),
+                    NGram = parse.GetValueForOption(ngramOption),
+                    TargetPerTokens = parse.GetValueForOption(targetPerTokensOption),
+                    MinSeparation = parse.GetValueForOption(minSeparationOption),
+                    AllowBoundaryCross = parse.GetValueForOption(crossSentencesOption),
+                    UseDomainStopwords = parse.GetValueForOption(domainStopwordsOption),
+                    AsrPrefixTokens = parse.GetValueForOption(asrPrefixTokensOption),
+                    EmitWindows = parse.GetValueForOption(emitWindowsOption)
+                };
+
+                using var handle = factory.Create(indexFile, asrFile: asrFile);
+                await command.ExecuteAsync(handle.Chapter, options, context.GetCancellationToken()).ConfigureAwait(false);
+                handle.Save();
+                CopyIfRequested(handle.Chapter.ResolveArtifactFile("align.anchors.json"), outFile);
             }
             catch (Exception ex)
             {
                 Log.Error(ex, "align anchors command failed");
-                Environment.Exit(1);
+                context.ExitCode = 1;
             }
         });
 
         return cmd;
     }
 
-    private static Command CreateTranscriptIndex(IChapterContextFactory chapterFactory)
+    private static Command CreateTranscriptIndex(IChapterContextFactory factory, BuildTranscriptIndexCommand command)
     {
-        ArgumentNullException.ThrowIfNull(chapterFactory);
-
         var cmd = new Command("tx", "Validate & compare Book vs ASR using anchors; emit TranscriptIndex (*.tx.json)");
 
-        var indexOption = new Option<FileInfo?>("--index", "Path to BookIndex JSON");
+        var indexOption = new Option<FileInfo?>("--index", "Path to BookIndex JSON") { IsRequired = true };
         indexOption.AddAlias("-i");
-        var asrOption = new Option<FileInfo?>("--asr-json", "Path to ASR JSON");
+        var asrOption = new Option<FileInfo?>("--asr-json", "Path to ASR JSON") { IsRequired = true };
         asrOption.AddAlias("-j");
-        var audioOption = new Option<FileInfo?>("--audio", "Path to audio file for reference");
+        var audioOption = new Option<FileInfo?>("--audio", "Chapter audio file") { IsRequired = true };
         audioOption.AddAlias("-a");
-        var outOption = new Option<FileInfo?>("--out", "Output TranscriptIndex JSON (*.tx.json)");
+        var outOption = new Option<FileInfo?>("--out", "Output TranscriptIndex JSON");
         outOption.AddAlias("-o");
 
         var detectSectionOption = new Option<bool>("--detect-section", () => true, "Detect section from ASR prefix and restrict window");
@@ -137,47 +129,57 @@ public static class AlignCommand
 
         cmd.SetHandler(async context =>
         {
-            var indexFile = CommandInputResolver.ResolveBookIndex(context.ParseResult.GetValueForOption(indexOption));
-            var asrFile = CommandInputResolver.ResolveChapterArtifact(context.ParseResult.GetValueForOption(asrOption), "asr.json");
-            var audioFile = CommandInputResolver.RequireAudio(context.ParseResult.GetValueForOption(audioOption));
-            var outFile = CommandInputResolver.ResolveChapterArtifact(context.ParseResult.GetValueForOption(outOption), "align.tx.json", mustExist: false);
-
-            var anchorOptions = new AnchorComputationOptions
-            {
-                DetectSection = context.ParseResult.GetValueForOption(detectSectionOption),
-                AsrPrefixTokens = context.ParseResult.GetValueForOption(asrPrefixTokensOption),
-                NGram = context.ParseResult.GetValueForOption(ngramOption),
-                TargetPerTokens = context.ParseResult.GetValueForOption(targetPerTokensOption),
-                MinSeparation = context.ParseResult.GetValueForOption(minSeparationOption),
-                AllowBoundaryCross = context.ParseResult.GetValueForOption(crossSentencesOption),
-                UseDomainStopwords = context.ParseResult.GetValueForOption(domainStopwordsOption)
-            };
-
             try
             {
-                await RunTranscriptIndexAsync(chapterFactory, indexFile, asrFile, audioFile, outFile, anchorOptions, context.GetCancellationToken()).ConfigureAwait(false);
+                var parse = context.ParseResult;
+                var indexFile = CommandInputResolver.ResolveBookIndex(parse.GetValueForOption(indexOption));
+                var asrFile = CommandInputResolver.ResolveChapterArtifact(parse.GetValueForOption(asrOption), "asr.json");
+                var audioFile = CommandInputResolver.RequireAudio(parse.GetValueForOption(audioOption));
+                var outFile = CommandInputResolver.ResolveChapterArtifact(parse.GetValueForOption(outOption), "align.tx.json", mustExist: false);
+
+                var anchorOptions = new AnchorComputationOptions
+                {
+                    DetectSection = parse.GetValueForOption(detectSectionOption),
+                    AsrPrefixTokens = parse.GetValueForOption(asrPrefixTokensOption),
+                    NGram = parse.GetValueForOption(ngramOption),
+                    TargetPerTokens = parse.GetValueForOption(targetPerTokensOption),
+                    MinSeparation = parse.GetValueForOption(minSeparationOption),
+                    AllowBoundaryCross = parse.GetValueForOption(crossSentencesOption),
+                    UseDomainStopwords = parse.GetValueForOption(domainStopwordsOption)
+                };
+
+                var options = new BuildTranscriptIndexOptions
+                {
+                    AudioFile = audioFile,
+                    AsrFile = asrFile,
+                    BookIndexFile = indexFile,
+                    AnchorOptions = anchorOptions
+                };
+
+                using var handle = factory.Create(indexFile, asrFile: asrFile, audioFile: audioFile);
+                await command.ExecuteAsync(handle.Chapter, options, context.GetCancellationToken()).ConfigureAwait(false);
+                handle.Save();
+                CopyIfRequested(handle.Chapter.ResolveArtifactFile("align.tx.json"), outFile);
             }
             catch (Exception ex)
             {
                 Log.Error(ex, "align tx command failed");
-                Environment.Exit(1);
+                context.ExitCode = 1;
             }
         });
 
         return cmd;
     }
 
-    private static Command CreateHydrateTx(IChapterContextFactory chapterFactory)
+    private static Command CreateHydrateTx(IChapterContextFactory factory, HydrateTranscriptCommand command)
     {
-        ArgumentNullException.ThrowIfNull(chapterFactory);
-
         var cmd = new Command("hydrate", "Hydrate a TranscriptIndex with token values from BookIndex and ASR (for debugging)");
 
-        var indexOption = new Option<FileInfo?>("--index", "Path to BookIndex JSON");
+        var indexOption = new Option<FileInfo?>("--index", "Path to BookIndex JSON") { IsRequired = true };
         indexOption.AddAlias("-i");
-        var asrOption = new Option<FileInfo?>("--asr-json", "Path to ASR JSON");
+        var asrOption = new Option<FileInfo?>("--asr-json", "Path to ASR JSON") { IsRequired = true };
         asrOption.AddAlias("-j");
-        var txOption = new Option<FileInfo?>("--tx-json", "Path to TranscriptIndex JSON");
+        var txOption = new Option<FileInfo?>("--tx-json", "Path to TranscriptIndex JSON") { IsRequired = true };
         txOption.AddAlias("-t");
         var outOption = new Option<FileInfo?>("--out", "Output hydrated JSON file");
         outOption.AddAlias("-o");
@@ -189,100 +191,38 @@ public static class AlignCommand
 
         cmd.SetHandler(async context =>
         {
-            var indexFile = CommandInputResolver.ResolveBookIndex(context.ParseResult.GetValueForOption(indexOption));
-            var asrFile = CommandInputResolver.ResolveChapterArtifact(context.ParseResult.GetValueForOption(asrOption), "asr.json");
-            var txFile = CommandInputResolver.ResolveChapterArtifact(context.ParseResult.GetValueForOption(txOption), "align.tx.json");
-            var outFile = CommandInputResolver.ResolveChapterArtifact(context.ParseResult.GetValueForOption(outOption), "align.hydrate.json", mustExist: false);
-
             try
             {
-                await RunHydrateTxAsync(chapterFactory, indexFile, asrFile, txFile, outFile, context.GetCancellationToken()).ConfigureAwait(false);
+                var parse = context.ParseResult;
+                var indexFile = CommandInputResolver.ResolveBookIndex(parse.GetValueForOption(indexOption));
+                var asrFile = CommandInputResolver.ResolveChapterArtifact(parse.GetValueForOption(asrOption), "asr.json");
+                var txFile = CommandInputResolver.ResolveChapterArtifact(parse.GetValueForOption(txOption), "align.tx.json");
+                var outFile = CommandInputResolver.ResolveChapterArtifact(parse.GetValueForOption(outOption), "align.hydrate.json", mustExist: false);
+
+                using var handle = factory.Create(indexFile, asrFile: asrFile, transcriptFile: txFile);
+                await command.ExecuteAsync(handle.Chapter, null, context.GetCancellationToken()).ConfigureAwait(false);
+                handle.Save();
+                CopyIfRequested(handle.Chapter.ResolveArtifactFile("align.hydrate.json"), outFile);
             }
             catch (Exception ex)
             {
                 Log.Error(ex, "align hydrate command failed");
-                Environment.Exit(1);
+                context.ExitCode = 1;
             }
         });
 
         return cmd;
     }
 
-    internal static async Task RunAnchorsAsync(
-        IChapterContextFactory chapterFactory,
-        FileInfo indexFile,
-        FileInfo asrFile,
-        FileInfo outFile,
-        AnchorComputationOptions options,
-        CancellationToken cancellationToken = default)
+    private static void CopyIfRequested(FileInfo source, FileInfo? destination)
     {
-        ArgumentNullException.ThrowIfNull(chapterFactory);
-
-        using var handle = chapterFactory.Create(indexFile, asrFile: asrFile);
-        var service = CreateAlignmentService();
-        var anchors = await service.ComputeAnchorsAsync(handle.Chapter, options, cancellationToken).ConfigureAwait(false);
-        await WriteJsonAsync(outFile, anchors, cancellationToken).ConfigureAwait(false);
-        handle.Save();
-    }
-
-    internal static async Task RunTranscriptIndexAsync(
-        IChapterContextFactory chapterFactory,
-        FileInfo indexFile,
-        FileInfo asrFile,
-        FileInfo audioFile,
-        FileInfo outFile,
-        AnchorComputationOptions anchorOptions,
-        CancellationToken cancellationToken = default)
-    {
-        ArgumentNullException.ThrowIfNull(chapterFactory);
-
-        using var handle = chapterFactory.Create(
-            bookIndexFile: indexFile,
-            asrFile: asrFile,
-            audioFile: audioFile);
-
-        var service = CreateAlignmentService();
-        var transcript = await service.BuildTranscriptIndexAsync(handle.Chapter, new TranscriptBuildOptions
+        if (destination is null)
         {
-            AudioPath = audioFile.FullName,
-            ScriptPath = asrFile.FullName,
-            BookIndexPath = indexFile.FullName,
-            AnchorOptions = anchorOptions
-        }, cancellationToken).ConfigureAwait(false);
+            return;
+        }
 
-        await WriteJsonAsync(outFile, transcript, cancellationToken).ConfigureAwait(false);
-        handle.Save();
-    }
-
-    internal static async Task RunHydrateTxAsync(
-        IChapterContextFactory chapterFactory,
-        FileInfo indexFile,
-        FileInfo asrFile,
-        FileInfo txFile,
-        FileInfo outFile,
-        CancellationToken cancellationToken = default)
-    {
-        ArgumentNullException.ThrowIfNull(chapterFactory);
-
-        using var handle = chapterFactory.Create(
-            bookIndexFile: indexFile,
-            asrFile: asrFile,
-            transcriptFile: txFile);
-
-        var service = CreateAlignmentService();
-        var hydrated = await service.HydrateTranscriptAsync(handle.Chapter, null, cancellationToken).ConfigureAwait(false);
-        await WriteJsonAsync(outFile, hydrated, cancellationToken).ConfigureAwait(false);
-        handle.Save();
-    }
-
-    private static IAlignmentService CreateAlignmentService()
-        => new AlignmentService(new MfaPronunciationProvider());
-
-    private static async Task WriteJsonAsync<T>(FileInfo target, T payload, CancellationToken cancellationToken)
-    {
-        Directory.CreateDirectory(target.Directory?.FullName ?? Directory.GetCurrentDirectory());
-        var json = JsonSerializer.Serialize(payload, JsonWriteOptions);
-        await File.WriteAllTextAsync(target.FullName, json, cancellationToken).ConfigureAwait(false);
-        Log.Debug("Wrote {Path}", target.FullName);
+        Directory.CreateDirectory(destination.Directory?.FullName ?? Directory.GetCurrentDirectory());
+        File.Copy(source.FullName, destination.FullName, overwrite: true);
+        Log.Debug("Wrote {Path}", destination.FullName);
     }
 }

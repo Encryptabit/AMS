@@ -1,3 +1,4 @@
+using System.IO;
 using Ams.Core.Runtime.Artifacts;
 using Ams.Core.Runtime.Audio;
 using Ams.Core.Runtime.Book;
@@ -25,5 +26,28 @@ public sealed class ChapterContext
     public void Save()
     {
         Documents.SaveChanges();
+    }
+
+    public FileInfo ResolveArtifactFile(string suffix)
+    {
+        if (string.IsNullOrWhiteSpace(suffix))
+        {
+            throw new ArgumentException("Suffix must be provided.", nameof(suffix));
+        }
+
+        var trimmedSuffix = suffix.Trim().TrimStart('.');
+        if (trimmedSuffix.Length == 0)
+        {
+            throw new ArgumentException("Suffix must contain file information.", nameof(suffix));
+        }
+
+        var rootPath = Descriptor.RootPath;
+        if (string.IsNullOrWhiteSpace(rootPath))
+        {
+            throw new InvalidOperationException("Chapter root path is not configured.");
+        }
+
+        var fileName = $"{Descriptor.ChapterId}.{trimmedSuffix}";
+        return new FileInfo(Path.Combine(rootPath, fileName));
     }
 }

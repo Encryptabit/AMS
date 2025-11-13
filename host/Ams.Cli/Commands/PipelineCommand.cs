@@ -11,14 +11,12 @@ using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
-using Ams.Cli.Services;
 using Ams.Cli.Utilities;
 using Ams.Cli.Repl;
-using Ams.Core.Processors.Alignment.Mfa;
-using Ams.Core.Services.Alignment;
+using Ams.Core.Application.Services;
 using Ams.Core.Artifacts;
 using Ams.Core.Audio;
-using Ams.Core.Services;
+using Ams.Core.Asr;
 using Ams.Core.Processors;
 using Ams.Core.Runtime.Documents;
 using Ams.Core.Common;
@@ -31,18 +29,6 @@ namespace Ams.Cli.Commands;
 
 public static class PipelineCommand
 {
-    private enum PipelineStage
-    {
-        Pending = 0,
-        BookIndex = 1,
-        Asr = 2,
-        Anchors = 3,
-        Transcript = 4,
-        Hydrate = 5,
-        Mfa = 6,
-        Complete = 7
-    }
-
     private const int PipelineStageCount = (int)PipelineStage.Complete;
 
     private static readonly ProgressColumn[] PipelineProgressColumns =
@@ -64,13 +50,12 @@ public static class PipelineCommand
         Log.Debug(message, args);
     }
 
-    public static Command Create(IChapterContextFactory chapterFactory, IAsrService asrServiceClient)
+    public static Command Create(PipelineService pipelineService)
     {
-        ArgumentNullException.ThrowIfNull(chapterFactory);
-        ArgumentNullException.ThrowIfNull(asrServiceClient);
+        ArgumentNullException.ThrowIfNull(pipelineService);
 
         var pipeline = new Command("pipeline", "Run the end-to-end chapter pipeline");
-        pipeline.AddCommand(CreateRun(chapterFactory, asrServiceClient));
+        pipeline.AddCommand(CreateRun(pipelineService));
         pipeline.AddCommand(CreatePrepCommand());
         pipeline.AddCommand(CreateVerifyCommand());
         pipeline.AddCommand(CreateStatsCommand());
@@ -107,44 +92,6 @@ public static class PipelineCommand
         cmd.AddCommand(CreatePrepRenameCommand());
         cmd.AddCommand(CreatePrepResetCommand());
         return cmd;
-    }
-
-    private sealed class PipelineConcurrencyControl : IDisposable
-    {
-        private int _bookIndexForceClaimed;
-
-        public SemaphoreSlim BookIndexSemaphore { get; }
-        public SemaphoreSlim AsrSemaphore { get; }
-        public SemaphoreSlim MfaSemaphore { get; }
-
-        private PipelineConcurrencyControl(int bookIndexDegree, int asrDegree, int mfaDegree)
-        {
-            BookIndexSemaphore = new SemaphoreSlim(Math.Max(1, bookIndexDegree), Math.Max(1, bookIndexDegree));
-            AsrSemaphore = new SemaphoreSlim(Math.Max(1, asrDegree), Math.Max(1, asrDegree));
-            MfaSemaphore = new SemaphoreSlim(Math.Max(1, mfaDegree), Math.Max(1, mfaDegree));
-        }
-
-        public static PipelineConcurrencyControl CreateSingle()
-        {
-            return new PipelineConcurrencyControl(bookIndexDegree: 1, asrDegree: 1, mfaDegree: 1);
-        }
-
-        public static PipelineConcurrencyControl CreateShared(int maxMfaParallelism)
-        {
-            return new PipelineConcurrencyControl(bookIndexDegree: 1, asrDegree: 1, mfaDegree: Math.Max(1, maxMfaParallelism));
-        }
-
-        public void Dispose()
-        {
-            BookIndexSemaphore.Dispose();
-            AsrSemaphore.Dispose();
-            MfaSemaphore.Dispose();
-        }
-
-        public bool TryClaimBookIndexForce()
-        {
-            return Interlocked.CompareExchange(ref _bookIndexForceClaimed, 1, 0) == 0;
-        }
     }
 
     private sealed class PipelineProgressReporter
@@ -247,9 +194,8 @@ public static class PipelineCommand
         }
     }
 
-    private static async Task RunPipelineForMultipleChaptersAsync(
-        IChapterContextFactory chapterFactory,
-        IAsrService asrServiceClient,
+private static async Task RunPipelineForMultipleChaptersAsync(
+    PipelineService pipelineService,
         FileInfo bookFile,
         DirectoryInfo? workDirOption,
         FileInfo? bookIndexOverride,
@@ -265,9 +211,8 @@ public static class PipelineCommand
         int maxMfaParallelism,
         ProgressContext? progressContext,
         CancellationToken cancellationToken)
-    {
-        ArgumentNullException.ThrowIfNull(chapterFactory);
-        ArgumentNullException.ThrowIfNull(asrServiceClient);
+{
+    ArgumentNullException.ThrowIfNull(pipelineService);
 
         if (chapterFiles is null || chapterFiles.Count == 0)
         {
@@ -328,8 +273,7 @@ public static class PipelineCommand
                 cancellationToken.ThrowIfCancellationRequested();
 
                 await RunPipelineAsync(
-                    chapterFactory,
-                    asrServiceClient,
+                    pipelineService,
                     bookFile,
                     chapter,
                     workDirOption,
@@ -899,10 +843,9 @@ public static class PipelineCommand
         return cmd;
     }
 
-    private static Command CreateRun(IChapterContextFactory chapterFactory, IAsrService asrServiceClient)
+    private static Command CreateRun(PipelineService pipelineService)
     {
-        ArgumentNullException.ThrowIfNull(chapterFactory);
-        ArgumentNullException.ThrowIfNull(asrServiceClient);
+        ArgumentNullException.ThrowIfNull(pipelineService);
 
         var cmd = new Command("run", "Build index, run ASR, align, and hydrate in one pass");
 
@@ -983,8 +926,7 @@ public static class PipelineCommand
                             .StartAsync(async progressContext =>
                             {
                                 await RunPipelineForMultipleChaptersAsync(
-                                    chapterFactory,
-                                    asrServiceClient,
+                                    pipelineService,
                                     bookFile,
                                     workDir,
                                     bookIndex,
@@ -1005,8 +947,7 @@ public static class PipelineCommand
                     else
                     {
                         await RunPipelineForMultipleChaptersAsync(
-                            chapterFactory,
-                            asrServiceClient,
+                            pipelineService,
                             bookFile,
                             workDir,
                             bookIndex,
@@ -1052,8 +993,7 @@ public static class PipelineCommand
                             try
                             {
                                 await RunPipelineAsync(
-                                    chapterFactory,
-                                    asrServiceClient,
+                                    pipelineService,
                                     bookFile,
                                     audioFile,
                                     workDir,
@@ -1088,8 +1028,7 @@ public static class PipelineCommand
                 {
                     using var concurrency = PipelineConcurrencyControl.CreateSingle();
                     await RunPipelineAsync(
-                        chapterFactory,
-                        asrServiceClient,
+                        pipelineService,
                         bookFile,
                         audioFile,
                         workDir,
@@ -1121,9 +1060,8 @@ public static class PipelineCommand
         return cmd;
     }
 
-    private static async Task RunPipelineAsync(
-        IChapterContextFactory chapterFactory,
-        IAsrService asrServiceClient,
+private static async Task RunPipelineAsync(
+    PipelineService pipelineService,
         FileInfo bookFile,
         FileInfo audioFile,
         DirectoryInfo? workDirOption,
@@ -1140,8 +1078,7 @@ public static class PipelineCommand
         PipelineConcurrencyControl concurrency,
         CancellationToken cancellationToken)
     {
-        ArgumentNullException.ThrowIfNull(chapterFactory);
-        ArgumentNullException.ThrowIfNull(asrServiceClient);
+        ArgumentNullException.ThrowIfNull(pipelineService);
 
         bool quiet = progress is not null;
         bool logInfo = !quiet || verbose;
@@ -1175,99 +1112,12 @@ public static class PipelineCommand
         var treatedWav = new FileInfo(Path.Combine(chapterDir, $"{chapterStem}.treated.wav"));
         var textGridFile = new FileInfo(Path.Combine(chapterDir, "alignment", "mfa", $"{chapterStem}.TextGrid"));
 
-        bool requestIndexRebuild = forceIndex || force;
-        forceIndex = requestIndexRebuild && concurrency.TryClaimBookIndexForce();
-
         LogStageInfo(logInfo, "=== AMS Pipeline ===");
         LogStageInfo(logInfo, "Book={BookFile}", bookFile.FullName);
         LogStageInfo(logInfo, "Audio={AudioFile}", audioFile.FullName);
         LogStageInfo(logInfo, "WorkDir={WorkDir}", workDirPath);
         LogStageInfo(logInfo, "Chapter={Chapter}", chapterStem);
         LogStageInfo(logInfo, "ChapterDir={ChapterDir}", chapterDir);
-
-        bool bookIndexExists = bookIndexFile.Exists;
-        bool bookIndexExistedInitially = bookIndexExists;
-
-        if (forceIndex || !bookIndexExists)
-        {
-            await concurrency.BookIndexSemaphore.WaitAsync(cancellationToken).ConfigureAwait(false);
-            try
-            {
-                bookIndexExists = bookIndexFile.Exists;
-                if (forceIndex || !bookIndexExists)
-                {
-                    LogStageInfo(logInfo, forceIndex ? "Rebuilding book index at {BookIndexFile}" : "Building book index at {BookIndexFile}", bookIndexFile.FullName);
-                    await BuildIndexCommand.BuildBookIndexAsync(
-                        bookFile,
-                        bookIndexFile,
-                        forceIndex,
-                        new BookIndexOptions { AverageWpm = avgWpm },
-                        noCache: false).ConfigureAwait(false);
-                    bookIndexExists = bookIndexFile.Exists;
-                }
-                else
-                {
-                    LogStageInfo(logInfo, "Using cached book index at {BookIndexFile}", bookIndexFile.FullName);
-                }
-            }
-            finally
-            {
-                concurrency.BookIndexSemaphore.Release();
-            }
-        }
-        else
-        {
-            LogStageInfo(logInfo, "Using cached book index at {BookIndexFile}", bookIndexFile.FullName);
-        }
-
-        if (!bookIndexExists)
-        {
-            throw new InvalidOperationException($"Book index file missing or inaccessible: {bookIndexFile.FullName}");
-        }
-
-        var bookIndexMessage = forceIndex || !bookIndexExistedInitially ? "Index built" : "Index ready";
-        progress?.ReportStage(chapterStem, PipelineStage.BookIndex, bookIndexMessage);
-
-        EnsureDirectory(asrFile.DirectoryName);
-        asrFile.Refresh();
-        bool asrRan;
-        if (!force && asrFile.Exists)
-        {
-            LogStageInfo(logInfo, "Skipping ASR stage; {AsrFile} already exists (pass --force to rerun)", asrFile.FullName);
-            asrRan = false;
-        }
-        else
-        {
-            await concurrency.AsrSemaphore.WaitAsync(cancellationToken).ConfigureAwait(false);
-            try
-            {
-                asrFile.Refresh();
-                if (!force && asrFile.Exists)
-                {
-                    LogStageInfo(logInfo, "Skipping ASR stage; {AsrFile} already exists (pass --force to rerun)", asrFile.FullName);
-                    asrRan = false;
-                }
-                else
-                {
-                    LogStageInfo(logInfo, "Running ASR stage");
-                    using var asrHandle = chapterFactory.Create(
-                        bookIndexFile,
-                        audioFile: audioFile,
-                        chapterId: chapterStem);
-
-                    await AsrCommand.RunAsrAsync(asrHandle, asrFile, asrServiceClient, asrServiceUrl, asrModel, asrLanguage).ConfigureAwait(false);
-                    asrHandle.Save();
-                    asrFile.Refresh();
-                    asrRan = true;
-                }
-            }
-            finally
-            {
-                concurrency.AsrSemaphore.Release();
-            }
-        }
-
-        progress?.ReportStage(chapterStem, PipelineStage.Asr, asrRan ? "ASR complete" : "ASR cached");
 
         var defaultAnchorOptions = new AnchorComputationOptions
         {
@@ -1280,144 +1130,79 @@ public static class PipelineCommand
             UseDomainStopwords = true
         };
 
-        anchorsFile.Refresh();
-        bool anchorsRan;
-        if (!force && anchorsFile.Exists)
+        var transcriptOptions = new GenerateTranscriptOptions
         {
-            LogStageInfo(logInfo, "Skipping anchor selection; {AnchorsFile} already exists (pass --force to rerun)", anchorsFile.FullName);
-            anchorsRan = false;
-        }
-        else
-        {
-            LogStageInfo(logInfo, "Selecting anchors");
-            asrFile.Refresh();
-            await AlignCommand.RunAnchorsAsync(
-                chapterFactory,
-                bookIndexFile,
-                asrFile,
-                anchorsFile,
-                defaultAnchorOptions with { EmitWindows = false },
-                cancellationToken);
-            anchorsFile.Refresh();
-            anchorsRan = true;
-        }
+            Engine = AsrEngineConfig.Resolve(),
+            ServiceUrl = asrServiceUrl,
+            Model = asrModel,
+            Language = asrLanguage
+        };
 
-        progress?.ReportStage(chapterStem, PipelineStage.Anchors, anchorsRan ? "Anchors generated" : "Anchors cached");
-
-        txFile.Refresh();
-        bool transcriptRan;
-        if (!force && txFile.Exists)
+        var pipelineOptions = new PipelineRunOptions
         {
-            LogStageInfo(logInfo, "Skipping transcript index; {TranscriptFile} already exists (pass --force to rerun)", txFile.FullName);
-            transcriptRan = false;
-        }
-        else
-        {
-            LogStageInfo(logInfo, "Generating transcript index");
-            asrFile.Refresh();
-            await AlignCommand.RunTranscriptIndexAsync(
-                chapterFactory,
-                bookIndexFile,
-                asrFile,
-                audioFile,
-                txFile,
-                defaultAnchorOptions with { EmitWindows = true },
-                cancellationToken);
-            txFile.Refresh();
-            transcriptRan = true;
-        }
-
-        progress?.ReportStage(chapterStem, PipelineStage.Transcript, transcriptRan ? "Transcript indexed" : "Transcript cached");
-
-        hydrateFile.Refresh();
-        bool hydrateRan;
-        if (!force && hydrateFile.Exists)
-        {
-            LogStageInfo(logInfo, "Skipping hydrate stage; {HydratedFile} already exists (pass --force to rerun)", hydrateFile.FullName);
-            hydrateRan = false;
-        }
-        else
-        {
-            LogStageInfo(logInfo, "Hydrating transcript");
-            asrFile.Refresh();
-            txFile.Refresh();
-            await AlignCommand.RunHydrateTxAsync(chapterFactory, bookIndexFile, asrFile, txFile, hydrateFile, cancellationToken);
-            hydrateFile.Refresh();
-            hydrateRan = true;
-        }
-
-        progress?.ReportStage(chapterStem, PipelineStage.Hydrate, hydrateRan ? "Hydrate complete" : "Hydrate cached");
-
-        cancellationToken.ThrowIfCancellationRequested();
-
-        textGridFile.Refresh();
-        bool mfaRan;
-        if (!force && textGridFile.Exists)
-        {
-            LogStageInfo(logInfo, "Skipping MFA alignment; {TextGridFile} already exists (pass --force to rerun)", textGridFile.FullName);
-            mfaRan = false;
-        }
-        else
-        {
-            await concurrency.MfaSemaphore.WaitAsync(cancellationToken).ConfigureAwait(false);
-            try
+            BookFile = bookFile,
+            BookIndexFile = bookIndexFile,
+            AudioFile = audioFile,
+            ChapterDirectory = chapterDirInfo,
+            ChapterId = chapterStem,
+            Force = force,
+            ForceIndex = forceIndex,
+            AverageWordsPerMinute = avgWpm,
+            TranscriptOptions = transcriptOptions,
+            AnchorOptions = defaultAnchorOptions with { EmitWindows = false },
+            TranscriptIndexOptions = new BuildTranscriptIndexOptions
             {
-                textGridFile.Refresh();
-                if (!force && textGridFile.Exists)
-                {
-                    LogStageInfo(logInfo, "Skipping MFA alignment; {TextGridFile} already exists (pass --force to rerun)", textGridFile.FullName);
-                    mfaRan = false;
-                }
-                else
-                {
-                    LogStageInfo(logInfo, "Running MFA alignment workflow");
-                    hydrateFile.Refresh();
-                    await MfaWorkflow.RunChapterAsync(audioFile, hydrateFile, chapterStem, chapterDirInfo, cancellationToken).ConfigureAwait(false);
-                    textGridFile.Refresh();
-                    mfaRan = true;
-                }
-            }
-            finally
+                AudioFile = audioFile,
+                AsrFile = asrFile,
+                BookIndexFile = bookIndexFile,
+                AnchorOptions = defaultAnchorOptions with { EmitWindows = true }
+            },
+            HydrationOptions = null,
+            MfaOptions = new RunMfaOptions
             {
-                concurrency.MfaSemaphore.Release();
-            }
-        }
+                AudioFile = audioFile,
+                HydrateFile = hydrateFile,
+                TextGridFile = textGridFile,
+                AlignmentRootDirectory = new DirectoryInfo(Path.Combine(chapterDir, "alignment"))
+            },
+            MergeOptions = new MergeTimingsOptions
+            {
+                HydrateFile = hydrateFile,
+                TranscriptFile = txFile,
+                TextGridFile = textGridFile
+            },
+            TreatedCopyFile = treatedWav,
+            Concurrency = concurrency
+        };
 
-        if (textGridFile.Exists)
-        {
-            try
-            {
-                MfaTimingMerger.MergeTimings(hydrateFile, textGridFile);
-                hydrateFile.Refresh();
-                var fallbackTexts = MfaTimingMerger.BuildFallbackTextMap(hydrateFile);
-                MfaTimingMerger.MergeTimings(txFile, textGridFile, fallbackTexts);
-            }
-            catch (Exception ex)
-            {
-                Log.Debug("Failed to merge MFA timings: {0}", ex);
-            }
-        }
-        else
-        {
-            Log.Debug("Skipping MFA timing merge because TextGrid not found at {TextGridFile}", textGridFile.FullName);
-        }
+        var result = await pipelineService.RunChapterAsync(pipelineOptions, cancellationToken).ConfigureAwait(false);
 
-        var mfaMessage = textGridFile.Exists
-            ? (mfaRan ? "MFA aligned" : "MFA cached")
+        var bookIndexMessage = result.BookIndexBuilt ? "Index built" : "Index ready";
+        progress?.ReportStage(chapterStem, PipelineStage.BookIndex, bookIndexMessage);
+        progress?.ReportStage(chapterStem, PipelineStage.Asr, result.AsrRan ? "ASR complete" : "ASR cached");
+        progress?.ReportStage(chapterStem, PipelineStage.Anchors, result.AnchorsRan ? "Anchors generated" : "Anchors cached");
+        progress?.ReportStage(chapterStem, PipelineStage.Transcript, result.TranscriptRan ? "Transcript indexed" : "Transcript cached");
+        progress?.ReportStage(chapterStem, PipelineStage.Hydrate, result.HydrateRan ? "Hydrate complete" : "Hydrate cached");
+
+        var textGridStatus = result.TextGridFile.Exists
+            ? (result.MfaRan ? "MFA aligned" : "MFA cached")
             : "MFA missing";
-        progress?.ReportStage(chapterStem, PipelineStage.Mfa, mfaMessage);
+        progress?.ReportStage(chapterStem, PipelineStage.Mfa, textGridStatus);
 
-        treatedWav.Refresh();
-        if (!force && treatedWav.Exists)
-        {
-            LogStageInfo(logInfo, "Skipping treated copy; {TreatedFile} already exists (pass --force to overwrite)", treatedWav.FullName);
-        }
-        else
-        {
-            LogStageInfo(logInfo, "Copying source audio to treated output");
-            File.Copy(audioFile.FullName, treatedWav.FullName, overwrite: true);
-            treatedWav.Refresh();
-        }
+        LogStageInfo(logInfo, "Book index : {Status}", result.BookIndexBuilt ? "Rebuilt" : "Cached");
+        LogStageInfo(logInfo, "ASR        : {Status}", result.AsrRan ? "Executed" : "Cached");
+        LogStageInfo(logInfo, "Anchors    : {Status}", result.AnchorsRan ? "Executed" : "Cached");
+        LogStageInfo(logInfo, "Transcript : {Status}", result.TranscriptRan ? "Executed" : "Cached");
+        LogStageInfo(logInfo, "Hydrate    : {Status}", result.HydrateRan ? "Executed" : "Cached");
+        LogStageInfo(logInfo, "MFA        : {Status}", textGridStatus);
+
+        bookIndexFile = result.BookIndexFile;
+        asrFile = result.AsrFile;
+        anchorsFile = result.AnchorFile;
+        txFile = result.TranscriptFile;
+        hydrateFile = result.HydrateFile;
+        textGridFile = result.TextGridFile;
+        treatedWav = result.TreatedAudioFile;
 
         LogStageInfo(logInfo, "=== Outputs ===");
         LogStageInfo(logInfo, "Book index : {BookIndex}", bookIndexFile.FullName);

@@ -6,14 +6,15 @@ using System.Text;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
+using Ams.Core.Application.Processes;
 using Ams.Core.Artifacts.Alignment;
 using Ams.Core.Artifacts.Alignment.Mfa;
 using Ams.Core.Common;
 using Ams.Core.Runtime.Documents;
 
-namespace Ams.Cli.Services;
+namespace Ams.Core.Application.Mfa;
 
-internal static class MfaWorkflow
+public static class MfaWorkflow
 {
     internal static async Task RunChapterAsync(
         FileInfo audioFile,
