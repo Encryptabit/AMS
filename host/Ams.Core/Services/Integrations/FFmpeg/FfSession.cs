@@ -14,6 +14,12 @@ public sealed class FfSession : IDisposable
     private static bool _initialized;
     private static bool _filtersChecked;
     private static bool _filtersAvailable;
+    private static readonly string[] RootSearchSuffixes = new[]
+    {
+        Path.Combine("ExtTools", "ffmpeg", "bin"),
+        Path.Combine("ExtTools", "ffmpeg", "binaries"),
+        Path.Combine("ExtTools", "ffmpeg")
+    };
 
     /// <summary>
     /// Ensures FFmpeg has been initialized for the current process.
@@ -55,7 +61,7 @@ public sealed class FfSession : IDisposable
         EnsureFilterProbe();
         if (!_filtersAvailable)
         {
-            throw new NotSupportedException("FFmpeg filter graph support (libavfilter) is not available. Install FFmpeg builds that include avfilter and place the DLLs under ExtTools/ffmpeg/binaries.");
+            throw new NotSupportedException("FFmpeg filter graph support (libavfilter) is not available. Install FFmpeg builds that include avfilter and place the DLLs under ExtTools/ffmpeg/bin (or ExtTools/ffmpeg/binaries).");
         }
     }
 
@@ -71,8 +77,14 @@ public sealed class FfSession : IDisposable
 
     private static void TrySetRootPath()
     {
-        var probable = Path.Combine(AppContext.BaseDirectory, "ExtTools", "ffmpeg", "binaries");
-        TrySet(probable);
+        var baseDir = AppContext.BaseDirectory;
+        foreach (var suffix in RootSearchSuffixes)
+        {
+            if (TrySet(Path.Combine(baseDir, suffix)))
+            {
+                return;
+            }
+        }
     }
 
 
@@ -197,7 +209,7 @@ public sealed class FfSession : IDisposable
             : $"Attempted root path: '{ffmpeg.RootPath}'.";
 
         return $"{rootHint} Place FFmpeg shared libraries under 'ExtTools/ffmpeg/bin' (relative to the solution root) so they ship with the project. " +
-               "Download builds from https://ffmpeg.org or https://www.gyan.dev/ffmpeg/builds/ (Windows) and copy the DLLs into that folder.";
+               "(Older layouts that use 'ExtTools/ffmpeg/binaries' are also supported.) Download builds from https://ffmpeg.org or https://www.gyan.dev/ffmpeg/builds/ (Windows) and copy the DLLs into that folder.";
     }
 
     public void Dispose()
