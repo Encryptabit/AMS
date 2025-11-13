@@ -401,7 +401,7 @@ public sealed class AlignmentService : IAlignmentService
         CancellationToken cancellationToken)
     {
         var pronunciations = await _pronunciationProvider.GetPronunciationsAsync(
-            asr.Tokens.Select(t => t.Word),
+            asr.Words,
             cancellationToken).ConfigureAwait(false);
 
         var result = new string[asrView.Tokens.Count][];
@@ -409,13 +409,14 @@ public sealed class AlignmentService : IAlignmentService
         {
             cancellationToken.ThrowIfCancellationRequested();
             var originalIndex = asrView.FilteredToOriginalToken[i];
-            if (originalIndex < 0 || originalIndex >= asr.Tokens.Length)
+            if (originalIndex < 0 || originalIndex >= asr.WordCount)
             {
                 result[i] = Array.Empty<string>();
                 continue;
             }
 
-            var lexeme = PronunciationHelper.NormalizeForLookup(asr.Tokens[originalIndex].Word);
+            var word = asr.GetWord(originalIndex);
+            var lexeme = PronunciationHelper.NormalizeForLookup(word ?? string.Empty);
             if (!string.IsNullOrEmpty(lexeme) && pronunciations.TryGetValue(lexeme, out var variants) && variants.Length > 0)
             {
                 result[i] = variants;
@@ -481,7 +482,7 @@ public sealed class AlignmentService : IAlignmentService
             w.BookIdx,
             w.AsrIdx,
             w.BookIdx.HasValue && w.BookIdx.Value >= 0 && w.BookIdx.Value < book.Words.Length ? book.Words[w.BookIdx.Value].Text : null,
-            w.AsrIdx.HasValue && w.AsrIdx.Value >= 0 && w.AsrIdx.Value < asr.Tokens.Length ? asr.Tokens[w.AsrIdx.Value].Word : null,
+            w.AsrIdx.HasValue && w.AsrIdx.Value >= 0 && w.AsrIdx.Value < asr.WordCount ? asr.GetWord(w.AsrIdx.Value) : null,
             w.Op.ToString(),
             w.Reason,
             w.Score)).ToList();
@@ -508,8 +509,18 @@ public sealed class AlignmentService : IAlignmentService
         {
             if (!start.HasValue || !end.HasValue) return string.Empty;
             int s = start.Value, e = end.Value;
-            if (s < 0 || e >= asr.Tokens.Length || e < s) return string.Empty;
-            var raw = string.Join(" ", asr.Tokens.Skip(s).Take(e - s + 1).Select(x => x.Word));
+            if (s < 0 || e >= asr.WordCount || e < s) return string.Empty;
+            var collected = new List<string>(Math.Max(0, e - s + 1));
+            for (int i = s; i <= e; i++)
+            {
+                var word = asr.GetWord(i);
+                if (!string.IsNullOrWhiteSpace(word))
+                {
+                    collected.Add(word!);
+                }
+            }
+
+            var raw = collected.Count == 0 ? string.Empty : string.Join(" ", collected);
             return NormalizeSurface(raw);
         }
 
@@ -598,7 +609,7 @@ public sealed class AlignmentService : IAlignmentService
 
     private static TimingRange ComputeTiming(ScriptRange? scriptRange, AsrResponse asr)
     {
-        if (scriptRange?.Start is not int start || scriptRange.End is not int end || asr.Tokens.Length == 0)
+        if (!asr.HasWordTimings || scriptRange?.Start is not int start || scriptRange.End is not int end)
         {
             return TimingRange.Empty;
         }

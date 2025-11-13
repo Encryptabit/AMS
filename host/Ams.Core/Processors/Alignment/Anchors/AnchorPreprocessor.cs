@@ -41,15 +41,31 @@ public static class AnchorPreprocessor
 
     public static AsrAnchorView BuildAsrView(AsrResponse asr)
     {
-        var tokens = new List<string>(asr.Tokens.Length);
-        var filteredToOriginal = new List<int>(asr.Tokens.Length);
-        for (int i = 0; i < asr.Tokens.Length; i++)
+        if (!asr.HasWords)
         {
-            var tok = AnchorTokenizer.Normalize(asr.Tokens[i].Word);
-            if (string.IsNullOrEmpty(tok)) continue;
+            return new AsrAnchorView(Array.Empty<string>(), Array.Empty<int>());
+        }
+
+        var tokens = new List<string>(asr.WordCount);
+        var filteredToOriginal = new List<int>(asr.WordCount);
+        for (int i = 0; i < asr.WordCount; i++)
+        {
+            var word = asr.GetWord(i);
+            if (string.IsNullOrWhiteSpace(word))
+            {
+                continue;
+            }
+
+            var tok = AnchorTokenizer.Normalize(word!);
+            if (string.IsNullOrEmpty(tok))
+            {
+                continue;
+            }
+
             filteredToOriginal.Add(i);
             tokens.Add(tok);
         }
+
         return new AsrAnchorView(tokens, filteredToOriginal);
     }
 
@@ -83,6 +99,3 @@ public static class AnchorPreprocessor
         return false;
     }
 }
-
-
-

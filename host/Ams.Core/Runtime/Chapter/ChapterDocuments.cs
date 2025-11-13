@@ -15,6 +15,7 @@ public sealed class ChapterDocuments
     private readonly DocumentSlot<HydratedTranscript> _hydratedTranscript;
     private readonly DocumentSlot<AnchorDocument> _anchors;
     private readonly DocumentSlot<AsrResponse> _asr;
+    private readonly DocumentSlot<string> _asrTranscriptText;
     private readonly DocumentSlot<PauseAdjustmentsDocument> _pauseAdjustments;
     private readonly DocumentSlot<PausePolicy> _pausePolicy;
 
@@ -38,6 +39,10 @@ public sealed class ChapterDocuments
         _asr = new DocumentSlot<AsrResponse>(
             () => resolver.LoadAsr(context),
             value => resolver.SaveAsr(context, value));
+
+        _asrTranscriptText = new DocumentSlot<string>(
+            () => resolver.LoadAsrTranscriptText(context),
+            value => resolver.SaveAsrTranscriptText(context, value));
 
         _pauseAdjustments = new DocumentSlot<PauseAdjustmentsDocument>(
             () => resolver.LoadPauseAdjustments(context),
@@ -72,6 +77,12 @@ public sealed class ChapterDocuments
         set => _asr.SetValue(value);
     }
 
+    public string? AsrTranscriptText
+    {
+        get => _asrTranscriptText.GetValue();
+        set => _asrTranscriptText.SetValue(value);
+    }
+
     public PauseAdjustmentsDocument? PauseAdjustments
     {
         get => _pauseAdjustments.GetValue();
@@ -93,6 +104,7 @@ public sealed class ChapterDocuments
         _hydratedTranscript.IsDirty ||
         _anchors.IsDirty ||
         _asr.IsDirty ||
+        _asrTranscriptText.IsDirty ||
         _pauseAdjustments.IsDirty ||
         _pausePolicy.IsDirty;
 
@@ -102,6 +114,7 @@ public sealed class ChapterDocuments
         _hydratedTranscript.Save();
         _anchors.Save();
         _asr.Save();
+        _asrTranscriptText.Save();
         _pauseAdjustments.Save();
         _pausePolicy.Save();
     }

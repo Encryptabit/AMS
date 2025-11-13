@@ -108,7 +108,16 @@ internal sealed class ChapterContextFactory : IChapterContextFactory
 
         if (asrFile?.Exists == true)
         {
-            chapter.Documents.Asr = LoadJson<AsrResponse>(asrFile.FullName);
+            var asrDocument = LoadJson<AsrResponse>(asrFile.FullName);
+            if (asrDocument is not null)
+            {
+                chapter.Documents.Asr = asrDocument;
+                var currentCorpus = chapter.Documents.AsrTranscriptText;
+                if (string.IsNullOrWhiteSpace(currentCorpus))
+                {
+                    chapter.Documents.AsrTranscriptText = AsrTranscriptBuilder.BuildCorpusText(asrDocument);
+                }
+            }
         }
 
         if (transcriptFile?.Exists == true)

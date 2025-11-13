@@ -23,7 +23,11 @@ public interface IArtifactResolver
     void SaveAnchors(ChapterContext context, AnchorDocument document);
 
     AsrResponse? LoadAsr(ChapterContext context);
+
+    string? LoadAsrTranscriptText(ChapterContext context);
     void SaveAsr(ChapterContext context, AsrResponse asr);
+
+    void SaveAsrTranscriptText(ChapterContext context, string text);
 
     PausePolicy LoadPausePolicy(ChapterContext context);
     void SavePausePolicy(ChapterContext context, PausePolicy policy);

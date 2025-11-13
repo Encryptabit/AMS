@@ -52,11 +52,11 @@ public static class AsrCommand
         var useGpuOption = new Option<bool>("--use-gpu", () => true, "Enable GPU acceleration when supported");
         var gpuDeviceOption = new Option<int>("--gpu-device", () => 0, "GPU device index for Whisper");
         var beamSizeOption = new Option<int>("--beam-size", () => 5, "Beam size for Whisper beam search");
-        var bestOfOption = new Option<int>("--best-of", () => 1, "Best-of sampling count for Whisper greedy search");
+        var bestOfOption = new Option<int>("--best-of", () => 3, "Best-of sampling count for Whisper greedy search");
         var temperatureOption = new Option<double>("--temperature", () => 0.0, "Sampling temperature (0-1) for Whisper");
-        var wordTimestampsOption = new Option<bool>("--word-timestamps", () => true, "Emit word-level timestamps (Whisper)");
+        var wordTimestampsOption = new Option<bool>("--word-timestamps", () => false, "Emit word-level timestamps (Whisper)");
         var flashAttentionOption = new Option<bool>("--flash-attention", () => false, "Enable FlashAttention kernels when building with support");
-        var dtwOption = new Option<bool>("--dtw-timestamps", () => true, "Enable DTW timestamp refinement (Whisper)");
+        var dtwOption = new Option<bool>("--dtw-timestamps", () => false, "Enable DTW timestamp refinement (Whisper)");
 
         var bookIndexOption = new Option<FileInfo?>("--book-index", "Path to book-index.json (required for context-aware ASR)");
         var chapterIdOption = new Option<string?>("--chapter-id", "Override chapter identifier (defaults to audio stem or active chapter)");
@@ -238,10 +238,10 @@ public static class AsrCommand
             threads: 0,
             useGpu: true,
             gpuDevice: 0,
-            beamSize: 5,
+            beamSize: 8,
             bestOf: 1,
             temperature: 0.0,
-            wordTimestamps: true,
+            wordTimestamps: false,
             flashAttention: false,
             dtwTimestamps: false);
     }
@@ -288,6 +288,8 @@ public static class AsrCommand
 
         var response = await asrService.TranscribeAsync(chapter, options, CancellationToken.None);
         chapter.Documents.Asr = response;
+        var corpusText = AsrTranscriptBuilder.BuildCorpusText(response);
+        chapter.Documents.AsrTranscriptText = corpusText;
 
         await WriteResponseAsync(outputFile, response);
         Log.Debug("ASR summary: ModelVersion={ModelVersion}, Tokens={TokenCount}", response.ModelVersion, response.Tokens.Length);

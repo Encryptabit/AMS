@@ -67,17 +67,27 @@ public class ScriptValidator(ValidationOptions? options = null)
     {
         var words = new List<WordAlignment>();
         
-        foreach (var token in asrResponse.Tokens)
+        for (int i = 0; i < asrResponse.WordCount; i++)
         {
-            var normalizedWord = TextNormalizer.Normalize(token.Word, _options.ExpandContractions, _options.RemoveNumbers);
+            var word = asrResponse.GetWord(i) ?? string.Empty;
+            var normalizedWord = TextNormalizer.Normalize(word, _options.ExpandContractions, _options.RemoveNumbers);
             if (!string.IsNullOrEmpty(normalizedWord))
             {
+                double start = 0;
+                double end = 0;
+                if (asrResponse.HasWordTimings && i < asrResponse.Tokens.Length)
+                {
+                    var token = asrResponse.Tokens[i];
+                    start = token.StartTime;
+                    end = token.StartTime + token.Duration;
+                }
+
                 words.Add(new WordAlignment
                 {
                     Word = normalizedWord,
-                    StartTime = token.StartTime,
-                    EndTime = token.StartTime + token.Duration,
-                    OriginalWord = token.Word
+                    StartTime = start,
+                    EndTime = end,
+                    OriginalWord = word
                 });
             }
         }
@@ -250,23 +260,36 @@ public class ScriptValidator(ValidationOptions? options = null)
     {
         var stats = new List<SegmentStats>();
         
-        if (!asrResponse.Tokens.Any())
+        if (!asrResponse.HasWords)
             return stats;
         
-        // Create a single segment from all tokens
-        var firstToken = asrResponse.Tokens.First();
-        var lastToken = asrResponse.Tokens.Last();
+        double startTime = 0;
+        double endTime = 0;
+        if (asrResponse.HasWordTimings && asrResponse.Tokens.Length > 0)
+        {
+            var firstToken = asrResponse.Tokens.First();
+            var lastToken = asrResponse.Tokens.Last();
+            startTime = firstToken.StartTime;
+            endTime = lastToken.StartTime + lastToken.Duration;
+        }
+        else if (asrResponse.Segments.Length > 0)
+        {
+            var firstSegment = asrResponse.Segments.First();
+            var lastSegment = asrResponse.Segments.Last();
+            startTime = firstSegment.StartSec;
+            endTime = lastSegment.EndSec;
+        }
         
         var expectedText = TextNormalizer.Normalize(scriptText, _options.ExpandContractions, _options.RemoveNumbers);
-        var actualText = string.Join(" ", asrResponse.Tokens.Select(t => t.Word));
+        var actualText = string.Join(" ", asrResponse.Words);
         var normalizedActualText = TextNormalizer.Normalize(actualText, _options.ExpandContractions, _options.RemoveNumbers);
         
         var segmentWer = CalculateSegmentWER(expectedText, normalizedActualText);
         
         stats.Add(new SegmentStats(
             Index: 0,
-            StartTime: firstToken.StartTime,
-            EndTime: lastToken.StartTime + lastToken.Duration,
+            StartTime: startTime,
+            EndTime: endTime,
             ExpectedText: expectedText,
             ActualText: normalizedActualText,
             WordErrorRate: segmentWer,
@@ -346,7 +369,7 @@ public class ScriptValidator(ValidationOptions? options = null)
 
     private string GetTranscriptText(AsrResponse asrResponse)
     {
-        return string.Join(" ", asrResponse.Tokens.Select(t => t.Word));
+        return string.Join(" ", asrResponse.Words);
     }
 
     private record WordAlignment

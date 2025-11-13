@@ -535,7 +535,7 @@ public static class TranscriptAligner
             sentsOut.Add(new SentenceAlign(s.Id, new IntRange(start, end), aRange, TimingRange.Empty, metrics, status));
         }
 
-        SynthesizeMissingScriptRanges(sentsOut, asr?.Tokens.Length ?? 0, guardRanges);
+        SynthesizeMissingScriptRanges(sentsOut, asr?.WordCount ?? 0, guardRanges);
 
         // Paragraphs
         var parasOut = new List<ParagraphAlign>(bookParagraphs.Count);
@@ -880,18 +880,22 @@ public static class TranscriptAligner
 
     private static string BuildNormalizedWordString(AsrResponse? asr, int? start, int? end)
     {
-        if (asr is null || !start.HasValue || !end.HasValue || asr.Tokens.Length == 0)
+        if (asr is null || !start.HasValue || !end.HasValue || !asr.HasWords)
         {
             return string.Empty;
         }
 
-        int s = Math.Clamp(start.Value, 0, asr.Tokens.Length - 1);
-        int e = Math.Clamp(end.Value, s, asr.Tokens.Length - 1);
+        int s = Math.Clamp(start.Value, 0, asr.WordCount - 1);
+        int e = Math.Clamp(end.Value, s, asr.WordCount - 1);
         var builder = new StringBuilder();
 
         for (int i = s; i <= e; i++)
         {
-            AppendNormalized(builder, asr.Tokens[i].Word);
+            var word = asr.GetWord(i);
+            if (!string.IsNullOrEmpty(word))
+            {
+                AppendNormalized(builder, word);
+            }
         }
 
         return builder.ToString();
