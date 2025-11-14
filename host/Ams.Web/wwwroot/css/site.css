@@ -1,0 +1,16 @@
+.ams-shell {
+    min-height: calc(100vh - 64px);
+}
+
+.ams-drawer {
+    height: 100%;
+    overflow-y: auto;
+}
+
+.ams-sentence-row.selected {
+    background-color: rgba(25, 118, 210, 0.16);
+}
+
+.ams-audio {
+    width: 100%;
+}

@@ -63,8 +63,14 @@ public sealed class CrxExportService
         var chapterCrxDirectory = Path.Combine(crxRoot, summary.Id);
         Directory.CreateDirectory(chapterCrxDirectory);
 
+        var workbookPath = Path.Combine(chapterCrxDirectory, $"{summary.Id}_CRX.xlsx");
+        await EnsureWorkbookAsync(workbookPath, templatePath, cancellationToken).ConfigureAwait(false);
+
+        var nextRowNumber = await FindNextRowNumberAsync(workbookPath, cancellationToken).ConfigureAwait(false);
+        var errorNumber = Math.Max(1, nextRowNumber - _options.FirstDataRow + 1);
+
         var audioFile = await _chapterData.ResolveAudioFileAsync(summary, cancellationToken).ConfigureAwait(false);
-        var clipFileName = $"{summary.Id}_S{sentence.Id:D4}_{FormatTimeStamp(sentence.Timing.StartSec)}-{FormatTimeStamp(sentence.Timing.EndSec)}.wav";
+        var clipFileName = $"{errorNumber:000}.wav";
         var clipFile = await _segmentExporter.ExportAsync(
             audioFile.FullName,
             chapterCrxDirectory,
@@ -73,16 +79,21 @@ public sealed class CrxExportService
             sentence.Timing.EndSec,
             cancellationToken).ConfigureAwait(false);
 
-        var workbookPath = Path.Combine(chapterCrxDirectory, $"{summary.Id}_CRX.xlsx");
-        await EnsureWorkbookAsync(workbookPath, templatePath, cancellationToken).ConfigureAwait(false);
-
-        var rowNumber = await AppendRowAsync(workbookPath, summary, sentence, errorType, request.Comment, clipFile, cancellationToken)
-            .ConfigureAwait(false);
+        await AppendRowAsync(
+            workbookPath,
+            nextRowNumber,
+            summary,
+            sentence,
+            errorType,
+            request.Comment,
+            clipFile,
+            cancellationToken).ConfigureAwait(false);
 
         return new CrxExportResult(
             clipFile.FullName,
             workbookPath,
-            rowNumber,
+            nextRowNumber,
+            errorNumber,
             errorType,
             request.Comment ?? string.Empty,
             sentence.Timing.StartSec,
@@ -101,17 +112,8 @@ public sealed class CrxExportService
         await Task.Run(() => File.Copy(templatePath, workbookPath, overwrite: false), cancellationToken).ConfigureAwait(false);
     }
 
-    private async Task<int> AppendRowAsync(
-        string workbookPath,
-        ChapterSummary summary,
-        HydratedSentence sentence,
-        string errorType,
-        string? comment,
-        FileInfo clipFile,
-        CancellationToken cancellationToken)
+    private async Task<int> FindNextRowNumberAsync(string workbookPath, CancellationToken cancellationToken)
     {
-        cancellationToken.ThrowIfCancellationRequested();
-
         return await Task.Run(() =>
         {
             using var workbook = new XLWorkbook(workbookPath);
@@ -123,6 +125,27 @@ public sealed class CrxExportService
                 rowNumber++;
             }
 
+            return rowNumber;
+        }, cancellationToken).ConfigureAwait(false);
+    }
+
+    private async Task AppendRowAsync(
+        string workbookPath,
+        int rowNumber,
+        ChapterSummary summary,
+        HydratedSentence sentence,
+        string errorType,
+        string? comment,
+        FileInfo clipFile,
+        CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+
+        await Task.Run(() =>
+        {
+            using var workbook = new XLWorkbook(workbookPath);
+            var worksheet = workbook.Worksheets.First();
+
             worksheet.Cell(rowNumber, 1).Value = summary.DisplayName;
             worksheet.Cell(rowNumber, 2).Value = sentence.Id;
             worksheet.Cell(rowNumber, 3).Value = FormatTime(sentence.Timing!.StartSec);
@@ -133,7 +156,6 @@ public sealed class CrxExportService
             worksheet.Cell(rowNumber, 8).Value = sentence.BookText;
 
             workbook.Save();
-            return rowNumber;
         }, cancellationToken).ConfigureAwait(false);
     }
 
@@ -148,6 +170,7 @@ public sealed record CrxExportResult(
     string SegmentPath,
     string WorkbookPath,
     int RowNumber,
+    int ErrorNumber,
     string ErrorType,
     string Comment,
     double StartSeconds,
