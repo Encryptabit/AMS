@@ -1,6 +1,7 @@
 using System.Linq;
 using Ams.Web.Client;
 using Ams.Web.Dtos;
+using Ams.Web.Requests;
 using Microsoft.AspNetCore.Components;
 using Microsoft.AspNetCore.Components.Web;
 using Microsoft.JSInterop;
@@ -27,6 +28,9 @@ public partial class Home : ComponentBase, IAsyncDisposable
     private bool _isPlaying;
     private double _currentPlaybackTime;
     private string? _lastExportMessage;
+    private string _exportErrorCode = "MR";
+    private string? _exportComment;
+    private bool _isExporting;
     private AudioTransport? _audioTransport;
     private readonly CancellationTokenSource _cts = new();
 
@@ -217,30 +221,47 @@ public partial class Home : ComponentBase, IAsyncDisposable
 
     private async Task ExportCurrentSentence()
     {
-        if (_selectedSentence is null || _selectedChapter is null)
+        if (_selectedSentence?.Timing is null || _selectedChapter is null || _isExporting)
         {
             return;
         }
 
         try
         {
-            // TODO: Implement export via ChapterApiClient
-            _lastExportMessage = $"Exported S{_selectedSentence.Id}";
-            Snackbar.Add(_lastExportMessage, Severity.Success);
+            _isExporting = true;
+            await InvokeAsync(StateHasChanged);
 
-            // Clear message after 3 seconds
-            _ = Task.Delay(3000).ContinueWith(_ =>
+            var request = new ExportSentenceRequest
+            {
+                ErrorType = string.IsNullOrWhiteSpace(_exportErrorCode) ? null : _exportErrorCode.Trim(),
+                Comment = string.IsNullOrWhiteSpace(_exportComment) ? null : _exportComment.Trim()
+            };
+
+            var result = await ChapterApi.ExportSentenceAsync(
+                _selectedChapter.Id,
+                _selectedSentence.Id,
+                request,
+                _cts.Token).ConfigureAwait(false);
+
+            var fileName = Path.GetFileName(result.SegmentPath);
+            _lastExportMessage = $"Row {result.RowNumber} • {fileName}";
+            Snackbar.Add($"Exported sentence {_selectedSentence.Id} to {fileName}", Severity.Success);
+
+            _ = Task.Delay(TimeSpan.FromSeconds(5), _cts.Token).ContinueWith(_ =>
             {
                 _lastExportMessage = null;
                 InvokeAsync(StateHasChanged);
-            });
+            }, TaskScheduler.Default);
         }
         catch (Exception ex)
         {
             Snackbar.Add($"Export failed: {ex.Message}", Severity.Error);
         }
-
-        await InvokeAsync(StateHasChanged);
+        finally
+        {
+            _isExporting = false;
+            await InvokeAsync(StateHasChanged);
+        }
     }
 
     private async Task HandleKeyDown(KeyboardEventArgs e)

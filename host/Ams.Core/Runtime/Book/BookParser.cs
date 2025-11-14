@@ -1,6 +1,7 @@
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.RegularExpressions;
+using Ams.Core.Runtime.Book;
 using Xceed.Words.NET;
 using PDFiumCore;
 

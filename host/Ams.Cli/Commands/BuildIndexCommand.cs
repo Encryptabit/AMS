@@ -2,6 +2,7 @@ using System.CommandLine;
 using System.Text.Json;
 using Ams.Cli.Utilities;
 using Ams.Core.Processors.DocumentProcessor;
+using Ams.Core.Runtime.Book;
 
 namespace Ams.Cli.Commands;
 
