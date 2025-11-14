@@ -37,6 +37,13 @@ internal sealed class DocumentSlot<T>
         _dirty = true;
     }
 
+    public void Invalidate()
+    {
+        _loaded = false;
+        _value = null;
+        _dirty = false;
+    }
+
     public void Save()
     {
         if (!_dirty || _value is null)

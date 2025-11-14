@@ -41,6 +41,8 @@ public sealed class RunMfaCommand
         var textGridFile = options?.TextGridFile
                              ?? new FileInfo(Path.Combine(alignmentRoot.FullName, "mfa", $"{chapterStem}.TextGrid"));
 
+        chapter.Documents.InvalidateTextGrid();
+
         return new RunMfaResult(textGridFile);
     }
 
