@@ -1,6 +1,3 @@
-using Ams.Core;
-using Ams.Core.Validation;
-
 namespace Ams.Tests;
 
 public class TextNormalizerTests
@@ -8,6 +5,7 @@ public class TextNormalizerTests
     [Theory]
     [InlineData("Hello, World!", "hello world")]
     [InlineData("Don't you think it's great?", "do not you think it is great")]
+    [InlineData("He whispered, “Don’t move.”", "he whispered do not move")]
     [InlineData("I can't believe it's 123 degrees!", "i cannot believe it is one hundred twenty three degrees")]
     [InlineData("  Multiple    spaces   ", "multiple spaces")]
     [InlineData("", "")]
@@ -38,6 +36,14 @@ public class TextNormalizerTests
         var result = TextNormalizer.TokenizeWords(input);
         Assert.Equal(expected, result);
     }
+
+    [Fact]
+    public void NormalizeTypography_ReplacesSmartQuotes()
+    {
+        var input = "“Don’t” ‘quote’";
+        var normalized = TextNormalizer.NormalizeTypography(input);
+        Assert.Equal("\"Don't\" 'quote'", normalized);
+    }
 }
 
 public class ScriptValidatorTests
@@ -48,8 +54,8 @@ public class ScriptValidatorTests
         var validator = new ScriptValidator();
         var scriptText = "hello world test";
         var asrResponse = new AsrResponse(
-            ModelVersion: "test@v1",
-            Tokens: new[]
+            "test@v1",
+            new[]
             {
                 new AsrToken(StartTime: 0.0, Duration: 0.5, Word: "hello"),
                 new AsrToken(StartTime: 0.5, Duration: 0.5, Word: "world"),
@@ -73,8 +79,8 @@ public class ScriptValidatorTests
         var validator = new ScriptValidator();
         var scriptText = "hello world test";
         var asrResponse = new AsrResponse(
-            ModelVersion: "test@v1",
-            Tokens: new[]
+            "test@v1",
+            new[]
             {
                 new AsrToken(StartTime: 0.0, Duration: 0.5, Word: "hello"),
                 new AsrToken(StartTime: 0.5, Duration: 0.5, Word: "word"), // "world" -> "word"
@@ -103,8 +109,8 @@ public class ScriptValidatorTests
         var validator = new ScriptValidator();
         var scriptText = "hello world";
         var asrResponse = new AsrResponse(
-            ModelVersion: "test@v1",
-            Tokens: new[]
+            "test@v1",
+            new[]
             {
                 new AsrToken(StartTime: 0.0, Duration: 0.5, Word: "hello"),
                 new AsrToken(StartTime: 0.5, Duration: 0.5, Word: "beautiful"), // extra "beautiful"
@@ -132,8 +138,8 @@ public class ScriptValidatorTests
         var validator = new ScriptValidator();
         var scriptText = "hello beautiful world";
         var asrResponse = new AsrResponse(
-            ModelVersion: "test@v1",
-            Tokens: new[]
+            "test@v1",
+            new[]
             {
                 new AsrToken(StartTime: 0.0, Duration: 0.5, Word: "hello"),
                 new AsrToken(StartTime: 1.0, Duration: 0.5, Word: "world") // missing "beautiful"
@@ -160,8 +166,8 @@ public class ScriptValidatorTests
         var validator = new ScriptValidator(new ValidationOptions { ExpandContractions = true });
         var scriptText = "I can't believe it's working";
         var asrResponse = new AsrResponse(
-            ModelVersion: "test@v1",
-            Tokens: new[]
+            "test@v1",
+            new[]
             {
                 new AsrToken(StartTime: 0.0, Duration: 0.3, Word: "I"),
                 new AsrToken(StartTime: 0.3, Duration: 0.5, Word: "cannot"),
@@ -184,8 +190,8 @@ public class ScriptValidatorTests
         var validator = new ScriptValidator();
         var scriptText = "The quick brown fox jumps over the lazy dog";
         var asrResponse = new AsrResponse(
-            ModelVersion: "test@v1",
-            Tokens: new[]
+            "test@v1",
+            new[]
             {
                 new AsrToken(StartTime: 0.0, Duration: 0.3, Word: "The"),
                 new AsrToken(StartTime: 0.3, Duration: 0.4, Word: "fast"), // quick->fast

@@ -1,7 +1,6 @@
 using System.Diagnostics;
 using System.Text;
 using System.Text.Json;
-using Ams.Core.Alignment.Tx;
 using Ams.Core.Artifacts;
 using SentenceTiming = Ams.Core.Artifacts.SentenceTiming;
 
@@ -31,17 +30,28 @@ public sealed class SentenceRefinementService
         var indexMap = new List<(int sentenceId, int startIdx, int endIdx)>(tx.Sentences.Count);
         foreach (var s in tx.Sentences)
         {
-            if (s.ScriptRange is null || !s.ScriptRange.Start.HasValue || !s.ScriptRange.End.HasValue)
+            if (s.ScriptRange is null || !s.ScriptRange.Start.HasValue || !s.ScriptRange.End.HasValue || !asr.HasWords)
             {
                 lines.Add(string.Empty);
                 indexMap.Add((s.Id, -1, -1));
                 continue;
             }
 
-            int si = Math.Clamp(s.ScriptRange.Start!.Value, 0, asr.Tokens.Length - 1);
-            int ei = Math.Clamp(s.ScriptRange.End!.Value, 0, asr.Tokens.Length - 1);
-            var text = string.Join(' ', asr.Tokens.Skip(si).Take(ei - si + 1).Select(t => t.Word));
-            lines.Add(text);
+            var maxIndex = Math.Max(0, asr.WordCount - 1);
+            int si = Math.Clamp(s.ScriptRange.Start!.Value, 0, maxIndex);
+            int ei = Math.Clamp(s.ScriptRange.End!.Value, si, maxIndex);
+
+            var collected = new List<string>(Math.Max(0, ei - si + 1));
+            for (int w = si; w <= ei; w++)
+            {
+                var word = asr.GetWord(w);
+                if (!string.IsNullOrWhiteSpace(word))
+                {
+                    collected.Add(word!);
+                }
+            }
+
+            lines.Add(collected.Count > 0 ? string.Join(' ', collected) : string.Empty);
             indexMap.Add((s.Id, si, ei));
         }
 

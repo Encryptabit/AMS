@@ -1,8 +1,6 @@
-using System;
-using System.IO;
 using Microsoft.Extensions.Logging;
 using Serilog;
-using Serilog.Extensions.Logging;
+using Serilog.Events;
 using ILogger = Microsoft.Extensions.Logging.ILogger;
 using ILoggerFactory = Microsoft.Extensions.Logging.ILoggerFactory;
 
@@ -15,6 +13,7 @@ namespace Ams.Core.Common;
 public static class Log
 {
     private const string DefaultCategory = "AMS";
+    private const string LevelEnvVar = "AMS_LOG_LEVEL";
 
     private static readonly object SyncRoot = new();
     private static ILoggerFactory loggerFactory = CreateDefaultFactory();
@@ -32,7 +31,8 @@ public static class Log
         string logFileName = "ams-log.txt",
         long fileSizeLimitBytes = 10 * 1024 * 1024,
         int retainedFileCountLimit = 5,
-        bool includeConsole = true)
+        bool includeConsole = true,
+        LogEventLevel? minimumLevel = null)
     {
         var baseDir = baseDirectory;
         if (string.IsNullOrWhiteSpace(baseDir))
@@ -48,8 +48,10 @@ public static class Log
         Directory.CreateDirectory(LogDirectory);
         LogFilePath = Path.Combine(LogDirectory, logFileName);
 
+        var resolvedLevel = minimumLevel ?? ResolveMinimumLevelFromEnvironment();
+
         var loggerConfiguration = new LoggerConfiguration()
-            .MinimumLevel.Information()
+            .MinimumLevel.Is(resolvedLevel)
             .Enrich.FromLogContext();
 
         if (includeConsole)
@@ -84,11 +86,18 @@ public static class Log
         string logFileName = "ams-log.txt",
         long fileSizeLimitBytes = 10 * 1024 * 1024,
         int retainedFileCountLimit = 5,
-        bool includeConsole = true)
+        bool includeConsole = true,
+        LogEventLevel? minimumLevel = null)
     {
-        var factory = CreateDefaultFactory(baseDirectory, logFileName, fileSizeLimitBytes, retainedFileCountLimit, includeConsole);
+        var factory = CreateDefaultFactory(baseDirectory, logFileName, fileSizeLimitBytes, retainedFileCountLimit, includeConsole, minimumLevel);
         Configure(factory);
         return factory;
+    }
+
+    public static bool IsDebugLoggingEnabled()
+    {
+        var resolvedLevel = ResolveMinimumLevelFromEnvironment();
+        return resolvedLevel <= LogEventLevel.Debug;
     }
 
     public static void Configure(ILoggerFactory factory, string? category = null)
@@ -124,4 +133,24 @@ public static class Log
     public static void Error(Exception exception, string message, params object?[] args) => logger.LogError(exception, message, args);
 
     public static void Critical(Exception exception, string message, params object?[] args) => logger.LogCritical(exception, message, args);
+
+    private static LogEventLevel ResolveMinimumLevelFromEnvironment()
+    {
+        var raw = Environment.GetEnvironmentVariable(LevelEnvVar);
+        if (string.IsNullOrWhiteSpace(raw))
+        {
+            return LogEventLevel.Information;
+        }
+
+        return raw.Trim().ToUpperInvariant() switch
+        {
+            "TRACE" or "VERBOSE" => LogEventLevel.Verbose,
+            "DEBUG" => LogEventLevel.Debug,
+            "INFO" or "INFORMATION" => LogEventLevel.Information,
+            "WARN" or "WARNING" => LogEventLevel.Warning,
+            "ERROR" => LogEventLevel.Error,
+            "FATAL" or "CRITICAL" => LogEventLevel.Fatal,
+            _ => LogEventLevel.Information
+        };
+    }
 }

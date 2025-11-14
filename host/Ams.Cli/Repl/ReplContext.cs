@@ -1,10 +1,5 @@
-using System;
-using System.Collections.Generic;
-using System.IO;
-using System.Linq;
 using System.Text.Json;
 using System.Text.RegularExpressions;
-using System.Threading;
 
 namespace Ams.Cli.Repl;
 
@@ -145,7 +140,6 @@ internal sealed class ReplState
         try
         {
             Chapters = Directory.EnumerateFiles(WorkingDirectory, "*.wav", SearchOption.TopDirectoryOnly)
-                .Where(path => !string.Equals(Path.GetFileName(path), "roomtone.wav", StringComparison.OrdinalIgnoreCase))
                 .Select(path => new FileInfo(path))
                 .OrderBy(file => file, ChapterFileComparer.Instance)
                 .ToList();

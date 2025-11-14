@@ -1,26 +1,17 @@
 using System.Collections.Concurrent;
-using System.Collections.Generic;
 using System.CommandLine;
-using System.CommandLine.Invocation;
 using System.Globalization;
-using System.IO;
-using System.Linq;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
-using System.Threading;
-using System.Threading.Tasks;
-using Ams.Cli.Services;
 using Ams.Cli.Utilities;
 using Ams.Cli.Repl;
-using Ams.Core.Alignment.Mfa;
 using Ams.Core.Artifacts;
-using Ams.Core.Audio;
-using Ams.Core.Book;
-using Ams.Core.Common;
-using Ams.Core.Hydrate;
+using Ams.Core.Processors;
+using Ams.Core.Artifacts.Hydrate;
 using Ams.Core.Prosody;
+using Ams.Core.Services;
 using Spectre.Console;
 using AudioSentenceTiming = Ams.Core.Artifacts.SentenceTiming;
 
@@ -28,20 +19,6 @@ namespace Ams.Cli.Commands;
 
 public static class PipelineCommand
 {
-    private enum PipelineStage
-    {
-        Pending = 0,
-        BookIndex = 1,
-        Asr = 2,
-        Anchors = 3,
-        Transcript = 4,
-        Hydrate = 5,
-        Mfa = 6,
-        Roomtone = 7,
-        Validate = 8,
-        Complete = 9
-    }
-
     private const int PipelineStageCount = (int)PipelineStage.Complete;
 
     private static readonly ProgressColumn[] PipelineProgressColumns =
@@ -63,10 +40,12 @@ public static class PipelineCommand
         Log.Debug(message, args);
     }
 
-    public static Command Create()
+    public static Command Create(PipelineService pipelineService)
     {
+        ArgumentNullException.ThrowIfNull(pipelineService);
+
         var pipeline = new Command("pipeline", "Run the end-to-end chapter pipeline");
-        pipeline.AddCommand(CreateRun());
+        pipeline.AddCommand(CreateRun(pipelineService));
         pipeline.AddCommand(CreatePrepCommand());
         pipeline.AddCommand(CreateVerifyCommand());
         pipeline.AddCommand(CreateStatsCommand());
@@ -94,7 +73,7 @@ public static class PipelineCommand
         Converters = { new JsonStringEnumConverter() }
     };
 
-    private static readonly Regex PatternTokenRegex = new(@"\{(d{1,2})([+-]\d+)?\}", RegexOptions.Compiled | RegexOptions.CultureInvariant | RegexOptions.IgnoreCase);
+    private static readonly Regex PatternTokenRegex = new(@"\{(d{1,2}|um\d+-\d+|um\d+|um\*)([+-]\d+)?\}", RegexOptions.Compiled | RegexOptions.CultureInvariant | RegexOptions.IgnoreCase);
 
     private static Command CreatePrepCommand()
     {
@@ -103,44 +82,6 @@ public static class PipelineCommand
         cmd.AddCommand(CreatePrepRenameCommand());
         cmd.AddCommand(CreatePrepResetCommand());
         return cmd;
-    }
-
-    private sealed class PipelineConcurrencyControl : IDisposable
-    {
-        private int _bookIndexForceClaimed;
-
-        public SemaphoreSlim BookIndexSemaphore { get; }
-        public SemaphoreSlim AsrSemaphore { get; }
-        public SemaphoreSlim MfaSemaphore { get; }
-
-        private PipelineConcurrencyControl(int bookIndexDegree, int asrDegree, int mfaDegree)
-        {
-            BookIndexSemaphore = new SemaphoreSlim(Math.Max(1, bookIndexDegree), Math.Max(1, bookIndexDegree));
-            AsrSemaphore = new SemaphoreSlim(Math.Max(1, asrDegree), Math.Max(1, asrDegree));
-            MfaSemaphore = new SemaphoreSlim(Math.Max(1, mfaDegree), Math.Max(1, mfaDegree));
-        }
-
-        public static PipelineConcurrencyControl CreateSingle()
-        {
-            return new PipelineConcurrencyControl(bookIndexDegree: 1, asrDegree: 1, mfaDegree: 1);
-        }
-
-        public static PipelineConcurrencyControl CreateShared(int maxMfaParallelism)
-        {
-            return new PipelineConcurrencyControl(bookIndexDegree: 1, asrDegree: 1, mfaDegree: Math.Max(1, maxMfaParallelism));
-        }
-
-        public void Dispose()
-        {
-            BookIndexSemaphore.Dispose();
-            AsrSemaphore.Dispose();
-            MfaSemaphore.Dispose();
-        }
-
-        public bool TryClaimBookIndexForce()
-        {
-            return Interlocked.CompareExchange(ref _bookIndexForceClaimed, 1, 0) == 0;
-        }
     }
 
     private sealed class PipelineProgressReporter
@@ -157,8 +98,6 @@ public static class PipelineCommand
             [PipelineStage.Transcript] = ("Transcript", "deepskyblue1"),
             [PipelineStage.Hydrate] = ("Hydrate", "deepskyblue1"),
             [PipelineStage.Mfa] = ("MFA", "lightseagreen"),
-            [PipelineStage.Roomtone] = ("Roomtone", "gold1"),
-            [PipelineStage.Validate] = ("Validate", "mediumvioletred"),
             [PipelineStage.Complete] = ("Done", "green")
         };
 
@@ -245,33 +184,26 @@ public static class PipelineCommand
         }
     }
 
-    private static async Task RunPipelineForMultipleChaptersAsync(
+private static async Task RunPipelineForMultipleChaptersAsync(
+    PipelineService pipelineService,
         FileInfo bookFile,
         DirectoryInfo? workDirOption,
         FileInfo? bookIndexOverride,
         bool forceIndex,
         bool force,
         double avgWpm,
-        string asrService,
+        string asrServiceUrl,
         string? asrModel,
         string asrLanguage,
-        int sampleRate,
-        int bitDepth,
-        double fadeMs,
-        double toneDb,
-        bool emitDiagnostics,
-        bool adaptiveGain,
-        double gapLeftThresholdDb,
-        double gapRightThresholdDb,
-        double gapStepMs,
-        double gapBackoffMs,
         bool verbose,
         IReadOnlyList<FileInfo> chapterFiles,
         int maxWorkers,
         int maxMfaParallelism,
         ProgressContext? progressContext,
         CancellationToken cancellationToken)
-    {
+{
+    ArgumentNullException.ThrowIfNull(pipelineService);
+
         if (chapterFiles is null || chapterFiles.Count == 0)
         {
             Log.Debug("No chapters available for pipeline run.");
@@ -331,6 +263,7 @@ public static class PipelineCommand
                 cancellationToken.ThrowIfCancellationRequested();
 
                 await RunPipelineAsync(
+                    pipelineService,
                     bookFile,
                     chapter,
                     workDirOption,
@@ -339,19 +272,9 @@ public static class PipelineCommand
                     forceIndex,
                     force,
                     avgWpm,
-                    asrService,
+                    asrServiceUrl,
                     asrModel,
                     asrLanguage,
-                    sampleRate,
-                    bitDepth,
-                    fadeMs,
-                    toneDb,
-                    emitDiagnostics,
-                    adaptiveGain,
-                    gapLeftThresholdDb,
-                    gapRightThresholdDb,
-                    gapStepMs,
-                    gapBackoffMs,
                     verbose,
                     reporter,
                     concurrency,
@@ -672,7 +595,7 @@ public static class PipelineCommand
         var patternOption = new Option<string>
         (
             "--pattern",
-            description: "Naming template. Use {d} or {dd} tokens with optional +/- offsets (e.g., {dd}, {d+1}, {dd-1})."
+            description: "Naming template. Use {d}/{dd} (with optional +/- offsets) and {um#} for unmatched text segments."
         )
         {
             IsRequired = true
@@ -686,15 +609,24 @@ public static class PipelineCommand
             "Preview the planned renames without touching the filesystem."
         );
 
+        var allOption = new Option<bool>
+        (
+            "--all",
+            () => false,
+            "Force rename across every detected chapter, ignoring the REPL's active chapter scope."
+        );
+
         cmd.AddOption(rootOption);
         cmd.AddOption(patternOption);
         cmd.AddOption(dryRunOption);
+        cmd.AddOption(allOption);
 
         cmd.SetHandler(context =>
         {
             var rootOverride = context.ParseResult.GetValueForOption(rootOption);
             var pattern = context.ParseResult.GetValueForOption(patternOption);
             var dryRun = context.ParseResult.GetValueForOption(dryRunOption);
+            var forceAll = context.ParseResult.GetValueForOption(allOption);
 
             if (string.IsNullOrWhiteSpace(pattern))
             {
@@ -723,7 +655,7 @@ public static class PipelineCommand
                 return;
             }
 
-            var chapters = ResolveRenameTargets(root);
+            var chapters = ResolveRenameTargets(root, forceAll);
             if (chapters.Count == 0)
             {
                 Log.Debug("No chapter WAV files detected under {Root}", root.FullName);
@@ -737,7 +669,8 @@ public static class PipelineCommand
             {
                 var chapter = chapters[i];
                 var oldStem = Path.GetFileNameWithoutExtension(chapter.Name);
-                var newStem = ApplyRenamePattern(pattern, i).Trim();
+                var unmatchedParts = ExtractUnmatchedParts(oldStem);
+                var newStem = ApplyRenamePattern(pattern, i, unmatchedParts).Trim();
 
                 if (string.IsNullOrEmpty(newStem))
                 {
@@ -900,9 +833,11 @@ public static class PipelineCommand
         return cmd;
     }
 
-    private static Command CreateRun()
+    private static Command CreateRun(PipelineService pipelineService)
     {
-        var cmd = new Command("run", "Build index, run ASR, align, hydrate, and apply roomtone in one pass");
+        ArgumentNullException.ThrowIfNull(pipelineService);
+
+        var cmd = new Command("run", "Build index, run ASR, align, and hydrate in one pass");
 
         var bookOption = new Option<FileInfo?>("--book", "Path to the book manuscript (DOCX/TXT/etc.)");
         bookOption.AddAlias("-b");
@@ -925,19 +860,9 @@ public static class PipelineCommand
         var asrLanguageOption = new Option<string>("--language", () => "en", "ASR language code");
         asrLanguageOption.AddAlias("-l");
 
-        var sampleRateOption = new Option<int>("--sample-rate", () => 44100, "Roomtone output sample rate (Hz)");
-        var bitDepthOption = new Option<int>("--bit-depth", () => 32, "Roomtone output bit depth");
-        var fadeMsOption = new Option<double>("--fade-ms", () => 10.0, "Crossfade length for roomtone boundaries (ms)");
-        var toneDbOption = new Option<double>("--tone-gain-db", () => -60.0, "Target RMS level for roomtone (dBFS)");
-        var diagnosticsOption = new Option<bool>("--emit-diagnostics", () => false, "Emit diagnostic WAVs during roomtone rendering");
-        var adaptiveGainOption = new Option<bool>("--adaptive-gain", () => false, "Scale roomtone seed to match target RMS");
-        var gapLeftThresholdOption = new Option<double>("--gap-left-threshold-db", () => -30.0, "RMS threshold (dBFS) used to detect silence on the left side of gaps");
-        var gapRightThresholdOption = new Option<double>("--gap-right-threshold-db", () => -30.0, "RMS threshold (dBFS) used to detect silence on the right side of gaps");
-        var gapStepOption = new Option<double>("--gap-step-ms", () => 5.0, "Step size (ms) when probing gap boundaries");
-        var gapBackoffOption = new Option<double>("--gap-backoff-ms", () => 5.0, "Backoff amount (ms) applied after a silent window is detected");
-        var verboseOption = new Option<bool>("--verbose", () => false, "Enable verbose logging for pipeline stages (roomtone gap analysis, ASR, etc.)");
+        var verboseOption = new Option<bool>("--verbose", () => false, "Enable verbose logging for pipeline stages.");
         var maxWorkersOption = new Option<int>("--max-workers", () => Math.Max(1, Environment.ProcessorCount), "Maximum number of chapters to process in parallel once ASR is complete");
-        var maxMfaOption = new Option<int>("--max-mfa", () => Math.Max(1, Environment.ProcessorCount / 2), "Maximum number of concurrent MFA alignment jobs");
+        var maxMfaOption = new Option<int>("--max-mfa", () => 1, "Maximum number of concurrent MFA alignment jobs");
         var progressOption = new Option<bool>("--progress", () => true, "Display live progress UI while running the pipeline");
 
         cmd.AddOption(bookOption);
@@ -951,16 +876,6 @@ public static class PipelineCommand
         cmd.AddOption(asrServiceOption);
         cmd.AddOption(asrModelOption);
         cmd.AddOption(asrLanguageOption);
-        cmd.AddOption(sampleRateOption);
-        cmd.AddOption(bitDepthOption);
-        cmd.AddOption(fadeMsOption);
-        cmd.AddOption(toneDbOption);
-        cmd.AddOption(diagnosticsOption);
-        cmd.AddOption(adaptiveGainOption);
-        cmd.AddOption(gapLeftThresholdOption);
-        cmd.AddOption(gapRightThresholdOption);
-        cmd.AddOption(gapStepOption);
-        cmd.AddOption(gapBackoffOption);
         cmd.AddOption(verboseOption);
         cmd.AddOption(maxWorkersOption);
         cmd.AddOption(maxMfaOption);
@@ -975,23 +890,18 @@ public static class PipelineCommand
             var forceAll = context.ParseResult.GetValueForOption(forceOption);
             var forceIndex = context.ParseResult.GetValueForOption(forceIndexOption);
             var avgWpm = context.ParseResult.GetValueForOption(avgWpmOption);
-            var asrService = context.ParseResult.GetValueForOption(asrServiceOption) ?? "http://localhost:8000";
+            var asrServiceUrl = context.ParseResult.GetValueForOption(asrServiceOption) ?? "http://localhost:8000";
             var asrModel = context.ParseResult.GetValueForOption(asrModelOption);
             var asrLanguage = context.ParseResult.GetValueForOption(asrLanguageOption) ?? "en";
-            var sampleRate = context.ParseResult.GetValueForOption(sampleRateOption);
-            var bitDepth = context.ParseResult.GetValueForOption(bitDepthOption);
-            var fadeMs = context.ParseResult.GetValueForOption(fadeMsOption);
-            var toneDb = context.ParseResult.GetValueForOption(toneDbOption);
-            var emitDiagnostics = context.ParseResult.GetValueForOption(diagnosticsOption);
-            var adaptiveGain = context.ParseResult.GetValueForOption(adaptiveGainOption);
-            var gapLeftThreshold = context.ParseResult.GetValueForOption(gapLeftThresholdOption);
-            var gapRightThreshold = context.ParseResult.GetValueForOption(gapRightThresholdOption);
-            var gapStep = context.ParseResult.GetValueForOption(gapStepOption);
-            var gapBackoff = context.ParseResult.GetValueForOption(gapBackoffOption);
             var verbose = context.ParseResult.GetValueForOption(verboseOption);
             var maxWorkers = context.ParseResult.GetValueForOption(maxWorkersOption);
             var maxMfa = context.ParseResult.GetValueForOption(maxMfaOption);
             var showProgress = context.ParseResult.GetValueForOption(progressOption);
+            if (showProgress && Log.IsDebugLoggingEnabled())
+            {
+                Log.Debug("Progress UI disabled while AMS_LOG_LEVEL requests Debug-level logging.");
+                showProgress = false;
+            }
 
             var repl = ReplContext.Current;
             if (repl?.RunAllChapters == true && repl.Chapters.Count > 0)
@@ -1006,25 +916,16 @@ public static class PipelineCommand
                             .StartAsync(async progressContext =>
                             {
                                 await RunPipelineForMultipleChaptersAsync(
+                                    pipelineService,
                                     bookFile,
                                     workDir,
                                     bookIndex,
                                     forceIndex,
                                     forceAll,
                                     avgWpm,
-                                    asrService,
+                                    asrServiceUrl,
                                     asrModel,
                                     asrLanguage,
-                                    sampleRate,
-                                    bitDepth,
-                                    fadeMs,
-                                    toneDb,
-                                    emitDiagnostics,
-                                    adaptiveGain,
-                                    gapLeftThreshold,
-                                    gapRightThreshold,
-                                    gapStep,
-                                    gapBackoff,
                                     verbose,
                                     repl.Chapters,
                                     maxWorkers,
@@ -1036,25 +937,16 @@ public static class PipelineCommand
                     else
                     {
                         await RunPipelineForMultipleChaptersAsync(
+                            pipelineService,
                             bookFile,
                             workDir,
                             bookIndex,
                             forceIndex,
                             forceAll,
                             avgWpm,
-                            asrService,
+                            asrServiceUrl,
                             asrModel,
                             asrLanguage,
-                            sampleRate,
-                            bitDepth,
-                            fadeMs,
-                            toneDb,
-                            emitDiagnostics,
-                            adaptiveGain,
-                            gapLeftThreshold,
-                            gapRightThreshold,
-                            gapStep,
-                            gapBackoff,
                             verbose,
                             repl.Chapters,
                             maxWorkers,
@@ -1091,6 +983,7 @@ public static class PipelineCommand
                             try
                             {
                                 await RunPipelineAsync(
+                                    pipelineService,
                                     bookFile,
                                     audioFile,
                                     workDir,
@@ -1099,19 +992,9 @@ public static class PipelineCommand
                                     forceIndex,
                                     forceAll,
                                     avgWpm,
-                                    asrService,
+                                    asrServiceUrl,
                                     asrModel,
                                     asrLanguage,
-                                    sampleRate,
-                                    bitDepth,
-                                    fadeMs,
-                                    toneDb,
-                                    emitDiagnostics,
-                                    adaptiveGain,
-                                    gapLeftThreshold,
-                                    gapRightThreshold,
-                                    gapStep,
-                                    gapBackoff,
                                     verbose,
                                     reporter,
                                     concurrency,
@@ -1135,6 +1018,7 @@ public static class PipelineCommand
                 {
                     using var concurrency = PipelineConcurrencyControl.CreateSingle();
                     await RunPipelineAsync(
+                        pipelineService,
                         bookFile,
                         audioFile,
                         workDir,
@@ -1143,19 +1027,9 @@ public static class PipelineCommand
                         forceIndex,
                         forceAll,
                         avgWpm,
-                        asrService,
+                        asrServiceUrl,
                         asrModel,
                         asrLanguage,
-                        sampleRate,
-                        bitDepth,
-                        fadeMs,
-                        toneDb,
-                        emitDiagnostics,
-                        adaptiveGain,
-                        gapLeftThreshold,
-                        gapRightThreshold,
-                        gapStep,
-                        gapBackoff,
                         verbose,
                         progress: null,
                         concurrency,
@@ -1176,7 +1050,8 @@ public static class PipelineCommand
         return cmd;
     }
 
-    private static async Task RunPipelineAsync(
+private static async Task RunPipelineAsync(
+    PipelineService pipelineService,
         FileInfo bookFile,
         FileInfo audioFile,
         DirectoryInfo? workDirOption,
@@ -1185,24 +1060,16 @@ public static class PipelineCommand
         bool forceIndex,
         bool force,
         double avgWpm,
-        string asrService,
+        string asrServiceUrl,
         string? asrModel,
         string asrLanguage,
-        int sampleRate,
-        int bitDepth,
-        double fadeMs,
-        double toneDb,
-        bool emitDiagnostics,
-        bool adaptiveGain,
-        double gapLeftThresholdDb,
-        double gapRightThresholdDb,
-        double gapStepMs,
-        double gapBackoffMs,
         bool verbose,
         PipelineProgressReporter? progress,
         PipelineConcurrencyControl concurrency,
         CancellationToken cancellationToken)
     {
+        ArgumentNullException.ThrowIfNull(pipelineService);
+
         bool quiet = progress is not null;
         bool logInfo = !quiet || verbose;
         if (!bookFile.Exists)
@@ -1235,9 +1102,6 @@ public static class PipelineCommand
         var treatedWav = new FileInfo(Path.Combine(chapterDir, $"{chapterStem}.treated.wav"));
         var textGridFile = new FileInfo(Path.Combine(chapterDir, "alignment", "mfa", $"{chapterStem}.TextGrid"));
 
-        bool requestIndexRebuild = forceIndex || force;
-        forceIndex = requestIndexRebuild && concurrency.TryClaimBookIndexForce();
-
         LogStageInfo(logInfo, "=== AMS Pipeline ===");
         LogStageInfo(logInfo, "Book={BookFile}", bookFile.FullName);
         LogStageInfo(logInfo, "Audio={AudioFile}", audioFile.FullName);
@@ -1245,243 +1109,90 @@ public static class PipelineCommand
         LogStageInfo(logInfo, "Chapter={Chapter}", chapterStem);
         LogStageInfo(logInfo, "ChapterDir={ChapterDir}", chapterDir);
 
-        bool bookIndexExists = bookIndexFile.Exists;
-        bool bookIndexExistedInitially = bookIndexExists;
-
-        if (forceIndex || !bookIndexExists)
+        var defaultAnchorOptions = new AnchorComputationOptions
         {
-            await concurrency.BookIndexSemaphore.WaitAsync(cancellationToken).ConfigureAwait(false);
-            try
+            DetectSection = true,
+            AsrPrefixTokens = 8,
+            NGram = 3,
+            TargetPerTokens = 50,
+            MinSeparation = 100,
+            AllowBoundaryCross = false,
+            UseDomainStopwords = true
+        };
+
+        var transcriptOptions = new GenerateTranscriptOptions
+        {
+            Engine = AsrEngineConfig.Resolve(),
+            ServiceUrl = asrServiceUrl,
+            Model = asrModel,
+            Language = asrLanguage
+        };
+
+        var pipelineOptions = new PipelineRunOptions
+        {
+            BookFile = bookFile,
+            BookIndexFile = bookIndexFile,
+            AudioFile = audioFile,
+            ChapterDirectory = chapterDirInfo,
+            ChapterId = chapterStem,
+            Force = force,
+            ForceIndex = forceIndex,
+            AverageWordsPerMinute = avgWpm,
+            TranscriptOptions = transcriptOptions,
+            AnchorOptions = defaultAnchorOptions with { EmitWindows = false },
+            TranscriptIndexOptions = new BuildTranscriptIndexOptions
             {
-                bookIndexExists = bookIndexFile.Exists;
-                if (forceIndex || !bookIndexExists)
-                {
-                    LogStageInfo(logInfo, forceIndex ? "Rebuilding book index at {BookIndexFile}" : "Building book index at {BookIndexFile}", bookIndexFile.FullName);
-                    await BuildIndexCommand.BuildBookIndexAsync(
-                        bookFile,
-                        bookIndexFile,
-                        forceIndex,
-                        new BookIndexOptions { AverageWpm = avgWpm },
-                        noCache: false).ConfigureAwait(false);
-                    bookIndexExists = bookIndexFile.Exists;
-                }
-                else
-                {
-                    LogStageInfo(logInfo, "Using cached book index at {BookIndexFile}", bookIndexFile.FullName);
-                }
-            }
-            finally
+                AudioFile = audioFile,
+                AsrFile = asrFile,
+                BookIndexFile = bookIndexFile,
+                AnchorOptions = defaultAnchorOptions with { EmitWindows = true }
+            },
+            HydrationOptions = null,
+            MfaOptions = new RunMfaOptions
             {
-                concurrency.BookIndexSemaphore.Release();
-            }
-        }
-        else
-        {
-            LogStageInfo(logInfo, "Using cached book index at {BookIndexFile}", bookIndexFile.FullName);
-        }
+                AudioFile = audioFile,
+                HydrateFile = hydrateFile,
+                TextGridFile = textGridFile,
+                AlignmentRootDirectory = new DirectoryInfo(Path.Combine(chapterDir, "alignment"))
+            },
+            MergeOptions = new MergeTimingsOptions
+            {
+                HydrateFile = hydrateFile,
+                TranscriptFile = txFile,
+                TextGridFile = textGridFile
+            },
+            TreatedCopyFile = treatedWav,
+            Concurrency = concurrency
+        };
 
-        if (!bookIndexExists)
-        {
-            throw new InvalidOperationException($"Book index file missing or inaccessible: {bookIndexFile.FullName}");
-        }
+        var result = await pipelineService.RunChapterAsync(pipelineOptions, cancellationToken).ConfigureAwait(false);
 
-        var bookIndexMessage = forceIndex || !bookIndexExistedInitially ? "Index built" : "Index ready";
+        var bookIndexMessage = result.BookIndexBuilt ? "Index built" : "Index ready";
         progress?.ReportStage(chapterStem, PipelineStage.BookIndex, bookIndexMessage);
+        progress?.ReportStage(chapterStem, PipelineStage.Asr, result.AsrRan ? "ASR complete" : "ASR cached");
+        progress?.ReportStage(chapterStem, PipelineStage.Anchors, result.AnchorsRan ? "Anchors generated" : "Anchors cached");
+        progress?.ReportStage(chapterStem, PipelineStage.Transcript, result.TranscriptRan ? "Transcript indexed" : "Transcript cached");
+        progress?.ReportStage(chapterStem, PipelineStage.Hydrate, result.HydrateRan ? "Hydrate complete" : "Hydrate cached");
 
-        EnsureDirectory(asrFile.DirectoryName);
-        asrFile.Refresh();
-        bool asrRan;
-        if (!force && asrFile.Exists)
-        {
-            LogStageInfo(logInfo, "Skipping ASR stage; {AsrFile} already exists (pass --force to rerun)", asrFile.FullName);
-            asrRan = false;
-        }
-        else
-        {
-            await concurrency.AsrSemaphore.WaitAsync(cancellationToken).ConfigureAwait(false);
-            try
-            {
-                asrFile.Refresh();
-                if (!force && asrFile.Exists)
-                {
-                    LogStageInfo(logInfo, "Skipping ASR stage; {AsrFile} already exists (pass --force to rerun)", asrFile.FullName);
-                    asrRan = false;
-                }
-                else
-                {
-                    LogStageInfo(logInfo, "Running ASR stage");
-                    await AsrCommand.RunAsrAsync(audioFile, asrFile, asrService, asrModel, asrLanguage).ConfigureAwait(false);
-                    asrFile.Refresh();
-                    asrRan = true;
-                }
-            }
-            finally
-            {
-                concurrency.AsrSemaphore.Release();
-            }
-        }
-
-        progress?.ReportStage(chapterStem, PipelineStage.Asr, asrRan ? "ASR complete" : "ASR cached");
-
-        anchorsFile.Refresh();
-        bool anchorsRan;
-        if (!force && anchorsFile.Exists)
-        {
-            LogStageInfo(logInfo, "Skipping anchor selection; {AnchorsFile} already exists (pass --force to rerun)", anchorsFile.FullName);
-            anchorsRan = false;
-        }
-        else
-        {
-            LogStageInfo(logInfo, "Selecting anchors");
-            asrFile.Refresh();
-            await AlignCommand.RunAnchorsAsync(
-                bookIndexFile,
-                asrFile,
-                anchorsFile,
-                detectSection: true,
-                ngram: 3,
-                targetPerTokens: 50,
-                minSeparation: 100,
-                crossSentences: false,
-                domainStopwords: true,
-                asrPrefixTokens: 8,
-                emitWindows: false);
-            anchorsFile.Refresh();
-            anchorsRan = true;
-        }
-
-        progress?.ReportStage(chapterStem, PipelineStage.Anchors, anchorsRan ? "Anchors generated" : "Anchors cached");
-
-        txFile.Refresh();
-        bool transcriptRan;
-        if (!force && txFile.Exists)
-        {
-            LogStageInfo(logInfo, "Skipping transcript index; {TranscriptFile} already exists (pass --force to rerun)", txFile.FullName);
-            transcriptRan = false;
-        }
-        else
-        {
-            LogStageInfo(logInfo, "Generating transcript index");
-            asrFile.Refresh();
-            await AlignCommand.RunTranscriptIndexAsync(
-                bookIndexFile,
-                asrFile,
-                audioFile,
-                txFile,
-                detectSection: true,
-                asrPrefixTokens: 8,
-                ngram: 3,
-                targetPerTokens: 50,
-                minSeparation: 100,
-                crossSentences: false,
-                domainStopwords: true);
-            txFile.Refresh();
-            transcriptRan = true;
-        }
-
-        progress?.ReportStage(chapterStem, PipelineStage.Transcript, transcriptRan ? "Transcript indexed" : "Transcript cached");
-
-        hydrateFile.Refresh();
-        bool hydrateRan;
-        if (!force && hydrateFile.Exists)
-        {
-            LogStageInfo(logInfo, "Skipping hydrate stage; {HydratedFile} already exists (pass --force to rerun)", hydrateFile.FullName);
-            hydrateRan = false;
-        }
-        else
-        {
-            LogStageInfo(logInfo, "Hydrating transcript");
-            asrFile.Refresh();
-            txFile.Refresh();
-            await AlignCommand.RunHydrateTxAsync(bookIndexFile, asrFile, txFile, hydrateFile);
-            hydrateFile.Refresh();
-            hydrateRan = true;
-        }
-
-        progress?.ReportStage(chapterStem, PipelineStage.Hydrate, hydrateRan ? "Hydrate complete" : "Hydrate cached");
-
-        cancellationToken.ThrowIfCancellationRequested();
-
-        textGridFile.Refresh();
-        bool mfaRan;
-        if (!force && textGridFile.Exists)
-        {
-            LogStageInfo(logInfo, "Skipping MFA alignment; {TextGridFile} already exists (pass --force to rerun)", textGridFile.FullName);
-            mfaRan = false;
-        }
-        else
-        {
-            await concurrency.MfaSemaphore.WaitAsync(cancellationToken).ConfigureAwait(false);
-            try
-            {
-                textGridFile.Refresh();
-                if (!force && textGridFile.Exists)
-                {
-                    LogStageInfo(logInfo, "Skipping MFA alignment; {TextGridFile} already exists (pass --force to rerun)", textGridFile.FullName);
-                    mfaRan = false;
-                }
-                else
-                {
-                    LogStageInfo(logInfo, "Running MFA alignment workflow");
-                    hydrateFile.Refresh();
-                    await MfaWorkflow.RunChapterAsync(audioFile, hydrateFile, chapterStem, chapterDirInfo, cancellationToken).ConfigureAwait(false);
-                    textGridFile.Refresh();
-                    mfaRan = true;
-                }
-            }
-            finally
-            {
-                concurrency.MfaSemaphore.Release();
-            }
-        }
-
-        if (textGridFile.Exists)
-        {
-            try
-            {
-                MfaTimingMerger.MergeTimings(hydrateFile, asrFile, textGridFile);
-                hydrateFile.Refresh();
-                var fallbackTexts = MfaTimingMerger.BuildFallbackTextMap(hydrateFile);
-                MfaTimingMerger.MergeTimings(txFile, asrFile, textGridFile, fallbackTexts);
-            }
-            catch (Exception ex)
-            {
-                Log.Debug("Failed to merge MFA timings: {0}", ex);
-            }
-        }
-        else
-        {
-            Log.Debug("Skipping MFA timing merge because TextGrid not found at {TextGridFile}", textGridFile.FullName);
-        }
-
-        var mfaMessage = textGridFile.Exists
-            ? (mfaRan ? "MFA aligned" : "MFA cached")
+        var textGridStatus = result.TextGridFile.Exists
+            ? (result.MfaRan ? "MFA aligned" : "MFA cached")
             : "MFA missing";
-        progress?.ReportStage(chapterStem, PipelineStage.Mfa, mfaMessage);
+        progress?.ReportStage(chapterStem, PipelineStage.Mfa, textGridStatus);
 
-        treatedWav.Refresh();
-        bool roomtoneRendered;
-        if (!force && treatedWav.Exists)
-        {
-            LogStageInfo(logInfo, "Skipping roomtone render; {RoomtoneFile} already exists (pass --force to rerun)", treatedWav.FullName);
-            roomtoneRendered = false;
-        }
-        else
-        {
-            LogStageInfo(logInfo, "Rendering roomtone");
-            txFile.Refresh();
-            await AudioCommand.RunRenderAsync(txFile, treatedWav, sampleRate, bitDepth, fadeMs, toneDb, emitDiagnostics, adaptiveGain, verbose, gapLeftThresholdDb, gapRightThresholdDb, gapStepMs, gapBackoffMs);
-            treatedWav.Refresh();
-            roomtoneRendered = true;
-        }
+        LogStageInfo(logInfo, "Book index : {Status}", result.BookIndexBuilt ? "Rebuilt" : "Cached");
+        LogStageInfo(logInfo, "ASR        : {Status}", result.AsrRan ? "Executed" : "Cached");
+        LogStageInfo(logInfo, "Anchors    : {Status}", result.AnchorsRan ? "Executed" : "Cached");
+        LogStageInfo(logInfo, "Transcript : {Status}", result.TranscriptRan ? "Executed" : "Cached");
+        LogStageInfo(logInfo, "Hydrate    : {Status}", result.HydrateRan ? "Executed" : "Cached");
+        LogStageInfo(logInfo, "MFA        : {Status}", textGridStatus);
 
-        var roomtoneMessage = treatedWav.Exists
-            ? (roomtoneRendered ? "Roomtone rendered" : "Roomtone cached")
-            : "Roomtone missing";
-        progress?.ReportStage(chapterStem, PipelineStage.Roomtone, roomtoneMessage);
-
-        bool validateSuccess = await RunValidateTimingHeadlessAsync(txFile, hydrateFile, bookIndexFile, toneDb, logInfo, cancellationToken).ConfigureAwait(false);
-        progress?.ReportStage(chapterStem, PipelineStage.Validate, validateSuccess ? "Timing updated" : "Timing skipped");
+        bookIndexFile = result.BookIndexFile;
+        asrFile = result.AsrFile;
+        anchorsFile = result.AnchorFile;
+        txFile = result.TranscriptFile;
+        hydrateFile = result.HydrateFile;
+        textGridFile = result.TextGridFile;
+        treatedWav = result.TreatedAudioFile;
 
         LogStageInfo(logInfo, "=== Outputs ===");
         LogStageInfo(logInfo, "Book index : {BookIndex}", bookIndexFile.FullName);
@@ -1489,71 +1200,7 @@ public static class PipelineCommand
         LogStageInfo(logInfo, "Anchors    : {AnchorsFile}", anchorsFile.FullName);
         LogStageInfo(logInfo, "Transcript : {TranscriptFile}", txFile.FullName);
         LogStageInfo(logInfo, "Hydrated   : {HydratedFile}", hydrateFile.FullName);
-        LogStageInfo(logInfo, "Roomtone   : {RoomtoneFile}", treatedWav.FullName);
-    }
-
-    private static async Task<bool> RunValidateTimingHeadlessAsync(
-        FileInfo txFile,
-        FileInfo hydrateFile,
-        FileInfo bookIndexFile,
-        double toneGainDb,
-        bool logInfo,
-        CancellationToken cancellationToken)
-    {
-        if (!txFile.Exists || !hydrateFile.Exists)
-        {
-            Log.Debug("Skipping validate timing headless: required artifacts missing (Transcript/Hydrate).");
-            return false;
-        }
-
-        if (!bookIndexFile.Exists)
-        {
-            Log.Debug("Skipping validate timing headless: book-index not found at {Path}", bookIndexFile.FullName);
-            return false;
-        }
-
-        try
-        {
-            LogStageInfo(logInfo, "Running validate timing headless to apply pause policy defaults");
-            var session = new ValidateTimingSession(txFile, bookIndexFile, hydrateFile, runProsodyAnalysis: true);
-            var headlessResult = await session.RunHeadlessAsync(cancellationToken).ConfigureAwait(false);
-            if (!headlessResult.HasAdjustments)
-            {
-                LogStageInfo(logInfo, "validate timing headless produced no adjustments; skipping timing-apply.");
-                return false;
-            }
-
-            LogStageInfo(logInfo, "validate timing headless produced {Count} adjustment(s); applying timing updates", headlessResult.AdjustmentCount);
-            var exitCode = ValidateCommand.RunTimingApplyCore(
-                txFile,
-                hydrateFile,
-                headlessResult.AdjustmentsFile,
-                outWavOverride: null,
-                roomtoneOverride: null,
-                bookIndexOverride: bookIndexFile,
-                toneGainDb: toneGainDb,
-                overwriteOutputs: true,
-                useAdjusted: false,
-                cancellationToken: cancellationToken);
-
-            if (exitCode != 0)
-            {
-                Log.Debug("timing-apply exited with code {ExitCode}", exitCode);
-                return false;
-            }
-
-            return true;
-        }
-        catch (OperationCanceledException)
-        {
-            Log.Debug("validate timing headless cancelled");
-            throw;
-        }
-        catch (Exception ex)
-        {
-            Log.Error(ex, "validate timing headless failed; continuing without pause-adjusted outputs");
-            return false;
-        }
+        LogStageInfo(logInfo, "Treated    : {TreatedFile}", treatedWav.FullName);
     }
 
     private static void PerformSoftReset(DirectoryInfo root, CancellationToken cancellationToken)
@@ -1615,7 +1262,7 @@ public static class PipelineCommand
         {
             cancellationToken.ThrowIfCancellationRequested();
 
-            if (file.Extension.Equals(".docx", StringComparison.OrdinalIgnoreCase))
+            if (file.Extension.Equals(".docx", StringComparison.OrdinalIgnoreCase) || file.Extension.Equals(".pdf", StringComparison.OrdinalIgnoreCase))
             {
                 continue;
             }
@@ -1713,42 +1360,102 @@ public static class PipelineCommand
         PrintStatsReport(root, bookIndexFile, bookIndex, statsList, totalAudioSec);
     }
 
-    private static List<FileInfo> ResolveRenameTargets(DirectoryInfo root)
+    private static List<FileInfo> ResolveRenameTargets(DirectoryInfo root, bool forceAll = false)
     {
-        var repl = ReplContext.Current;
-        if (repl is not null && PathsEqual(repl.WorkingDirectory, root.FullName))
+        if (!forceAll)
         {
-            if (repl.RunAllChapters)
+            var repl = ReplContext.Current;
+            if (repl is not null && PathsEqual(repl.WorkingDirectory, root.FullName))
             {
-                return repl.Chapters.ToList();
-            }
+                if (repl.RunAllChapters)
+                {
+                    if (repl.ActiveChapter is not null)
+                    {
+                        return new List<FileInfo> { repl.ActiveChapter };
+                    }
 
-            if (repl.ActiveChapter is not null)
-            {
-                return new List<FileInfo> { repl.ActiveChapter };
-            }
+                    return repl.Chapters.ToList();
+                }
 
-            return new List<FileInfo>();
+                if (repl.ActiveChapter is not null)
+                {
+                    return new List<FileInfo> { repl.ActiveChapter };
+                }
+
+                return new List<FileInfo>();
+            }
         }
 
         return Directory.EnumerateFiles(root.FullName, "*.wav", SearchOption.TopDirectoryOnly)
-            .Where(path => !string.Equals(Path.GetFileName(path), "roomtone.wav", StringComparison.OrdinalIgnoreCase))
             .Select(path => new FileInfo(path))
             .OrderBy(file => file.Name, StringComparer.OrdinalIgnoreCase)
             .ToList();
     }
 
-    private static string ApplyRenamePattern(string pattern, int index)
+    private static string ApplyRenamePattern(string pattern, int index, IReadOnlyList<string> unmatchedParts)
     {
         var result = PatternTokenRegex.Replace(pattern, match =>
         {
             var token = match.Groups[1].Value.ToLowerInvariant();
             var offsetGroup = match.Groups[2];
-            var offset = offsetGroup.Success ? int.Parse(offsetGroup.Value, CultureInfo.InvariantCulture) : 0;
-            var value = index + offset;
-            return token.Length > 1
-                ? value.ToString("D" + token.Length, CultureInfo.InvariantCulture)
-                : value.ToString(CultureInfo.InvariantCulture);
+            if (token.StartsWith("um", StringComparison.Ordinal))
+            {
+                if (offsetGroup.Success)
+                {
+                    throw new InvalidOperationException($"Token '{match.Value}' does not support +/- offsets.");
+                }
+
+                if (token.Equals("um*", StringComparison.Ordinal))
+                {
+                    return unmatchedParts.Count == 0
+                        ? string.Empty
+                        : string.Join("_", unmatchedParts);
+                }
+
+                if (token.Contains('-'))
+                {
+                    var rangeParts = token[2..].Split('-', StringSplitOptions.RemoveEmptyEntries);
+                    if (rangeParts.Length != 2 ||
+                        !int.TryParse(rangeParts[0], NumberStyles.Integer, CultureInfo.InvariantCulture, out var startIndex) ||
+                        !int.TryParse(rangeParts[1], NumberStyles.Integer, CultureInfo.InvariantCulture, out var endIndex) ||
+                        startIndex <= 0 || endIndex < startIndex)
+                    {
+                        throw new InvalidOperationException($"Invalid unmatched range token '{match.Value}'.");
+                    }
+
+                    int startZero = startIndex - 1;
+                    int endZero = Math.Min(endIndex - 1, unmatchedParts.Count - 1);
+                    if (startZero >= unmatchedParts.Count || startZero > endZero)
+                    {
+                        return string.Empty;
+                    }
+
+                    var slice = unmatchedParts
+                        .Skip(startZero)
+                        .Take(endZero - startZero + 1);
+                    return string.Join("_", slice);
+                }
+                else
+                {
+                    if (!int.TryParse(token.AsSpan(2), NumberStyles.Integer, CultureInfo.InvariantCulture, out var partIndex) || partIndex <= 0)
+                    {
+                        throw new InvalidOperationException($"Invalid unmatched token '{match.Value}'.");
+                    }
+
+                    var zeroIndex = partIndex - 1;
+                    return zeroIndex >= 0 && zeroIndex < unmatchedParts.Count
+                        ? unmatchedParts[zeroIndex]
+                        : string.Empty;
+                }
+            }
+            else
+            {
+                var offset = offsetGroup.Success ? int.Parse(offsetGroup.Value, CultureInfo.InvariantCulture) : 0;
+                var value = index + offset;
+                return token.Length > 1
+                    ? value.ToString("D" + token.Length, CultureInfo.InvariantCulture)
+                    : value.ToString(CultureInfo.InvariantCulture);
+            }
         });
 
         if (result.IndexOf('{') >= 0 || result.IndexOf('}') >= 0)
@@ -1757,6 +1464,29 @@ public static class PipelineCommand
         }
 
         return result;
+    }
+
+    private static readonly Regex UnmatchedTokenRegex = new(@"[A-Za-z]+[A-Za-z0-9]*", RegexOptions.Compiled);
+
+    private static string[] ExtractUnmatchedParts(string stem)
+    {
+        if (string.IsNullOrWhiteSpace(stem))
+        {
+            return Array.Empty<string>();
+        }
+
+        var matches = UnmatchedTokenRegex.Matches(stem);
+        if (matches.Count == 0)
+        {
+            return Array.Empty<string>();
+        }
+
+        var parts = new string[matches.Count];
+        for (int i = 0; i < matches.Count; i++)
+        {
+            parts[i] = matches[i].Value;
+        }
+        return parts;
     }
 
     private static ChapterRenamePlan BuildRenamePlan(FileInfo chapter, string oldStem, string newStem)
@@ -2158,7 +1888,7 @@ public static class PipelineCommand
                         IReadOnlyDictionary<int, AudioSentenceTiming> rawTimings;
                         try
                         {
-                            var rawBuffer = WavIo.ReadPcmOrFloat(raw.FullName);
+                            var rawBuffer = AudioProcessor.Decode(raw.FullName);
                             rawSampleRate = rawBuffer.SampleRate;
                             rawMono = ToMono(rawBuffer);
                             rawTimings = LoadSentenceTimings(referenceHydratePath);
@@ -2189,7 +1919,7 @@ public static class PipelineCommand
                             AudioVerificationResult result;
                             try
                             {
-                                var variantBuffer = WavIo.ReadPcmOrFloat(variant.File.FullName);
+                                var variantBuffer = AudioProcessor.Decode(variant.File.FullName);
                                 var variantMono = ToMono(variantBuffer);
                                 var variantTimings = string.Equals(variant.HydratePath, referenceHydratePath, StringComparison.OrdinalIgnoreCase)
                                     ? rawTimings
@@ -2347,7 +2077,6 @@ public static class PipelineCommand
         }
 
         var allChapters = Directory.EnumerateFiles(root.FullName, "*.wav", SearchOption.TopDirectoryOnly)
-            .Where(path => !string.Equals(Path.GetFileName(path), "roomtone.wav", StringComparison.OrdinalIgnoreCase))
             .Select(path => new FileInfo(path))
             .OrderBy(file => file.Name, PathComparer)
             .ToList();
@@ -2736,7 +2465,7 @@ public static class PipelineCommand
 
     private static AudioStats ComputeAudioStats(FileInfo audioFile)
     {
-        var buffer = WavIo.ReadPcmOrFloat(audioFile.FullName);
+        var buffer = AudioProcessor.Decode(audioFile.FullName);
         var totalSamples = buffer.Length;
         var channels = buffer.Channels;
         if (totalSamples == 0 || channels == 0)

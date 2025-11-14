@@ -1,5 +1,3 @@
-using System;
-
 namespace Ams.Core.Artifacts;
 
 /// <summary>

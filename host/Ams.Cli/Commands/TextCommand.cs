@@ -1,6 +1,4 @@
 using System.CommandLine;
-using Ams.Core.Validation;
-using Ams.Core.Common;
 
 namespace Ams.Cli.Commands;
 
