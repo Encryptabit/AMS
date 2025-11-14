@@ -1,4 +1,3 @@
-using System;
 using Ams.Core.Runtime.Artifacts;
 using Ams.Core.Runtime.Common;
 
@@ -15,7 +14,11 @@ public sealed class BookDocuments
 
         _bookIndex = new DocumentSlot<BookIndex>(
             () => resolver.LoadBookIndex(context),
-            value => resolver.SaveBookIndex(context, value));
+            value => resolver.SaveBookIndex(context, value),
+            new DocumentSlotOptions<BookIndex>
+            {
+                BackingFileAccessor = () => resolver.GetBookIndexFile(context)
+            });
     }
 
     public BookIndex? BookIndex
@@ -25,4 +28,6 @@ public sealed class BookDocuments
     }
 
     internal void SaveChanges() => _bookIndex.Save();
+
+    internal FileInfo? GetBookIndexFile() => _bookIndex.GetBackingFile();
 }

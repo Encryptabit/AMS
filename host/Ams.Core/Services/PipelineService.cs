@@ -2,7 +2,6 @@ using System.Text.Json;
 using Ams.Core.Application.Commands;
 using Ams.Core.Application.Contexts;
 using Ams.Core.Application.Pipeline;
-using Ams.Core.Artifacts.Alignment.Mfa;
 using Ams.Core.Processors.DocumentProcessor;
 using Ams.Core.Services.Alignment;
 
@@ -72,12 +71,33 @@ public sealed class PipelineService
             return doc?.Intervals?.Count > 0;
         }
 
-        FileInfo ResolveAsrFile() => chapter.ResolveArtifactFile("asr.json");
-        FileInfo ResolveAnchorsFile() => chapter.ResolveArtifactFile("align.anchors.json");
-        FileInfo ResolveTranscriptFile() => chapter.ResolveArtifactFile("align.tx.json");
-        FileInfo ResolveHydrateFile() => chapter.ResolveArtifactFile("align.hydrate.json");
+        FileInfo ResolveAsrFile()
+            => chapter.Documents.GetAsrFile()
+               ?? throw new InvalidOperationException("ASR artifact path is not available.");
+
+        FileInfo ResolveAnchorsFile()
+            => chapter.Documents.GetAnchorsFile()
+               ?? throw new InvalidOperationException("Anchor artifact path is not available.");
+
+        FileInfo ResolveTranscriptFile()
+            => chapter.Documents.GetTranscriptFile()
+               ?? throw new InvalidOperationException("Transcript artifact path is not available.");
+
+        FileInfo ResolveHydrateFile()
+            => chapter.Documents.GetHydratedTranscriptFile()
+               ?? throw new InvalidOperationException("Hydrate artifact path is not available.");
+
         FileInfo ResolveTreatedFile() => options.TreatedCopyFile ?? chapter.ResolveArtifactFile("treated.wav");
-        FileInfo TextGridFile() => options.MfaOptions?.TextGridFile ?? ResolveTextGridFile(chapterRoot, chapter.Descriptor.ChapterId);
+        FileInfo TextGridFile()
+        {
+            if (options.MfaOptions?.TextGridFile is { } explicitGrid)
+            {
+                return explicitGrid;
+            }
+
+            return chapter.Documents.GetTextGridFile()
+                   ?? ResolveTextGridFile(chapterRoot, chapter.Descriptor.ChapterId);
+        }
 
         var hasAsr = HasAsrDocument();
         var hasAnchors = HasAnchorDocument();

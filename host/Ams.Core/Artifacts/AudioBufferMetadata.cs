@@ -1,5 +1,3 @@
-using System.Collections.Generic;
-
 namespace Ams.Core.Artifacts;
 
 public sealed record AudioBufferMetadata

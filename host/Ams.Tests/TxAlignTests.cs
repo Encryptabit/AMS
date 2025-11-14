@@ -1,11 +1,5 @@
-using System;
-using System.Collections.Generic;
-using System.Linq;
 using Ams.Core.Artifacts;
 using Ams.Core.Processors.Alignment.Tx;
-using Ams.Core.Runtime.Documents;
-using Ams.Core.Asr;
-using Xunit;
 
 public class TxAlignTests
 {

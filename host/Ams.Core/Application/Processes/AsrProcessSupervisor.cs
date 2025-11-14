@@ -1,10 +1,5 @@
 using System.Diagnostics;
-using System.IO;
 using System.Runtime.InteropServices;
-using System.Threading;
-using System.Threading.Tasks;
-using Ams.Core.Asr;
-using Ams.Core.Common;
 
 namespace Ams.Core.Application.Processes;
 

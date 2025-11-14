@@ -1,8 +1,3 @@
-using System;
-using System.Collections.Generic;
-using System.Linq;
-using Ams.Core;
-
 namespace Ams.Core.Processors.Alignment.Anchors;
 
 public sealed record BookAnchorView(

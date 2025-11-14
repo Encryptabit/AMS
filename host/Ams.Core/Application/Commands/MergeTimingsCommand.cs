@@ -1,8 +1,3 @@
-using System;
-using System.IO;
-using System.Threading;
-using System.Threading.Tasks;
-using Ams.Core.Common;
 using Ams.Core.Processors.Alignment.Mfa;
 using Ams.Core.Runtime.Chapter;
 
@@ -17,7 +12,9 @@ public sealed class MergeTimingsCommand
     {
         ArgumentNullException.ThrowIfNull(chapter);
 
-        var textGridFile = options?.TextGridFile ?? ResolveTextGridFile(chapter, options);
+        var textGridFile = options?.TextGridFile
+                           ?? chapter.Documents.GetTextGridFile()
+                           ?? throw new InvalidOperationException("TextGrid artifact path is not available.");
 
         var updateHydrate = options?.ApplyToHydrate ?? true;
         var updateTranscript = options?.ApplyToTranscript ?? true;
@@ -32,17 +29,6 @@ public sealed class MergeTimingsCommand
         return Task.CompletedTask;
     }
 
-    private static FileInfo ResolveTextGridFile(ChapterContext chapter, MergeTimingsOptions? options)
-    {
-        if (options?.TextGridFile is { } overrideFile)
-        {
-            return overrideFile;
-        }
-
-        var chapterRoot = chapter.Descriptor.RootPath ?? throw new InvalidOperationException("Chapter root path is not configured.");
-        var alignmentRoot = options?.AlignmentRootDirectory ?? new DirectoryInfo(Path.Combine(chapterRoot, "alignment", "mfa"));
-        return new FileInfo(Path.Combine(alignmentRoot.FullName, $"{chapter.Descriptor.ChapterId}.TextGrid"));
-    }
 }
 
 public sealed record MergeTimingsOptions

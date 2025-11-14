@@ -1,9 +1,5 @@
 using System.CommandLine;
 using System.Text.Json;
-using Ams.Core;
-using Ams.Core.Runtime.Documents;
-using Ams.Core.Processors;
-using Ams.Core.Common;
 using Ams.Cli.Utilities;
 using Ams.Core.Processors.DocumentProcessor;
 

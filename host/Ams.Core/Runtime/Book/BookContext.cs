@@ -1,6 +1,5 @@
 using Ams.Core.Runtime.Artifacts;
 using Ams.Core.Runtime.Chapter;
-using System.IO;
 
 namespace Ams.Core.Runtime.Book;
 
@@ -34,12 +33,6 @@ public sealed class BookContext
             throw new ArgumentException("File name must be provided.", nameof(fileName));
         }
 
-        var rootPath = Descriptor.RootPath;
-        if (string.IsNullOrWhiteSpace(rootPath))
-        {
-            throw new InvalidOperationException("Book root path is not configured.");
-        }
-
-        return new FileInfo(Path.Combine(rootPath, fileName.Trim()));
+        return _resolver.GetBookArtifactFile(this, fileName.Trim());
     }
 }

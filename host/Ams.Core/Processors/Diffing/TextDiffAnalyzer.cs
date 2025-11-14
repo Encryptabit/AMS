@@ -1,9 +1,5 @@
-using System;
-using System.Collections.Generic;
-using System.Linq;
 using System.Text;
 using Ams.Core.Artifacts;
-using Ams.Core.Common;
 using Ams.Core.Artifacts.Hydrate;
 using DiffMatchPatch;
 

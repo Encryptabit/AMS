@@ -1,8 +1,3 @@
-using System;
-using System.Collections.Generic;
-using Ams.Core.Artifacts;
-
-
 namespace Ams.Core.Processors.Alignment.Tx;
 
 // (2) Anchors -> clamped half-open windows builder

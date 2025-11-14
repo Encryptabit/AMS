@@ -1,5 +1,3 @@
-using System;
-
 namespace Ams.Core.Processors.Alignment.Anchors;
 
 /// <summary>

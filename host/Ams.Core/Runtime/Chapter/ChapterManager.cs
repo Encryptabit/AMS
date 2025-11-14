@@ -1,7 +1,3 @@
-using System;
-using System.Collections.Generic;
-using Ams.Core.Common;
-using Ams.Core.Runtime.Audio;
 using Ams.Core.Runtime.Book;
 
 namespace Ams.Core.Runtime.Chapter;

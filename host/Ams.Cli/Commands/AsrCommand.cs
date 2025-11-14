@@ -1,7 +1,4 @@
 using System.CommandLine;
-using System.IO;
-using Ams.Core.Asr;
-using Ams.Core.Common;
 using Ams.Cli.Utilities;
 
 namespace Ams.Cli.Commands;
@@ -125,8 +122,15 @@ public static class AsrCommand
 
                 if (output is not null)
                 {
-                    var artifact = handle.Chapter.ResolveArtifactFile("asr.json");
+                    var artifact = handle.Chapter.Documents.GetAsrFile()
+                                   ?? throw new InvalidOperationException("ASR artifact is not available.");
                     Directory.CreateDirectory(output.Directory?.FullName ?? output.DirectoryName ?? ".");
+                    artifact.Refresh();
+                    if (!artifact.Exists)
+                    {
+                        throw new FileNotFoundException($"Artifact not found: {artifact.FullName}");
+                    }
+
                     File.Copy(artifact.FullName, output.FullName, overwrite: true);
                 }
             }

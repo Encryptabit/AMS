@@ -1,16 +1,8 @@
-using System;
-using System.IO;
-using System.Threading;
-using System.Threading.Tasks;
 using Ams.Core.Artifacts;
 using Ams.Core.Application.Processes;
-using Ams.Core.Asr;
-using Ams.Core.Common;
 using Ams.Core.Processors;
-using Ams.Core.Runtime.Audio;
 using Ams.Core.Runtime.Chapter;
 using Ams.Core.Services;
-using Whisper.net;
 using Whisper.net.Ggml;
 
 namespace Ams.Core.Application.Commands;

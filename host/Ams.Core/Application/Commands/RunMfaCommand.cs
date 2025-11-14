@@ -1,8 +1,3 @@
-using System;
-using System.IO;
-using System.Linq;
-using System.Threading;
-using System.Threading.Tasks;
 using Ams.Core.Application.Mfa;
 using Ams.Core.Runtime.Chapter;
 
@@ -21,7 +16,9 @@ public sealed class RunMfaCommand
         var chapterStem = chapter.Descriptor.ChapterId;
 
         var chapterDirectory = options?.ChapterDirectory ?? new DirectoryInfo(chapterRoot);
-        var hydrateFile = options?.HydrateFile ?? chapter.ResolveArtifactFile("align.hydrate.json");
+        var hydrateFile = options?.HydrateFile
+                          ?? chapter.Documents.GetHydratedTranscriptFile()
+                          ?? throw new InvalidOperationException("Hydrated transcript artifact path is not available.");
         var audioFile = options?.AudioFile ?? ResolveAudioFile(chapter, options);
 
         if (!hydrateFile.Exists)
@@ -39,6 +36,7 @@ public sealed class RunMfaCommand
 
         var alignmentRoot = options?.AlignmentRootDirectory ?? new DirectoryInfo(Path.Combine(chapterRoot, "alignment"));
         var textGridFile = options?.TextGridFile
+                             ?? chapter.Documents.GetTextGridFile()
                              ?? new FileInfo(Path.Combine(alignmentRoot.FullName, "mfa", $"{chapterStem}.TextGrid"));
 
         chapter.Documents.InvalidateTextGrid();

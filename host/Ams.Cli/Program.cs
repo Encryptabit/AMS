@@ -1,12 +1,8 @@
 ﻿using System.CommandLine;
 using System.Text;
-using Ams.Core.Asr;
-using Ams.Core.Common;
 using Ams.Cli.Repl;
 using Ams.Cli.Commands;
-using Ams.Cli.Utilities;
 using Ams.Core.Services;
-using Ams.Core.Services.Alignment;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 
