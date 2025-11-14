@@ -8,6 +8,7 @@ internal static class FfmpegPathResolver
 
     public static string Resolve(string? configuredPath)
     {
+        /*
         if (!string.IsNullOrWhiteSpace(configuredPath))
         {
             var candidate = Path.GetFullPath(Environment.ExpandEnvironmentVariables(configuredPath));
@@ -19,6 +20,7 @@ internal static class FfmpegPathResolver
             return candidate;
         }
 
+        */
         var fromEnv = Environment.GetEnvironmentVariable(EnvVar);
         if (!string.IsNullOrWhiteSpace(fromEnv))
         {

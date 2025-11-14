@@ -1,5 +1,6 @@
 using System.Security.Cryptography;
 using System.Text.RegularExpressions;
+using Ams.Core.Runtime.Book;
 
 namespace Ams.Core.Runtime.Documents;
 

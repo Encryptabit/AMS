@@ -70,9 +70,13 @@ public static class PronunciationHelper
                     segments.Add(digits);
                 }
             }
-            else if (ch == '\'' || ch == '’' || ch == '-')
+            else if (ch == '\'' || ch == '’')
             {
-                current.Append(ch == '’' ? '\'' : ch);
+                current.Append('\'');
+            }
+            else if (ch == '-')
+            {
+                Flush();
             }
             else
             {

@@ -103,20 +103,35 @@
         {
             <MudItem xs="12">
                 <MudPaper Elevation="3" Class="pa-3">
-                    <AudioTransport @ref="_audioTransport"
-                                    AudioSource="@AudioSource"
-                                    CurrentTime="@_currentPlaybackTime"
-                                    TotalTime="@SelectedChapter?.DurationSeconds"
-                                    IsPlaying="@_isPlaying"
-                                    CanNavigatePrevious="@CanNavigatePrevious"
-                                    CanNavigateNext="@CanNavigateNext"
-                                    CanExport="@(_selectedSentence != null)"
-                                    LastExportMessage="@_lastExportMessage"
-                                    OnPlayPauseClick="@TogglePlayPause"
-                                    OnStopClick="@StopPlayback"
-                                    OnPreviousClick="@NavigatePrevious"
-                                    OnNextClick="@NavigateNext"
-                                    OnExportClick="@ExportCurrentSentence" />
+                    <MudStack Spacing="2">
+                        <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2">
+                            <MudTextField @bind-Value="_exportErrorCode"
+                                          Label="Error Code"
+                                          Variant="Variant.Outlined"
+                                          Margin="Margin.Dense"
+                                          Style="max-width: 150px;" />
+                            <MudTextField @bind-Value="_exportComment"
+                                          Label="Comment"
+                                          Variant="Variant.Outlined"
+                                          Margin="Margin.Dense"
+                                          Class="flex-grow-1" />
+                        </MudStack>
+
+                        <AudioTransport @ref="_audioTransport"
+                                        AudioSource="@AudioSource"
+                                        CurrentTime="@_currentPlaybackTime"
+                                        TotalTime="@SelectedChapter?.DurationSeconds"
+                                        IsPlaying="@_isPlaying"
+                                        CanNavigatePrevious="@CanNavigatePrevious"
+                                        CanNavigateNext="@CanNavigateNext"
+                                        CanExport="@(_selectedSentence?.Timing is not null && !_isExporting)"
+                                        LastExportMessage="@_lastExportMessage"
+                                        OnPlayPauseClick="@TogglePlayPause"
+                                        OnStopClick="@StopPlayback"
+                                        OnPreviousClick="@NavigatePrevious"
+                                        OnNextClick="@NavigateNext"
+                                        OnExportClick="@ExportCurrentSentence" />
+                    </MudStack>
                 </MudPaper>
             </MudItem>
         }

@@ -4,7 +4,7 @@ namespace Ams.Core.Runtime.Chapter;
 
 public sealed class ChapterManager : IChapterManager
 {
-    private const int DefaultMaxCachedContexts = 5;
+    private const int DefaultMaxCachedContexts = 30;
 
     private readonly BookContext _bookContext;
     private readonly List<ChapterDescriptor> _descriptors;
