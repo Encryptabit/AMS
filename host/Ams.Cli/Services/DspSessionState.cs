@@ -1,5 +1,3 @@
-using System;
-
 namespace Ams.Cli.Services;
 
 internal enum DspOutputMode

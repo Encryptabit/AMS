@@ -1,15 +1,9 @@
 using System.CommandLine;
-using System.IO;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
-using System.Linq;
-using System.Threading;
-using System.Threading.Tasks;
-using Ams.Core;
-using Ams.Core.Book;
+using Ams.Core.Processors.DocumentProcessor;
 using Ams.Cli.Utilities;
-using Ams.Cli.Services;
 
 namespace Ams.Cli.Commands;
 
@@ -105,7 +99,7 @@ public static class BookCommand
 
         var provider = new MfaPronunciationProvider(g2pModel: g2pModel);
 
-        var enriched = await BookPhonemePopulator.PopulateMissingAsync(index, provider, cancellationToken).ConfigureAwait(false);
+        var enriched = await DocumentProcessor.PopulateMissingPhonemesAsync(index, provider, cancellationToken).ConfigureAwait(false);
 
         static bool HasPhonemes(BookWord w) => w.Phonemes is { Length: >0 };
 
@@ -170,7 +164,7 @@ public static class BookCommand
         }
         catch (Exception ex)
         {
-            throw new InvalidOperationException("Failed to parse BookIndex JSON as canonical schema. Ensure schema matches Ams.Core.BookIndex.", ex);
+            throw new InvalidOperationException("Failed to parse BookIndex JSON as canonical schema. Ensure schema matches Ams.Core.Runtime.Documents.BookIndex.", ex);
         }
 
         if (idx == null)
@@ -407,4 +401,3 @@ public static class BookCommand
         return Convert.ToHexString(hash);
     }
 }
-

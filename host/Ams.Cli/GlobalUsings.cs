@@ -1,8 +1,15 @@
-global using Ams.Core.Book;
+global using Ams.Core.Runtime.Documents;
 global using Ams.Core.Asr;
 global using Ams.Core.Validation;
 global using Ams.Core.Pipeline;
 global using Ams.Core.Common;
 global using Ams.Core.Audio;
+global using Ams.Core.Application.Contexts;
+global using Ams.Core.Application.Commands;
+global using Ams.Core.Application.Processes;
+global using Ams.Core.Application.Mfa;
+global using Ams.Core.Application.Pipeline;
+global using Ams.Core.Services.Alignment;
+global using Ams.Core.Processors.Alignment.Mfa;
 global using Ams.Cli.Services;
 global using Ams.Cli.Models;

@@ -1,7 +1,4 @@
-using System.Collections.Generic;
-using Ams.Core.Alignment.Anchors;
-using Ams.Core;
-using Xunit;
+using Ams.Core.Processors.Alignment.Anchors;
 
 public class AnchorDiscoveryTests
 {

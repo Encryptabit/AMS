@@ -1,9 +1,10 @@
 ﻿using System.CommandLine;
 using System.Text;
-using Ams.Core.Common;
 using Ams.Cli.Repl;
 using Ams.Cli.Commands;
-using Ams.Cli.Services;
+using Ams.Core.Services;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
 
 namespace Ams.Cli;
 
@@ -11,32 +12,63 @@ internal static class Program
 {
     private static async Task<int> Main(string[] args)
     {
+        HostApplicationBuilder builder = Host.CreateApplicationBuilder(args);
+
+        builder.Services.AddSingleton<IChapterContextFactory, ChapterContextFactory>();
+        builder.Services.AddSingleton<IAsrService, AsrService>();
+        builder.Services.AddSingleton<IAlignmentService, AlignmentService>();
+        builder.Services.AddSingleton<GenerateTranscriptCommand>();
+        builder.Services.AddSingleton<ComputeAnchorsCommand>();
+        builder.Services.AddSingleton<BuildTranscriptIndexCommand>();
+        builder.Services.AddSingleton<HydrateTranscriptCommand>();
+        builder.Services.AddSingleton<RunMfaCommand>();
+        builder.Services.AddSingleton<MergeTimingsCommand>();
+        builder.Services.AddSingleton<PipelineService>();
+        builder.Services.AddSingleton<ValidationService>();
+        using IHost host = builder.Build();
+        var chapterFactory = host.Services.GetRequiredService<IChapterContextFactory>();
+        var generateTranscript = host.Services.GetRequiredService<GenerateTranscriptCommand>();
+        var computeAnchors = host.Services.GetRequiredService<ComputeAnchorsCommand>();
+        var transcriptIndexCommand = host.Services.GetRequiredService<BuildTranscriptIndexCommand>();
+        var hydrateCommand = host.Services.GetRequiredService<HydrateTranscriptCommand>();
+        var pipelineService = host.Services.GetRequiredService<PipelineService>();
+        var validationService = host.Services.GetRequiredService<ValidationService>();
+        
         using var loggerFactory = Log.ConfigureDefaults(logFileName: "ams-log.txt");
         Log.Debug("Structured logging initialized. Console + file at {LogFile}", Log.LogFilePath ?? "(unknown)");
 
         AsrProcessSupervisor.RegisterForShutdown();
-        var defaultAsrUrl = ResolveDefaultAsrUrl();
-        AsrProcessSupervisor.TriggerBackgroundWarmup(defaultAsrUrl);
+        var configuredEngine = AsrEngineConfig.Resolve();
+        Log.Debug("ASR engine configured as {Engine}", configuredEngine);
+        if (configuredEngine == AsrEngine.Nemo)
+        {
+            var defaultAsrUrl = ResolveDefaultAsrUrl();
+            AsrProcessSupervisor.TriggerBackgroundWarmup(defaultAsrUrl);
+        }
+        else
+        {
+            Log.Debug("Whisper.NET in-process ASR selected; skipping external service warmup.");
+        }
 
         MfaProcessSupervisor.RegisterForShutdown();
         MfaProcessSupervisor.TriggerBackgroundWarmup();
 
         var rootCommand = new RootCommand("AMS - Audio Management System CLI");
 
-        rootCommand.AddCommand(AsrCommand.Create());
-        rootCommand.AddCommand(ValidateCommand.Create());
+        rootCommand.AddCommand(AsrCommand.Create(chapterFactory, generateTranscript));
+        rootCommand.AddCommand(ValidateCommand.Create(chapterFactory, validationService));
         rootCommand.AddCommand(TextCommand.Create());
         rootCommand.AddCommand(BuildIndexCommand.Create());
         rootCommand.AddCommand(BookCommand.Create());
-        rootCommand.AddCommand(AlignCommand.Create());
-        rootCommand.AddCommand(AudioCommand.Create());
+        rootCommand.AddCommand(AlignCommand.Create(chapterFactory, computeAnchors, transcriptIndexCommand, hydrateCommand));
         rootCommand.AddCommand(RefineSentencesCommand.Create());
-        rootCommand.AddCommand(PipelineCommand.Create());
+        rootCommand.AddCommand(PipelineCommand.Create(pipelineService));
         rootCommand.AddCommand(DspCommand.Create());
         
         var replCommand = new Command("repl", "Start interactive REPL");
         replCommand.SetHandler(async () => await StartRepl(rootCommand));
         rootCommand.AddCommand(replCommand);
+        await host.StartAsync();
 
         // if no args , repl by default
         if (args.Length == 0)

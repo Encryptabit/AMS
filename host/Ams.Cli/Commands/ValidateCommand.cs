@@ -1,38 +1,38 @@
-using System.Collections.Generic;
 using System.CommandLine;
 using System.CommandLine.Invocation;
 using System.Diagnostics;
-using System.Linq;
 using System.Text;
 using System.Text.Json;
-using System.IO;
-using System.Threading;
 using Ams.Core.Artifacts;
-using Ams.Core.Audio;
-using Ams.Core.Book;
-using Ams.Core.Common;
-using Ams.Core.Hydrate;
+using Ams.Core.Processors;
+using Ams.Core.Artifacts.Hydrate;
+using Ams.Core.Artifacts.Validation;
 using Ams.Core.Prosody;
 using Ams.Cli.Repl;
 using Ams.Cli.Utilities;
+using Ams.Core.Services;
 using SentenceTiming = Ams.Core.Artifacts.SentenceTiming;
 
 namespace Ams.Cli.Commands;
 
 public static class ValidateCommand
 {
-    public static Command Create()
+    public static Command Create(IChapterContextFactory chapterFactory, ValidationService validationService)
     {
+        ArgumentNullException.ThrowIfNull(chapterFactory);
+        ArgumentNullException.ThrowIfNull(validationService);
+
         var validate = new Command("validate", "Validation utilities");
-        validate.AddCommand(CreateReportCommand());
-        validate.AddCommand(CreateTimingCommand());
-        validate.AddCommand(CreateTimingApplyCommand());
+        validate.AddCommand(CreateReportCommand(chapterFactory, validationService));
+        validate.AddCommand(CreateTimingCommand(chapterFactory));
         validate.AddCommand(CreateServeCommand());
         return validate;
     }
 
-    private static Command CreateTimingCommand()
+    private static Command CreateTimingCommand(IChapterContextFactory chapterFactory)
     {
+        ArgumentNullException.ThrowIfNull(chapterFactory);
+
         var cmd = new Command("timing", "Interactively review and adjust sentence spacing gaps");
 
         var txOption = new Option<FileInfo?>(
@@ -70,16 +70,6 @@ public static class ValidateCommand
             () => false,
             "Only allow inter-sentence (between sentences) pause edits; ignore intra-sentence adjustments.");
 
-        var headlessOption = new Option<bool>(
-            "--headless",
-            () => false,
-            "Apply default pause compression and automatically run timing-apply without launching the UI.");
-
-        var headlessOverwriteOption = new Option<bool>(
-            "--overwrite",
-            () => false,
-            "Overwrite pause-adjusted outputs when --headless runs timing-apply.");
-
         cmd.AddOption(txOption);
         cmd.AddOption(hydrateOption);
         cmd.AddOption(bookIndexOption);
@@ -87,8 +77,6 @@ public static class ValidateCommand
         cmd.AddOption(useAdjustedOption);
         cmd.AddOption(includeAllIntraOption);
         cmd.AddOption(interOnlyOption);
-        cmd.AddOption(headlessOption);
-        cmd.AddOption(headlessOverwriteOption);
 
         cmd.AddCommand(CreateTimingInitCommand());
 
@@ -148,7 +136,6 @@ public static class ValidateCommand
                     }
                 }
 
-                var headless = context.ParseResult.GetValueForOption(headlessOption);
                 FileInfo? bookIndexOverride = context.ParseResult.GetValueForOption(bookIndexOption);
                 FileInfo bookIndex;
                 try
@@ -168,37 +155,7 @@ public static class ValidateCommand
                 var includeAllIntra = context.ParseResult.GetValueForOption(includeAllIntraOption);
                 var interOnly = context.ParseResult.GetValueForOption(interOnlyOption);
 
-                var session = new ValidateTimingSession(tx, bookIndex, hydrate, runProsody, includeAllIntra, interOnly);
-
-                if (headless)
-                {
-                    var overwriteOutputs = context.ParseResult.GetValueForOption(headlessOverwriteOption);
-                    var headlessResult = await session.RunHeadlessAsync(cancellationToken).ConfigureAwait(false);
-                    if (!headlessResult.HasAdjustments)
-                    {
-                        context.ExitCode = 0;
-                        return;
-                    }
-
-                    Log.Debug(
-                        "validate timing headless committed {Adjustments} adjustment(s); invoking timing-apply",
-                        headlessResult.AdjustmentCount);
-
-                    var applyExitCode = RunTimingApplyCore(
-                        txFile: tx,
-                        hydrateFile: hydrate,
-                        adjustmentsOverride: headlessResult.AdjustmentsFile,
-                        outWavOverride: null,
-                        roomtoneOverride: null,
-                        bookIndexOverride: bookIndexOverride,
-                        toneGainDb: -60.0,
-                        overwriteOutputs: overwriteOutputs,
-                        useAdjusted: false,
-                        cancellationToken: cancellationToken);
-
-                    context.ExitCode = applyExitCode;
-                    return;
-                }
+                var session = new ValidateTimingSession(chapterFactory, tx, bookIndex, hydrate, runProsody, includeAllIntra, interOnly);
 
                 await session.RunAsync(cancellationToken).ConfigureAwait(false);
             }
@@ -311,290 +268,6 @@ public static class ValidateCommand
         return cmd;
     }
 
-    internal static int RunTimingApplyCore(
-        FileInfo txFile,
-        FileInfo hydrateFile,
-        FileInfo? adjustmentsOverride,
-        FileInfo? outWavOverride,
-        FileInfo? roomtoneOverride,
-        FileInfo? bookIndexOverride,
-        double toneGainDb,
-        bool overwriteOutputs,
-        bool useAdjusted,
-        CancellationToken cancellationToken)
-    {
-        if (txFile is null) throw new ArgumentNullException(nameof(txFile));
-        if (hydrateFile is null) throw new ArgumentNullException(nameof(hydrateFile));
-
-        var effectiveTx = txFile;
-        var effectiveHydrate = hydrateFile;
-
-        if (!effectiveTx.Exists)
-        {
-            Log.Error("TranscriptIndex JSON not found at {Path}", effectiveTx.FullName);
-            return 1;
-        }
-
-        if (!effectiveHydrate.Exists)
-        {
-            Log.Error("Hydrated transcript JSON not found at {Path}", effectiveHydrate.FullName);
-            return 1;
-        }
-
-        if (useAdjusted)
-        {
-            var adjustedTx = TryResolveAdjustedArtifact(txFile, ".pause-adjusted.align.tx.json");
-            if (adjustedTx is not null)
-            {
-                Log.Debug("timing-apply loading pause-adjusted transcript: {0}", adjustedTx.FullName);
-                effectiveTx = adjustedTx;
-            }
-            else
-            {
-                Log.Debug("Pause-adjusted transcript not found; using {0}", effectiveTx.FullName);
-            }
-
-            var adjustedHydrate = TryResolveAdjustedArtifact(hydrateFile, ".pause-adjusted.align.hydrate.json");
-            if (adjustedHydrate is not null)
-            {
-                Log.Debug("timing-apply loading pause-adjusted hydrate: {0}", adjustedHydrate.FullName);
-                effectiveHydrate = adjustedHydrate;
-            }
-            else
-            {
-                Log.Debug("Pause-adjusted hydrate not found; using {0}", effectiveHydrate.FullName);
-            }
-        }
-
-        var adjustmentsFile = adjustmentsOverride ?? ResolveAdjustmentsPath(effectiveTx, null);
-        if (!adjustmentsFile.Exists)
-        {
-            Log.Error("Pause adjustments file not found: {0}", adjustmentsFile.FullName);
-            return 1;
-        }
-
-        PauseAdjustmentsDocument adjustments;
-        try
-        {
-            adjustments = PauseAdjustmentsDocument.Load(adjustmentsFile.FullName);
-        }
-        catch (Exception ex)
-        {
-            Log.Error(ex, "Failed to load pause adjustments from {Path}", adjustmentsFile.FullName);
-            return 1;
-        }
-
-        if (adjustments.Adjustments.Count == 0)
-        {
-            Log.Debug("No pause adjustments found in {Path}. Nothing to apply.", adjustmentsFile.FullName);
-            return 0;
-        }
-
-        var transcript = LoadJson<TranscriptIndex>(effectiveTx);
-        var hydrated = LoadJson<HydratedTranscript>(effectiveHydrate);
-
-        FileInfo? bookIndexFile = bookIndexOverride ?? TryResolveBookIndex(transcript.BookIndexPath, effectiveTx.DirectoryName);
-        BookIndex? bookIndex = null;
-        if (bookIndexFile is not null && bookIndexFile.Exists)
-        {
-            bookIndex = LoadJson<BookIndex>(bookIndexFile);
-        }
-
-        var audioPath = ResolveAudioPath(transcript, hydrated, effectiveTx, effectiveHydrate);
-        if (!File.Exists(audioPath))
-        {
-            Log.Error("Audio file not found at {Path}", audioPath);
-            return 1;
-        }
-
-        string roomtonePath;
-        double? stageFadeMs;
-        double? stageAppliedGainDb;
-        try
-        {
-            roomtonePath = ResolveRoomtonePath(
-                roomtoneOverride,
-                effectiveTx,
-                transcript,
-                hydrated,
-                audioPath,
-                transcript.ScriptPath,
-                effectiveHydrate.DirectoryName ?? effectiveTx.DirectoryName,
-                bookIndex,
-                out stageFadeMs,
-                out stageAppliedGainDb);
-        }
-        catch (Exception ex)
-        {
-            Log.Error(ex, "Failed to locate roomtone.wav");
-            return 1;
-        }
-
-        var outWav = outWavOverride ?? BuildSiblingFile(audioPath, ".pause-adjusted.wav");
-        try
-        {
-            EnsureWritable(outWav, overwriteOutputs);
-        }
-        catch (Exception ex)
-        {
-            Log.Error(ex, "Cannot write output WAV to {Path}", outWav.FullName);
-            return 1;
-        }
-
-        cancellationToken.ThrowIfCancellationRequested();
-
-        var audioBuffer = WavIo.ReadPcmOrFloat(audioPath);
-        var roomtoneBuffer = WavIo.ReadPcmOrFloat(roomtonePath);
-        double fadeMs = stageFadeMs ?? 5.0;
-
-        double targetToneDb = toneGainDb;
-        var toneAnalyzer = new AudioAnalysisService(roomtoneBuffer);
-        double toneDuration = roomtoneBuffer.SampleRate > 0 ? roomtoneBuffer.Length / (double)roomtoneBuffer.SampleRate : 0.0;
-        var toneStats = toneAnalyzer.AnalyzeGap(0.0, toneDuration);
-        double toneGainLinear = 1.0;
-        Log.Debug(
-            "timing-apply using roomtone seed {0} (stageFade={1}, stageGain={2}, measuredRms={3:F2} dB, targetRms={4:F2} dB)",
-            roomtonePath,
-            stageFadeMs,
-            stageAppliedGainDb,
-            toneStats.MeanRmsDb,
-            targetToneDb);
-
-        var baselineTimings = BuildBaselineTimings(transcript, hydrated);
-
-        var vettedAdjustments = VetPauseAdjustments(adjustments.Adjustments, transcript, audioBuffer);
-        var timelineResult = PauseTimelineApplier.Apply(baselineTimings, vettedAdjustments);
-
-        var adjustedAudio = PauseAudioApplier.Apply(
-            audioBuffer,
-            roomtoneBuffer,
-            transcript.Sentences,
-            timelineResult.Timeline,
-            toneGainLinear,
-            fadeMs: fadeMs,
-            intraSentenceGaps: timelineResult.IntraSentenceGaps);
-        WavIo.WriteFloat32(outWav.FullName, adjustedAudio);
-
-    var updatedTranscript = UpdateTranscriptTimings(transcript, timelineResult.Timeline);
-        var updatedHydrate = UpdateHydratedTimings(hydrated, timelineResult.Timeline);
-
-        var transcriptOut = BuildOutputJsonPath(effectiveTx, ".pause-adjusted.align.tx.json");
-        var hydrateOut = BuildOutputJsonPath(effectiveHydrate, ".pause-adjusted.align.hydrate.json");
-
-        try
-        {
-            EnsureWritable(transcriptOut, overwriteOutputs);
-            EnsureWritable(hydrateOut, overwriteOutputs);
-        }
-        catch (Exception ex)
-        {
-            Log.Error(ex, "Cannot write updated timing JSON");
-            return 1;
-        }
-
-        SaveJson(transcriptOut, updatedTranscript);
-        SaveJson(hydrateOut, updatedHydrate);
-
-        Log.Debug("Pause-adjusted audio saved to {Output}", outWav.FullName);
-        Log.Debug("Updated transcript timings saved to {Output}", transcriptOut.FullName);
-        Log.Debug("Updated hydrate timings saved to {Output}", hydrateOut.FullName);
-
-        return 0;
-    }
-
-    private static Command CreateTimingApplyCommand()
-    {
-        var cmd = new Command("timing-apply", "Render pause-adjusted audio and refreshed timing JSON from saved adjustments");
-
-        var txOption = new Option<FileInfo?>("--tx", "Path to TranscriptIndex JSON (*.align.tx.json)");
-        txOption.AddAlias("-t");
-
-        var hydrateOption = new Option<FileInfo?>("--hydrate", "Path to hydrated transcript JSON (*.align.hydrate.json)");
-        hydrateOption.AddAlias("-h");
-
-        var adjustmentsOption = new Option<FileInfo?>("--adjustments", "Path to pause-adjustments JSON (defaults to <chapter>.pause-adjustments.json)");
-        var outWavOption = new Option<FileInfo?>("--out-wav", "Output WAV path (defaults to <audio>.pause-adjusted.wav)");
-        var roomtoneOption = new Option<FileInfo?>("--roomtone", "Override roomtone WAV path (defaults to roomtone.wav near chapter)");
-        var bookIndexOption = new Option<FileInfo?>("--book-index", "Optional book-index.json path when discovery via TranscriptIndex fails");
-        var toneGainOption = new Option<double>("--tone-gain-db", () => -60.0, "Target RMS level for injected roomtone (dBFS)");
-        var overwriteOption = new Option<bool>("--overwrite", () => false, "Overwrite existing outputs");
-        var useAdjustedOption = new Option<bool>("--use-adjusted", () => false, "Load pause-adjusted transcript/hydrate artifacts when present");
-
-        cmd.AddOption(txOption);
-        cmd.AddOption(hydrateOption);
-        cmd.AddOption(adjustmentsOption);
-        cmd.AddOption(outWavOption);
-        cmd.AddOption(roomtoneOption);
-        cmd.AddOption(bookIndexOption);
-        cmd.AddOption(toneGainOption);
-        cmd.AddOption(overwriteOption);
-        cmd.AddOption(useAdjustedOption);
-
-        cmd.SetHandler(context =>
-        {
-            try
-            {
-                var cancellationToken = context.GetCancellationToken();
-
-                var txFile = CommandInputResolver.ResolveChapterArtifact(
-                    context.ParseResult.GetValueForOption(txOption),
-                    suffix: "align.tx.json",
-                    mustExist: true);
-
-                if (txFile is null)
-                {
-                    Log.Error("timing-apply requires --tx or an active chapter with TranscriptIndex JSON");
-                    context.ExitCode = 1;
-                    return;
-                }
-
-                var hydrateFile = CommandInputResolver.ResolveChapterArtifact(
-                    context.ParseResult.GetValueForOption(hydrateOption),
-                    suffix: "align.hydrate.json",
-                    mustExist: true);
-
-                if (hydrateFile is null || !hydrateFile.Exists)
-                {
-                    Log.Error("timing-apply requires a hydrated transcript JSON (e.g., *.align.hydrate.json)");
-                    context.ExitCode = 1;
-                    return;
-                }
-
-                var adjustmentsOverride = context.ParseResult.GetValueForOption(adjustmentsOption);
-                var outWavOverride = context.ParseResult.GetValueForOption(outWavOption);
-                var roomtoneOverride = context.ParseResult.GetValueForOption(roomtoneOption);
-                var bookIndexOverride = context.ParseResult.GetValueForOption(bookIndexOption);
-                var toneGainDb = context.ParseResult.GetValueForOption(toneGainOption);
-                var overwrite = context.ParseResult.GetValueForOption(overwriteOption);
-                var useAdjusted = context.ParseResult.GetValueForOption(useAdjustedOption);
-
-                context.ExitCode = RunTimingApplyCore(
-                    txFile,
-                    hydrateFile,
-                    adjustmentsOverride,
-                    outWavOverride,
-                    roomtoneOverride,
-                    bookIndexOverride,
-                    toneGainDb,
-                    overwrite,
-                    useAdjusted,
-                    cancellationToken);
-            }
-            catch (OperationCanceledException)
-            {
-                Log.Debug("timing-apply cancelled");
-                context.ExitCode = 1;
-            }
-            catch (Exception ex)
-            {
-                Log.Error(ex, "timing-apply failed");
-                context.ExitCode = 1;
-            }
-        });
-
-        return cmd;
-    }
-
     private static Command CreateServeCommand()
     {
         var serve = new Command("serve", "Start web viewer for validation reports");
@@ -684,8 +357,11 @@ public static class ValidateCommand
         return serve;
     }
 
-    private static Command CreateReportCommand()
+    private static Command CreateReportCommand(IChapterContextFactory chapterFactory, ValidationService validationService)
     {
+        ArgumentNullException.ThrowIfNull(chapterFactory);
+        ArgumentNullException.ThrowIfNull(validationService);
+
         var cmd = new Command("report", "Render a human-friendly view of transcript validation metrics");
 
         var txOption = new Option<FileInfo?>(
@@ -736,7 +412,17 @@ public static class ValidateCommand
 
             try
             {
-                var result = await GenerateReportAsync(txFile, hydrateFile, allErrors, topSentences, topParagraphs, includeWords, includeAllFlagged);
+                var bookIndexFile = CommandInputResolver.ResolveBookIndex(null);
+                using var handle = chapterFactory.Create(bookIndexFile, transcriptFile: txFile, hydrateFile: hydrateFile);
+                var options = new ValidationReportOptions(
+                    AllErrors: allErrors,
+                    TopSentences: topSentences,
+                    TopParagraphs: topParagraphs,
+                    IncludeWordTallies: includeWords,
+                    IncludeAllFlagged: includeAllFlagged);
+
+                var result = await validationService.BuildReportAsync(handle.Chapter, options, context.GetCancellationToken())
+                    .ConfigureAwait(false);
 
                 var summarySentences = result.Sentences.Count;
                 var summarySentencesFlagged = result.Sentences.Count(s => !string.Equals(s.Status, "ok", StringComparison.OrdinalIgnoreCase));
@@ -753,7 +439,8 @@ public static class ValidateCommand
                     ?? new FileInfo(Path.Combine(Directory.GetCurrentDirectory(), "validate.report.txt"));
 
                 Directory.CreateDirectory(targetFile.DirectoryName ?? Directory.GetCurrentDirectory());
-                await File.WriteAllTextAsync(targetFile.FullName, result.Report, Encoding.UTF8);
+                await File.WriteAllTextAsync(targetFile.FullName, result.Report, Encoding.UTF8, context.GetCancellationToken());
+                handle.Save();
                 Log.Debug("Validation report written to {Output}", targetFile.FullName);
             }
             catch (Exception ex)
@@ -764,344 +451,6 @@ public static class ValidateCommand
         });
 
         return cmd;
-    }
-
-    private static async Task<ReportResult> GenerateReportAsync(FileInfo? txFile,
-        FileInfo? hydrateFile,
-        bool allErrors,
-        int topSentences,
-        int topParagraphs,
-        bool includeWordTallies,
-        bool includeAllFlagged)
-    {
-        TranscriptIndex? tx = null;
-        HydratedTranscript? hydrated = null;
-
-        var jsonOptions = new JsonSerializerOptions
-        {
-            PropertyNameCaseInsensitive = true
-        };
-
-        if (txFile is not null)
-        {
-            if (!txFile.Exists)
-            {
-                throw new FileNotFoundException($"TranscriptIndex file not found: {txFile.FullName}");
-            }
-
-            var txJson = await File.ReadAllTextAsync(txFile.FullName);
-            tx = JsonSerializer.Deserialize<TranscriptIndex>(txJson, jsonOptions)
-                 ?? throw new InvalidOperationException("Failed to deserialize TranscriptIndex JSON");
-        }
-
-        if (hydrateFile is not null)
-        {
-            if (!hydrateFile.Exists)
-            {
-                throw new FileNotFoundException($"Hydrated transcript file not found: {hydrateFile.FullName}");
-            }
-
-            var hydrateJson = await File.ReadAllTextAsync(hydrateFile.FullName);
-            hydrated = JsonSerializer.Deserialize<HydratedTranscript>(hydrateJson, jsonOptions)
-                        ?? throw new InvalidOperationException("Failed to deserialize hydrated transcript JSON");
-        }
-
-        if (tx is null && hydrated is null)
-        {
-            throw new InvalidOperationException("No transcript artifacts could be loaded");
-        }
-
-        var info = ExtractSourceInfo(tx, hydrated);
-        var sentenceViews = BuildSentenceViews(tx, hydrated);
-        var paragraphViews = BuildParagraphViews(tx, hydrated);
-        var wordTallies = includeWordTallies ? BuildWordTallies(tx) : null;
-
-        var fullReport = BuildTextReport(info, sentenceViews, paragraphViews, wordTallies, allErrors, topSentences, topParagraphs, includeAllFlagged, hydrated);
-        return new ReportResult(fullReport, sentenceViews, paragraphViews, wordTallies);
-    }
-
-    private static SourceInfo ExtractSourceInfo(TranscriptIndex? tx, HydratedTranscript? hydrated)
-    {
-        return tx is not null
-            ? new SourceInfo(tx.AudioPath, tx.ScriptPath, tx.BookIndexPath, tx.CreatedAtUtc)
-            : new SourceInfo(
-                hydrated!.AudioPath,
-                hydrated.ScriptPath,
-                hydrated.BookIndexPath,
-                hydrated.CreatedAtUtc);
-    }
-
-    private static IReadOnlyList<SentenceView> BuildSentenceViews(TranscriptIndex? tx, HydratedTranscript? hydrated)
-    {
-        if (tx is null && hydrated is null)
-        {
-            return Array.Empty<SentenceView>();
-        }
-
-        var txMap = tx?.Sentences.ToDictionary(s => s.Id);
-        var hydratedMap = hydrated?.Sentences.ToDictionary(s => s.Id);
-
-        var ids = new SortedSet<int>();
-        if (txMap is not null)
-        {
-            foreach (var id in txMap.Keys)
-            {
-                ids.Add(id);
-            }
-        }
-        if (hydratedMap is not null)
-        {
-            foreach (var id in hydratedMap.Keys)
-            {
-                ids.Add(id);
-            }
-        }
-
-        var views = new List<SentenceView>(ids.Count);
-        foreach (var id in ids)
-        {
-            SentenceAlign? txSentence = null;
-            HydratedSentence? hydSentence = null;
-            txMap?.TryGetValue(id, out txSentence);
-            hydratedMap?.TryGetValue(id, out hydSentence);
-
-            var bookRange = hydSentence is not null
-                ? (hydSentence.BookRange.Start, hydSentence.BookRange.End)
-                : txSentence is not null
-                    ? (txSentence.BookRange.Start, txSentence.BookRange.End)
-                    : (0, 0);
-
-            var scriptRange = hydSentence?.ScriptRange is not null
-                ? (hydSentence.ScriptRange.Start, hydSentence.ScriptRange.End)
-                : txSentence?.ScriptRange is not null
-                    ? (txSentence.ScriptRange.Start, txSentence.ScriptRange.End)
-                    : (null, null);
-
-            var metrics = txSentence?.Metrics ?? hydSentence?.Metrics
-                ?? new SentenceMetrics(0, 0, 0, 0, 0);
-            var status = hydSentence?.Status ?? txSentence?.Status ?? "unknown";
-            string? bookText = hydSentence?.BookText;
-            string? scriptText = hydSentence?.ScriptText;
-            var timing = hydSentence?.Timing ?? txSentence?.Timing;
-
-            views.Add(new SentenceView(
-                id,
-                bookRange,
-                scriptRange,
-                metrics,
-                status,
-                string.IsNullOrWhiteSpace(bookText) ? null : bookText,
-                string.IsNullOrWhiteSpace(scriptText) ? null : scriptText,
-                timing));
-        }
-
-        return views.OrderBy(s => s.Id).ToList();
-    }
-
-    private static IReadOnlyList<ParagraphView> BuildParagraphViews(TranscriptIndex? tx, HydratedTranscript? hydrated)
-    {
-        if (tx is null && hydrated is null)
-        {
-            return Array.Empty<ParagraphView>();
-        }
-
-        var paragraphs = hydrated?.Paragraphs ?? tx!.Paragraphs.Select(p => new HydratedParagraph(
-            p.Id,
-            new HydratedRange(p.BookRange.Start, p.BookRange.End),
-            p.SentenceIds,
-            BookText: string.Empty,
-            p.Metrics,
-            p.Status)).ToList();
-
-        return paragraphs!
-            .Select(p => new ParagraphView(
-                p.Id,
-                (p.BookRange.Start, p.BookRange.End),
-                p.Metrics,
-                p.Status,
-                string.IsNullOrWhiteSpace(p.BookText) ? null : p.BookText))
-            .OrderBy(p => p.Id)
-            .ToList();
-    }
-
-    private static WordTallies? BuildWordTallies(TranscriptIndex? tx)
-    {
-        if (tx is null)
-        {
-            return null;
-        }
-
-        int match = 0, substitution = 0, insertion = 0, deletion = 0;
-
-        foreach (var word in tx.Words)
-        {
-            switch (word.Op)
-            {
-                case AlignOp.Match:
-                    match++;
-                    break;
-                case AlignOp.Sub:
-                    substitution++;
-                    break;
-                case AlignOp.Ins:
-                    insertion++;
-                    break;
-                case AlignOp.Del:
-                    deletion++;
-                    break;
-            }
-        }
-
-        return new WordTallies(match, substitution, insertion, deletion, tx.Words.Count);
-    }
-
-    private static string BuildTextReport(
-        SourceInfo info,
-        IReadOnlyList<SentenceView> sentences,
-        IReadOnlyList<ParagraphView> paragraphs,
-        WordTallies? wordTallies,
-        bool allErrors,
-        int topSentences,
-        int topParagraphs,
-        bool includeAllFlagged,
-        HydratedTranscript? hydrated)
-    {
-        var builder = new StringBuilder();
-
-        builder.AppendLine("=== Validation Report ===");
-        builder.AppendLine($"Audio     : {info.AudioPath}");
-        builder.AppendLine($"Script    : {info.ScriptPath}");
-        builder.AppendLine($"Book Index: {info.BookIndexPath}");
-        builder.AppendLine($"Created   : {info.CreatedAtUtc:O}");
-        builder.AppendLine();
-
-        if (sentences.Count > 0)
-        {
-            var avgWer = sentences.Average(s => s.Metrics.Wer);
-            var maxWer = sentences.Max(s => s.Metrics.Wer);
-            var flagged = sentences.Count(s => !string.Equals(s.Status, "ok", StringComparison.OrdinalIgnoreCase));
-
-            builder.AppendLine($"Sentences : {sentences.Count} (Avg WER {avgWer:P2}, Max WER {maxWer:P2}, Flagged {flagged})");
-        }
-        else
-        {
-            builder.AppendLine("Sentences : 0");
-        }
-
-        if (paragraphs.Count > 0)
-        {
-            var avgWer = paragraphs.Average(p => p.Metrics.Wer);
-            var avgCoverage = paragraphs.Average(p => p.Metrics.Coverage);
-            builder.AppendLine($"Paragraphs: {paragraphs.Count} (Avg WER {avgWer:P2}, Avg Coverage {avgCoverage:P2})");
-        }
-        else
-        {
-            builder.AppendLine("Paragraphs: 0");
-        }
-
-        if (wordTallies is not null)
-        {
-            builder.AppendLine($"Words     : {wordTallies.Total} (Match {wordTallies.Match}, Sub {wordTallies.Substitution}, Ins {wordTallies.Insertion}, Del {wordTallies.Deletion})");
-        }
-
-        builder.AppendLine();
-
-        if ( topSentences > 0 && sentences.Count > 0)
-        {
-            if (allErrors) builder.AppendLine("All sentences by WER:");
-            else builder.AppendLine($"Top {Math.Min(topSentences, sentences.Count)} sentences by WER:");
-
-            var sentencesOrdered = sentences
-                .OrderByDescending(s => s.Metrics.Wer)
-                .ThenByDescending(s => s.Metrics.Cer);
-            
-            var sentenceBucket = allErrors ? sentencesOrdered.Where(s => !s.Status.Equals("ok", StringComparison.OrdinalIgnoreCase)) : sentencesOrdered.Take(topSentences);
-
-            foreach (var sentence in sentenceBucket)
-            {
-                builder.AppendLine($"  #{sentence.Id} | WER {sentence.Metrics.Wer:P1} | CER {sentence.Metrics.Cer:P1} | Status {sentence.Status}");
-                builder.AppendLine($"    Book range: {sentence.BookRange.Start}-{sentence.BookRange.End}");
-
-                if (sentence.ScriptRange is not null)
-                {
-                    builder.AppendLine($"    Script range: {sentence.ScriptRange.Value.Start}-{sentence.ScriptRange.Value.End}");
-                }
-
-                if (sentence.Timing is not null)
-                {
-                    var timing = sentence.Timing;
-                    builder.AppendLine($"    Timing: {timing.StartSec:F3}s → {timing.EndSec:F3}s (Δ {timing.Duration:F3}s)");
-                }
-
-                if (!string.IsNullOrWhiteSpace(sentence.BookText))
-                {
-                    builder.AppendLine($"    Book   : {TrimText(sentence.BookText)}");
-                }
-
-                if (!string.IsNullOrWhiteSpace(sentence.ScriptText))
-                {
-                    builder.AppendLine($"    Script : {TrimText(sentence.ScriptText)}");
-                }
-
-                builder.AppendLine();
-            }
-        }
-
-        var paragraphOrdered = paragraphs
-            .OrderByDescending(p => p.Metrics.Wer)
-            .ThenByDescending(p => p.Metrics.Coverage);
-        
-        IEnumerable<ParagraphView> paragraphBucket;
-        
-        if (includeAllFlagged && hydrated?.Paragraphs is not null)
-        {
-            // Build a set of flagged sentence IDs
-            var flaggedSentenceIds = new HashSet<int>(
-                sentences.Where(s => !s.Status.Equals("ok", StringComparison.OrdinalIgnoreCase))
-                        .Select(s => s.Id));
-
-            // Build a set of paragraph IDs that contain flagged sentences
-            var paragraphsWithFlaggedSentences = new HashSet<int>();
-            foreach (var hydratedPara in hydrated.Paragraphs)
-            {
-                if (hydratedPara.SentenceIds.Any(sid => flaggedSentenceIds.Contains(sid)))
-                {
-                    paragraphsWithFlaggedSentences.Add(hydratedPara.Id);
-                }
-            }
-
-            // Include paragraphs that are either flagged OR contain flagged sentences
-            paragraphBucket = allErrors 
-                ? paragraphOrdered.Where(p => !p.Status.Equals("ok", StringComparison.OrdinalIgnoreCase) || paragraphsWithFlaggedSentences.Contains(p.Id))
-                : paragraphOrdered.Take(topParagraphs);
-        }
-        else
-        {
-            paragraphBucket = allErrors 
-                ? paragraphOrdered.Where(p => !p.Status.Equals("ok", StringComparison.OrdinalIgnoreCase)) 
-                : paragraphOrdered.Take(topParagraphs);
-        }
-
-        if (topParagraphs > 0 && paragraphs.Count > 0)
-        {
-            if (allErrors) builder.AppendLine("All paragraphs by WER:");
-            else builder.AppendLine($"Top {Math.Min(topParagraphs, paragraphs.Count)} paragraphs by WER:");
-
-            foreach (var paragraph in paragraphBucket)
-            {
-                builder.AppendLine($"  #{paragraph.Id} | WER {paragraph.Metrics.Wer:P1} | Coverage {paragraph.Metrics.Coverage:P1} | Status {paragraph.Status}");
-                builder.AppendLine($"    Book range: {paragraph.BookRange.Start}-{paragraph.BookRange.End}");
-
-                if (!string.IsNullOrWhiteSpace(paragraph.BookText))
-                {
-                    builder.AppendLine($"    Book   : {TrimText(paragraph.BookText)}");
-                }
-
-                builder.AppendLine();
-            }
-        }
-
-        return builder.ToString().TrimEnd();
     }
 
     private static FileInfo ResolveAdjustmentsPath(FileInfo txFile, FileInfo? overrideFile)
@@ -1288,178 +637,6 @@ public static class ValidateCommand
         throw new InvalidOperationException("Transcript does not reference an audioPath in hydrate or transcript JSON.");
     }
 
-    private static string ResolveRoomtonePath(
-        FileInfo? overrideRoomtone,
-        FileInfo txFile,
-        TranscriptIndex transcript,
-        HydratedTranscript hydrated,
-        string audioPath,
-        string? scriptPath,
-        string? baseDirectory,
-        BookIndex? bookIndex,
-        out double? stageFadeMs,
-        out double? stageAppliedGainDb)
-    {
-        stageFadeMs = null;
-        stageAppliedGainDb = null;
-
-        if (overrideRoomtone is not null)
-        {
-            if (!overrideRoomtone.Exists)
-            {
-                throw new FileNotFoundException("Specified roomtone file not found", overrideRoomtone.FullName);
-            }
-
-            return overrideRoomtone.FullName;
-        }
-
-        var directories = new List<string>();
-        var unique = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-
-        void AddDirectory(string? candidate)
-        {
-            if (string.IsNullOrWhiteSpace(candidate))
-            {
-                return;
-            }
-
-            string full = Path.GetFullPath(candidate);
-            if (unique.Add(full) && Directory.Exists(full))
-            {
-                directories.Add(full);
-            }
-        }
-
-        // Load stage parameters if available
-        var paramsPath = Path.Combine(Path.GetDirectoryName(audioPath) ?? string.Empty, "params.snapshot.json");
-        if (File.Exists(paramsPath))
-        {
-            try
-            {
-                using var doc = JsonDocument.Parse(File.ReadAllText(paramsPath));
-                if (doc.RootElement.TryGetProperty("parameters", out var parameters))
-                {
-                    if (parameters.TryGetProperty("fadeMs", out var fadeElement) && fadeElement.ValueKind == JsonValueKind.Number)
-                    {
-                        stageFadeMs = fadeElement.GetDouble();
-                    }
-                    if (parameters.TryGetProperty("appliedGainDb", out var appliedGainElement) && appliedGainElement.ValueKind == JsonValueKind.Number)
-                    {
-                        stageAppliedGainDb = appliedGainElement.GetDouble();
-                    }
-
-                    if (parameters.TryGetProperty("roomtoneSeedPath", out var seedElement) && seedElement.ValueKind == JsonValueKind.String)
-                    {
-                        var seedPath = seedElement.GetString();
-                        if (!string.IsNullOrWhiteSpace(seedPath) && File.Exists(seedPath))
-                        {
-                            return Path.GetFullPath(seedPath);
-                        }
-                    }
-                }
-            }
-            catch
-            {
-                // Ignore and fall back to directory search
-            }
-        }
-
-        AddDirectory(Path.GetDirectoryName(audioPath));
-
-        if (!string.IsNullOrWhiteSpace(scriptPath))
-        {
-            var scriptFull = MakeAbsolute(scriptPath, baseDirectory);
-            AddDirectory(Path.GetDirectoryName(scriptFull));
-        }
-
-        if (!string.IsNullOrWhiteSpace(baseDirectory))
-        {
-            AddDirectory(Path.GetFullPath(baseDirectory));
-        }
-
-        if (bookIndex?.SourceFile is not null)
-        {
-            var sourceFull = MakeAbsolute(bookIndex.SourceFile, baseDirectory);
-            AddDirectory(Path.GetDirectoryName(sourceFull));
-        }
-
-        AddDirectory(txFile.DirectoryName);
-
-        var current = txFile.DirectoryName;
-        for (int i = 0; i < 4 && !string.IsNullOrEmpty(current); i++)
-        {
-            current = Path.GetDirectoryName(current);
-            if (!string.IsNullOrEmpty(current))
-            {
-                AddDirectory(current);
-            }
-        }
-
-        var candidateNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
-        {
-            "roomtone"
-        };
-        void AddCandidateName(string? value)
-        {
-            var stem = NormalizeStem(value);
-            if (!string.IsNullOrWhiteSpace(stem)) candidateNames.Add(stem);
-        }
-
-        AddCandidateName(GetBaseStem(txFile.Name));
-        AddCandidateName(Path.GetFileNameWithoutExtension(audioPath));
-        AddCandidateName(Path.GetFileNameWithoutExtension(transcript.AudioPath));
-        AddCandidateName(Path.GetFileNameWithoutExtension(hydrated.AudioPath ?? string.Empty));
-
-        foreach (var dir in directories)
-        {
-            var match = Directory.EnumerateFiles(dir, "roomtone.wav", SearchOption.TopDirectoryOnly)
-                .FirstOrDefault(path => string.Equals(Path.GetFileName(path), "roomtone.wav", StringComparison.OrdinalIgnoreCase));
-            if (match is not null)
-            {
-                return match;
-            }
-        }
-
-        foreach (var dir in directories)
-        {
-            var candidates = Directory.EnumerateFiles(dir, "*.wav", SearchOption.TopDirectoryOnly)
-                .Where(path => !path.EndsWith(".treated.wav", StringComparison.OrdinalIgnoreCase)
-                               && !path.Contains(".pause", StringComparison.OrdinalIgnoreCase)
-                               && !path.Contains(".adjusted", StringComparison.OrdinalIgnoreCase))
-                .OrderBy(path => ScoreCandidate(path, candidateNames))
-                .ThenBy(Path.GetFileName)
-                .ToList();
-
-            if (candidates.Count > 0)
-            {
-                return candidates[0];
-            }
-        }
-
-        throw new FileNotFoundException("roomtone.wav not found in expected directories.");
-
-        static int ScoreCandidate(string path, HashSet<string> names)
-        {
-            var stem = NormalizeStem(Path.GetFileNameWithoutExtension(path));
-            if (string.Equals(stem, "roomtone", StringComparison.OrdinalIgnoreCase))
-            {
-                return 0;
-            }
-
-            if (names.Contains(stem))
-            {
-                return 1;
-            }
-
-            if (stem.Contains("room", StringComparison.OrdinalIgnoreCase))
-            {
-                return 2;
-            }
-
-            return 3;
-        }
-    }
-
     private static FileInfo BuildSiblingFile(string referencePath, string suffix)
     {
         var directory = Path.GetDirectoryName(referencePath) ?? Environment.CurrentDirectory;
@@ -1619,8 +796,6 @@ public static class ValidateCommand
             .Where(s => s is not null)
             .ToDictionary(s => s.Id) ?? new Dictionary<int, SentenceAlign>();
 
-        var analyzer = new AudioAnalysisService(audio);
-
         var accepted = new List<PauseAdjust>(plannedAdjustments.Count);
         var rejected = new List<(PauseAdjust Adjust, double Start, double End, double RmsDb)>();
 
@@ -1640,13 +815,13 @@ public static class ValidateCommand
                 continue;
             }
 
-            if (IsBreathSafe(audio, analyzer, spanStart, spanEnd))
+            if (IsBreathSafe(audio, spanStart, spanEnd))
             {
                 accepted.Add(adjust);
             }
             else
             {
-                double rms = analyzer.MeasureRms(spanStart, spanEnd);
+                double rms = AudioProcessor.MeasureRms(audio, spanStart, spanEnd);
                 rejected.Add((adjust, spanStart, spanEnd, rms));
             }
         }
@@ -1694,7 +869,7 @@ public static class ValidateCommand
         return string.Equals(sentence.Status, "ok", StringComparison.OrdinalIgnoreCase);
     }
 
-    private static bool IsBreathSafe(AudioBuffer audio, AudioAnalysisService analyzer, double startSec, double endSec)
+    private static bool IsBreathSafe(AudioBuffer audio, double startSec, double endSec)
     {
         if (endSec - startSec <= 0)
         {
@@ -1711,7 +886,7 @@ public static class ValidateCommand
 
         if (regions.Count == 0)
         {
-            double rms = analyzer.MeasureRms(startSec, endSec);
+            double rms = AudioProcessor.MeasureRms(audio, startSec, endSec);
             return rms <= BreathGuardSpeechThresholdDb;
         }
 
@@ -1722,7 +897,7 @@ public static class ValidateCommand
             double gapEnd = region.StartSec;
             if (gapEnd - gapStart >= BreathGuardMinSpanSec)
             {
-                double rms = analyzer.MeasureRms(gapStart, gapEnd);
+                double rms = AudioProcessor.MeasureRms(audio, gapStart, gapEnd);
                 if (rms > BreathGuardSpeechThresholdDb)
                 {
                     return false;
@@ -1734,7 +909,7 @@ public static class ValidateCommand
 
         if (endSec - cursor >= BreathGuardMinSpanSec)
         {
-            double rms = analyzer.MeasureRms(cursor, endSec);
+            double rms = AudioProcessor.MeasureRms(audio, cursor, endSec);
             if (rms > BreathGuardSpeechThresholdDb)
             {
                 return false;
@@ -1743,43 +918,5 @@ public static class ValidateCommand
 
         return true;
     }
-
-    private static string TrimText(string text, int? maxLength = null)
-    {
-        var normalized = text.Replace('\n', ' ').Replace('\r', ' ').Trim();
-        if (maxLength is null || normalized.Length <= maxLength.Value)
-        {
-            return normalized;
-        }
-
-        return normalized[..maxLength.Value].TrimEnd() + "…";
-    }
-
-    private sealed record SourceInfo(string AudioPath, string ScriptPath, string BookIndexPath, DateTime CreatedAtUtc);
-
-    private sealed record SentenceView(
-        int Id,
-        (int Start, int End) BookRange,
-        (int? Start, int? End)? ScriptRange,
-        SentenceMetrics Metrics,
-        string Status,
-        string? BookText,
-        string? ScriptText,
-        TimingRange? Timing);
-
-    private sealed record ParagraphView(
-        int Id,
-        (int Start, int End) BookRange,
-        ParagraphMetrics Metrics,
-        string Status,
-        string? BookText);
-
-    private sealed record WordTallies(int Match, int Substitution, int Insertion, int Deletion, int Total);
-
-    private sealed record ReportResult(
-        string Report,
-        IReadOnlyList<SentenceView> Sentences,
-        IReadOnlyList<ParagraphView> Paragraphs,
-        WordTallies? WordTallies);
 
 }

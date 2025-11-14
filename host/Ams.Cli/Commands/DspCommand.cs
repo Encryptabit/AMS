@@ -1,13 +1,12 @@
-using System;
-using System.Collections.Generic;
 using System.CommandLine;
 using System.CommandLine.Invocation;
-using System.IO;
-using System.Linq;
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using Ams.Cli.Utilities;
+using Ams.Core.Artifacts;
+using Ams.Core.Processors;
+using Ams.Core.Services.Integrations.FFmpeg;
 
 namespace Ams.Cli.Commands;
 
@@ -15,6 +14,25 @@ public static class DspCommand
 {
     private const string DefaultChainFileName = "dsp.chain.json";
     private const int DefaultBitDepth = 32;
+
+    private static readonly (string Name, Func<FfFilterGraph, FfFilterGraph> Apply)[] BuiltInFilterDefinitions =
+    [
+        ("highpass", g => g.HighPass(new HighPassFilterParams(Frequency: 35, Poles: 1))),
+        ("lowpass", g => g.LowPass(new LowPassFilterParams(Frequency: 14000, Poles: 1))),
+        ("deesser", g => g.DeEsser(new DeEsserFilterParams(NormalizedFrequency: 0.4, Intensity: 0.2, MaxReduction: 0.5, OutputMode: "o"))),
+        ("denoise", g => g.FftDenoise(new FftDenoiseFilterParams(NoiseReductionDb: 6))),
+        ("ndenoise", g => g.NeuralDenoise()),
+        ("aspectralstats", g => g.AspectralStats()),
+        ("dynaudnorm", g => g.DynaudNorm()),
+        ("astats", g => g.AStats(new AStatsFilterParams(EmitMetadata: true, ResetInterval: 1))),
+        ("compressor", g => g.ACompressor(new ACompressorFilterParams(ThresholdDb: -24, Ratio: 1.3, AttackMilliseconds: 5, ReleaseMilliseconds: 120, MakeupDb: 0.5))),
+        ("limiter", g => g.ALimiter(new ALimiterFilterParams(LimitDb: -1.0, AttackMilliseconds: 5, ReleaseMilliseconds: 60))),
+        ("loudnorm", g => g.LoudNorm(new LoudNormFilterParams(TargetI: -18, TargetLra: 7, TargetTp: -2, DualMono: true))),
+        ("resample", g => g.Resample(new ResampleFilterParams(SampleRate: 48000))),
+    ];
+
+    private static readonly IReadOnlyDictionary<string, Func<FfFilterGraph, FfFilterGraph>> BuiltInFilterMap =
+        BuiltInFilterDefinitions.ToDictionary(f => f.Name, f => f.Apply, StringComparer.OrdinalIgnoreCase);
 
     public static Command Create()
     {
@@ -28,6 +46,9 @@ public static class DspCommand
         dsp.AddCommand(CreateSetDirCommand());
         dsp.AddCommand(CreateInitCommand());
         dsp.AddCommand(CreateChainCommand());
+        dsp.AddCommand(CreateFiltersCommand());
+        dsp.AddCommand(CreateFilterChainCommand());
+        dsp.AddCommand(CreateTestAllCommand());
 
         return dsp;
     }
@@ -176,6 +197,109 @@ public static class DspCommand
         root.AddCommand(CreateChainRemoveCommand());
 
         return root;
+    }
+
+    private static Command CreateFiltersCommand()
+    {
+        var cmd = new Command("filters", "List built-in FFmpeg filter helpers");
+        cmd.SetHandler(() =>
+        {
+            Log.Info("Built-in FFmpeg filters:");
+            foreach (var (name, _) in BuiltInFilterDefinitions)
+            {
+                Console.WriteLine($"- {name}");
+            }
+        });
+        return cmd;
+    }
+
+    private static Command CreateFilterChainCommand()
+    {
+        var cmd = new Command("filter-chain", "Apply built-in FFmpeg filters to an input file");
+
+        var inputOption = new Option<FileInfo?>("--input", "Input audio file (defaults to active chapter)");
+        var filtersOption = new Option<string[]>("--filters", () => Array.Empty<string>(), "Filters to apply (see dsp filters)")
+        {
+            AllowMultipleArgumentsPerToken = true
+        };
+        var saveOption = new Option<bool>("--save", () => false, "Write filtered audio to disk");
+        var outputOption = new Option<FileInfo?>("--output", "Optional output path when using --save");
+
+        inputOption.AddAlias("-i");
+        cmd.AddOption(inputOption);
+        cmd.AddOption(filtersOption);
+        cmd.AddOption(saveOption);
+        cmd.AddOption(outputOption);
+
+        cmd.SetHandler(context =>
+        {
+            var token = context.GetCancellationToken();
+            try
+            {
+                var inputFile = CommandInputResolver.RequireAudio(context.ParseResult.GetValueForOption(inputOption));
+                var filterNames = context.ParseResult.GetValueForOption(filtersOption);
+                if (filterNames is null || filterNames.Length == 0)
+                {
+                    throw new InvalidOperationException("Specify at least one filter via --filters (run 'dsp filters' to list options).");
+                }
+
+                var save = context.ParseResult.GetValueForOption(saveOption);
+                var outputFile = context.ParseResult.GetValueForOption(outputOption);
+                if (!save && outputFile is not null)
+                {
+                    throw new InvalidOperationException("--output can only be used with --save.");
+                }
+
+                ExecuteFilterChain(inputFile, filterNames, save, outputFile);
+            }
+            catch (Exception ex)
+            {
+                Log.Error(ex, "dsp filter-chain failed");
+                context.ExitCode = 1;
+            }
+        });
+
+        return cmd;
+    }
+
+    private static Command CreateTestAllCommand()
+    {
+        var cmd = new Command("test-all", "Run all built-in FFmpeg filters in sequence to validate the pipeline");
+
+        var inputOption = new Option<FileInfo?>("--input", "Input audio file (defaults to active chapter)");
+        var saveOption = new Option<bool>("--save", () => false, "Write filtered audio to disk");
+        var outputOption = new Option<FileInfo?>("--output", "Optional output path when using --save");
+
+        inputOption.AddAlias("-i");
+        cmd.AddOption(inputOption);
+        cmd.AddOption(saveOption);
+        cmd.AddOption(outputOption);
+
+        cmd.SetHandler(context =>
+        {
+            var token = context.GetCancellationToken();
+            try
+            {
+                var inputFile = CommandInputResolver.RequireAudio(context.ParseResult.GetValueForOption(inputOption));
+                var filterNames = BuiltInFilterDefinitions.Select(f => f.Name).ToArray();
+
+                var save = context.ParseResult.GetValueForOption(saveOption);
+                var outputFile = context.ParseResult.GetValueForOption(outputOption);
+                if (!save && outputFile is not null)
+                {
+                    throw new InvalidOperationException("--output can only be used with --save.");
+                }
+
+                ExecuteFilterChain(inputFile, filterNames, save, outputFile);
+            }
+            catch (Exception ex)
+            {
+                Log.Error(ex, "dsp test-all failed");
+                context.ExitCode = 1;
+            }
+        });
+
+        return cmd;
     }
 
     private static Command CreateChainListCommand()
@@ -1106,6 +1230,83 @@ public static class DspCommand
                 Log.Debug("[dsp] Intermediate files kept at {Path}", workRoot);
             }
         }
+    }
+    
+    private static void ExecuteFilterChain(
+        FileInfo inputFile,
+        IReadOnlyList<string> filterNames,
+        bool saveOutput,
+        FileInfo? explicitOutput)
+    {
+        if (filterNames.Count == 0)
+        {
+            throw new InvalidOperationException("Specify at least one filter.");
+        }
+
+        var buffer = AudioProcessor.Decode(inputFile.FullName);
+        var graph = BuildFilterGraph(buffer, filterNames);
+
+        if (saveOutput)
+        {
+            var resolved = ResolveFilteredOutput(explicitOutput, inputFile);
+            Directory.CreateDirectory(resolved.DirectoryName ?? Directory.GetCurrentDirectory());
+            using var stream = File.Create(resolved.FullName);
+            var encodeOptions = new AudioEncodeOptions(
+                TargetSampleRate: buffer.SampleRate,
+                TargetBitDepth: 32);
+            graph.StreamToWave(stream, encodeOptions);
+            Log.Info("Filtered audio written to {Output}", resolved.FullName);
+        }
+        else
+        {
+            graph.RunDiscardingOutput();
+            Log.Info("Filter chain executed for {Input} ({Count} filters)", inputFile.FullName, filterNames.Count);
+        }
+    }
+
+    private static FfFilterGraph BuildFilterGraph(AudioBuffer buffer, IReadOnlyList<string> filterNames)
+    {
+        var graph = FfFilterGraph.FromBuffer(buffer);
+        foreach (var filter in filterNames)
+        {
+            if (!BuiltInFilterMap.TryGetValue(filter, out var apply))
+            {
+                throw new InvalidOperationException($"Unknown filter '{filter}'. Run 'dsp filters' to list available filters.");
+            }
+
+            graph = apply(graph);
+        }
+
+        return graph;
+    }
+
+    private static FileInfo ResolveFilteredOutput(FileInfo? explicitOutput, FileInfo inputFile)
+    {
+        if (explicitOutput is not null)
+        {
+            return explicitOutput;
+        }
+
+        var chapterArtifact = CommandInputResolver.TryResolveChapterArtifact(
+            provided: null,
+            suffix: "dsp.filtered.wav",
+            mustExist: false);
+
+        if (chapterArtifact is not null)
+        {
+            var artifactDirectory = chapterArtifact.DirectoryName;
+            if (!string.IsNullOrEmpty(artifactDirectory))
+            {
+                Directory.CreateDirectory(artifactDirectory);
+            }
+
+            return chapterArtifact;
+        }
+
+        var directory = inputFile.DirectoryName ?? Directory.GetCurrentDirectory();
+        var stem = Path.GetFileNameWithoutExtension(inputFile.Name);
+        var candidate = Path.Combine(directory, $"{stem}.filtered.wav");
+        return new FileInfo(candidate);
     }
 
     private static (IReadOnlyList<string> Inputs, string? MidiInput) ResolveInputs(

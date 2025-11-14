@@ -7,7 +7,7 @@
 
 ## Domain Namespaces
 
-### `Ams.Core.Book`
+### `Ams.Core.Runtime.Documents`
 - Book parsing, indexing, caching, and related models.
 - Responsible for emitting `book-index.json` and validating source manuscripts.
 
@@ -21,7 +21,7 @@
 
 ### `Ams.Core.Audio`
 - DSP utilities, audio analysis, and room-tone rendering.
-- Hosts `AudioAnalysisService` and upcoming sentence-level RMS heuristics.
+- Energy/silence heuristics now live on `Ams.Core.Processors.AudioProcessor` (FFmpeg-backed primitives) replacing the legacy `AudioAnalysisService`.
 
 ### `Ams.Core.Pipeline`
 - Stage orchestration, manifest handling, and CLI-facing workflow glue.

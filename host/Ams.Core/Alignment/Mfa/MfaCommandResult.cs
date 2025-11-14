@@ -1,5 +1,0 @@
-using System.Collections.Generic;
-
-namespace Ams.Core.Alignment.Mfa;
-
-public sealed record MfaCommandResult(string Command, int ExitCode, IReadOnlyList<string> StdOut, IReadOnlyList<string> StdErr);

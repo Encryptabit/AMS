@@ -1,9 +1,6 @@
 using System.CommandLine;
 using System.Text.Json;
-using Ams.Core.Alignment.Tx;
 using Ams.Core.Artifacts;
-using Ams.Core;
-using Ams.Core.Common;
 using Ams.Cli.Utilities;
 
 namespace Ams.Cli.Commands;
