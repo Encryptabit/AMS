@@ -11,7 +11,7 @@ else
     <MudList T="string" Dense="true">
         @foreach (var sentence in Sentences)
         {
-            <MudListItem OnClick="@(() => OnSentenceClick(sentence))"
+            <MudListItem Class="ma-5" OnClick="@(() => OnSentenceClick(sentence))"
                          Selected="@(sentence == SelectedSentence)">
                 <MudStack Row="true" AlignItems="AlignItems.Start" Spacing="2">
                     <MudText Typo="Typo.caption" Color="Color.Secondary" Style="min-width: 50px; text-align: right; font-family: 'Consolas', monospace;">
@@ -43,7 +43,6 @@ else
                     }
                 </MudStack>
             </MudListItem>
-            <MudDivider />
         }
     </MudList>
 }
