@@ -84,6 +84,8 @@ public sealed class ChapterContextFactory : IChapterContextFactory
         var audioPath = audioFile?.FullName ?? Path.Combine(chapterRoot, $"{chapterStem}.wav");
         var bookIndex = LoadJson<BookIndex>(bookIndexFile.FullName);
 
+        var aliases = BuildAliasSet(chapterStem, chapterRoot, bookIndex, out var matchedSection);
+
         var initialDescriptor = new ChapterDescriptor(
             chapterId: chapterStem,
             rootPath: chapterRoot,
@@ -91,7 +93,9 @@ public sealed class ChapterContextFactory : IChapterContextFactory
             {
                 new AudioBufferDescriptor("raw", audioPath)
             },
-            aliases: BuildAliasSet(chapterStem, chapterRoot, bookIndex));
+            aliases: aliases,
+            bookStartWord: matchedSection?.StartWord,
+            bookEndWord: matchedSection?.EndWord);
 
         var bookRoot = bookIndexFile.Directory?.FullName ?? Directory.GetCurrentDirectory();
         var bookDescriptor = new BookDescriptor(
@@ -249,8 +253,10 @@ public sealed class ChapterContextFactory : IChapterContextFactory
         var rootPath = string.IsNullOrWhiteSpace(incoming.RootPath) ? existing.RootPath : incoming.RootPath;
         var audioBuffers = existing.AudioBuffers.Count > 0 ? existing.AudioBuffers : incoming.AudioBuffers;
         var documents = existing.Documents ?? incoming.Documents;
+        var startWord = incoming.BookStartWord ?? existing.BookStartWord;
+        var endWord = incoming.BookEndWord ?? existing.BookEndWord;
 
-        return new ChapterDescriptor(existing.ChapterId, rootPath, audioBuffers, documents, aliases);
+        return new ChapterDescriptor(existing.ChapterId, rootPath, audioBuffers, documents, aliases, startWord, endWord);
     }
 
     private static IReadOnlyCollection<string> MergeAliases(ChapterDescriptor existing, ChapterDescriptor incoming)
@@ -272,8 +278,13 @@ public sealed class ChapterContextFactory : IChapterContextFactory
         return aliases.ToArray();
     }
 
-    private static IReadOnlyCollection<string> BuildAliasSet(string chapterId, string chapterRoot, BookIndex bookIndex)
+    private static IReadOnlyCollection<string> BuildAliasSet(
+        string chapterId,
+        string chapterRoot,
+        BookIndex bookIndex,
+        out SectionRange? matchedSection)
     {
+        matchedSection = null;
         var aliases = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         AddAlias(aliases, chapterId);
 
@@ -283,19 +294,40 @@ public sealed class ChapterContextFactory : IChapterContextFactory
             AddAlias(aliases, rootName);
         }
 
-        var section = SectionLocator.ResolveSectionByTitle(bookIndex, chapterId);
-        if (section is null && !string.IsNullOrWhiteSpace(chapterRoot))
-        {
-            var rootName = Path.GetFileName(chapterRoot.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
-            section = SectionLocator.ResolveSectionByTitle(bookIndex, rootName);
-        }
+        matchedSection = TryResolveSection(bookIndex, chapterId)
+            ?? TryResolveSection(bookIndex, Path.GetFileName(chapterRoot?.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) ?? string.Empty))
+            ?? TryResolveSectionFromAliases(bookIndex, aliases);
 
-        if (section is not null && !string.IsNullOrWhiteSpace(section.Title))
+        if (matchedSection is not null && !string.IsNullOrWhiteSpace(matchedSection.Title))
         {
-            AddAlias(aliases, section.Title);
+            AddAlias(aliases, matchedSection.Title);
         }
 
         return aliases.ToArray();
+    }
+
+    private static SectionRange? TryResolveSection(BookIndex bookIndex, string? label)
+    {
+        if (string.IsNullOrWhiteSpace(label))
+        {
+            return null;
+        }
+
+        return SectionLocator.ResolveSectionByTitle(bookIndex, label);
+    }
+
+    private static SectionRange? TryResolveSectionFromAliases(BookIndex bookIndex, IEnumerable<string> aliases)
+    {
+        foreach (var alias in aliases)
+        {
+            var section = TryResolveSection(bookIndex, alias);
+            if (section is not null)
+            {
+                return section;
+            }
+        }
+
+        return null;
     }
 
     private static void AddAlias(ISet<string> aliases, string? value)
@@ -370,8 +402,6 @@ public sealed class ChapterContextFactory : IChapterContextFactory
         }
 
         throw new ArgumentException("Chapter identifier must be provided.");
-
-        return string.Empty;
     }
 
     private static string ResolveChapterRoot(

@@ -1,8 +1,9 @@
 using System;
-using Ams.Core.Artifacts.Alignment;
-using Ams.Core.Asr;
 using Ams.Core.Artifacts;
+using Ams.Core.Artifacts.Alignment;
+using Ams.Core.Artifacts.Alignment.Mfa;
 using Ams.Core.Artifacts.Hydrate;
+using Ams.Core.Asr;
 using Ams.Core.Prosody;
 using Ams.Core.Runtime.Artifacts;
 using Ams.Core.Runtime.Common;
@@ -18,6 +19,7 @@ public sealed class ChapterDocuments
     private readonly DocumentSlot<string> _asrTranscriptText;
     private readonly DocumentSlot<PauseAdjustmentsDocument> _pauseAdjustments;
     private readonly DocumentSlot<PausePolicy> _pausePolicy;
+    private readonly DocumentSlot<TextGridDocument> _textGrid;
 
     internal ChapterDocuments(ChapterContext context, IArtifactResolver resolver)
     {
@@ -51,6 +53,10 @@ public sealed class ChapterDocuments
         _pausePolicy = new DocumentSlot<PausePolicy>(
             () => resolver.LoadPausePolicy(context),
             value => resolver.SavePausePolicy(context, value));
+
+        _textGrid = new DocumentSlot<TextGridDocument>(
+            () => resolver.LoadTextGrid(context),
+            _ => { });
     }
 
     public TranscriptIndex? Transcript
@@ -99,6 +105,12 @@ public sealed class ChapterDocuments
         }
     }
 
+    public TextGridDocument? TextGrid
+    {
+        get => _textGrid.GetValue();
+        set => _textGrid.SetValue(value);
+    }
+
     internal bool IsDirty =>
         _transcript.IsDirty ||
         _hydratedTranscript.IsDirty ||
@@ -106,7 +118,8 @@ public sealed class ChapterDocuments
         _asr.IsDirty ||
         _asrTranscriptText.IsDirty ||
         _pauseAdjustments.IsDirty ||
-        _pausePolicy.IsDirty;
+        _pausePolicy.IsDirty ||
+        _textGrid.IsDirty;
 
     internal void SaveChanges()
     {
@@ -117,5 +130,6 @@ public sealed class ChapterDocuments
         _asrTranscriptText.Save();
         _pauseAdjustments.Save();
         _pausePolicy.Save();
+        _textGrid.Save();
     }
 }

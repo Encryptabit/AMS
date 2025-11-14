@@ -1,7 +1,8 @@
-using Ams.Core.Artifacts.Alignment;
-using Ams.Core.Asr;
 using Ams.Core.Artifacts;
+using Ams.Core.Artifacts.Alignment;
+using Ams.Core.Artifacts.Alignment.Mfa;
 using Ams.Core.Artifacts.Hydrate;
+using Ams.Core.Asr;
 using Ams.Core.Prosody;
 using Ams.Core.Runtime.Book;
 using Ams.Core.Runtime.Chapter;
@@ -34,4 +35,7 @@ public interface IArtifactResolver
 
     PauseAdjustmentsDocument? LoadPauseAdjustments(ChapterContext context);
     void SavePauseAdjustments(ChapterContext context, PauseAdjustmentsDocument document);
+
+    TextGridDocument? LoadTextGrid(ChapterContext context);
+    void SaveTextGrid(ChapterContext context, TextGridDocument document);
 }

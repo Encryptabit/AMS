@@ -1,10 +1,13 @@
 using System;
 using System.IO;
+using System.Linq;
 using System.Text.Json;
-using Ams.Core.Artifacts.Alignment;
-using Ams.Core.Asr;
 using Ams.Core.Artifacts;
+using Ams.Core.Artifacts.Alignment;
+using Ams.Core.Artifacts.Alignment.Mfa;
 using Ams.Core.Artifacts.Hydrate;
+using Ams.Core.Asr;
+using Ams.Core.Processors.Alignment.Mfa;
 using Ams.Core.Prosody;
 using Ams.Core.Runtime.Book;
 using Ams.Core.Runtime.Chapter;
@@ -108,6 +111,25 @@ public sealed class FileArtifactResolver : IArtifactResolver
         document.Save(path);
     }
 
+    public TextGridDocument? LoadTextGrid(ChapterContext context)
+    {
+        var path = GetTextGridPath(context);
+        if (!File.Exists(path))
+        {
+            return null;
+        }
+
+        var intervals = TextGridParser.ParseWordIntervals(path).ToList();
+        return new TextGridDocument(path, DateTime.UtcNow, intervals);
+    }
+
+    public void SaveTextGrid(ChapterContext context, TextGridDocument document)
+    {
+        _ = context;
+        _ = document;
+        // TextGrid documents are derived from the MFA output TextGrid file and do not need separate persistence.
+    }
+
     private static PauseAdjustmentsDocument? LoadPauseAdjustmentsInternal(string path)
     {
         if (!File.Exists(path))
@@ -190,6 +212,14 @@ public sealed class FileArtifactResolver : IArtifactResolver
         var directory = GetChapterRoot(context.Descriptor);
         var stem = GetChapterStem(context.Descriptor);
         return Path.Combine(directory, $"{stem}.{suffix}");
+    }
+
+    private static string GetTextGridPath(ChapterContext context)
+    {
+        var chapterRoot = GetChapterRoot(context.Descriptor);
+        var stem = GetChapterStem(context.Descriptor);
+        var alignmentDir = Path.Combine(chapterRoot, "alignment", "mfa");
+        return Path.Combine(alignmentDir, $"{stem}.TextGrid");
     }
 
     private static void EnsureDirectory(string filePath)
