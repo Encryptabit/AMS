@@ -28,7 +28,6 @@ public partial class Home : ComponentBase, IAsyncDisposable
     private double _currentPlaybackTime;
     private string? _lastExportMessage;
     private AudioTransport? _audioTransport;
-    private bool _keyDownPreventDefault;
     private readonly CancellationTokenSource _cts = new();
 
     protected override async Task OnInitializedAsync()
@@ -246,36 +245,29 @@ public partial class Home : ComponentBase, IAsyncDisposable
 
     private async Task HandleKeyDown(KeyboardEventArgs e)
     {
-        _keyDownPreventDefault = false;
-
         switch (e.Key.ToLowerInvariant())
         {
             case " ":
             case "spacebar":
-                _keyDownPreventDefault = true;
                 await TogglePlayPause();
                 break;
 
             case "arrowup":
-                _keyDownPreventDefault = true;
                 await NavigatePrevious();
                 break;
 
             case "arrowdown":
-                _keyDownPreventDefault = true;
                 await NavigateNext();
                 break;
 
             case "e":
                 if (!e.CtrlKey && !e.AltKey)
                 {
-                    _keyDownPreventDefault = true;
                     await ExportCurrentSentence();
                 }
                 break;
 
             case "escape":
-                _keyDownPreventDefault = true;
                 await StopPlayback();
                 break;
         }
@@ -312,8 +304,8 @@ public partial class Home : ComponentBase, IAsyncDisposable
             ? null
             : $"api/chapters/{Uri.EscapeDataString(_selectedChapter.Id)}/audio";
 
-    private string ContentAreaStyle =>
-        _drawerOpen ? "margin-left: 280px;" : "margin-left: 0;";
+    private string ContentMarginStyle =>
+        _drawerOpen ? "margin-left: 280px; transition: margin-left 0.3s ease;" : "margin-left: 0; transition: margin-left 0.3s ease;";
 
     private bool CanNavigatePrevious
     {

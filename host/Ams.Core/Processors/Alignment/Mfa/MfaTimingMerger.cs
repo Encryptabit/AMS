@@ -1,855 +1,403 @@
-using System.Linq;
-using System.Text.Json;
-using System.Text.Json.Nodes;
-using Ams.Core.Artifacts;
-using Ams.Core.Artifacts.Hydrate;
-using Ams.Core.Processors.Alignment.Anchors;
-using Ams.Core.Runtime.Chapter;
+// MfaTimingMerger.cs
+// Robust, token-aware merger of MFA TextGrid timings into hydrate using global alignment.
+// - Handles count mismatches (e.g., 1140 TG tokens vs 1119 book tokens)
+// - Treats <unk>/unk as a wildcard for the current book token
+// - Aligns with Needleman–Wunsch (global) and applies timings
+// - Hyphen / quote / unicode normalization made symmetric
+//
+// Integration notes:
+//  - Provide TextGridWord[] from your TextGrid "words" tier.
+//  - Provide getBookToken(bookIdx) for indices in [chapterStartBookIdx, chapterEndBookIdx].
+//  - Provide WordTarget/SentenceTarget adapters for your hydrate structures.
 
-namespace Ams.Core.Processors.Alignment.Mfa;
+using System.Text;
 
-public static class MfaTimingMerger
+namespace Ams.Core.Processors.Alignment.Mfa
 {
-    private static readonly JsonSerializerOptions SerializerOptions = new()
+    // -------- Public surface -------------------------------------------------
+
+    public static class MfaTimingMerger
     {
-        PropertyNameCaseInsensitive = true,
-        WriteIndented = true
-    };
-
-    public static void MergeTimings(FileInfo hydrateFile, FileInfo textGridFile, IReadOnlyDictionary<int, (string? ScriptText, string? BookText)>? fallbackTexts = null)
-    {
-        if (!hydrateFile.Exists)
+        /// <summary>
+        /// Aligns TextGrid tokens to book tokens and applies timings to hydrate words/sentences.
+        /// </summary>
+        /// <param name="textGridWords">TextGrid "word" intervals (non-empty text only)</param>
+        /// <param name="getBookToken">Fetcher for raw book token by bookIdx</param>
+        /// <param name="chapterStartBookIdx">Inclusive start of the chapter word window</param>
+        /// <param name="chapterEndBookIdx">Inclusive end of the chapter word window</param>
+        /// <param name="wordTargets">Adapters for hydrate words (provide BookIdx and a setter)</param>
+        /// <param name="sentenceTargets">Adapters for hydrate sentences (provide book range and setter)</param>
+        /// <param name="debugLog">Optional debug logger (e.g., s => Log.Debug(s))</param>
+        public static MergeReport MergeAndApply(
+            IEnumerable<TextGridWord> textGridWords,
+            Func<int, string> getBookToken,
+            int chapterStartBookIdx,
+            int chapterEndBookIdx,
+            IEnumerable<WordTarget> wordTargets,
+            IEnumerable<SentenceTarget> sentenceTargets,
+            Action<string>? debugLog = null)
         {
-            Log.Debug("Hydrate file not found; skipping MFA timing merge ({File})", hydrateFile.FullName);
-            return;
-        }
+            // 1) Build normalized token streams
+            var tgTokens   = BuildTimedTgTokens(textGridWords);
+            var bookTokens = BuildBookTokens(getBookToken, chapterStartBookIdx, chapterEndBookIdx);
 
-        if (!textGridFile.Exists)
-        {
-            Log.Debug("TextGrid file not found; skipping MFA timing merge ({File})", textGridFile.FullName);
-            return;
-        }
+            // 2) Global alignment (unk treated as wildcard)
+            var ar = Align(bookTokens, tgTokens);
 
-        var textGridIntervals = TextGridParser.ParseWordIntervals(textGridFile.FullName)
-            .Where(w => !string.IsNullOrWhiteSpace(w.Text))
-            .ToList();
+            // 3) Build bookIdx -> (start,end) timing map (merge duplicates)
+            var timingMap = BuildBookTimingMap(ar, tgTokens);
 
-        if (textGridIntervals.Count == 0)
-        {
-            Log.Debug("TextGrid contained no word intervals ({File})", textGridFile.FullName);
-            return;
-        }
+            // 4) Apply to hydrate words & sentences
+            int wordsUpdated     = ApplyWordTimings(timingMap, wordTargets);
+            int sentencesUpdated = ApplySentenceTimings(timingMap, sentenceTargets);
 
-        var intervalTokens = BuildIntervalTokens(textGridIntervals);
-        if (intervalTokens.Count == 0)
-        {
-            Log.Debug("TextGrid contained no usable tokens ({File})", textGridFile.FullName);
-            return;
-        }
+            // 5) Log summary
+            debugLog?.Invoke(
+                $"MFA alignment: TG tokens={tgTokens.Count}, Book tokens={bookTokens.Count}, " +
+                $"pairs={ar.Pairs.Count}, match={ar.Matches}, wild={ar.WildMatches}, " +
+                $"ins={ar.Insertions}, del={ar.Deletions}. " +
+                $"Updated {sentencesUpdated} sentences and {wordsUpdated} words."
+            );
 
-        var intervalCursor = 0;
-        double previousEndSec = 0.0;
-
-        var hydrateNode = JsonNode.Parse(File.ReadAllText(hydrateFile.FullName))?.AsObject();
-        if (hydrateNode is null)
-        {
-            Log.Debug("Failed to parse hydrate JSON; skipping MFA timing merge ({File})", hydrateFile.FullName);
-            return;
-        }
-
-        if (hydrateNode["sentences"] is not JsonArray sentencesArray)
-        {
-            Log.Debug("Hydrate JSON missing sentences array; skipping MFA timing merge ({File})", hydrateFile.FullName);
-            return;
-        }
-
-        var updated = 0;
-        foreach (var sentenceNode in sentencesArray.OfType<JsonObject>())
-        {
-            if (!TryFindSentenceTiming(sentenceNode, intervalTokens, ref intervalCursor, previousEndSec, fallbackTexts, out var start, out var end))
+            return new MergeReport
             {
-                continue;
-            }
-
-            if (end <= start)
-            {
-                continue;
-            }
-
-            var duration = end - start;
-
-            if (sentenceNode["timing"] is not JsonObject timingNode)
-            {
-                timingNode = new JsonObject();
-                sentenceNode["timing"] = timingNode;
-            }
-
-            timingNode["startSec"] = start;
-            timingNode["endSec"] = end;
-            timingNode["duration"] = duration;
-
-            updated++;
-            previousEndSec = end;
-        }
-
-        if (updated == 0)
-        {
-            Log.Debug("No MFA timings applied for {File}", hydrateFile.FullName);
-            return;
-        }
-
-        File.WriteAllText(hydrateFile.FullName, hydrateNode.ToJsonString(SerializerOptions));
-        Log.Debug("Updated {Count} sentences with MFA timings ({File})", updated, hydrateFile.Name);
-    }
-
-    public static void MergeTimings(
-        ChapterContext chapter,
-        FileInfo textGridFile,
-        bool updateHydratedTranscript = true,
-        bool updateTranscriptIndex = true)
-    {
-        if (!updateHydratedTranscript && !updateTranscriptIndex)
-        {
-            return;
-        }
-
-        var textGridDocument = chapter.Documents.TextGrid;
-        if (textGridDocument is null || textGridDocument.Intervals.Count == 0)
-        {
-            Log.Debug("TextGrid document not loaded; skipping MFA timing merge for {Chapter}", chapter.Descriptor.ChapterId);
-            return;
-        }
-
-        var bookIndex = chapter.Book.Documents.BookIndex ?? throw new InvalidOperationException("BookIndex is not loaded.");
-        if (bookIndex.Words.Length == 0)
-        {
-            Log.Debug("BookIndex contains no words; skipping MFA timing merge");
-            return;
-        }
-
-        var nonEmptyIntervalCount = textGridDocument.Intervals.Count(static interval => !string.IsNullOrWhiteSpace(interval.Text));
-        if (nonEmptyIntervalCount == 0)
-        {
-            Log.Debug("TextGrid contained no word intervals ({File})", textGridFile.FullName);
-            return;
-        }
-
-        var (chapterStartWord, chapterEndWord) = ResolveChapterWordWindow(chapter, bookIndex);
-        var chapterWordCount = Math.Max(0, chapterEndWord - chapterStartWord + 1);
-        if (chapterWordCount == 0)
-        {
-            Log.Debug("Chapter {Chapter} has an empty word window; skipping MFA timing merge", chapter.Descriptor.ChapterId);
-            return;
-        }
-
-        if (nonEmptyIntervalCount != chapterWordCount)
-        {
-            Log.Debug(
-                "TextGrid word count {GridCount} differs from chapter word window ({ChapterCount}); mapping sequentially",
-                nonEmptyIntervalCount,
-                chapterWordCount);
-        }
-
-        var wordTimings = BuildWordTimingIndex(bookIndex, chapterStartWord, chapterEndWord, textGridDocument.Intervals);
-
-        HydrateUpdateResult hydrateResult = new(null, 0, 0);
-        if (updateHydratedTranscript && chapter.Documents.HydratedTranscript is { } hydratedTranscript)
-        {
-            hydrateResult = ApplyHydratedTranscriptTimings(hydratedTranscript, wordTimings);
-            if (hydrateResult.Transcript is not null)
-            {
-                chapter.Documents.HydratedTranscript = hydrateResult.Transcript;
-            }
-        }
-
-        TranscriptUpdateResult transcriptResult = new(null, 0);
-        if (updateTranscriptIndex && chapter.Documents.Transcript is { } transcript)
-        {
-            transcriptResult = ApplyTranscriptIndexTimings(transcript, wordTimings);
-            if (transcriptResult.Transcript is not null)
-            {
-                chapter.Documents.Transcript = transcriptResult.Transcript;
-            }
-        }
-
-        if (hydrateResult.Transcript is null && transcriptResult.Transcript is null)
-        {
-            Log.Debug("No MFA timings applied for chapter {Chapter}", chapter.Descriptor.ChapterId);
-            return;
-        }
-
-        chapter.Documents.SaveChanges();
-
-        if (hydrateResult.Transcript is not null)
-        {
-            Log.Debug(
-                "Updated {SentenceCount} hydrated sentences and {WordCount} hydrated words with MFA timings for ({Chapter})",
-                hydrateResult.SentencesUpdated,
-                hydrateResult.WordsUpdated,
-                chapter.Descriptor.ChapterId);
-        }
-
-        if (transcriptResult.Transcript is not null)
-        {
-            Log.Debug(
-                "Updated {SentenceCount} transcript sentences with MFA timings for ({Chapter})",
-                transcriptResult.SentencesUpdated,
-                chapter.Descriptor.ChapterId);
-        }
-    }
-
-    private static List<IntervalToken> BuildIntervalTokens(IReadOnlyList<TextGridInterval> intervals)
-    {
-        var tokens = new List<IntervalToken>(intervals.Count);
-        tokens.AddRange(from interval in intervals
-            let normalized = TextNormalizer.NormalizeTypography(interval.Text)
-            let token = Sanitize(normalized)
-            where !string.IsNullOrEmpty(token)
-            select new IntervalToken(interval.Start, interval.End, token));
-
-        return tokens;
-    }
-
-    private static ChapterWordTimings BuildWordTimingIndex(
-        BookIndex bookIndex,
-        int startWord,
-        int endWord,
-        IReadOnlyList<TextGridInterval> intervals)
-    {
-        var length = Math.Max(0, endWord - startWord + 1);
-        var map = new TimingRange?[length];
-
-        if (length == 0 || intervals.Count == 0)
-        {
-            return new ChapterWordTimings(startWord, endWord, map);
-        }
-
-        var bookTokens = BuildBookTokens(bookIndex, startWord, endWord);
-        var intervalWords = BuildIntervalWords(intervals);
-        var alignment = AlignBookToIntervals(bookTokens, intervalWords);
-
-        for (var wordOffset = 0; wordOffset < alignment.Length; wordOffset++)
-        {
-            var matchIndex = alignment[wordOffset];
-            if (matchIndex < 0 || matchIndex >= intervalWords.Count)
-            {
-                continue;
-            }
-
-            var interval = intervals[intervalWords[matchIndex].IntervalIndex];
-            map[wordOffset] = new TimingRange(interval.Start, interval.End);
-        }
-
-        return new ChapterWordTimings(startWord, endWord, map);
-    }
-
-    private static string[] BuildBookTokens(BookIndex bookIndex, int startWord, int endWord)
-    {
-        var length = Math.Max(0, endWord - startWord + 1);
-        var tokens = new string[length];
-        for (var i = 0; i < length; i++)
-        {
-            var idx = startWord + i;
-            if (idx < 0 || idx >= bookIndex.Words.Length)
-            {
-                tokens[i] = string.Empty;
-                continue;
-            }
-
-            var normalized = TextNormalizer.NormalizeTypography(bookIndex.Words[idx].Text);
-            tokens[i] = Sanitize(normalized);
-        }
-
-        return tokens;
-    }
-
-    private static List<IntervalWord> BuildIntervalWords(IReadOnlyList<TextGridInterval> intervals)
-    {
-        var words = new List<IntervalWord>(intervals.Count);
-        for (var i = 0; i < intervals.Count; i++)
-        {
-            var interval = intervals[i];
-            if (string.IsNullOrWhiteSpace(interval.Text))
-            {
-                continue;
-            }
-
-            if (interval.End <= interval.Start)
-            {
-                continue;
-            }
-
-            var normalized = TextNormalizer.NormalizeTypography(interval.Text);
-            var token = Sanitize(normalized);
-            if (string.IsNullOrEmpty(token))
-            {
-                continue;
-            }
-
-            words.Add(new IntervalWord(i, token));
-        }
-
-        return words;
-    }
-
-    private static int[] AlignBookToIntervals(IReadOnlyList<string> bookTokens, IReadOnlyList<IntervalWord> intervalWords)
-    {
-        var bookLength = bookTokens.Count;
-        var intervalLength = intervalWords.Count;
-        var mapping = Enumerable.Repeat(-1, bookLength).ToArray();
-
-        if (bookLength == 0 || intervalLength == 0)
-        {
-            return mapping;
-        }
-
-        const int matchScore = 2;
-        const int mismatchPenalty = -1;
-        const int gapPenalty = -1;
-
-        var scores = new int[bookLength + 1, intervalLength + 1];
-        var moves = new byte[bookLength + 1, intervalLength + 1];
-
-        for (var i = 1; i <= bookLength; i++)
-        {
-            scores[i, 0] = i * gapPenalty;
-            moves[i, 0] = 1;
-        }
-
-        for (var j = 1; j <= intervalLength; j++)
-        {
-            scores[0, j] = j * gapPenalty;
-            moves[0, j] = 2;
-        }
-
-        for (var i = 1; i <= bookLength; i++)
-        {
-            for (var j = 1; j <= intervalLength; j++)
-            {
-                var diag = scores[i - 1, j - 1] +
-                           (TokensMatch(bookTokens[i - 1], intervalWords[j - 1].Token) ? matchScore : mismatchPenalty);
-                var up = scores[i - 1, j] + gapPenalty;
-                var left = scores[i, j - 1] + gapPenalty;
-
-                var best = diag;
-                byte move = 0;
-                if (up > best)
-                {
-                    best = up;
-                    move = 1;
-                }
-
-                if (left > best)
-                {
-                    best = left;
-                    move = 2;
-                }
-
-                scores[i, j] = best;
-                moves[i, j] = move;
-            }
-        }
-
-        var b = bookLength;
-        var t = intervalLength;
-        while (b > 0 && t > 0)
-        {
-            var move = moves[b, t];
-            switch (move)
-            {
-                case 0:
-                    b--;
-                    t--;
-                    if (TokensMatch(bookTokens[b], intervalWords[t].Token))
-                    {
-                        mapping[b] = t;
-                    }
-
-                    break;
-                case 1:
-                    b--;
-                    break;
-                case 2:
-                    t--;
-                    break;
-                default:
-                    b--;
-                    t--;
-                    break;
-            }
-        }
-
-        return mapping;
-    }
-
-    private static HydrateUpdateResult ApplyHydratedTranscriptTimings(HydratedTranscript hydrate, ChapterWordTimings timingWindow)
-    {
-        if (hydrate.Sentences.Count == 0 && hydrate.Words.Count == 0)
-        {
-            return new HydrateUpdateResult(null, 0, 0);
-        }
-
-        List<HydratedSentence>? updatedSentences = null;
-        var sentencesUpdated = 0;
-        for (var i = 0; i < hydrate.Sentences.Count; i++)
-        {
-            var sentence = hydrate.Sentences[i];
-            var relativeStart = sentence.BookRange.Start - timingWindow.StartWord;
-            var relativeEnd = sentence.BookRange.End - timingWindow.StartWord;
-            if (!TryComputeTiming(timingWindow.Timings, relativeStart, relativeEnd, out var timing))
-            {
-                continue;
-            }
-
-            if (sentence.Timing is { } existingTiming && existingTiming.Equals(timing))
-            {
-                continue;
-            }
-
-            updatedSentences ??= hydrate.Sentences.ToList();
-            updatedSentences[i] = sentence with { Timing = timing };
-            sentencesUpdated++;
-        }
-
-        List<HydratedWord>? updatedWords = null;
-        var wordsUpdated = 0;
-        for (var i = 0; i < hydrate.Words.Count; i++)
-        {
-            var word = hydrate.Words[i];
-            if (word.BookIdx is not int bookIdx)
-            {
-                continue;
-            }
-
-            var relativeIdx = bookIdx - timingWindow.StartWord;
-            if (!TryGetWordTiming(timingWindow.Timings, relativeIdx, out var timing))
-            {
-                continue;
-            }
-
-            var startSec = timing.StartSec;
-            var endSec = timing.EndSec;
-            var durationSec = Math.Max(0, endSec - startSec);
-            if (AreClose(word.StartSec, startSec) &&
-                AreClose(word.EndSec, endSec) &&
-                AreClose(word.DurationSec, durationSec))
-            {
-                continue;
-            }
-
-            updatedWords ??= hydrate.Words.ToList();
-            updatedWords[i] = word with
-            {
-                StartSec = startSec,
-                EndSec = endSec,
-                DurationSec = durationSec
+                TextGridTokenCount = tgTokens.Count,
+                BookTokenCount     = bookTokens.Count,
+                Pairs              = ar.Pairs.Count,
+                Matches            = ar.Matches,
+                WildMatches        = ar.WildMatches,
+                Insertions         = ar.Insertions,
+                Deletions          = ar.Deletions,
+                WordsUpdated       = wordsUpdated,
+                SentencesUpdated   = sentencesUpdated
             };
-            wordsUpdated++;
         }
 
-        if (sentencesUpdated == 0 && wordsUpdated == 0)
-        {
-            return new HydrateUpdateResult(null, 0, 0);
-        }
+        // -------- Core algorithm ---------------------------------------------
 
-        var updated = hydrate with
+        private static List<TgTok> BuildTimedTgTokens(IEnumerable<TextGridWord> intervals)
         {
-            Sentences = updatedSentences ?? hydrate.Sentences,
-            Words = updatedWords ?? hydrate.Words
-        };
+            var list = new List<TgTok>();
+            var seq = 0;
 
-        return new HydrateUpdateResult(updated, sentencesUpdated, wordsUpdated);
-    }
-
-    private static TranscriptUpdateResult ApplyTranscriptIndexTimings(TranscriptIndex transcript, ChapterWordTimings timingWindow)
-    {
-        if (transcript.Sentences.Count == 0)
-        {
-            return new TranscriptUpdateResult(null, 0);
-        }
-
-        List<SentenceAlign>? updatedSentences = null;
-        var updatedCount = 0;
-        for (var i = 0; i < transcript.Sentences.Count; i++)
-        {
-            var sentence = transcript.Sentences[i];
-            var relativeStart = sentence.BookRange.Start - timingWindow.StartWord;
-            var relativeEnd = sentence.BookRange.End - timingWindow.StartWord;
-            if (!TryComputeTiming(timingWindow.Timings, relativeStart, relativeEnd, out var timing))
+            foreach (var it in intervals)
             {
-                continue;
-            }
+                if (string.IsNullOrWhiteSpace(it.Text)) continue;
+                if (!(it.End > it.Start)) continue;
 
-            if (sentence.Timing is { } existingTiming && existingTiming.Equals(timing))
-            {
-                continue;
-            }
-
-            updatedSentences ??= transcript.Sentences.ToList();
-            updatedSentences[i] = sentence with { Timing = timing };
-            updatedCount++;
-        }
-
-        if (updatedCount == 0)
-        {
-            return new TranscriptUpdateResult(null, 0);
-        }
-
-        var updated = transcript with { Sentences = updatedSentences! };
-        return new TranscriptUpdateResult(updated, updatedCount);
-    }
-
-    private static bool TryComputeTiming(TimingRange?[] wordTimings, int startIndex, int endIndex, out TimingRange timing)
-    {
-        timing = TimingRange.Empty;
-        if (wordTimings.Length == 0)
-        {
-            return false;
-        }
-
-        var minIndex = Math.Min(startIndex, endIndex);
-        var maxIndex = Math.Max(startIndex, endIndex);
-        if (maxIndex < 0 || minIndex >= wordTimings.Length)
-        {
-            return false;
-        }
-
-        var lo = Math.Max(0, minIndex);
-        var hi = Math.Min(wordTimings.Length - 1, maxIndex);
-
-        double? start = null;
-        double? end = null;
-
-        for (var i = lo; i <= hi; i++)
-        {
-            if (wordTimings[i] is { } range)
-            {
-                start = range.StartSec;
-                break;
-            }
-        }
-
-        for (var i = hi; i >= lo; i--)
-        {
-            if (wordTimings[i] is { } range)
-            {
-                end = range.EndSec;
-                break;
-            }
-        }
-
-        if (!start.HasValue || !end.HasValue || end.Value <= start.Value)
-        {
-            return false;
-        }
-
-        timing = new TimingRange(start.Value, end.Value);
-        return true;
-    }
-
-    private static bool TryGetWordTiming(TimingRange?[] wordTimings, int index, out TimingRange timing)
-    {
-        timing = TimingRange.Empty;
-        if (index < 0 || index >= wordTimings.Length)
-        {
-            return false;
-        }
-
-        if (wordTimings[index] is not { } range)
-        {
-            return false;
-        }
-
-        timing = range;
-        return true;
-    }
-
-    private static bool AreClose(double? left, double? right)
-    {
-        if (!left.HasValue && !right.HasValue)
-        {
-            return true;
-        }
-
-        if (!left.HasValue || !right.HasValue)
-        {
-            return false;
-        }
-
-        return Math.Abs(left.Value - right.Value) < 1e-6;
-    }
-
-    private static (int startWord, int endWord) ResolveChapterWordWindow(ChapterContext chapter, BookIndex bookIndex)
-    {
-        var start = chapter.Descriptor.BookStartWord;
-        var end = chapter.Descriptor.BookEndWord;
-
-        if (!start.HasValue || !end.HasValue)
-        {
-            foreach (var label in EnumerateChapterLabels(chapter))
-            {
-                if (string.IsNullOrWhiteSpace(label))
+                var emitted = false;
+                foreach (var tok in TokenizeForAlignment(it.Text, forTextGrid: true))
                 {
-                    continue;
+                    list.Add(new TgTok(seq++, tok, it.Start, it.End));
+                    emitted = true;
                 }
 
-                var section = SectionLocator.ResolveSectionByTitle(bookIndex, label);
-                if (section is not null)
+                if (!emitted)
                 {
-                    start = section.StartWord;
-                    end = section.EndWord;
-                    break;
+                    list.Add(new TgTok(seq++, UNK, it.Start, it.End));
                 }
             }
+
+            return list;
         }
 
-        var maxIndex = Math.Max(0, bookIndex.Words.Length - 1);
-        if (!start.HasValue || !end.HasValue)
+        private static List<BookTok> BuildBookTokens(
+            Func<int, string> getBookToken,
+            int startIdx,
+            int endIdx)
         {
-            return (0, maxIndex);
-        }
+            if (endIdx < startIdx) return new List<BookTok>();
 
-        var normalizedStart = Math.Clamp(start.Value, 0, maxIndex);
-        var normalizedEnd = Math.Clamp(end.Value, normalizedStart, maxIndex);
-        return (normalizedStart, normalizedEnd);
-    }
+            var list = new List<BookTok>();
 
-    private static IEnumerable<string> EnumerateChapterLabels(ChapterContext chapter)
-    {
-        if (!string.IsNullOrWhiteSpace(chapter.Descriptor.ChapterId))
-        {
-            yield return chapter.Descriptor.ChapterId;
-        }
-
-        foreach (var alias in chapter.Descriptor.Aliases)
-        {
-            if (!string.IsNullOrWhiteSpace(alias))
+            for (int i = startIdx; i <= endIdx; i++)
             {
-                yield return alias;
-            }
-        }
+                var raw = getBookToken(i) ?? "";
 
-        if (!string.IsNullOrWhiteSpace(chapter.Descriptor.RootPath))
-        {
-            var label = Path.GetFileName(chapter.Descriptor.RootPath.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
-            if (!string.IsNullOrWhiteSpace(label))
-            {
-                yield return label;
-            }
-        }
-    }
-
-    private sealed record ChapterWordTimings(int StartWord, int EndWord, TimingRange?[] Timings);
-
-    private sealed record IntervalWord(int IntervalIndex, string Token);
-
-    private const double MinimumStartTolerance = 0.05;
-
-    private static bool TryFindSentenceTiming(
-        JsonObject sentenceNode,
-        IReadOnlyList<IntervalToken> intervalTokens,
-        ref int cursor,
-        double minStartSec,
-        IReadOnlyDictionary<int, (string? ScriptText, string? BookText)>? fallbackTexts,
-        out double start,
-        out double end)
-    {
-        start = 0;
-        end = 0;
-
-        if (intervalTokens.Count == 0)
-        {
-            return false;
-        }
-
-        var tokenCandidates = ExtractSentenceTokenCandidates(sentenceNode, fallbackTexts);
-        foreach (var sentenceTokens in tokenCandidates)
-        {
-            if (sentenceTokens.Count == 0)
-            {
-                continue;
-            }
-
-            var startIndex = Math.Max(0, cursor);
-            for (var i = startIndex; i <= intervalTokens.Count - sentenceTokens.Count; i++)
-            {
-                if (intervalTokens[i].Start + MinimumStartTolerance < minStartSec)
+                // CRITICAL: We may produce multiple tokens for one bookIdx (e.g., hyphenated),
+                // and later MERGE their timings for that single word index.
+                var emitted = false;
+                foreach (var tok in TokenizeForAlignment(raw, forTextGrid: false))
                 {
-                    continue;
+                    list.Add(new BookTok(i, tok));
+                    emitted = true;
                 }
-
-                if (!TokensMatch(intervalTokens[i].Token, sentenceTokens[0]))
+                if (!emitted)
                 {
-                    continue;
+                    // Keep a placeholder so indexing doesn't drift.
+                    list.Add(new BookTok(i, "")); // empty tokens won't match anything
                 }
+            }
 
-                var matched = true;
-                var localEnd = i;
+            return list;
+        }
 
-                for (var k = 1; k < sentenceTokens.Count; k++)
+        // ---- Global alignment (Needleman–Wunsch) ----------------------------
+
+        private const int MATCH =  2; // exact token match
+        private const int WILD  =  2; // tg == UNK wildcard maps to current book token
+        private const int MISM  = -2; // mismatch
+        private const int GAP   = -1; // insertion / deletion
+
+        private static bool Eq(string a, string b) => a == b;
+        private static bool IsWild(string t) => t == UNK;
+
+        private static AlignmentResult Align(List<BookTok> book, List<TgTok> tg)
+        {
+            int n = book.Count, m = tg.Count;
+
+            var dp = new int[n + 1, m + 1];
+            var bt = new byte[n + 1, m + 1]; // 1=diag, 2=up (book gap), 3=left (tg gap)
+
+            for (int i = 1; i <= n; i++) { dp[i,0] = i * GAP; bt[i,0] = 2; }
+            for (int j = 1; j <= m; j++) { dp[0,j] = j * GAP; bt[0,j] = 3; }
+
+            for (int i = 1; i <= n; i++)
+            {
+                var bi = book[i - 1].Tok;
+                for (int j = 1; j <= m; j++)
                 {
-                    var nextIndex = i + k;
-                    if (nextIndex >= intervalTokens.Count || !TokensMatch(intervalTokens[nextIndex].Token, sentenceTokens[k]))
+                    var tj = tg[j - 1].Tok;
+                    int sMatch = Eq(bi, tj) ? MATCH : (IsWild(tj) ? WILD : MISM);
+
+                    int d = dp[i - 1, j - 1] + sMatch;
+                    int u = dp[i - 1, j] + GAP;
+                    int l = dp[i, j - 1] + GAP;
+
+                    int best = d; byte move = 1;
+                    if (u > best) { best = u; move = 2; }
+                    if (l > best) { best = l; move = 3; }
+
+                    dp[i, j] = best;
+                    bt[i, j] = move;
+                }
+            }
+
+            var pairs = new List<Pair>(Math.Max(n, m));
+            int matches = 0, wildMatches = 0, insertions = 0, deletions = 0;
+
+            // Backtrace
+            int ii = n, jj = m;
+            while (ii > 0 || jj > 0)
+            {
+                byte move = bt[ii, jj];
+
+                if (move == 1) // diag
+                {
+                    var bTok = book[ii - 1].Tok;
+                    var tTok = tg[jj - 1].Tok;
+
+                    if (Eq(bTok, tTok))
                     {
-                        matched = false;
-                        break;
+                        matches++;
+                        pairs.Add(new Pair(book[ii - 1].BookIdx, tg[jj - 1].TgSeq));
                     }
+                    else if (IsWild(tTok))
+                    {
+                        wildMatches++;
+                        pairs.Add(new Pair(book[ii - 1].BookIdx, tg[jj - 1].TgSeq));
+                    }
+                    // else diag mismatch: skip emitting a pair
 
-                    localEnd = nextIndex;
+                    ii--; jj--;
                 }
+                else if (move == 2) { deletions++; ii--; }  // gap in tg (drop a book token)
+                else if (move == 3) { insertions++; jj--; } // gap in book (drop a tg token)
+                else break;
+            }
 
-                if (!matched)
+            pairs.Reverse();
+
+            return new AlignmentResult(pairs, matches, wildMatches, insertions, deletions);
+        }
+
+        // ---- Build timing map and apply ------------------------------------
+
+        private static Dictionary<int, (double start, double end)> BuildBookTimingMap(
+            AlignmentResult ar,
+            List<TgTok> tg)
+        {
+            var map = new Dictionary<int, (double start, double end)>();
+
+            // Pre-lookup for tgSeq -> (start,end)
+            var tgTimes = tg.ToDictionary(x => x.TgSeq, x => (x.Start, x.End));
+
+            foreach (var p in ar.Pairs)
+            {
+                var (start, end) = tgTimes[p.TgSeq];
+
+                if (map.TryGetValue(p.BookIdx, out var cur))
                 {
-                    continue;
+                    // Merge multiple TG tokens mapped to the same bookIdx (e.g., hyphen splits):
+                    // take earliest start and latest end
+                    map[p.BookIdx] = (Math.Min(cur.start, start), Math.Max(cur.end, end));
                 }
-
-                start = intervalTokens[i].Start;
-                end = intervalTokens[localEnd].End;
-                cursor = localEnd + 1;
-                return end > start;
-            }
-        }
-
-        return false;
-    }
-
-    private static bool TokensMatch(string intervalToken, string sentenceToken)
-    {
-        const string UnknownToken = "unk";
-        if (string.Equals(intervalToken, sentenceToken, StringComparison.OrdinalIgnoreCase))
-        {
-            return true;
-        }
-
-        if (string.Equals(intervalToken, UnknownToken, StringComparison.OrdinalIgnoreCase) ||
-            string.Equals(sentenceToken, UnknownToken, StringComparison.OrdinalIgnoreCase))
-        {
-            return true;
-        }
-
-        return false;
-    }
-
-    private static List<List<string>> ExtractSentenceTokenCandidates(JsonObject sentenceNode, IReadOnlyDictionary<int, (string? ScriptText, string? BookText)>? fallbackTexts)
-    {
-        sentenceNode.TryGetPropertyValue("bookText", out var bookNode);
-
-        var bookText = bookNode?.GetValue<string>();
-
-        var candidates = new List<List<string>>(2);
-        var prioritized = new List<string?>
-        {
-            bookText
-        };
-
-        if (fallbackTexts is not null && sentenceNode.TryGetPropertyValue("id", out var idNode) && idNode is not null)
-        {
-            var id = idNode.GetValue<int>();
-            if (fallbackTexts.TryGetValue(id, out var texts))
-            {
-                prioritized.Add(texts.BookText);
-            }
-        }
-
-        foreach (var candidate in prioritized)
-        {
-            if (string.IsNullOrWhiteSpace(candidate))
-            {
-                continue;
-            }
-
-            var normalized = TextNormalizer.NormalizeTypography(candidate);
-            normalized = normalized.Replace('-', ' ');
-            var tokens = new List<string>();
-            foreach (var raw in normalized.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries))
-            {
-                var token = Sanitize(raw);
-                if (!string.IsNullOrEmpty(token))
+                else
                 {
-                    tokens.Add(token);
+                    map[p.BookIdx] = (start, end);
                 }
             }
 
-            if (tokens.Count > 0)
-            {
-                // avoid duplicates
-                if (!candidates.Any(existing => existing.SequenceEqual(tokens, StringComparer.OrdinalIgnoreCase)))
-                {
-                    candidates.Add(tokens);
-                }
-            }
-        }
-
-        return candidates;
-    }
-
-    private sealed record IntervalToken(double Start, double End, string Token);
-
-    private sealed record HydrateUpdateResult(HydratedTranscript? Transcript, int SentencesUpdated, int WordsUpdated);
-
-    private sealed record TranscriptUpdateResult(TranscriptIndex? Transcript, int SentencesUpdated);
-
-    public static IReadOnlyDictionary<int, (string? ScriptText, string? BookText)> BuildFallbackTextMap(FileInfo hydrateFile)
-    {
-        var map = new Dictionary<int, (string? ScriptText, string? BookText)>();
-
-        if (!hydrateFile.Exists)
-        {
             return map;
         }
 
-        JsonNode? rootNode;
-        try
+        private static int ApplyWordTimings(
+            Dictionary<int, (double start, double end)> timingMap,
+            IEnumerable<WordTarget> wordTargets)
         {
-            rootNode = JsonNode.Parse(File.ReadAllText(hydrateFile.FullName));
-        }
-        catch
-        {
-            return map;
-        }
+            int updated = 0;
 
-        if (rootNode is not JsonObject root || root["sentences"] is not JsonArray sentencesArray)
-        {
-            return map;
-        }
-
-        foreach (var sentence in sentencesArray.OfType<JsonObject>())
-        {
-            if (!sentence.TryGetPropertyValue("id", out var idNode) || idNode is null)
+            foreach (var w in wordTargets)
             {
-                continue;
+                if (w.BookIdx is int bi && timingMap.TryGetValue(bi, out var t))
+                {
+                    var (s, e) = t;
+                    w.SetTiming(s, e, e - s);
+                    updated++;
+                }
             }
 
-            var id = idNode.GetValue<int>();
-            sentence.TryGetPropertyValue("scriptText", out var scriptNode);
-            sentence.TryGetPropertyValue("bookText", out var bookNode);
-
-            map[id] = (
-                scriptNode?.GetValue<string>(),
-                bookNode?.GetValue<string>());
+            return updated;
         }
 
-        return map;
+        private static int ApplySentenceTimings(
+            Dictionary<int, (double start, double end)> timingMap,
+            IEnumerable<SentenceTarget> sentences)
+        {
+            int updated = 0;
+
+            foreach (var s in sentences)
+            {
+                double? start = null, end = null;
+
+                for (int i = s.BookStartIdx; i <= s.BookEndIdx; i++)
+                {
+                    if (!timingMap.TryGetValue(i, out var t)) continue;
+                    start = start is null ? t.start : Math.Min(start.Value, t.start);
+                    end   = end   is null ? t.end   : Math.Max(end.Value, t.end);
+                }
+
+                if (start is not null && end is not null)
+                {
+                    s.SetTiming(start.Value, end.Value, end.Value - start.Value);
+                    updated++;
+                }
+            }
+
+            return updated;
+        }
+
+        // -------- Normalization & tokenization -------------------------------
+
+        private const string UNK = "unk";
+
+        private static IEnumerable<string> TokenizeForAlignment(string? s, bool forTextGrid)
+        {
+            if (string.IsNullOrWhiteSpace(s)) yield break;
+
+            // Unicode normalization (NFKC helps unify different quote/dash forms)
+            s = s.Normalize(NormalizationForm.FormKC);
+
+            // Unify quotes/dashes
+            s = s.Replace('“', '"').Replace('”', '"')
+                 .Replace('‘', '\'').Replace('’', '\'')
+                 .Replace('—', '-').Replace('–', '-');
+
+            // Lowercase
+            s = s.ToLowerInvariant();
+
+            // Treat hyphens as separators to keep TG/book tokenization symmetric
+            s = s.Replace('-', ' ');
+
+            // Split by whitespace
+            var parts = s.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries);
+
+            foreach (var raw in parts)
+            {
+                var tok = TrimPunct(raw);
+
+                if (string.IsNullOrEmpty(tok)) continue;
+
+                // Treat MFA unknown/special as wildcard on the TG side
+                if (forTextGrid && (tok == "<unk>" || tok == UNK || tok == "sp" || tok == "sil"))
+                {
+                    yield return UNK; // sentinel wildcard
+                }
+                else
+                {
+                    yield return tok;
+                }
+            }
+        }
+
+        private static string TrimPunct(string t)
+        {
+            int i = 0, j = t.Length - 1;
+            while (i <= j && IsPunctToTrim(t[i])) i++;
+            while (j >= i && IsPunctToTrim(t[j])) j--;
+            return (i <= j) ? t.Substring(i, j - i + 1) : "";
+        }
+
+        private static bool IsPunctToTrim(char c)
+        {
+            // Keep inner apostrophes (don't), strip most leading/trailing punctuation.
+            if (c == '\'' || c == '"') return false;
+            return char.IsPunctuation(c);
+        }
     }
 
-    private static string Sanitize(string? value)
+    // -------- Adapter types (tiny glue you wire to your models) -------------
+
+    /// <summary> Minimal TextGrid "word" interval. Build this from your parser. </summary>
+    public readonly record struct TextGridWord(string Text, double Start, double End);
+
+    /// <summary>
+    /// Word adapter: expose BookIdx (nullable if this word doesn't map to a book token),
+    /// and a setter that can write start/end/duration to your hydrate word object.
+    /// </summary>
+    public readonly record struct WordTarget(int? BookIdx, Action<double, double, double> SetTiming);
+
+    /// <summary>
+    /// Sentence adapter: expose its book range [start,end] (inclusive),
+    /// and a setter to write timing back on your hydrate sentence.
+    /// </summary>
+    public readonly record struct SentenceTarget(int BookStartIdx, int BookEndIdx, Action<double, double, double> SetTiming);
+
+    /// <summary> Summary metrics for logging/telemetry. </summary>
+    public sealed class MergeReport
     {
-        if (string.IsNullOrWhiteSpace(value))
+        public int TextGridTokenCount { get; init; }
+        public int BookTokenCount     { get; init; }
+        public int Pairs              { get; init; }
+        public int Matches            { get; init; }
+        public int WildMatches        { get; init; }
+        public int Insertions         { get; init; }
+        public int Deletions          { get; init; }
+        public int WordsUpdated       { get; init; }
+        public int SentencesUpdated   { get; init; }
+    }
+
+    // -------- Internal DTOs -------------------------------------------------
+
+    internal readonly record struct BookTok(int BookIdx, string Tok);
+    internal readonly record struct TgTok(int TgSeq, string Tok, double Start, double End);
+    internal readonly record struct Pair(int BookIdx, int TgSeq);
+
+    internal sealed class AlignmentResult
+    {
+        public AlignmentResult(List<Pair> pairs, int matches, int wildMatches, int insertions, int deletions)
         {
-            return string.Empty;
+            Pairs       = pairs;
+            Matches     = matches;
+            WildMatches = wildMatches;
+            Insertions  = insertions;
+            Deletions   = deletions;
         }
 
-        Span<char> buffer = stackalloc char[value.Length];
-        var count = 0;
-
-        foreach (var ch in value)
-        {
-            if (char.IsLetterOrDigit(ch))
-            {
-                buffer[count++] = char.ToLowerInvariant(ch);
-            }
-        }
-
-        return count == 0 ? string.Empty : new string(buffer[..count]);
+        public List<Pair> Pairs { get; }
+        public int Matches { get; }
+        public int WildMatches { get; }
+        public int Insertions { get; }
+        public int Deletions { get; }
     }
 }
