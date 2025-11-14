@@ -23,7 +23,17 @@ public sealed record HydratedWord(
     [property: JsonPropertyName("asrWord")] string? AsrWord,
     [property: JsonPropertyName("op")] string Op,
     [property: JsonPropertyName("reason")] string Reason,
-    [property: JsonPropertyName("score")] double Score);
+    [property: JsonPropertyName("score")] double Score)
+{
+    [JsonPropertyName("startSec")]
+    public double? StartSec { get; init; }
+
+    [JsonPropertyName("endSec")]
+    public double? EndSec { get; init; }
+
+    [JsonPropertyName("durationSec")]
+    public double? DurationSec { get; init; }
+}
 
 public sealed record HydratedSentence(
     int Id,

@@ -248,7 +248,9 @@ public sealed class ChapterManager : IChapterManager
         var rootPath = string.IsNullOrWhiteSpace(incoming.RootPath) ? existing.RootPath : incoming.RootPath;
         var audioBuffers = incoming.AudioBuffers.Count > 0 ? incoming.AudioBuffers : existing.AudioBuffers;
         var documents = incoming.Documents ?? existing.Documents;
+        var startWord = incoming.BookStartWord ?? existing.BookStartWord;
+        var endWord = incoming.BookEndWord ?? existing.BookEndWord;
 
-        return new ChapterDescriptor(existing.ChapterId, rootPath, audioBuffers, documents, aliasSet.ToArray());
+        return new ChapterDescriptor(existing.ChapterId, rootPath, audioBuffers, documents, aliasSet.ToArray(), startWord, endWord);
     }
 }

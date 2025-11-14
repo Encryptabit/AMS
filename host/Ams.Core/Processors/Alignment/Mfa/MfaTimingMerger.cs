@@ -8,10 +8,13 @@ using System.Text.Json.Nodes;
 using Ams.Core.Artifacts;
 using Ams.Core.Artifacts.Hydrate;
 using Ams.Core.Common;
+using Ams.Core.Processors.Alignment.Anchors;
 using Ams.Core.Runtime.Book;
 using Ams.Core.Runtime.Chapter;
 
 namespace Ams.Core.Processors.Alignment.Mfa;
+
+using Ams.Core.Artifacts.Alignment.Mfa;
 
 public static class MfaTimingMerger
 {
@@ -107,14 +110,14 @@ public static class MfaTimingMerger
         Log.Debug("Updated {Count} sentences with MFA timings ({File})", updated, hydrateFile.Name);
     }
 
-    public static void MergeTimings(BookContext bookContext, FileInfo textGridFile, IReadOnlyDictionary<int, (string? ScriptText, string? BookText)>? fallbackTexts = null)
+    public static void MergeTimings(
+        ChapterContext chapter,
+        FileInfo textGridFile,
+        bool updateHydratedTranscript = true,
+        bool updateTranscriptIndex = true)
     {
-        var hydratedTranscript = bookContext.Chapters.Current.Documents.HydratedTranscript;
-        var book = bookContext.Documents.BookIndex?.Words ?? throw new InvalidOperationException("Book index missing words");
-
-        if (hydratedTranscript is null)
+        if (!updateHydratedTranscript && !updateTranscriptIndex)
         {
-            Log.Debug("Hydrate file not found; skipping MFA timing merge");
             return;
         }
 
@@ -124,60 +127,95 @@ public static class MfaTimingMerger
             return;
         }
 
-        var textGridIntervals = TextGridParser.ParseWordIntervals(textGridFile.FullName)
-            .Where(w => !string.IsNullOrWhiteSpace(w.Text))
-            .ToList();
+        var bookIndex = chapter.Book.Documents.BookIndex ?? throw new InvalidOperationException("BookIndex is not loaded.");
+        if (bookIndex.Words.Length == 0)
+        {
+            Log.Debug("BookIndex contains no words; skipping MFA timing merge");
+            return;
+        }
 
-        if (textGridIntervals.Count == 0)
+        var rawIntervals = TextGridParser.ParseWordIntervals(textGridFile.FullName).ToList();
+        if (rawIntervals.Count == 0)
+        {
+            Log.Debug("TextGrid contained no intervals ({File})", textGridFile.FullName);
+            return;
+        }
+
+        var textGridDocument = new TextGridDocument(
+            textGridFile.FullName,
+            DateTime.UtcNow,
+            rawIntervals);
+        chapter.Documents.TextGrid = textGridDocument;
+
+        var nonEmptyIntervalCount = textGridDocument.Intervals.Count(static interval => !string.IsNullOrWhiteSpace(interval.Text));
+        if (nonEmptyIntervalCount == 0)
         {
             Log.Debug("TextGrid contained no word intervals ({File})", textGridFile.FullName);
             return;
         }
 
-        var intervalTokens = BuildIntervalTokens(textGridIntervals);
-        if (intervalTokens.Count == 0)
+        var (chapterStartWord, chapterEndWord) = ResolveChapterWordWindow(chapter, bookIndex);
+        var chapterWordCount = Math.Max(0, chapterEndWord - chapterStartWord + 1);
+        if (chapterWordCount == 0)
         {
-            Log.Debug("TextGrid contained no usable tokens ({File})", textGridFile.FullName);
+            Log.Debug("Chapter {Chapter} has an empty word window; skipping MFA timing merge", chapter.Descriptor.ChapterId);
             return;
         }
 
-        var intervalCursor = 0;
-        double previousEndSec = 0.0;
-
-        if (hydratedTranscript.Sentences.Count == 0)
+        if (nonEmptyIntervalCount != chapterWordCount)
         {
-            Log.Debug("Hydrate missing sentences array; skipping MFA timing merge");
-            return;
+            Log.Debug(
+                "TextGrid word count {GridCount} differs from chapter word window ({ChapterCount}); mapping sequentially",
+                nonEmptyIntervalCount,
+                chapterWordCount);
         }
 
-        var updated = 0;
-        foreach (var sentence in hydratedTranscript.Sentences)
+        var wordTimings = BuildWordTimingIndex(chapterStartWord, chapterEndWord, textGridDocument.Intervals);
+
+        HydrateUpdateResult hydrateResult = new(null, 0, 0);
+        if (updateHydratedTranscript && chapter.Documents.HydratedTranscript is { } hydratedTranscript)
         {
-            if (!TryFindSentenceTiming2(sentence, intervalTokens, ref intervalCursor, previousEndSec, fallbackTexts, out var start, out var end))
+            hydrateResult = ApplyHydratedTranscriptTimings(hydratedTranscript, wordTimings);
+            if (hydrateResult.Transcript is not null)
             {
-                continue;
+                chapter.Documents.HydratedTranscript = hydrateResult.Transcript;
             }
-
-            if (end <= start)
-            {
-                continue;
-            }
-
-
-            sentence.Timing = new TimingRange(start, end);
-            previousEndSec = end;
-            updated++;
         }
 
-        if (updated == 0)
+        TranscriptUpdateResult transcriptResult = new(null, 0);
+        if (updateTranscriptIndex && chapter.Documents.Transcript is { } transcript)
         {
-            Log.Debug("No MFA timings applied");
+            transcriptResult = ApplyTranscriptIndexTimings(transcript, wordTimings);
+            if (transcriptResult.Transcript is not null)
+            {
+                chapter.Documents.Transcript = transcriptResult.Transcript;
+            }
+        }
+
+        if (hydrateResult.Transcript is null && transcriptResult.Transcript is null)
+        {
+            Log.Debug("No MFA timings applied for chapter {Chapter}", chapter.Descriptor.ChapterId);
             return;
         }
 
-        bookContext.Chapters.Current.Documents.SaveChanges();
+        chapter.Documents.SaveChanges();
 
-        Log.Debug("Updated {Count} sentences with MFA timings for ({id})", updated, bookContext.Chapters.Current.Descriptor.ChapterId);
+        if (hydrateResult.Transcript is not null)
+        {
+            Log.Debug(
+                "Updated {SentenceCount} hydrated sentences and {WordCount} hydrated words with MFA timings for ({Chapter})",
+                hydrateResult.SentencesUpdated,
+                hydrateResult.WordsUpdated,
+                chapter.Descriptor.ChapterId);
+        }
+
+        if (transcriptResult.Transcript is not null)
+        {
+            Log.Debug(
+                "Updated {SentenceCount} transcript sentences with MFA timings for ({Chapter})",
+                transcriptResult.SentencesUpdated,
+                chapter.Descriptor.ChapterId);
+        }
     }
 
     private static List<IntervalToken> BuildIntervalTokens(IReadOnlyList<TextGridInterval> intervals)
@@ -191,6 +229,294 @@ public static class MfaTimingMerger
 
         return tokens;
     }
+
+    private static ChapterWordTimings BuildWordTimingIndex(int startWord, int endWord, IReadOnlyList<TextGridInterval> intervals)
+    {
+        var length = Math.Max(0, endWord - startWord + 1);
+        var map = new TimingRange?[length];
+        if (length == 0 || intervals.Count == 0)
+        {
+            return new ChapterWordTimings(startWord, endWord, map);
+        }
+
+        var intervalIndex = 0;
+        for (var chapterIdx = 0; chapterIdx < length && intervalIndex < intervals.Count;)
+        {
+            var interval = intervals[intervalIndex++];
+            if (string.IsNullOrWhiteSpace(interval.Text))
+            {
+                continue;
+            }
+
+            if (interval.End <= interval.Start)
+            {
+                continue;
+            }
+
+            map[chapterIdx++] = new TimingRange(interval.Start, interval.End);
+        }
+
+        return new ChapterWordTimings(startWord, endWord, map);
+    }
+
+    private static HydrateUpdateResult ApplyHydratedTranscriptTimings(HydratedTranscript hydrate, ChapterWordTimings timingWindow)
+    {
+        if (hydrate.Sentences.Count == 0 && hydrate.Words.Count == 0)
+        {
+            return new HydrateUpdateResult(null, 0, 0);
+        }
+
+        List<HydratedSentence>? updatedSentences = null;
+        var sentencesUpdated = 0;
+        for (var i = 0; i < hydrate.Sentences.Count; i++)
+        {
+            var sentence = hydrate.Sentences[i];
+            var relativeStart = sentence.BookRange.Start - timingWindow.StartWord;
+            var relativeEnd = sentence.BookRange.End - timingWindow.StartWord;
+            if (!TryComputeTiming(timingWindow.Timings, relativeStart, relativeEnd, out var timing))
+            {
+                continue;
+            }
+
+            if (sentence.Timing is { } existingTiming && existingTiming.Equals(timing))
+            {
+                continue;
+            }
+
+            updatedSentences ??= hydrate.Sentences.ToList();
+            updatedSentences[i] = sentence with { Timing = timing };
+            sentencesUpdated++;
+        }
+
+        List<HydratedWord>? updatedWords = null;
+        var wordsUpdated = 0;
+        for (var i = 0; i < hydrate.Words.Count; i++)
+        {
+            var word = hydrate.Words[i];
+            if (word.BookIdx is not int bookIdx)
+            {
+                continue;
+            }
+
+            var relativeIdx = bookIdx - timingWindow.StartWord;
+            if (!TryGetWordTiming(timingWindow.Timings, relativeIdx, out var timing))
+            {
+                continue;
+            }
+
+            var startSec = timing.StartSec;
+            var endSec = timing.EndSec;
+            var durationSec = Math.Max(0, endSec - startSec);
+            if (AreClose(word.StartSec, startSec) &&
+                AreClose(word.EndSec, endSec) &&
+                AreClose(word.DurationSec, durationSec))
+            {
+                continue;
+            }
+
+            updatedWords ??= hydrate.Words.ToList();
+            updatedWords[i] = word with
+            {
+                StartSec = startSec,
+                EndSec = endSec,
+                DurationSec = durationSec
+            };
+            wordsUpdated++;
+        }
+
+        if (sentencesUpdated == 0 && wordsUpdated == 0)
+        {
+            return new HydrateUpdateResult(null, 0, 0);
+        }
+
+        var updated = hydrate with
+        {
+            Sentences = updatedSentences ?? hydrate.Sentences,
+            Words = updatedWords ?? hydrate.Words
+        };
+
+        return new HydrateUpdateResult(updated, sentencesUpdated, wordsUpdated);
+    }
+
+    private static TranscriptUpdateResult ApplyTranscriptIndexTimings(TranscriptIndex transcript, ChapterWordTimings timingWindow)
+    {
+        if (transcript.Sentences.Count == 0)
+        {
+            return new TranscriptUpdateResult(null, 0);
+        }
+
+        List<SentenceAlign>? updatedSentences = null;
+        var updatedCount = 0;
+        for (var i = 0; i < transcript.Sentences.Count; i++)
+        {
+            var sentence = transcript.Sentences[i];
+            var relativeStart = sentence.BookRange.Start - timingWindow.StartWord;
+            var relativeEnd = sentence.BookRange.End - timingWindow.StartWord;
+            if (!TryComputeTiming(timingWindow.Timings, relativeStart, relativeEnd, out var timing))
+            {
+                continue;
+            }
+
+            if (sentence.Timing is { } existingTiming && existingTiming.Equals(timing))
+            {
+                continue;
+            }
+
+            updatedSentences ??= transcript.Sentences.ToList();
+            updatedSentences[i] = sentence with { Timing = timing };
+            updatedCount++;
+        }
+
+        if (updatedCount == 0)
+        {
+            return new TranscriptUpdateResult(null, 0);
+        }
+
+        var updated = transcript with { Sentences = updatedSentences! };
+        return new TranscriptUpdateResult(updated, updatedCount);
+    }
+
+    private static bool TryComputeTiming(TimingRange?[] wordTimings, int startIndex, int endIndex, out TimingRange timing)
+    {
+        timing = TimingRange.Empty;
+        if (wordTimings.Length == 0)
+        {
+            return false;
+        }
+
+        var minIndex = Math.Min(startIndex, endIndex);
+        var maxIndex = Math.Max(startIndex, endIndex);
+        if (maxIndex < 0 || minIndex >= wordTimings.Length)
+        {
+            return false;
+        }
+
+        var lo = Math.Max(0, minIndex);
+        var hi = Math.Min(wordTimings.Length - 1, maxIndex);
+
+        double? start = null;
+        double? end = null;
+
+        for (var i = lo; i <= hi; i++)
+        {
+            if (wordTimings[i] is { } range)
+            {
+                start = range.StartSec;
+                break;
+            }
+        }
+
+        for (var i = hi; i >= lo; i--)
+        {
+            if (wordTimings[i] is { } range)
+            {
+                end = range.EndSec;
+                break;
+            }
+        }
+
+        if (!start.HasValue || !end.HasValue || end.Value <= start.Value)
+        {
+            return false;
+        }
+
+        timing = new TimingRange(start.Value, end.Value);
+        return true;
+    }
+
+    private static bool TryGetWordTiming(TimingRange?[] wordTimings, int index, out TimingRange timing)
+    {
+        timing = TimingRange.Empty;
+        if (index < 0 || index >= wordTimings.Length)
+        {
+            return false;
+        }
+
+        if (wordTimings[index] is not { } range)
+        {
+            return false;
+        }
+
+        timing = range;
+        return true;
+    }
+
+    private static bool AreClose(double? left, double? right)
+    {
+        if (!left.HasValue && !right.HasValue)
+        {
+            return true;
+        }
+
+        if (!left.HasValue || !right.HasValue)
+        {
+            return false;
+        }
+
+        return Math.Abs(left.Value - right.Value) < 1e-6;
+    }
+
+    private static (int startWord, int endWord) ResolveChapterWordWindow(ChapterContext chapter, BookIndex bookIndex)
+    {
+        var start = chapter.Descriptor.BookStartWord;
+        var end = chapter.Descriptor.BookEndWord;
+
+        if (!start.HasValue || !end.HasValue)
+        {
+            foreach (var label in EnumerateChapterLabels(chapter))
+            {
+                if (string.IsNullOrWhiteSpace(label))
+                {
+                    continue;
+                }
+
+                var section = SectionLocator.ResolveSectionByTitle(bookIndex, label);
+                if (section is not null)
+                {
+                    start = section.StartWord;
+                    end = section.EndWord;
+                    break;
+                }
+            }
+        }
+
+        var maxIndex = Math.Max(0, bookIndex.Words.Length - 1);
+        if (!start.HasValue || !end.HasValue)
+        {
+            return (0, maxIndex);
+        }
+
+        var normalizedStart = Math.Clamp(start.Value, 0, maxIndex);
+        var normalizedEnd = Math.Clamp(end.Value, normalizedStart, maxIndex);
+        return (normalizedStart, normalizedEnd);
+    }
+
+    private static IEnumerable<string> EnumerateChapterLabels(ChapterContext chapter)
+    {
+        if (!string.IsNullOrWhiteSpace(chapter.Descriptor.ChapterId))
+        {
+            yield return chapter.Descriptor.ChapterId;
+        }
+
+        foreach (var alias in chapter.Descriptor.Aliases)
+        {
+            if (!string.IsNullOrWhiteSpace(alias))
+            {
+                yield return alias;
+            }
+        }
+
+        if (!string.IsNullOrWhiteSpace(chapter.Descriptor.RootPath))
+        {
+            var label = Path.GetFileName(chapter.Descriptor.RootPath.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
+            if (!string.IsNullOrWhiteSpace(label))
+            {
+                yield return label;
+            }
+        }
+    }
+
+    private sealed record ChapterWordTimings(int StartWord, int EndWord, TimingRange?[] Timings);
 
     private const double MinimumStartTolerance = 0.05;
 
@@ -262,71 +588,6 @@ public static class MfaTimingMerger
         return false;
     }
 
-    private static bool TryFindSentenceTiming2(
-        HydratedSentence sentenceNode,
-        IReadOnlyList<IntervalToken> intervalTokens,
-        ref int cursor,
-        double minStartSec,
-        IReadOnlyDictionary<int, (string? ScriptText, string? BookText)>? fallbackTexts,
-        out double start,
-        out double end)
-    {
-        start = 0;
-        end = 0;
-
-        if (intervalTokens.Count == 0)
-        {
-            return false;
-        }
-
-        var sentenceTokens = TextNormalizer.Normalize(sentenceNode.BookText).Split(" ");
-
-
-        foreach (var word in sentenceTokens)
-        {
-            if (string.IsNullOrWhiteSpace(word))
-            {
-                continue;
-            }
-
-            var startIndex = Math.Max(0, cursor);
-            for (var i = startIndex; i <= intervalTokens.Count; i++)
-            {
-                if (intervalTokens[i].Start + MinimumStartTolerance < minStartSec)
-                {
-                    continue;
-                }
-
-                if (!string.Equals(intervalTokens[i].Token, word, StringComparison.OrdinalIgnoreCase))
-                {
-                    continue;
-                }
-
-                var matched = true;
-                var localEnd = i;
-
-                for (var k = 1; k < localEnd; k++)
-                {
-                    var nextIndex = i + k;
-                    if (nextIndex >= intervalTokens.Count || !string.Equals(intervalTokens[nextIndex].Token, sentenceTokens[k], StringComparison.OrdinalIgnoreCase))
-                    {
-                        matched = false;
-                        break;
-                    }
-
-                    start = intervalTokens[i].Start;
-                    end = intervalTokens[localEnd].End;
-                    cursor = localEnd + 1;
-                    return end > start;
-                }
-            }
-        }
-
-        return false;
-    }
-
- 
-
     private static List<List<string>> ExtractSentenceTokenCandidates(JsonObject sentenceNode, IReadOnlyDictionary<int, (string? ScriptText, string? BookText)>? fallbackTexts)
     {
         sentenceNode.TryGetPropertyValue("bookText", out var bookNode);
@@ -381,6 +642,10 @@ public static class MfaTimingMerger
     }
 
     private sealed record IntervalToken(double Start, double End, string Token);
+
+    private sealed record HydrateUpdateResult(HydratedTranscript? Transcript, int SentencesUpdated, int WordsUpdated);
+
+    private sealed record TranscriptUpdateResult(TranscriptIndex? Transcript, int SentencesUpdated);
 
     public static IReadOnlyDictionary<int, (string? ScriptText, string? BookText)> BuildFallbackTextMap(FileInfo hydrateFile)
     {

@@ -2,6 +2,7 @@ using System;
 using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
+using Ams.Core.Common;
 using Ams.Core.Processors.Alignment.Mfa;
 using Ams.Core.Runtime.Chapter;
 
@@ -16,20 +17,17 @@ public sealed class MergeTimingsCommand
     {
         ArgumentNullException.ThrowIfNull(chapter);
 
-        var hydrateFile = options?.HydrateFile ?? chapter.ResolveArtifactFile("align.hydrate.json");
-        var transcriptFile = options?.TranscriptFile ?? chapter.ResolveArtifactFile("align.tx.json");
         var textGridFile = options?.TextGridFile ?? ResolveTextGridFile(chapter, options);
 
-        if ((options?.ApplyToHydrate ?? true) && textGridFile.Exists)
+        var updateHydrate = options?.ApplyToHydrate ?? true;
+        var updateTranscript = options?.ApplyToTranscript ?? true;
+        if (!updateHydrate && !updateTranscript)
         {
-            MfaTimingMerger.MergeTimings(chapter.Book, textGridFile);
+            Log.Debug("merge-timings invoked with both hydrate/transcript targets disabled; skipping.");
+            return Task.CompletedTask;
         }
 
-        if (options?.ApplyToTranscript ?? true)
-        {
-            var fallback = MfaTimingMerger.BuildFallbackTextMap(hydrateFile);
-            MfaTimingMerger.MergeTimings(chapter.Book, textGridFile);
-        }
+        MfaTimingMerger.MergeTimings(chapter, textGridFile, updateHydrate, updateTranscript);
 
         return Task.CompletedTask;
     }
