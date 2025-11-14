@@ -1,14 +1,47 @@
-using MudBlazor.Services;
+using Ams.Core.Application.Commands;
+using Ams.Core.Application.Contexts;
+using Ams.Core.Services;
+using Ams.Core.Services.Alignment;
 using Ams.Web.Components;
+using Ams.Web.Configuration;
+using Ams.Web.Endpoints;
+using Ams.Web.Services;
+using MudBlazor.Services;
+using Microsoft.Extensions.Options;
 
 var builder = WebApplication.CreateBuilder(args);
 
-// Add MudBlazor services
+builder.Services.AddOptions<AmsOptions>()
+    .Bind(builder.Configuration.GetSection(AmsOptions.SectionName))
+    .ValidateDataAnnotations()
+    .ValidateOnStart();
+
 builder.Services.AddMudServices();
 
-// Add services to the container.
 builder.Services.AddRazorComponents()
     .AddInteractiveServerComponents();
+
+// Core service graph mirrors the CLI host so orchestration remains identical.
+builder.Services.AddSingleton<IChapterContextFactory, ChapterContextFactory>();
+builder.Services.AddSingleton<IAsrService, AsrService>();
+builder.Services.AddSingleton<IAlignmentService, AlignmentService>();
+builder.Services.AddSingleton<GenerateTranscriptCommand>();
+builder.Services.AddSingleton<ComputeAnchorsCommand>();
+builder.Services.AddSingleton<BuildTranscriptIndexCommand>();
+builder.Services.AddSingleton<HydrateTranscriptCommand>();
+builder.Services.AddSingleton<RunMfaCommand>();
+builder.Services.AddSingleton<MergeTimingsCommand>();
+builder.Services.AddSingleton<PipelineService>();
+builder.Services.AddSingleton<ValidationService>();
+
+// Web-specific services
+builder.Services.AddSingleton<WorkspaceState>();
+builder.Services.AddSingleton<ChapterContextAccessor>();
+builder.Services.AddSingleton<ChapterCatalogService>();
+builder.Services.AddSingleton<ChapterDataService>();
+builder.Services.AddSingleton<ReviewedStatusStore>();
+builder.Services.AddSingleton<IAudioSegmentExporter, FfmpegCliSegmentExporter>();
+builder.Services.AddSingleton<CrxExportService>();
 
 var app = builder.Build();
 
@@ -22,11 +55,13 @@ if (!app.Environment.IsDevelopment())
 
 app.UseHttpsRedirection();
 
-
 app.UseAntiforgery();
 
 app.MapStaticAssets();
 app.MapRazorComponents<App>()
     .AddInteractiveServerRenderMode();
+
+app.MapChapterApi();
+app.MapWorkspaceApi();
 
 app.Run();
