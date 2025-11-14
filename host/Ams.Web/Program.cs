@@ -5,8 +5,10 @@ using Ams.Core.Services.Alignment;
 using Ams.Web.Components;
 using Ams.Web.Configuration;
 using Ams.Web.Endpoints;
+using Ams.Web.Client;
 using Ams.Web.Services;
 using MudBlazor.Services;
+using Microsoft.AspNetCore.Components;
 using Microsoft.Extensions.Options;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -35,6 +37,13 @@ builder.Services.AddSingleton<PipelineService>();
 builder.Services.AddSingleton<ValidationService>();
 
 // Web-specific services
+builder.Services.AddScoped(sp =>
+{
+    var navigationManager = sp.GetRequiredService<NavigationManager>();
+    return new HttpClient { BaseAddress = new Uri(navigationManager.BaseUri) };
+});
+builder.Services.AddScoped<WorkspaceApiClient>();
+builder.Services.AddScoped<ChapterApiClient>();
 builder.Services.AddSingleton<WorkspaceState>();
 builder.Services.AddSingleton<ChapterContextAccessor>();
 builder.Services.AddSingleton<ChapterCatalogService>();

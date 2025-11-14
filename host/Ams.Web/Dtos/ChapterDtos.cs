@@ -38,6 +38,7 @@ public sealed record SentenceExportResponse(
     string SegmentPath,
     string WorkbookPath,
     int RowNumber,
+    int ErrorNumber,
     string ErrorType,
     double StartSeconds,
     double EndSeconds);

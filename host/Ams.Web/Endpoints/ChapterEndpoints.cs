@@ -118,6 +118,7 @@ public static class ChapterEndpoints
                     result.SegmentPath,
                     result.WorkbookPath,
                     result.RowNumber,
+                    result.ErrorNumber,
                     result.ErrorType,
                     result.StartSeconds,
                     result.EndSeconds);
