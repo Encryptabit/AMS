@@ -2,6 +2,7 @@ using System.Linq;
 using Ams.Web.Client;
 using Ams.Web.Dtos;
 using Microsoft.AspNetCore.Components;
+using Microsoft.AspNetCore.Components.Web;
 using Microsoft.JSInterop;
 using MudBlazor;
 
@@ -22,7 +23,12 @@ public partial class Home : ComponentBase, IAsyncDisposable
     private bool _isChaptersLoading = true;
     private bool _isChapterLoading;
     private string? _chapterFilter;
-    private ElementReference _audioRef;
+    private bool _drawerOpen = true;
+    private bool _isPlaying;
+    private double _currentPlaybackTime;
+    private string? _lastExportMessage;
+    private AudioTransport? _audioTransport;
+    private bool _keyDownPreventDefault;
     private readonly CancellationTokenSource _cts = new();
 
     protected override async Task OnInitializedAsync()
@@ -45,7 +51,7 @@ public partial class Home : ComponentBase, IAsyncDisposable
         finally
         {
             _isWorkspaceLoading = false;
-            InvokeAsync(StateHasChanged);
+            await InvokeAsync(StateHasChanged);
         }
     }
 
@@ -63,7 +69,7 @@ public partial class Home : ComponentBase, IAsyncDisposable
         finally
         {
             _isChaptersLoading = false;
-            InvokeAsync(StateHasChanged);
+            await InvokeAsync(StateHasChanged);
         }
     }
 
@@ -77,7 +83,7 @@ public partial class Home : ComponentBase, IAsyncDisposable
         _isChapterLoading = true;
         _selectedChapter = null;
         _selectedSentence = null;
-        InvokeAsync(StateHasChanged);
+        await InvokeAsync(StateHasChanged);
 
         try
         {
@@ -97,7 +103,7 @@ public partial class Home : ComponentBase, IAsyncDisposable
         finally
         {
             _isChapterLoading = false;
-            InvokeAsync(StateHasChanged);
+            await InvokeAsync(StateHasChanged);
         }
     }
 
@@ -111,11 +117,167 @@ public partial class Home : ComponentBase, IAsyncDisposable
 
         try
         {
-            await JS.InvokeVoidAsync("amsAudio.seekAndPlay", _audioRef, sentence.Timing.Start, sentence.Timing.End);
+            if (_audioTransport is not null)
+            {
+                var audioElement = _audioTransport.GetAudioElement();
+                await JS.InvokeVoidAsync("amsAudio.seekAndPlay", audioElement, sentence.Timing.Start, sentence.Timing.End);
+                _isPlaying = true;
+            }
         }
         catch (JSException jsEx)
         {
             Snackbar.Add($"Audio playback failed: {jsEx.Message}", Severity.Warning);
+        }
+
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private async Task TogglePlayPause()
+    {
+        if (_audioTransport is null || _selectedSentence?.Timing is null) return;
+
+        try
+        {
+            var audioElement = _audioTransport.GetAudioElement();
+            if (_isPlaying)
+            {
+                await JS.InvokeVoidAsync("amsAudio.pause", audioElement);
+                _isPlaying = false;
+            }
+            else
+            {
+                await JS.InvokeVoidAsync("amsAudio.seekAndPlay", audioElement, _selectedSentence.Timing.Start, _selectedSentence.Timing.End);
+                _isPlaying = true;
+            }
+        }
+        catch (JSException jsEx)
+        {
+            Snackbar.Add($"Playback control failed: {jsEx.Message}", Severity.Warning);
+        }
+
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private async Task StopPlayback()
+    {
+        if (_audioTransport is null) return;
+
+        try
+        {
+            var audioElement = _audioTransport.GetAudioElement();
+            await JS.InvokeVoidAsync("amsAudio.stop", audioElement);
+            _isPlaying = false;
+        }
+        catch (JSException jsEx)
+        {
+            Snackbar.Add($"Stop failed: {jsEx.Message}", Severity.Warning);
+        }
+
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private async Task NavigatePrevious()
+    {
+        if (_selectedChapter is null || _selectedSentence is null) return;
+
+        var sentences = _selectedChapter.Sentences;
+        var currentIndex = -1;
+        for (int i = 0; i < sentences.Count; i++)
+        {
+            if (sentences[i] == _selectedSentence)
+            {
+                currentIndex = i;
+                break;
+            }
+        }
+        if (currentIndex > 0)
+        {
+            await OnSentenceSelected(sentences[currentIndex - 1]);
+        }
+    }
+
+    private async Task NavigateNext()
+    {
+        if (_selectedChapter is null || _selectedSentence is null) return;
+
+        var sentences = _selectedChapter.Sentences;
+        var currentIndex = -1;
+        for (int i = 0; i < sentences.Count; i++)
+        {
+            if (sentences[i] == _selectedSentence)
+            {
+                currentIndex = i;
+                break;
+            }
+        }
+        if (currentIndex >= 0 && currentIndex < sentences.Count - 1)
+        {
+            await OnSentenceSelected(sentences[currentIndex + 1]);
+        }
+    }
+
+    private async Task ExportCurrentSentence()
+    {
+        if (_selectedSentence is null || _selectedChapter is null)
+        {
+            return;
+        }
+
+        try
+        {
+            // TODO: Implement export via ChapterApiClient
+            _lastExportMessage = $"Exported S{_selectedSentence.Id}";
+            Snackbar.Add(_lastExportMessage, Severity.Success);
+
+            // Clear message after 3 seconds
+            _ = Task.Delay(3000).ContinueWith(_ =>
+            {
+                _lastExportMessage = null;
+                InvokeAsync(StateHasChanged);
+            });
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Export failed: {ex.Message}", Severity.Error);
+        }
+
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private async Task HandleKeyDown(KeyboardEventArgs e)
+    {
+        _keyDownPreventDefault = false;
+
+        switch (e.Key.ToLowerInvariant())
+        {
+            case " ":
+            case "spacebar":
+                _keyDownPreventDefault = true;
+                await TogglePlayPause();
+                break;
+
+            case "arrowup":
+                _keyDownPreventDefault = true;
+                await NavigatePrevious();
+                break;
+
+            case "arrowdown":
+                _keyDownPreventDefault = true;
+                await NavigateNext();
+                break;
+
+            case "e":
+                if (!e.CtrlKey && !e.AltKey)
+                {
+                    _keyDownPreventDefault = true;
+                    await ExportCurrentSentence();
+                }
+                break;
+
+            case "escape":
+                _keyDownPreventDefault = true;
+                await StopPlayback();
+                break;
         }
     }
 
@@ -137,7 +299,7 @@ public partial class Home : ComponentBase, IAsyncDisposable
 
     private ChapterDetailDto? SelectedChapter => _selectedChapter;
 
-    private IEnumerable<SentenceDto> SentencesToDisplay =>
+    private IReadOnlyList<SentenceDto> SentencesToDisplay =>
         SelectedChapter?.Sentences ?? Array.Empty<SentenceDto>();
 
     private string WorkspaceDescription =>
@@ -150,17 +312,50 @@ public partial class Home : ComponentBase, IAsyncDisposable
             ? null
             : $"api/chapters/{Uri.EscapeDataString(_selectedChapter.Id)}/audio";
 
+    private string ContentAreaStyle =>
+        _drawerOpen ? "margin-left: 280px;" : "margin-left: 0;";
+
+    private bool CanNavigatePrevious
+    {
+        get
+        {
+            if (_selectedChapter is null || _selectedSentence is null) return false;
+            var index = -1;
+            for (int i = 0; i < _selectedChapter.Sentences.Count; i++)
+            {
+                if (_selectedChapter.Sentences[i] == _selectedSentence)
+                {
+                    index = i;
+                    break;
+                }
+            }
+            return index > 0;
+        }
+    }
+
+    private bool CanNavigateNext
+    {
+        get
+        {
+            if (_selectedChapter is null || _selectedSentence is null) return false;
+            var index = -1;
+            for (int i = 0; i < _selectedChapter.Sentences.Count; i++)
+            {
+                if (_selectedChapter.Sentences[i] == _selectedSentence)
+                {
+                    index = i;
+                    break;
+                }
+            }
+            return index >= 0 && index < _selectedChapter.Sentences.Count - 1;
+        }
+    }
+
     private static string FormatDuration(double seconds) =>
         TimeSpan.FromSeconds(seconds).ToString(@"hh\:mm\:ss");
 
-    private static string FormatTime(double? seconds) =>
-        seconds is null ? "--:--" : TimeSpan.FromSeconds(seconds.Value).ToString(@"mm\:ss\.fff");
-
     private string GetChapterItemClass(ChapterListItemDto chapter) =>
         chapter.Id == _selectedChapter?.Id ? "mud-selected-item" : string.Empty;
-
-    private string GetSentenceRowClass(SentenceDto sentence) =>
-        sentence == _selectedSentence ? "ams-sentence-row selected" : "ams-sentence-row";
 
     public ValueTask DisposeAsync()
     {

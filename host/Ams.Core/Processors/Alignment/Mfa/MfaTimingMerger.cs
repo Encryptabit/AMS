@@ -1,3 +1,4 @@
+using System.Linq;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using Ams.Core.Artifacts;
@@ -149,7 +150,7 @@ public static class MfaTimingMerger
                 chapterWordCount);
         }
 
-        var wordTimings = BuildWordTimingIndex(chapterStartWord, chapterEndWord, textGridDocument.Intervals);
+        var wordTimings = BuildWordTimingIndex(bookIndex, chapterStartWord, chapterEndWord, textGridDocument.Intervals);
 
         HydrateUpdateResult hydrateResult = new(null, 0, 0);
         if (updateHydratedTranscript && chapter.Documents.HydratedTranscript is { } hydratedTranscript)
@@ -209,19 +210,65 @@ public static class MfaTimingMerger
         return tokens;
     }
 
-    private static ChapterWordTimings BuildWordTimingIndex(int startWord, int endWord, IReadOnlyList<TextGridInterval> intervals)
+    private static ChapterWordTimings BuildWordTimingIndex(
+        BookIndex bookIndex,
+        int startWord,
+        int endWord,
+        IReadOnlyList<TextGridInterval> intervals)
     {
         var length = Math.Max(0, endWord - startWord + 1);
         var map = new TimingRange?[length];
+
         if (length == 0 || intervals.Count == 0)
         {
             return new ChapterWordTimings(startWord, endWord, map);
         }
 
-        var intervalIndex = 0;
-        for (var chapterIdx = 0; chapterIdx < length && intervalIndex < intervals.Count;)
+        var bookTokens = BuildBookTokens(bookIndex, startWord, endWord);
+        var intervalWords = BuildIntervalWords(intervals);
+        var alignment = AlignBookToIntervals(bookTokens, intervalWords);
+
+        for (var wordOffset = 0; wordOffset < alignment.Length; wordOffset++)
         {
-            var interval = intervals[intervalIndex++];
+            var matchIndex = alignment[wordOffset];
+            if (matchIndex < 0 || matchIndex >= intervalWords.Count)
+            {
+                continue;
+            }
+
+            var interval = intervals[intervalWords[matchIndex].IntervalIndex];
+            map[wordOffset] = new TimingRange(interval.Start, interval.End);
+        }
+
+        return new ChapterWordTimings(startWord, endWord, map);
+    }
+
+    private static string[] BuildBookTokens(BookIndex bookIndex, int startWord, int endWord)
+    {
+        var length = Math.Max(0, endWord - startWord + 1);
+        var tokens = new string[length];
+        for (var i = 0; i < length; i++)
+        {
+            var idx = startWord + i;
+            if (idx < 0 || idx >= bookIndex.Words.Length)
+            {
+                tokens[i] = string.Empty;
+                continue;
+            }
+
+            var normalized = TextNormalizer.NormalizeTypography(bookIndex.Words[idx].Text);
+            tokens[i] = Sanitize(normalized);
+        }
+
+        return tokens;
+    }
+
+    private static List<IntervalWord> BuildIntervalWords(IReadOnlyList<TextGridInterval> intervals)
+    {
+        var words = new List<IntervalWord>(intervals.Count);
+        for (var i = 0; i < intervals.Count; i++)
+        {
+            var interval = intervals[i];
             if (string.IsNullOrWhiteSpace(interval.Text))
             {
                 continue;
@@ -232,10 +279,107 @@ public static class MfaTimingMerger
                 continue;
             }
 
-            map[chapterIdx++] = new TimingRange(interval.Start, interval.End);
+            var normalized = TextNormalizer.NormalizeTypography(interval.Text);
+            var token = Sanitize(normalized);
+            if (string.IsNullOrEmpty(token))
+            {
+                continue;
+            }
+
+            words.Add(new IntervalWord(i, token));
         }
 
-        return new ChapterWordTimings(startWord, endWord, map);
+        return words;
+    }
+
+    private static int[] AlignBookToIntervals(IReadOnlyList<string> bookTokens, IReadOnlyList<IntervalWord> intervalWords)
+    {
+        var bookLength = bookTokens.Count;
+        var intervalLength = intervalWords.Count;
+        var mapping = Enumerable.Repeat(-1, bookLength).ToArray();
+
+        if (bookLength == 0 || intervalLength == 0)
+        {
+            return mapping;
+        }
+
+        const int matchScore = 2;
+        const int mismatchPenalty = -1;
+        const int gapPenalty = -1;
+
+        var scores = new int[bookLength + 1, intervalLength + 1];
+        var moves = new byte[bookLength + 1, intervalLength + 1];
+
+        for (var i = 1; i <= bookLength; i++)
+        {
+            scores[i, 0] = i * gapPenalty;
+            moves[i, 0] = 1;
+        }
+
+        for (var j = 1; j <= intervalLength; j++)
+        {
+            scores[0, j] = j * gapPenalty;
+            moves[0, j] = 2;
+        }
+
+        for (var i = 1; i <= bookLength; i++)
+        {
+            for (var j = 1; j <= intervalLength; j++)
+            {
+                var diag = scores[i - 1, j - 1] +
+                           (TokensMatch(bookTokens[i - 1], intervalWords[j - 1].Token) ? matchScore : mismatchPenalty);
+                var up = scores[i - 1, j] + gapPenalty;
+                var left = scores[i, j - 1] + gapPenalty;
+
+                var best = diag;
+                byte move = 0;
+                if (up > best)
+                {
+                    best = up;
+                    move = 1;
+                }
+
+                if (left > best)
+                {
+                    best = left;
+                    move = 2;
+                }
+
+                scores[i, j] = best;
+                moves[i, j] = move;
+            }
+        }
+
+        var b = bookLength;
+        var t = intervalLength;
+        while (b > 0 && t > 0)
+        {
+            var move = moves[b, t];
+            switch (move)
+            {
+                case 0:
+                    b--;
+                    t--;
+                    if (TokensMatch(bookTokens[b], intervalWords[t].Token))
+                    {
+                        mapping[b] = t;
+                    }
+
+                    break;
+                case 1:
+                    b--;
+                    break;
+                case 2:
+                    t--;
+                    break;
+                default:
+                    b--;
+                    t--;
+                    break;
+            }
+        }
+
+        return mapping;
     }
 
     private static HydrateUpdateResult ApplyHydratedTranscriptTimings(HydratedTranscript hydrate, ChapterWordTimings timingWindow)
@@ -497,6 +641,8 @@ public static class MfaTimingMerger
 
     private sealed record ChapterWordTimings(int StartWord, int EndWord, TimingRange?[] Timings);
 
+    private sealed record IntervalWord(int IntervalIndex, string Token);
+
     private const double MinimumStartTolerance = 0.05;
 
     private static bool TryFindSentenceTiming(
@@ -532,7 +678,7 @@ public static class MfaTimingMerger
                     continue;
                 }
 
-                if (!string.Equals(intervalTokens[i].Token, sentenceTokens[0], StringComparison.Ordinal))
+                if (!TokensMatch(intervalTokens[i].Token, sentenceTokens[0]))
                 {
                     continue;
                 }
@@ -543,7 +689,7 @@ public static class MfaTimingMerger
                 for (var k = 1; k < sentenceTokens.Count; k++)
                 {
                     var nextIndex = i + k;
-                    if (nextIndex >= intervalTokens.Count || !string.Equals(intervalTokens[nextIndex].Token, sentenceTokens[k], StringComparison.Ordinal))
+                    if (nextIndex >= intervalTokens.Count || !TokensMatch(intervalTokens[nextIndex].Token, sentenceTokens[k]))
                     {
                         matched = false;
                         break;
@@ -562,6 +708,23 @@ public static class MfaTimingMerger
                 cursor = localEnd + 1;
                 return end > start;
             }
+        }
+
+        return false;
+    }
+
+    private static bool TokensMatch(string intervalToken, string sentenceToken)
+    {
+        const string UnknownToken = "unk";
+        if (string.Equals(intervalToken, sentenceToken, StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        if (string.Equals(intervalToken, UnknownToken, StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(sentenceToken, UnknownToken, StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
         }
 
         return false;
@@ -610,7 +773,7 @@ public static class MfaTimingMerger
             if (tokens.Count > 0)
             {
                 // avoid duplicates
-                if (!candidates.Any(existing => existing.SequenceEqual(tokens, StringComparer.Ordinal)))
+                if (!candidates.Any(existing => existing.SequenceEqual(tokens, StringComparer.OrdinalIgnoreCase)))
                 {
                     candidates.Add(tokens);
                 }

@@ -1,0 +1,112 @@
+@using Microsoft.JSInterop
+
+<div class="audio-transport">
+    <audio @ref="_audioRef"
+           src="@AudioSource"
+           preload="metadata"
+           style="display: none;">
+    </audio>
+
+    <div class="transport-controls">
+        <MudIconButton Icon="@Icons.Material.Filled.SkipPrevious"
+                       Color="Color.Primary"
+                       Size="Size.Large"
+                       OnClick="OnPreviousSentence"
+                       Disabled="@(!CanNavigatePrevious)" />
+
+        <MudIconButton Icon="@GetPlayIcon()"
+                       Color="Color.Primary"
+                       Size="Size.Large"
+                       OnClick="OnPlayPause" />
+
+        <MudIconButton Icon="@Icons.Material.Filled.SkipNext"
+                       Color="Color.Primary"
+                       Size="Size.Large"
+                       OnClick="OnNextSentence"
+                       Disabled="@(!CanNavigateNext)" />
+
+        <MudIconButton Icon="@Icons.Material.Filled.Stop"
+                       Color="Color.Default"
+                       Size="Size.Large"
+                       OnClick="OnStop" />
+    </div>
+
+    <div class="transport-info">
+        <MudText Typo="Typo.body2" Class="transport-time">
+            @CurrentTimeDisplay / @TotalTimeDisplay
+        </MudText>
+
+        <MudSlider T="double"
+                   @bind-Value="_playbackRate"
+                   Min="0.5"
+                   Max="2.0"
+                   Step="0.1"
+                   Class="transport-rate-slider"
+                   ValueLabel="true"
+                   ValueLabelFormat="@($"{_playbackRate:F1}x")" />
+    </div>
+
+    <div class="transport-actions">
+        <MudButton Variant="Variant.Filled"
+                   Color="Color.Secondary"
+                   StartIcon="@Icons.Material.Filled.FileDownload"
+                   OnClick="OnExport"
+                   Disabled="@(!CanExport)">
+            Export (E)
+        </MudButton>
+
+        @if (!string.IsNullOrEmpty(LastExportMessage))
+        {
+            <MudText Typo="Typo.caption" Color="Color.Success" Class="ml-2">
+                @LastExportMessage
+            </MudText>
+        }
+    </div>
+</div>
+
+@code {
+    [Inject] private IJSRuntime JS { get; set; } = default!;
+
+    [Parameter] public string? AudioSource { get; set; }
+    [Parameter] public double? CurrentTime { get; set; }
+    [Parameter] public double? TotalTime { get; set; }
+    [Parameter] public bool IsPlaying { get; set; }
+    [Parameter] public bool CanNavigatePrevious { get; set; }
+    [Parameter] public bool CanNavigateNext { get; set; }
+    [Parameter] public bool CanExport { get; set; }
+    [Parameter] public string? LastExportMessage { get; set; }
+
+    [Parameter] public EventCallback OnPlayPauseClick { get; set; }
+    [Parameter] public EventCallback OnStopClick { get; set; }
+    [Parameter] public EventCallback OnPreviousClick { get; set; }
+    [Parameter] public EventCallback OnNextClick { get; set; }
+    [Parameter] public EventCallback OnExportClick { get; set; }
+
+    private ElementReference _audioRef;
+    private double _playbackRate = 1.0;
+
+    private string GetPlayIcon() => IsPlaying ? Icons.Material.Filled.Pause : Icons.Material.Filled.PlayArrow;
+
+    private string CurrentTimeDisplay => CurrentTime.HasValue
+        ? FormatTime(CurrentTime.Value)
+        : "00:00.000";
+
+    private string TotalTimeDisplay => TotalTime.HasValue
+        ? FormatTime(TotalTime.Value)
+        : "00:00.000";
+
+    private static string FormatTime(double seconds)
+    {
+        var ts = TimeSpan.FromSeconds(seconds);
+        return $"{ts:mm\\:ss\\.fff}";
+    }
+
+    private async Task OnPlayPause() => await OnPlayPauseClick.InvokeAsync();
+    private async Task OnStop() => await OnStopClick.InvokeAsync();
+    private async Task OnPreviousSentence() => await OnPreviousClick.InvokeAsync();
+    private async Task OnNextSentence() => await OnNextClick.InvokeAsync();
+    private async Task OnExport() => await OnExportClick.InvokeAsync();
+
+    public ElementReference GetAudioElement() => _audioRef;
+    public double PlaybackRate => _playbackRate;
+}

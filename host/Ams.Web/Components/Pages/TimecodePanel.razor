@@ -1,0 +1,61 @@
+@using Ams.Web.Dtos
+
+<div class="timecode-panel">
+    <div class="timecode-header">
+        <MudText Typo="Typo.subtitle2" Class="px-2">Timecodes</MudText>
+    </div>
+
+    @if (Sentences.Count == 0)
+    {
+        <div class="timecode-empty">
+            <MudText Typo="Typo.caption" Color="Color.Secondary">—</MudText>
+        </div>
+    }
+    else
+    {
+        <MudVirtualize Items="@Sentences.ToList()" Context="sentence" OverscanCount="10">
+            <div class="timecode-row @GetRowClass(sentence)">
+                <div class="timecode-content">
+                    @if (sentence.Timing != null)
+                    {
+                        <MudText Typo="Typo.body2" Class="timecode-start">
+                            @FormatTime(sentence.Timing.Start)
+                        </MudText>
+                        <MudText Typo="Typo.caption" Color="Color.Secondary" Class="timecode-duration">
+                            @FormatDuration(sentence.Timing.Duration)
+                        </MudText>
+                        <MudText Typo="Typo.body2" Class="timecode-end">
+                            @FormatTime(sentence.Timing.End)
+                        </MudText>
+                    }
+                    else
+                    {
+                        <MudText Typo="Typo.caption" Color="Color.Error">No timing</MudText>
+                    }
+                </div>
+            </div>
+        </MudVirtualize>
+    }
+</div>
+
+@code {
+    [Parameter] public IReadOnlyList<SentenceDto> Sentences { get; set; } = Array.Empty<SentenceDto>();
+    [Parameter] public SentenceDto? SelectedSentence { get; set; }
+
+    private string GetRowClass(SentenceDto sentence)
+    {
+        return sentence == SelectedSentence ? "selected" : string.Empty;
+    }
+
+    private static string FormatTime(double seconds)
+    {
+        var ts = TimeSpan.FromSeconds(seconds);
+        return $"{ts:mm\\:ss\\.fff}";
+    }
+
+    private static string FormatDuration(double seconds)
+    {
+        var ts = TimeSpan.FromSeconds(seconds);
+        return $"({ts:s\\.fff}s)";
+    }
+}
