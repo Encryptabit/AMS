@@ -1,121 +1,127 @@
-﻿@page "/"
+@page "/"
 
-<PageTitle>AMS Proof Console</PageTitle>
+<div class="ams-viewport" @onkeydown="HandleKeyDown" @onkeydown:preventDefault="@_keyDownPreventDefault" tabindex="0">
 
-<MudContainer MaxWidth="MaxWidth.False" Class="ams-shell">
-    <MudGrid Class="ma-0" Spacing="0">
-        <MudItem xs="12" md="3">
-            <MudPaper Class="pa-4 ams-drawer" Elevation="0">
-                <MudStack Spacing="2">
-                    <MudText Typo="Typo.subtitle2" Class="text-medium-emphasis">Workspace</MudText>
-                    <MudText Typo="Typo.body2">@WorkspaceDescription</MudText>
-                    <MudTextField @bind-Value="_chapterFilter"
-                                  Placeholder="Search chapters..."
-                                  Adornment="Adornment.Start"
-                                  AdornmentIcon="@Icons.Material.Filled.Search"
-                                  Immediate="true"
-                                  Variant="Variant.Outlined" />
-                    @if (_isChaptersLoading)
-                    {
-                        <MudProgressLinear Indeterminate="true" Color="Color.Primary" Class="mt-2" />
-                    }
-                    <MudList T="ChapterListItemDto" Dense="true" Class="mt-2">
-                        @if (FilteredChapters.Count == 0)
-                        {
-                            <MudListItem T="ChapterListItemDto" Disabled="true">
-                                <MudText Typo="Typo.body2">No chapters</MudText>
-                            </MudListItem>
-                        }
-                        else
-                        {
-                            @foreach (var chapter in FilteredChapters)
-                            {
-                                <MudListItem T="ChapterListItemDto"
-                                             Class="@GetChapterItemClass(chapter)"
-                                             OnClick="@(() => SelectChapterAsync(chapter))">
-                                    <MudStack>
-                                        <MudText Typo="Typo.body2">@chapter.Name</MudText>
-                                        <MudText Typo="Typo.caption" Class="text-medium-emphasis">
-                                            @FormatDuration(chapter.DurationSeconds) • @chapter.SentenceCount sentences
-                                        </MudText>
-                                    </MudStack>
-                                </MudListItem>
-                            }
-                        }
-                    </MudList>
-                </MudStack>
-            </MudPaper>
-        </MudItem>
-        <MudItem xs="12" md="9">
-            <MudPaper Class="pa-4 h-100" Elevation="0">
-                @if (_isChapterLoading)
+    <MudDrawer @bind-Open="_drawerOpen"
+               Elevation="1"
+               Variant="@DrawerVariant.Persistent"
+               Class="ams-chapter-drawer">
+        <div class="drawer-content">
+            <MudStack Spacing="2" Class="pa-3">
+                <MudText Typo="Typo.subtitle2" Color="Color.Primary">Workspace</MudText>
+                <MudText Typo="Typo.caption" Color="Color.Secondary">
+                    @WorkspaceDescription
+                </MudText>
+
+                <MudTextField @bind-Value="_chapterFilter"
+                              Placeholder="Search chapters..."
+                              Adornment="Adornment.Start"
+                              AdornmentIcon="@Icons.Material.Filled.Search"
+                              Immediate="true"
+                              Variant="Variant.Outlined"
+                              Margin="Margin.Dense" />
+
+                @if (_isChaptersLoading)
                 {
-                    <MudStack AlignItems="AlignItems.Center" Justify="Justify.Center" Class="h-100">
-                        <MudProgressCircular Indeterminate="true" Size="Size.Large" />
-                        <MudText Typo="Typo.subtitle1">Loading chapter…</MudText>
-                    </MudStack>
+                    <MudProgressLinear Indeterminate="true" Color="Color.Primary" />
                 }
-                else if (SelectedChapter is null)
+            </MudStack>
+
+            <MudList T="ChapterListItemDto" Dense="true" Class="chapter-list">
+                @if (FilteredChapters.Count == 0)
                 {
-                    <MudStack AlignItems="AlignItems.Center" Justify="Justify.Center" Class="h-100">
-                        <MudIcon Icon="@Icons.Material.Filled.LibraryMusic" Size="Size.Large" />
-                        <MudText Typo="Typo.h6">Select a chapter to begin</MudText>
-                    </MudStack>
+                    <MudListItem T="ChapterListItemDto" Disabled="true">
+                        <MudText Typo="Typo.body2" Color="Color.Secondary">No chapters</MudText>
+                    </MudListItem>
                 }
                 else
                 {
-                    <MudStack Spacing="2">
-                        <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="1">
-                            <MudText Typo="Typo.h5">@SelectedChapter.Name</MudText>
-                            <MudChip T="string" Color="Color.Secondary" Variant="Variant.Filled">
-                                @SelectedChapter.SentenceCount sentences
-                            </MudChip>
-                            <MudChip T="string" Color="Color.Info" Variant="Variant.Outlined">
-                                @FormatDuration(SelectedChapter.DurationSeconds)
-                            </MudChip>
-                        </MudStack>
-
-                        <audio @ref="_audioRef"
-                               class="ams-audio"
-                               src="@AudioSource"
-                               controls
-                               preload="metadata">
-                        </audio>
-
-                        <MudPaper Outlined="true">
-                            <MudTable Items="SentencesToDisplay"
-                                      Hover="true"
-                                      Dense="true"
-                                      Bordered="false"
-                                      Class="full-width">
-                                <HeaderContent>
-                                    <MudTh>Sentence</MudTh>
-                                    <MudTh>Book Text</MudTh>
-                                    <MudTh>Start</MudTh>
-                                    <MudTh>End</MudTh>
-                                </HeaderContent>
-                                <RowTemplate>
-                                    <MudTr Class="@GetSentenceRowClass(context)"
-                                           @onclick="() => OnSentenceSelected(context)">
-                                        <MudTd DataLabel="Sentence">
-                                            <MudText Typo="Typo.subtitle2">@context.Id</MudText>
-                                        </MudTd>
-                                        <MudTd DataLabel="Book Text">
-                                            <MudText Typo="Typo.body2">@context.BookText</MudText>
-                                        </MudTd>
-                                        <MudTd DataLabel="Start">
-                                            @FormatTime(context.Timing?.Start)
-                                        </MudTd>
-                                        <MudTd DataLabel="End">
-                                            @FormatTime(context.Timing?.End)
-                                        </MudTd>
-                                    </MudTr>
-                                </RowTemplate>
-                            </MudTable>
-                        </MudPaper>
-                    </MudStack>
+                    @foreach (var chapter in FilteredChapters)
+                    {
+                        <MudListItem T="ChapterListItemDto"
+                                     Class="@GetChapterItemClass(chapter)"
+                                     OnClick="@(() => SelectChapterAsync(chapter))">
+                            <MudStack Spacing="1">
+                                <MudText Typo="Typo.body2">@chapter.Name</MudText>
+                                <MudText Typo="Typo.caption" Color="Color.Secondary">
+                                    @FormatDuration(chapter.DurationSeconds) • @chapter.SentenceCount sentences
+                                </MudText>
+                            </MudStack>
+                        </MudListItem>
+                    }
                 }
-            </MudPaper>
-        </MudItem>
-    </MudGrid>
-</MudContainer>
+            </MudList>
+        </div>
+    </MudDrawer>
+
+    <div class="ams-content-area" style="@ContentAreaStyle">
+        @if (_isChapterLoading)
+        {
+            <div class="loading-overlay">
+                <MudStack AlignItems="AlignItems.Center" Spacing="2">
+                    <MudProgressCircular Indeterminate="true" Size="Size.Large" />
+                    <MudText Typo="Typo.subtitle1">Loading chapter…</MudText>
+                </MudStack>
+            </div>
+        }
+        else if (SelectedChapter is null)
+        {
+            <div class="empty-state">
+                <MudStack AlignItems="AlignItems.Center" Spacing="2">
+                    <MudIcon Icon="@Icons.Material.Filled.LibraryMusic" Size="Size.Large" Color="Color.Secondary" />
+                    <MudText Typo="Typo.h6" Color="Color.Secondary">Select a chapter to begin</MudText>
+                </MudStack>
+            </div>
+        }
+        else
+        {
+            <div class="chapter-viewport">
+                <div class="chapter-header">
+                    <MudText Typo="Typo.h5">@SelectedChapter.Name</MudText>
+                    <div class="chapter-header-meta">
+                        <MudChip T="string" Size="Size.Small" Color="Color.Secondary">
+                            @SelectedChapter.SentenceCount sentences
+                        </MudChip>
+                        <MudChip T="string" Size="Size.Small" Color="Color.Info" Variant="Variant.Outlined">
+                            @FormatDuration(SelectedChapter.DurationSeconds)
+                        </MudChip>
+                    </div>
+                </div>
+
+                <div class="manuscript-timecode-container">
+                    <div class="manuscript-wrapper">
+                        <ManuscriptPanel Sentences="@SentencesToDisplay"
+                                         SelectedSentence="@_selectedSentence"
+                                         OnSentenceSelected="@OnSentenceSelected" />
+                    </div>
+
+                    <div class="timecode-wrapper">
+                        <TimecodePanel Sentences="@SentencesToDisplay"
+                                       SelectedSentence="@_selectedSentence" />
+                    </div>
+                </div>
+            </div>
+        }
+    </div>
+
+    @if (SelectedChapter is not null)
+    {
+        <div class="audio-transport-dock">
+            <AudioTransport @ref="_audioTransport"
+                            AudioSource="@AudioSource"
+                            CurrentTime="@_currentPlaybackTime"
+                            TotalTime="@SelectedChapter?.DurationSeconds"
+                            IsPlaying="@_isPlaying"
+                            CanNavigatePrevious="@CanNavigatePrevious"
+                            CanNavigateNext="@CanNavigateNext"
+                            CanExport="@(_selectedSentence != null)"
+                            LastExportMessage="@_lastExportMessage"
+                            OnPlayPauseClick="@TogglePlayPause"
+                            OnStopClick="@StopPlayback"
+                            OnPreviousClick="@NavigatePrevious"
+                            OnNextClick="@NavigateNext"
+                            OnExportClick="@ExportCurrentSentence" />
+        </div>
+    }
+
+</div>

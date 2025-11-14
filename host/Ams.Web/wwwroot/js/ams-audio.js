@@ -29,7 +29,40 @@ window.amsAudio = (function () {
         });
     }
 
+    function pause(audioElement) {
+        if (!audioElement) {
+            return;
+        }
+        audioElement.pause();
+    }
+
+    function stop(audioElement) {
+        if (!audioElement) {
+            return;
+        }
+        audioElement.pause();
+        audioElement.currentTime = 0;
+    }
+
+    function getCurrentTime(audioElement) {
+        if (!audioElement) {
+            return 0;
+        }
+        return audioElement.currentTime;
+    }
+
+    function setPlaybackRate(audioElement, rate) {
+        if (!audioElement) {
+            return;
+        }
+        audioElement.playbackRate = rate;
+    }
+
     return {
-        seekAndPlay
+        seekAndPlay,
+        pause,
+        stop,
+        getCurrentTime,
+        setPlaybackRate
     };
 })();
