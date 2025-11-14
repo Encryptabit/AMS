@@ -1,5 +1,3 @@
-using System.IO;
-
 namespace Ams.Core.Application.Pipeline;
 
 public sealed record PipelineChapterResult(

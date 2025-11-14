@@ -1,12 +1,8 @@
-using System;
-using System.IO;
-using System.Linq;
 using System.Text.Json;
 using Ams.Core.Artifacts;
 using Ams.Core.Artifacts.Alignment;
 using Ams.Core.Artifacts.Alignment.Mfa;
 using Ams.Core.Artifacts.Hydrate;
-using Ams.Core.Asr;
 using Ams.Core.Processors.Alignment.Mfa;
 using Ams.Core.Prosody;
 using Ams.Core.Runtime.Book;
@@ -129,6 +125,39 @@ public sealed class FileArtifactResolver : IArtifactResolver
         _ = document;
         // TextGrid documents are derived from the MFA output TextGrid file and do not need separate persistence.
     }
+
+    public FileInfo GetBookIndexFile(BookContext context)
+        => new(ResolveBookIndexPath(context));
+
+    public FileInfo GetTranscriptFile(ChapterContext context)
+        => new(GetChapterArtifactPath(context, "align.tx.json"));
+
+    public FileInfo GetHydratedTranscriptFile(ChapterContext context)
+        => new(GetChapterArtifactPath(context, "align.hydrate.json"));
+
+    public FileInfo GetAnchorsFile(ChapterContext context)
+        => new(GetChapterArtifactPath(context, "align.anchors.json"));
+
+    public FileInfo GetAsrFile(ChapterContext context)
+        => new(GetChapterArtifactPath(context, "asr.json"));
+
+    public FileInfo GetAsrTranscriptTextFile(ChapterContext context)
+        => new(GetChapterArtifactPath(context, "asr.corpus.txt"));
+
+    public FileInfo GetPausePolicyFile(ChapterContext context)
+        => new(Path.Combine(GetChapterRoot(context.Descriptor), "pause-policy.json"));
+
+    public FileInfo GetPauseAdjustmentsFile(ChapterContext context)
+        => new(GetChapterArtifactPath(context, "pause-adjustments.json"));
+
+    public FileInfo GetTextGridFile(ChapterContext context)
+        => new(GetTextGridPath(context));
+
+    public FileInfo GetChapterArtifactFile(ChapterContext context, string suffix)
+        => new(GetChapterArtifactPath(context, suffix));
+
+    public FileInfo GetBookArtifactFile(BookContext context, string fileName)
+        => new(Path.Combine(GetBookRoot(context), fileName));
 
     private static PauseAdjustmentsDocument? LoadPauseAdjustmentsInternal(string path)
     {

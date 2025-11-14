@@ -1,7 +1,4 @@
 using System.CommandLine;
-using System.IO;
-using Ams.Core.Common;
-using Ams.Core.Processors.Alignment.Anchors;
 using Ams.Cli.Utilities;
 
 namespace Ams.Cli.Commands;
@@ -82,7 +79,9 @@ public static class AlignCommand
                 using var handle = factory.Create(indexFile, asrFile: asrFile);
                 await command.ExecuteAsync(handle.Chapter, options, context.GetCancellationToken()).ConfigureAwait(false);
                 handle.Save();
-                CopyIfRequested(handle.Chapter.ResolveArtifactFile("align.anchors.json"), outFile);
+                var anchorsFile = handle.Chapter.Documents.GetAnchorsFile()
+                                   ?? throw new InvalidOperationException("Anchors artifact is not available.");
+                CopyIfRequested(anchorsFile, outFile);
             }
             catch (Exception ex)
             {
@@ -159,7 +158,9 @@ public static class AlignCommand
                 using var handle = factory.Create(indexFile, asrFile: asrFile, audioFile: audioFile);
                 await command.ExecuteAsync(handle.Chapter, options, context.GetCancellationToken()).ConfigureAwait(false);
                 handle.Save();
-                CopyIfRequested(handle.Chapter.ResolveArtifactFile("align.tx.json"), outFile);
+                var transcriptFile = handle.Chapter.Documents.GetTranscriptFile()
+                                      ?? throw new InvalidOperationException("Transcript artifact is not available.");
+                CopyIfRequested(transcriptFile, outFile);
             }
             catch (Exception ex)
             {
@@ -202,7 +203,9 @@ public static class AlignCommand
                 using var handle = factory.Create(indexFile, asrFile: asrFile, transcriptFile: txFile);
                 await command.ExecuteAsync(handle.Chapter, null, context.GetCancellationToken()).ConfigureAwait(false);
                 handle.Save();
-                CopyIfRequested(handle.Chapter.ResolveArtifactFile("align.hydrate.json"), outFile);
+                var hydrateArtifact = handle.Chapter.Documents.GetHydratedTranscriptFile()
+                                       ?? throw new InvalidOperationException("Hydrate artifact is not available.");
+                CopyIfRequested(hydrateArtifact, outFile);
             }
             catch (Exception ex)
             {

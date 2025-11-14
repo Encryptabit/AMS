@@ -1,7 +1,6 @@
 using System.Diagnostics;
 using System.Text;
 using System.Text.Json;
-using Ams.Core.Processors.Alignment.Tx;
 using Ams.Core.Artifacts;
 using SentenceTiming = Ams.Core.Artifacts.SentenceTiming;
 

@@ -1,11 +1,4 @@
-using System.Collections.Generic;
-using System.Linq;
 using System.Text.Json;
-using System.Threading;
-using System.Threading.Tasks;
-using Ams.Core;
-using Ams.Core.Runtime.Documents;
-using Ams.Core.Processors;
 using Ams.Core.Processors.DocumentProcessor;
 
 namespace Ams.Tests;

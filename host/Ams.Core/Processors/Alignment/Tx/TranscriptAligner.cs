@@ -1,11 +1,5 @@
-using System;
-using System.Collections.Generic;
-using System.Linq;
 using System.Text;
 using Ams.Core.Artifacts;
-using Ams.Core.Runtime.Documents;
-using Ams.Core.Asr;
-using Ams.Core.Common;
 
 namespace Ams.Core.Processors.Alignment.Tx;
 

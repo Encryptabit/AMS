@@ -1,7 +1,3 @@
-using System;
-using System.Threading;
-using System.Threading.Tasks;
-using Ams.Core.Processors.Alignment.Anchors;
 using Ams.Core.Runtime.Chapter;
 using Ams.Core.Services.Alignment;
 

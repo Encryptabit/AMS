@@ -1,9 +1,3 @@
-using System;
-using System.IO;
-using System.Linq;
-using System.Threading;
-using System.Threading.Tasks;
-using Ams.Core.Processors.Alignment.Anchors;
 using Ams.Core.Runtime.Chapter;
 using Ams.Core.Services.Alignment;
 
@@ -27,8 +21,17 @@ public sealed class BuildTranscriptIndexCommand
 
         var effective = options ?? BuildTranscriptIndexOptions.Default;
         var audioPath = (effective.AudioFile ?? ResolveAudioFile(chapter)).FullName;
-        var asrPath = (effective.AsrFile ?? chapter.ResolveArtifactFile("asr.json")).FullName;
-        var bookIndexPath = (effective.BookIndexFile ?? chapter.Book.ResolveArtifactFile("book-index.json")).FullName;
+
+        var asrFile = effective.AsrFile
+                     ?? chapter.Documents.GetAsrFile()
+                     ?? throw new InvalidOperationException("ASR artifact path could not be resolved.");
+
+        var bookIndexFile = effective.BookIndexFile
+                            ?? chapter.Book.Documents.GetBookIndexFile()
+                            ?? throw new InvalidOperationException("Book index artifact path could not be resolved.");
+
+        var asrPath = asrFile.FullName;
+        var bookIndexPath = bookIndexFile.FullName;
         var anchorOptions = effective.AnchorOptions ?? new AnchorComputationOptions();
 
         var transcript = await _alignmentService.BuildTranscriptIndexAsync(

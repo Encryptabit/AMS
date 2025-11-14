@@ -1,6 +1,3 @@
-using System;
-using System.IO;
-using System.Runtime.InteropServices;
 using FFmpeg.AutoGen;
 
 namespace Ams.Core.Services.Integrations.FFmpeg;
