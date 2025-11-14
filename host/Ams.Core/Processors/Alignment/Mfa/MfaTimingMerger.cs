@@ -121,9 +121,10 @@ public static class MfaTimingMerger
             return;
         }
 
-        if (!textGridFile.Exists)
+        var textGridDocument = chapter.Documents.TextGrid;
+        if (textGridDocument is null || textGridDocument.Intervals.Count == 0)
         {
-            Log.Debug("TextGrid file not found; skipping MFA timing merge ({File})", textGridFile.FullName);
+            Log.Debug("TextGrid document not loaded; skipping MFA timing merge for {Chapter}", chapter.Descriptor.ChapterId);
             return;
         }
 
@@ -133,19 +134,6 @@ public static class MfaTimingMerger
             Log.Debug("BookIndex contains no words; skipping MFA timing merge");
             return;
         }
-
-        var rawIntervals = TextGridParser.ParseWordIntervals(textGridFile.FullName).ToList();
-        if (rawIntervals.Count == 0)
-        {
-            Log.Debug("TextGrid contained no intervals ({File})", textGridFile.FullName);
-            return;
-        }
-
-        var textGridDocument = new TextGridDocument(
-            textGridFile.FullName,
-            DateTime.UtcNow,
-            rawIntervals);
-        chapter.Documents.TextGrid = textGridDocument;
 
         var nonEmptyIntervalCount = textGridDocument.Intervals.Count(static interval => !string.IsNullOrWhiteSpace(interval.Text));
         if (nonEmptyIntervalCount == 0)

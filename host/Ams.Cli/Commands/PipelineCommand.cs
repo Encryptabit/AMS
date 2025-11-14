@@ -872,7 +872,7 @@ private static async Task RunPipelineForMultipleChaptersAsync(
 
         var verboseOption = new Option<bool>("--verbose", () => false, "Enable verbose logging for pipeline stages.");
         var maxWorkersOption = new Option<int>("--max-workers", () => Math.Max(1, Environment.ProcessorCount), "Maximum number of chapters to process in parallel once ASR is complete");
-        var maxMfaOption = new Option<int>("--max-mfa", () => Math.Max(1, Environment.ProcessorCount / 2), "Maximum number of concurrent MFA alignment jobs");
+        var maxMfaOption = new Option<int>("--max-mfa", () => 1, "Maximum number of concurrent MFA alignment jobs");
         var progressOption = new Option<bool>("--progress", () => true, "Display live progress UI while running the pipeline");
 
         cmd.AddOption(bookOption);

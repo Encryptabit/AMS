@@ -2,6 +2,7 @@ using System.Text.Json;
 using Ams.Core.Application.Commands;
 using Ams.Core.Application.Contexts;
 using Ams.Core.Application.Pipeline;
+using Ams.Core.Artifacts.Alignment.Mfa;
 using Ams.Core.Processors.DocumentProcessor;
 using Ams.Core.Services.Alignment;
 
@@ -55,12 +56,34 @@ public sealed class PipelineService
         var chapter = handle.Chapter;
         var chapterRoot = chapter.Descriptor.RootPath ?? throw new InvalidOperationException("Chapter root path is not configured.");
 
-        FileInfo AsrFile() => chapter.ResolveArtifactFile("asr.json");
-        FileInfo AnchorsFile() => chapter.ResolveArtifactFile("align.anchors.json");
-        FileInfo TranscriptFile() => chapter.ResolveArtifactFile("align.tx.json");
-        FileInfo HydrateFile() => chapter.ResolveArtifactFile("align.hydrate.json");
-        FileInfo TreatedFile() => options.TreatedCopyFile ?? chapter.ResolveArtifactFile("treated.wav");
-        var textGridFile = () => options.MfaOptions?.TextGridFile ?? ResolveTextGridFile(chapterRoot, chapter.Descriptor.ChapterId);
+        bool HasAsrDocument() => chapter.Documents.Asr is not null;
+        bool HasAnchorDocument() => chapter.Documents.Anchors is not null;
+        bool HasTranscriptDocument() => chapter.Documents.Transcript is not null;
+        bool HasHydrateDocument() => chapter.Documents.HydratedTranscript is not null;
+        bool HasTextGridDocument()
+        {
+            if (options.MfaOptions?.TextGridFile is { } explicitGrid)
+            {
+                explicitGrid.Refresh();
+                return explicitGrid.Exists;
+            }
+
+            var doc = chapter.Documents.TextGrid;
+            return doc?.Intervals?.Count > 0;
+        }
+
+        FileInfo ResolveAsrFile() => chapter.ResolveArtifactFile("asr.json");
+        FileInfo ResolveAnchorsFile() => chapter.ResolveArtifactFile("align.anchors.json");
+        FileInfo ResolveTranscriptFile() => chapter.ResolveArtifactFile("align.tx.json");
+        FileInfo ResolveHydrateFile() => chapter.ResolveArtifactFile("align.hydrate.json");
+        FileInfo ResolveTreatedFile() => options.TreatedCopyFile ?? chapter.ResolveArtifactFile("treated.wav");
+        FileInfo TextGridFile() => options.MfaOptions?.TextGridFile ?? ResolveTextGridFile(chapterRoot, chapter.Descriptor.ChapterId);
+
+        var hasAsr = HasAsrDocument();
+        var hasAnchors = HasAnchorDocument();
+        var hasTranscript = HasTranscriptDocument();
+        var hasHydrate = HasHydrateDocument();
+        var hasTextGrid = HasTextGridDocument();
 
         bool asrRan = false;
         bool anchorsRan = false;
@@ -68,13 +91,14 @@ public sealed class PipelineService
         bool hydrateRan = false;
         bool mfaRan = false;
 
-        if (IsStageEnabled(PipelineStage.Asr, options) && (options.Force || !AsrFile().Exists))
+        if (IsStageEnabled(PipelineStage.Asr, options) && (options.Force || !hasAsr))
         {
             await WaitAsync(options.Concurrency?.AsrSemaphore, cancellationToken).ConfigureAwait(false);
             try
             {
                 await _generateTranscript.ExecuteAsync(chapter, options.TranscriptOptions, cancellationToken).ConfigureAwait(false);
                 asrRan = true;
+                hasAsr = true;
             }
             finally
             {
@@ -82,37 +106,40 @@ public sealed class PipelineService
             }
         }
 
-        if (IsStageEnabled(PipelineStage.Anchors, options) && (options.Force || !AnchorsFile().Exists))
+        if (IsStageEnabled(PipelineStage.Anchors, options) && (options.Force || !hasAnchors))
         {
             var anchorOptions = (options.AnchorOptions ?? BuildDefaultAnchorOptions()) with { EmitWindows = false };
             await _computeAnchors.ExecuteAsync(chapter, anchorOptions, cancellationToken).ConfigureAwait(false);
             anchorsRan = true;
+            hasAnchors = true;
         }
 
-        if (IsStageEnabled(PipelineStage.Transcript, options) && (options.Force || !TranscriptFile().Exists))
+        if (IsStageEnabled(PipelineStage.Transcript, options) && (options.Force || !hasTranscript))
         {
             var transcriptOptions = options.TranscriptIndexOptions ?? new BuildTranscriptIndexOptions();
             transcriptOptions = transcriptOptions with
             {
                 AudioFile = options.AudioFile,
-                AsrFile = AsrFile(),
+                AsrFile = options.TranscriptIndexOptions?.AsrFile,
                 BookIndexFile = options.BookIndexFile,
                 AnchorOptions = (options.AnchorOptions ?? BuildDefaultAnchorOptions()) with { EmitWindows = true }
             };
 
             await _buildTranscriptIndex.ExecuteAsync(chapter, transcriptOptions, cancellationToken).ConfigureAwait(false);
             transcriptRan = true;
+            hasTranscript = true;
         }
 
-        if (IsStageEnabled(PipelineStage.Hydrate, options) && (options.Force || !HydrateFile().Exists))
+        if (IsStageEnabled(PipelineStage.Hydrate, options) && (options.Force || !hasHydrate))
         {
             await _hydrateTranscript.ExecuteAsync(chapter, options.HydrationOptions, cancellationToken).ConfigureAwait(false);
             hydrateRan = true;
+            hasHydrate = true;
         }
 
         if (IsStageEnabled(PipelineStage.Mfa, options))
         {
-            var textGridExists = textGridFile().Exists;
+            var textGridExists = hasTextGrid;
             if (options.Force || !textGridExists)
             {
                 await WaitAsync(options.Concurrency?.MfaSemaphore, cancellationToken).ConfigureAwait(false);
@@ -121,13 +148,14 @@ public sealed class PipelineService
                     var mfaOptions = (options.MfaOptions ?? new RunMfaOptions()) with
                     {
                         AudioFile = options.AudioFile,
-                        HydrateFile = HydrateFile(),
-                        TextGridFile = textGridFile()
+                        HydrateFile = ResolveHydrateFile(),
+                        TextGridFile = TextGridFile()
                     };
 
                     var result = await _runMfa.ExecuteAsync(chapter, mfaOptions, cancellationToken).ConfigureAwait(false);
-                    textGridFile = () => result.TextGridFile;
                     mfaRan = true;
+                    hasTextGrid = HasTextGridDocument();
+                    textGridExists = hasTextGrid;
                 }
                 finally
                 {
@@ -135,23 +163,24 @@ public sealed class PipelineService
                 }
             }
 
-            if (textGridFile().Exists)
+            if (hasTextGrid)
             {
                 var mergeOptions = options.MergeOptions ?? new MergeTimingsOptions();
                 mergeOptions = mergeOptions with
                 {
-                    HydrateFile = HydrateFile(),
-                    TranscriptFile = TranscriptFile(),
-                    TextGridFile = textGridFile()
+                    TextGridFile = TextGridFile()
                 };
 
                 await _mergeTimings.ExecuteAsync(chapter, mergeOptions, cancellationToken).ConfigureAwait(false);
+                hasHydrate = true;
+                hasTranscript = true;
+                hasTextGrid = true;
             }
         }
 
         if (!options.SkipTreatedCopy)
         {
-            CopyTreatedAudio(options.AudioFile, TreatedFile(), options.Force);
+            CopyTreatedAudio(options.AudioFile, ResolveTreatedFile(), options.Force);
         }
 
         handle.Save();
@@ -165,12 +194,12 @@ public sealed class PipelineService
             hydrateRan,
             mfaRan,
             options.BookIndexFile,
-            AsrFile(),
-            AnchorsFile(),
-            TranscriptFile(),
-            HydrateFile(),
-            textGridFile(),
-            TreatedFile());
+            ResolveAsrFile(),
+            ResolveAnchorsFile(),
+            ResolveTranscriptFile(),
+            ResolveHydrateFile(),
+            TextGridFile(),
+            ResolveTreatedFile());
     }
 
     private static bool IsStageEnabled(PipelineStage stage, PipelineRunOptions options)

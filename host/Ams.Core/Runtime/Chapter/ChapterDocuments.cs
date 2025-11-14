@@ -132,4 +132,6 @@ public sealed class ChapterDocuments
         _pausePolicy.Save();
         _textGrid.Save();
     }
+
+    internal void InvalidateTextGrid() => _textGrid.Invalidate();
 }
