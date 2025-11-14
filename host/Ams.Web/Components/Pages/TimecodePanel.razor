@@ -1,51 +1,49 @@
 @using Ams.Web.Dtos
 
-<div class="timecode-panel">
-    <div class="timecode-header">
-        <MudText Typo="Typo.subtitle2" Class="px-2">Timecodes</MudText>
-    </div>
+<MudStack Spacing="2">
+    <MudText Typo="Typo.subtitle2">Timecodes</MudText>
+    <MudDivider />
 
     @if (Sentences.Count == 0)
     {
-        <div class="timecode-empty">
+        <MudStack AlignItems="AlignItems.Center" Class="pa-4">
             <MudText Typo="Typo.caption" Color="Color.Secondary">—</MudText>
-        </div>
+        </MudStack>
     }
     else
     {
-        <MudVirtualize Items="@Sentences.ToList()" Context="sentence" OverscanCount="10">
-            <div class="timecode-row @GetRowClass(sentence)">
-                <div class="timecode-content">
+        <MudList T="string" Dense="true">
+            @foreach (var sentence in Sentences)
+            {
+                <MudListItem Selected="@(sentence == SelectedSentence)">
                     @if (sentence.Timing != null)
                     {
-                        <MudText Typo="Typo.body2" Class="timecode-start">
-                            @FormatTime(sentence.Timing.Start)
-                        </MudText>
-                        <MudText Typo="Typo.caption" Color="Color.Secondary" Class="timecode-duration">
-                            @FormatDuration(sentence.Timing.Duration)
-                        </MudText>
-                        <MudText Typo="Typo.body2" Class="timecode-end">
-                            @FormatTime(sentence.Timing.End)
-                        </MudText>
+                        <MudStack Spacing="0">
+                            <MudText Typo="Typo.body2" Style="font-family: 'Consolas', monospace;">
+                                @FormatTime(sentence.Timing.Start)
+                            </MudText>
+                            <MudText Typo="Typo.caption" Color="Color.Secondary" Style="font-family: 'Consolas', monospace;">
+                                @FormatDuration(sentence.Timing.Duration)
+                            </MudText>
+                            <MudText Typo="Typo.body2" Style="font-family: 'Consolas', monospace;">
+                                @FormatTime(sentence.Timing.End)
+                            </MudText>
+                        </MudStack>
                     }
                     else
                     {
                         <MudText Typo="Typo.caption" Color="Color.Error">No timing</MudText>
                     }
-                </div>
-            </div>
-        </MudVirtualize>
+                </MudListItem>
+                <MudDivider />
+            }
+        </MudList>
     }
-</div>
+</MudStack>
 
 @code {
     [Parameter] public IReadOnlyList<SentenceDto> Sentences { get; set; } = Array.Empty<SentenceDto>();
     [Parameter] public SentenceDto? SelectedSentence { get; set; }
-
-    private string GetRowClass(SentenceDto sentence)
-    {
-        return sentence == SelectedSentence ? "selected" : string.Empty;
-    }
 
     private static string FormatTime(double seconds)
     {
