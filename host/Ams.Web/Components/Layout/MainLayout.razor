@@ -1,26 +1,27 @@
 @inherits LayoutComponentBase
 
-<MudThemeProvider Theme="_theme"/>
-<MudPopoverProvider/>
-<MudDialogProvider/>
-<MudSnackbarProvider/>
+<MudThemeProvider Theme="_theme" />
+<MudPopoverProvider />
+<MudDialogProvider />
+<MudSnackbarProvider />
 
 <MudLayout>
-    <MudAppBar>
-        <MudTabs Color="Color.Primary" ApplyEffectsToContainer="true" PanelClass="pa-0">
-            <MudTabPanel Text="Stage"/>
-            <MudTabPanel Text="Proof"/>
-            <MudTabPanel Text="Publish"/>
+    <MudAppBar Elevation="0">
+        <MudText Typo="Typo.h6">AMS Proof Console</MudText>
+        <MudSpacer />
+        <MudTabs Color="Color.Primary" Rounded="true" Centered="true">
+            <MudTabPanel Text="Stage" />
+            <MudTabPanel Text="Proof" />
+            <MudTabPanel Text="Publish" />
         </MudTabs>
     </MudAppBar>
 
     <MudMainContent>
-            @Body
+        @Body
     </MudMainContent>
 </MudLayout>
 
 @code {
-
     private readonly MudTheme _theme = new()
     {
         PaletteLight = new PaletteLight
@@ -35,5 +36,4 @@
             TextSecondary = "#b0b0b0"
         }
     };
-
 }

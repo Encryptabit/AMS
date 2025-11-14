@@ -2,26 +2,24 @@
 
 @if (Sentences.Count == 0)
 {
-    <MudStack AlignItems="AlignItems.Center" Justify="Justify.Center" Class="pa-16">
+    <MudStack AlignItems="AlignItems.Center" Class="pa-8">
         <MudText Typo="Typo.body1" Color="Color.Secondary">No sentences loaded</MudText>
     </MudStack>
 }
 else
 {
-    <MudList T="SentenceDto" Dense="true" Class="pa-0">
-        @foreach (var sentence in Sentences.ToList())
+    <MudList T="string" Dense="true">
+        @foreach (var sentence in Sentences)
         {
-            <MudListItem Class="@GetRowClass(sentence)"
-                         OnClick="@(() => OnSentenceClick(sentence))">
-                <MudStack Row="true" Spacing="2" Class="align-center">
-                    <MudText Typo="Typo.caption" Color="Color.Secondary" Class="sentence-id" Style="min-width: 60px; text-align: right;">
-                        S@sentence.Id
+            <MudListItem OnClick="@(() => OnSentenceClick(sentence))"
+                         Selected="@(sentence == SelectedSentence)">
+                <MudStack Row="true" AlignItems="AlignItems.Start" Spacing="2">
+                    <MudText Typo="Typo.caption" Color="Color.Secondary" Style="min-width: 50px; text-align: right; font-family: 'Consolas', monospace;">
+                        @sentence.Id
                     </MudText>
 
                     <MudStack Spacing="1" Class="flex-grow-1">
-                        <MudText Typo="Typo.body1" Class="sentence-text">
-                            @sentence.BookText
-                        </MudText>
+                        <MudText Typo="Typo.body1">@sentence.BookText</MudText>
                         @if (!string.IsNullOrEmpty(sentence.ScriptText) && sentence.ScriptText != sentence.BookText)
                         {
                             <MudText Typo="Typo.body2" Color="Color.Warning" Style="font-style: italic;">
@@ -30,9 +28,9 @@ else
                         }
                     </MudStack>
 
-                    <MudStack Row="true" Spacing="1" Style="min-width: 60px;" Justify="Justify.Center">
-                        @if (sentence.Diff != null)
-                        {
+                    @if (sentence.Diff != null && (sentence.Diff.Stats.Insertions > 0 || sentence.Diff.Stats.Deletions > 0))
+                    {
+                        <MudStack Row="true" Spacing="1">
                             @if (sentence.Diff.Stats.Insertions > 0)
                             {
                                 <MudIcon Icon="@Icons.Material.Filled.Add" Size="Size.Small" Color="Color.Success" />
@@ -41,8 +39,8 @@ else
                             {
                                 <MudIcon Icon="@Icons.Material.Filled.Remove" Size="Size.Small" Color="Color.Error" />
                             }
-                        }
-                    </MudStack>
+                        </MudStack>
+                    }
                 </MudStack>
             </MudListItem>
             <MudDivider />
@@ -54,23 +52,6 @@ else
     [Parameter] public IReadOnlyList<SentenceDto> Sentences { get; set; } = Array.Empty<SentenceDto>();
     [Parameter] public SentenceDto? SelectedSentence { get; set; }
     [Parameter] public EventCallback<SentenceDto> OnSentenceSelected { get; set; }
-
-    private string GetRowClass(SentenceDto sentence)
-    {
-        var classes = new List<string> { "manuscript-row" };
-
-        if (sentence == SelectedSentence)
-        {
-            classes.Add("mud-selected-item");
-        }
-
-        if (sentence.Diff != null && (sentence.Diff.Stats.Insertions > 0 || sentence.Diff.Stats.Deletions > 0))
-        {
-            classes.Add("has-diff");
-        }
-
-        return string.Join(" ", classes);
-    }
 
     private async Task OnSentenceClick(SentenceDto sentence)
     {
