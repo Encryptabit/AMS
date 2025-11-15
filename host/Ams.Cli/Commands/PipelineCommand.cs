@@ -382,7 +382,7 @@ public static class PipelineCommand
             var elapsed = FormatElapsed(_stopwatch.Elapsed);
             var anyRunning = _chapters.Values.Any(c => c.IsRunning);
             var indicatorSuffix = !_finished && anyRunning ? " [blink]●[/]" : string.Empty;
-            table.Caption = new Markup($"[grey]Total runtime: {elapsed}{indicatorSuffix}[/]");
+            table.Caption = new TableTitle($"[grey]Total runtime: {elapsed}{indicatorSuffix}[/]");
 
             return table;
         }
