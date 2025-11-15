@@ -12,7 +12,7 @@ public class BookParsingTests
         Assert.True(DocumentProcessor.CanParseBook("test.txt"));
         Assert.True(DocumentProcessor.CanParseBook("test.md"));
         Assert.True(DocumentProcessor.CanParseBook("test.rtf"));
-        Assert.False(DocumentProcessor.CanParseBook("test.pdf"));
+        Assert.True(DocumentProcessor.CanParseBook("test.pdf"));
     }
 
     [Fact]
