@@ -167,6 +167,7 @@ public static class TextDiffAnalyzer
         var dmp = new diff_match_patch();
         var diffs = dmp.diff_main(encodedReference, encodedHypothesis, false);
         dmp.diff_cleanupSemantic(diffs);
+        PostProcessGlueTokens(diffs, dictionary);
 
         return new TokenDiffResult(diffs, dictionary);
     }
@@ -191,6 +192,199 @@ public static class TextDiffAnalyzer
         return tokens;
     }
 
+
+    private static void PostProcessGlueTokens(List<Diff> diffs, IReadOnlyList<string> dictionary)
+    {
+        if (diffs.Count < 2)
+        {
+            return;
+        }
+
+        var normalizedCache = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        string NormalizeToken(string token)
+        {
+            if (normalizedCache.TryGetValue(token, out var existing))
+            {
+                return existing;
+            }
+
+            var normalized = string.Concat(PronunciationHelper.ExtractPronunciationParts(token));
+            normalizedCache[token] = normalized;
+            return normalized;
+        }
+
+        int i = 0;
+        while (i < diffs.Count - 1)
+        {
+            var first = diffs[i];
+            var second = diffs[i + 1];
+
+            if (!IsGlueCandidate(first, second))
+            {
+                i++;
+                continue;
+            }
+
+            var deletes = DecodeTokens(first.text, dictionary).ToList();
+            var inserts = DecodeTokens(second.text, dictionary).ToList();
+            if (deletes.Count == 0 || inserts.Count == 0)
+            {
+                i++;
+                continue;
+            }
+
+            if (!TryMatchGlue(deletes, inserts, NormalizeToken, out var deleteIndex, out var insertSpan, out var mergedText))
+            {
+                i++;
+                continue;
+            }
+
+            var replacement = new List<Diff>();
+
+            if (deleteIndex >= 0 && deleteIndex < deletes.Count)
+            {
+                deletes.RemoveAt(deleteIndex);
+                if (deletes.Count > 0)
+                {
+                    replacement.Add(new Diff(Operation.DELETE, EncodeTokens(deletes, dictionary)));
+                }
+            }
+            else
+            {
+                replacement.Add(new Diff(first.operation, first.text));
+            }
+
+            replacement.Add(new Diff(Operation.EQUAL, EncodeTokens(new[] { mergedText }, dictionary)));
+
+            if (insertSpan.length > 0 && insertSpan.start < inserts.Count)
+            {
+                inserts.RemoveRange(insertSpan.start, Math.Min(insertSpan.length, inserts.Count - insertSpan.start));
+                if (inserts.Count > 0)
+                {
+                    replacement.Add(new Diff(Operation.INSERT, EncodeTokens(inserts, dictionary)));
+                }
+            }
+            else
+            {
+                replacement.Add(new Diff(second.operation, second.text));
+            }
+
+            diffs.RemoveAt(i + 1);
+            diffs.RemoveAt(i);
+            diffs.InsertRange(i, replacement);
+
+            i = Math.Max(0, i - 1);
+        }
+    }
+
+    private static bool IsGlueCandidate(Diff first, Diff second)
+        => ((first.operation == Operation.DELETE && second.operation == Operation.INSERT)
+            || (first.operation == Operation.INSERT && second.operation == Operation.DELETE))
+           && first.text.Length > 0
+           && second.text.Length > 0;
+
+    private static bool TryMatchGlue(
+        List<string> deletes,
+        List<string> inserts,
+        Func<string, string> normalize,
+        out int deleteIndex,
+        out (int start, int length) insertSpan,
+        out string mergedText)
+    {
+        deleteIndex = -1;
+        insertSpan = (0, 0);
+        mergedText = string.Empty;
+
+        var normalizedInserts = inserts.Select(normalize).ToList();
+        var normalizedDeletes = deletes.Select(normalize).ToList();
+
+        for (int di = 0; di < normalizedDeletes.Count; di++)
+        {
+            var deleteToken = normalizedDeletes[di];
+            if (string.IsNullOrEmpty(deleteToken))
+            {
+                continue;
+            }
+
+            for (int start = 0; start < normalizedInserts.Count; start++)
+            {
+                var builder = new StringBuilder();
+                int length = 0;
+                for (int span = start; span < normalizedInserts.Count; span++)
+                {
+                    builder.Append(normalizedInserts[span]);
+                    length++;
+
+                    if (builder.ToString().Equals(deleteToken, StringComparison.OrdinalIgnoreCase))
+                    {
+                        deleteIndex = di;
+                        insertSpan = (start, length);
+                        mergedText = deletes[di];
+                        return true;
+                    }
+                }
+            }
+        }
+
+        for (int ii = 0; ii < normalizedInserts.Count; ii++)
+        {
+            var insertToken = normalizedInserts[ii];
+            if (string.IsNullOrEmpty(insertToken))
+            {
+                continue;
+            }
+
+            for (int start = 0; start < normalizedDeletes.Count; start++)
+            {
+                var builder = new StringBuilder();
+                int length = 0;
+                for (int span = start; span < normalizedDeletes.Count; span++)
+                {
+                    builder.Append(normalizedDeletes[span]);
+                    length++;
+
+                    if (builder.ToString().Equals(insertToken, StringComparison.OrdinalIgnoreCase))
+                    {
+                        deleteIndex = start;
+                        insertSpan = (ii, 1);
+                        mergedText = inserts[ii];
+                        return true;
+                    }
+                }
+            }
+        }
+
+        return false;
+    }
+
+
+    private static int IndexOfToken(IReadOnlyList<string> dictionary, string token)
+    {
+        for (int i = 0; i < dictionary.Count; i++)
+        {
+            if (string.Equals(dictionary[i], token, StringComparison.Ordinal))
+            {
+                return i;
+            }
+        }
+        return -1;
+    }
+    private static string EncodeTokens(IEnumerable<string> tokens, IReadOnlyList<string> dictionary)
+    {
+        var indices = new List<char>();
+        foreach (var token in tokens)
+        {
+            var index = IndexOfToken(dictionary, token);
+            if (index < 0)
+            {
+                continue;
+            }
+
+            indices.Add((char)index);
+        }
+
+        return new string(indices.ToArray());
+    }
     private static string MapOperation(Operation op) => op switch
     {
         Operation.DELETE => "delete",

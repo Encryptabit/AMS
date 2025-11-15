@@ -304,15 +304,10 @@ public static class ValidateCommand
             Log.Debug("Base directory: {BaseDir}", baseDir);
             Log.Debug("Server will run at: http://localhost:{Port}", port);
             
-            var pythonScript = Path.Combine(
-                AppContext.BaseDirectory, 
-                "..", "..", "..", "..", "..",
-                "tools", "validation-viewer", "server.py");
-            
-            if (!File.Exists(pythonScript))
+            var pythonScript = ResolveValidationViewerScript();
+            if (pythonScript is null)
             {
-                Log.Error("Validation viewer script not found at: {Path}", pythonScript);
-                Log.Debug("Expected location: {Path}", pythonScript);
+                Log.Error("Validation viewer script not found. Ensure tools/validation-viewer/server.py is available.");
                 context.ExitCode = 1;
                 return;
             }
@@ -413,7 +408,8 @@ public static class ValidateCommand
             try
             {
                 var bookIndexFile = CommandInputResolver.ResolveBookIndex(null);
-                using var handle = chapterFactory.Create(bookIndexFile, transcriptFile: txFile, hydrateFile: hydrateFile);
+                var chapterId = TryInferChapterId(txFile, hydrateFile);
+                using var handle = chapterFactory.Create(bookIndexFile, transcriptFile: txFile, hydrateFile: hydrateFile, chapterId: chapterId);
                 var options = new ValidationReportOptions(
                     AllErrors: allErrors,
                     TopSentences: topSentences,
@@ -436,7 +432,7 @@ public static class ValidateCommand
 
                 var targetFile = outputFile
                     ?? CommandInputResolver.TryResolveChapterArtifact(null, "validate.report.txt", mustExist: false)
-                    ?? new FileInfo(Path.Combine(Directory.GetCurrentDirectory(), "validate.report.txt"));
+                    ?? ResolveDefaultReportPath(txFile, hydrateFile);
 
                 Directory.CreateDirectory(targetFile.DirectoryName ?? Directory.GetCurrentDirectory());
                 await File.WriteAllTextAsync(targetFile.FullName, result.Report, Encoding.UTF8, context.GetCancellationToken());
@@ -463,6 +459,61 @@ public static class ValidateCommand
         string stem = GetBaseStem(txFile.Name);
         var directory = txFile.DirectoryName ?? Environment.CurrentDirectory;
         return new FileInfo(Path.Combine(directory, stem + ".pause-adjustments.json"));
+    }
+
+    private static string? TryInferChapterId(FileInfo? txFile, FileInfo? hydrateFile)
+    {
+        var source = txFile ?? hydrateFile;
+        if (source is null)
+        {
+            return null;
+        }
+
+        return GetBaseStem(source.Name);
+    }
+
+    private static FileInfo ResolveDefaultReportPath(FileInfo? txFile, FileInfo? hydrateFile)
+    {
+        var source = txFile ?? hydrateFile
+            ?? throw new InvalidOperationException("Cannot determine default report path without --tx or --hydrate.");
+
+        var directory = source.DirectoryName ?? Directory.GetCurrentDirectory();
+        var stem = GetBaseStem(source.Name);
+        return new FileInfo(Path.Combine(directory, stem + ".validate.report.txt"));
+    }
+
+    private static string? ResolveValidationViewerScript()
+    {
+        var baseDir = new DirectoryInfo(AppContext.BaseDirectory);
+
+        string? TryCandidate(string path) => File.Exists(path) ? Path.GetFullPath(path) : null;
+
+        var inline = TryCandidate(Path.Combine(baseDir.FullName, "tools", "validation-viewer", "server.py"));
+        if (inline is not null)
+        {
+            return inline;
+        }
+
+        inline = TryCandidate(Path.Combine(baseDir.FullName, "validation-viewer", "server.py"));
+        if (inline is not null)
+        {
+            return inline;
+        }
+
+        var current = baseDir;
+        for (int i = 0; i < 8 && current is not null; i++)
+        {
+            var candidate = Path.Combine(current.FullName, "tools", "validation-viewer", "server.py");
+            var resolved = TryCandidate(candidate);
+            if (resolved is not null)
+            {
+                return resolved;
+            }
+
+            current = current.Parent;
+        }
+
+        return null;
     }
 
     private static string GetBaseStem(string fileName)
