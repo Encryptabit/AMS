@@ -1,5 +1,6 @@
 ﻿using System.CommandLine;
 using System.Text;
+using System.Threading;
 using Ams.Cli.Repl;
 using Ams.Cli.Commands;
 using Ams.Core.Services;
@@ -332,7 +333,12 @@ internal static class Program
 
             if (state.RunAllChapters && state.Chapters.Count > 0)
             {
-                if (ShouldHandleAllChaptersInBulk(args))
+                if (TryGetAsrParallelism(args, out var parallelism))
+                {
+                    await ExecuteChaptersInParallelAsync(state, rootCommand, args, parallelism);
+                    return;
+                }
+                else if (ShouldHandleAllChaptersInBulk(args))
                 {
                     ReplContext.Current = state;
                     try
@@ -400,6 +406,122 @@ internal static class Program
         {
             Directory.SetCurrentDirectory(originalDirectory);
         }
+    }
+
+    private static async Task ExecuteChaptersInParallelAsync(
+        ReplState state,
+        RootCommand rootCommand,
+        string[] args,
+        int requestedParallelism)
+    {
+        var chapters = state.Chapters;
+        if (chapters.Count == 0)
+        {
+            return;
+        }
+
+        var degree = Math.Clamp(requestedParallelism, 1, chapters.Count);
+        Log.Debug("Running ASR in parallel with degree {Degree} (requested {Requested})", degree, requestedParallelism);
+        using var semaphore = new SemaphoreSlim(degree);
+        var tasks = new List<Task>(chapters.Count);
+        var failures = 0;
+
+        foreach (var chapter in chapters)
+        {
+            await semaphore.WaitAsync().ConfigureAwait(false);
+            var chapterCopy = chapter;
+            tasks.Add(Task.Run(async () =>
+            {
+                try
+                {
+                    Console.WriteLine($"=== {chapterCopy.Name} ===");
+                    using var scope = state.BeginChapterScope(chapterCopy);
+                    ReplContext.Current = state;
+                    var concreteArgs = ReplacePlaceholders(args, chapterCopy);
+                    var exitCode = await rootCommand.InvokeAsync(concreteArgs).ConfigureAwait(false);
+                    if (exitCode != 0)
+                    {
+                        Interlocked.Increment(ref failures);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Interlocked.Increment(ref failures);
+                    Console.WriteLine($"Chapter {chapterCopy.Name} failed: {ex.Message}");
+                }
+                finally
+                {
+                    ReplContext.Current = null;
+                    semaphore.Release();
+                }
+            }));
+        }
+
+        await Task.WhenAll(tasks).ConfigureAwait(false);
+
+        if (failures > 0)
+        {
+            Console.WriteLine($"{failures} chapter(s) reported failures during parallel execution.");
+        }
+    }
+
+    private static bool TryGetAsrParallelism(IReadOnlyList<string> args, out int parallelism)
+    {
+        parallelism = 1;
+        if (args.Count < 2)
+        {
+            return false;
+        }
+
+        if (!args[0].Equals("asr", StringComparison.OrdinalIgnoreCase) ||
+            !args[1].Equals("run", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        parallelism = Math.Max(1, ExtractParallelism(args));
+        return parallelism > 1;
+    }
+
+    private static int ExtractParallelism(IReadOnlyList<string> args)
+    {
+        for (int i = 0; i < args.Count; i++)
+        {
+            var token = args[i];
+            if (token.Equals("--parallel", StringComparison.OrdinalIgnoreCase) ||
+                token.Equals("-p", StringComparison.OrdinalIgnoreCase))
+            {
+                if (i + 1 < args.Count && int.TryParse(args[i + 1], out var value))
+                {
+                    return NormalizeParallelism(value);
+                }
+
+                return 1;
+            }
+
+            const string prefix = "--parallel=";
+            if (token.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+            {
+                var inline = token.Substring(prefix.Length);
+                if (int.TryParse(inline, out var inlineValue))
+                {
+                    return NormalizeParallelism(inlineValue);
+                }
+            }
+        }
+
+        return 1;
+    }
+
+    private static int NormalizeParallelism(int requested)
+    {
+        if (requested > 0)
+        {
+            return requested;
+        }
+
+        var auto = Math.Max(1, Environment.ProcessorCount / 2);
+        return auto;
     }
 
     private static bool ShouldHandleAllChaptersInBulk(IReadOnlyList<string> args)

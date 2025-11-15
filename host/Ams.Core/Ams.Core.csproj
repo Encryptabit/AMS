@@ -10,6 +10,9 @@
         <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
       <Link>ExtTools\ffmpeg\%(RecursiveDir)%(Filename)%(Extension)</Link>
     </None>
+    <None Update="..\..\..\..\Users\Jacar\.nuget\packages\whisper.net.runtime.cuda.windows\1.8.1\build\win-x64\ggml-cuda-whisper.dll">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </None>
   </ItemGroup>
 
   <ItemGroup>
@@ -38,7 +41,6 @@
     <PackageReference Include="System.Text.Json" Version="10.0.0" />
     <PackageReference Include="Tesseract" Version="5.2.0" />
     <PackageReference Include="Whisper.net" Version="1.8.1" />
-    <PackageReference Include="Whisper.net.AllRuntimes" Version="1.8.1" />
     <PackageReference Include="Whisper.net.Runtime.Cuda" Version="1.8.1" />
   </ItemGroup>
   <ItemGroup>

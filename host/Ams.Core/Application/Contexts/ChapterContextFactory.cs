@@ -22,28 +22,34 @@ public interface IChapterContextFactory
 
 public sealed class ChapterContextHandle : IDisposable
 {
-    private readonly IBookManager _bookManager;
-    private string ChapterId => _bookManager.Current.Chapters.Current.Descriptor.ChapterId;
+    private readonly BookContext _bookContext;
+    private readonly ChapterContext _chapterContext;
     private bool _disposed;
 
-    internal ChapterContextHandle(IBookManager bookManager)
+    internal ChapterContextHandle(BookContext bookContext, ChapterContext chapterContext)
     {
-        _bookManager = bookManager;
+        _bookContext = bookContext ?? throw new ArgumentNullException(nameof(bookContext));
+        _chapterContext = chapterContext ?? throw new ArgumentNullException(nameof(chapterContext));
     }
 
-    public BookContext Book => _bookManager.Current;
-    public ChapterContext Chapter => _bookManager.Current.Chapters.Current;
+    public BookContext Book => _bookContext;
+    public ChapterContext Chapter => _chapterContext;
 
     public void Save()
     {
-        Chapter.Save();
-        Book.Save();
+        _chapterContext.Save();
+        _bookContext.Save();
     }
 
     public void Dispose()
     {
-        if (_disposed) return;
-        _bookManager.Deallocate(ChapterId);
+        if (_disposed)
+        {
+            return;
+        }
+
+        var chapterId = _chapterContext.Descriptor.ChapterId;
+        _bookContext.Chapters.Deallocate(chapterId);
         _disposed = true;
     }
 }
@@ -129,7 +135,7 @@ public sealed class ChapterContextFactory : IChapterContextFactory
             chapter.Documents.HydratedTranscript = LoadJson<HydratedTranscript>(hydrateFile.FullName);
         }
 
-        return new ChapterContextHandle(manager);
+        return new ChapterContextHandle(book, chapter);
     }
 
     private static ChapterDescriptor EnsureChapterDescriptor(

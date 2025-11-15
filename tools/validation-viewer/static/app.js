@@ -88,9 +88,9 @@ async function resetAllReviews() {
 }
 
 function updateFloatingButton() {
-    const existingButton = document.getElementById('floating-reviewed-button');
-    if (existingButton) {
-        existingButton.remove();
+    const existingBar = document.getElementById('floating-action-bar');
+    if (existingBar) {
+        existingBar.remove();
     }
 
     if (!currentChapter) return;
@@ -99,13 +99,44 @@ function updateFloatingButton() {
     const reviewedClass = isReviewed ? 'reviewed' : '';
     const buttonText = isReviewed ? '✓ Reviewed' : 'Mark as Reviewed';
 
-    const button = document.createElement('button');
-    button.id = 'floating-reviewed-button';
-    button.className = `reviewed-button ${reviewedClass}`;
-    button.innerHTML = buttonText;
-    button.onclick = () => markReviewed(currentChapter, !isReviewed);
+    // Create action bar container
+    const actionBar = document.createElement('div');
+    actionBar.id = 'floating-action-bar';
+    actionBar.className = 'floating-action-bar';
 
-    document.body.appendChild(button);
+    // View switcher group
+    const viewGroup = document.createElement('div');
+    viewGroup.className = 'action-bar-group';
+
+    const errorsButton = document.createElement('button');
+    errorsButton.className = `action-bar-button ${currentView === 'errors' ? 'active' : ''}`;
+    errorsButton.innerHTML = 'Errors';
+    errorsButton.onclick = () => switchView('errors');
+
+    const playbackButton = document.createElement('button');
+    playbackButton.className = `action-bar-button ${currentView === 'playback' ? 'active' : ''}`;
+    playbackButton.innerHTML = 'Playback';
+    playbackButton.onclick = () => switchView('playback');
+
+    viewGroup.appendChild(errorsButton);
+    viewGroup.appendChild(playbackButton);
+
+    // Separator
+    const separator = document.createElement('div');
+    separator.className = 'action-bar-separator';
+
+    // Reviewed button
+    const reviewedButton = document.createElement('button');
+    reviewedButton.className = `action-bar-button reviewed-button ${reviewedClass}`;
+    reviewedButton.innerHTML = buttonText;
+    reviewedButton.onclick = () => markReviewed(currentChapter, !isReviewed);
+
+    // Assemble action bar
+    actionBar.appendChild(viewGroup);
+    actionBar.appendChild(separator);
+    actionBar.appendChild(reviewedButton);
+
+    document.body.appendChild(actionBar);
 }
 
 // Chapter list rendering
@@ -267,6 +298,9 @@ function switchView(view) {
     document.querySelectorAll('.view-toggle-button').forEach(btn => btn.classList.remove('active'));
     document.querySelector(`[data-view="${view}"]`).classList.add('active');
 
+    // Update floating action bar buttons
+    updateFloatingButton();
+
     if (currentReport) {
         renderReport(currentReport);
     }
@@ -378,7 +412,8 @@ function openCrxForSentence(sentenceId) {
     const sentence = currentReport.sentences.find(s => s.id === sentenceId);
     if (!sentence) return;
 
-    openCrxModal(currentChapter, sentence.startTime, sentence.endTime, sentenceId, sentence.bookText || '');
+    // Don't pass excerpt - let openCrxModal generate the comment from diff data
+    openCrxModal(currentChapter, sentence.startTime, sentence.endTime, sentenceId, null);
 }
 
 // Errors view
@@ -727,10 +762,66 @@ function generateCrxComment(sentence) {
     return `Read as: ${diff.scriptHighlighted}\nShould be: ${diff.bookHighlighted}`;
 }
 
+function generateCrxCommentWithSelection(sentence) {
+    if (!sentence || !sentence.diff || !sentence.diff.ops) {
+        return generateCrxComment(sentence);
+    }
+
+    // Get selected error indices
+    const selectedIndices = new Set();
+    document.querySelectorAll('#errorCheckboxes input[type="checkbox"]:checked').forEach(cb => {
+        selectedIndices.add(parseInt(cb.dataset.errorIndex));
+    });
+
+    // Build comment with only selected errors bracketed
+    let shouldBeLine = [];
+    let readAsLine = [];
+    let hasDifferences = false;
+
+    sentence.diff.ops.forEach((op, index) => {
+        const tokens = op.tokens || [];
+        if (tokens.length === 0) return;
+
+        const text = tokens.join(' ');
+        const isSelected = selectedIndices.has(index);
+
+        if (op.op === 'equal') {
+            shouldBeLine.push(text);
+            readAsLine.push(text);
+        } else if (op.op === 'delete') {
+            if (isSelected) {
+                shouldBeLine.push(`[${text}]`);
+                hasDifferences = true;
+            } else {
+                shouldBeLine.push(text);
+                readAsLine.push(text);
+            }
+        } else if (op.op === 'insert') {
+            if (isSelected) {
+                readAsLine.push(`[${text}]`);
+                hasDifferences = true;
+            } else {
+                shouldBeLine.push(text);
+                readAsLine.push(text);
+            }
+        }
+    });
+
+    if (!hasDifferences) {
+        return sentence.bookText;
+    }
+
+    const shouldBe = shouldBeLine.join(' ');
+    const readAs = readAsLine.join(' ');
+
+    return `Should be: ${shouldBe}\nRead as: ${readAs}`;
+}
+
 function generateBracketedDiffComment(diff, bookText) {
     // Build two lines showing differences in brackets
     let shouldBeLine = [];
     let readAsLine = [];
+    let hasDifferences = false;
 
     diff.ops.forEach(op => {
         const tokens = op.tokens || [];
@@ -745,13 +836,20 @@ function generateBracketedDiffComment(diff, bookText) {
         } else if (op.op === 'delete') {
             // In book but not read
             shouldBeLine.push(`[${text}]`);
+            hasDifferences = true;
             // Don't add to readAs
         } else if (op.op === 'insert') {
             // Read but not in book
             readAsLine.push(`[${text}]`);
+            hasDifferences = true;
             // Don't add to shouldBe
         }
     });
+
+    // If no differences, just return the sentence
+    if (!hasDifferences) {
+        return bookText;
+    }
 
     const shouldBe = shouldBeLine.join(' ');
     const readAs = readAsLine.join(' ');
@@ -767,23 +865,120 @@ function openCrxModal(chapterName, startTime, endTime, sentenceId, excerpt) {
         start: startTime,
         end: endTime,
         sentenceId: sentenceId,
-        excerpt: decodedExcerpt
+        excerpt: decodedExcerpt,
+        sentence: null
     };
 
-    const commentsField = document.getElementById('comments');
     const sentence = currentReport && Array.isArray(currentReport.sentences)
         ? currentReport.sentences.find(s => s.id === sentenceId)
         : null;
 
-    if (decodedExcerpt) {
-        commentsField.value = decodedExcerpt;
-    } else if (sentence) {
+    pendingCrxData.sentence = sentence;
+
+    // Populate error checkboxes from diff data
+    populateErrorCheckboxes(sentence);
+
+    // Always try to generate comment from sentence diff data first
+    const commentsField = document.getElementById('comments');
+    if (sentence) {
         commentsField.value = generateCrxComment(sentence);
+    } else if (decodedExcerpt) {
+        commentsField.value = decodedExcerpt;
     } else {
         commentsField.value = '';
     }
 
+    // Set up audio preview
+    refreshAudioPreview();
+
     document.getElementById('crxModal').style.display = 'block';
+}
+
+function populateErrorCheckboxes(sentence) {
+    const container = document.getElementById('errorCheckboxes');
+    container.innerHTML = '';
+
+    if (!sentence || !sentence.diff || !sentence.diff.ops) {
+        container.innerHTML = '<div style="color: #858585; font-style: italic;">No diff data available</div>';
+        document.getElementById('selectAllErrors').disabled = true;
+        return;
+    }
+
+    document.getElementById('selectAllErrors').disabled = false;
+    document.getElementById('selectAllErrors').checked = true;
+
+    // Collect all non-equal ops
+    const errors = [];
+    sentence.diff.ops.forEach((op, index) => {
+        if (op.op !== 'equal' && op.tokens && op.tokens.length > 0) {
+            errors.push({
+                index: index,
+                type: op.op,
+                text: op.tokens.join(' ')
+            });
+        }
+    });
+
+    if (errors.length === 0) {
+        container.innerHTML = '<div style="color: #858585; font-style: italic;">No errors detected</div>';
+        document.getElementById('selectAllErrors').disabled = true;
+        return;
+    }
+
+    errors.forEach(error => {
+        const label = document.createElement('label');
+        label.style.display = 'block';
+        label.style.marginBottom = '4px';
+
+        const checkbox = document.createElement('input');
+        checkbox.type = 'checkbox';
+        checkbox.checked = true;
+        checkbox.dataset.errorIndex = error.index;
+        checkbox.onchange = () => updateCrxComment();
+
+        const typeSpan = document.createElement('span');
+        typeSpan.style.color = error.type === 'delete' ? '#ff6b6b' : '#69db7c';
+        typeSpan.style.fontWeight = '600';
+        typeSpan.textContent = error.type === 'delete' ? 'DEL' : 'INS';
+
+        label.appendChild(checkbox);
+        label.appendChild(document.createTextNode(' '));
+        label.appendChild(typeSpan);
+        label.appendChild(document.createTextNode(`: "${error.text}"`));
+
+        container.appendChild(label);
+    });
+}
+
+function toggleAllErrors(checked) {
+    const checkboxes = document.querySelectorAll('#errorCheckboxes input[type="checkbox"]');
+    checkboxes.forEach(cb => cb.checked = checked);
+    updateCrxComment();
+}
+
+function updatePaddingValue(value) {
+    document.getElementById('paddingValue').textContent = value;
+}
+
+function updateCrxComment() {
+    if (!pendingCrxData || !pendingCrxData.sentence) return;
+
+    const commentsField = document.getElementById('comments');
+    commentsField.value = generateCrxCommentWithSelection(pendingCrxData.sentence);
+}
+
+function refreshAudioPreview() {
+    if (!pendingCrxData) return;
+
+    const padding = parseInt(document.getElementById('paddingSlider').value) / 1000; // Convert ms to seconds
+    const start = pendingCrxData.start;
+    const end = pendingCrxData.end + padding;
+
+    const audioPreview = document.getElementById('crxAudioPreview');
+    const audioSource = document.getElementById('crxAudioSource');
+
+    audioSource.src = `/api/audio/${encodeURIComponent(pendingCrxData.chapterName)}?start=${start}&end=${end}`;
+    audioPreview.load();
 }
 
 function closeCrxModal() {
@@ -796,6 +991,7 @@ async function submitCrx() {
 
     const errorType = document.getElementById('errorType').value;
     const comments = document.getElementById('comments').value;
+    const paddingMs = parseInt(document.getElementById('paddingSlider').value);
 
     try {
         const response = await fetch(`/api/crx/${encodeURIComponent(pendingCrxData.chapterName)}`, {
@@ -809,14 +1005,15 @@ async function submitCrx() {
                 sentenceId: pendingCrxData.sentenceId,
                 errorType: errorType,
                 comments: comments,
-                excerpt: pendingCrxData.excerpt
+                excerpt: pendingCrxData.excerpt,
+                paddingMs: paddingMs
             })
         });
 
         const result = await response.json();
 
         if (result.success) {
-            showToast(`Added to CRX!<br>Error #${result.errorNumber} • ${result.timecode}`, 'success');
+            showToast(`Added to CRX!<br>Error #${result.errorNumber} • ${result.timecode}<br>Audio: ${result.audioFile}`, 'success');
             closeCrxModal();
         } else {
             showToast(`Failed to add to CRX: ${result.error}`, 'error');

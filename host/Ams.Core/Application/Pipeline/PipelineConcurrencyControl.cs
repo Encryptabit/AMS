@@ -27,7 +27,7 @@ public sealed class PipelineConcurrencyControl : IDisposable
 
     public static PipelineConcurrencyControl CreateShared(int maxMfaParallelism)
     {
-        return new PipelineConcurrencyControl(bookIndexDegree: 1, asrDegree: 1, mfaDegree: Math.Max(1, maxMfaParallelism));
+        return new PipelineConcurrencyControl(bookIndexDegree: 1, asrDegree: Math.Max(1, maxMfaParallelism), mfaDegree: Math.Max(1, maxMfaParallelism));
     }
 
     public bool TryClaimBookIndexForce()

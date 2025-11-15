@@ -1,4 +1,5 @@
 using System.Buffers;
+using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
 using System.Net.Http;
@@ -14,8 +15,89 @@ using EchoSharp.Onnx.SileroVad;
 using EchoSharp.SpeechTranscription;
 using EchoSharp.Whisper.net;
 using Whisper.net;
+using Whisper.net.Logger;
 
 namespace Ams.Core.Processors;
+
+internal static class WhisperFactoryPool
+{
+    private readonly record struct FactoryKey(string ModelPath, bool UseGpu, int GpuDevice, bool UseFlashAttention, bool UseDtw);
+
+    private sealed class FactoryEntry
+    {
+        public FactoryEntry(WhisperFactory factory)
+        {
+            Factory = factory;
+        }
+
+        public WhisperFactory Factory { get; }
+        public int RefCount;
+    }
+
+    private sealed class FactoryHandle : IDisposable
+    {
+        private readonly FactoryKey _key;
+        private FactoryEntry? _entry;
+
+        public FactoryHandle(FactoryKey key, FactoryEntry entry)
+        {
+            _key = key;
+            _entry = entry;
+        }
+
+        public WhisperFactory Factory => _entry!.Factory;
+
+        public void Dispose()
+        {
+            if (_entry is null)
+            {
+                return;
+            }
+
+            lock (SyncRoot)
+            {
+                if (--_entry.RefCount == 0)
+                {
+                    if (Entries.Remove(_key, out var removed))
+                    {
+                        removed.Factory.Dispose();
+                    }
+                }
+            }
+
+            _entry = null;
+        }
+    }
+
+    private static readonly object SyncRoot = new();
+    private static readonly Dictionary<FactoryKey, FactoryEntry> Entries = new();
+
+    public static IDisposable Acquire(string modelPath, WhisperFactoryOptions options, out WhisperFactory factory)
+    {
+        var key = new FactoryKey(
+            ModelPath: Path.GetFullPath(modelPath),
+            UseGpu: options.UseGpu,
+            GpuDevice: options.GpuDevice,
+            UseFlashAttention: options.UseFlashAttention,
+            UseDtw: options.UseDtwTimeStamps);
+
+        FactoryEntry entry;
+        lock (SyncRoot)
+        {
+            if (!Entries.TryGetValue(key, out var cached))
+            {
+                cached = new FactoryEntry(WhisperFactory.FromPath(key.ModelPath, options));
+                Entries[key] = cached;
+            }
+
+            cached.RefCount++;
+            entry = cached;
+        }
+
+        factory = entry.Factory;
+        return new FactoryHandle(key, entry);
+    }
+}
 
 /// <summary>
 /// Whisper.NET backed ASR primitives exposed as static helpers.
@@ -103,7 +185,8 @@ public static class AsrProcessor
     {
         cancellationToken.ThrowIfCancellationRequested();
 
-        using var factory = WhisperFactory.FromPath(options.ModelPath, CreateFactoryOptions(options));
+        var factoryOptions = CreateFactoryOptions(options);
+        using var handle = WhisperFactoryPool.Acquire(options.ModelPath, factoryOptions, out var factory);
         var builder = ConfigureBuilder(factory, options, enableTokenTimestamps: false);
         await using var processor = builder.Build();
 
@@ -119,32 +202,44 @@ public static class AsrProcessor
     {
         var factoryOptions = CreateFactoryOptions(options);
 
-        using var factory = WhisperFactory.FromPath(options.ModelPath, factoryOptions);
-        var builder = ConfigureBuilder(factory, options, enableTokenTimestamps: options.EnableWordTimestamps);
-
-        await using var processor = builder.Build();
-        await using var wavStream = buffer.ToWavStream(new AudioEncodeOptions
+        using var factoryHandle = WhisperFactoryPool.Acquire(options.ModelPath, factoryOptions, out var factory);
+        var active = Interlocked.Increment(ref _whisperInflight);
+        Log.Debug("Whisper.NET inflight={Active} model={Model}", active, options.ModelPath);
+        try
         {
-            TargetSampleRate = AudioProcessor.DefaultAsrSampleRate,
-            TargetBitDepth = 16
-        });
-        wavStream.Position = 0;
+            var builder = ConfigureBuilder(factory, options, enableTokenTimestamps: options.EnableWordTimestamps);
 
-        var tokens = new List<AsrToken>();
-        var segments = new List<AsrSegment>();
-        await foreach (var segment in processor.ProcessAsync(wavStream, cancellationToken).ConfigureAwait(false))
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            segments.Add(new AsrSegment(
-                segment.Start.TotalSeconds,
-                segment.End.TotalSeconds,
-                segment.Text?.Trim() ?? string.Empty));
-            AppendTokens(tokens, segment);
+            await using var processor = builder.Build();
+            await using var wavStream = buffer.ToWavStream(new AudioEncodeOptions
+            {
+                TargetSampleRate = AudioProcessor.DefaultAsrSampleRate,
+                TargetBitDepth = 16
+            });
+            wavStream.Position = 0;
+
+            var tokens = new List<AsrToken>();
+            var segments = new List<AsrSegment>();
+            await foreach (var segment in processor.ProcessAsync(wavStream, cancellationToken).ConfigureAwait(false))
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                segments.Add(new AsrSegment(
+                    segment.Start.TotalSeconds,
+                    segment.End.TotalSeconds,
+                    segment.Text?.Trim() ?? string.Empty));
+                AppendTokens(tokens, segment);
+            }
+
+            var modelVersion = Path.GetFileName(options.ModelPath) ?? "whisper";
+            return new AsrResponse(modelVersion, tokens.ToArray(), segments.ToArray());
         }
-
-        var modelVersion = Path.GetFileName(options.ModelPath) ?? "whisper";
-        return new AsrResponse(modelVersion, tokens.ToArray(), segments.ToArray());
+        finally
+        {
+            var remaining = Interlocked.Decrement(ref _whisperInflight);
+            Log.Debug("Whisper.NET completed inflight={Active} model={Model}", remaining, options.ModelPath);
+        }
     }
+
+    private static int _whisperInflight;
 
     private static void EnsureModelPath(string modelPath)
     {
@@ -317,6 +412,7 @@ public static class AsrProcessor
         try
         {
             using var waveSource = BuildAwaitableWaveSource(buffer);
+           // using var whisperLogger = LogProvider.AddConsoleLogging(WhisperLogLevel.Debug);
             using var whisperFactory = WhisperFactory.FromPath(options.ModelPath, CreateFactoryOptions(options));
             using var speechFactory = new WhisperSpeechTranscriptorFactory(whisperFactory, dispose: false);
             var vadFactory = await GetSileroVadFactoryAsync(cancellationToken).ConfigureAwait(false);

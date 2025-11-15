@@ -136,15 +136,15 @@ public class BookIndexer : IBookIndexer
 
             foreach (var rawToken in TokenizeByWhitespace(pText))
             {
-                var token = NormalizeTokenSurface(rawToken);
-                if (!ContainsLexicalContent(token))
+                var normalizedToken = NormalizeTokenSurface(rawToken);
+                if (!ContainsLexicalContent(normalizedToken))
                 {
                     continue;
                 }
 
                 paragraphHasLexical = true;
 
-                string? lexeme = PronunciationHelper.NormalizeForLookup(token);
+                string? lexeme = PronunciationHelper.NormalizeForLookup(normalizedToken);
                 string[]? phonemes = null;
                 if (!string.IsNullOrEmpty(lexeme) && pronunciations.TryGetValue(lexeme, out var mapped) && mapped.Length > 0)
                 {
@@ -152,7 +152,7 @@ public class BookIndexer : IBookIndexer
                 }
 
                 var w = new BookWord(
-                    Text: token,
+                    Text: rawToken,
                     WordIndex: globalWord,
                     SentenceIndex: sentenceIndex,
                     ParagraphIndex: pIndex,
@@ -162,7 +162,7 @@ public class BookIndexer : IBookIndexer
                 words.Add(w);
                 globalWord++;
 
-                if (IsSentenceTerminal(token))
+                if (IsSentenceTerminal(normalizedToken))
                 {
                     sentences.Add(new SentenceRange(Index: sentenceIndex, Start: sentenceStartWord, End: globalWord - 1));
                     sentenceIndex++;
@@ -703,4 +703,3 @@ public class BookIndexer : IBookIndexer
         }
     }
 }
-

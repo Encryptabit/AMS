@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using System.Threading;
 
 namespace Ams.Cli.Repl;
 
@@ -16,7 +17,7 @@ internal static class ReplContext
 
 internal sealed class ReplState
 {
-    private FileInfo? _chapterOverride;
+    private readonly AsyncLocal<FileInfo?> _chapterOverride = new();
     private readonly string _stateFilePath;
     private bool _suppressPersist;
     private string? _pendingChapterName;
@@ -67,7 +68,7 @@ internal sealed class ReplState
             ? Chapters[idx]
             : null;
 
-    public FileInfo? ActiveChapter => _chapterOverride ?? SelectedChapter;
+    public FileInfo? ActiveChapter => _chapterOverride.Value ?? SelectedChapter;
 
     public string? ActiveChapterStem =>
         ActiveChapter is null
@@ -225,7 +226,7 @@ internal sealed class ReplState
 
         RunAllChapters = true;
         SelectedChapterIndex = null;
-        _chapterOverride = null;
+        _chapterOverride.Value = null;
 
         PersistState();
     }
@@ -257,13 +258,14 @@ internal sealed class ReplState
 
     public IDisposable BeginChapterScope(FileInfo chapter)
     {
-        _chapterOverride = chapter;
-        return new ChapterScope(this);
+        var previous = _chapterOverride.Value;
+        _chapterOverride.Value = chapter;
+        return new ChapterScope(this, previous);
     }
 
     public void ClearChapterScope()
     {
-        _chapterOverride = null;
+        _chapterOverride.Value = null;
     }
 
     public FileInfo ResolveChapterFile(string suffix, bool mustExist)
@@ -307,16 +309,16 @@ internal sealed class ReplState
         private readonly FileInfo? _previous;
         private bool _disposed;
 
-        public ChapterScope(ReplState state)
+        public ChapterScope(ReplState state, FileInfo? previous)
         {
             _state = state;
-            _previous = state._chapterOverride;
+            _previous = previous;
         }
 
         public void Dispose()
         {
             if (_disposed) return;
-            _state._chapterOverride = _previous;
+            _state._chapterOverride.Value = _previous;
             _disposed = true;
         }
     }
@@ -361,7 +363,7 @@ internal sealed class ReplState
         }
 
         SelectedChapterIndex = Math.Clamp(index, 0, Chapters.Count - 1);
-        _chapterOverride = null;
+        _chapterOverride.Value = null;
         if (updateLastSelected && SelectedChapter is not null)
         {
             _lastSelectedChapterName = SelectedChapter.Name;
