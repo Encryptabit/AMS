@@ -1,0 +1,3 @@
+# Python requirements for validation-viewer server
+openpyxl>=3.0.0
+xlwings>=0.24.0

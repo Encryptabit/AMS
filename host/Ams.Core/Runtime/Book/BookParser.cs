@@ -100,6 +100,7 @@ public class BookParser : IBookParser
             return await Task.Run(() =>
             {
                 using var document = DocX.Load(filePath);
+                var bodyUri = document.PackagePart?.Uri;
 
                 string? title = null;
                 string? author = null;
@@ -126,6 +127,12 @@ public class BookParser : IBookParser
                     cancellationToken.ThrowIfCancellationRequested();
 
                     var p = paragraphs[i];
+
+                    if (bodyUri != null && p.PackagePart?.Uri != null && p.PackagePart.Uri != bodyUri)
+                    {
+                        continue;
+                    }
+
                     var text = p.Text ?? string.Empty; // Do not trim/normalize
                     var style = p.StyleId ?? "Unknown";
                     var kind = style.Contains("Heading", StringComparison.OrdinalIgnoreCase) ? "Heading" : "Body";
