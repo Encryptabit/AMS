@@ -1125,7 +1125,8 @@ private static async Task RunPipelineAsync(
             Engine = AsrEngineConfig.Resolve(),
             ServiceUrl = asrServiceUrl,
             Model = asrModel,
-            Language = asrLanguage
+            Language = asrLanguage,
+            EnableWordTimestamps = true
         };
 
         var pipelineOptions = new PipelineRunOptions
