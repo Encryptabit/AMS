@@ -7,6 +7,148 @@ let reviewedStatus = {};
 let currentView = 'errors'; // 'errors' or 'playback'
 let chapterAudio = null;
 let currentPlayingSentence = null;
+let waveSurferInstances = {}; // Track WaveSurfer instances by ID
+
+// WaveSurfer Audio Player Component
+class WaveSurferPlayer {
+    constructor(containerId, audioUrl, options = {}) {
+        this.containerId = containerId;
+        this.audioUrl = audioUrl;
+        this.options = {
+            title: options.title || 'Audio',
+            height: options.height || 80,
+            waveColor: options.waveColor || '#4a9eff',
+            progressColor: options.progressColor || '#1177bb',
+            cursorColor: options.cursorColor || '#ffffff',
+            barWidth: options.barWidth || 2,
+            barGap: options.barGap || 1,
+            barRadius: options.barRadius || 2,
+            onReady: options.onReady || null,
+            onTimeUpdate: options.onTimeUpdate || null,
+        };
+        this.wavesurfer = null;
+        this.isPlaying = false;
+    }
+
+    render() {
+        const container = document.getElementById(this.containerId);
+        if (!container) {
+            console.error(`Container ${this.containerId} not found`);
+            return;
+        }
+
+        container.innerHTML = `
+            <div class="waveform-container">
+                <div class="waveform-header">
+                    <div class="waveform-title">${this.options.title}</div>
+                    <div class="waveform-time">
+                        <span id="${this.containerId}-current">0:00</span> /
+                        <span id="${this.containerId}-duration">0:00</span>
+                    </div>
+                </div>
+                <div id="${this.containerId}-waveform" class="waveform-canvas"></div>
+                <div class="waveform-controls">
+                    <button id="${this.containerId}-play" class="waveform-play-button">▶</button>
+                </div>
+            </div>
+        `;
+
+        this.init();
+    }
+
+    async init() {
+        const waveformDiv = document.getElementById(`${this.containerId}-waveform`);
+        if (!waveformDiv) return;
+
+        this.wavesurfer = WaveSurfer.create({
+            container: waveformDiv,
+            height: this.options.height,
+            waveColor: this.options.waveColor,
+            progressColor: this.options.progressColor,
+            cursorColor: this.options.cursorColor,
+            barWidth: this.options.barWidth,
+            barGap: this.options.barGap,
+            barRadius: this.options.barRadius,
+            normalize: true,
+            backend: 'WebAudio',
+        });
+
+        // Load audio
+        await this.wavesurfer.load(this.audioUrl);
+
+        // Event listeners
+        this.wavesurfer.on('ready', () => {
+            const duration = this.wavesurfer.getDuration();
+            document.getElementById(`${this.containerId}-duration`).textContent = this.formatTime(duration);
+            if (this.options.onReady) {
+                this.options.onReady(this.wavesurfer);
+            }
+        });
+
+        this.wavesurfer.on('audioprocess', () => {
+            const current = this.wavesurfer.getCurrentTime();
+            document.getElementById(`${this.containerId}-current`).textContent = this.formatTime(current);
+            if (this.options.onTimeUpdate) {
+                this.options.onTimeUpdate(current);
+            }
+        });
+
+        this.wavesurfer.on('play', () => {
+            this.isPlaying = true;
+            document.getElementById(`${this.containerId}-play`).textContent = '⏸';
+        });
+
+        this.wavesurfer.on('pause', () => {
+            this.isPlaying = false;
+            document.getElementById(`${this.containerId}-play`).textContent = '▶';
+        });
+
+        // Play/pause button
+        const playButton = document.getElementById(`${this.containerId}-play`);
+        playButton.onclick = () => this.playPause();
+
+        // Store instance
+        waveSurferInstances[this.containerId] = this;
+    }
+
+    playPause() {
+        if (this.wavesurfer) {
+            this.wavesurfer.playPause();
+        }
+    }
+
+    play() {
+        if (this.wavesurfer) {
+            this.wavesurfer.play();
+        }
+    }
+
+    pause() {
+        if (this.wavesurfer) {
+            this.wavesurfer.pause();
+        }
+    }
+
+    seekTo(time) {
+        if (this.wavesurfer) {
+            const duration = this.wavesurfer.getDuration();
+            this.wavesurfer.seekTo(time / duration);
+        }
+    }
+
+    destroy() {
+        if (this.wavesurfer) {
+            this.wavesurfer.destroy();
+            delete waveSurferInstances[this.containerId];
+        }
+    }
+
+    formatTime(seconds) {
+        const mins = Math.floor(seconds / 60);
+        const secs = Math.floor(seconds % 60);
+        return `${mins}:${secs.toString().padStart(2, '0')}`;
+    }
+}
 
 // Initialization
 async function loadReviewedStatus() {
@@ -324,9 +466,7 @@ function renderPlaybackView(report) {
                  class="compact-sentence ${hasErrorsClass}"
                  data-sentence-id="${s.id}"
                  data-start="${s.startTime}"
-                 data-end="${s.endTime}"
-                 onclick="seekToSentence(${s.id}, ${s.startTime})"
-                 ondblclick="openCrxForSentence(${s.id})">
+                 data-end="${s.endTime}">
                 <div class="compact-header">
                     <span class="compact-id">#${s.id}</span>
                     <span class="compact-timing">${formatTime(s.startTime)} - ${formatTime(s.endTime)}</span>
@@ -346,17 +486,43 @@ function renderPlaybackView(report) {
             <button class="view-toggle-button active" data-view="playback" onclick="switchView('playback')">Playback View</button>
         </div>
 
-        <div class="chapter-audio-player">
-            <audio id="chapter-audio" controls>
-                <source src="/api/audio/${encodeURIComponent(currentChapter)}" type="audio/wav">
-            </audio>
-        </div>
+        <div id="chapter-audio-player"></div>
 
-        <div class="section-title">Chapter Sentences (Click to seek, Double-click for CRX)</div>
+        <div class="section-title">Chapter Sentences (Click to seek • Shift+Click or E for CRX)</div>
         ${compactSentencesHtml}
     `;
 
     setupChapterAudio();
+    setupCompactSentenceListeners();
+}
+
+function setupCompactSentenceListeners() {
+    const sentences = document.querySelectorAll('.compact-sentence');
+    sentences.forEach(sentence => {
+        const sentenceId = parseInt(sentence.dataset.sentenceId);
+        const startTime = parseFloat(sentence.dataset.start);
+
+        // Track hover for 'e' key functionality
+        sentence.addEventListener('mouseenter', () => {
+            window.lastHoveredSentence = sentenceId;
+        });
+
+        // Click handler: Shift+click = CRX export, regular click = seek
+        sentence.addEventListener('click', (e) => {
+            if (e.shiftKey) {
+                e.preventDefault();
+                openCrxForSentence(sentenceId);
+            } else {
+                seekToSentence(sentenceId, startTime);
+            }
+        });
+
+        // Double-click handler: CRX export (backwards compatibility)
+        sentence.addEventListener('dblclick', (e) => {
+            e.preventDefault();
+            openCrxForSentence(sentenceId);
+        });
+    });
 }
 
 function formatTime(seconds) {
@@ -366,13 +532,26 @@ function formatTime(seconds) {
 }
 
 function setupChapterAudio() {
-    chapterAudio = document.getElementById('chapter-audio');
-    if (!chapterAudio) return;
+    // Destroy existing WaveSurfer instance if any
+    if (waveSurferInstances['chapter-audio-player']) {
+        waveSurferInstances['chapter-audio-player'].destroy();
+    }
 
-    chapterAudio.addEventListener('timeupdate', () => {
-        const currentTime = chapterAudio.currentTime;
-        updatePlayingSentence(currentTime);
+    // Create new WaveSurfer player for chapter audio
+    const audioUrl = `/api/audio/${encodeURIComponent(currentChapter)}`;
+    const player = new WaveSurferPlayer('chapter-audio-player', audioUrl, {
+        title: `${currentChapter} - Full Chapter Audio`,
+        height: 100,
+        waveColor: '#4a9eff',
+        progressColor: '#1177bb',
+        onTimeUpdate: (currentTime) => {
+            updatePlayingSentence(currentTime);
+        }
     });
+    player.render();
+
+    // Store reference for seeking
+    chapterAudio = player;
 }
 
 function updatePlayingSentence(currentTime) {
@@ -403,7 +582,7 @@ function updatePlayingSentence(currentTime) {
 
 function seekToSentence(sentenceId, startTime) {
     if (!chapterAudio) return;
-    chapterAudio.currentTime = startTime;
+    chapterAudio.seekTo(startTime);
     chapterAudio.play();
 }
 
@@ -888,7 +1067,7 @@ function openCrxModal(chapterName, startTime, endTime, sentenceId, excerpt) {
         commentsField.value = '';
     }
 
-    // Set up audio preview
+    // Set up audio preview with WaveSurfer
     refreshAudioPreview();
 
     document.getElementById('crxModal').style.display = 'block';
@@ -974,14 +1153,28 @@ function refreshAudioPreview() {
     const start = pendingCrxData.start;
     const end = pendingCrxData.end + padding;
 
-    const audioPreview = document.getElementById('crxAudioPreview');
-    const audioSource = document.getElementById('crxAudioSource');
+    // Destroy existing WaveSurfer instance if any
+    if (waveSurferInstances['crx-audio-preview-container']) {
+        waveSurferInstances['crx-audio-preview-container'].destroy();
+    }
 
-    audioSource.src = `/api/audio/${encodeURIComponent(pendingCrxData.chapterName)}?start=${start}&end=${end}`;
-    audioPreview.load();
+    // Create new WaveSurfer player
+    const audioUrl = `/api/audio/${encodeURIComponent(pendingCrxData.chapterName)}?start=${start}&end=${end}`;
+    const player = new WaveSurferPlayer('crx-audio-preview-container', audioUrl, {
+        title: 'Audio Preview',
+        height: 60,
+        waveColor: '#4a9eff',
+        progressColor: '#1177bb'
+    });
+    player.render();
 }
 
 function closeCrxModal() {
+    // Destroy WaveSurfer instance
+    if (waveSurferInstances['crx-audio-preview-container']) {
+        waveSurferInstances['crx-audio-preview-container'].destroy();
+    }
+
     document.getElementById('crxModal').style.display = 'none';
     pendingCrxData = null;
 }
@@ -1337,6 +1530,41 @@ window.onclick = function(event) {
         closeCrxModal();
     }
 }
+
+// Keyboard shortcuts
+document.addEventListener('keydown', (e) => {
+    // Don't trigger shortcuts when typing in inputs/textareas
+    if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') {
+        return;
+    }
+
+    // Spacebar: play/pause chapter audio
+    if (e.code === 'Space' || e.key === ' ') {
+        e.preventDefault();
+        if (chapterAudio && chapterAudio.playPause) {
+            chapterAudio.playPause();
+        }
+    }
+
+    // 'e' key: export to CRX for currently playing or last hovered sentence
+    if (e.key === 'e' || e.key === 'E') {
+        e.preventDefault();
+        if (currentPlayingSentence !== null) {
+            openCrxForSentence(currentPlayingSentence);
+        } else if (window.lastHoveredSentence !== null) {
+            openCrxForSentence(window.lastHoveredSentence);
+        }
+    }
+
+    // 'q' key: close CRX modal if open
+    if (e.key === 'q' || e.key === 'Q') {
+        const modal = document.getElementById('crxModal');
+        if (modal && modal.style.display === 'block') {
+            e.preventDefault();
+            closeCrxModal();
+        }
+    }
+});
 
 // Initialize on page load
 loadChapters().then(() => {

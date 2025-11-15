@@ -163,13 +163,16 @@ public sealed class PipelineService
             if (options.Force || !textGridExists)
             {
                 await WaitAsync(options.Concurrency?.MfaSemaphore, cancellationToken).ConfigureAwait(false);
+                string? workspaceRoot = null;
                 try
                 {
+                    workspaceRoot = options.Concurrency?.RentMfaWorkspace();
                     var mfaOptions = (options.MfaOptions ?? new RunMfaOptions()) with
                     {
                         AudioFile = options.AudioFile,
                         HydrateFile = ResolveHydrateFile(),
-                        TextGridFile = TextGridFile()
+                        TextGridFile = TextGridFile(),
+                        WorkspaceRoot = workspaceRoot ?? options.MfaOptions?.WorkspaceRoot
                     };
 
                     var result = await _runMfa.ExecuteAsync(chapter, mfaOptions, cancellationToken).ConfigureAwait(false);
@@ -179,6 +182,7 @@ public sealed class PipelineService
                 }
                 finally
                 {
+                    options.Concurrency?.ReturnMfaWorkspace(workspaceRoot);
                     Release(options.Concurrency?.MfaSemaphore);
                 }
             }

@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.CommandLine;
+using System.Diagnostics;
 using System.Globalization;
 using System.Text;
 using System.Text.Json;
@@ -75,6 +76,27 @@ public static class PipelineCommand
 
     private static readonly Regex PatternTokenRegex = new(@"\{(d{1,2}|um\d+-\d+|um\d+|um\*)([+-]\d+)?\}", RegexOptions.Compiled | RegexOptions.CultureInvariant | RegexOptions.IgnoreCase);
 
+    private static readonly Dictionary<PipelineStage, (string Label, string Color)> StageStyles = new()
+    {
+        [PipelineStage.Pending] = ("Queued", "grey"),
+        [PipelineStage.BookIndex] = ("Index", "deepskyblue1"),
+        [PipelineStage.Asr] = ("ASR", "deepskyblue1"),
+        [PipelineStage.Anchors] = ("Anchors", "deepskyblue1"),
+        [PipelineStage.Transcript] = ("Transcript", "deepskyblue1"),
+        [PipelineStage.Hydrate] = ("Hydrate", "deepskyblue1"),
+        [PipelineStage.Mfa] = ("MFA", "lightseagreen"),
+        [PipelineStage.Complete] = ("Done", "green")
+    };
+
+    private interface IPipelineProgressReporter
+    {
+        void SetQueued(string chapterId);
+        void MarkRunning(string chapterId);
+        void ReportStage(string chapterId, PipelineStage stage, string message);
+        void MarkComplete(string chapterId);
+        void MarkFailed(string chapterId, string message);
+    }
+
     private static Command CreatePrepCommand()
     {
         var cmd = new Command("prep", "Preparation utilities for batch handoff");
@@ -84,22 +106,10 @@ public static class PipelineCommand
         return cmd;
     }
 
-    private sealed class PipelineProgressReporter
+    private sealed class PipelineProgressReporter : IPipelineProgressReporter
     {
         private readonly object _sync = new();
         private readonly Dictionary<string, ProgressTask> _tasks;
-
-        private static readonly Dictionary<PipelineStage, (string Label, string Color)> StageStyles = new()
-        {
-            [PipelineStage.Pending] = ("Queued", "grey"),
-            [PipelineStage.BookIndex] = ("Index", "deepskyblue1"),
-            [PipelineStage.Asr] = ("ASR", "deepskyblue1"),
-            [PipelineStage.Anchors] = ("Anchors", "deepskyblue1"),
-            [PipelineStage.Transcript] = ("Transcript", "deepskyblue1"),
-            [PipelineStage.Hydrate] = ("Hydrate", "deepskyblue1"),
-            [PipelineStage.Mfa] = ("MFA", "lightseagreen"),
-            [PipelineStage.Complete] = ("Done", "green")
-        };
 
         public PipelineProgressReporter(ProgressContext context, IReadOnlyList<FileInfo> chapters)
         {
@@ -118,6 +128,11 @@ public static class PipelineCommand
         public void SetQueued(string chapterId)
         {
             Update(chapterId, PipelineStage.Pending, "Queued");
+        }
+
+        public void MarkRunning(string chapterId)
+        {
+            Update(chapterId, PipelineStage.Pending, "Running...");
         }
 
         public void ReportStage(string chapterId, PipelineStage stage, string message)
@@ -184,6 +199,221 @@ public static class PipelineCommand
         }
     }
 
+    private sealed class CompactPipelineProgressReporter : IPipelineProgressReporter
+    {
+        private sealed class ChapterStatus
+        {
+            public PipelineStage Stage { get; set; } = PipelineStage.Pending;
+            public string Message { get; set; } = "Queued";
+            public bool IsRunning { get; set; }
+            public bool Failed { get; set; }
+        }
+
+        private readonly object _sync = new();
+        private readonly Dictionary<string, ChapterStatus> _chapters;
+        private readonly List<string> _chapterOrder;
+        private readonly Stopwatch _stopwatch = Stopwatch.StartNew();
+        private LiveDisplayContext? _liveContext;
+        private bool _finished;
+
+        private CompactPipelineProgressReporter(IReadOnlyList<FileInfo> chapters)
+        {
+            _chapterOrder = chapters
+                .Select(file => Path.GetFileNameWithoutExtension(file.Name))
+                .ToList();
+
+            _chapters = _chapterOrder
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToDictionary(id => id, id => new ChapterStatus(), StringComparer.OrdinalIgnoreCase);
+        }
+
+        public static Task RunAsync(IReadOnlyList<FileInfo> chapters, Func<IPipelineProgressReporter, Task> run)
+        {
+            if (chapters is null || chapters.Count == 0)
+            {
+                return run(new NullProgressReporter());
+            }
+
+            var reporter = new CompactPipelineProgressReporter(chapters);
+            var initial = reporter.BuildView();
+
+            return AnsiConsole.Live(initial)
+                .AutoClear(false)
+                .Overflow(VerticalOverflow.Ellipsis)
+                .Cropping(VerticalOverflowCropping.Top)
+                .StartAsync(async ctx =>
+                {
+                    reporter.Attach(ctx);
+                    try
+                    {
+                        await run(reporter).ConfigureAwait(false);
+                    }
+                    finally
+                    {
+                        reporter.MarkFinished();
+                    }
+                });
+        }
+
+        private void Attach(LiveDisplayContext context)
+        {
+            _liveContext = context;
+        }
+
+        public void SetQueued(string chapterId)
+        {
+            UpdateChapter(chapterId, status =>
+            {
+                status.Stage = PipelineStage.Pending;
+                status.Message = "Queued";
+                status.IsRunning = false;
+                status.Failed = false;
+            });
+        }
+
+        public void MarkRunning(string chapterId)
+        {
+            UpdateChapter(chapterId, status =>
+            {
+                status.IsRunning = true;
+                if (status.Stage == PipelineStage.Pending)
+                {
+                    status.Message = "In progress...";
+                }
+            });
+        }
+
+        public void ReportStage(string chapterId, PipelineStage stage, string message)
+        {
+            UpdateChapter(chapterId, status =>
+            {
+                status.Stage = stage;
+                status.Message = message;
+            });
+        }
+
+        public void MarkComplete(string chapterId)
+        {
+            UpdateChapter(chapterId, status =>
+            {
+                status.Stage = PipelineStage.Complete;
+                status.Message = "Complete";
+                status.IsRunning = false;
+                status.Failed = false;
+            });
+        }
+
+        public void MarkFailed(string chapterId, string message)
+        {
+            UpdateChapter(chapterId, status =>
+            {
+                status.Stage = PipelineStage.Complete;
+                status.Message = string.IsNullOrWhiteSpace(message) ? "Failed" : $"Failed: {message}";
+                status.IsRunning = false;
+                status.Failed = true;
+            });
+        }
+
+        private void UpdateChapter(string chapterId, Action<ChapterStatus> updater)
+        {
+            if (!_chapters.TryGetValue(chapterId, out var status))
+            {
+                return;
+            }
+
+            lock (_sync)
+            {
+                updater(status);
+                RefreshUnsafe();
+            }
+        }
+
+        private void RefreshUnsafe()
+        {
+            _liveContext?.UpdateTarget(BuildView());
+        }
+
+        private void MarkFinished()
+        {
+            lock (_sync)
+            {
+                _finished = true;
+                _stopwatch.Stop();
+                RefreshUnsafe();
+            }
+        }
+
+        private Table BuildView()
+        {
+            var table = new Table()
+                .Border(TableBorder.Minimal)
+                .BorderColor(Color.Grey37)
+                .Expand();
+
+            table.AddColumn("[grey]Chapter[/]");
+            table.AddColumn("[grey]Stage[/]");
+            table.AddColumn("[grey]Status[/]");
+            table.AddColumn("[grey]Active[/]");
+
+            foreach (var chapterId in _chapterOrder)
+            {
+                if (!_chapters.TryGetValue(chapterId, out var status))
+                {
+                    continue;
+                }
+
+                var chapterMarkup = Markup.Escape(chapterId);
+                var stageMarkup = BuildStageMarkup(status.Stage);
+                var statusMarkup = string.IsNullOrWhiteSpace(status.Message)
+                    ? string.Empty
+                    : Markup.Escape(status.Message);
+
+                var indicator = status.Failed
+                    ? "[red]×[/]"
+                    : status.IsRunning
+                        ? "[blink yellow]●[/]"
+                        : status.Stage == PipelineStage.Complete
+                            ? "[green]●[/]"
+                            : string.Empty;
+
+                table.AddRow($"[white]{chapterMarkup}[/]", stageMarkup, statusMarkup, indicator);
+            }
+
+            var elapsed = FormatElapsed(_stopwatch.Elapsed);
+            var anyRunning = _chapters.Values.Any(c => c.IsRunning);
+            var indicatorSuffix = !_finished && anyRunning ? " [blink]●[/]" : string.Empty;
+            table.Caption = new Markup($"[grey]Total runtime: {elapsed}{indicatorSuffix}[/]");
+
+            return table;
+        }
+
+        private static string BuildStageMarkup(PipelineStage stage)
+        {
+            if (!StageStyles.TryGetValue(stage, out var style))
+            {
+                return Markup.Escape(stage.ToString());
+            }
+
+            return $"[bold {style.Color}]{style.Label}[/]";
+        }
+
+        private static string FormatElapsed(TimeSpan span)
+        {
+            return span.TotalHours >= 1
+                ? span.ToString("hh\\:mm\\:ss")
+                : span.ToString("mm\\:ss");
+        }
+
+        private sealed class NullProgressReporter : IPipelineProgressReporter
+        {
+            public void SetQueued(string chapterId) { }
+            public void MarkRunning(string chapterId) { }
+            public void ReportStage(string chapterId, PipelineStage stage, string message) { }
+            public void MarkComplete(string chapterId) { }
+            public void MarkFailed(string chapterId, string message) { }
+        }
+    }
+
 private static async Task RunPipelineForMultipleChaptersAsync(
     PipelineService pipelineService,
         FileInfo bookFile,
@@ -199,7 +429,7 @@ private static async Task RunPipelineForMultipleChaptersAsync(
         IReadOnlyList<FileInfo> chapterFiles,
         int maxWorkers,
         int maxMfaParallelism,
-        ProgressContext? progressContext,
+        IPipelineProgressReporter? reporter,
         CancellationToken cancellationToken)
 {
     ArgumentNullException.ThrowIfNull(pipelineService);
@@ -226,9 +456,6 @@ private static async Task RunPipelineForMultipleChaptersAsync(
             Log.Debug("Skipping {Missing} chapter(s) because the WAV file was not found.", chapterFiles.Count - existingChapters.Count);
         }
 
-        PipelineProgressReporter? reporter = progressContext is not null
-            ? new PipelineProgressReporter(progressContext, existingChapters)
-            : null;
         maxWorkers = maxWorkers <= 0 ? Math.Max(1, Environment.ProcessorCount) : maxWorkers;
         maxMfaParallelism = maxMfaParallelism <= 0 ? Math.Max(1, Environment.ProcessorCount / 2) : maxMfaParallelism;
 
@@ -261,6 +488,7 @@ private static async Task RunPipelineForMultipleChaptersAsync(
             try
             {
                 cancellationToken.ThrowIfCancellationRequested();
+                reporter?.MarkRunning(chapterId);
 
                 await RunPipelineAsync(
                     pipelineService,
@@ -862,7 +1090,7 @@ private static async Task RunPipelineForMultipleChaptersAsync(
 
         var verboseOption = new Option<bool>("--verbose", () => false, "Enable verbose logging for pipeline stages.");
         var maxWorkersOption = new Option<int>("--max-workers", () => Math.Max(1, Environment.ProcessorCount), "Maximum number of chapters to process in parallel once ASR is complete");
-        var maxMfaOption = new Option<int>("--max-mfa", () => 4, "Maximum number of concurrent MFA alignment jobs");
+        var maxMfaOption = new Option<int>("--max-mfa", () =>  Math.Max(1, Environment.ProcessorCount), "Maximum number of concurrent MFA alignment jobs");
         var progressOption = new Option<bool>("--progress", () => true, "Display live progress UI while running the pipeline");
 
         cmd.AddOption(bookOption);
@@ -910,29 +1138,25 @@ private static async Task RunPipelineForMultipleChaptersAsync(
                 {
                     if (showProgress)
                     {
-                        await AnsiConsole.Progress()
-                            .AutoClear(false)
-                            .Columns(PipelineProgressColumns)
-                            .StartAsync(async progressContext =>
-                            {
-                                await RunPipelineForMultipleChaptersAsync(
-                                    pipelineService,
-                                    bookFile,
-                                    workDir,
-                                    bookIndex,
-                                    forceIndex,
-                                    forceAll,
-                                    avgWpm,
-                                    asrServiceUrl,
-                                    asrModel,
-                                    asrLanguage,
-                                    verbose,
-                                    repl.Chapters,
-                                    maxWorkers,
-                                    maxMfa,
-                                    progressContext,
-                                    cancellationToken).ConfigureAwait(false);
-                            }).ConfigureAwait(false);
+                        await CompactPipelineProgressReporter.RunAsync(
+                            repl.Chapters,
+                            reporter => RunPipelineForMultipleChaptersAsync(
+                                pipelineService,
+                                bookFile,
+                                workDir,
+                                bookIndex,
+                                forceIndex,
+                                forceAll,
+                                avgWpm,
+                                asrServiceUrl,
+                                asrModel,
+                                asrLanguage,
+                                verbose,
+                                repl.Chapters,
+                                maxWorkers,
+                                maxMfa,
+                                reporter,
+                                cancellationToken));
                     }
                     else
                     {
@@ -951,7 +1175,7 @@ private static async Task RunPipelineForMultipleChaptersAsync(
                             repl.Chapters,
                             maxWorkers,
                             maxMfa,
-                            progressContext: null,
+                            reporter: null,
                             cancellationToken).ConfigureAwait(false);
                     }
                 }
@@ -982,6 +1206,7 @@ private static async Task RunPipelineForMultipleChaptersAsync(
 
                             try
                             {
+                                reporter.MarkRunning(chapterId);
                                 await RunPipelineAsync(
                                     pipelineService,
                                     bookFile,
@@ -1064,7 +1289,7 @@ private static async Task RunPipelineAsync(
         string? asrModel,
         string asrLanguage,
         bool verbose,
-        PipelineProgressReporter? progress,
+        IPipelineProgressReporter? progress,
         PipelineConcurrencyControl concurrency,
         CancellationToken cancellationToken)
     {
@@ -1126,8 +1351,10 @@ private static async Task RunPipelineAsync(
             ServiceUrl = asrServiceUrl,
             Model = asrModel,
             Language = asrLanguage,
-            EnableWordTimestamps = false
+            EnableWordTimestamps = true 
         };
+
+        var useDedicatedMfaProcess = concurrency?.MfaDegree > 1;
 
         var pipelineOptions = new PipelineRunOptions
         {
@@ -1154,7 +1381,8 @@ private static async Task RunPipelineAsync(
                 AudioFile = audioFile,
                 HydrateFile = hydrateFile,
                 TextGridFile = textGridFile,
-                AlignmentRootDirectory = new DirectoryInfo(Path.Combine(chapterDir, "alignment"))
+                AlignmentRootDirectory = new DirectoryInfo(Path.Combine(chapterDir, "alignment")),
+                UseDedicatedProcess = useDedicatedMfaProcess
             },
             MergeOptions = new MergeTimingsOptions
             {

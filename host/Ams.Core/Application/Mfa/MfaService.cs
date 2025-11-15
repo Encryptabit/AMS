@@ -21,8 +21,13 @@ public sealed class MfaService : IMfaService
     internal const string DefaultAcousticModel = "english_mfa";
     internal const string DefaultG2pModel = "english_us_mfa";
 
-    internal MfaService()
+    private readonly bool _useDedicatedProcess;
+    private readonly string? _workspaceRoot;
+
+    internal MfaService(bool useDedicatedProcess = false, string? workspaceRoot = null)
     {
+        _useDedicatedProcess = useDedicatedProcess;
+        _workspaceRoot = workspaceRoot;
     }
 
     private static readonly string ValidateCommand = "validate";
@@ -58,7 +63,7 @@ public sealed class MfaService : IMfaService
         // Avoid monophone training during validation (can fail on very small corpora)
         args.Append(" --no_train");
 
-        return MfaProcessSupervisor.RunAsync(
+        return RunCommandAsync(
             ValidateCommand,
             args.ToString(),
             context.WorkingDirectory,
@@ -91,7 +96,7 @@ public sealed class MfaService : IMfaService
         args.Append(' ').Append(Quote(g2pModel));
         args.Append(' ').Append(QuoteRequired(context.G2pOutputPath));
 
-        return MfaProcessSupervisor.RunAsync(
+        return RunCommandAsync(
             G2pCommand,
             args.ToString(),
             context.WorkingDirectory,
@@ -118,7 +123,7 @@ public sealed class MfaService : IMfaService
         args.Append(Quote(baseDictionary));
         args.Append(' ').Append(QuoteRequired(context.G2pOutputPath));
 
-        return MfaProcessSupervisor.RunAsync(
+        return RunCommandAsync(
             AddWordsCommand,
             args.ToString(),
             context.WorkingDirectory,
@@ -166,11 +171,23 @@ public sealed class MfaService : IMfaService
             args.Append(" --clean");
         }
 
-        return MfaProcessSupervisor.RunAsync(
+        return RunCommandAsync(
             AlignCommandName,
             args.ToString(),
             context.WorkingDirectory,
             cancellationToken);
+
+    }
+
+    private Task<MfaCommandResult> RunCommandAsync(
+        string subcommand,
+        string? args,
+        string? workingDirectory,
+        CancellationToken cancellationToken)
+    {
+        return _useDedicatedProcess
+            ? MfaDetachedProcessRunner.RunAsync(subcommand, args, workingDirectory, _workspaceRoot, cancellationToken)
+            : MfaProcessSupervisor.RunAsync(subcommand, args, workingDirectory, cancellationToken);
     }
 
     private static string Quote(string value)

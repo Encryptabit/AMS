@@ -14,9 +14,14 @@ public static class MfaWorkflow
         FileInfo hydrateFile,
         string chapterStem,
         DirectoryInfo chapterDirectory,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        bool useDedicatedProcess = false,
+        string? workspaceRoot = null)
     {
-        await MfaProcessSupervisor.EnsureReadyAsync(cancellationToken).ConfigureAwait(false);
+        if (!useDedicatedProcess)
+        {
+            await MfaProcessSupervisor.EnsureReadyAsync(cancellationToken).ConfigureAwait(false);
+        }
 
         if (!audioFile.Exists)
         {
@@ -32,7 +37,7 @@ public static class MfaWorkflow
         var corpusDir = EnsureDirectory(Path.Combine(alignmentDir, "corpus"));
         var mfaCopyDir = EnsureDirectory(Path.Combine(alignmentDir, "mfa"));
 
-        var mfaRoot = ResolveMfaRoot();
+        var mfaRoot = ResolveMfaRoot(useDedicatedProcess ? workspaceRoot : null);
         CleanupMfaArtifacts(mfaRoot, chapterStem);
 
         var textGridCopyPath = Path.Combine(mfaCopyDir, chapterStem + ".TextGrid");
@@ -82,7 +87,7 @@ public static class MfaWorkflow
             CleanOutput = true
         };
 
-        var service = new MfaService();
+        var service = new MfaService(useDedicatedProcess, useDedicatedProcess ? mfaRoot : null);
 
         Log.Debug("Running MFA validate on corpus {CorpusDir}", corpusDir);
         var oovListPath = FindOovListFile(mfaRoot);
@@ -412,7 +417,10 @@ public static class MfaWorkflow
         TryDeleteDirectory(Path.Combine(mfaRoot, $"{chapterStem}.align"));
         TryDeleteDirectory(Path.Combine(mfaRoot, $"{chapterStem}.g2p"));
         TryDeleteDirectory(Path.Combine(mfaRoot, $"{chapterStem}.oov.cleaned"));
-        TryDeleteDirectory(Path.Combine(mfaRoot, "corpus"));
+        // MFA itself uses Documents/MFA/corpus as a shared working directory.
+        // Parallel alignment jobs can hold open sqlite handles (corpus.db), so deleting
+        // this directory per chapter causes needless contention/log noise.
+        // Leave it intact so concurrent runs can share the workspace safely.
 
         TryDelete(Path.Combine(mfaRoot, "oov_counts_english_mfa.txt"));
         TryDelete(Path.Combine(mfaRoot, "utterance_oovs.txt"));
@@ -433,8 +441,14 @@ public static class MfaWorkflow
         }
     }
 
-    private static string ResolveMfaRoot()
+    private static string ResolveMfaRoot(string? overrideRoot = null)
     {
+        if (!string.IsNullOrWhiteSpace(overrideRoot))
+        {
+            Directory.CreateDirectory(overrideRoot);
+            return overrideRoot;
+        }
+
         var documents = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
 
         if (string.IsNullOrWhiteSpace(documents))

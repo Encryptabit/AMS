@@ -441,7 +441,7 @@ public static class MfaProcessSupervisor
         }
     }
 
-    private static string ResolvePwshExecutable()
+    internal static string ResolvePwshExecutable()
     {
         var fromEnv = Environment.GetEnvironmentVariable("AMS_MFA_PWSH");
         if (!string.IsNullOrWhiteSpace(fromEnv))
@@ -457,7 +457,7 @@ public static class MfaProcessSupervisor
         return "pwsh";
     }
 
-    private static string ResolveBootstrapSequence()
+    internal static string ResolveBootstrapSequence()
     {
         var fromEnv = Environment.GetEnvironmentVariable("AMS_MFA_BOOTSTRAP");
         if (!string.IsNullOrWhiteSpace(fromEnv))
