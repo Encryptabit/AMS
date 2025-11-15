@@ -401,6 +401,6 @@ public record ValidationOptions
     public double SubstitutionCost { get; init; } = 1.0;
     public double InsertionCost { get; init; } = 1.0;
     public double DeletionCost { get; init; } = 1.0;
-    public bool ExpandContractions { get; init; } = true;
+    public bool ExpandContractions { get; init; } = false;
     public bool RemoveNumbers { get; init; } = false;
 }
