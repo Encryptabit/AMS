@@ -31,7 +31,15 @@ public sealed class RunMfaCommand
             throw new FileNotFoundException("Audio file not found.", audioFile.FullName);
         }
 
-        await MfaWorkflow.RunChapterAsync(chapter, audioFile, hydrateFile, chapterStem, chapterDirectory, cancellationToken)
+        await MfaWorkflow.RunChapterAsync(
+            chapter,
+            audioFile,
+            hydrateFile,
+            chapterStem,
+            chapterDirectory,
+            cancellationToken,
+            options?.UseDedicatedProcess ?? false,
+            options?.WorkspaceRoot)
             .ConfigureAwait(false);
 
         var alignmentRoot = options?.AlignmentRootDirectory ?? new DirectoryInfo(Path.Combine(chapterRoot, "alignment"));
@@ -68,6 +76,8 @@ public sealed record RunMfaOptions
     public FileInfo? TextGridFile { get; init; }
     public DirectoryInfo? AlignmentRootDirectory { get; init; }
     public DirectoryInfo? ChapterDirectory { get; init; }
+    public bool UseDedicatedProcess { get; init; }
+    public string? WorkspaceRoot { get; init; }
 }
 
 public sealed record RunMfaResult(FileInfo TextGridFile);

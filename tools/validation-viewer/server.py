@@ -234,6 +234,7 @@ class ValidationReportHandler(BaseHTTPRequestHandler):
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Validation Report Viewer</title>
     <link rel="stylesheet" href="/static/styles.css">
+    <script src="https://unpkg.com/wavesurfer.js@7"></script>
 </head>
 <body>
     <div id="toast-container" class="toast-container"></div>
@@ -283,15 +284,7 @@ class ValidationReportHandler(BaseHTTPRequestHandler):
                     </div>
 
                     <div>
-                        <div class="audio-preview-container">
-                            <div class="audio-preview-label">Audio Preview</div>
-                            <audio id="crxAudioPreview" controls>
-                                <source id="crxAudioSource" type="audio/wav">
-                            </audio>
-                            <button class="refresh-preview-button" onclick="refreshAudioPreview()">
-                                Refresh Preview
-                            </button>
-                        </div>
+                        <div id="crx-audio-preview-container"></div>
                     </div>
                 </div>
 

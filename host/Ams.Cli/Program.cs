@@ -520,7 +520,7 @@ internal static class Program
             return requested;
         }
 
-        var auto = Math.Max(1, Environment.ProcessorCount / 2);
+        var auto = Math.Max(1, Environment.ProcessorCount);
         return auto;
     }
 
