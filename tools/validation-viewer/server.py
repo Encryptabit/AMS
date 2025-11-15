@@ -485,6 +485,45 @@ class ValidationReportHandler(BaseHTTPRequestHandler):
             font-weight: 500;
         }
 
+        /* Inline diff view styles */
+        .diff-unified {
+            background: #1e1e1e;
+            border: 1px solid #3e3e42;
+            border-radius: 4px;
+            padding: 12px;
+        }
+
+        .diff-inline {
+            color: #d4d4d4;
+            line-height: 1.8;
+            font-size: 14px;
+            word-wrap: break-word;
+        }
+
+        .diff-deleted {
+            background-color: rgba(255, 0, 0, 0.2);
+            color: #ff6b6b;
+            text-decoration: line-through;
+            padding: 2px 4px;
+            border-radius: 3px;
+            margin: 0 1px;
+        }
+
+        .diff-inserted {
+            background-color: rgba(0, 255, 0, 0.2);
+            color: #69db7c;
+            padding: 2px 4px;
+            border-radius: 3px;
+            margin: 0 1px;
+            font-weight: 500;
+        }
+
+        .diff-empty {
+            color: #888888;
+            font-style: italic;
+            padding: 8px;
+        }
+
         .audio-player {
             margin-top: 12px;
             padding: 12px;
@@ -1250,23 +1289,23 @@ class ValidationReportHandler(BaseHTTPRequestHandler):
                         ${s.paragraphId !== null && s.paragraphId !== undefined ? `<div class="paragraph-flags">Parent paragraph: <a href="#paragraph-${s.paragraphId}" onclick="focusParagraph(${s.paragraphId}); return false;">#${s.paragraphId}</a></div>` : ''}
                     </div>
                     <div class="sentence-text">
-                        ${s.excerpt ? `
-                            <div class="text-label">Excerpt</div>
-                            <div class="text-content">${escapeHtml(s.excerpt)}</div>
+                        ${s.diff && s.diff.ops ? `
+                            <div class="text-label">Manuscript</div>
+                            <div class="text-content">${escapeHtml(s.bookText)}</div>
+                            <div class="text-label" style="margin-top: 12px;">Transcript</div>
+                            <div class="diff-unified" data-sentence-id="${s.id}"></div>
+                        ` : s.scriptText && s.bookText ? `
+                            <div class="text-label">Script (Read as)</div>
+                            <div class="text-content diff-text" data-sentence-id="${s.id}" data-diff-script="${escapeHtml(s.scriptText)}" data-diff-book="${escapeHtml(s.bookText)}"></div>
+                            <div class="text-label" style="margin-top: 12px;">Book (Should be)</div>
+                            <div class="text-content diff-text" data-sentence-id="${s.id}" data-diff-script="${escapeHtml(s.scriptText)}" data-diff-book="${escapeHtml(s.bookText)}" data-diff-type="book"></div>
                         ` : `
-                            ${s.scriptText && s.bookText ? `
-                                <div class="text-label">Script (Read as)</div>
-                                <div class="text-content diff-text" data-sentence-id="${s.id}" data-diff-script="${escapeHtml(s.scriptText)}" data-diff-book="${escapeHtml(s.bookText)}"></div>
-                                <div class="text-label" style="margin-top: 12px;">Book (Should be)</div>
-                                <div class="text-content diff-text" data-sentence-id="${s.id}" data-diff-script="${escapeHtml(s.scriptText)}" data-diff-book="${escapeHtml(s.bookText)}" data-diff-type="book"></div>
-                            ` : `
-                                <div class="text-label">Book</div>
-                                <div class="text-content">${escapeHtml(s.bookText)}</div>
-                                ${s.scriptText ? `
-                                    <div class="text-label" style="margin-top: 12px;">Script</div>
-                                    <div class="text-content">${escapeHtml(s.scriptText)}</div>
-                                ` : ''}
-                            `}
+                            <div class="text-label">Book</div>
+                            <div class="text-content">${escapeHtml(s.bookText)}</div>
+                            ${s.scriptText ? `
+                                <div class="text-label" style="margin-top: 12px;">Script</div>
+                                <div class="text-content">${escapeHtml(s.scriptText)}</div>
+                            ` : ''}
                         `}
                     </div>
                     ${s.startTime !== null && s.endTime !== null ? `
@@ -1406,6 +1445,18 @@ class ValidationReportHandler(BaseHTTPRequestHandler):
                     if (scriptText || bookText) {
                         const highlighted = highlightDifferencesVisual(scriptText, bookText, wordOps);
                         elem.innerHTML = diffType === 'book' ? highlighted.bookHighlighted : highlighted.scriptHighlighted;
+                    }
+                });
+
+                // Render unified diff views
+                document.querySelectorAll('.diff-unified').forEach(elem => {
+                    const sentenceIdAttr = elem.getAttribute('data-sentence-id');
+                    if (sentenceIdAttr && currentReport && Array.isArray(currentReport.sentences)) {
+                        const sentenceId = parseInt(sentenceIdAttr, 10);
+                        const sentenceData = currentReport.sentences.find(s => s.id === sentenceId);
+                        if (sentenceData && sentenceData.diff) {
+                            elem.innerHTML = renderUnifiedDiff(sentenceData.diff);
+                        }
                     }
                 });
             }, 0);
@@ -1814,6 +1865,41 @@ Should be: ${diff.bookHighlighted}`;
             };
         }
 
+        function renderUnifiedDiff(diff) {
+            // Render the transcript (what was read) with inline diff highlighting
+            // Deletions = what was in the manuscript but NOT read (strikethrough red)
+            // Insertions = what was actually read but NOT in manuscript (green highlight)
+            if (!diff || !diff.ops || !Array.isArray(diff.ops)) {
+                return '<div class="diff-empty">No diff data available</div>';
+            }
+
+            const parts = [];
+
+            diff.ops.forEach(op => {
+                const tokens = op.tokens || [];
+
+                if (tokens.length === 0) return;
+
+                const text = tokens.join(' ');
+
+                if (op.op === 'equal') {
+                    // Equal tokens - what was read correctly
+                    parts.push(escapeHtml(text));
+                } else if (op.op === 'delete') {
+                    // Deletion - what should have been read but wasn't (strikethrough)
+                    parts.push(`<span class="diff-deleted">${escapeHtml(text)}</span>`);
+                } else if (op.op === 'insert') {
+                    // Insertion - what was actually read (not in manuscript)
+                    parts.push(`<span class="diff-inserted">${escapeHtml(text)}</span>`);
+                }
+            });
+
+            if (parts.length === 0) {
+                return '<div class="diff-empty">No transcript data</div>';
+            }
+
+            return '<div class="diff-inline">' + parts.join(' ') + '</div>';
+        }
 
         function closeCrxModal() {
             document.getElementById('crxModal').style.display = 'none';
@@ -1902,6 +1988,41 @@ Should be: ${diff.bookHighlighted}`;
         self.end_headers()
         self.wfile.write(html.encode())
 
+    def extract_hydrate_metrics(self, hydrate_path):
+        """Extract summary metrics from hydrate.json"""
+        try:
+            with open(hydrate_path, 'r', encoding='utf-8') as f:
+                hydrate_data = json.load(f)
+
+            sentences = hydrate_data.get('sentences', [])
+            paragraphs = hydrate_data.get('paragraphs', [])
+
+            # Count flagged sentences
+            flagged_sentences = [s for s in sentences if s.get('status', 'ok') != 'ok']
+
+            # Calculate average WER
+            total_wer = sum(s.get('metrics', {}).get('wer', 0) for s in sentences if 'metrics' in s)
+            avg_wer = (total_wer / len(sentences) * 100) if sentences else 0
+
+            return {
+                'sentenceCount': len(sentences),
+                'sentenceFlagged': len(flagged_sentences),
+                'sentenceAvgWer': f"{avg_wer:.2f}%",
+                'paragraphCount': len(paragraphs),
+                'paragraphFlagged': 0,
+                'paragraphAvgWer': '0.00%'
+            }
+        except Exception as e:
+            print(f"Error extracting metrics from {hydrate_path}: {e}")
+            return {
+                'sentenceCount': 0,
+                'sentenceFlagged': 0,
+                'sentenceAvgWer': 'N/A',
+                'paragraphCount': 0,
+                'paragraphFlagged': 0,
+                'paragraphAvgWer': 'N/A'
+            }
+
     def extract_report_metrics(self, report_path):
         """Extract summary metrics from a validation report"""
         try:
@@ -1949,18 +2070,18 @@ Should be: ${diff.bookHighlighted}`;
             }
 
     def serve_chapters_list(self):
-        """Find all validation report files and return chapter list with metrics"""
+        """Find all hydrate files and return chapter list with metrics"""
         chapters = []
 
         for item in BASE_DIR.iterdir():
             if item.is_dir():
-                # Look for validation report in this directory
-                report_pattern = item.name + ".validate.report.txt"
-                report_path = item / report_pattern
+                # Look for hydrate.json in this directory
+                hydrate_pattern = item.name + ".align.hydrate.json"
+                hydrate_path = item / hydrate_pattern
 
-                if report_path.exists():
-                    # Extract basic metrics from report
-                    metrics = self.extract_report_metrics(report_path)
+                if hydrate_path.exists():
+                    # Extract basic metrics from hydrate
+                    metrics = self.extract_hydrate_metrics(hydrate_path)
                     chapters.append({
                         'name': item.name,
                         'path': str(item.relative_to(BASE_DIR)),
@@ -1990,11 +2111,11 @@ Should be: ${diff.bookHighlighted}`;
 
         for item in BASE_DIR.iterdir():
             if item.is_dir():
-                report_pattern = item.name + ".validate.report.txt"
-                report_path = item / report_pattern
+                hydrate_pattern = item.name + ".align.hydrate.json"
+                hydrate_path = item / hydrate_pattern
 
-                if report_path.exists():
-                    metrics = self.extract_report_metrics(report_path)
+                if hydrate_path.exists():
+                    metrics = self.extract_hydrate_metrics(hydrate_path)
                     chapters.append({
                         'name': item.name,
                         'path': str(item.relative_to(BASE_DIR)),
@@ -2054,26 +2175,23 @@ Should be: ${diff.bookHighlighted}`;
         self.wfile.write(json.dumps(overview).encode())
 
     def serve_report(self, chapter_name):
-        """Parse and serve a validation report"""
+        """Parse and serve a validation report from hydrate.json"""
         from urllib.parse import unquote
 
         # Decode URL-encoded chapter name
         chapter_name = unquote(chapter_name)
 
         chapter_dir = BASE_DIR / chapter_name
-        report_file = chapter_dir / f"{chapter_name}.validate.report.txt"
         hydrate_file = chapter_dir / f"{chapter_name}.align.hydrate.json"
 
-        print(f"Looking for report: {report_file}")
-        print(f"File exists: {report_file.exists()}")
         print(f"Looking for hydrate: {hydrate_file}")
         print(f"Hydrate exists: {hydrate_file.exists()}")
 
-        if not report_file.exists():
+        if not hydrate_file.exists():
             error_msg = json.dumps({
-                'error': 'Report not found',
+                'error': 'Hydrate file not found',
                 'chapter': chapter_name,
-                'path': str(report_file)
+                'path': str(hydrate_file)
             })
             self.send_response(404)
             self.send_header('Content-type', 'application/json')
@@ -2082,20 +2200,18 @@ Should be: ${diff.bookHighlighted}`;
             return
 
         try:
-            # Load hydrate data if available
-            hydrate_data = None
-            if hydrate_file.exists():
-                with open(hydrate_file, 'r', encoding='utf-8') as f:
-                    hydrate_data = json.load(f)
+            # Load hydrate data
+            with open(hydrate_file, 'r', encoding='utf-8') as f:
+                hydrate_data = json.load(f)
 
-            report_data = self.parse_report(report_file, chapter_name, hydrate_data)
+            report_data = self.parse_hydrate_to_report(hydrate_data, chapter_name)
             self.send_response(200)
             self.send_header('Content-type', 'application/json')
             self.end_headers()
             self.wfile.write(json.dumps(report_data).encode())
         except Exception as e:
             import traceback
-            print(f"Error parsing report: {e}")
+            print(f"Error parsing hydrate: {e}")
             print(traceback.format_exc())
 
             error_msg = json.dumps({
@@ -2106,6 +2222,72 @@ Should be: ${diff.bookHighlighted}`;
             self.send_header('Content-type', 'application/json')
             self.end_headers()
             self.wfile.write(error_msg.encode())
+
+    def parse_hydrate_to_report(self, hydrate_data, chapter_name):
+        """Convert hydrate.json data to report format expected by the UI"""
+        sentences = hydrate_data.get('sentences', [])
+        paragraphs = hydrate_data.get('paragraphs', [])
+
+        # Calculate statistics
+        flagged_sentences = [s for s in sentences if s.get('status', 'ok') != 'ok']
+        total_wer = sum(s.get('metrics', {}).get('wer', 0) for s in sentences if 'metrics' in s)
+        avg_wer = (total_wer / len(sentences) * 100) if sentences else 0
+        max_wer = max((s.get('metrics', {}).get('wer', 0) for s in sentences if 'metrics' in s), default=0) * 100
+
+        # Convert sentences to UI format
+        ui_sentences = []
+        for sent in sentences:
+            metrics = sent.get('metrics', {})
+            timing = sent.get('timing', {})
+            book_range = sent.get('bookRange', {})
+            script_range = sent.get('scriptRange', {})
+
+            wer = metrics.get('wer', 0) * 100
+            cer = metrics.get('cer', 0) * 100
+
+            ui_sent = {
+                'id': sent.get('id'),
+                'wer': f"{wer:.1f}%",
+                'cer': f"{cer:.1f}%",
+                'status': sent.get('status', 'ok'),
+                'bookRange': f"{book_range.get('start', 0)}-{book_range.get('end', 0)}",
+                'scriptRange': f"{script_range.get('start', 0)}-{script_range.get('end', 0)}",
+                'timing': f"{timing.get('startSec', 0):.3f}s → {timing.get('endSec', 0):.3f}s (Δ {timing.get('duration', 0):.3f}s)",
+                'bookText': sent.get('bookText', ''),
+                'scriptText': sent.get('scriptText', ''),
+                'excerpt': sent.get('bookText', '')[:100],
+                'diff': sent.get('diff', {}),  # Include the full diff structure
+                'startTime': timing.get('startSec', 0),
+                'endTime': timing.get('endSec', 0),
+                'bookRangeStart': book_range.get('start'),
+                'bookRangeEnd': book_range.get('end')
+            }
+            ui_sentences.append(ui_sent)
+
+        # Sort by WER descending
+        ui_sentences.sort(key=lambda s: float(s['wer'].rstrip('%')), reverse=True)
+
+        # Build report data structure
+        report_data = {
+            'chapterName': chapter_name,
+            'audioPath': hydrate_data.get('audioPath', ''),
+            'scriptPath': '',
+            'bookIndex': '',
+            'created': datetime.now().isoformat(),
+            'stats': {
+                'sentenceCount': str(len(sentences)),
+                'avgWer': f"{avg_wer:.2f}%",
+                'maxWer': f"{max_wer:.2f}%",
+                'flaggedCount': str(len(flagged_sentences)),
+                'paragraphCount': str(len(paragraphs)),
+                'paragraphAvgWer': '0.00%',
+                'avgCoverage': '100.00%'
+            },
+            'sentences': ui_sentences,
+            'paragraphs': []
+        }
+
+        return report_data
 
     def parse_report(self, report_path, chapter_name, hydrate_data=None):
         """Parse validation report text file into structured data"""
@@ -2454,8 +2636,12 @@ Should be: ${diff.bookHighlighted}`;
         start_time = float(query_params.get('start', [0])[0])
         end_time = float(query_params.get('end', [0])[0])
 
-        # Find the audio file - it should be at the book root with the same name as the chapter folder
-        audio_path = BASE_DIR / f"{chapter_name}.wav"
+        # Find the audio file - try chapter folder first, then book root
+        audio_path = BASE_DIR / chapter_name / f"{chapter_name}.treated.wav"
+        if not audio_path.exists():
+            audio_path = BASE_DIR / chapter_name / f"{chapter_name}.wav"
+        if not audio_path.exists():
+            audio_path = BASE_DIR / f"{chapter_name}.wav"
 
         print(f"Looking for audio: {audio_path}")
         print(f"Audio exists: {audio_path.exists()}")
@@ -2537,8 +2723,13 @@ Should be: ${diff.bookHighlighted}`;
         end_time = float(params['end'])
         sentence_id = params.get('sentenceId', 'unknown')
 
-        # Find the audio file
-        audio_path = BASE_DIR / f"{chapter_name}.wav"
+        # Find the audio file - try chapter folder first, then book root
+        audio_path = BASE_DIR / chapter_name / f"{chapter_name}.treated.wav"
+        if not audio_path.exists():
+            audio_path = BASE_DIR / chapter_name / f"{chapter_name}.wav"
+        if not audio_path.exists():
+            audio_path = BASE_DIR / f"{chapter_name}.wav"
+
         print(f"Looking for audio at: {audio_path}")
         print(f"Audio exists: {audio_path.exists()}")
 
