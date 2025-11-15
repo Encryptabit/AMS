@@ -247,24 +247,56 @@ class ValidationReportHandler(BaseHTTPRequestHandler):
 
     <!-- CRX Modal -->
     <div id="crxModal" class="modal">
-        <div class="modal-content">
+        <div class="modal-content" style="max-width: 700px;">
             <div class="modal-header">Add to CRX</div>
             <div class="modal-body">
-                <label for="errorType">Error Type:</label>
-                <select id="errorType" class="modal-input">
-                    <option value="MR" selected>MR</option>
-                    <option value="PRON">PRON</option>
-                    <option value="DIC">DIC</option>
-                    <option value="NZ">NZ</option>
-                    <option value="PL">PL</option>
-                    <option value="DIST">DIST</option>
-                    <option value="MW">MW</option>
-                    <option value="ML">ML</option>
-                    <option value="TYPO">TYPO</option>
-                    <option value="CHAR">CHAR</option>
-                </select>
-                <label for="comments">Comments:</label>
-                <textarea id="comments" class="modal-textarea" placeholder="Enter any additional comments..."></textarea>
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px;">
+                    <div>
+                        <label for="errorType">Error Type:</label>
+                        <select id="errorType" class="modal-input">
+                            <option value="MR" selected>MR - Misread</option>
+                            <option value="PRON">PRON - Pronunciation</option>
+                            <option value="DIC">DIC - Diction</option>
+                            <option value="NZ">NZ - Noise</option>
+                            <option value="PL">PL - Plosive</option>
+                            <option value="DIST">DIST - Distortion</option>
+                            <option value="MW">MW - Missing Word</option>
+                            <option value="ML">ML - Missing Line</option>
+                            <option value="TYPO">TYPO - Possible Typo</option>
+                            <option value="CHAR">CHAR - Character Voice</option>
+                        </select>
+
+                        <label style="margin-top: 12px; display: block;">Errors to Highlight:</label>
+                        <div style="background: #1e1e1e; padding: 8px; border-radius: 4px; margin-top: 4px;">
+                            <label style="display: block; margin-bottom: 4px; font-size: 12px;">
+                                <input type="checkbox" id="selectAllErrors" onchange="toggleAllErrors(this.checked)">
+                                <strong>Select All</strong>
+                            </label>
+                            <div id="errorCheckboxes" style="margin-left: 16px; font-size: 12px;"></div>
+                        </div>
+
+                        <label for="paddingSlider" style="margin-top: 12px; display: block;">
+                            Tail Padding: <span id="paddingValue">50</span>ms
+                        </label>
+                        <input type="range" id="paddingSlider" min="0" max="200" value="50" step="10"
+                               class="modal-slider" oninput="updatePaddingValue(this.value)">
+                    </div>
+
+                    <div>
+                        <div class="audio-preview-container">
+                            <div class="audio-preview-label">Audio Preview</div>
+                            <audio id="crxAudioPreview" controls>
+                                <source id="crxAudioSource" type="audio/wav">
+                            </audio>
+                            <button class="refresh-preview-button" onclick="refreshAudioPreview()">
+                                Refresh Preview
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <label for="comments" style="margin-top: 16px; display: block;">Comments:</label>
+                <textarea id="comments" class="modal-textarea" placeholder="Auto-generated from diff..." rows="4"></textarea>
             </div>
             <div class="modal-footer">
                 <button class="modal-button modal-button-secondary" onclick="closeCrxModal()">Cancel</button>
@@ -1116,6 +1148,7 @@ class ValidationReportHandler(BaseHTTPRequestHandler):
         sentence_id = params.get('sentenceId', 'unknown')
         error_type = params.get('errorType', DEFAULT_ERROR_TYPE)
         comments = params.get('comments', '')
+        padding_ms = params.get('paddingMs', 50)  # Default 50ms if not provided
 
         try:
             # Create CRX directory if it doesn't exist
@@ -1190,8 +1223,9 @@ class ValidationReportHandler(BaseHTTPRequestHandler):
                 audio_filename = f"{error_num:03d}.wav"
                 audio_output_path = crx_dir / audio_filename
 
-                # Use ffmpeg to extract the segment
-                duration = end_time - start_time
+                # Use ffmpeg to extract the segment with dynamic tail padding
+                padding_sec = padding_ms / 1000.0
+                duration = (end_time - start_time) + padding_sec
                 cmd = [
                     'ffmpeg',
                     '-i', str(audio_path),

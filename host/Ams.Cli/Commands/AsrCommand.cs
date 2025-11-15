@@ -1,4 +1,5 @@
 using System.CommandLine;
+using Ams.Cli.Repl;
 using Ams.Cli.Utilities;
 
 namespace Ams.Cli.Commands;
@@ -42,9 +43,14 @@ public static class AsrCommand
         var beamSizeOption = new Option<int>("--beam-size", () => 5, "Beam size for Whisper beam search");
         var bestOfOption = new Option<int>("--best-of", () => 1, "Best-of sampling count for Whisper greedy search");
         var temperatureOption = new Option<double>("--temperature", () => 0.0, "Sampling temperature (0-1) for Whisper");
-        var wordTimestampsOption = new Option<bool>("--word-timestamps", () => true, "Emit word-level timestamps (Whisper)");
+        var wordTimestampsOption = new Option<bool>("--word-timestamps", () => false, "Emit word-level timestamps (Whisper)");
         var flashAttentionOption = new Option<bool>("--flash-attention", () => false, "Enable FlashAttention kernels when building with support");
         var dtwOption = new Option<bool>("--dtw-timestamps", () => false, "Enable DTW timestamp refinement (Whisper)");
+        var parallelOption = new Option<int>(
+            "--parallel",
+            () => 0,
+            "Process multiple chapters in parallel when using 'mode all' (0 = auto based on CPU cores).");
+        parallelOption.AddAlias("-p");
 
         var bookIndexOption = new Option<FileInfo?>("--book-index", "Path to book-index.json (required for context-aware ASR)");
         var chapterIdOption = new Option<string?>("--chapter-id", "Override chapter identifier (defaults to audio stem or active chapter)");
@@ -67,6 +73,7 @@ public static class AsrCommand
         runCommand.AddOption(dtwOption);
         runCommand.AddOption(bookIndexOption);
         runCommand.AddOption(chapterIdOption);
+        runCommand.AddOption(parallelOption);
 
         runCommand.SetHandler(async context =>
         {
@@ -89,6 +96,12 @@ public static class AsrCommand
                 var wordTimestamps = parse.GetValueForOption(wordTimestampsOption);
                 var flashAttention = parse.GetValueForOption(flashAttentionOption);
                 var dtwTimestamps = parse.GetValueForOption(dtwOption);
+                var requestedParallelism = parse.GetValueForOption(parallelOption);
+
+                if (requestedParallelism > 1 && ReplContext.Current?.RunAllChapters != true)
+                {
+                    Log.Debug("--parallel ignored because CLI is not running in mode ALL");
+                }
 
                 var bookIndexFile = CommandInputResolver.ResolveBookIndex(parse.GetValueForOption(bookIndexOption), mustExist: true);
                 var chapterId = parse.GetValueForOption(chapterIdOption) ?? Path.GetFileNameWithoutExtension(audio.Name);
