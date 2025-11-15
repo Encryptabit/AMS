@@ -61,7 +61,7 @@ public static partial class AudioProcessor
         return ms;
     }
 
-    public static AudioBuffer Resample(AudioBuffer buffer, int targetSampleRate)
+    public static AudioBuffer Resample(AudioBuffer buffer, ulong targetSampleRate)
     {
         if (buffer is null)
         {
@@ -73,13 +73,16 @@ public static partial class AudioProcessor
             throw new ArgumentOutOfRangeException(nameof(targetSampleRate));
         }
 
-        if (buffer.SampleRate == targetSampleRate)
+        if (buffer.SampleRate == (int)targetSampleRate)
         {
             return buffer;
         }
-
-        var filter = FormattableString.Invariant($"aresample={targetSampleRate}");
-        return FfFilterGraphRunner.Apply(buffer, filter);
+        
+        var graph = FfFilterGraph.FromBuffer(buffer);
+        
+        graph.Resample(new ResampleFilterParams(targetSampleRate));
+       
+        return graph.ToBuffer();
     }
 
     public static IReadOnlyList<SilenceInterval> DetectSilence(AudioBuffer buffer, SilenceDetectOptions? options = null)

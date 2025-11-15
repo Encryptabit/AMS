@@ -87,7 +87,7 @@ namespace Ams.Core.Services.Integrations.FFmpeg
             private AudioAccumulator? _accumulator;
 
             private readonly int _channels;
-            private readonly int _sampleRate;
+            private int _sampleRate;
 
             public FilterGraphExecutor(IReadOnlyList<GraphInput> inputs, string filterSpec, FilterExecutionMode mode, IAudioFrameSink? frameSink)
             {
@@ -113,6 +113,7 @@ namespace Ams.Core.Services.Integrations.FFmpeg
 
                 SetupSink();
                 ConfigureGraph();
+                RefreshOutputFormat();
 
                 _outputFrame = ffmpeg.av_frame_alloc();
                 if (_outputFrame == null)
@@ -291,7 +292,6 @@ namespace Ams.Core.Services.Integrations.FFmpeg
             private void ConfigureSinkFormat()
             {
                 ConfigureIntOption("sample_fmts", (int)AVSampleFormat.AV_SAMPLE_FMT_FLT);
-                ConfigureIntOption("sample_rates", _sampleRate);
                 ConfigureChannelLayouts();
             }
 
@@ -393,6 +393,20 @@ namespace Ams.Core.Services.Integrations.FFmpeg
 
                     if (inputs != null)
                         ffmpeg.avfilter_inout_free(&inputs);
+                }
+            }
+
+            private void RefreshOutputFormat()
+            {
+                if (_sink == null)
+                {
+                    return;
+                }
+
+                var sinkRate = ffmpeg.av_buffersink_get_sample_rate(_sink);
+                if (sinkRate > 0)
+                {
+                    _sampleRate = sinkRate;
                 }
             }
 

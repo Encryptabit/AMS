@@ -42,7 +42,7 @@ public static class AsrCommand
         var beamSizeOption = new Option<int>("--beam-size", () => 5, "Beam size for Whisper beam search");
         var bestOfOption = new Option<int>("--best-of", () => 1, "Best-of sampling count for Whisper greedy search");
         var temperatureOption = new Option<double>("--temperature", () => 0.0, "Sampling temperature (0-1) for Whisper");
-        var wordTimestampsOption = new Option<bool>("--word-timestamps", () => false, "Emit word-level timestamps (Whisper)");
+        var wordTimestampsOption = new Option<bool>("--word-timestamps", () => true, "Emit word-level timestamps (Whisper)");
         var flashAttentionOption = new Option<bool>("--flash-attention", () => false, "Enable FlashAttention kernels when building with support");
         var dtwOption = new Option<bool>("--dtw-timestamps", () => false, "Enable DTW timestamp refinement (Whisper)");
 

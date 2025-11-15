@@ -1,5 +1,18 @@
+using System.Buffers;
+using System.Globalization;
+using System.IO;
+using System.Net.Http;
+using System.Security.Cryptography;
 using System.Text;
+using System.Threading;
 using Ams.Core.Artifacts;
+using EchoSharp.Abstractions.Audio;
+using EchoSharp.Abstractions.SpeechTranscription;
+using EchoSharp.Abstractions.VoiceActivityDetection;
+using EchoSharp.Audio;
+using EchoSharp.Onnx.SileroVad;
+using EchoSharp.SpeechTranscription;
+using EchoSharp.Whisper.net;
 using Whisper.net;
 
 namespace Ams.Core.Processors;
@@ -9,6 +22,12 @@ namespace Ams.Core.Processors;
 /// </summary>
 public static class AsrProcessor
 {
+    private const string SileroVadDirectoryEnvVar = "AMS_SILERO_VAD_DIR";
+    private static readonly SemaphoreSlim VadFactoryLock = new(1, 1);
+    private static IVadDetectorFactory? _sileroVadFactory;
+
+    private const string SileroVadModelFileName = "silero_vad.onnx";
+
     public static async Task<AsrResponse> TranscribeFileAsync(
         string audioPath,
         AsrOptions options,
@@ -65,6 +84,39 @@ public static class AsrProcessor
         CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
+        buffer = NormalizeBuffer(buffer);
+
+        var echoResponse = await TranscribeWithEchoSharpRealtimeAsync(buffer, options, cancellationToken)
+            .ConfigureAwait(false);
+        if (echoResponse is not null)
+        {
+            return echoResponse;
+        }
+
+        return await TranscribeWithWhisperNetAsync(buffer, options, cancellationToken).ConfigureAwait(false);
+    }
+
+    private static async Task<string> DetectLanguageInternalAsync(
+        AudioBuffer buffer,
+        AsrOptions options,
+        CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+
+        using var factory = WhisperFactory.FromPath(options.ModelPath, CreateFactoryOptions(options));
+        var builder = ConfigureBuilder(factory, options, enableTokenTimestamps: false);
+        await using var processor = builder.Build();
+
+        var samples = ExtractMonoSamples(buffer);
+        var (language, _) = processor.DetectLanguageWithProbability(samples);
+        return string.IsNullOrWhiteSpace(language) ? options.Language : language!;
+    }
+
+    private static async Task<AsrResponse> TranscribeWithWhisperNetAsync(
+        AudioBuffer buffer,
+        AsrOptions options,
+        CancellationToken cancellationToken)
+    {
         var factoryOptions = CreateFactoryOptions(options);
 
         using var factory = WhisperFactory.FromPath(options.ModelPath, factoryOptions);
@@ -94,21 +146,6 @@ public static class AsrProcessor
         return new AsrResponse(modelVersion, tokens.ToArray(), segments.ToArray());
     }
 
-    private static async Task<string> DetectLanguageInternalAsync(
-        AudioBuffer buffer,
-        AsrOptions options,
-        CancellationToken cancellationToken)
-    {
-        cancellationToken.ThrowIfCancellationRequested();
-
-        using var factory = WhisperFactory.FromPath(options.ModelPath, CreateFactoryOptions(options));
-        var builder = ConfigureBuilder(factory, options, enableTokenTimestamps: false);
-        await using var processor = builder.Build();
-
-        var samples = ExtractMonoSamples(buffer);
-        var (language, _) = processor.DetectLanguageWithProbability(samples);
-        return string.IsNullOrWhiteSpace(language) ? options.Language : language!;
-    }
     private static void EnsureModelPath(string modelPath)
     {
         if (string.IsNullOrWhiteSpace(modelPath))
@@ -137,7 +174,14 @@ public static class AsrProcessor
         bool enableTokenTimestamps)
     {
         var builder = factory.CreateBuilder();
+        return ConfigureBuilder(builder, options, enableTokenTimestamps);
+    }
 
+    private static WhisperProcessorBuilder ConfigureBuilder(
+        WhisperProcessorBuilder builder,
+        AsrOptions options,
+        bool enableTokenTimestamps)
+    {
         var threadCount = options.Threads > 0 ? options.Threads : Environment.ProcessorCount;
         builder.WithThreads(threadCount);
 
@@ -147,7 +191,8 @@ public static class AsrProcessor
             builder.SplitOnWord();
         }
 
-        if (string.IsNullOrWhiteSpace(options.Language) || options.Language.Equals("auto", StringComparison.OrdinalIgnoreCase))
+        if (string.IsNullOrWhiteSpace(options.Language) ||
+            options.Language.Equals("auto", StringComparison.OrdinalIgnoreCase))
         {
             builder.WithLanguageDetection();
         }
@@ -194,7 +239,18 @@ public static class AsrProcessor
         }
     }
 
-    private static List<AsrToken> AggregateTokens(WhisperToken[] rawTokens)
+    private static List<AsrToken> AggregateTokens(WhisperToken[] rawTokens) =>
+        AggregateTokens(
+            rawTokens,
+            token => token.Start / 100.0,
+            token => Math.Max(token.Start / 100.0, token.End / 100.0),
+            token => token.Text);
+
+    private static List<AsrToken> AggregateTokens<TToken>(
+        IEnumerable<TToken> rawTokens,
+        Func<TToken, double> startSelector,
+        Func<TToken, double> endSelector,
+        Func<TToken, string?> textSelector)
     {
         var result = new List<AsrToken>();
         var builder = new StringBuilder();
@@ -203,12 +259,7 @@ public static class AsrProcessor
 
         foreach (var token in rawTokens)
         {
-            if (token.Start < 0 || token.End < 0)
-            {
-                continue;
-            }
-
-            var raw = token.Text;
+            var raw = textSelector(token);
             if (string.IsNullOrEmpty(raw))
             {
                 continue;
@@ -226,8 +277,8 @@ public static class AsrProcessor
             }
 
             var leadingSpace = char.IsWhiteSpace(raw[0]);
-            var tokenStart = token.Start / 100.0;
-            var tokenEnd = Math.Max(tokenStart, token.End / 100.0);
+            var tokenStart = startSelector(token);
+            var tokenEnd = Math.Max(tokenStart, endSelector(token));
 
             if (builder.Length == 0 || leadingSpace)
             {
@@ -256,6 +307,110 @@ public static class AsrProcessor
             wordStart = 0;
             wordEnd = 0;
         }
+    }
+
+    private static async Task<AsrResponse?> TranscribeWithEchoSharpRealtimeAsync(
+        AudioBuffer buffer,
+        AsrOptions options,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            using var waveSource = BuildAwaitableWaveSource(buffer);
+            using var whisperFactory = WhisperFactory.FromPath(options.ModelPath, CreateFactoryOptions(options));
+            using var speechFactory = new WhisperSpeechTranscriptorFactory(whisperFactory, dispose: false);
+            var vadFactory = await GetSileroVadFactoryAsync(cancellationToken).ConfigureAwait(false);
+
+            var realtimeFactory = new EchoSharpRealtimeTranscriptorFactory(
+                speechTranscriptorFactory: speechFactory,
+                vadDetectorFactory: vadFactory,
+                recognizingSpeechTranscriptorFactory: null,
+                echoSharpOptions: BuildRealtimeOptions(),
+                vadDetectorOptions: BuildVadOptions());
+
+            var realtime = realtimeFactory.Create(BuildRealtimeSpeechOptions(options));
+            var tokens = new List<AsrToken>();
+            var segments = new List<AsrSegment>();
+
+            try
+            {
+                await foreach (var evt in realtime.TranscribeAsync(waveSource, cancellationToken).ConfigureAwait(false))
+                {
+                    if (evt is RealtimeSegmentRecognized recognized)
+                    {
+                        AppendSegmentAndTokens(segments, tokens, recognized.Segment);
+                    }
+                }
+            }
+            finally
+            {
+                (realtime as IDisposable)?.Dispose();
+            }
+
+            if (segments.Count == 0)
+            {
+                return null;
+            }
+
+            tokens.Sort((a, b) => a.StartTime.CompareTo(b.StartTime));
+            segments.Sort((a, b) => a.StartSec.CompareTo(b.StartSec));
+
+            var modelVersion = Path.GetFileName(options.ModelPath) ?? "whisper";
+            return new AsrResponse(modelVersion, tokens.ToArray(), segments.ToArray());
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+
+    private static async Task<IVadDetectorFactory> GetSileroVadFactoryAsync(CancellationToken cancellationToken)
+    {
+        var cached = Volatile.Read(ref _sileroVadFactory);
+        if (cached is not null)
+        {
+            return cached;
+        }
+
+        await VadFactoryLock.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            if (_sileroVadFactory is not null)
+            {
+                return _sileroVadFactory;
+            }
+
+            var modelPath = await EnsureSileroModelAsync(cancellationToken).ConfigureAwait(false);
+            var options = new SileroVadOptions(modelPath);
+            _sileroVadFactory = new SileroVadDetectorFactory(options);
+            return _sileroVadFactory;
+        }
+        finally
+        {
+            VadFactoryLock.Release();
+        }
+    }
+
+    private static Task<string> EnsureSileroModelAsync(CancellationToken cancellationToken)
+    {
+        var directory = ResolveSileroModelDirectory();
+        var modelPath = Path.Combine(directory, SileroVadModelFileName);
+
+        return Task.FromResult(modelPath);
+    }
+    
+
+    private static string ResolveSileroModelDirectory()
+    {
+        var env = Environment.GetEnvironmentVariable(SileroVadDirectoryEnvVar);
+        if (!string.IsNullOrWhiteSpace(env))
+        {
+            return Path.GetFullPath(env);
+        }
+
+        var baseDir = AppContext.BaseDirectory;
+        return Path.Combine(baseDir, "models");
     }
 
     private static bool IsSpecialToken(string text) =>
@@ -294,10 +449,263 @@ public static class AsrProcessor
             {
                 sum += buffer.Planar[ch][i];
             }
+
             samples[i] = (float)(sum / buffer.Channels);
         }
 
         return samples;
+    }
+
+    private static EchoSharpRealtimeOptions BuildRealtimeOptions() => new()
+    {
+        
+    };
+
+    private static VadDetectorOptions BuildVadOptions() => new()
+    {
+    };
+
+    private static RealtimeSpeechTranscriptorOptions BuildRealtimeSpeechOptions(AsrOptions options)
+    {
+        var autoDetect = string.IsNullOrWhiteSpace(options.Language) ||
+                         options.Language.Equals("auto", StringComparison.OrdinalIgnoreCase);
+        return new RealtimeSpeechTranscriptorOptions
+        {
+            Language = ResolveCulture(options.Language),
+            RetrieveTokenDetails = true,
+            IncludeSpeechRecogizingEvents = true 
+        };
+    }
+
+    private static CultureInfo ResolveCulture(string? language)
+    {
+        if (string.IsNullOrWhiteSpace(language) || language.Equals("auto", StringComparison.OrdinalIgnoreCase))
+        {
+            return CultureInfo.GetCultureInfo("en-US");
+        }
+
+        try
+        {
+            return CultureInfo.GetCultureInfo(language);
+        }
+        catch (CultureNotFoundException)
+        {
+            if (language.Length > 2)
+            {
+                var shortCode = language[..2];
+                try
+                {
+                    return CultureInfo.GetCultureInfo(shortCode);
+                }
+                catch (CultureNotFoundException)
+                {
+                    // ignored
+                }
+            }
+
+            return CultureInfo.GetCultureInfo("en-US");
+        }
+    }
+
+    private static AwaitableWaveFileSource BuildAwaitableWaveSource(AudioBuffer buffer)
+    {
+        var source = new AwaitableWaveFileSource();
+        using var wavStream = buffer.ToWavStream(new AudioEncodeOptions
+        {
+            TargetSampleRate = buffer.SampleRate,
+            TargetBitDepth = 16
+        });
+        wavStream.Position = 0;
+
+        var rented = ArrayPool<byte>.Shared.Rent(81920);
+        try
+        {
+            int read;
+            while ((read = wavStream.Read(rented, 0, rented.Length)) > 0)
+            {
+                source.WriteData(rented.AsMemory(0, read));
+            }
+        }
+        finally
+        {
+            ArrayPool<byte>.Shared.Return(rented);
+        }
+
+        source.Flush();
+        return source;
+    }
+
+    private static void AppendSegmentAndTokens(List<AsrSegment> segments, List<AsrToken> tokens,
+        TranscriptSegment segment)
+    {
+        if (segment is null)
+        {
+            return;
+        }
+
+        var text = segment.Text?.Trim() ?? string.Empty;
+        var start = segment.StartTime.TotalSeconds;
+        var end = start + segment.Duration.TotalSeconds;
+        if (end < start)
+        {
+            end = start;
+        }
+
+        segments.Add(new AsrSegment(start, end, text));
+
+        if (segment.Tokens is not { Count: > 0 })
+        {
+            return;
+        }
+
+        var normalizedWords = PronunciationHelper.ExtractPronunciationParts(segment.Text ?? string.Empty);
+        if (normalizedWords.Count == 0)
+        {
+            return;
+        }
+
+        var pieces = BuildTokenPieces(start, segment.Tokens);
+        if (pieces.Count == 0)
+        {
+            return;
+        }
+
+        var pieceIndex = 0;
+        foreach (var normalizedWord in normalizedWords)
+        {
+            if (pieceIndex >= pieces.Count)
+            {
+                break;
+            }
+
+            double? wordStart = null;
+            double wordEnd = start;
+            var builder = new StringBuilder();
+            var consumed = 0;
+            var normalizedTarget = normalizedWord ?? string.Empty;
+
+            while (pieceIndex + consumed < pieces.Count)
+            {
+                var piece = pieces[pieceIndex + consumed];
+                if (string.IsNullOrWhiteSpace(piece.Text))
+                {
+                    consumed++;
+                    continue;
+                }
+
+                wordStart ??= piece.Start;
+                wordEnd = Math.Max(wordEnd, piece.End);
+                builder.Append(piece.Text);
+                consumed++;
+
+                if (builder.ToString().Equals(normalizedTarget, StringComparison.OrdinalIgnoreCase))
+                {
+                    var duration = Math.Max(0.001, wordEnd - wordStart.Value);
+                    tokens.Add(new AsrToken(wordStart.Value, duration, normalizedTarget));
+                    pieceIndex += consumed;
+                    break;
+                }
+            }
+
+            if (builder.Length == 0)
+            {
+                continue;
+            }
+
+            if (!builder.ToString().Equals(normalizedTarget, StringComparison.OrdinalIgnoreCase) && wordStart.HasValue)
+            {
+                var duration = Math.Max(0.001, wordEnd - wordStart.Value);
+                tokens.Add(new AsrToken(wordStart.Value, duration, builder.ToString()));
+                pieceIndex += consumed;
+            }
+        }
+
+        for (; pieceIndex < pieces.Count; pieceIndex++)
+        {
+            var piece = pieces[pieceIndex];
+            var duration = Math.Max(0.001, piece.End - piece.Start);
+            tokens.Add(new AsrToken(piece.Start, duration, piece.Text));
+        }
+    }
+
+    private sealed record TokenPiece(string Text, double Start, double End);
+
+    private static List<TokenPiece> BuildTokenPieces(double segmentStart, IList<TranscriptToken> transcriptTokens)
+    {
+        var pieces = new List<TokenPiece>();
+        foreach (var token in transcriptTokens)
+        {
+            if (token is null || string.IsNullOrWhiteSpace(token.Text) || IsSpecialToken(token.Text))
+            {
+                continue;
+            }
+
+            var parts = PronunciationHelper.ExtractPronunciationParts(token.Text);
+            if (parts.Count == 0)
+            {
+                continue;
+            }
+
+            var tokenStart = segmentStart + token.StartTime.TotalSeconds;
+            var tokenDuration = Math.Max(0.001, token.Duration.TotalSeconds);
+            var tokenEnd = tokenStart + tokenDuration;
+            var sliceDuration = tokenDuration / parts.Count;
+            var pieceStart = tokenStart;
+
+            for (int i = 0; i < parts.Count; i++)
+            {
+                var part = parts[i];
+                if (string.IsNullOrWhiteSpace(part))
+                {
+                    continue;
+                }
+
+                var pieceEnd = i == parts.Count - 1 ? tokenEnd : pieceStart + sliceDuration;
+                pieces.Add(new TokenPiece(part, pieceStart, pieceEnd));
+                pieceStart = pieceEnd;
+            }
+        }
+
+        pieces.Sort((a, b) => a.Start.CompareTo(b.Start));
+        return pieces;
+    }
+
+    private static AudioBuffer NormalizeBuffer(AudioBuffer buffer)
+    {
+        var working = buffer;
+        if (working.Channels != 1)
+        {
+            working = DownmixToMono(working);
+        }
+
+        if (working.SampleRate != AudioProcessor.DefaultAsrSampleRate)
+        {
+            working = AudioProcessor.Resample(working, AudioProcessor.DefaultAsrSampleRate);
+        }
+
+        return working;
+    }
+
+    private static AudioBuffer DownmixToMono(AudioBuffer buffer)
+    {
+        if (buffer.Channels == 1)
+        {
+            return buffer;
+        }
+
+        var mono = new AudioBuffer(1, buffer.SampleRate, buffer.Length);
+        for (var i = 0; i < buffer.Length; i++)
+        {
+            double sum = 0;
+            for (var ch = 0; ch < buffer.Channels; ch++)
+            {
+                sum += buffer.Planar[ch][i];
+            }
+
+            mono.Planar[0][i] = (float)(sum / buffer.Channels);
+        }
+
+        return mono;
     }
 }
 
