@@ -371,13 +371,17 @@ public static class AsrProcessor
                 continue;
             }
 
-            var leadingSpace = char.IsWhiteSpace(raw[0]);
+            var hasBoundary = HasExplicitWordBoundary(raw);
             var tokenStart = startSelector(token);
             var tokenEnd = Math.Max(tokenStart, endSelector(token));
 
-            if (builder.Length == 0 || leadingSpace)
+            if (builder.Length > 0 && hasBoundary)
             {
                 Flush();
+            }
+
+            if (builder.Length == 0)
+            {
                 wordStart = tokenStart;
             }
 
@@ -521,6 +525,17 @@ public static class AsrProcessor
             .Trim();
 
         return normalized;
+    }
+
+    private static bool HasExplicitWordBoundary(string text)
+    {
+        if (string.IsNullOrEmpty(text))
+        {
+            return false;
+        }
+
+        var first = text[0];
+        return char.IsWhiteSpace(first) || first == '▁' || first == 'Ġ' || first == 'Ċ';
     }
 
     private static float[] ExtractMonoSamples(AudioBuffer buffer)

@@ -971,6 +971,42 @@ body {
     background: #4e4e52;
 }
 
+/* Audio Source Menu */
+.audio-source-menu {
+    position: fixed;
+    background: #252526;
+    border: 1px solid #3e3e42;
+    border-radius: 6px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
+    z-index: 1001;
+    min-width: 140px;
+    overflow: hidden;
+}
+
+.audio-source-option {
+    padding: 10px 16px;
+    cursor: pointer;
+    color: #d4d4d4;
+    font-size: 13px;
+    transition: background 0.2s;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.audio-source-option:hover {
+    background: #2d2d30;
+}
+
+.audio-source-option.active {
+    background: #0e639c;
+    color: #ffffff;
+}
+
+.audio-source-option.active:hover {
+    background: #1177bb;
+}
+
 .reviewed-button.reviewed {
     background: #3e3e42;
     color: #4ec9b0;

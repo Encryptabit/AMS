@@ -954,13 +954,18 @@ class ValidationReportHandler(BaseHTTPRequestHandler):
 
         start_time = float(query_params.get('start', [0])[0]) if 'start' in query_params else None
         end_time = float(query_params.get('end', [0])[0]) if 'end' in query_params else None
+        source = query_params.get('source', ['raw'])[0] if 'source' in query_params else 'raw'
 
-        # Find the audio file - try chapter folder first, then book root
-        audio_path = BASE_DIR / chapter_name / f"{chapter_name}.treated.wav"
-        if not audio_path.exists():
+        # Find the audio file based on source
+        if source == 'treated':
+            audio_path = BASE_DIR / chapter_name / f"{chapter_name}.treated.wav"
+        elif source == 'filtered':
+            audio_path = BASE_DIR / chapter_name / f"{chapter_name}.filtered.wav"
+        else:  # raw
+            # Try chapter folder first, then book root
             audio_path = BASE_DIR / chapter_name / f"{chapter_name}.wav"
-        if not audio_path.exists():
-            audio_path = BASE_DIR / f"{chapter_name}.wav"
+            if not audio_path.exists():
+                audio_path = BASE_DIR / f"{chapter_name}.wav"
 
         print(f"Looking for audio: {audio_path}")
         print(f"Audio exists: {audio_path.exists()}")
@@ -987,6 +992,9 @@ class ValidationReportHandler(BaseHTTPRequestHandler):
                 self.send_header('Content-type', 'audio/wav')
                 self.send_header('Content-Length', str(len(audio_data)))
                 self.send_header('Accept-Ranges', 'bytes')
+                self.send_header('Cache-Control', 'no-store, no-cache, must-revalidate')
+                self.send_header('Pragma', 'no-cache')
+                self.send_header('Expires', '0')
                 self.end_headers()
                 self.wfile.write(audio_data)
                 return
@@ -1019,6 +1027,9 @@ class ValidationReportHandler(BaseHTTPRequestHandler):
             self.send_response(200)
             self.send_header('Content-type', 'audio/wav')
             self.send_header('Content-Length', str(len(audio_data)))
+            self.send_header('Cache-Control', 'no-store, no-cache, must-revalidate')
+            self.send_header('Pragma', 'no-cache')
+            self.send_header('Expires', '0')
             self.end_headers()
             self.wfile.write(audio_data)
 
