@@ -37,7 +37,7 @@ public static class MfaWorkflow
         var corpusDir = EnsureDirectory(Path.Combine(alignmentDir, "corpus"));
         var mfaCopyDir = EnsureDirectory(Path.Combine(alignmentDir, "mfa"));
 
-        var mfaRoot = ResolveMfaRoot(useDedicatedProcess ? workspaceRoot : null);
+        var mfaRoot = ResolveMfaRoot(workspaceRoot);
         CleanupMfaArtifacts(mfaRoot, chapterStem);
 
         var textGridCopyPath = Path.Combine(mfaCopyDir, chapterStem + ".TextGrid");
