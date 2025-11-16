@@ -2,6 +2,7 @@ using System.Text.Json;
 using Ams.Core.Application.Commands;
 using Ams.Core.Application.Contexts;
 using Ams.Core.Application.Pipeline;
+using Ams.Core.Application.Processes;
 using Ams.Core.Processors.DocumentProcessor;
 using Ams.Core.Services.Alignment;
 
@@ -164,9 +165,18 @@ public sealed class PipelineService
             {
                 await WaitAsync(options.Concurrency?.MfaSemaphore, cancellationToken).ConfigureAwait(false);
                 string? workspaceRoot = null;
+                EnvironmentVariableScope? mfaRootScope = null;
                 try
                 {
                     workspaceRoot = options.Concurrency?.RentMfaWorkspace();
+                    var useDedicatedProcess = options.MfaOptions?.UseDedicatedProcess ?? false;
+                    var requiresWorkspaceBinding = !useDedicatedProcess && !string.IsNullOrWhiteSpace(workspaceRoot);
+                    if (requiresWorkspaceBinding)
+                    {
+                        mfaRootScope = new EnvironmentVariableScope("MFA_ROOT_DIR", workspaceRoot!);
+                        MfaProcessSupervisor.Shutdown();
+                    }
+
                     var mfaOptions = (options.MfaOptions ?? new RunMfaOptions()) with
                     {
                         AudioFile = options.AudioFile,
@@ -182,6 +192,7 @@ public sealed class PipelineService
                 }
                 finally
                 {
+                    mfaRootScope?.Dispose();
                     options.Concurrency?.ReturnMfaWorkspace(workspaceRoot);
                     Release(options.Concurrency?.MfaSemaphore);
                 }
@@ -407,6 +418,31 @@ public sealed class PipelineService
         if (options.AudioFile is null)
         {
             throw new ArgumentException("AudioFile must be provided.", nameof(options.AudioFile));
+        }
+    }
+
+    private sealed class EnvironmentVariableScope : IDisposable
+    {
+        private readonly string _name;
+        private readonly string? _previousValue;
+        private readonly bool _changed;
+
+        public EnvironmentVariableScope(string name, string value)
+        {
+            _name = name;
+            _previousValue = Environment.GetEnvironmentVariable(name);
+            Environment.SetEnvironmentVariable(name, value);
+            _changed = true;
+        }
+
+        public void Dispose()
+        {
+            if (!_changed)
+            {
+                return;
+            }
+
+            Environment.SetEnvironmentVariable(_name, _previousValue);
         }
     }
 }

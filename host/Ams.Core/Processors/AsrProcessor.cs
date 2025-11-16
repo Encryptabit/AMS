@@ -826,6 +826,7 @@ public sealed record AsrOptions(
     int Threads = 8,
     bool UseGpu = true,
     bool EnableWordTimestamps = true,
+    bool SplitOnWord = true,
     int BeamSize = 5,
     int BestOf = 1,
     float Temperature = 0.0f,

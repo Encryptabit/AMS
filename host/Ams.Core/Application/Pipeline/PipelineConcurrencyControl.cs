@@ -106,7 +106,9 @@ public sealed class PipelineConcurrencyControl : IDisposable
             yield break;
         }
 
-        var desired = Math.Max(8, requestedCount);
+        var desired = requestedCount <= 1
+            ? 1
+            : Math.Max(8, requestedCount);
         for (var i = 1; i <= desired; i++)
         {
             var path = Path.Combine(documents, $"MFA_{i}");
