@@ -8,6 +8,7 @@ let currentView = 'errors'; // 'errors' or 'playback'
 let chapterAudio = null;
 let currentPlayingSentence = null;
 let waveSurferInstances = {}; // Track WaveSurfer instances by ID
+let currentAudioSource = 'raw'; // 'raw', 'treated', or 'filtered'
 
 // WaveSurfer Audio Player Component
 class WaveSurferPlayer {
@@ -263,6 +264,19 @@ function updateFloatingButton() {
     viewGroup.appendChild(errorsButton);
     viewGroup.appendChild(playbackButton);
 
+    // Audio source selector (show in both views)
+    const audioSourceSelector = document.createElement('div');
+    audioSourceSelector.className = 'action-bar-group';
+    audioSourceSelector.style.marginLeft = '8px';
+
+    const audioButton = document.createElement('button');
+    audioButton.className = 'action-bar-button audio-source-button';
+    audioButton.innerHTML = `🎵 ${currentAudioSource.charAt(0).toUpperCase() + currentAudioSource.slice(1)}`;
+    audioButton.onclick = () => toggleAudioSourceMenu();
+    audioButton.id = 'audio-source-button';
+
+    audioSourceSelector.appendChild(audioButton);
+
     // Separator
     const separator = document.createElement('div');
     separator.className = 'action-bar-separator';
@@ -275,10 +289,87 @@ function updateFloatingButton() {
 
     // Assemble action bar
     actionBar.appendChild(viewGroup);
+    actionBar.appendChild(audioSourceSelector);
     actionBar.appendChild(separator);
     actionBar.appendChild(reviewedButton);
 
     document.body.appendChild(actionBar);
+}
+
+function toggleAudioSourceMenu() {
+    // Remove existing menu if any
+    const existingMenu = document.getElementById('audio-source-menu');
+    if (existingMenu) {
+        existingMenu.remove();
+        return;
+    }
+
+    const menu = document.createElement('div');
+    menu.id = 'audio-source-menu';
+    menu.className = 'audio-source-menu';
+
+    const sources = [
+        { id: 'raw', label: 'Raw' },
+        { id: 'treated', label: 'Treated' },
+        { id: 'filtered', label: 'Filtered' }
+    ];
+
+    sources.forEach(source => {
+        const option = document.createElement('div');
+        option.className = `audio-source-option ${currentAudioSource === source.id ? 'active' : ''}`;
+        option.innerHTML = source.label;
+        option.onclick = () => switchAudioSource(source.id);
+        menu.appendChild(option);
+    });
+
+    // Position menu above the button
+    const button = document.getElementById('audio-source-button');
+    const rect = button.getBoundingClientRect();
+    menu.style.bottom = `${window.innerHeight - rect.top + 8}px`;
+    menu.style.right = `${window.innerWidth - rect.right}px`;
+
+    document.body.appendChild(menu);
+
+    // Close menu when clicking outside
+    setTimeout(() => {
+        document.addEventListener('click', function closeMenu(e) {
+            if (!menu.contains(e.target) && e.target.id !== 'audio-source-button') {
+                menu.remove();
+                document.removeEventListener('click', closeMenu);
+            }
+        });
+    }, 0);
+}
+
+function switchAudioSource(source) {
+    currentAudioSource = source;
+
+    // Close menu
+    const menu = document.getElementById('audio-source-menu');
+    if (menu) menu.remove();
+
+    // Update button text
+    updateFloatingButton();
+
+    // Reload audio for playback view
+    if (currentView === 'playback' && currentReport) {
+        setupChapterAudio();
+    }
+
+    // Note: Audio segments in errors view will automatically use the new source
+    // on next play since they call playAudioSegment which uses currentAudioSource
+}
+
+function getAudioUrlForSource(chapterName, source) {
+    // Base URL for the chapter
+    let url = `/api/audio/${encodeURIComponent(chapterName)}`;
+
+    // Add source parameter
+    if (source !== 'raw') {
+        url += `?source=${source}`;
+    }
+
+    return url;
 }
 
 // Chapter list rendering
@@ -537,10 +628,11 @@ function setupChapterAudio() {
         waveSurferInstances['chapter-audio-player'].destroy();
     }
 
-    // Create new WaveSurfer player for chapter audio
-    const audioUrl = `/api/audio/${encodeURIComponent(currentChapter)}`;
+    // Create new WaveSurfer player for chapter audio with selected source
+    const audioUrl = getAudioUrlForSource(currentChapter, currentAudioSource);
+    const sourceLabel = currentAudioSource.charAt(0).toUpperCase() + currentAudioSource.slice(1);
     const player = new WaveSurferPlayer('chapter-audio-player', audioUrl, {
-        title: `${currentChapter} - Full Chapter Audio`,
+        title: `${currentChapter} - ${sourceLabel} Audio`,
         height: 100,
         waveColor: '#4a9eff',
         progressColor: '#1177bb',
@@ -844,7 +936,12 @@ function playAudioSegment(chapterName, startTime, endTime) {
         document.body.appendChild(audioPlayer);
     }
 
-    const url = `/api/audio/${encodeURIComponent(chapterName)}?start=${startTime}&end=${endTime}`;
+    // Use current audio source
+    let url = `/api/audio/${encodeURIComponent(chapterName)}?start=${startTime}&end=${endTime}`;
+    if (currentAudioSource !== 'raw') {
+        url += `&source=${currentAudioSource}`;
+    }
+
     audioPlayer.src = url;
     audioPlayer.currentTime = 0;
     audioPlayer.play().catch(err => {
