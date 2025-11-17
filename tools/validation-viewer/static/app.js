@@ -31,6 +31,8 @@ class WaveSurferPlayer {
             onReady: options.onReady || null,
             onTimeUpdate: options.onTimeUpdate || null,
             disableZoom: options.disableZoom || false,
+            autoCenter: options.autoCenter !== undefined ? options.autoCenter : !options.disableZoom,
+            scrollParent: options.scrollParent !== undefined ? options.scrollParent : false,
         };
         this.wavesurfer = null;
         this.isPlaying = false;
@@ -97,9 +99,9 @@ class WaveSurferPlayer {
             backend: 'MediaElement',
             pixelRatio: window.devicePixelRatio || 1,
             minPxPerSec: this.options.disableZoom ? 50 : 100,
-            fillParent: !this.options.disableZoom,
-            scrollParent: false,
-            autoCenter: !this.options.disableZoom,
+            fillParent: false,
+            scrollParent: this.options.scrollParent,
+            autoCenter: this.options.autoCenter,
             hideScrollbar: true,
             barHeight: 1,
         };
@@ -333,121 +335,6 @@ async function resetAllReviews() {
     }
 }
 
-function updateFloatingButton() {
-    const isMobile = window.innerWidth <= 768;
-
-    if (isMobile) {
-        // Mobile: Remove desktop floating action bar if it exists
-        const desktopBar = document.getElementById('floating-action-bar');
-        if (desktopBar) {
-            desktopBar.remove();
-        }
-
-        if (!currentChapter) return;
-
-        // Mobile: create bottom action bar if it doesn't exist
-        let actionBar = document.querySelector('.mobile-action-bar');
-        if (!actionBar) {
-            actionBar = document.createElement('div');
-            actionBar.className = 'mobile-action-bar';
-            document.body.appendChild(actionBar);
-        }
-
-        const isReviewed = reviewedStatus[currentChapter]?.reviewed;
-        actionBar.innerHTML = `
-            <div class="action-bar">
-                <button class="action-bar-button" onclick="switchView('errors')">
-                    <i class="fas fa-times-circle"></i>
-                    <span class="button-text">Errors</span>
-                </button>
-                <button class="action-bar-button" onclick="switchView('playback')">
-                    <i class="fas fa-headphones"></i>
-                    <span class="button-text">Playback</span>
-                </button>
-                <button class="action-bar-button" id="audio-source-button" onclick="toggleAudioSourceMenu()">
-                    <i class="fas fa-volume-up"></i>
-                    <span class="button-text">Source</span>
-                </button>
-                <button class="action-bar-button ${isReviewed ? 'reviewed' : ''}"
-                        onclick="markReviewed('${currentChapter}', ${!isReviewed})">
-                    <i class="fas fa-check"></i>
-                    <span class="button-text">Review</span>
-                </button>
-            </div>
-        `;
-    } else {
-        // Desktop: Remove mobile action bar if it exists
-        const mobileActionBar = document.querySelector('.mobile-action-bar');
-        if (mobileActionBar) {
-            mobileActionBar.remove();
-        }
-
-        // Desktop: Remove existing desktop floating action bar
-        const existingBar = document.getElementById('floating-action-bar');
-        if (existingBar) {
-            existingBar.remove();
-        }
-
-        if (!currentChapter) return;
-
-        const isReviewed = reviewedStatus[currentChapter]?.reviewed;
-        const reviewedClass = isReviewed ? 'reviewed' : '';
-        const buttonText = isReviewed ? '✓ Reviewed' : 'Mark as Reviewed';
-
-        // Create action bar container
-        const actionBar = document.createElement('div');
-        actionBar.id = 'floating-action-bar';
-        actionBar.className = 'floating-action-bar';
-
-        // View switcher group
-        const viewGroup = document.createElement('div');
-        viewGroup.className = 'action-bar-group';
-
-        const errorsButton = document.createElement('button');
-        errorsButton.className = `action-bar-button ${currentView === 'errors' ? 'active' : ''}`;
-        errorsButton.innerHTML = 'Errors';
-        errorsButton.onclick = () => switchView('errors');
-
-        const playbackButton = document.createElement('button');
-        playbackButton.className = `action-bar-button ${currentView === 'playback' ? 'active' : ''}`;
-        playbackButton.innerHTML = 'Playback';
-        playbackButton.onclick = () => switchView('playback');
-
-        viewGroup.appendChild(errorsButton);
-        viewGroup.appendChild(playbackButton);
-
-        // Audio source selector (show in both views)
-        const audioSourceSelector = document.createElement('div');
-        audioSourceSelector.className = 'action-bar-group';
-        audioSourceSelector.style.marginLeft = '8px';
-
-        const audioButton = document.createElement('button');
-        audioButton.className = 'action-bar-button audio-source-button';
-        audioButton.innerHTML = `<i class="fas fa-volume-up"></i> ${currentAudioSource.charAt(0).toUpperCase() + currentAudioSource.slice(1)}`;
-        audioButton.onclick = () => toggleAudioSourceMenu();
-        audioButton.id = 'audio-source-button';
-
-        audioSourceSelector.appendChild(audioButton);
-
-        // Separator
-        const separator = document.createElement('div');
-        separator.className = 'action-bar-separator';
-
-        // Reviewed button
-        const reviewedButton = document.createElement('button');
-        reviewedButton.className = `action-bar-button reviewed-button ${reviewedClass}`;
-        reviewedButton.innerHTML = buttonText;
-        reviewedButton.onclick = () => markReviewed(currentChapter, !isReviewed);
-
-        // Assemble action bar
-        actionBar.appendChild(viewGroup);
-        actionBar.appendChild(audioSourceSelector);
-        actionBar.appendChild(separator);
-        actionBar.appendChild(reviewedButton);
-
-        document.body.appendChild(actionBar);
-    }
-}
 
 function toggleAudioSourceMenu() {
     // Remove existing menu if any
@@ -859,6 +746,9 @@ function setupChapterAudio() {
         height: isMobile ? 25 : 100,
         waveColor: '#4a9eff',
         progressColor: '#1177bb',
+        disableZoom: true,
+        autoCenter: true,
+        scrollParent: true,
         onTimeUpdate: (currentTime) => {
             updatePlayingSentence(currentTime);
         }
@@ -1620,13 +1510,17 @@ function refreshAudioPreview() {
 
     // Create new WaveSurfer player
     const audioUrl = `/api/audio/${encodeURIComponent(pendingCrxData.chapterName)}?start=${start}&end=${end}`;
-    const isMobile = window.innerWidth <= 768;
     const player = new WaveSurferPlayer('crx-audio-preview-container', audioUrl, {
         title: 'Audio Preview',
         height: 60,
         waveColor: '#4a9eff',
         progressColor: '#1177bb',
-        disableZoom: !isMobile  // Only disable zoom on desktop to prevent oscillation
+        fillParent: false,
+        hideScrollbar: false,
+        scrollParent: true, 
+        autoCenter: true,
+        minPxPerSec: 100,
+        disableZoom: true
     });
     player.render();
 }
@@ -2095,6 +1989,107 @@ function toggleMobileChapters() {
                 </div>
             `;
         }).join('');
+    }
+}
+
+function updateFloatingButton() {
+    const isMobile = window.innerWidth <= 768;
+
+    if (isMobile) {
+        // Mobile: create bottom action bar if it doesn't exist
+        let actionBar = document.querySelector('.mobile-action-bar');
+        if (!actionBar) {
+            actionBar = document.createElement('div');
+            actionBar.className = 'mobile-action-bar';
+            document.body.appendChild(actionBar);
+        }
+
+        actionBar.innerHTML = `
+            <div class="action-bar">
+                <button class="action-bar-button" onclick="switchView('errors')">
+                    <i class="fas fa-times-circle"></i>
+                    <span class="button-text">Errors</span>
+                </button>
+                <button class="action-bar-button" onclick="switchView('playback')">
+                    <i class="fas fa-headphones"></i>
+                    <span class="button-text">Playback</span>
+                </button>
+                <button class="action-bar-button" onclick="showAudioSourceMenu()">
+                    <i class="fas fa-volume-up"></i>
+                    <span class="button-text">Source</span>
+                </button>
+                <button class="action-bar-button ${reviewedStatus[currentChapter] ? 'reviewed' : ''}"
+                        onclick="toggleReviewStatus('${currentChapter}')">
+                    <i class="fas fa-check"></i>
+                    <span class="button-text">Review</span>
+                </button>
+            </div>
+        `;
+    } else {
+        // Desktop: create floating action bar
+        const existingBar = document.getElementById('floating-action-bar');
+        if (existingBar) {
+            existingBar.remove();
+        }
+
+        if (!currentChapter) return;
+
+        const isReviewed = reviewedStatus[currentChapter]?.reviewed;
+        const reviewedClass = isReviewed ? 'reviewed' : '';
+        const buttonText = isReviewed ? '✓ Reviewed' : 'Mark as Reviewed';
+
+        // Create action bar container
+        const actionBar = document.createElement('div');
+        actionBar.id = 'floating-action-bar';
+        actionBar.className = 'floating-action-bar';
+
+        // View switcher group
+        const viewGroup = document.createElement('div');
+        viewGroup.className = 'action-bar-group';
+
+        const errorsButton = document.createElement('button');
+        errorsButton.className = `action-bar-button ${currentView === 'errors' ? 'active' : ''}`;
+        errorsButton.innerHTML = 'Errors';
+        errorsButton.onclick = () => switchView('errors');
+
+        const playbackButton = document.createElement('button');
+        playbackButton.className = `action-bar-button ${currentView === 'playback' ? 'active' : ''}`;
+        playbackButton.innerHTML = 'Playback';
+        playbackButton.onclick = () => switchView('playback');
+
+        viewGroup.appendChild(errorsButton);
+        viewGroup.appendChild(playbackButton);
+
+        // Audio source selector
+        const audioSourceSelector = document.createElement('div');
+        audioSourceSelector.className = 'action-bar-group';
+        audioSourceSelector.style.marginLeft = '8px';
+
+        const audioButton = document.createElement('button');
+        audioButton.className = 'action-bar-button audio-source-button';
+        audioButton.innerHTML = `<i class="fas fa-volume-up"></i> ${currentAudioSource.charAt(0).toUpperCase() + currentAudioSource.slice(1)}`;
+        audioButton.onclick = () => toggleAudioSourceMenu();
+        audioButton.id = 'audio-source-button';
+
+        audioSourceSelector.appendChild(audioButton);
+
+        // Separator
+        const separator = document.createElement('div');
+        separator.className = 'action-bar-separator';
+
+        // Reviewed button
+        const reviewedButton = document.createElement('button');
+        reviewedButton.className = `action-bar-button reviewed-button ${reviewedClass}`;
+        reviewedButton.innerHTML = buttonText;
+        reviewedButton.onclick = () => markReviewed(currentChapter, !isReviewed);
+
+        // Assemble action bar
+        actionBar.appendChild(viewGroup);
+        actionBar.appendChild(audioSourceSelector);
+        actionBar.appendChild(separator);
+        actionBar.appendChild(reviewedButton);
+
+        document.body.appendChild(actionBar);
     }
 }
 

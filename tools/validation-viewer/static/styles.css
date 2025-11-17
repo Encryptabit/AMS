@@ -612,24 +612,15 @@ body {
     margin-right: 8px;
 }
 
-/* Modal waveform specific styles to prevent oscillation */
-#crx-audio-preview-container,
-.modal-waveform-container {
+/* Modal waveform container - let WaveSurfer manage internal layout */
+#crx-audio-preview-container {
     max-width: 100%;
-    overflow-x: hidden;
-    contain: layout style;
 }
 
-.modal-waveform-container .waveform-canvas {
-    max-width: 100% !important;
-    overflow-x: hidden !important;
-}
-
-.modal-waveform-container wave,
-.modal-waveform-container wave > wave,
-.modal-waveform-container wave canvas {
-    max-width: 100% !important;
-    width: 100% !important;
+#crx-audio-preview-container .waveform-container {
+    background: #252526;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+    margin: 0;
 }
 
 .audio-preview-container {
@@ -1002,7 +993,6 @@ body {
     box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
     z-index: 1001;
     min-width: 140px;
-    overflow: hidden;
 }
 
 .audio-source-option {
@@ -1629,7 +1619,6 @@ body {
     .waveform-container {
         margin-bottom: 8px;
         max-width: 100%;
-        overflow: hidden;
     }
 
 
