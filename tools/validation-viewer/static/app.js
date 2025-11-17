@@ -9,23 +9,27 @@ let chapterAudio = null;
 let currentPlayingSentence = null;
 let waveSurferInstances = {}; // Track WaveSurfer instances by ID
 let currentAudioSource = 'raw'; // 'raw', 'treated', or 'filtered'
+let selectedSentences = []; // Track ctrl+clicked sentences for multi-select
 
 // WaveSurfer Audio Player Component
 class WaveSurferPlayer {
     constructor(containerId, audioUrl, options = {}) {
         this.containerId = containerId;
         this.audioUrl = audioUrl;
+        this.audioRate = 1;
+        this.preservePitch = true;  // Track pitch preservation as instance property
         this.options = {
             title: options.title || 'Audio',
-            height: options.height || 80,
+            height: options.height || 150,  // Taller for more detail
             waveColor: options.waveColor || '#4a9eff',
             progressColor: options.progressColor || '#1177bb',
             cursorColor: options.cursorColor || '#ffffff',
-            barWidth: options.barWidth || 2,
-            barGap: options.barGap || 1,
-            barRadius: options.barRadius || 2,
+            barWidth: options.barWidth || 0,
+            barGap: options.barGap || 0,
+            barRadius: options.barRadius || 0,
             onReady: options.onReady || null,
             onTimeUpdate: options.onTimeUpdate || null,
+            disableZoom: options.disableZoom || false,
         };
         this.wavesurfer = null;
         this.isPlaying = false;
@@ -49,7 +53,24 @@ class WaveSurferPlayer {
                 </div>
                 <div id="${this.containerId}-waveform" class="waveform-canvas"></div>
                 <div class="waveform-controls">
-                    <button id="${this.containerId}-play" class="waveform-play-button">▶</button>
+                    <button id="${this.containerId}-skip-start" class="waveform-control-btn" title="Skip to start">
+                        <i class="fas fa-step-backward"></i>
+                    </button>
+                    <button id="${this.containerId}-play" class="waveform-control-btn" title="Play/Pause">
+                        <i class="fas fa-play"></i>
+                    </button>
+                    <button id="${this.containerId}-skip-end" class="waveform-control-btn" title="Skip to end">
+                        <i class="fas fa-step-forward"></i>
+                    </button>
+                    <div class="waveform-speed-section">
+                        <button id="${this.containerId}-preserve-pitch" class="waveform-pitch-toggle active" title="Preserve pitch">
+                            <i class="fas fa-clock"></i>
+                        </button>
+                        <input type="range" id="${this.containerId}-speed-slider"
+                               min="0.25" max="4" step="0.1" value="1"
+                               class="waveform-speed-slider" />
+                        <span class="waveform-speed-value" id="${this.containerId}-speed">1.00x</span>
+                    </div>
                 </div>
             </div>
         `;
@@ -61,8 +82,12 @@ class WaveSurferPlayer {
         const waveformDiv = document.getElementById(`${this.containerId}-waveform`);
         if (!waveformDiv) return;
 
+        // ZoomPlugin is available globally as WaveSurfer.Zoom
+        const ZoomPlugin = WaveSurfer.Zoom;
+
         this.wavesurfer = WaveSurfer.create({
             container: waveformDiv,
+            audioRate: this.audioRate,
             height: this.options.height,
             waveColor: this.options.waveColor,
             progressColor: this.options.progressColor,
@@ -71,8 +96,25 @@ class WaveSurferPlayer {
             barGap: this.options.barGap,
             barRadius: this.options.barRadius,
             normalize: true,
-            backend: 'WebAudio',
+            backend: 'MediaElement',
+            pixelRatio: window.devicePixelRatio || 1,  // Use device pixel ratio for crisp rendering
+            minPxPerSec: this.options.disableZoom ? 50 : 100,  // Lower detail for modal preview
+            fillParent: !this.options.disableZoom,  // Disable fillParent for modal to prevent oscillation
+            scrollParent: false,
+            autoCenter: !this.options.disableZoom,
+            hideScrollbar: true,
+            barHeight: 1,  // Maximum bar height for full amplitude range
         });
+
+        // Register Zoom plugin only if not disabled
+        if (!this.options.disableZoom) {
+            this.wavesurfer.registerPlugin(
+                ZoomPlugin.create({
+                    scale: 0.5,  // 30% magnification per scroll for finer control
+                    maxZoom: 5000,  // Very high maximum zoom for extreme detail
+                })
+            );
+        }
 
         // Load audio
         await this.wavesurfer.load(this.audioUrl);
@@ -88,7 +130,10 @@ class WaveSurferPlayer {
 
         this.wavesurfer.on('audioprocess', () => {
             const current = this.wavesurfer.getCurrentTime();
-            document.getElementById(`${this.containerId}-current`).textContent = this.formatTime(current);
+            const currentElem = document.getElementById(`${this.containerId}-current`);
+            if (currentElem) {
+                currentElem.textContent = this.formatTime(current);
+            }
             if (this.options.onTimeUpdate) {
                 this.options.onTimeUpdate(current);
             }
@@ -96,17 +141,62 @@ class WaveSurferPlayer {
 
         this.wavesurfer.on('play', () => {
             this.isPlaying = true;
-            document.getElementById(`${this.containerId}-play`).textContent = '⏸';
+            const playBtn = document.getElementById(`${this.containerId}-play`);
+            if (playBtn) {
+                playBtn.innerHTML = '<i class="fas fa-pause"></i>';
+            }
         });
 
         this.wavesurfer.on('pause', () => {
             this.isPlaying = false;
-            document.getElementById(`${this.containerId}-play`).textContent = '▶';
+            const playBtn = document.getElementById(`${this.containerId}-play`);
+            if (playBtn) {
+                playBtn.innerHTML = '<i class="fas fa-play"></i>';
+            }
         });
 
-        // Play/pause button
+        // Transport controls
         const playButton = document.getElementById(`${this.containerId}-play`);
-        playButton.onclick = () => this.playPause();
+        const skipStartButton = document.getElementById(`${this.containerId}-skip-start`);
+        const skipEndButton = document.getElementById(`${this.containerId}-skip-end`);
+
+        if (playButton) {
+            playButton.onclick = () => this.playPause();
+        }
+        if (skipStartButton) {
+            skipStartButton.onclick = () => {
+                this.wavesurfer.seekTo(0);
+            };
+        }
+        if (skipEndButton) {
+            skipEndButton.onclick = () => {
+                this.wavesurfer.seekTo(1);
+            };
+        }
+
+        // Speed controls
+        const speedSlider = document.getElementById(`${this.containerId}-speed-slider`);
+        const speedDisplay = document.getElementById(`${this.containerId}-speed`);
+        const pitchToggle = document.getElementById(`${this.containerId}-preserve-pitch`);
+
+        // Initialize preservePitch state
+        this.preservePitch = true;
+
+        if (speedSlider && speedDisplay) {
+            speedSlider.addEventListener('input', (e) => {
+                const speed = parseFloat(e.target.value);
+                speedDisplay.textContent = speed.toFixed(2) + 'x';
+                this.wavesurfer.setPlaybackRate(speed, this.preservePitch);
+            });
+        }
+
+        if (pitchToggle) {
+            pitchToggle.addEventListener('click', (e) => {
+                this.preservePitch = !this.preservePitch;
+                pitchToggle.classList.toggle('active', this.preservePitch);
+                this.wavesurfer.setPlaybackRate(this.wavesurfer.getPlaybackRate(), this.preservePitch);
+            });
+        }
 
         // Store instance
         waveSurferInstances[this.containerId] = this;
@@ -133,7 +223,9 @@ class WaveSurferPlayer {
     seekTo(time) {
         if (this.wavesurfer) {
             const duration = this.wavesurfer.getDuration();
-            this.wavesurfer.seekTo(time / duration);
+            if (duration > 0) {
+                this.wavesurfer.seekTo(time / duration);
+            }
         }
     }
 
@@ -271,7 +363,7 @@ function updateFloatingButton() {
 
     const audioButton = document.createElement('button');
     audioButton.className = 'action-bar-button audio-source-button';
-    audioButton.innerHTML = `🎵 ${currentAudioSource.charAt(0).toUpperCase() + currentAudioSource.slice(1)}`;
+    audioButton.innerHTML = `<i class="fas fa-volume-up"></i> ${currentAudioSource.charAt(0).toUpperCase() + currentAudioSource.slice(1)}`;
     audioButton.onclick = () => toggleAudioSourceMenu();
     audioButton.id = 'audio-source-button';
 
@@ -531,6 +623,9 @@ function switchView(view) {
     document.querySelectorAll('.view-toggle-button').forEach(btn => btn.classList.remove('active'));
     document.querySelector(`[data-view="${view}"]`).classList.add('active');
 
+    // Clear multi-select when switching views
+    clearSentenceSelection();
+
     // Update floating action bar buttons
     updateFloatingButton();
 
@@ -598,9 +693,12 @@ function setupCompactSentenceListeners() {
             window.lastHoveredSentence = sentenceId;
         });
 
-        // Click handler: Shift+click = CRX export, regular click = seek
+        // Click handler: Ctrl+click = multi-select, Shift+click = CRX export, regular click = seek
         sentence.addEventListener('click', (e) => {
-            if (e.shiftKey) {
+            if (e.ctrlKey || e.metaKey) {
+                e.preventDefault();
+                toggleSentenceSelection(sentenceId);
+            } else if (e.shiftKey) {
                 e.preventDefault();
                 openCrxForSentence(sentenceId);
             } else {
@@ -674,8 +772,78 @@ function updatePlayingSentence(currentTime) {
 
 function seekToSentence(sentenceId, startTime) {
     if (!chapterAudio) return;
-    chapterAudio.seekTo(startTime);
-    chapterAudio.play();
+
+    // Check if audio is ready, if not wait for it
+    if (chapterAudio.wavesurfer && chapterAudio.wavesurfer.getDuration() > 0) {
+        chapterAudio.seekTo(startTime);
+        chapterAudio.play();
+    } else {
+        // Wait for audio to load
+        const checkReady = setInterval(() => {
+            if (chapterAudio.wavesurfer && chapterAudio.wavesurfer.getDuration() > 0) {
+                clearInterval(checkReady);
+                chapterAudio.seekTo(startTime);
+                chapterAudio.play();
+            }
+        }, 100);
+
+        // Timeout after 10 seconds
+        setTimeout(() => clearInterval(checkReady), 10000);
+    }
+}
+
+function toggleSentenceSelection(sentenceId) {
+    const index = selectedSentences.indexOf(sentenceId);
+    const sentenceElem = document.querySelector(`.compact-sentence[data-sentence-id="${sentenceId}"]`);
+
+    if (index === -1) {
+        // Add to selection
+        selectedSentences.push(sentenceId);
+        if (sentenceElem) sentenceElem.classList.add('selected');
+    } else {
+        // Remove from selection
+        selectedSentences.splice(index, 1);
+        if (sentenceElem) sentenceElem.classList.remove('selected');
+    }
+
+    // If we have 2+ selected, show export button
+    updateMultiSelectUI();
+}
+
+function updateMultiSelectUI() {
+    // No floating button needed - 'e' key handles export
+}
+
+function exportSelectedSentences() {
+    if (!currentReport || selectedSentences.length === 0) return;
+
+    // Sort selected IDs to ensure sequential order
+    const sortedIds = [...selectedSentences].sort((a, b) => a - b);
+    const sentences = sortedIds.map(id => currentReport.sentences.find(s => s.id === id)).filter(Boolean);
+
+    if (sentences.length === 0) return;
+
+    const firstSentence = sentences[0];
+    const lastSentence = sentences[sentences.length - 1];
+    const startTime = firstSentence.startTime;
+    const endTime = lastSentence.endTime;
+
+    // Check if any sentence has a diff
+    const sentenceWithDiff = sentences.find(s => s.diff && s.diff.ops);
+
+    openCrxModal(currentChapter, startTime, endTime, sentenceWithDiff ? sentenceWithDiff.id : firstSentence.id, null, sentences);
+
+    // Clear selection after export
+    clearSentenceSelection();
+}
+
+function clearSentenceSelection() {
+    selectedSentences.forEach(id => {
+        const elem = document.querySelector(`.compact-sentence[data-sentence-id="${id}"]`);
+        if (elem) elem.classList.remove('selected');
+    });
+    selectedSentences = [];
+    updateMultiSelectUI();
 }
 
 function openCrxForSentence(sentenceId) {
@@ -707,7 +875,7 @@ function renderReport(report) {
         });
 
     const sentencesHtml = filteredSentences.map(s => `
-        <div id="sentence-${s.id}" class="sentence-item ${s.status}">
+        <div id="sentence-${s.id}" class="sentence-item ${s.status}" data-sentence-id="${s.id}" data-start="${s.startTime}" style="cursor: pointer;">
             <div class="sentence-header">
                 <span class="sentence-id">#${s.id}</span>
                 <div class="sentence-metrics">
@@ -865,6 +1033,31 @@ function renderReport(report) {
                 const sentenceId = parseInt(this.getAttribute('data-sentence-id'), 10);
                 const excerpt = this.getAttribute('data-excerpt');
                 openCrxModal(chapter, start, end, sentenceId, excerpt);
+            });
+        });
+
+        // Add click listeners to sentence items in errors view
+        document.querySelectorAll('.sentence-item').forEach(item => {
+            item.addEventListener('click', function(e) {
+                // Don't trigger if clicking on buttons or interactive elements
+                if (e.target.closest('button') || e.target.closest('a')) {
+                    return;
+                }
+                const sentenceId = parseInt(this.getAttribute('data-sentence-id'), 10);
+                const startTime = parseFloat(this.getAttribute('data-start'));
+                if (!isNaN(sentenceId) && !isNaN(startTime)) {
+                    switchView('playback');
+                    // Wait for view to render, then scroll to sentence
+                    setTimeout(() => {
+                        const targetSentence = document.querySelector(`.compact-sentence[data-sentence-id="${sentenceId}"]`);
+                        if (targetSentence) {
+                            targetSentence.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                            targetSentence.classList.add('highlight-flash');
+                            setTimeout(() => targetSentence.classList.remove('highlight-flash'), 2000);
+                        }
+                        seekToSentence(sentenceId, startTime);
+                    }, 100);
+                }
             });
         });
 
@@ -1130,10 +1323,10 @@ function generateBracketedDiffComment(diff, bookText) {
     const shouldBe = shouldBeLine.join(' ');
     const readAs = readAsLine.join(' ');
 
-    return `Should be: ${shouldBe}\nRead as: ${readAs}`;
+    return `Should be: ${shouldBe}\n\nRead as: ${readAs}`;
 }
 
-function openCrxModal(chapterName, startTime, endTime, sentenceId, excerpt) {
+function openCrxModal(chapterName, startTime, endTime, sentenceId, excerpt, sentences = null) {
     const decodedExcerpt = decodeHtml(excerpt || '');
 
     pendingCrxData = {
@@ -1142,7 +1335,8 @@ function openCrxModal(chapterName, startTime, endTime, sentenceId, excerpt) {
         end: endTime,
         sentenceId: sentenceId,
         excerpt: decodedExcerpt,
-        sentence: null
+        sentence: null,
+        sentences: sentences  // Store multiple sentences if provided
     };
 
     const sentence = currentReport && Array.isArray(currentReport.sentences)
@@ -1156,7 +1350,48 @@ function openCrxModal(chapterName, startTime, endTime, sentenceId, excerpt) {
 
     // Always try to generate comment from sentence diff data first
     const commentsField = document.getElementById('comments');
-    if (sentence) {
+
+    if (sentences && sentences.length > 1) {
+        // Generate concatenated comment for multiple sentences
+        const shouldBeLines = [];
+        const readAsLines = [];
+
+        sentences.forEach(s => {
+            if (s.diff && s.diff.ops) {
+                const shouldBeLine = [];
+                const readAsLine = [];
+
+                s.diff.ops.forEach(op => {
+                    const tokens = op.tokens || [];
+                    const text = tokens.join(' ');
+
+                    if (op.op === 'equal') {
+                        shouldBeLine.push(text);
+                        readAsLine.push(text);
+                    } else if (op.op === 'delete') {
+                        shouldBeLine.push(`[${text}]`);
+                    } else if (op.op === 'insert') {
+                        readAsLine.push(`[${text}]`);
+                    }
+                });
+
+                if (shouldBeLine.length > 0) shouldBeLines.push(shouldBeLine.join(' '));
+                if (readAsLine.length > 0) readAsLines.push(readAsLine.join(' '));
+            } else {
+                // No diff, just add book text
+                const text = s.bookText || '';
+                if (text) {
+                    shouldBeLines.push(text);
+                    readAsLines.push(text);
+                }
+            }
+        });
+
+        const shouldBe = shouldBeLines.join(' ');
+        const readAs = readAsLines.join(' ');
+
+        commentsField.value = `Should be: ${shouldBe}\n\nRead as: ${readAs}`;
+    } else if (sentence) {
         commentsField.value = generateCrxComment(sentence);
     } else if (decodedExcerpt) {
         commentsField.value = decodedExcerpt;
@@ -1164,10 +1399,13 @@ function openCrxModal(chapterName, startTime, endTime, sentenceId, excerpt) {
         commentsField.value = '';
     }
 
-    // Set up audio preview with WaveSurfer
-    refreshAudioPreview();
-
+    // Show modal first, then initialize audio after DOM is ready
     document.getElementById('crxModal').style.display = 'block';
+
+    // Delay audio preview initialization to let modal render
+    setTimeout(() => {
+        refreshAudioPreview();
+    }, 50);
 }
 
 function populateErrorCheckboxes(sentence) {
@@ -1261,7 +1499,8 @@ function refreshAudioPreview() {
         title: 'Audio Preview',
         height: 60,
         waveColor: '#4a9eff',
-        progressColor: '#1177bb'
+        progressColor: '#1177bb',
+        disableZoom: true  // Disable zoom for modal preview
     });
     player.render();
 }
@@ -1630,12 +1869,26 @@ window.onclick = function(event) {
 
 // Keyboard shortcuts
 document.addEventListener('keydown', (e) => {
+    // Check if CRX modal is open
+    const modal = document.getElementById('crxModal');
+    const modalOpen = modal && modal.style.display === 'block';
+
+    // If modal is open and spacebar pressed, play/pause modal audio instead
+    if (modalOpen && (e.code === 'Space' || e.key === ' ')) {
+        e.preventDefault();
+        const crxPlayer = waveSurferInstances['crx-audio-preview-container'];
+        if (crxPlayer && crxPlayer.playPause) {
+            crxPlayer.playPause();
+        }
+        return;
+    }
+
     // Don't trigger shortcuts when typing in inputs/textareas
     if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') {
         return;
     }
 
-    // Spacebar: play/pause chapter audio
+    // Spacebar: play/pause chapter audio (global, prevents scrolling)
     if (e.code === 'Space' || e.key === ' ') {
         e.preventDefault();
         if (chapterAudio && chapterAudio.playPause) {
@@ -1643,10 +1896,13 @@ document.addEventListener('keydown', (e) => {
         }
     }
 
-    // 'e' key: export to CRX for currently playing or last hovered sentence
+    // 'e' key: export to CRX - handles both single and multi-select
     if (e.key === 'e' || e.key === 'E') {
         e.preventDefault();
-        if (currentPlayingSentence !== null) {
+        if (selectedSentences.length > 0) {
+            // Export selected sentences
+            exportSelectedSentences();
+        } else if (currentPlayingSentence !== null) {
             openCrxForSentence(currentPlayingSentence);
         } else if (window.lastHoveredSentence !== null) {
             openCrxForSentence(window.lastHoveredSentence);
@@ -1655,8 +1911,7 @@ document.addEventListener('keydown', (e) => {
 
     // 'q' key: close CRX modal if open
     if (e.key === 'q' || e.key === 'Q') {
-        const modal = document.getElementById('crxModal');
-        if (modal && modal.style.display === 'block') {
+        if (modalOpen) {
             e.preventDefault();
             closeCrxModal();
         }

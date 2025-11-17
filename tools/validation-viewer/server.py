@@ -227,85 +227,18 @@ class ValidationReportHandler(BaseHTTPRequestHandler):
 
     def serve_index(self):
         """Serve the main HTML page"""
-        html = """<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Validation Report Viewer</title>
-    <link rel="stylesheet" href="/static/styles.css">
-    <script src="https://unpkg.com/wavesurfer.js@7"></script>
-</head>
-<body>
-    <div id="toast-container" class="toast-container"></div>
-    <div id="sidebar">
-        <h2>Validation Reports</h2>
-        <div id="chapter-list"></div>
-    </div>
-    <div id="content">
-        <div id="loading">Select a chapter to view its validation report</div>
-    </div>
+        index_path = SCRIPT_DIR / 'static' / 'index.html'
+        try:
+            with open(index_path, 'r', encoding='utf-8') as f:
+                html = f.read()
 
-    <!-- CRX Modal -->
-    <div id="crxModal" class="modal">
-        <div class="modal-content" style="max-width: 700px;">
-            <div class="modal-header">Add to CRX</div>
-            <div class="modal-body">
-                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px;">
-                    <div>
-                        <label for="errorType">Error Type:</label>
-                        <select id="errorType" class="modal-input">
-                            <option value="MR" selected>MR - Misread</option>
-                            <option value="PRON">PRON - Pronunciation</option>
-                            <option value="DIC">DIC - Diction</option>
-                            <option value="NZ">NZ - Noise</option>
-                            <option value="PL">PL - Plosive</option>
-                            <option value="DIST">DIST - Distortion</option>
-                            <option value="MW">MW - Missing Word</option>
-                            <option value="ML">ML - Missing Line</option>
-                            <option value="TYPO">TYPO - Possible Typo</option>
-                            <option value="CHAR">CHAR - Character Voice</option>
-                        </select>
-
-                        <label style="margin-top: 12px; display: block;">Errors to Highlight:</label>
-                        <div style="background: #1e1e1e; padding: 8px; border-radius: 4px; margin-top: 4px;">
-                            <label style="display: block; margin-bottom: 4px; font-size: 12px;">
-                                <input type="checkbox" id="selectAllErrors" onchange="toggleAllErrors(this.checked)">
-                                <strong>Select All</strong>
-                            </label>
-                            <div id="errorCheckboxes" style="margin-left: 16px; font-size: 12px;"></div>
-                        </div>
-
-                        <label for="paddingSlider" style="margin-top: 12px; display: block;">
-                            Tail Padding: <span id="paddingValue">50</span>ms
-                        </label>
-                        <input type="range" id="paddingSlider" min="0" max="200" value="50" step="10"
-                               class="modal-slider" oninput="updatePaddingValue(this.value)">
-                    </div>
-
-                    <div>
-                        <div id="crx-audio-preview-container"></div>
-                    </div>
-                </div>
-
-                <label for="comments" style="margin-top: 16px; display: block;">Comments:</label>
-                <textarea id="comments" class="modal-textarea" placeholder="Auto-generated from diff..." rows="4"></textarea>
-            </div>
-            <div class="modal-footer">
-                <button class="modal-button modal-button-secondary" onclick="closeCrxModal()">Cancel</button>
-                <button class="modal-button modal-button-primary" onclick="submitCrx()">Add to CRX</button>
-            </div>
-        </div>
-    </div>
-
-    <script src="/static/app.js"></script>
-</body>
-</html>"""
-
-        self.send_response(200)
-        self.send_header('Content-type', 'text/html')
-        self.end_headers()
-        self.wfile.write(html.encode())
+            self.send_response(200)
+            self.send_header('Content-type', 'text/html')
+            self.end_headers()
+            self.wfile.write(html.encode())
+        except Exception as e:
+            print(f"Error loading index.html: {e}")
+            self.send_error(500)
 
     def extract_hydrate_metrics(self, hydrate_path):
         """Extract summary metrics from hydrate.json"""
