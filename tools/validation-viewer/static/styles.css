@@ -473,6 +473,7 @@ body {
     width: 100%;
     height: 100%;
     background-color: rgba(0, 0, 0, 0.6);
+    isolation: isolate;
 }
 
 .modal-content {
@@ -481,8 +482,9 @@ body {
     padding: 24px;
     border: 1px solid #3e3e42;
     border-radius: 8px;
-    width: 80%;
-    max-width: 500px;
+    width: fit-content;
+    min-width: 600px;
+    max-width: 90%;
 }
 
 .modal-header {
@@ -608,6 +610,26 @@ body {
     background-color: #3e3e42;
     border-radius: 4px;
     margin-right: 8px;
+}
+
+/* Modal waveform specific styles to prevent oscillation */
+#crx-audio-preview-container,
+.modal-waveform-container {
+    max-width: 100%;
+    overflow-x: hidden;
+    contain: layout style;
+}
+
+.modal-waveform-container .waveform-canvas {
+    max-width: 100% !important;
+    overflow-x: hidden !important;
+}
+
+.modal-waveform-container wave,
+.modal-waveform-container wave > wave,
+.modal-waveform-container wave canvas {
+    max-width: 100% !important;
+    width: 100% !important;
 }
 
 .audio-preview-container {
@@ -1351,4 +1373,297 @@ body {
 .compact-text {
     color: #cccccc;
     line-height: 1.4;
+}
+
+/* Desktop/mobile visibility helpers */
+.mobile-only {
+    display: none;
+}
+
+.desktop-only {
+    display: inline;
+}
+
+/* Mobile Responsiveness */
+@media (max-width: 768px) {
+    .mobile-only {
+        display: inline;
+    }
+
+    .desktop-only {
+        display: none;
+    }
+
+    body {
+        flex-direction: column;
+    }
+
+    /* Hide sidebar, we'll use mobile header instead */
+    #sidebar {
+        display: none;
+    }
+
+    #content {
+        width: 100%;
+        height: calc(100vh - 60px - 48px); /* Account for mobile header + action bar */
+        padding-top: 60px; /* Space for fixed header, adjusted via JS when hidden */
+        padding-bottom: 48px; /* Space for fixed action bar */
+        transition: padding-top 0.3s ease-in-out;
+    }
+
+    /* CRX Modal adjustments */
+    .modal-content {
+        width: 100% !important;
+        min-width: unset !important;
+        max-width: 100% !important;
+        margin: 0 !important;
+        padding: 12px !important;
+        height: 100vh;
+        border-radius: 0 !important;
+        overflow-y: auto;
+    }
+
+    .modal {
+        align-items: flex-start !important;
+    }
+
+    .modal-header {
+        font-size: 16px;
+        margin-bottom: 12px;
+        position: sticky;
+        top: 0;
+        background: #252526;
+        z-index: 10;
+        padding: 8px 0;
+    }
+
+    .modal-body > div[style*="grid"] {
+        grid-template-columns: 1fr !important;
+        gap: 12px !important;
+    }
+
+    .modal-body label {
+        font-size: 14px !important;
+    }
+
+    .modal-footer {
+        position: sticky;
+        bottom: 0;
+        background: #252526;
+        padding-top: 12px;
+        margin-top: 12px;
+        border-top: 1px solid #3e3e42;
+        display: flex;
+        gap: 8px;
+    }
+
+    .modal-button {
+        flex: 1;
+        padding: 12px !important;
+        font-size: 14px !important;
+    }
+
+    /* Sentence items - make more touch-friendly */
+    .sentence-item {
+        padding: 16px;
+    }
+
+    .compact-sentence {
+        padding: 12px;
+        font-size: 14px;
+    }
+
+    /* Action buttons stack vertically */
+    .action-buttons {
+        flex-direction: column;
+        gap: 8px;
+    }
+
+    .action-buttons button {
+        width: 100%;
+    }
+
+    /* View toggle buttons */
+    .view-toggle {
+        flex-wrap: wrap;
+        gap: 8px;
+    }
+
+    .view-toggle-button {
+        flex: 1;
+        min-width: 120px;
+    }
+
+    /* Stats grid */
+    .stats-grid {
+        grid-template-columns: 1fr !important;
+        gap: 12px;
+    }
+
+    /* Waveform controls - keep horizontal on mobile */
+    .waveform-controls {
+        flex-direction: row;
+        gap: 8px;
+    }
+
+    .waveform-speed-section {
+        width: 100%;
+        justify-content: center;
+    }
+
+    /* Mobile header */
+    .mobile-header {
+        position: fixed;
+        top: 0;
+        left: 0;
+        right: 0;
+        height: 60px;
+        background: #252526;
+        border-bottom: 1px solid #3e3e42;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 0 16px;
+        z-index: 1000;
+        transition: transform 0.3s ease-in-out;
+        transform: translateY(0);
+    }
+
+    .mobile-logo {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        cursor: pointer;
+        font-size: 16px;
+        font-weight: 600;
+        color: #cccccc;
+    }
+
+    .mobile-chapter-toggle {
+        background: transparent;
+        border: none;
+        color: #d4d4d4;
+        font-size: 20px;
+        padding: 8px;
+        cursor: pointer;
+    }
+
+    .mobile-chapters-dropdown {
+        position: fixed;
+        top: 60px;
+        left: 0;
+        right: 0;
+        max-height: 50vh;
+        background: #252526;
+        border-bottom: 1px solid #3e3e42;
+        overflow-y: auto;
+        z-index: 999;
+        display: none;
+    }
+
+    .mobile-chapters-dropdown.open {
+        display: block;
+    }
+
+    /* Simple action buttons for mobile */
+    .action-bar {
+        position: static;
+        display: flex;
+        flex-direction: row;
+        gap: 6px;
+        padding: 8px 12px;
+        background: #252526;
+        border-top: 1px solid #3e3e42;
+        justify-content: space-around;
+    }
+
+    .action-bar-button {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 2px;
+        background: transparent;
+        border: none;
+        color: #d4d4d4;
+        padding: 6px;
+        cursor: pointer;
+        font-size: 16px;
+        transition: color 0.2s;
+    }
+
+    .action-bar-button:active {
+        color: #0e639c;
+    }
+
+    .action-bar-button.reviewed {
+        color: #4ec9b0;
+    }
+
+    .action-bar-button .button-text {
+        font-size: 8px;
+        text-transform: uppercase;
+        font-weight: 600;
+        letter-spacing: 0.3px;
+    }
+
+    /* Mobile action bar container */
+    .mobile-action-bar {
+        position: fixed;
+        bottom: 0;
+        left: 0;
+        right: 0;
+        z-index: 100;
+    }
+
+    /* Chapter audio player - adjust sizing on mobile */
+    #chapter-audio-player {
+        position: sticky;
+        top: 0; /* Stick to top of content area */
+        z-index: 50;
+        background: #1e1e1e;
+        padding-bottom: 8px;
+    }
+
+    .waveform-container {
+        margin-bottom: 8px;
+        max-width: 100%;
+        overflow: hidden;
+    }
+
+
+    /* Compact sentences - adjust for mobile viewport */
+    .compact-sentence.playing {
+        scroll-margin-top: 200px; /* Account for header + audio player */
+    }
+
+    /* Sentence metrics - wrap on small screens */
+    .sentence-metrics {
+        flex-wrap: wrap;
+        gap: 8px;
+    }
+
+    /* Modal textarea larger on mobile */
+    .modal-textarea {
+        min-height: 120px;
+        font-size: 16px; /* Prevents zoom on iOS */
+    }
+
+    /* Modal inputs larger for touch */
+    .modal-input, .modal-slider {
+        font-size: 16px; /* Prevents zoom on iOS */
+        min-height: 44px;
+    }
+}
+
+/* Tablet adjustments */
+@media (min-width: 769px) and (max-width: 1024px) {
+    #sidebar {
+        width: 240px;
+    }
+
+    .stats-grid {
+        grid-template-columns: repeat(2, 1fr) !important;
+    }
 }
