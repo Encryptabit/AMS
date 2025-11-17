@@ -516,7 +516,7 @@ body {
     border: 1px solid #3e3e42;
     border-radius: 4px;
     font-size: 13px;
-    min-height: 80px;
+    min-height: 180px;
     resize: vertical;
 }
 
@@ -1103,23 +1103,106 @@ body {
 
 .waveform-canvas {
     border-radius: 4px;
-    overflow: hidden;
     margin-bottom: 12px;
 }
 
+
 .waveform-controls {
     display: flex;
+    justify-content: center;
     align-items: center;
     gap: 12px;
 }
 
-.waveform-play-button {
-    background: #0e639c;
+.waveform-control-btn {
+    background: transparent;
     border: none;
-    color: white;
-    width: 36px;
-    height: 36px;
+    color: #d4d4d4;
+    width: 28px;
+    height: 28px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 16px;
+    transition: color 0.2s;
+}
+
+.waveform-control-btn:hover {
+    color: #ffffff;
+}
+
+.waveform-speed-section {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+}
+
+.waveform-pitch-toggle {
+    background: transparent;
+    border: none;
+    color: #858585;
+    width: 24px;
+    height: 24px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 14px;
+    transition: color 0.2s;
+}
+
+.waveform-pitch-toggle:hover {
+    color: #d4d4d4;
+}
+
+.waveform-pitch-toggle.active {
+    color: #0e639c;
+}
+
+.waveform-speed-value {
+    font-size: 11px;
+    color: #cccccc;
+    font-weight: 600;
+    min-width: 40px;
+    text-align: center;
+}
+
+.waveform-speed-slider {
+    width: 120px;
+    height: 4px;
+    background: #3e3e42;
+    border-radius: 2px;
+    outline: none;
+    -webkit-appearance: none;
+}
+
+.waveform-speed-slider::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 12px;
+    height: 12px;
     border-radius: 50%;
+    background: #0e639c;
+    cursor: pointer;
+}
+
+.waveform-speed-slider::-moz-range-thumb {
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    background: #0e639c;
+    cursor: pointer;
+    border: none;
+}
+
+.waveform-speed-slider::-webkit-slider-thumb:hover {
+    background: #1177bb;
+}
+
+.waveform-speed-slider::-moz-range-thumb:hover {
+    background: #1177bb;
+}
     cursor: pointer;
     display: flex;
     align-items: center;
@@ -1210,6 +1293,27 @@ body {
 .compact-sentence:hover {
     background: #2d2d30;
     border-left-color: #007acc;
+}
+
+.compact-sentence.highlight-flash {
+    animation: highlight-pulse 2s ease-out;
+}
+
+@keyframes highlight-pulse {
+    0% {
+        background: #0e639c;
+        border-left-color: #1177bb;
+    }
+    100% {
+        background: #252526;
+        border-left-color: #3e3e42;
+    }
+}
+
+.compact-sentence.selected {
+    background: #2d3540;
+    border-left-color: #0e639c;
+    border-left-width: 4px;
 }
 
 .compact-sentence.playing {
