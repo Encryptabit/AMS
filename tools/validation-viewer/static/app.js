@@ -10,6 +10,7 @@ let currentPlayingSentence = null;
 let waveSurferInstances = {}; // Track WaveSurfer instances by ID
 let currentAudioSource = 'raw'; // 'raw', 'treated', or 'filtered'
 let selectedSentences = []; // Track ctrl+clicked sentences for multi-select
+let savedScrollPosition = 0; // Save scroll position when switching views
 
 // WaveSurfer Audio Player Component
 class WaveSurferPlayer {
@@ -85,26 +86,36 @@ class WaveSurferPlayer {
         // ZoomPlugin is available globally as WaveSurfer.Zoom
         const ZoomPlugin = WaveSurfer.Zoom;
 
-        this.wavesurfer = WaveSurfer.create({
+        const wavesurferConfig = {
             container: waveformDiv,
             audioRate: this.audioRate,
             height: this.options.height,
             waveColor: this.options.waveColor,
             progressColor: this.options.progressColor,
             cursorColor: this.options.cursorColor,
-            barWidth: this.options.barWidth,
-            barGap: this.options.barGap,
-            barRadius: this.options.barRadius,
             normalize: true,
             backend: 'MediaElement',
-            pixelRatio: window.devicePixelRatio || 1,  // Use device pixel ratio for crisp rendering
-            minPxPerSec: this.options.disableZoom ? 50 : 100,  // Lower detail for modal preview
-            fillParent: !this.options.disableZoom,  // Disable fillParent for modal to prevent oscillation
+            pixelRatio: window.devicePixelRatio || 1,
+            minPxPerSec: this.options.disableZoom ? 50 : 100,
+            fillParent: !this.options.disableZoom,
             scrollParent: false,
             autoCenter: !this.options.disableZoom,
             hideScrollbar: true,
-            barHeight: 1,  // Maximum bar height for full amplitude range
-        });
+            barHeight: 1,
+        };
+
+        // Only add bar properties if they are explicitly set (non-zero)
+        if (this.options.barWidth !== undefined && this.options.barWidth !== 0) {
+            wavesurferConfig.barWidth = this.options.barWidth;
+        }
+        if (this.options.barGap !== undefined && this.options.barGap !== 0) {
+            wavesurferConfig.barGap = this.options.barGap;
+        }
+        if (this.options.barRadius !== undefined && this.options.barRadius !== 0) {
+            wavesurferConfig.barRadius = this.options.barRadius;
+        }
+
+        this.wavesurfer = WaveSurfer.create(wavesurferConfig);
 
         // Register Zoom plugin only if not disabled
         if (!this.options.disableZoom) {
@@ -619,6 +630,12 @@ async function loadReport(chapterName) {
 
 // View management
 function switchView(view) {
+    // Save scroll position if leaving errors view
+    const contentDiv = document.getElementById('content');
+    if (currentView === 'errors' && contentDiv) {
+        savedScrollPosition = contentDiv.scrollTop;
+    }
+
     currentView = view;
     document.querySelectorAll('.view-toggle-button').forEach(btn => btn.classList.remove('active'));
     document.querySelector(`[data-view="${view}"]`).classList.add('active');
@@ -631,6 +648,13 @@ function switchView(view) {
 
     if (currentReport) {
         renderReport(currentReport);
+
+        // Restore scroll position if returning to errors view
+        if (view === 'errors' && contentDiv && savedScrollPosition > 0) {
+            setTimeout(() => {
+                contentDiv.scrollTop = savedScrollPosition;
+            }, 50);
+        }
     }
 }
 
@@ -674,7 +698,11 @@ function renderPlaybackView(report) {
 
         <div id="chapter-audio-player"></div>
 
-        <div class="section-title">Chapter Sentences (Click to seek • Shift+Click or E for CRX)</div>
+        <div class="section-title">
+            Chapter Sentences
+            <span class="mobile-only">(Tap to seek • Swipe ← to select • Swipe → to export)</span>
+            <span class="desktop-only">(Click to seek • Shift+Click or E for CRX)</span>
+        </div>
         ${compactSentencesHtml}
     `;
 
@@ -692,6 +720,52 @@ function setupCompactSentenceListeners() {
         sentence.addEventListener('mouseenter', () => {
             window.lastHoveredSentence = sentenceId;
         });
+
+        // Touch gesture support for mobile
+        let touchStartX = 0;
+        let touchStartY = 0;
+        let touchStartTime = 0;
+
+        sentence.addEventListener('touchstart', (e) => {
+            touchStartX = e.touches[0].clientX;
+            touchStartY = e.touches[0].clientY;
+            touchStartTime = Date.now();
+        }, { passive: true });
+
+        sentence.addEventListener('touchend', (e) => {
+            const touchEndX = e.changedTouches[0].clientX;
+            const touchEndY = e.changedTouches[0].clientY;
+            const touchDuration = Date.now() - touchStartTime;
+
+            const deltaX = touchEndX - touchStartX;
+            const deltaY = touchEndY - touchStartY;
+            const absDeltaX = Math.abs(deltaX);
+            const absDeltaY = Math.abs(deltaY);
+
+            // Detect horizontal swipe (must be more horizontal than vertical)
+            if (absDeltaX > 50 && absDeltaX > absDeltaY && touchDuration < 500) {
+                e.preventDefault();
+
+                if (deltaX < 0) {
+                    // Swipe left: toggle multi-select
+                    toggleSentenceSelection(sentenceId);
+                    showToast(`${selectedSentences.length} sentence(s) selected`, 'success', 1500);
+                } else {
+                    // Swipe right: export selected or current sentence
+                    if (selectedSentences.length > 0) {
+                        exportSelectedSentences();
+                    } else {
+                        openCrxForSentence(sentenceId);
+                    }
+                }
+                return;
+            }
+
+            // Regular tap (no significant swipe)
+            if (absDeltaX < 10 && absDeltaY < 10 && touchDuration < 300) {
+                seekToSentence(sentenceId, startTime);
+            }
+        }, { passive: false });
 
         // Click handler: Ctrl+click = multi-select, Shift+click = CRX export, regular click = seek
         sentence.addEventListener('click', (e) => {
@@ -729,9 +803,10 @@ function setupChapterAudio() {
     // Create new WaveSurfer player for chapter audio with selected source
     const audioUrl = getAudioUrlForSource(currentChapter, currentAudioSource);
     const sourceLabel = currentAudioSource.charAt(0).toUpperCase() + currentAudioSource.slice(1);
+    const isMobile = window.innerWidth <= 768;
     const player = new WaveSurferPlayer('chapter-audio-player', audioUrl, {
         title: `${currentChapter} - ${sourceLabel} Audio`,
-        height: 100,
+        height: isMobile ? 25 : 100,
         waveColor: '#4a9eff',
         progressColor: '#1177bb',
         onTimeUpdate: (currentTime) => {
@@ -1495,12 +1570,13 @@ function refreshAudioPreview() {
 
     // Create new WaveSurfer player
     const audioUrl = `/api/audio/${encodeURIComponent(pendingCrxData.chapterName)}?start=${start}&end=${end}`;
+    const isMobile = window.innerWidth <= 768;
     const player = new WaveSurferPlayer('crx-audio-preview-container', audioUrl, {
         title: 'Audio Preview',
         height: 60,
         waveColor: '#4a9eff',
         progressColor: '#1177bb',
-        disableZoom: true  // Disable zoom for modal preview
+        disableZoom: !isMobile  // Only disable zoom on desktop to prevent oscillation
     });
     player.render();
 }
@@ -1918,7 +1994,176 @@ document.addEventListener('keydown', (e) => {
     }
 });
 
+// Mobile UI functions
+function createMobileHeader() {
+    if (window.innerWidth > 768) return;
+
+    const existingHeader = document.querySelector('.mobile-header');
+    if (existingHeader) return;
+
+    const header = document.createElement('div');
+    header.className = 'mobile-header';
+    header.innerHTML = `
+        <div class="mobile-logo" onclick="loadOverview()">
+            <i class="fas fa-book"></i>
+            <span>Book Overview</span>
+        </div>
+        <button class="mobile-chapter-toggle" onclick="toggleMobileChapters()">
+            <i class="fas fa-chevron-down"></i>
+        </button>
+    `;
+
+    document.body.insertBefore(header, document.body.firstChild);
+
+    // Create chapters dropdown
+    const dropdown = document.createElement('div');
+    dropdown.className = 'mobile-chapters-dropdown';
+    dropdown.id = 'mobile-chapters-dropdown';
+    document.body.insertBefore(dropdown, document.getElementById('sidebar'));
+}
+
+function toggleMobileChapters() {
+    const dropdown = document.getElementById('mobile-chapters-dropdown');
+    const toggle = document.querySelector('.mobile-chapter-toggle i');
+
+    if (dropdown.classList.contains('open')) {
+        dropdown.classList.remove('open');
+        toggle.className = 'fas fa-chevron-down';
+    } else {
+        dropdown.classList.add('open');
+        toggle.className = 'fas fa-chevron-up';
+
+        // Populate with chapters
+        dropdown.innerHTML = chapters.map(chapter => {
+            const isReviewed = reviewedStatus[chapter.name]?.reviewed;
+            const reviewedClass = isReviewed ? 'reviewed' : '';
+            return `
+                <div class="chapter-item ${chapter.name === currentChapter ? 'active' : ''} ${reviewedClass}"
+                     onclick="loadReport('${chapter.name}'); toggleMobileChapters();">
+                    <div class="chapter-name">${chapter.name}</div>
+                    <div class="chapter-stats">Flagged: ${chapter.metrics.sentenceFlagged} sentences</div>
+                </div>
+            `;
+        }).join('');
+    }
+}
+
+function updateFloatingButton() {
+    const isMobile = window.innerWidth <= 768;
+
+    if (isMobile) {
+        // Mobile: create bottom action bar if it doesn't exist
+        let actionBar = document.querySelector('.mobile-action-bar');
+        if (!actionBar) {
+            actionBar = document.createElement('div');
+            actionBar.className = 'mobile-action-bar';
+            document.body.appendChild(actionBar);
+        }
+
+        actionBar.innerHTML = `
+            <div class="action-bar">
+                <button class="action-bar-button" onclick="switchView('errors')">
+                    <i class="fas fa-times-circle"></i>
+                    <span class="button-text">Errors</span>
+                </button>
+                <button class="action-bar-button" onclick="switchView('playback')">
+                    <i class="fas fa-headphones"></i>
+                    <span class="button-text">Playback</span>
+                </button>
+                <button class="action-bar-button" onclick="showAudioSourceMenu()">
+                    <i class="fas fa-volume-up"></i>
+                    <span class="button-text">Source</span>
+                </button>
+                <button class="action-bar-button ${reviewedStatus[currentChapter] ? 'reviewed' : ''}"
+                        onclick="toggleReviewStatus('${currentChapter}')">
+                    <i class="fas fa-check"></i>
+                    <span class="button-text">Review</span>
+                </button>
+            </div>
+        `;
+    } else {
+        // Desktop: use existing action bar
+        const actionBar = document.querySelector('.action-bar');
+        if (!actionBar) return;
+        // Desktop: existing layout
+        if (currentView === 'playback') {
+            actionBar.innerHTML = `
+                <button class="action-bar-button" onclick="switchView('errors')">
+                    <i class="fas fa-list"></i>
+                    <span class="button-text">Errors</span>
+                </button>
+                <button class="action-bar-button" onclick="showAudioSourceMenu()">
+                    <i class="fas fa-volume-up"></i>
+                    <span class="button-text">Audio Source</span>
+                </button>
+                <button class="action-bar-button reviewed-button ${reviewedStatus[currentChapter] ? 'reviewed' : ''}"
+                        onclick="toggleReviewStatus('${currentChapter}')">
+                    <i class="fas fa-check"></i>
+                    <span class="button-text">${reviewedStatus[currentChapter] ? 'Reviewed' : 'Mark Reviewed'}</span>
+                </button>
+            `;
+        } else {
+            actionBar.innerHTML = `
+                <button class="action-bar-button" onclick="switchView('playback')">
+                    <i class="fas fa-play"></i>
+                    <span class="button-text">Playback</span>
+                </button>
+                <button class="action-bar-button reviewed-button ${reviewedStatus[currentChapter] ? 'reviewed' : ''}"
+                        onclick="toggleReviewStatus('${currentChapter}')">
+                    <i class="fas fa-check"></i>
+                    <span class="button-text">${reviewedStatus[currentChapter] ? 'Reviewed' : 'Mark Reviewed'}</span>
+                </button>
+            `;
+        }
+    }
+}
+
+// Mobile header auto-hide on scroll
+function setupMobileHeaderAutoHide() {
+    if (window.innerWidth > 768) return;
+
+    let lastScrollY = 0;
+    let ticking = false;
+
+    const header = document.querySelector('.mobile-header');
+    const dropdown = document.getElementById('mobile-chapters-dropdown');
+    const content = document.getElementById('content');
+
+    if (!header || !content) return;
+
+    content.addEventListener('scroll', () => {
+        if (!ticking) {
+            window.requestAnimationFrame(() => {
+                const currentScrollY = content.scrollTop;
+
+                // Don't hide if dropdown is open
+                if (dropdown && dropdown.classList.contains('open')) {
+                    ticking = false;
+                    return;
+                }
+
+                if (currentScrollY > lastScrollY && currentScrollY > 60) {
+                    // Scrolling down - hide header
+                    header.style.transform = 'translateY(-100%)';
+                    content.style.paddingTop = '0';
+                } else if (currentScrollY < lastScrollY) {
+                    // Scrolling up - show header
+                    header.style.transform = 'translateY(0)';
+                    content.style.paddingTop = '60px';
+                }
+
+                lastScrollY = currentScrollY;
+                ticking = false;
+            });
+
+            ticking = true;
+        }
+    });
+}
+
 // Initialize on page load
 loadChapters().then(() => {
     loadOverview();
+    createMobileHeader();
+    setupMobileHeaderAutoHide();
 });
