@@ -4,7 +4,6 @@ global using Ams.Core.Validation;
 global using Ams.Core.Pipeline;
 global using Ams.Core.Common;
 global using Ams.Core.Audio;
-global using Ams.Core.Application.Contexts;
 global using Ams.Core.Application.Commands;
 global using Ams.Core.Application.Processes;
 global using Ams.Core.Application.Mfa;

@@ -15,6 +15,8 @@ What's Implemented
   - `align anchors`: Computes n-gram anchors between a BookIndex and ASR JSON; optional section detection, tunable policy knobs, and optional windows output.
   - `align tx`: Emits `TranscriptIndex (*.tx.json)` mapping sentences/paragraphs to ASR token ranges (script ranges), optionally scoped to a detected section.
   - `refine-sentences`: Sentence-only refinement. Starts from Aeneas (per-sentence) and ends from FFmpeg `silencedetect` (noise floor and min duration are parameters). Outputs `[ { start, end, startWordIdx, endWordIdx } ]`.
+- Workspace abstraction
+  - `IWorkspace` now owns `BookContext` lifetimes per host. The CLI REPL exposes `ReplState.Workspace`, and ASP.NET hosts use `WebWorkspace`, so commands/services call `workspace.OpenChapter(...)` instead of a global `ChapterContextFactory`.
 - ASR Client
   - `Ams.Core.AsrClient`: Posts `{audio_path, model, language}` and deserializes response.
   - Updated to handle word-level tokens without segment structure for cleaner validation.

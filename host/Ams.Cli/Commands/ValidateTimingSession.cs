@@ -2,6 +2,7 @@ using System.Text;
 using Ams.Core.Artifacts;
 using Ams.Core.Artifacts.Hydrate;
 using Ams.Core.Prosody;
+using Ams.Core.Runtime.Workspace;
 using Ams.Cli.Utilities;
 using Spectre.Console;
 using Spectre.Console.Rendering;
@@ -13,7 +14,7 @@ internal sealed class ValidateTimingSession
 {
     private const double StructuralEpsilon = 1e-6;
 
-    private readonly IChapterContextFactory _chapterContextFactory;
+    private readonly IWorkspace _workspace;
     private readonly FileInfo _transcriptFile;
     private readonly FileInfo _bookIndexFile;
     private readonly FileInfo _hydrateFile;
@@ -26,13 +27,13 @@ internal sealed class ValidateTimingSession
     private PauseAnalysisReport? _prosodyAnalysis;
 
     public ValidateTimingSession(
-        IChapterContextFactory chapterContextFactory,
+        IWorkspace workspace,
         FileInfo transcriptFile,
         FileInfo bookIndexFile,
         FileInfo hydrateFile,
         bool runProsodyAnalysis, bool includeAllIntraSentenceGaps = false, bool interSentenceOnly = true)
     {
-        _chapterContextFactory = chapterContextFactory ?? throw new ArgumentNullException(nameof(chapterContextFactory));
+        _workspace = workspace ?? throw new ArgumentNullException(nameof(workspace));
         _transcriptFile = transcriptFile ?? throw new ArgumentNullException(nameof(transcriptFile));
         _bookIndexFile = bookIndexFile ?? throw new ArgumentNullException(nameof(bookIndexFile));
         _hydrateFile = hydrateFile ?? throw new ArgumentNullException(nameof(hydrateFile));
@@ -152,10 +153,14 @@ internal sealed class ValidateTimingSession
     {
         cancellationToken.ThrowIfCancellationRequested();
 
-        using var handle = _chapterContextFactory.Create(
-            bookIndexFile: _bookIndexFile,
-            transcriptFile: _transcriptFile,
-            hydrateFile: _hydrateFile);
+        var openOptions = new ChapterOpenOptions
+        {
+            BookIndexFile = _bookIndexFile,
+            TranscriptFile = _transcriptFile,
+            HydrateFile = _hydrateFile
+        };
+
+        using var handle = _workspace.OpenChapter(openOptions);
 
         var bookIndex = handle.Book.Documents.BookIndex
             ?? throw new InvalidOperationException("BookIndex is not available in the chapter context.");

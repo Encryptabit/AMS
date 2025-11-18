@@ -10,6 +10,7 @@ using Ams.Core.Artifacts.Validation;
 using Ams.Core.Prosody;
 using Ams.Cli.Repl;
 using Ams.Cli.Utilities;
+using Ams.Core.Runtime.Workspace;
 using Ams.Core.Services;
 using SentenceTiming = Ams.Core.Artifacts.SentenceTiming;
 
@@ -17,22 +18,19 @@ namespace Ams.Cli.Commands;
 
 public static class ValidateCommand
 {
-    public static Command Create(IChapterContextFactory chapterFactory, ValidationService validationService)
+    public static Command Create(ValidationService validationService)
     {
-        ArgumentNullException.ThrowIfNull(chapterFactory);
         ArgumentNullException.ThrowIfNull(validationService);
 
         var validate = new Command("validate", "Validation utilities");
-        validate.AddCommand(CreateReportCommand(chapterFactory, validationService));
-        validate.AddCommand(CreateTimingCommand(chapterFactory));
+        validate.AddCommand(CreateReportCommand(validationService));
+        validate.AddCommand(CreateTimingCommand());
         validate.AddCommand(CreateServeCommand());
         return validate;
     }
 
-    private static Command CreateTimingCommand(IChapterContextFactory chapterFactory)
+    private static Command CreateTimingCommand()
     {
-        ArgumentNullException.ThrowIfNull(chapterFactory);
-
         var cmd = new Command("timing", "Interactively review and adjust sentence spacing gaps");
 
         var txOption = new Option<FileInfo?>(
@@ -154,8 +152,16 @@ public static class ValidateCommand
                 var runProsody = context.ParseResult.GetValueForOption(prosodyAnalyzeOption);
                 var includeAllIntra = context.ParseResult.GetValueForOption(includeAllIntraOption);
                 var interOnly = context.ParseResult.GetValueForOption(interOnlyOption);
+                var workspace = CommandInputResolver.ResolveWorkspace(bookIndex);
 
-                var session = new ValidateTimingSession(chapterFactory, tx, bookIndex, hydrate, runProsody, includeAllIntra, interOnly);
+                var session = new ValidateTimingSession(
+                    workspace,
+                    tx,
+                    bookIndex,
+                    hydrate,
+                    runProsody,
+                    includeAllIntra,
+                    interOnly);
 
                 await session.RunAsync(cancellationToken).ConfigureAwait(false);
             }
@@ -352,9 +358,8 @@ public static class ValidateCommand
         return serve;
     }
 
-    private static Command CreateReportCommand(IChapterContextFactory chapterFactory, ValidationService validationService)
+    private static Command CreateReportCommand(ValidationService validationService)
     {
-        ArgumentNullException.ThrowIfNull(chapterFactory);
         ArgumentNullException.ThrowIfNull(validationService);
 
         var cmd = new Command("report", "Render a human-friendly view of transcript validation metrics");
@@ -408,8 +413,17 @@ public static class ValidateCommand
             try
             {
                 var bookIndexFile = CommandInputResolver.ResolveBookIndex(null);
+                var workspace = CommandInputResolver.ResolveWorkspace(bookIndexFile);
                 var chapterId = TryInferChapterId(txFile, hydrateFile);
-                using var handle = chapterFactory.Create(bookIndexFile, transcriptFile: txFile, hydrateFile: hydrateFile, chapterId: chapterId);
+                var openOptions = new ChapterOpenOptions
+                {
+                    BookIndexFile = bookIndexFile,
+                    TranscriptFile = txFile,
+                    HydrateFile = hydrateFile,
+                    ChapterId = chapterId
+                };
+
+                using var handle = workspace.OpenChapter(openOptions);
                 var options = new ValidationReportOptions(
                     AllErrors: allErrors,
                     TopSentences: topSentences,

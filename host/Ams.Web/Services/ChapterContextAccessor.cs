@@ -1,25 +1,25 @@
 using System.Collections.Concurrent;
 using System.IO;
-using Ams.Core.Application.Contexts;
 using Ams.Core.Runtime.Book;
 using Ams.Core.Runtime.Chapter;
+using Ams.Core.Runtime.Workspace;
 using Microsoft.Extensions.Logging;
 
 namespace Ams.Web.Services;
 
 public sealed class ChapterContextAccessor : IDisposable
 {
-    private readonly IChapterContextFactory _contextFactory;
+    private readonly IWorkspace _workspace;
     private readonly WorkspaceState _workspaceState;
     private readonly ILogger<ChapterContextAccessor> _logger;
     private readonly ConcurrentDictionary<string, ChapterContextHandle> _handles = new(StringComparer.OrdinalIgnoreCase);
 
     public ChapterContextAccessor(
-        IChapterContextFactory contextFactory,
+        IWorkspace workspace,
         WorkspaceState workspaceState,
         ILogger<ChapterContextAccessor> logger)
     {
-        _contextFactory = contextFactory ?? throw new ArgumentNullException(nameof(contextFactory));
+        _workspace = workspace ?? throw new ArgumentNullException(nameof(workspace));
         _workspaceState = workspaceState ?? throw new ArgumentNullException(nameof(workspaceState));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
 
@@ -51,12 +51,13 @@ public sealed class ChapterContextAccessor : IDisposable
 
     private ChapterContextHandle CreateHandle(ChapterSummary summary)
     {
-        var handle = _contextFactory.Create(
-            bookIndexFile: new FileInfo(_workspaceState.BookIndexPath),
-            hydrateFile: new FileInfo(summary.HydratePath),
-            audioFile: summary.AudioPath is null ? null : new FileInfo(summary.AudioPath),
-            chapterDirectory: new DirectoryInfo(summary.RootPath),
-            chapterId: summary.Id);
+        var handle = _workspace.OpenChapter(new ChapterOpenOptions
+        {
+            HydrateFile = new FileInfo(summary.HydratePath),
+            AudioFile = summary.AudioPath is null ? null : new FileInfo(summary.AudioPath),
+            ChapterDirectory = new DirectoryInfo(summary.RootPath),
+            ChapterId = summary.Id
+        });
 
         _logger.LogDebug("ChapterContext created for {Chapter}", summary.Id);
         return handle;
