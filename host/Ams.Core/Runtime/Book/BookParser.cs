@@ -21,6 +21,8 @@ public class BookParser : IBookParser
 
     private static readonly Regex _paragraphBreakRegex = new(@"(\r?\n){2,}", RegexOptions.Compiled);
     private static readonly Regex PdfSentenceSplitRegex = new(@"(?<=[\.\!\?…])\s+|\n\s*\n+", RegexOptions.Compiled);
+    private static readonly Regex MetadataBreakRegex = new(@"(?<=\S)\n(?=[A-Z0-9#©])", RegexOptions.Compiled);
+    private static readonly Regex LeadingPageMarkerRegex = new(@"^\s*(?:#?\d+\s*|[©]{0,1}\d{2,4}\s*)+", RegexOptions.Compiled);
     private static readonly object PdfInitLock = new();
     private static bool _pdfiumInitialized;
 
@@ -438,7 +440,7 @@ public class BookParser : IBookParser
                                     chars[i] = (char)buffer[i];
                                 }
 
-                                var text = new string(chars);
+                                var text = SanitizePdfText(new string(chars));
                                 if (string.IsNullOrWhiteSpace(text))
                                 {
                                     continue;
@@ -451,13 +453,32 @@ public class BookParser : IBookParser
                                         continue;
                                     }
 
-                                    if (suppressList.Contains(sentence.Trim()))
+                                    var working = sentence.Trim();
+                                    if (string.IsNullOrEmpty(working))
                                     {
                                         continue;
                                     }
 
-                                    parsedParagraphs.Add(new ParsedParagraph(sentence, null, "Body"));
-                                    sb.AppendLine(sentence);
+                                    working = StripLeadingPageMarkers(working);
+                                    if (string.IsNullOrEmpty(working))
+                                    {
+                                        continue;
+                                    }
+
+                                    var cleanedSentence = RemoveSuppressEdges(working, suppressList);
+                                    if (string.IsNullOrWhiteSpace(cleanedSentence))
+                                    {
+                                        continue;
+                                    }
+
+                                    var flattened = Regex.Replace(cleanedSentence.ReplaceLineEndings(" "), "\\s+", " ").Trim();
+                                    if (string.IsNullOrWhiteSpace(flattened))
+                                    {
+                                        continue;
+                                    }
+
+                                    parsedParagraphs.Add(new ParsedParagraph(flattened, null, "Body"));
+                                    sb.AppendLine(flattened);
                                     sb.AppendLine();
                                 }
                             }
@@ -527,6 +548,131 @@ public class BookParser : IBookParser
         }
     }
 
+    private static string SanitizePdfText(string text)
+    {
+        if (string.IsNullOrEmpty(text))
+        {
+            return text;
+        }
+
+        Span<char> pair = stackalloc char[2];
+        var builder = new StringBuilder(text.Length);
+
+        for (int i = 0; i < text.Length;)
+        {
+            var c = text[i];
+
+            if (c == '\uFFFE' || c == '\uFFFF')
+            {
+                i++;
+                continue;
+            }
+
+            if (char.IsSurrogate(c))
+            {
+                if (i + 1 < text.Length && char.IsSurrogatePair(c, text[i + 1]))
+                {
+                    pair[0] = c;
+                    pair[1] = text[i + 1];
+                    builder.Append(pair);
+                    i += 2;
+                    continue;
+                }
+
+                i++;
+                continue;
+            }
+
+            if (char.IsControl(c) && c != '\n' && c != '\r' && c != '\t')
+            {
+                i++;
+                continue;
+            }
+
+            builder.Append(c);
+            i++;
+        }
+
+        return builder.ToString();
+    }
+
+    private static string StripLeadingPageMarkers(string text)
+    {
+        if (string.IsNullOrEmpty(text))
+        {
+            return text;
+        }
+
+        var stripped = LeadingPageMarkerRegex.Replace(text, string.Empty, 1);
+        return stripped.TrimStart();
+    }
+
+    private static string RemoveSuppressEdges(string sentence, HashSet<string> suppressList)
+    {
+        if (string.IsNullOrWhiteSpace(sentence) || suppressList.Count == 0)
+        {
+            return sentence;
+        }
+
+        var working = sentence.Trim();
+
+        bool changed;
+        do
+        {
+            changed = false;
+
+            foreach (var entry in suppressList)
+            {
+                if (string.IsNullOrWhiteSpace(entry))
+                {
+                    continue;
+                }
+
+                if (working.StartsWith(entry, StringComparison.OrdinalIgnoreCase))
+                {
+                    working = working.Substring(entry.Length).TrimStart();
+                    changed = true;
+                }
+
+                if (working.Length == 0)
+                {
+                    break;
+                }
+
+                if (working.EndsWith(entry, StringComparison.OrdinalIgnoreCase))
+                {
+                    working = working.Substring(0, working.Length - entry.Length).TrimEnd();
+                    changed = true;
+                }
+
+                if (working.Length == 0)
+                {
+                    break;
+                }
+
+                if (entry.Contains(working, StringComparison.OrdinalIgnoreCase))
+                {
+                    working = string.Empty;
+                    changed = true;
+                }
+            }
+        } while (changed && working.Length > 0);
+
+ 
+
+        var normalized = working.Trim();
+        if (normalized.Length > 0)
+        {
+            var lower = normalized.ToLowerInvariant();
+            if (suppressList.Contains(lower))
+            {
+                return string.Empty;
+            }
+        }
+
+        return working;
+    }
+
     private static IEnumerable<string> SplitPdfSentences(string text)
     {
         if (string.IsNullOrWhiteSpace(text))
@@ -534,7 +680,7 @@ public class BookParser : IBookParser
             yield break;
         }
 
-        var normalized = text.Replace("\r\n", "\n").Replace('\r', '\n').Trim();
+        var normalized = TextNormalizer.NormalizeTypography(text.Replace("\r\n", "\n").Replace('\r', '\n').Trim());
         if (normalized.Length == 0)
         {
             yield break;
@@ -543,12 +689,11 @@ public class BookParser : IBookParser
         var segments = PdfSentenceSplitRegex.Split(normalized);
         if (segments.Length <= 1)
         {
-            foreach (var line in normalized.Split('\n'))
+            foreach (var fragment in SplitOnMetadataBreaks(normalized))
             {
-                var candidate = line.Trim();
-                if (candidate.Length > 0)
+                if (fragment.Length > 0)
                 {
-                    yield return candidate;
+                    yield return fragment;
                 }
             }
 
@@ -557,7 +702,27 @@ public class BookParser : IBookParser
 
         foreach (var segment in segments)
         {
-            var candidate = segment.Trim();
+            foreach (var fragment in SplitOnMetadataBreaks(segment))
+            {
+                if (fragment.Length > 0)
+                {
+                    yield return fragment;
+                }
+            }
+        }
+    }
+
+    private static IEnumerable<string> SplitOnMetadataBreaks(string text)
+    {
+        if (string.IsNullOrEmpty(text))
+        {
+            yield break;
+        }
+
+        var fragments = MetadataBreakRegex.Split(text);
+        foreach (var fragment in fragments)
+        {
+            var candidate = fragment.Trim();
             if (candidate.Length > 0)
             {
                 yield return candidate;
