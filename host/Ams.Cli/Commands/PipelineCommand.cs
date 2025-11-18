@@ -62,6 +62,7 @@ public static class PipelineCommand
         : StringComparer.Ordinal;
 
     private const string DefaultBatchFolderName = "Batch 2";
+    private const string CrxDirectoryName = "CRX";
 
     private static readonly JsonSerializerOptions StatsJsonOptions = new()
     {
@@ -1448,6 +1449,11 @@ private static async Task RunPipelineAsync(
                 continue;
             }
 
+            if (directory.Name.Equals(CrxDirectoryName, PathComparison))
+            {
+                continue;
+            }
+
             if (!LooksLikeChapterDirectory(directory))
             {
                 continue;
@@ -1474,6 +1480,11 @@ private static async Task RunPipelineAsync(
         foreach (var directory in root.EnumerateDirectories())
         {
             cancellationToken.ThrowIfCancellationRequested();
+
+            if (directory.Name.Equals(CrxDirectoryName, PathComparison))
+            {
+                continue;
+            }
 
             try
             {
@@ -2906,6 +2917,11 @@ private static async Task RunPipelineAsync(
     private static bool LooksLikeChapterDirectory(DirectoryInfo directory)
     {
         if (directory.Name.Equals(DefaultBatchFolderName, PathComparison))
+        {
+            return false;
+        }
+
+        if (directory.Name.Equals(CrxDirectoryName, PathComparison))
         {
             return false;
         }

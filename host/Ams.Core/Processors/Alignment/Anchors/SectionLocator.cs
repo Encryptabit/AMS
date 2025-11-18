@@ -15,7 +15,7 @@ public static class SectionLocator
 
     private static readonly HashSet<string> LeadingChapterKeywords = new(StringComparer.Ordinal)
     {
-        "chapter","chap","ch","part","section","sec","episode","book"
+        "chapter", "ch"
     };
 
     private static readonly Dictionary<string, int> SpelledUnits = new(StringComparer.Ordinal)

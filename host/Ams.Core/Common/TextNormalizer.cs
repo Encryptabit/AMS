@@ -112,6 +112,7 @@ public static class TextNormalizer
 
         return text
             .Replace('\u2018', '\'')
+            .Replace('\u0027', '\'')
             .Replace('\u2019', '\'')
             .Replace('\u201A', '\'')
             .Replace('\u2032', '\'')

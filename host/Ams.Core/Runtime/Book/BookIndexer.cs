@@ -8,10 +8,11 @@ namespace Ams.Core.Runtime.Documents;
 /// Canonical indexer: preserves exact token text, builds sentence/paragraph ranges only.
 /// No normalization, no timing.
 /// </summary>
-public class BookIndexer : IBookIndexer
+public partial class BookIndexer : IBookIndexer
 {
     private static readonly Regex _blankLineSplit = new("(\r?\n){2,}", RegexOptions.Compiled);
     private static readonly Regex ForcedHyphenBreakRegex = new(@"(?<=\p{L})-\r?\n\s*(?=\p{L})", RegexOptions.Compiled);
+    private static readonly Regex OcrChapterHeaderRegex = new(@"^C(?:H|A|P|T|E|R|\d)*\s*(\d+)$", RegexOptions.IgnoreCase | RegexOptions.Compiled);
     private readonly IPronunciationProvider _pronunciationProvider;
 
     public BookIndexer(IPronunciationProvider? pronunciationProvider = null)
@@ -86,7 +87,7 @@ public class BookIndexer : IBookIndexer
                 continue;
             }
 
-            var trimmedParagraph = pText.Trim();
+            var trimmedParagraph = NormalizeHeadingArtifacts(pText);
             bool paragraphHasLexical = ContainsLexicalContent(trimmedParagraph);
 
             if (paragraphHasLexical && ShouldStartSection(trimmedParagraph, style, kind))
@@ -410,14 +411,10 @@ public class BookIndexer : IBookIndexer
         return false;
     }
 
-    private static readonly Regex ChapterDuplicateRegex = new(@"^(?<prefix>\s*chapter)(?<ws>\s+)(?<number>\d+)(?<suffix>\s*[A-Za-z]*)?$", RegexOptions.IgnoreCase | RegexOptions.Compiled);
-    private static readonly Regex SectionTitleRegex = new(
-        @"^\s*(chapter\b|prologue\b|epilogue\b|prelude\b|foreword\b|introduction\b|afterword\b|appendix\b|part\b|book\b)",
-        RegexOptions.IgnoreCase | RegexOptions.Compiled);
+    private static readonly Regex ChapterDuplicateRegex = MyRegex1();
+    private static readonly Regex SectionTitleRegex = MyRegex();
 
-    private static readonly Regex NumberedHeadingRegex = new(
-        @"^\s*((\d+|[ivxlcdm]+)\s*[-–.:]\s*[a-zA-Z])",
-        RegexOptions.IgnoreCase | RegexOptions.Compiled);
+    private static readonly Regex NumberedHeadingRegex = MyRegex2();
 
     private static bool LooksLikeSectionHeading(string text)
     {
@@ -510,6 +507,39 @@ public class BookIndexer : IBookIndexer
         var normalized = TextNormalizer.NormalizeTypography(token).Trim();
         normalized = TrimOuterQuotes(normalized);
         return normalized;
+    }
+
+    private static string NormalizeHeadingArtifacts(string text)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            return string.Empty;
+        }
+
+        var trimmed = text.Trim();
+        var sample = trimmed.ToUpperInvariant();
+        sample = Regex.Replace(sample, "\\s+", string.Empty);
+
+        var digits = new System.Text.StringBuilder();
+        foreach (var ch in sample)
+        {
+            if (char.IsDigit(ch))
+            {
+                digits.Append(ch);
+            }
+        }
+
+        var match = OcrChapterHeaderRegex.Match(sample);
+        if (match.Success)
+        {
+            var number = digits.Length > 0 ? digits.ToString() : match.Groups[1].Value;
+            if (!string.IsNullOrEmpty(number))
+            {
+                return $"CHAPTER {number}";
+            }
+        }
+
+        return trimmed;
     }
 
     private static string TrimOuterQuotes(string value)
@@ -702,4 +732,11 @@ public class BookIndexer : IBookIndexer
             throw new BookIndexException($"Failed to compute hash for file '{filePath}': {ex.Message}", ex);
         }
     }
+
+    [GeneratedRegex(@"^\s*(chapter\b|prologue\b|epilogue\b|prelude\b|foreword\b|introduction\b|afterword\b|appendix\b)", RegexOptions.IgnoreCase | RegexOptions.Compiled, "en-US")]
+    private static partial Regex MyRegex();
+    [GeneratedRegex(@"^(?<prefix>\s*chapter)(?<ws>\s+)(?<number>\d+)(?<suffix>\s*[A-Za-z]*)?$", RegexOptions.IgnoreCase | RegexOptions.Compiled, "en-US")]
+    private static partial Regex MyRegex1();
+    [GeneratedRegex(@"^\s*((\d+|[ivxlcdm]+)\s*[-–.:]\s*[a-zA-Z])", RegexOptions.IgnoreCase | RegexOptions.Compiled, "en-US")]
+    private static partial Regex MyRegex2();
 }

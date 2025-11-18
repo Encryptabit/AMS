@@ -10,6 +10,7 @@
 //  - Provide getBookToken(bookIdx) for indices in [chapterStartBookIdx, chapterEndBookIdx].
 //  - Provide WordTarget/SentenceTarget adapters for your hydrate structures.
 
+using System.Globalization;
 using System.Text;
 
 namespace Ams.Core.Processors.Alignment.Mfa
@@ -295,8 +296,8 @@ namespace Ams.Core.Processors.Alignment.Mfa
         {
             if (string.IsNullOrWhiteSpace(s)) yield break;
 
-            // Unicode normalization (NFKC helps unify different quote/dash forms)
-            s = s.Normalize(NormalizationForm.FormKC);
+            s = SafeNormalize(s);
+            if (string.IsNullOrWhiteSpace(s)) yield break;
 
             // Unify quotes/dashes
             s = s.Replace('“', '"').Replace('”', '"')
@@ -336,6 +337,60 @@ namespace Ams.Core.Processors.Alignment.Mfa
             while (i <= j && IsPunctToTrim(t[i])) i++;
             while (j >= i && IsPunctToTrim(t[j])) j--;
             return (i <= j) ? t.Substring(i, j - i + 1) : "";
+        }
+
+        private static string SafeNormalize(string input)
+        {
+            if (string.IsNullOrEmpty(input))
+            {
+                return input ?? string.Empty;
+            }
+
+            Span<char> tmp = stackalloc char[4];
+
+            var builder = new StringBuilder(input.Length);
+            for (int i = 0; i < input.Length;)
+            {
+                var c = input[i];
+
+                if (char.IsSurrogate(c))
+                {
+                    if (i + 1 < input.Length && char.IsSurrogatePair(c, input[i + 1]))
+                    {
+                        tmp[0] = c;
+                        tmp[1] = input[i + 1];
+                        builder.Append(tmp.Slice(0,2));
+                        i += 2;
+                        continue;
+                    }
+                    i++;
+                    continue;
+                }
+
+                if (char.IsControl(c) && !char.IsWhiteSpace(c))
+                {
+                    i++;
+                    continue;
+                }
+
+                builder.Append(c);
+                i++;
+            }
+
+            var cleaned = builder.ToString();
+            if (cleaned.Length == 0)
+            {
+                return string.Empty;
+            }
+
+            try
+            {
+                return cleaned.Normalize(NormalizationForm.FormKC);
+            }
+            catch (ArgumentException)
+            {
+                return cleaned;
+            }
         }
 
         private static bool IsPunctToTrim(char c)
