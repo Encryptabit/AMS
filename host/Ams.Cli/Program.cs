@@ -15,7 +15,6 @@ internal static class Program
     {
         HostApplicationBuilder builder = Host.CreateApplicationBuilder(args);
 
-        builder.Services.AddSingleton<IChapterContextFactory, ChapterContextFactory>();
         builder.Services.AddSingleton<IAsrService, AsrService>();
         builder.Services.AddSingleton<IAlignmentService, AlignmentService>();
         builder.Services.AddSingleton<GenerateTranscriptCommand>();
@@ -27,7 +26,6 @@ internal static class Program
         builder.Services.AddSingleton<PipelineService>();
         builder.Services.AddSingleton<ValidationService>();
         using IHost host = builder.Build();
-        var chapterFactory = host.Services.GetRequiredService<IChapterContextFactory>();
         var generateTranscript = host.Services.GetRequiredService<GenerateTranscriptCommand>();
         var computeAnchors = host.Services.GetRequiredService<ComputeAnchorsCommand>();
         var transcriptIndexCommand = host.Services.GetRequiredService<BuildTranscriptIndexCommand>();
@@ -56,12 +54,12 @@ internal static class Program
 
         var rootCommand = new RootCommand("AMS - Audio Management System CLI");
 
-        rootCommand.AddCommand(AsrCommand.Create(chapterFactory, generateTranscript));
-        rootCommand.AddCommand(ValidateCommand.Create(chapterFactory, validationService));
+        rootCommand.AddCommand(AsrCommand.Create(generateTranscript));
+        rootCommand.AddCommand(ValidateCommand.Create(validationService));
         rootCommand.AddCommand(TextCommand.Create());
         rootCommand.AddCommand(BuildIndexCommand.Create());
         rootCommand.AddCommand(BookCommand.Create());
-        rootCommand.AddCommand(AlignCommand.Create(chapterFactory, computeAnchors, transcriptIndexCommand, hydrateCommand));
+        rootCommand.AddCommand(AlignCommand.Create(computeAnchors, transcriptIndexCommand, hydrateCommand));
         rootCommand.AddCommand(RefineSentencesCommand.Create());
         rootCommand.AddCommand(PipelineCommand.Create(pipelineService));
         rootCommand.AddCommand(DspCommand.Create());

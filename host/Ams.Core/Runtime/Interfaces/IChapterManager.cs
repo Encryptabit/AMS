@@ -1,4 +1,5 @@
-﻿using Ams.Core.Runtime.Book;
+﻿using System.IO;
+using Ams.Core.Runtime.Book;
 
 namespace Ams.Core.Runtime.Chapter;
 
@@ -10,6 +11,14 @@ public interface IChapterManager
     ChapterContext Load(int index);
     ChapterContext Load(string chapterId);
     bool Contains(string chapterId);
+    ChapterContextHandle CreateContext(
+        FileInfo bookIndexFile,
+        FileInfo? asrFile = null,
+        FileInfo? transcriptFile = null,
+        FileInfo? hydrateFile = null,
+        FileInfo? audioFile = null,
+        DirectoryInfo? chapterDirectory = null,
+        string? chapterId = null);
     ChapterDescriptor UpsertDescriptor(ChapterDescriptor descriptor);
     bool TryMoveNext(out ChapterContext context);
     bool TryMovePrevious(out ChapterContext context);

@@ -1,6 +1,7 @@
 using System.CommandLine;
 using Ams.Cli.Repl;
 using Ams.Cli.Utilities;
+using Ams.Core.Runtime.Workspace;
 
 namespace Ams.Cli.Commands;
 
@@ -8,9 +9,8 @@ public static class AsrCommand
 {
     internal const string DefaultServiceUrl = "http://localhost:8000";
 
-    public static Command Create(IChapterContextFactory chapterFactory, GenerateTranscriptCommand transcriptCommand)
+    public static Command Create(GenerateTranscriptCommand transcriptCommand)
     {
-        ArgumentNullException.ThrowIfNull(chapterFactory);
         ArgumentNullException.ThrowIfNull(transcriptCommand);
 
         var asrCommand = new Command("asr", "ASR (Automatic Speech Recognition) operations");
@@ -106,10 +106,16 @@ public static class AsrCommand
                 var bookIndexFile = CommandInputResolver.ResolveBookIndex(parse.GetValueForOption(bookIndexOption), mustExist: true);
                 var chapterId = parse.GetValueForOption(chapterIdOption) ?? Path.GetFileNameWithoutExtension(audio.Name);
 
-                using var handle = chapterFactory.Create(
-                    bookIndexFile: bookIndexFile,
-                    audioFile: audio,
-                    chapterId: chapterId);
+                var workspace = CommandInputResolver.ResolveWorkspace(bookIndexFile);
+                var openOptions = new ChapterOpenOptions
+                {
+                    BookIndexFile = bookIndexFile,
+                    AudioFile = audio,
+                    ChapterDirectory = audio.Directory,
+                    ChapterId = chapterId
+                };
+
+                using var handle = workspace.OpenChapter(openOptions);
 
                 var engine = AsrEngineConfig.Resolve(engineText);
                 var transcriptOptions = new GenerateTranscriptOptions

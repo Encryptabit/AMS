@@ -1,16 +1,16 @@
 using System.Text.Json;
 using Ams.Core.Application.Commands;
-using Ams.Core.Application.Contexts;
 using Ams.Core.Application.Pipeline;
 using Ams.Core.Application.Processes;
 using Ams.Core.Processors.DocumentProcessor;
+using Ams.Core.Runtime.Workspace;
 using Ams.Core.Services.Alignment;
+using Ams.Core.Runtime.Chapter;
 
 namespace Ams.Core.Services;
 
 public sealed class PipelineService
 {
-    private readonly IChapterContextFactory _contextFactory;
     private readonly GenerateTranscriptCommand _generateTranscript;
     private readonly ComputeAnchorsCommand _computeAnchors;
     private readonly BuildTranscriptIndexCommand _buildTranscriptIndex;
@@ -19,7 +19,6 @@ public sealed class PipelineService
     private readonly MergeTimingsCommand _mergeTimings;
 
     public PipelineService(
-        IChapterContextFactory contextFactory,
         GenerateTranscriptCommand generateTranscript,
         ComputeAnchorsCommand computeAnchors,
         BuildTranscriptIndexCommand buildTranscriptIndex,
@@ -27,7 +26,6 @@ public sealed class PipelineService
         RunMfaCommand runMfa,
         MergeTimingsCommand mergeTimings)
     {
-        _contextFactory = contextFactory ?? throw new ArgumentNullException(nameof(contextFactory));
         _generateTranscript = generateTranscript ?? throw new ArgumentNullException(nameof(generateTranscript));
         _computeAnchors = computeAnchors ?? throw new ArgumentNullException(nameof(computeAnchors));
         _buildTranscriptIndex = buildTranscriptIndex ?? throw new ArgumentNullException(nameof(buildTranscriptIndex));
@@ -37,9 +35,11 @@ public sealed class PipelineService
     }
 
     public async Task<PipelineChapterResult> RunChapterAsync(
+        IWorkspace workspace,
         PipelineRunOptions options,
         CancellationToken cancellationToken = default)
     {
+        ArgumentNullException.ThrowIfNull(workspace);
         ArgumentNullException.ThrowIfNull(options);
         ValidateOptions(options);
 
@@ -47,11 +47,15 @@ public sealed class PipelineService
 
         var bookIndexBuilt = await EnsureBookIndexAsync(options, cancellationToken).ConfigureAwait(false);
 
-        using var handle = _contextFactory.Create(
-            bookIndexFile: options.BookIndexFile,
-            audioFile: options.AudioFile,
-            chapterDirectory: options.ChapterDirectory,
-            chapterId: options.ChapterId);
+        var openOptions = new ChapterOpenOptions
+        {
+            BookIndexFile = options.BookIndexFile,
+            AudioFile = options.AudioFile,
+            ChapterDirectory = options.ChapterDirectory,
+            ChapterId = options.ChapterId
+        };
+
+        using var handle = workspace.OpenChapter(openOptions);
 
         var chapter = handle.Chapter;
         var chapterRoot = chapter.Descriptor.RootPath ?? throw new InvalidOperationException("Chapter root path is not configured.");

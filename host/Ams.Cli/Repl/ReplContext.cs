@@ -1,6 +1,8 @@
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using System.Threading;
+using Ams.Cli.Workspace;
+using Ams.Core.Runtime.Workspace;
 
 namespace Ams.Cli.Repl;
 
@@ -23,6 +25,7 @@ internal sealed class ReplState
     private string? _pendingChapterName;
     private bool _pendingRunAll;
     private string? _lastSelectedChapterName;
+    private CliWorkspace? _workspace;
 
     public ReplState()
     {
@@ -102,6 +105,8 @@ internal sealed class ReplState
             return "NONE";
         }
     }
+
+    public IWorkspace Workspace => _workspace ??= new CliWorkspace(this);
 
     public void SetWorkingDirectory(string path)
     {
@@ -301,6 +306,17 @@ internal sealed class ReplState
         }
 
         return new FileInfo(rootCandidate);
+    }
+
+    public FileInfo ResolveBookIndex(bool mustExist)
+    {
+        var fallback = Path.Combine(WorkingDirectory, "book-index.json");
+        if (mustExist && !File.Exists(fallback))
+        {
+            throw new FileNotFoundException("Book index not found in working directory. Provide --book-index.", fallback);
+        }
+
+        return new FileInfo(fallback);
     }
 
     private sealed class ChapterScope : IDisposable

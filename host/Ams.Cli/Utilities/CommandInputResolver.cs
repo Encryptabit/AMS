@@ -1,4 +1,6 @@
 using Ams.Cli.Repl;
+using Ams.Cli.Workspace;
+using Ams.Core.Runtime.Workspace;
 
 namespace Ams.Cli.Utilities;
 
@@ -81,8 +83,13 @@ internal static class CommandInputResolver
             return provided;
         }
 
-        var dir = ReplContext.Current?.WorkingDirectory ?? Directory.GetCurrentDirectory();
-        var fallback = Path.Combine(dir, "book-index.json");
+        var context = ReplContext.Current;
+        if (context is not null)
+        {
+            return context.ResolveBookIndex(mustExist);
+        }
+
+        var fallback = Path.Combine(Directory.GetCurrentDirectory(), "book-index.json");
         if (mustExist && !File.Exists(fallback))
         {
             throw new FileNotFoundException("Book index not found in working directory. Provide --book-index.", fallback);
@@ -141,5 +148,22 @@ internal static class CommandInputResolver
         }
 
         throw new InvalidOperationException("Chapter identifier required. Provide --chapter-id or select a chapter.");
+    }
+
+    public static IWorkspace ResolveWorkspace(FileInfo? bookIndexFile = null)
+    {
+        if (ReplContext.Current is { } state)
+        {
+            return state.Workspace;
+        }
+
+        if (bookIndexFile is null)
+        {
+            throw new InvalidOperationException("Book index must be specified when not running inside the REPL workspace.");
+        }
+
+        var root = bookIndexFile.Directory?.FullName
+                   ?? throw new InvalidOperationException("Book index path must have a parent directory.");
+        return new CliWorkspace(root);
     }
 }

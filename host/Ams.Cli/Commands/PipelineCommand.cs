@@ -1395,7 +1395,8 @@ private static async Task RunPipelineAsync(
             Concurrency = concurrency
         };
 
-        var result = await pipelineService.RunChapterAsync(pipelineOptions, cancellationToken).ConfigureAwait(false);
+        var workspace = CommandInputResolver.ResolveWorkspace(bookIndexFile);
+        var result = await pipelineService.RunChapterAsync(workspace, pipelineOptions, cancellationToken).ConfigureAwait(false);
 
         var bookIndexMessage = result.BookIndexBuilt ? "Index built" : "Index ready";
         progress?.ReportStage(chapterStem, PipelineStage.BookIndex, bookIndexMessage);

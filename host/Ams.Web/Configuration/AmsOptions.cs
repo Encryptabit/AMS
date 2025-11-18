@@ -25,7 +25,7 @@ public sealed class WorkspaceOptions
     public string? RootPath { get; init; }
 
     /// <summary>
-    /// Optional initial BookIndex path to prime IChapterContextFactory.
+    /// Optional initial BookIndex path to prime the workspace context.
     /// </summary>
     public string? BookIndexPath { get; init; }
 }

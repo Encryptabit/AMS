@@ -1,29 +1,28 @@
 using System.CommandLine;
 using Ams.Cli.Utilities;
+using Ams.Core.Runtime.Workspace;
 
 namespace Ams.Cli.Commands;
 
 public static class AlignCommand
 {
     public static Command Create(
-        IChapterContextFactory chapterFactory,
         ComputeAnchorsCommand anchorsCommand,
         BuildTranscriptIndexCommand transcriptCommand,
         HydrateTranscriptCommand hydrateCommand)
     {
-        ArgumentNullException.ThrowIfNull(chapterFactory);
         ArgumentNullException.ThrowIfNull(anchorsCommand);
         ArgumentNullException.ThrowIfNull(transcriptCommand);
         ArgumentNullException.ThrowIfNull(hydrateCommand);
 
         var align = new Command("align", "Alignment utilities");
-        align.AddCommand(CreateAnchors(chapterFactory, anchorsCommand));
-        align.AddCommand(CreateTranscriptIndex(chapterFactory, transcriptCommand));
-        align.AddCommand(CreateHydrateTx(chapterFactory, hydrateCommand));
+        align.AddCommand(CreateAnchors(anchorsCommand));
+        align.AddCommand(CreateTranscriptIndex(transcriptCommand));
+        align.AddCommand(CreateHydrateTx(hydrateCommand));
         return align;
     }
 
-    private static Command CreateAnchors(IChapterContextFactory factory, ComputeAnchorsCommand command)
+    private static Command CreateAnchors(ComputeAnchorsCommand command)
     {
         var cmd = new Command("anchors", "Compute n-gram anchors between BookIndex and ASR");
 
@@ -76,7 +75,14 @@ public static class AlignCommand
                     EmitWindows = parse.GetValueForOption(emitWindowsOption)
                 };
 
-                using var handle = factory.Create(indexFile, asrFile: asrFile);
+                var workspace = CommandInputResolver.ResolveWorkspace(indexFile);
+                var openOptions = new ChapterOpenOptions
+                {
+                    BookIndexFile = indexFile,
+                    AsrFile = asrFile
+                };
+
+                using var handle = workspace.OpenChapter(openOptions);
                 await command.ExecuteAsync(handle.Chapter, options, context.GetCancellationToken()).ConfigureAwait(false);
                 handle.Save();
                 var anchorsFile = handle.Chapter.Documents.GetAnchorsFile()
@@ -93,7 +99,7 @@ public static class AlignCommand
         return cmd;
     }
 
-    private static Command CreateTranscriptIndex(IChapterContextFactory factory, BuildTranscriptIndexCommand command)
+    private static Command CreateTranscriptIndex(BuildTranscriptIndexCommand command)
     {
         var cmd = new Command("tx", "Validate & compare Book vs ASR using anchors; emit TranscriptIndex (*.tx.json)");
 
@@ -155,7 +161,16 @@ public static class AlignCommand
                     AnchorOptions = anchorOptions
                 };
 
-                using var handle = factory.Create(indexFile, asrFile: asrFile, audioFile: audioFile);
+                var workspace = CommandInputResolver.ResolveWorkspace(indexFile);
+                var openOptions = new ChapterOpenOptions
+                {
+                    BookIndexFile = indexFile,
+                    AsrFile = asrFile,
+                    AudioFile = audioFile,
+                    ChapterDirectory = audioFile.Directory
+                };
+
+                using var handle = workspace.OpenChapter(openOptions);
                 await command.ExecuteAsync(handle.Chapter, options, context.GetCancellationToken()).ConfigureAwait(false);
                 handle.Save();
                 var transcriptFile = handle.Chapter.Documents.GetTranscriptFile()
@@ -172,7 +187,7 @@ public static class AlignCommand
         return cmd;
     }
 
-    private static Command CreateHydrateTx(IChapterContextFactory factory, HydrateTranscriptCommand command)
+    private static Command CreateHydrateTx(HydrateTranscriptCommand command)
     {
         var cmd = new Command("hydrate", "Hydrate a TranscriptIndex with token values from BookIndex and ASR (for debugging)");
 
@@ -200,7 +215,15 @@ public static class AlignCommand
                 var txFile = CommandInputResolver.ResolveChapterArtifact(parse.GetValueForOption(txOption), "align.tx.json");
                 var outFile = CommandInputResolver.ResolveChapterArtifact(parse.GetValueForOption(outOption), "align.hydrate.json", mustExist: false);
 
-                using var handle = factory.Create(indexFile, asrFile: asrFile, transcriptFile: txFile);
+                var workspace = CommandInputResolver.ResolveWorkspace(indexFile);
+                var openOptions = new ChapterOpenOptions
+                {
+                    BookIndexFile = indexFile,
+                    AsrFile = asrFile,
+                    TranscriptFile = txFile
+                };
+
+                using var handle = workspace.OpenChapter(openOptions);
                 await command.ExecuteAsync(handle.Chapter, null, context.GetCancellationToken()).ConfigureAwait(false);
                 handle.Save();
                 var hydrateArtifact = handle.Chapter.Documents.GetHydratedTranscriptFile()

@@ -1,5 +1,5 @@
 using Ams.Core.Application.Commands;
-using Ams.Core.Application.Contexts;
+using Ams.Core.Runtime.Workspace;
 using Ams.Core.Services;
 using Ams.Core.Services.Alignment;
 using Ams.Web.Components;
@@ -24,7 +24,6 @@ builder.Services.AddRazorComponents()
     .AddInteractiveServerComponents();
 
 // Core service graph mirrors the CLI host so orchestration remains identical.
-builder.Services.AddSingleton<IChapterContextFactory, ChapterContextFactory>();
 builder.Services.AddSingleton<IAsrService, AsrService>();
 builder.Services.AddSingleton<IAlignmentService, AlignmentService>();
 builder.Services.AddSingleton<GenerateTranscriptCommand>();
@@ -45,6 +44,8 @@ builder.Services.AddScoped(sp =>
 builder.Services.AddScoped<WorkspaceApiClient>();
 builder.Services.AddScoped<ChapterApiClient>();
 builder.Services.AddSingleton<WorkspaceState>();
+builder.Services.AddSingleton<WebWorkspace>();
+builder.Services.AddSingleton<IWorkspace>(sp => sp.GetRequiredService<WebWorkspace>());
 builder.Services.AddSingleton<ChapterContextAccessor>();
 builder.Services.AddSingleton<ChapterCatalogService>();
 builder.Services.AddSingleton<ChapterDataService>();
