@@ -44,11 +44,6 @@ if (builder.ExecutionContext.IsRunMode) // The following project is only added f
 
     serverWebProject.WithReference(mailpit);
 
-    // Blazor Hybrid Windows project.
-    builder.AddProject("clientwindows", "../../Client/Ams.Web.Client.Windows/Ams.Web.Client.Windows.csproj")
-        .WithExplicitStart();
-
-
     var tunnel = builder.AddDevTunnel("web-dev-tunnel")
         .WithAnonymousAccess()
         .WithReference(serverWebProject.WithHttpEndpoint(name: "devTunnel").GetEndpoint("devTunnel"));
