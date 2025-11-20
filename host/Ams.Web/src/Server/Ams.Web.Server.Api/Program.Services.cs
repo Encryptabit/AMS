@@ -24,6 +24,7 @@ using Hangfire.EntityFrameworkCore;
 using AdsPush;
 using AdsPush.Abstraction;
 using Azure.Storage.Blobs;
+using Ams.Web.Server.Api.Models.ValidationViewer;
 using Ams.Web.Server.Api.Services;
 using Ams.Web.Server.Api.Controllers;
 using Ams.Web.Server.Shared.Services;
@@ -183,6 +184,17 @@ public static partial class Program
             .Bind(configuration)
             .ValidateDataAnnotations()
             .ValidateOnStart();
+
+        services.AddOptions<ValidationViewerOptions>()
+            .Bind(configuration.GetSection("ValidationViewer"))
+            .ValidateDataAnnotations();
+
+        services.AddSingleton(sp =>
+        {
+            ValidationViewerOptions opts = new();
+            configuration.GetSection("ValidationViewer").Bind(opts);
+            return new ValidationViewerWorkspaceState(opts);
+        });
 
         services.AddSingleton(sp =>
         {
