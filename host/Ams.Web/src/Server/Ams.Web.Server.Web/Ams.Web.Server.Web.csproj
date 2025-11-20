@@ -1,0 +1,55 @@
+﻿<Project Sdk="Microsoft.NET.Sdk.Web">
+
+    <PropertyGroup>
+        <TargetFramework>net10.0</TargetFramework>
+        <UserSecretsId>ABE98AB9-E40A-4CB6-B57B-05EEDB1D6A42</UserSecretsId>
+        <ValidateExecutableReferencesMatchSelfContained>false</ValidateExecutableReferencesMatchSelfContained>
+    </PropertyGroup>
+
+    <PropertyGroup Condition="'$(Environment)' != 'Development' And '$(SelfContained)' == 'true'">
+        <RuntimeIdentifier>linux-x64</RuntimeIdentifier>
+        <PublishReadyToRun>true</PublishReadyToRun>
+        <PublishReadyToRunComposite>true</PublishReadyToRunComposite>
+    </PropertyGroup>
+
+    <ItemGroup>
+        <PackageReference Include="Bit.BlazorES2019" />
+        <PackageReference Include="NWebsec.AspNetCore.Middleware" />
+        <PackageReference Include="Microsoft.AspNetCore.Components.WebAssembly.Server" />
+    </ItemGroup>
+
+    <ItemGroup>
+        <ProjectReference Include="..\Ams.Web.Server.Shared\Ams.Web.Server.Shared.csproj" />
+        <ProjectReference Include="..\Ams.Web.Server.Api\Ams.Web.Server.Api.csproj" />
+        <ProjectReference Include="..\..\Client\Ams.Web.Client.Web\Ams.Web.Client.Web.csproj" />
+    </ItemGroup>
+
+    <ItemGroup>
+        <Using Include="Ams.Web.Shared.Enums" />
+    </ItemGroup>
+
+    <ItemGroup Condition="'$(Environment)' == 'Development'">
+        <!-- Check out  ScssCompilerService.cs source code. -->
+        <PackageReference Include="Meziantou.Framework.Win32.Jobs" />
+    </ItemGroup>
+    <ItemGroup Condition="'$(Environment)' != 'Development'">
+        <Compile Remove="Services\ScssCompilerService.cs" />
+    </ItemGroup>
+
+    <ItemGroup>
+        <None Include="..\Ams.Web.Server.Api\appsettings*.json">
+            <Link>%(Filename)%(Extension)</Link>
+            <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+        </None>
+    </ItemGroup>
+
+    <!--
+    https://learn.microsoft.com/en-us/dotnet/core/docker/publish-as-container
+    https://learn.microsoft.com/en-us/visualstudio/containers/container-msbuild-properties
+    -->
+    <PropertyGroup>
+        <DockerDefaultTargetOS>Linux</DockerDefaultTargetOS>
+        <EnableSdkContainerDebugging Condition="'$(Environment)' == 'Development'">True</EnableSdkContainerDebugging>
+    </PropertyGroup>
+
+</Project>
