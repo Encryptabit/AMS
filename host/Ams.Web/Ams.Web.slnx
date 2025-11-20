@@ -69,16 +69,8 @@
   </Folder>
   <Folder Name="/Client/">
     <Project Path="src/Client/Ams.Web.Client.Core/Ams.Web.Client.Core.csproj" />
-    <Project Path="src/Client/Ams.Web.Client.Maui/Ams.Web.Client.Maui.csproj">
-      <Build Solution="DebugBlazorServer|*" Project="false" />
-      <Deploy Solution="Debug|*" />
-      <Deploy Solution="Release|*" />
-    </Project>
     <Project Path="src/Client/Ams.Web.Client.Web/Ams.Web.Client.Web.csproj">
       <Build Solution="DebugBlazorServer|*" Project="false" />
-    </Project>
-    <Project Path="src/Client/Ams.Web.Client.Windows/Ams.Web.Client.Windows.csproj">
-        <Build Solution="DebugBlazorServer|*" Project="false" />
     </Project>
   </Folder>
   <Folder Name="/Shared/">
