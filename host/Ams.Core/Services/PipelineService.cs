@@ -52,7 +52,8 @@ public sealed class PipelineService
             BookIndexFile = options.BookIndexFile,
             AudioFile = options.AudioFile,
             ChapterDirectory = options.ChapterDirectory,
-            ChapterId = options.ChapterId
+            ChapterId = options.ChapterId,
+            ReloadBookIndex = bookIndexBuilt
         };
 
         using var handle = workspace.OpenChapter(openOptions);

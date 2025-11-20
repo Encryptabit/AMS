@@ -27,6 +27,9 @@ public sealed class BookDocuments
         set => _bookIndex.SetValue(value);
     }
 
+    internal void SetLoadedBookIndex(BookIndex? bookIndex)
+        => _bookIndex.SetValue(bookIndex, markClean: true);
+
     internal void SaveChanges() => _bookIndex.Save();
 
     internal FileInfo? GetBookIndexFile() => _bookIndex.GetBackingFile();

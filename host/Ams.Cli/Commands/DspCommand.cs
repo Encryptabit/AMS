@@ -1,5 +1,6 @@
 using System.CommandLine;
 using System.CommandLine.Invocation;
+using System.Linq;
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
@@ -13,26 +14,27 @@ namespace Ams.Cli.Commands;
 public static class DspCommand
 {
     private const string DefaultChainFileName = "dsp.chain.json";
+    private const string DefaultFilterChainFileName = "filter-chain.json";
     private const int DefaultBitDepth = 32;
 
-    private static readonly (string Name, Func<FfFilterGraph, FfFilterGraph> Apply)[] BuiltInFilterDefinitions =
+    private static readonly FilterDefinition[] FilterDefinitions =
     [
-        ("highpass", g => g.HighPass(new HighPassFilterParams(Frequency: 35, Poles: 1))),
-        ("lowpass", g => g.LowPass(new LowPassFilterParams(Frequency: 14000, Poles: 1))),
-        ("deesser", g => g.DeEsser(new DeEsserFilterParams(NormalizedFrequency: 0.4, Intensity: 0.2, MaxReduction: 0.5, OutputMode: "o"))),
-        ("denoise", g => g.FftDenoise(new FftDenoiseFilterParams(NoiseReductionDb: 6))),
-        ("ndenoise", g => g.NeuralDenoise()),
-        ("aspectralstats", g => g.AspectralStats()),
-        ("dynaudnorm", g => g.DynaudNorm()),
-        ("astats", g => g.AStats(new AStatsFilterParams(EmitMetadata: true, ResetInterval: 1))),
-        ("compressor", g => g.ACompressor(new ACompressorFilterParams(ThresholdDb: -24, Ratio: 1.3, AttackMilliseconds: 5, ReleaseMilliseconds: 120, MakeupDb: 0.5))),
-        ("limiter", g => g.ALimiter(new ALimiterFilterParams(LimitDb: -1.0, AttackMilliseconds: 5, ReleaseMilliseconds: 60))),
-        ("loudnorm", g => g.LoudNorm(new LoudNormFilterParams(TargetI: -18, TargetLra: 7, TargetTp: -2, DualMono: true))),
-        ("resample", g => g.Resample(new ResampleFilterParams(SampleRate: 48000))),
+        FilterDefinition.Create("highpass", (g, p) => g.HighPass(p), new HighPassFilterParams(Frequency: 35, Poles: 1)),
+        FilterDefinition.Create("lowpass", (g, p) => g.LowPass(p), new LowPassFilterParams(Frequency: 14000, Poles: 1)),
+        FilterDefinition.Create("deesser", (g, p) => g.DeEsser(p), new DeEsserFilterParams(NormalizedFrequency: 0.4, Intensity: 0.2, MaxReduction: 0.5, OutputMode: "o")),
+        FilterDefinition.Create("denoise", (g, p) => g.FftDenoise(p), new FftDenoiseFilterParams(NoiseReductionDb: 6)),
+        FilterDefinition.Create("ndenoise", (g, p) => g.NeuralDenoise(p), new NeuralDenoiseFilterParams(Model: "models/sh.rnnn", Mix: 0.6)),
+        FilterDefinition.Create("aspectralstats", (g, p) => g.AspectralStats(p), new AspectralStatsFilterParams()),
+        FilterDefinition.Create("dynaudnorm", (g, p) => g.DynaudNorm(p), new DynaudNormFilterParams()),
+        FilterDefinition.Create("astats", (g, p) => g.AStats(p), new AStatsFilterParams(EmitMetadata: true, ResetInterval: 1)),
+        FilterDefinition.Create("compressor", (g, p) => g.ACompressor(p), new ACompressorFilterParams(ThresholdDb: -24, Ratio: 1.3, AttackMilliseconds: 5, ReleaseMilliseconds: 120, MakeupDb: 0.5)),
+        FilterDefinition.Create("limiter", (g, p) => g.ALimiter(p), new ALimiterFilterParams(LimitDb: -1.0, AttackMilliseconds: 5, ReleaseMilliseconds: 60)),
+        FilterDefinition.Create("loudnorm", (g, p) => g.LoudNorm(p), new LoudNormFilterParams(TargetI: -18, TargetLra: 7, TargetTp: -2, DualMono: true)),
+        FilterDefinition.Create("resample", (g, p) => g.Resample(p), new ResampleFilterParams(SampleRate: 48000)),
     ];
 
-    private static readonly IReadOnlyDictionary<string, Func<FfFilterGraph, FfFilterGraph>> BuiltInFilterMap =
-        BuiltInFilterDefinitions.ToDictionary(f => f.Name, f => f.Apply, StringComparer.OrdinalIgnoreCase);
+    private static readonly IReadOnlyDictionary<string, FilterDefinition> FilterDefinitionMap =
+        FilterDefinitions.ToDictionary(f => f.Name, StringComparer.OrdinalIgnoreCase);
 
     public static Command Create()
     {
@@ -205,9 +207,9 @@ public static class DspCommand
         cmd.SetHandler(() =>
         {
             Log.Info("Built-in FFmpeg filters:");
-            foreach (var (name, _) in BuiltInFilterDefinitions)
+            foreach (var definition in FilterDefinitions)
             {
-                Console.WriteLine($"- {name}");
+                Console.WriteLine($"- {definition.Name}");
             }
         });
         return cmd;
@@ -215,32 +217,85 @@ public static class DspCommand
 
     private static Command CreateFilterChainCommand()
     {
-        var cmd = new Command("filter-chain", "Apply built-in FFmpeg filters to an input file");
+        var cmd = new Command("filter-chain", "Manage FFmpeg filter chains");
+        cmd.AddCommand(CreateFilterChainInitCommand());
+        cmd.AddCommand(CreateFilterChainRunCommand());
+        return cmd;
+    }
 
-        var inputOption = new Option<FileInfo?>("--input", "Input audio file (defaults to active chapter)");
-        var filtersOption = new Option<string[]>("--filters", () => Array.Empty<string>(), "Filters to apply (see dsp filters)")
+    private static Command CreateFilterChainInitCommand()
+    {
+        var cmd = new Command("init", "Create or overwrite a filter-chain configuration file");
+
+        var filtersOption = new Option<string[]>("--filters", () => Array.Empty<string>(), "Filters to include (name or 'all')")
         {
             AllowMultipleArgumentsPerToken = true
         };
+        var configOption = new Option<FileInfo?>("--config", () => null, $"Configuration file path (defaults to {DefaultFilterChainFileName})");
+
+        cmd.AddOption(filtersOption);
+        cmd.AddOption(configOption);
+
+        cmd.SetHandler(async context =>
+        {
+            var token = context.GetCancellationToken();
+            try
+            {
+                var selected = context.ParseResult.GetValueForOption(filtersOption);
+                var configPath = ResolveFilterConfigFile(context.ParseResult.GetValueForOption(configOption));
+                var definitions = ResolveFilterDefinitions(selected);
+
+                var config = new FilterChainConfig();
+                foreach (var definition in definitions)
+                {
+                    config.Filters.Add(new FilterConfig
+                    {
+                        Name = definition.Name,
+                        Enabled = true,
+                        Parameters = SerializeParameters(definition.DefaultParameters ?? CreateDefaultParameterInstance(definition))
+                    });
+                }
+
+                await config.SaveAsync(configPath, token).ConfigureAwait(false);
+                Log.Info("Filter-chain config written to {Path}", configPath.FullName);
+            }
+            catch (Exception ex)
+            {
+                Log.Error(ex, "dsp filter-chain init failed");
+                context.ExitCode = 1;
+            }
+        });
+
+        return cmd;
+    }
+
+    private static Command CreateFilterChainRunCommand()
+    {
+        var cmd = new Command("run", "Apply filters defined in a configuration file");
+
+        var inputOption = new Option<FileInfo?>("--input", "Input audio file (defaults to active chapter)");
+        inputOption.AddAlias("-i");
+        var configOption = new Option<FileInfo?>("--config", () => null, $"Configuration file path (defaults to {DefaultFilterChainFileName})");
         var saveOption = new Option<bool>("--save", () => false, "Write filtered audio to disk");
         var outputOption = new Option<FileInfo?>("--output", "Optional output path when using --save");
 
-        inputOption.AddAlias("-i");
         cmd.AddOption(inputOption);
-        cmd.AddOption(filtersOption);
+        cmd.AddOption(configOption);
         cmd.AddOption(saveOption);
         cmd.AddOption(outputOption);
 
-        cmd.SetHandler(context =>
+        cmd.SetHandler(async context =>
         {
             var token = context.GetCancellationToken();
             try
             {
                 var inputFile = CommandInputResolver.RequireAudio(context.ParseResult.GetValueForOption(inputOption));
-                var filterNames = context.ParseResult.GetValueForOption(filtersOption);
-                if (filterNames is null || filterNames.Length == 0)
+                var configPath = ResolveFilterConfigFile(context.ParseResult.GetValueForOption(configOption));
+                var config = await FilterChainConfig.LoadAsync(configPath, token).ConfigureAwait(false);
+                var enabledFilters = config.Filters.Where(f => f.Enabled).ToList();
+                if (enabledFilters.Count == 0)
                 {
-                    throw new InvalidOperationException("Specify at least one filter via --filters (run 'dsp filters' to list options).");
+                    throw new InvalidOperationException("No enabled filters found in the filter-chain configuration.");
                 }
 
                 var save = context.ParseResult.GetValueForOption(saveOption);
@@ -250,11 +305,11 @@ public static class DspCommand
                     throw new InvalidOperationException("--output can only be used with --save.");
                 }
 
-                ExecuteFilterChain(inputFile, filterNames, save, outputFile);
+                ExecuteFilterChain(inputFile, enabledFilters, save, outputFile);
             }
             catch (Exception ex)
             {
-                Log.Error(ex, "dsp filter-chain failed");
+                Log.Error(ex, "dsp filter-chain run failed");
                 context.ExitCode = 1;
             }
         });
@@ -281,7 +336,7 @@ public static class DspCommand
             try
             {
                 var inputFile = CommandInputResolver.RequireAudio(context.ParseResult.GetValueForOption(inputOption));
-                var filterNames = BuiltInFilterDefinitions.Select(f => f.Name).ToArray();
+                var filterConfigs = FilterDefinitions.Select(definition => CreateFilterConfig(definition)).ToList();
 
                 var save = context.ParseResult.GetValueForOption(saveOption);
                 var outputFile = context.ParseResult.GetValueForOption(outputOption);
@@ -290,7 +345,7 @@ public static class DspCommand
                     throw new InvalidOperationException("--output can only be used with --save.");
                 }
 
-                ExecuteFilterChain(inputFile, filterNames, save, outputFile);
+                ExecuteFilterChain(inputFile, filterConfigs, save, outputFile);
             }
             catch (Exception ex)
             {
@@ -1234,17 +1289,17 @@ public static class DspCommand
     
     private static void ExecuteFilterChain(
         FileInfo inputFile,
-        IReadOnlyList<string> filterNames,
+        IReadOnlyList<FilterConfig> filters,
         bool saveOutput,
         FileInfo? explicitOutput)
     {
-        if (filterNames.Count == 0)
+        if (filters.Count == 0)
         {
             throw new InvalidOperationException("Specify at least one filter.");
         }
 
         var buffer = AudioProcessor.Decode(inputFile.FullName);
-        var graph = BuildFilterGraph(buffer, filterNames);
+        var graph = BuildFilterGraph(buffer, filters);
 
         if (saveOutput)
         {
@@ -1260,24 +1315,130 @@ public static class DspCommand
         else
         {
             graph.RunDiscardingOutput();
-            Log.Info("Filter chain executed for {Input} ({Count} filters)", inputFile.FullName, filterNames.Count);
+            Log.Info("Filter chain executed for {Input} ({Count} filters)", inputFile.FullName, filters.Count);
         }
     }
 
-    private static FfFilterGraph BuildFilterGraph(AudioBuffer buffer, IReadOnlyList<string> filterNames)
+    private static IEnumerable<FilterDefinition> ResolveFilterDefinitions(string[]? requested)
+    {
+        if (requested is null || requested.Length == 0)
+        {
+            return FilterDefinitions;
+        }
+
+        if (requested.Any(name => string.Equals(name, "all", StringComparison.OrdinalIgnoreCase)))
+        {
+            return FilterDefinitions;
+        }
+
+        var definitions = new List<FilterDefinition>(requested.Length);
+        foreach (var name in requested)
+        {
+            definitions.Add(GetFilterDefinition(name));
+        }
+
+        return definitions;
+    }
+
+    private static FilterDefinition GetFilterDefinition(string name)
+    {
+        if (!FilterDefinitionMap.TryGetValue(name, out var definition))
+        {
+            throw new InvalidOperationException($"Unknown filter '{name}'. Run 'dsp filters' to list available filters.");
+        }
+
+        return definition;
+    }
+
+    private static FfFilterGraph BuildFilterGraph(AudioBuffer buffer, IReadOnlyList<FilterConfig> filters)
     {
         var graph = FfFilterGraph.FromBuffer(buffer);
-        foreach (var filter in filterNames)
+        foreach (var filter in filters)
         {
-            if (!BuiltInFilterMap.TryGetValue(filter, out var apply))
-            {
-                throw new InvalidOperationException($"Unknown filter '{filter}'. Run 'dsp filters' to list available filters.");
-            }
-
-            graph = apply(graph);
+            var definition = GetFilterDefinition(filter.Name);
+            var parameters = DeserializeParameters(definition, filter.Parameters);
+            graph = definition.Apply(graph, parameters);
         }
 
         return graph;
+    }
+
+    private static FilterConfig CreateFilterConfig(FilterDefinition definition, bool enabled = true)
+        => new()
+        {
+            Name = definition.Name,
+            Enabled = enabled,
+            Parameters = SerializeParameters(definition.DefaultParameters ?? CreateDefaultParameterInstance(definition))
+        };
+
+    private static JsonElement SerializeParameters(object? value)
+        => JsonSerializer.SerializeToElement(value ?? new { }, FilterChainConfig.SerializerOptions);
+
+    private static object? DeserializeParameters(FilterDefinition definition, JsonElement element)
+    {
+        if (definition.ParameterType is null)
+        {
+            return null;
+        }
+
+        if (element.ValueKind == JsonValueKind.Undefined || element.ValueKind == JsonValueKind.Null)
+        {
+            return definition.DefaultParameters ?? CreateDefaultParameterInstance(definition);
+        }
+
+        if (element.ValueKind == JsonValueKind.Object && !element.EnumerateObject().Any())
+        {
+            return definition.DefaultParameters ?? CreateDefaultParameterInstance(definition);
+        }
+
+        try
+        {
+            return element.Deserialize(definition.ParameterType, FilterChainConfig.SerializerOptions)
+                   ?? definition.DefaultParameters ?? CreateDefaultParameterInstance(definition);
+        }
+        catch (JsonException ex)
+        {
+            throw new InvalidOperationException($"Failed to deserialize parameters for filter '{definition.Name}': {ex.Message}", ex);
+        }
+    }
+
+    private static object? CreateDefaultParameterInstance(FilterDefinition definition)
+    {
+        if (definition.ParameterType is null)
+        {
+            return null;
+        }
+
+        return definition.DefaultParameters ?? Activator.CreateInstance(definition.ParameterType);
+    }
+
+    private sealed record FilterDefinition(
+        string Name,
+        Type? ParameterType,
+        Func<FfFilterGraph, object?, FfFilterGraph> Apply,
+        object? DefaultParameters)
+    {
+        public static FilterDefinition Create<TParams>(
+            string name,
+            Func<FfFilterGraph, TParams, FfFilterGraph> apply,
+            TParams? defaults = null) where TParams : class
+        {
+            var defaultParams = defaults ?? (TParams)Activator.CreateInstance(typeof(TParams))!;
+            return new FilterDefinition(
+                name,
+                typeof(TParams),
+                (graph, value) =>
+                {
+                    var typed = (TParams?)(value ?? defaultParams) ?? defaultParams;
+                    return apply(graph, typed);
+                },
+                defaultParams);
+        }
+
+        public static FilterDefinition Create(
+            string name,
+            Func<FfFilterGraph, FfFilterGraph> apply)
+            => new(name, null, (graph, _) => apply(graph), null);
     }
 
     private static FileInfo ResolveFilteredOutput(FileInfo? explicitOutput, FileInfo inputFile)
@@ -1307,6 +1468,17 @@ public static class DspCommand
         var stem = Path.GetFileNameWithoutExtension(inputFile.Name);
         var candidate = Path.Combine(directory, $"{stem}.filtered.wav");
         return new FileInfo(candidate);
+    }
+
+    private static FileInfo ResolveFilterConfigFile(FileInfo? provided)
+    {
+        if (provided is not null)
+        {
+            return new FileInfo(Path.GetFullPath(provided.FullName));
+        }
+
+        var root = Directory.GetCurrentDirectory();
+        return new FileInfo(Path.Combine(root, DefaultFilterChainFileName));
     }
 
     private static (IReadOnlyList<string> Inputs, string? MidiInput) ResolveInputs(

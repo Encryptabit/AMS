@@ -50,7 +50,8 @@ internal sealed class CliWorkspace : IWorkspace
             normalized.HydrateFile,
             normalized.AudioFile,
             normalized.ChapterDirectory,
-            normalized.ChapterId);
+            normalized.ChapterId,
+            normalized.ReloadBookIndex);
     }
 
     private ChapterOpenOptions NormalizeOptions(ChapterOpenOptions options)

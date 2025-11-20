@@ -12,3 +12,4 @@ global using Ams.Core.Services.Alignment;
 global using Ams.Core.Processors.Alignment.Mfa;
 global using Ams.Cli.Services;
 global using Ams.Cli.Models;
+global using Ams.Cli.Workspace;
