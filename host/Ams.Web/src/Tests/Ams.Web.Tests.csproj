@@ -1,0 +1,38 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+    <PropertyGroup>
+        <TargetFramework>net10.0</TargetFramework>
+        <Nullable>enable</Nullable>
+        <RunSettingsFilePath>$(MSBuildProjectDirectory)\.runsettings</RunSettingsFilePath>
+        <TestingPlatformCommandLineArguments>--settings ./.runsettings</TestingPlatformCommandLineArguments>
+    </PropertyGroup>
+
+    <ItemGroup>
+        <PackageReference Include="Aspire.Hosting.Testing" />
+        <PackageReference Include="Bit.BlazorES2019" />
+        <PackageReference Include="FakeItEasy" />
+        <PackageReference Include="Microsoft.Playwright.MSTest.v4" />
+        <PackageReference Include="MSTest" />
+    </ItemGroup>
+
+    <ItemGroup>
+        <ProjectReference Include="..\Server\Ams.Web.Server.Web\Ams.Web.Server.Web.csproj" />
+        <ProjectReference Include="..\Server\Ams.Web.Server.Api\Ams.Web.Server.Api.csproj" />
+        <ProjectReference Include="..\Server\Ams.Web.Server.AppHost\Ams.Web.Server.AppHost.csproj" />
+    </ItemGroup>
+
+    <ItemGroup>
+        <Using Include="System.Net.Http.Headers" />
+        <Using Include="System.Net.Http.Json" />
+        <Using Include="Ams.Web.Shared" />
+        <Using Include="Ams.Web.Server.Web" />
+        <Using Include="Ams.Web.Shared.Enums" />
+        <Using Include="Microsoft.AspNetCore.Http" />
+        <Using Include="Microsoft.AspNetCore.Components" />
+        <Using Include="Microsoft.VisualStudio.TestTools.UnitTesting" />
+        <Using Include="Microsoft.Playwright" />
+        <Using Include="Microsoft.Playwright.MSTest" />
+        <Using Include="FakeItEasy" />
+    </ItemGroup>
+
+</Project>

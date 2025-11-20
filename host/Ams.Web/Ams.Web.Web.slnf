@@ -1,0 +1,15 @@
+{
+  "solution": {
+    "path": "Ams.Web.slnx",
+    "projects": [
+      "src\\Client\\Ams.Web.Client.Core\\Ams.Web.Client.Core.csproj",
+      "src\\Client\\Ams.Web.Client.Web\\Ams.Web.Client.Web.csproj",
+      "src\\Server\\Ams.Web.Server.AppHost\\Ams.Web.Server.AppHost.csproj",
+      "src\\Server\\Ams.Web.Server.Api\\Ams.Web.Server.Api.csproj",
+      "src\\Server\\Ams.Web.Server.Shared\\Ams.Web.Server.Shared.csproj",
+      "src\\Server\\Ams.Web.Server.Web\\Ams.Web.Server.Web.csproj",
+      "src\\Shared\\Ams.Web.Shared.csproj",
+      "src\\Tests\\Ams.Web.Tests.csproj"
+    ]
+  }
+}
