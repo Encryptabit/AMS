@@ -49,7 +49,8 @@ public sealed class WebWorkspace : IWorkspace
             normalized.HydrateFile,
             normalized.AudioFile,
             normalized.ChapterDirectory,
-            normalized.ChapterId);
+            normalized.ChapterId,
+            normalized.ReloadBookIndex);
     }
 
     private void EnsureManager()

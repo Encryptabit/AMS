@@ -18,7 +18,8 @@ public interface IChapterManager
         FileInfo? hydrateFile = null,
         FileInfo? audioFile = null,
         DirectoryInfo? chapterDirectory = null,
-        string? chapterId = null);
+        string? chapterId = null,
+        bool reloadBookIndex = false);
     ChapterDescriptor UpsertDescriptor(ChapterDescriptor descriptor);
     bool TryMoveNext(out ChapterContext context);
     bool TryMovePrevious(out ChapterContext context);

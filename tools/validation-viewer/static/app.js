@@ -1831,22 +1831,65 @@ function renderUnifiedDiff(diff) {
     }
 
     const parts = [];
+    let i = 0;
 
-    diff.ops.forEach(op => {
+    while (i < diff.ops.length) {
+        const op = diff.ops[i];
         const tokens = op.tokens || [];
 
-        if (tokens.length === 0) return;
+        if (tokens.length === 0) {
+            i++;
+            continue;
+        }
 
         const text = tokens.join(' ');
 
         if (op.op === 'equal') {
             parts.push(escapeHtml(text));
+            i++;
         } else if (op.op === 'delete') {
-            parts.push(`<span class="diff-deleted">${escapeHtml(text)}</span>`);
+            // Collect consecutive deletes
+            const deletedTexts = [text];
+            let j = i + 1;
+            while (j < diff.ops.length && diff.ops[j].op === 'delete') {
+                const delTokens = diff.ops[j].tokens || [];
+                if (delTokens.length > 0) {
+                    deletedTexts.push(delTokens.join(' '));
+                }
+                j++;
+            }
+
+            // Check if followed by inserts (substitution)
+            const insertedTexts = [];
+            let k = j;
+            while (k < diff.ops.length && diff.ops[k].op === 'insert') {
+                const insTokens = diff.ops[k].tokens || [];
+                if (insTokens.length > 0) {
+                    insertedTexts.push(insTokens.join(' '));
+                }
+                k++;
+            }
+
+            if (insertedTexts.length > 0) {
+                // Substitution: show as deleted → inserted
+                const deletedStr = deletedTexts.map(t => escapeHtml(t)).join(' ');
+                const insertedStr = insertedTexts.map(t => escapeHtml(t)).join(' ');
+                parts.push(`<span class="diff-substitution"><span class="diff-deleted">${deletedStr}</span> → <span class="diff-inserted">${insertedStr}</span></span>`);
+                i = k;
+            } else {
+                // Pure deletion
+                const deletedStr = deletedTexts.map(t => escapeHtml(t)).join(' ');
+                parts.push(`<span class="diff-deleted">${deletedStr}</span>`);
+                i = j;
+            }
         } else if (op.op === 'insert') {
+            // Pure insertion (not part of a substitution)
             parts.push(`<span class="diff-inserted">${escapeHtml(text)}</span>`);
+            i++;
+        } else {
+            i++;
         }
-    });
+    }
 
     if (parts.length === 0) {
         return '<div class="diff-empty">No transcript data</div>';

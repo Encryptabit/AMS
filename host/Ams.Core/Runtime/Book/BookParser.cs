@@ -107,16 +107,31 @@ public class BookParser : IBookParser
                 string? title = null;
                 string? author = null;
                 var metadata = new Dictionary<string, object>();
+                var suppressList = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+                static void AddSuppress(HashSet<string> suppress, string? value)
+                {
+                    if (string.IsNullOrWhiteSpace(value))
+                    {
+                        return;
+                    }
+
+                    suppress.Add(value.Trim());
+                }
 
                 if (document.CoreProperties != null)
                 {
                     var props = document.CoreProperties;
                     title = props.GetValueOrDefault("title");
                     author = props.GetValueOrDefault("creator");
+                    AddSuppress(suppressList, title);
+                    AddSuppress(suppressList, author);
 
                     foreach (var kvp in props.Where(kvp => !string.IsNullOrWhiteSpace(kvp.Value) && kvp.Key != "title" && kvp.Key != "creator"))
                     {
-                        metadata[kvp.Key] = kvp.Value;
+                        var trimmed = kvp.Value!.Trim();
+                        metadata[kvp.Key] = trimmed;
+                        AddSuppress(suppressList, trimmed);
                     }
                 }
 
@@ -135,11 +150,12 @@ public class BookParser : IBookParser
                         continue;
                     }
 
-                    var text = p.Text ?? string.Empty; // Do not trim/normalize
+                    var text = p.Text ?? string.Empty; // Do not trim/normalize before filtering metadata
+                    text = RemoveSuppressEdges(text, suppressList);
                     var style = p.StyleId ?? "Unknown";
                     var kind = style.Contains("Heading", StringComparison.OrdinalIgnoreCase) ? "Heading" : "Body";
 
-                    if (!string.IsNullOrEmpty(text))
+                    if (!string.IsNullOrWhiteSpace(text))
                     {
                         parsedParagraphs.Add(new ParsedParagraph(text, style, kind));
                         sb.Append(text);

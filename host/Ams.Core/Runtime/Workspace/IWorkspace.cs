@@ -38,4 +38,5 @@ public sealed record ChapterOpenOptions
     public FileInfo? AudioFile { get; init; }
     public DirectoryInfo? ChapterDirectory { get; init; }
     public string? ChapterId { get; init; }
+    public bool ReloadBookIndex { get; init; }
 }

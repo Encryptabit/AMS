@@ -99,7 +99,8 @@ public sealed class ChapterManager : IChapterManager
         FileInfo? hydrateFile = null,
         FileInfo? audioFile = null,
         DirectoryInfo? chapterDirectory = null,
-        string? chapterId = null)
+        string? chapterId = null,
+        bool reloadBookIndex = false)
     {
         ArgumentNullException.ThrowIfNull(bookIndexFile);
         if (!bookIndexFile.Exists)
@@ -128,7 +129,11 @@ public sealed class ChapterManager : IChapterManager
         var descriptor = EnsureChapterDescriptor(initialDescriptor);
         var chapter = Load(descriptor.ChapterId);
 
-        _bookContext.Documents.BookIndex = bookIndex;
+        var currentBookIndex = _bookContext.Documents.BookIndex;
+        if (currentBookIndex is null || reloadBookIndex)
+        {
+            _bookContext.Documents.SetLoadedBookIndex(bookIndex);
+        }
 
         if (asrFile?.Exists == true)
         {
