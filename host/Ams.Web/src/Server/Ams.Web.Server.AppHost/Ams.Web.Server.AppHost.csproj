@@ -20,7 +20,6 @@
 
     <ItemGroup>
         <ProjectReference Include="..\..\Client\Ams.Web.Client.Web\Ams.Web.Client.Web.csproj" />
-        <ProjectReference Include="..\..\Client\Ams.Web.Client.Windows\Ams.Web.Client.Windows.csproj" />
         <ProjectReference Include="..\Ams.Web.Server.Web\Ams.Web.Server.Web.csproj" />
         <ProjectReference Include="..\Ams.Web.Server.Shared\Ams.Web.Server.Shared.csproj" IsAspireProjectResource="false" />
     </ItemGroup>
