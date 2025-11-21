@@ -18,7 +18,3 @@ public sealed record ValidationReportDto(
     string? HydratePath,
     int SentenceCount,
     int ParagraphCount);
-
-public sealed record ReviewedStatusDto(
-    bool Reviewed,
-    string? TimestampUtc);
