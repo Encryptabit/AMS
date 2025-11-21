@@ -8,4 +8,11 @@
     <PublishAot>true</PublishAot>
   </PropertyGroup>
 
+  <ItemGroup>
+    <PackageReference Include="Riok.Mapperly" PrivateAssets="all" Version="4.3.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Ams.Core\Ams.Core.csproj" />
+  </ItemGroup>
 </Project>

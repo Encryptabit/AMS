@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.Json.Serialization.Metadata;
 using Ams.Core.Artifacts;
 using Ams.Core.Artifacts.Alignment;
 using Ams.Core.Artifacts.Alignment.Mfa;
@@ -17,7 +18,11 @@ public sealed class FileArtifactResolver : IArtifactResolver
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
-        WriteIndented = true
+        WriteIndented = true,
+        TypeInfoResolverChain =
+        {
+            new DefaultJsonTypeInfoResolver()
+        }
     };
 
     public BookIndex? LoadBookIndex(BookContext context)
