@@ -12,7 +12,8 @@ namespace Ams.Core.Runtime.Chapter;
 
 public sealed class ChapterManager : IChapterManager
 {
-    private const int DefaultMaxCachedContexts = 30;
+    // Default to unbounded (all chapters) unless caller specifies smaller.
+    private const int DefaultMaxCachedContexts = int.MaxValue;
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
         PropertyNameCaseInsensitive = true
@@ -33,7 +34,8 @@ public sealed class ChapterManager : IChapterManager
         _cache = new Dictionary<string, ChapterContext>(StringComparer.OrdinalIgnoreCase);
         _usageNodes = new Dictionary<string, LinkedListNode<string>>(StringComparer.OrdinalIgnoreCase);
         _usageOrder = new LinkedList<string>();
-        _maxCachedContexts = Math.Max(1, maxCachedContexts);
+        // Clamp to descriptor count to avoid int.MaxValue allocations
+        _maxCachedContexts = Math.Max(1, Math.Min(maxCachedContexts, _descriptors.Count == 0 ? 1 : _descriptors.Count));
         _cursor = 0;
     }
 

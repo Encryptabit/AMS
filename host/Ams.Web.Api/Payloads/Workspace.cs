@@ -1,4 +1,4 @@
-namespace Ams.Web.Api.Dtos;
+namespace Ams.Web.Api.Payloads;
 
 public sealed record WorkspaceRequest(
     string? WorkspaceRoot,

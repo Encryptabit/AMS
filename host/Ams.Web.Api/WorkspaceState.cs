@@ -1,7 +1,10 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using Ams.Core.Runtime.Artifacts;
+using Ams.Core.Runtime.Book;
 using Ams.Core.Runtime.Workspace;
 using Ams.Web.Api.Json;
+using Ams.Web.Api.Payloads;
 
 public sealed class WorkspaceState
 {
@@ -11,6 +14,7 @@ public sealed class WorkspaceState
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
         DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
     };
+    private BookManager? _bookManager;
 
     public WorkspaceState()
     {
@@ -30,6 +34,7 @@ public sealed class WorkspaceState
             if (!string.IsNullOrWhiteSpace(request.WorkspaceRoot))
             {
                 BookRoot = request.WorkspaceRoot;
+                _bookManager = null; // reset so it will rebuild on next access
             }
 
             if (!string.IsNullOrWhiteSpace(request.BookIndexPath))
@@ -58,6 +63,32 @@ public sealed class WorkspaceState
 
             SaveToDisk();
         }
+    }
+
+    public BookContext GetBook(string bookId)
+    {
+        lock (_sync)
+        {
+            _bookManager ??= BuildBookManager(bookId);
+            if (!string.Equals(_bookManager.Current.Descriptor.BookId, bookId, StringComparison.OrdinalIgnoreCase))
+            {
+                _bookManager.Load(bookId);
+            }
+
+            return _bookManager.Current;
+        }
+    }
+
+    private BookManager BuildBookManager(string bookId)
+    {
+        if (string.IsNullOrWhiteSpace(BookRoot))
+        {
+            throw new InvalidOperationException("WorkspaceRoot is not configured.");
+        }
+
+        var descriptors = WorkspaceChapterDiscovery.Discover(BookRoot);
+        var bookDescriptor = new BookDescriptor(bookId, BookRoot, descriptors);
+        return new BookManager(new[] { bookDescriptor }, FileArtifactResolver.Instance);
     }
 
     public WorkspaceResponse ToResponse() => new(
