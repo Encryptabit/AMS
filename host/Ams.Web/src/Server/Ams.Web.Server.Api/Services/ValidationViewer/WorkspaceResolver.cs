@@ -1,7 +1,6 @@
 using Ams.Core.Runtime.Book;
 using Ams.Core.Runtime.Chapter;
 using Ams.Core.Runtime.Workspace;
-using Ams.Core.Runtime.Artifacts;
 
 namespace Ams.Web.Server.Api.Services.ValidationViewer;
 
@@ -12,39 +11,34 @@ namespace Ams.Web.Server.Api.Services.ValidationViewer;
 internal sealed class WorkspaceResolver
 {
     private readonly ValidationViewerWorkspaceState _state;
-    private readonly IArtifactResolver _artifactResolver;
+    private readonly WorkspaceFactory _factory;
     private readonly ILogger<WorkspaceResolver> _logger;
 
-    public WorkspaceResolver(ValidationViewerWorkspaceState state, ILogger<WorkspaceResolver> logger)
+    public WorkspaceResolver(ValidationViewerWorkspaceState state, WorkspaceFactory factory, ILogger<WorkspaceResolver> logger)
     {
         _state = state;
-        _artifactResolver = FileArtifactResolver.Instance;
+        _factory = factory;
         _logger = logger;
     }
 
     public ChapterContextHandle? OpenChapter(string bookId, string chapterId)
     {
-        var bookIndex = ResolveBookIndex(bookId);
-        if (bookIndex is null) return null;
-
-        var bookRoot = ResolveBookRoot(bookId);
-        var chapterDir = new DirectoryInfo(Path.Combine(bookRoot.FullName, chapterId));
-        var audio = new FileInfo(Path.Combine(chapterDir.FullName, $"{chapterId}.wav"));
-        if (!audio.Exists)
+        try
         {
-            var rootAudio = new FileInfo(Path.Combine(bookRoot.FullName, $"{chapterId}.wav"));
-            audio = rootAudio.Exists ? rootAudio : audio;
-        }
+            var workspace = _factory.CreateWorkspace(bookId);
+            var options = new ChapterOpenOptions
+            {
+                BookIndexFile = ResolveBookIndex(bookId),
+                ChapterId = chapterId
+            };
 
-        // hydrate/asr/transcript optional; Core will resolve via DocumentSlots if present
-        return ChapterContextHandle.Create(
-            bookIndex,
-            asrFile: null,
-            transcriptFile: null,
-            hydrateFile: null,
-            audioFile: audio.Exists ? audio : null,
-            chapterDirectory: chapterDir.Exists ? chapterDir : null,
-            chapterId: chapterId);
+            return workspace.OpenChapter(options);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "ValidationViewer: failed to open chapter {ChapterId} in book {BookId}", chapterId, bookId);
+            return null;
+        }
     }
 
     public DirectoryInfo ResolveBookRoot(string bookId)
@@ -55,60 +49,17 @@ internal sealed class WorkspaceResolver
             throw new InvalidOperationException("ValidationViewer: BookRoot not configured");
         }
 
-        var dir = new DirectoryInfo(root);
-        if (!dir.Exists)
-        {
-            throw new DirectoryNotFoundException(dir.FullName);
-        }
-
-        return dir;
+        return new DirectoryInfo(root);
     }
 
     public FileInfo? ResolveBookIndex(string bookId)
     {
         var path = _state.BookIndexPath ?? Path.Combine(ResolveBookRoot(bookId).FullName, "book-index.json");
-        var file = new FileInfo(path);
-        if (!file.Exists)
-        {
-            _logger.LogWarning("book-index.json not found at {Path}", path);
-            return null;
-        }
-
-        return file;
+        return new FileInfo(path);
     }
 
     public BookContext ResolveBook(string bookId)
     {
-        var root = ResolveBookRoot(bookId);
-        var descriptors = BuildChapterDescriptors(root);
-        var manager = new BookManager(new[]
-        {
-            new BookDescriptor(bookId, root.FullName, descriptors)
-        }, _artifactResolver);
-        return manager.Current;
-    }
-
-    private static IReadOnlyList<ChapterDescriptor> BuildChapterDescriptors(DirectoryInfo bookRoot)
-    {
-        var list = new List<ChapterDescriptor>();
-        foreach (var dir in bookRoot.EnumerateDirectories())
-        {
-            var hydrate = Path.Combine(dir.FullName, $"{dir.Name}.align.hydrate.json");
-            if (!File.Exists(hydrate))
-            {
-                continue;
-            }
-
-            var audioBuffers = new List<AudioBufferDescriptor>
-            {
-                new AudioBufferDescriptor("raw", Path.Combine(dir.FullName, $"{dir.Name}.wav")),
-                new AudioBufferDescriptor("treated", Path.Combine(dir.FullName, $"{dir.Name}.treated.wav")),
-                new AudioBufferDescriptor("filtered", Path.Combine(dir.FullName, $"{dir.Name}.filtered.wav"))
-            };
-
-            list.Add(new ChapterDescriptor(dir.Name, dir.FullName, audioBuffers));
-        }
-
-        return list;
+        return _factory.CreateBookManager(bookId).Current;
     }
 }
