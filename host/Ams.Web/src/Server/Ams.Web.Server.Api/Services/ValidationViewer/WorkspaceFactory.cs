@@ -28,10 +28,12 @@ internal sealed class WorkspaceFactory
             throw new InvalidOperationException("ValidationViewer: BookRoot is not configured.");
         }
 
+        var descriptors = WorkspaceChapterDiscovery.Discover(root);
+
         var descriptor = new BookDescriptor(
             bookId: bookId,
             rootPath: root,
-            chapters: Array.Empty<ChapterDescriptor>());
+            chapters: descriptors);
 
         return new BookManager(new[] { descriptor }, _resolver);
     }
@@ -41,14 +43,17 @@ internal sealed class WorkspaceFactory
         // Minimal workspace wrapper using the BookManager
         var manager = CreateBookManager(bookId);
         var context = manager.Current;
-        return new SimpleWorkspace(_state.BookRoot!, context);
+        return new SimpleWorkspace(_state.BookRoot!, _state.BookIndexPath, context);
     }
 
     private sealed class SimpleWorkspace : IWorkspace
     {
-        public SimpleWorkspace(string root, BookContext book)
+        private readonly string? _bookIndexPath;
+
+        public SimpleWorkspace(string root, string? bookIndexPath, BookContext book)
         {
             RootPath = root;
+            _bookIndexPath = bookIndexPath;
             Book = book;
         }
 
@@ -57,7 +62,7 @@ internal sealed class WorkspaceFactory
 
         public ChapterContextHandle OpenChapter(ChapterOpenOptions options)
         {
-            var bookIndex = options.BookIndexFile ?? new FileInfo(Path.Combine(RootPath, "book-index.json"));
+            var bookIndex = options.BookIndexFile ?? new FileInfo(_bookIndexPath ?? Path.Combine(RootPath, "book-index.json"));
             return ChapterContextHandle.Create(
                 bookIndex,
                 options.AsrFile,

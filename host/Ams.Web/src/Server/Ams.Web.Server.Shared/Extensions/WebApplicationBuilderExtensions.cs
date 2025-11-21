@@ -11,7 +11,8 @@ using OpenTelemetry;
 using OpenTelemetry.Metrics;
 using OpenTelemetry.Resources;
 using OpenTelemetry.Trace;
-using static System.Diagnostics.Metrics.MeterExtensions;
+using Ams.Web.Shared.Extensions;
+using MeterExtensions = System.Diagnostics.Metrics.MeterExtensions;
 
 namespace Ams.Web.Server.Shared.Extensions;
 
@@ -124,7 +125,7 @@ public static class WebApplicationBuilderExtensions
                     .AddHttpClientInstrumentation()
                     .AddRuntimeInstrumentation();
 
-                metrics.AddMeter(Current.Name);
+                metrics.AddMeter(MeterExtensions.Current.Name);
             })
             .WithTracing(tracing =>
             {
@@ -154,7 +155,7 @@ public static class WebApplicationBuilderExtensions
                     .AddEntityFrameworkCoreInstrumentation(options => options.Filter = (providerName, command) => command?.CommandText?.Contains("Hangfire") is false /* Ignore Hangfire */)
                     .AddHangfireInstrumentation();
 
-                tracing.AddSource(Current.Name);
+                tracing.AddSource(ActivitySourceExtensions.Current.Name);
             })
             .ConfigureResource(resource =>
             {
