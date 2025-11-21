@@ -2,7 +2,7 @@ using System.Diagnostics;
 using System.IO;
 using System.Text;
 using Ams.Core.Application.Processes;
-using Ams.Core.Artifacts.Alignment.Mfa;
+using Ams.Core.Artifacts.Alignment;
 
 namespace Ams.Core.Application.Mfa;
 

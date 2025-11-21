@@ -1,3 +1,5 @@
+using Ams.Core.Runtime.Book;
+
 namespace Ams.Core.Services.Alignment;
 
 public sealed record AnchorComputationOptions

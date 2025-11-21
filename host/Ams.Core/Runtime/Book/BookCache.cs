@@ -1,8 +1,7 @@
 using System.Security.Cryptography;
 using System.Text.Json;
-using Ams.Core.Runtime.Book;
 
-namespace Ams.Core.Runtime.Documents;
+namespace Ams.Core.Runtime.Book;
 
 /// <summary>
 /// File-based cache implementation for book indexes with SHA256 validation.

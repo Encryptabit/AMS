@@ -1,4 +1,6 @@
-﻿namespace Ams.Core.Runtime.Book;
+﻿using Ams.Core.Runtime.Book;
+
+namespace Ams.Core.Runtime.Interfaces;
 
 public interface IBookManager
 {

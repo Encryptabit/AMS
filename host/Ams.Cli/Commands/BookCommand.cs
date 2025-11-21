@@ -4,6 +4,7 @@ using System.Text;
 using System.Text.Json;
 using Ams.Core.Processors.DocumentProcessor;
 using Ams.Cli.Utilities;
+using Ams.Core.Runtime.Book;
 
 namespace Ams.Cli.Commands;
 

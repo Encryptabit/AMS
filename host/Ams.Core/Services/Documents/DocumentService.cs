@@ -1,5 +1,6 @@
 using Ams.Core.Processors.DocumentProcessor;
 using Ams.Core.Runtime.Book;
+using Ams.Core.Services.Interfaces;
 
 namespace Ams.Core.Services.Documents;
 

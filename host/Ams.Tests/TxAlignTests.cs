@@ -1,5 +1,6 @@
 using Ams.Core.Artifacts;
 using Ams.Core.Processors.Alignment.Tx;
+using Ams.Core.Runtime.Book;
 
 public class TxAlignTests
 {

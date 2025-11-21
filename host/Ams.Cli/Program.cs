@@ -6,6 +6,7 @@ using Ams.Cli.Commands;
 using Ams.Core.Services;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
+using Ams.Core.Services.Interfaces;
 
 namespace Ams.Cli;
 

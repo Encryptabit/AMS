@@ -2,8 +2,9 @@ using Ams.Core.Artifacts;
 using Ams.Core.Artifacts.Alignment;
 using Ams.Core.Artifacts.Hydrate;
 using Ams.Core.Runtime.Chapter;
+using Ams.Core.Services.Alignment;
 
-namespace Ams.Core.Services.Alignment;
+namespace Ams.Core.Services.Interfaces;
 
 public interface IAlignmentService
 {

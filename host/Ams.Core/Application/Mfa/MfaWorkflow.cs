@@ -1,7 +1,8 @@
 using System.IO;
 using System.Text;
 using Ams.Core.Application.Processes;
-using Ams.Core.Artifacts.Alignment.Mfa;
+using Ams.Core.Artifacts.Alignment;
+using Ams.Core.Runtime.Book;
 using Ams.Core.Runtime.Chapter;
 
 namespace Ams.Core.Application.Mfa;

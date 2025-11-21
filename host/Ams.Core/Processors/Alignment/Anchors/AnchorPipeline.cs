@@ -1,3 +1,5 @@
+using Ams.Core.Runtime.Book;
+
 namespace Ams.Core.Processors.Alignment.Anchors;
 
 public sealed record SectionDetectOptions(bool Detect = true, int AsrPrefixTokens = 8);

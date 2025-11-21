@@ -2,7 +2,7 @@
 using Ams.Core.Processors;
 using Ams.Core.Runtime.Chapter;
 
-namespace Ams.Core.Services;
+namespace Ams.Core.Services.Interfaces;
 
 public interface IAsrService
 {

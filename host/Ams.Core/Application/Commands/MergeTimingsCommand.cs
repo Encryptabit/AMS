@@ -7,6 +7,7 @@ using Ams.Core.Artifacts.Alignment.Mfa;
 using Ams.Core.Artifacts.Hydrate;
 using Ams.Core.Processors.Alignment.Anchors;
 using Ams.Core.Processors.Alignment.Mfa;
+using Ams.Core.Runtime.Book;
 using Ams.Core.Runtime.Chapter;
 
 namespace Ams.Core.Application.Commands;

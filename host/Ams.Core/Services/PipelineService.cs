@@ -6,6 +6,7 @@ using Ams.Core.Processors.DocumentProcessor;
 using Ams.Core.Runtime.Workspace;
 using Ams.Core.Services.Alignment;
 using Ams.Core.Runtime.Chapter;
+using Ams.Core.Runtime.Book;
 
 namespace Ams.Core.Services;
 

@@ -1,7 +1,8 @@
 ﻿using System.IO;
 using Ams.Core.Runtime.Book;
+using Ams.Core.Runtime.Chapter;
 
-namespace Ams.Core.Runtime.Chapter;
+namespace Ams.Core.Runtime.Interfaces;
 
 public interface IChapterManager
 {

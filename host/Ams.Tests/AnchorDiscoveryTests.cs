@@ -1,4 +1,5 @@
 using Ams.Core.Processors.Alignment.Anchors;
+using Ams.Core.Runtime.Book;
 
 public class AnchorDiscoveryTests
 {
