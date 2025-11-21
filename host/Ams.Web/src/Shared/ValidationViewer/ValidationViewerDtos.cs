@@ -1,27 +1,4 @@
-using System.Text.Json.Serialization;
-using Ams.Core.Artifacts.Hydrate;
-
-namespace Ams.Web.Server.Api.Models.ValidationViewer;
-
-public sealed class ValidationViewerOptions
-{
-    /// <summary>Root directory containing chapter folders and book-index.json.</summary>
-    public string BookRoot { get; set; } = string.Empty;
-
-    /// <summary>Optional path to a CRX Excel template copied when the first CRX file is created.</summary>
-    public string? CrxTemplatePath { get; set; }
-        = null;
-
-    /// <summary>Name of the CRX output directory relative to BookRoot.</summary>
-    public string CrxDirectoryName { get; set; } = "CRX";
-
-    /// <summary>Default error type used when callers do not provide one.</summary>
-    public string DefaultErrorType { get; set; } = "MR";
-
-    /// <summary>Optional override for where reviewed-status.json is stored.</summary>
-    public string? ReviewedStatusPath { get; set; }
-        = null;
-}
+namespace Ams.Web.Shared.ValidationViewer;
 
 public sealed record ValidationChapterMetrics(
     int SentenceCount,
@@ -67,7 +44,7 @@ public sealed record ValidationSentenceResponse(
     string BookText,
     string ScriptText,
     string Excerpt,
-    HydratedDiff? Diff,
+    object? Diff,
     double? StartTime,
     double? EndTime,
     int? BookRangeStart,
@@ -98,7 +75,5 @@ public sealed record ValidationReportResponse(
     IReadOnlyList<ValidationSentenceResponse> Sentences,
     IReadOnlyList<ValidationParagraphResponse> Paragraphs);
 
-public sealed record ReviewedStatusDto(
-    [property: JsonPropertyName("reviewed")] bool Reviewed,
-    [property: JsonPropertyName("timestamp")] string Timestamp);
+public sealed record ReviewedStatusDto(bool Reviewed, string Timestamp);
 

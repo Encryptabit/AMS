@@ -12,6 +12,8 @@
         <SupportedPlatform Include="browser" />
         <Content Remove="appsettings*.json" />
         <EmbeddedResource Include="appsettings*.json" />
+        <Using Include="System.Net.Http" />
+        <Using Include="System.Net.Http.Json" />
 
         <PackageReference Include="Bit.Butil" />
         <PackageReference Include="Bit.BlazorUI" />
@@ -24,6 +26,7 @@
         <PackageReference Include="Microsoft.Extensions.Logging.Configuration" />
         <PackageReference Include="Microsoft.Extensions.Logging.Debug" />
         <PackageReference Include="Microsoft.Extensions.Logging.Console" />
+        <PackageReference Include="Microsoft.Extensions.Http" />
 
         <Using Include="System.Net.Http.Json" />
         <Using Include="System.Collections.Concurrent" />

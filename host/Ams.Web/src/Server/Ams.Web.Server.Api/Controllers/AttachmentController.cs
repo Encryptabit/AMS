@@ -1,6 +1,7 @@
 ﻿using ImageMagick;
 using FluentStorage.Blobs;
 using System.Diagnostics.Metrics;
+using static System.Diagnostics.Metrics.MeterExtensions;
 using Ams.Web.Shared.Controllers;
 using Ams.Web.Server.Api.Services;
 using Ams.Web.Server.Api.Models.Identity;
@@ -23,7 +24,7 @@ public partial class AttachmentController : AppControllerBase, IAttachmentContro
     [AutoInject] private IConfiguration configuration = default!;
 
     // For open telemetry metrics
-    private static readonly Histogram<double> updateResizeDurationHistogram = Meter.Current.CreateHistogram<double>("attachment.resize_duration", "ms", "Elapsed time to resize and persist an uploaded image");
+    private static readonly Histogram<double> updateResizeDurationHistogram = Current.CreateHistogram<double>("attachment.resize_duration", "ms", "Elapsed time to resize and persist an uploaded image");
 
     [HttpPost]
     [RequestSizeLimit(11 * 1024 * 1024 /*11MB*/)]
@@ -65,7 +66,7 @@ public partial class AttachmentController : AppControllerBase, IAttachmentContro
 
     private async Task DeleteAttachment(Guid attachmentId, AttachmentKind[] kinds, CancellationToken cancellationToken)
     {
-        var attachments = await DbContext.Attachments.Where(p => p.Id == attachmentId && kinds.Contains(p.Kind)).ToArrayAsync(cancellationToken);
+        var attachments = await DbContext.Attachments.Where(p => p.Id == attachmentId && kinds.Contains(p.Kind, null)).ToArrayAsync(cancellationToken);
 
         foreach (var attachment in attachments)
         {
