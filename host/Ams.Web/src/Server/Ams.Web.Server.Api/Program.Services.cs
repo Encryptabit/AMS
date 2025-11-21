@@ -25,12 +25,15 @@ using AdsPush;
 using AdsPush.Abstraction;
 using Azure.Storage.Blobs;
 using Ams.Web.Server.Api.Models.ValidationViewer;
+using Ams.Web.Shared.ValidationViewer;
 using Ams.Web.Server.Api.Services;
+using Ams.Web.Server.Api.Services.ValidationViewer;
 using Ams.Web.Server.Api.Controllers;
 using Ams.Web.Server.Shared.Services;
 using Ams.Web.Server.Api.Services.Jobs;
 using Ams.Web.Server.Api.Models.Identity;
 using Ams.Web.Server.Api.Services.Identity;
+using Ams.Web.Server.Shared.Extensions;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
 
 namespace Ams.Web.Server.Api;
@@ -195,6 +198,14 @@ public static partial class Program
             configuration.GetSection("ValidationViewer").Bind(opts);
             return new ValidationViewerWorkspaceState(opts);
         });
+
+        services.AddScoped<WorkspaceResolver>();
+        services.AddSingleton<WorkspaceFactory>();
+        services.AddScoped<Ams.Web.Server.Api.Services.ValidationViewer.ValidationViewerService>();
+        services.AddScoped<IValidationViewerService>(sp => sp.GetRequiredService<Ams.Web.Server.Api.Services.ValidationViewer.ValidationViewerService>());
+        services.AddScoped<IAudioStreamService, AudioStreamService>();
+        services.AddScoped<IReviewedStateService, ReviewedStateService>();
+        services.AddScoped<ICrxService, CrxService>();
 
         services.AddSingleton(sp =>
         {

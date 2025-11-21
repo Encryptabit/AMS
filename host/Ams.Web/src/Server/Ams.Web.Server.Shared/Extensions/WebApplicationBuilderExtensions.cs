@@ -1,18 +1,19 @@
 ﻿using System.IO.Compression;
 using System.Net;
-using Azure.Monitor.OpenTelemetry.Profiler;
-using Azure.Monitor.OpenTelemetry.AspNetCore;
-using Ams.Web.Server.Shared;
 using Ams.Web.Server.Shared.Services;
+using Azure.Monitor.OpenTelemetry.AspNetCore;
+using Azure.Monitor.OpenTelemetry.Profiler;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.ResponseCompression;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using OpenTelemetry;
 using OpenTelemetry.Metrics;
 using OpenTelemetry.Resources;
 using OpenTelemetry.Trace;
+using static System.Diagnostics.Metrics.MeterExtensions;
 
-namespace Microsoft.Extensions.Hosting;
+namespace Ams.Web.Server.Shared.Extensions;
 
 public static class WebApplicationBuilderExtensions
 {
@@ -123,7 +124,7 @@ public static class WebApplicationBuilderExtensions
                     .AddHttpClientInstrumentation()
                     .AddRuntimeInstrumentation();
 
-                metrics.AddMeter(ActivitySource.Current.Name);
+                metrics.AddMeter(Current.Name);
             })
             .WithTracing(tracing =>
             {
@@ -153,7 +154,7 @@ public static class WebApplicationBuilderExtensions
                     .AddEntityFrameworkCoreInstrumentation(options => options.Filter = (providerName, command) => command?.CommandText?.Contains("Hangfire") is false /* Ignore Hangfire */)
                     .AddHangfireInstrumentation();
 
-                tracing.AddSource(ActivitySource.Current.Name);
+                tracing.AddSource(Current.Name);
             })
             .ConfigureResource(resource =>
             {

@@ -68,7 +68,7 @@ public partial class PushNotificationService
 
         var pushNotificationSubscriptionIds = await query.Select(pns => pns.Id).ToArrayAsync(cancellationToken);
 
-        backgroundJobClient.Enqueue<PushNotificationJobRunner>(runner => runner.RequestPush(pushNotificationSubscriptionIds, request));
+        backgroundJobClient.Enqueue<PushNotificationJobRunner>(runner => runner.RequestPush(pushNotificationSubscriptionIds, request, null!, CancellationToken.None));
     }
 }
 

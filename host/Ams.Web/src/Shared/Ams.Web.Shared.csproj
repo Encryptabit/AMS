@@ -23,6 +23,7 @@
         <SupportedPlatform Include="browser" />
         <Using Include="Ams.Web.Shared.Attributes" />
         <Using Include="Ams.Web.Shared.Services.Contracts" />
+        <Using Include="Ams.Web.Shared.ValidationViewer" />
     </ItemGroup>
 
     <ItemGroup>

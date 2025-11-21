@@ -3,6 +3,8 @@ using BlazorApplicationInsights.Interfaces;
 using Ams.Web.Client.Core;
 using System.Diagnostics.CodeAnalysis;
 using Microsoft.AspNetCore.Components.WebAssembly.Services;
+using Ams.Web.Client.Core.Services.Contracts.ValidationViewer;
+using Ams.Web.Client.Core.Services.Http;
 using Ams.Web.Client.Core.Services.HttpMessageHandlers;
 
 namespace Microsoft.Extensions.DependencyInjection;
@@ -99,6 +101,8 @@ public static partial class IClientCoreServiceCollectionExtensions
         {
             configuration.GetRequiredSection("ApplicationInsights").Bind(options);
         }, loggingOptions: options => configuration.GetRequiredSection("Logging:ApplicationInsightsLoggerProvider").Bind(options));
+
+        services.AddHttpClient<IValidationViewerClient, ValidationViewerClient>();
 
         services.AddTypedHttpClients(); // See Ams.Web.Shared/Controllers/Readme.md
 

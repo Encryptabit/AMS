@@ -62,7 +62,10 @@ public partial class AppDataAnnotationsValidator : AppComponentBase
             var validationAttributes = propertyInfo.GetCustomAttributes<ValidationAttribute>();
             var displayAttribute = propertyInfo.GetCustomAttribute<DisplayAttribute>();
 
-            displayAttribute?.ResourceType ??= resourceType;
+            if (displayAttribute != null)
+            {
+                displayAttribute.ResourceType ??= resourceType;
+            }
 
             foreach (var attribute in validationAttributes)
             {
@@ -80,7 +83,11 @@ public partial class AppDataAnnotationsValidator : AppComponentBase
                     if (attribute is CompareAttribute compareAttribute)
                     {
                         var otherPropertyInfoDisplayAttribute = (parent.GetProperty(compareAttribute.OtherProperty) ?? throw new InvalidOperationException($"Invalid OtherProperty {compareAttribute.OtherProperty}")).GetCustomAttribute<DisplayAttribute>();
-                        otherPropertyInfoDisplayAttribute?.ResourceType ??= resourceType;
+                        if (otherPropertyInfoDisplayAttribute != null)
+                        {
+                            otherPropertyInfoDisplayAttribute.ResourceType ??= resourceType;
+                        }
+
                         SetOtherPropertyDisplayName(compareAttribute, stringLocalizer.GetString(otherPropertyInfoDisplayAttribute?.Name ?? compareAttribute.OtherProperty).ToString());
                     }
                 }
@@ -135,7 +142,10 @@ public partial class AppDataAnnotationsValidator : AppComponentBase
                 var validationAttributes = propertyInfo.GetCustomAttributes<ValidationAttribute>();
                 var displayAttribute = propertyInfo.GetCustomAttribute<DisplayAttribute>();
 
-                displayAttribute?.ResourceType ??= resourceType;
+                if (displayAttribute != null)
+                {
+                    displayAttribute.ResourceType ??= resourceType;
+                }
 
                 foreach (var attribute in validationAttributes)
                 {
@@ -152,7 +162,11 @@ public partial class AppDataAnnotationsValidator : AppComponentBase
                         if (attribute is CompareAttribute compareAttribute)
                         {
                             var otherPropertyInfoDisplayAttribute = (properties.FirstOrDefault(p => p.Name == compareAttribute.OtherProperty) ?? throw new InvalidOperationException($"Invalid OtherProperty {compareAttribute.OtherProperty}")).GetCustomAttribute<DisplayAttribute>();
-                            otherPropertyInfoDisplayAttribute?.ResourceType ??= resourceType;
+                            if (otherPropertyInfoDisplayAttribute != null)
+                            {
+                                otherPropertyInfoDisplayAttribute.ResourceType ??= resourceType;
+                            }
+
                             SetOtherPropertyDisplayName(compareAttribute, stringLocalizer.GetString(otherPropertyInfoDisplayAttribute?.Name ?? compareAttribute.OtherProperty).ToString());
                         }
                     }
@@ -231,8 +245,15 @@ public partial class AppDataAnnotationsValidator : AppComponentBase
 
         if (disposed || disposing is false) return;
 
-        EditContext?.OnFieldChanged -= OnFieldChanged;
-        EditContext?.OnValidationRequested -= OnValidationRequested;
+        if (EditContext != null)
+        {
+            EditContext.OnFieldChanged -= OnFieldChanged;
+        }
+
+        if (EditContext != null)
+        {
+            EditContext.OnValidationRequested -= OnValidationRequested;
+        }
 
         disposed = true;
     }

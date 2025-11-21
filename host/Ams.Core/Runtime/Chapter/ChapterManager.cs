@@ -115,13 +115,21 @@ public sealed class ChapterManager : IChapterManager
 
         var aliases = BuildAliasSet(chapterStem, chapterRoot, bookIndex, out var matchedSection);
 
+        var bufferList = new List<AudioBufferDescriptor>
+        {
+            new AudioBufferDescriptor("raw", audioPath)
+        };
+
+        var treatedPath = Path.Combine(chapterRoot, $"{chapterStem}.treated.wav");
+        bufferList.Add(new AudioBufferDescriptor("treated", treatedPath));
+
+        var filteredPath = Path.Combine(chapterRoot, $"{chapterStem}.filtered.wav");
+        bufferList.Add(new AudioBufferDescriptor("filtered", filteredPath));
+
         var initialDescriptor = new ChapterDescriptor(
             chapterId: chapterStem,
             rootPath: chapterRoot,
-            audioBuffers: new[]
-            {
-                new AudioBufferDescriptor("raw", audioPath)
-            },
+            audioBuffers: bufferList,
             aliases: aliases,
             bookStartWord: matchedSection?.StartWord,
             bookEndWord: matchedSection?.EndWord);
