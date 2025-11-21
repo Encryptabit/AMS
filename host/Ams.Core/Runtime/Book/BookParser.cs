@@ -1,11 +1,10 @@
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.RegularExpressions;
-using Ams.Core.Runtime.Book;
 using Xceed.Words.NET;
 using PDFiumCore;
 
-namespace Ams.Core.Runtime.Documents;
+namespace Ams.Core.Runtime.Book;
 
 /// <summary>
 /// Book parser implementation using Xceed Document .NET for DOCX files
@@ -371,7 +370,7 @@ public class BookParser : IBookParser
                 EnsurePdfiumInitialized();
 
                 var document = fpdfview.FPDF_LoadDocument(filePath, null);
-                if (document == null || document.__Instance == IntPtr.Zero)
+                if (document == null || document.__Instance == nint.Zero)
                 {
                     var error = fpdfview.FPDF_GetLastError();
                     throw new BookParseException($"PDFium failed to load '{filePath}' (error {error}).");
@@ -421,7 +420,7 @@ public class BookParser : IBookParser
                         cancellationToken.ThrowIfCancellationRequested();
 
                         var page = fpdfview.FPDF_LoadPage(document, pageIndex);
-                        if (page == null || page.__Instance == IntPtr.Zero)
+                        if (page == null || page.__Instance == nint.Zero)
                         {
                             continue;
                         }
@@ -429,7 +428,7 @@ public class BookParser : IBookParser
                         try
                         {
                             var textPage = fpdf_text.FPDFTextLoadPage(page);
-                            if (textPage == null || textPage.__Instance == IntPtr.Zero)
+                            if (textPage == null || textPage.__Instance == nint.Zero)
                             {
                                 continue;
                             }
@@ -533,7 +532,7 @@ public class BookParser : IBookParser
     {
         try
         {
-            var length = (int)fpdf_doc.FPDF_GetMetaText(document, tag, IntPtr.Zero, 0);
+            var length = (int)fpdf_doc.FPDF_GetMetaText(document, tag, nint.Zero, 0);
             if (length <= 2)
             {
                 return null;

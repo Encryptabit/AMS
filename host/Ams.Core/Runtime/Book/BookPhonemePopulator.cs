@@ -1,4 +1,4 @@
-namespace Ams.Core.Runtime.Documents;
+namespace Ams.Core.Runtime.Book;
 
 public static class BookPhonemePopulator
 {

@@ -1,3 +1,5 @@
+using Ams.Core.Runtime.Book;
+
 namespace Ams.Core.Processors.DocumentProcessor;
 
 public static partial class DocumentProcessor

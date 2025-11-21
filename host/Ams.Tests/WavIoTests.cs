@@ -2,7 +2,7 @@ using System.Text;
 using Ams.Core.Processors;
 using Ams.Core.Services.Integrations.FFmpeg;
 
-namespace Ams.Tests.Audio;
+namespace Ams.Tests;
 
 public class WavIoTests
 {
@@ -30,8 +30,8 @@ public class WavIoTests
         {
             int s = samples[i];
             data[i * 3 + 0] = (byte)(s & 0xFF);
-            data[i * 3 + 1] = (byte)((s >> 8) & 0xFF);
-            data[i * 3 + 2] = (byte)((s >> 16) & 0xFF);
+            data[i * 3 + 1] = (byte)(s >> 8 & 0xFF);
+            data[i * 3 + 2] = (byte)(s >> 16 & 0xFF);
         }
 
         var path = WriteTempWav(1, 24, 44100, data);
@@ -176,7 +176,7 @@ public class WavIoTests
         int byteRate = sampleRate * blockAlign;
 
         const uint junkSize = 5;
-        uint junkSizeAligned = junkSize + (junkSize % 2);
+        uint junkSizeAligned = junkSize + junkSize % 2;
 
         using var ms = new MemoryStream();
         using (var bw = new BinaryWriter(ms, Encoding.ASCII, leaveOpen: true))
@@ -184,7 +184,7 @@ public class WavIoTests
             void WriteAscii(string s) => bw.Write(Encoding.ASCII.GetBytes(s));
 
             WriteAscii("RIFF");
-            var riffSize = (uint)(4 + (8 + 16) + (8 + junkSizeAligned) + (8 + data.Length));
+            var riffSize = (uint)(4 + 8 + 16 + (8 + junkSizeAligned) + (8 + data.Length));
             bw.Write(riffSize);
             WriteAscii("WAVE");
 

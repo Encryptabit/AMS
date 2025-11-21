@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Ams.Core.Processors.DocumentProcessor;
+using Ams.Core.Runtime.Book;
 
 namespace Ams.Tests;
 

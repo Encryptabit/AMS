@@ -1,6 +1,7 @@
 using System.Text;
 using System.Text.RegularExpressions;
 using Ams.Core.Artifacts.Alignment.Mfa;
+using Ams.Core.Runtime.Book;
 
 namespace Ams.Core.Application.Mfa;
 

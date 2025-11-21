@@ -1,4 +1,4 @@
-﻿namespace Ams.Core.Services;
+﻿namespace Ams.Core.Services.Interfaces;
 
 public interface IAudioService
 {

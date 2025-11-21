@@ -1,4 +1,6 @@
-﻿namespace Ams.Core.Runtime.Audio;
+﻿using Ams.Core.Runtime.Audio;
+
+namespace Ams.Core.Runtime.Interfaces;
 
 public interface IAudioBufferManager
 {

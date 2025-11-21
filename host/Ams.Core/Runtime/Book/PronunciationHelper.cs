@@ -1,7 +1,7 @@
 using System.Globalization;
 using System.Text;
 
-namespace Ams.Core.Runtime.Documents;
+namespace Ams.Core.Runtime.Book;
 
 public static class PronunciationHelper
 {

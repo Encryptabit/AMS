@@ -1,4 +1,5 @@
 using Ams.Core.Runtime.Artifacts;
+using Ams.Core.Runtime.Interfaces;
 
 namespace Ams.Core.Runtime.Book;
 

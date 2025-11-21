@@ -15,6 +15,7 @@ using Ams.Core.Prosody;
 using Ams.Core.Services;
 using Spectre.Console;
 using AudioSentenceTiming = Ams.Core.Artifacts.SentenceTiming;
+using Ams.Core.Runtime.Book;
 
 namespace Ams.Cli.Commands;
 

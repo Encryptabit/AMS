@@ -1,6 +1,7 @@
 using System.Text;
 using Ams.Core.Artifacts;
 using Ams.Core.Artifacts.Hydrate;
+using Ams.Core.Runtime.Book;
 using DiffMatchPatch;
 
 namespace Ams.Core.Processors.Diffing;

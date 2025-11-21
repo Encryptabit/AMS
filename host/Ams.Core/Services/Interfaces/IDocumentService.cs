@@ -1,4 +1,6 @@
-﻿namespace Ams.Core.Services.Documents;
+﻿using Ams.Core.Runtime.Book;
+
+namespace Ams.Core.Services.Interfaces;
 
 public interface IDocumentService
 {

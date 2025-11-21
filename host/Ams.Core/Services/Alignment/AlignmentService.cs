@@ -6,6 +6,7 @@ using Ams.Core.Processors.Alignment.Tx;
 using Ams.Core.Processors.Diffing;
 using Ams.Core.Runtime.Book;
 using Ams.Core.Runtime.Chapter;
+using Ams.Core.Services.Interfaces;
 
 namespace Ams.Core.Services.Alignment;
 

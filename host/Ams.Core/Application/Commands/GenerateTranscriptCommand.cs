@@ -2,8 +2,8 @@ using Ams.Core.Artifacts;
 using Ams.Core.Application.Processes;
 using Ams.Core.Processors;
 using Ams.Core.Runtime.Chapter;
-using Ams.Core.Services;
 using Whisper.net.Ggml;
+using Ams.Core.Services.Interfaces;
 
 namespace Ams.Core.Application.Commands;
 

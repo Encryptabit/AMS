@@ -7,6 +7,7 @@ using Ams.Cli.Utilities;
 using Spectre.Console;
 using Spectre.Console.Rendering;
 using SentenceTiming = Ams.Core.Artifacts.SentenceTiming;
+using Ams.Core.Runtime.Book;
 
 namespace Ams.Cli.Commands;
 
