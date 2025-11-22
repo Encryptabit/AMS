@@ -89,7 +89,8 @@ namespace Ams.Core.Services.Integrations.FFmpeg
             private readonly int _channels;
             private int _sampleRate;
 
-            public FilterGraphExecutor(IReadOnlyList<GraphInput> inputs, string filterSpec, FilterExecutionMode mode, IAudioFrameSink? frameSink)
+            public FilterGraphExecutor(IReadOnlyList<GraphInput> inputs, string filterSpec, FilterExecutionMode mode,
+                IAudioFrameSink? frameSink)
             {
                 FfSession.EnsureFiltersAvailable();
 
@@ -502,7 +503,6 @@ namespace Ams.Core.Services.Integrations.FFmpeg
 
                 return buffer;
             }
-
         }
 
         private sealed unsafe class GraphInputState

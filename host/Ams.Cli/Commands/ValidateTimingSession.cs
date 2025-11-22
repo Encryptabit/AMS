@@ -164,11 +164,13 @@ internal sealed class ValidateTimingSession
         using var handle = _workspace.OpenChapter(openOptions);
 
         var bookIndex = handle.Book.Documents.BookIndex
-            ?? throw new InvalidOperationException("BookIndex is not available in the chapter context.");
+                        ?? throw new InvalidOperationException("BookIndex is not available in the chapter context.");
         var transcript = handle.Chapter.Documents.Transcript
-            ?? throw new InvalidOperationException("TranscriptIndex is not available in the chapter context.");
+                         ?? throw new InvalidOperationException(
+                             "TranscriptIndex is not available in the chapter context.");
         var hydrated = handle.Chapter.Documents.HydratedTranscript
-            ?? throw new InvalidOperationException("Hydrated transcript is not available in the chapter context.");
+                       ?? throw new InvalidOperationException(
+                           "Hydrated transcript is not available in the chapter context.");
         var sentenceLookup = BuildSentenceLookup(bookIndex);
         var (paragraphs, sentenceToParagraph, paragraphSentences) = BuildParagraphData(bookIndex);
 
@@ -2043,7 +2045,6 @@ internal sealed class ValidateTimingSession
                 {
                     AppendSentenceFallback(sb, highlightSentenceId.Value, partnerSentenceId);
                 }
-
             }
             else
             {

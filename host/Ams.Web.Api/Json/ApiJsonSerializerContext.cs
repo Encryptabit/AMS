@@ -56,7 +56,8 @@ namespace Ams.Web.Api.Json;
 [JsonSerializable(typeof(ReviewedStatusDto))]
 [JsonSerializable(typeof(ReviewedStatusResponse))]
 [JsonSerializable(typeof(Dictionary<string, ReviewedStatusDto>))]
-[JsonSerializable(typeof(Dictionary<string, Dictionary<string, ReviewedStatusDto>>), TypeInfoPropertyName = "ReviewedStore")]
+[JsonSerializable(typeof(Dictionary<string, Dictionary<string, ReviewedStatusDto>>),
+    TypeInfoPropertyName = "ReviewedStore")]
 [JsonSerializable(typeof(IEnumerable<ReviewedStatusDto>))]
 [JsonSerializable(typeof(IEnumerable<ValidationOverviewDto>))]
 [JsonSerializable(typeof(IEnumerable<ValidationReportDto>))]

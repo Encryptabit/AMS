@@ -155,13 +155,15 @@ public sealed record SentencePauseElement(PauseInterval Pause) : SentenceTimelin
 
 public abstract record ParagraphTimelineElement(double OriginalStart);
 
-public sealed record ParagraphSentenceElement(SentencePauseMap Sentence) : ParagraphTimelineElement(Sentence.OriginalTiming.StartSec);
+public sealed record ParagraphSentenceElement(SentencePauseMap Sentence)
+    : ParagraphTimelineElement(Sentence.OriginalTiming.StartSec);
 
 public sealed record ParagraphPauseElement(PauseInterval Pause) : ParagraphTimelineElement(Pause.OriginalStart);
 
 public abstract record ChapterTimelineElement(double OriginalStart);
 
-public sealed record ChapterParagraphElement(ParagraphPauseMap Paragraph) : ChapterTimelineElement(Paragraph.OriginalStart);
+public sealed record ChapterParagraphElement(ParagraphPauseMap Paragraph)
+    : ChapterTimelineElement(Paragraph.OriginalStart);
 
 public sealed record ChapterPauseElement(PauseInterval Pause) : ChapterTimelineElement(Pause.OriginalStart);
 

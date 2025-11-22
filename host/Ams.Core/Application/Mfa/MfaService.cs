@@ -8,7 +8,8 @@ public interface IMfaService
 {
     Task<MfaCommandResult> ValidateAsync(MfaChapterContext context, CancellationToken cancellationToken = default);
 
-    Task<MfaCommandResult> GeneratePronunciationsAsync(MfaChapterContext context, CancellationToken cancellationToken = default);
+    Task<MfaCommandResult> GeneratePronunciationsAsync(MfaChapterContext context,
+        CancellationToken cancellationToken = default);
 
     Task<MfaCommandResult> AddWordsAsync(MfaChapterContext context, CancellationToken cancellationToken = default);
 
@@ -35,7 +36,8 @@ public sealed class MfaService : IMfaService
     private static readonly string AddWordsCommand = "model add_words";
     private static readonly string AlignCommandName = "align";
 
-    public Task<MfaCommandResult> ValidateAsync(MfaChapterContext context, CancellationToken cancellationToken = default)
+    public Task<MfaCommandResult> ValidateAsync(MfaChapterContext context,
+        CancellationToken cancellationToken = default)
     {
         if (context is null)
         {
@@ -70,7 +72,8 @@ public sealed class MfaService : IMfaService
             cancellationToken);
     }
 
-    public Task<MfaCommandResult> GeneratePronunciationsAsync(MfaChapterContext context, CancellationToken cancellationToken = default)
+    public Task<MfaCommandResult> GeneratePronunciationsAsync(MfaChapterContext context,
+        CancellationToken cancellationToken = default)
     {
         if (context is null)
         {
@@ -103,7 +106,8 @@ public sealed class MfaService : IMfaService
             cancellationToken);
     }
 
-    public Task<MfaCommandResult> AddWordsAsync(MfaChapterContext context, CancellationToken cancellationToken = default)
+    public Task<MfaCommandResult> AddWordsAsync(MfaChapterContext context,
+        CancellationToken cancellationToken = default)
     {
         if (context is null)
         {
@@ -176,7 +180,6 @@ public sealed class MfaService : IMfaService
             args.ToString(),
             context.WorkingDirectory,
             cancellationToken);
-
     }
 
     private Task<MfaCommandResult> RunCommandAsync(

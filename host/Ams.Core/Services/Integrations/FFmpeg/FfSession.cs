@@ -11,6 +11,7 @@ public sealed class FfSession : IDisposable
     private static bool _initialized;
     private static bool _filtersChecked;
     private static bool _filtersAvailable;
+
     private static readonly string[] RootSearchSuffixes = new[]
     {
         Path.Combine("ExtTools", "ffmpeg", "bin"),
@@ -39,7 +40,7 @@ public sealed class FfSession : IDisposable
 
             try
             {
-                 ffmpeg.av_log_set_level(ffmpeg.AV_LOG_WARNING);
+                ffmpeg.av_log_set_level(ffmpeg.AV_LOG_WARNING);
                 FfUtils.ThrowIfError(ffmpeg.avformat_network_init(), "Failed to initialize FFmpeg network stack");
                 _initialized = true;
             }
@@ -58,7 +59,8 @@ public sealed class FfSession : IDisposable
         EnsureFilterProbe();
         if (!_filtersAvailable)
         {
-            throw new NotSupportedException("FFmpeg filter graph support (libavfilter) is not available. Install FFmpeg builds that include avfilter and place the DLLs under ExtTools/ffmpeg/bin (or ExtTools/ffmpeg/binaries).");
+            throw new NotSupportedException(
+                "FFmpeg filter graph support (libavfilter) is not available. Install FFmpeg builds that include avfilter and place the DLLs under ExtTools/ffmpeg/bin (or ExtTools/ffmpeg/binaries).");
         }
     }
 
@@ -145,6 +147,7 @@ public sealed class FfSession : IDisposable
         {
             // ignore, treat as missing
         }
+
         return false;
     }
 
@@ -205,8 +208,9 @@ public sealed class FfSession : IDisposable
             ? "FFmpeg.AutoGen could not locate native binaries."
             : $"Attempted root path: '{ffmpeg.RootPath}'.";
 
-        return $"{rootHint} Place FFmpeg shared libraries under 'ExtTools/ffmpeg/bin' (relative to the solution root) so they ship with the project. " +
-               "(Older layouts that use 'ExtTools/ffmpeg/binaries' are also supported.) Download builds from https://ffmpeg.org or https://www.gyan.dev/ffmpeg/builds/ (Windows) and copy the DLLs into that folder.";
+        return
+            $"{rootHint} Place FFmpeg shared libraries under 'ExtTools/ffmpeg/bin' (relative to the solution root) so they ship with the project. " +
+            "(Older layouts that use 'ExtTools/ffmpeg/binaries' are also supported.) Download builds from https://ffmpeg.org or https://www.gyan.dev/ffmpeg/builds/ (Windows) and copy the DLLs into that folder.";
     }
 
     public void Dispose()

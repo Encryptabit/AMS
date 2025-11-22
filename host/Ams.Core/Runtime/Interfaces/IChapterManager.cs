@@ -12,6 +12,7 @@ public interface IChapterManager
     ChapterContext Load(int index);
     ChapterContext Load(string chapterId);
     bool Contains(string chapterId);
+
     ChapterContextHandle CreateContext(
         FileInfo bookIndexFile,
         FileInfo? asrFile = null,
@@ -21,6 +22,7 @@ public interface IChapterManager
         DirectoryInfo? chapterDirectory = null,
         string? chapterId = null,
         bool reloadBookIndex = false);
+
     ChapterDescriptor UpsertDescriptor(ChapterDescriptor descriptor);
     bool TryMoveNext(out ChapterContext context);
     bool TryMovePrevious(out ChapterContext context);

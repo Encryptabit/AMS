@@ -32,7 +32,8 @@ internal static class CommandInputResolver
         var context = ReplContext.Current;
         if (context?.ActiveChapterStem is null)
         {
-            throw new InvalidOperationException("Cannot derive output path without an active chapter. Provide --out explicitly.");
+            throw new InvalidOperationException(
+                "Cannot derive output path without an active chapter. Provide --out explicitly.");
         }
 
         return context.ResolveChapterFile(suffix, mustExist: false);
@@ -92,7 +93,8 @@ internal static class CommandInputResolver
         var fallback = Path.Combine(Directory.GetCurrentDirectory(), "book-index.json");
         if (mustExist && !File.Exists(fallback))
         {
-            throw new FileNotFoundException("Book index not found in working directory. Provide --book-index.", fallback);
+            throw new FileNotFoundException("Book index not found in working directory. Provide --book-index.",
+                fallback);
         }
 
         return new FileInfo(fallback);
@@ -118,7 +120,8 @@ internal static class CommandInputResolver
             }
         }
 
-        throw new InvalidOperationException("No manuscript file found in working directory. Provide --book or add a DOCX/TXT/MD/RTF file.");
+        throw new InvalidOperationException(
+            "No manuscript file found in working directory. Provide --book or add a DOCX/TXT/MD/RTF file.");
     }
 
     public static DirectoryInfo ResolveDirectory(DirectoryInfo? provided)
@@ -159,7 +162,8 @@ internal static class CommandInputResolver
 
         if (bookIndexFile is null)
         {
-            throw new InvalidOperationException("Book index must be specified when not running inside the REPL workspace.");
+            throw new InvalidOperationException(
+                "Book index must be specified when not running inside the REPL workspace.");
         }
 
         var root = bookIndexFile.Directory?.FullName

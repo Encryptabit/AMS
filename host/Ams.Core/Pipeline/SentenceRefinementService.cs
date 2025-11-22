@@ -59,7 +59,9 @@ public sealed class SentenceRefinementService
         var fragments = await RunAeneasAsync(audioPath, lines, language);
 
         // 3) Detect silences with FFmpeg once (optional)
-        var silences = useSilence ? await DetectSilencesAsync(audioPath, silenceThresholdDb, silenceMinDurationSec) : Array.Empty<SilenceInfo>();
+        var silences = useSilence
+            ? await DetectSilencesAsync(audioPath, silenceThresholdDb, silenceMinDurationSec)
+            : Array.Empty<SilenceInfo>();
 
         // 4) Compose refined sentences: start from Aeneas begin; end from nearest silence_end after fragment end and before next begin
         var results = new List<SentenceRefined>(tx.Sentences.Count);
@@ -114,7 +116,8 @@ public sealed class SentenceRefinementService
         return results;
     }
 
-    private async Task<List<(double begin, double end)>> RunAeneasAsync(string audioPath, List<string> lines, string language)
+    private async Task<List<(double begin, double end)>> RunAeneasAsync(string audioPath, List<string> lines,
+        string language)
     {
         var temp = Path.Combine(Path.GetTempPath(), $"aeneas_sent_{Guid.NewGuid():N}");
         Directory.CreateDirectory(temp);
@@ -130,7 +133,8 @@ public sealed class SentenceRefinementService
             var psi = new ProcessStartInfo
             {
                 FileName = pythonExe!,
-                Arguments = $"-m aeneas.tools.execute_task \"{audioPath}\" \"{txt}\" \"task_language={language}|is_text_type=plain|os_task_file_format=json\" \"{outJson}\"",
+                Arguments =
+                    $"-m aeneas.tools.execute_task \"{audioPath}\" \"{txt}\" \"task_language={language}|is_text_type=plain|os_task_file_format=json\" \"{outJson}\"",
                 RedirectStandardError = true,
                 RedirectStandardOutput = true,
                 UseShellExecute = false,
@@ -152,14 +156,22 @@ public sealed class SentenceRefinementService
                 double e = ParseDouble(f.GetProperty("end"));
                 frags.Add((b, e));
             }
+
             return frags;
         }
         finally
         {
-            try { Directory.Delete(temp, true); } catch { }
+            try
+            {
+                Directory.Delete(temp, true);
+            }
+            catch
+            {
+            }
         }
 
-        static double ParseDouble(JsonElement el) => el.ValueKind == JsonValueKind.String ? double.Parse(el.GetString()!) : el.GetDouble();
+        static double ParseDouble(JsonElement el) =>
+            el.ValueKind == JsonValueKind.String ? double.Parse(el.GetString()!) : el.GetDouble();
     }
 
     private async Task<SilenceInfo[]> DetectSilencesAsync(string audioPath, double thresholdDb, double minDurationSec)
@@ -170,7 +182,8 @@ public sealed class SentenceRefinementService
         var psi = new ProcessStartInfo
         {
             FileName = ffmpegExe!,
-            Arguments = $"-i \"{audioPath}\" -af silencedetect=noise={thresholdDb}dB:duration={minDurationSec} -f null -",
+            Arguments =
+                $"-i \"{audioPath}\" -af silencedetect=noise={thresholdDb}dB:duration={minDurationSec} -f null -",
             RedirectStandardError = true,
             RedirectStandardOutput = true,
             UseShellExecute = false,
@@ -205,7 +218,7 @@ public sealed class SentenceRefinementService
                 }
             }
         }
+
         return silences.ToArray();
     }
 }
-

@@ -14,6 +14,7 @@ public sealed class ChapterManager : IChapterManager
 {
     // Default to unbounded (all chapters) unless caller specifies smaller.
     private const int DefaultMaxCachedContexts = int.MaxValue;
+
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
         PropertyNameCaseInsensitive = true
@@ -78,7 +79,8 @@ public sealed class ChapterManager : IChapterManager
             }
         }
 
-        throw new KeyNotFoundException($"Chapter '{chapterId}' was not found in book '{_bookContext.Descriptor.BookId}'.");
+        throw new KeyNotFoundException(
+            $"Chapter '{chapterId}' was not found in book '{_bookContext.Descriptor.BookId}'.");
     }
 
     public bool Contains(string chapterId)
@@ -112,7 +114,8 @@ public sealed class ChapterManager : IChapterManager
         }
 
         var chapterStem = DetermineChapterStem(chapterId, audioFile, asrFile);
-        var chapterRoot = ResolveChapterRoot(chapterDirectory, audioFile, asrFile, bookIndexFile.Directory, chapterStem);
+        var chapterRoot =
+            ResolveChapterRoot(chapterDirectory, audioFile, asrFile, bookIndexFile.Directory, chapterStem);
         var audioPath = audioFile?.FullName ?? Path.Combine(chapterRoot, $"{chapterStem}.wav");
         var bookIndex = LoadJson<BookIndex>(bookIndexFile.FullName);
 
@@ -339,7 +342,8 @@ public sealed class ChapterManager : IChapterManager
         var startWord = incoming.BookStartWord ?? existing.BookStartWord;
         var endWord = incoming.BookEndWord ?? existing.BookEndWord;
 
-        return new ChapterDescriptor(existing.ChapterId, rootPath, audioBuffers, documents, aliasSet.ToArray(), startWord, endWord);
+        return new ChapterDescriptor(existing.ChapterId, rootPath, audioBuffers, documents, aliasSet.ToArray(),
+            startWord, endWord);
     }
 
     private ChapterDescriptor EnsureChapterDescriptor(ChapterDescriptor template)
@@ -383,7 +387,8 @@ public sealed class ChapterManager : IChapterManager
 
         foreach (var descriptor in descriptors)
         {
-            if (string.Equals(NormalizeChapterId(descriptor.ChapterId), normalizedAlias, StringComparison.OrdinalIgnoreCase))
+            if (string.Equals(NormalizeChapterId(descriptor.ChapterId), normalizedAlias,
+                    StringComparison.OrdinalIgnoreCase))
             {
                 return descriptor;
             }
@@ -400,7 +405,8 @@ public sealed class ChapterManager : IChapterManager
         return null;
     }
 
-    private static ChapterDescriptor? TryMatchByRootPath(IReadOnlyList<ChapterDescriptor> descriptors, string chapterRoot)
+    private static ChapterDescriptor? TryMatchByRootPath(IReadOnlyList<ChapterDescriptor> descriptors,
+        string chapterRoot)
     {
         if (string.IsNullOrWhiteSpace(chapterRoot))
         {
@@ -424,7 +430,8 @@ public sealed class ChapterManager : IChapterManager
         return null;
     }
 
-    private static ChapterDescriptor? TryMatchByRootSlug(IReadOnlyList<ChapterDescriptor> descriptors, string normalizedRequested)
+    private static ChapterDescriptor? TryMatchByRootSlug(IReadOnlyList<ChapterDescriptor> descriptors,
+        string normalizedRequested)
     {
         foreach (var descriptor in descriptors)
         {
@@ -457,7 +464,8 @@ public sealed class ChapterManager : IChapterManager
         var startWord = incoming.BookStartWord ?? existing.BookStartWord;
         var endWord = incoming.BookEndWord ?? existing.BookEndWord;
 
-        return new ChapterDescriptor(existing.ChapterId, rootPath, audioBuffers, documents, aliases, startWord, endWord);
+        return new ChapterDescriptor(existing.ChapterId, rootPath, audioBuffers, documents, aliases, startWord,
+            endWord);
     }
 
     private static IReadOnlyCollection<string> MergeAliases(ChapterDescriptor existing, ChapterDescriptor incoming)
@@ -491,13 +499,16 @@ public sealed class ChapterManager : IChapterManager
 
         if (!string.IsNullOrWhiteSpace(chapterRoot))
         {
-            var rootName = Path.GetFileName(chapterRoot.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
+            var rootName =
+                Path.GetFileName(chapterRoot.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
             AddAlias(aliases, rootName);
         }
 
         matchedSection = TryResolveSection(bookIndex, chapterId)
-            ?? TryResolveSection(bookIndex, Path.GetFileName(chapterRoot?.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) ?? string.Empty))
-            ?? TryResolveSectionFromAliases(bookIndex, aliases);
+                         ?? TryResolveSection(bookIndex,
+                             Path.GetFileName(chapterRoot?.TrimEnd(Path.DirectorySeparatorChar,
+                                 Path.AltDirectorySeparatorChar) ?? string.Empty))
+                         ?? TryResolveSectionFromAliases(bookIndex, aliases);
 
         if (matchedSection is not null && !string.IsNullOrWhiteSpace(matchedSection.Title))
         {
@@ -617,5 +628,5 @@ public sealed class ChapterManager : IChapterManager
 
     private static T LoadJson<T>(string path)
         => JsonSerializer.Deserialize<T>(File.ReadAllText(path), JsonOptions)
-            ?? throw new InvalidOperationException($"Failed to deserialize {typeof(T).Name} from {path}");
+           ?? throw new InvalidOperationException($"Failed to deserialize {typeof(T).Name} from {path}");
 }

@@ -89,7 +89,8 @@ public static class Log
         bool includeConsole = true,
         LogEventLevel? minimumLevel = null)
     {
-        var factory = CreateDefaultFactory(baseDirectory, logFileName, fileSizeLimitBytes, retainedFileCountLimit, includeConsole, minimumLevel);
+        var factory = CreateDefaultFactory(baseDirectory, logFileName, fileSizeLimitBytes, retainedFileCountLimit,
+            includeConsole, minimumLevel);
         Configure(factory);
         return factory;
     }
@@ -130,9 +131,11 @@ public static class Log
 
     public static void Error(string message, params object?[] args) => logger.LogError(message, args);
 
-    public static void Error(Exception exception, string message, params object?[] args) => logger.LogError(exception, message, args);
+    public static void Error(Exception exception, string message, params object?[] args) =>
+        logger.LogError(exception, message, args);
 
-    public static void Critical(Exception exception, string message, params object?[] args) => logger.LogCritical(exception, message, args);
+    public static void Critical(Exception exception, string message, params object?[] args) =>
+        logger.LogCritical(exception, message, args);
 
     private static LogEventLevel ResolveMinimumLevelFromEnvironment()
     {

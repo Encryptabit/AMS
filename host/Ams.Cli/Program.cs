@@ -33,7 +33,7 @@ internal static class Program
         var hydrateCommand = host.Services.GetRequiredService<HydrateTranscriptCommand>();
         var pipelineService = host.Services.GetRequiredService<PipelineService>();
         var validationService = host.Services.GetRequiredService<ValidationService>();
-        
+
         using var loggerFactory = Log.ConfigureDefaults(logFileName: "ams-log.txt");
         Log.Debug("Structured logging initialized. Console + file at {LogFile}", Log.LogFilePath ?? "(unknown)");
 
@@ -64,7 +64,7 @@ internal static class Program
         rootCommand.AddCommand(RefineSentencesCommand.Create());
         rootCommand.AddCommand(PipelineCommand.Create(pipelineService));
         rootCommand.AddCommand(DspCommand.Create());
-        
+
         var replCommand = new Command("repl", "Start interactive REPL");
         replCommand.SetHandler(async () => await StartRepl(rootCommand));
         rootCommand.AddCommand(replCommand);
@@ -76,7 +76,7 @@ internal static class Program
             await StartRepl(rootCommand);
             return 0;
         }
-        
+
         return await rootCommand.InvokeAsync(args);
     }
 
@@ -128,7 +128,7 @@ internal static class Program
             Console.WriteLine();
         }
     }
-    
+
     private static string[] ParseInput(string input)
     {
         var args = new List<string>();
@@ -148,13 +148,14 @@ internal static class Program
                         args.Add(current.ToString());
                         current.Clear();
                     }
+
                     break;
                 default:
                     current.Append(c);
                     break;
             }
         }
-        
+
         if (current.Length > 0)
         {
             args.Add(current.ToString());
@@ -232,6 +233,7 @@ internal static class Program
                     Console.WriteLine("Usage: run <command> [args...]");
                     return true;
                 }
+
                 var runArgs = tokens.Skip(1).ToArray();
                 await ExecuteWithScopeAsync(runArgs, state, rootCommand);
                 return true;
@@ -296,6 +298,7 @@ internal static class Program
             {
                 Console.WriteLine("Invalid chapter index");
             }
+
             state.PrintState();
             return;
         }
@@ -304,6 +307,7 @@ internal static class Program
         {
             Console.WriteLine("Chapter not found");
         }
+
         state.PrintState();
     }
 
@@ -545,11 +549,12 @@ internal static class Program
         {
             replaced[i] = args[i]
                 .Replace("{audio}", chapter.FullName, StringComparison.OrdinalIgnoreCase)
-                .Replace("{chapter}", Path.GetFileNameWithoutExtension(chapter.Name), StringComparison.OrdinalIgnoreCase)
-                .Replace("{chapterName}", Path.GetFileNameWithoutExtension(chapter.Name), StringComparison.OrdinalIgnoreCase);
+                .Replace("{chapter}", Path.GetFileNameWithoutExtension(chapter.Name),
+                    StringComparison.OrdinalIgnoreCase)
+                .Replace("{chapterName}", Path.GetFileNameWithoutExtension(chapter.Name),
+                    StringComparison.OrdinalIgnoreCase);
         }
 
         return replaced;
     }
-
 }

@@ -46,6 +46,7 @@ public sealed class PauseDynamicsService : IPauseDynamicsService
     private const double IntraSentenceMaxShrinkSeconds = 0.050;
     private const double IntraSentenceEdgeGuardSeconds = 0.002;
     private const double IntraSentenceMinRatio = 0.005;
+
     public PauseAnalysisReport AnalyzeChapter(
         TranscriptIndex transcript,
         BookIndex bookIndex,
@@ -130,7 +131,8 @@ public sealed class PauseDynamicsService : IPauseDynamicsService
                 continue;
             }
 
-            double target = PauseCompressionMath.ComputeTargetDuration(span.DurationSec, span.Class, policy, classProfiles);
+            double target =
+                PauseCompressionMath.ComputeTargetDuration(span.DurationSec, span.Class, policy, classProfiles);
             if (!double.IsFinite(target))
             {
                 continue;
@@ -236,7 +238,8 @@ public sealed class PauseDynamicsService : IPauseDynamicsService
         IReadOnlyList<(double Start, double End)>? intraSentenceSilences = null,
         bool includeAllIntraSentenceGaps = true)
     {
-        var analysis = AnalyzeChapter(transcript, bookIndex, hydrated, policy, intraSentenceSilences, includeAllIntraSentenceGaps);
+        var analysis = AnalyzeChapter(transcript, bookIndex, hydrated, policy, intraSentenceSilences,
+            includeAllIntraSentenceGaps);
         var plan = PlanTransforms(analysis, policy);
         var sentenceToParagraph = BuildSentenceParagraphMap(bookIndex);
         var filteredPlan = FilterParagraphZeroAdjustments(plan, sentenceToParagraph);
@@ -277,8 +280,8 @@ public sealed class PauseDynamicsService : IPauseDynamicsService
             sentenceToParagraph.TryGetValue(right.Id, out var rightParagraphId);
 
             bool crossesParagraph = leftParagraphId >= 0
-                && rightParagraphId >= 0
-                && leftParagraphId != rightParagraphId;
+                                    && rightParagraphId >= 0
+                                    && leftParagraphId != rightParagraphId;
             bool leftHeading = leftParagraphId >= 0 && headingParagraphIds.Contains(leftParagraphId);
             bool rightHeading = rightParagraphId >= 0 && headingParagraphIds.Contains(rightParagraphId);
             bool crossesChapterHead = leftHeading || rightHeading;
@@ -301,7 +304,8 @@ public sealed class PauseDynamicsService : IPauseDynamicsService
 
             if (span.Class == PauseClass.Comma)
             {
-                Log.Debug("PauseDynamics comma span from script: sentence {SentenceId} start={Start:F3}s end={End:F3}s", left.Id, span.StartSec, span.EndSec);
+                Log.Debug("PauseDynamics comma span from script: sentence {SentenceId} start={Start:F3}s end={End:F3}s",
+                    left.Id, span.StartSec, span.EndSec);
             }
         }
 
@@ -340,6 +344,7 @@ public sealed class PauseDynamicsService : IPauseDynamicsService
             {
                 yield return span;
             }
+
             yield break;
         }
 
@@ -440,7 +445,8 @@ public sealed class PauseDynamicsService : IPauseDynamicsService
                     CrossesChapterHead: false,
                     Provenance: provenance);
 
-                Log.Debug("PauseDynamics comma span (script/textgrid) sentence {SentenceId} start={Start:F3}s end={End:F3}s provenance={Prov}",
+                Log.Debug(
+                    "PauseDynamics comma span (script/textgrid) sentence {SentenceId} start={Start:F3}s end={End:F3}s provenance={Prov}",
                     sentence.Id,
                     start,
                     end,
@@ -457,12 +463,12 @@ public sealed class PauseDynamicsService : IPauseDynamicsService
             const double MinGapSecondsLocal = 0.05;
             const double ToleranceLocal = 0.002;
 
-        foreach (var (start, end) in silences)
-        {
-            if (!double.IsFinite(start) || !double.IsFinite(end))
+            foreach (var (start, end) in silences)
             {
-                continue;
-            }
+                if (!double.IsFinite(start) || !double.IsFinite(end))
+                {
+                    continue;
+                }
 
                 double duration = end - start;
                 if (duration < MinGapSecondsLocal)
@@ -474,47 +480,50 @@ public sealed class PauseDynamicsService : IPauseDynamicsService
                     s.Timing.StartSec <= start + ToleranceLocal &&
                     s.Timing.EndSec >= end - ToleranceLocal);
 
-            if (sentence is null)
-            {
-                continue;
+                if (sentence is null)
+                {
+                    continue;
+                }
+
+                if (!IsReliableSentence(sentence))
+                {
+                    continue;
+                }
+
+                if (headingSentenceIds.Contains(sentence.Id))
+                {
+                    continue;
+                }
+
+                double safeStart = start + IntraSentenceEdgeGuardSeconds;
+                double safeEnd = end - IntraSentenceEdgeGuardSeconds;
+                if (safeEnd - safeStart < MinGapSecondsLocal)
+                {
+                    continue;
+                }
+
+                var span = new PauseSpan(
+                    sentence.Id,
+                    sentence.Id,
+                    safeStart,
+                    safeEnd,
+                    safeEnd - safeStart,
+                    PauseClass.Comma,
+                    HasGapHint: true,
+                    CrossesParagraph: false,
+                    CrossesChapterHead: false,
+                    Provenance: PauseProvenance.TextGridSilence);
+
+                Log.Debug(
+                    "PauseDynamics comma span from TextGrid: sentence {SentenceId} start={Start:F3}s end={End:F3}s",
+                    sentence.Id, safeStart, safeEnd);
+                yield return span;
             }
-
-            if (!IsReliableSentence(sentence))
-            {
-                continue;
-            }
-
-            if (headingSentenceIds.Contains(sentence.Id))
-            {
-                continue;
-            }
-
-            double safeStart = start + IntraSentenceEdgeGuardSeconds;
-            double safeEnd = end - IntraSentenceEdgeGuardSeconds;
-            if (safeEnd - safeStart < MinGapSecondsLocal)
-            {
-                continue;
-            }
-
-            var span = new PauseSpan(
-                sentence.Id,
-                sentence.Id,
-                safeStart,
-                safeEnd,
-                safeEnd - safeStart,
-                PauseClass.Comma,
-                HasGapHint: true,
-                CrossesParagraph: false,
-                CrossesChapterHead: false,
-                Provenance: PauseProvenance.TextGridSilence);
-
-            Log.Debug("PauseDynamics comma span from TextGrid: sentence {SentenceId} start={Start:F3}s end={End:F3}s", sentence.Id, safeStart, safeEnd);
-            yield return span;
-        }
         }
     }
 
-    private static List<double> GetPunctuationTimes(SentenceAlign sentence, BookIndex bookIndex, HydratedSentence? hydratedSentence)
+    private static List<double> GetPunctuationTimes(SentenceAlign sentence, BookIndex bookIndex,
+        HydratedSentence? hydratedSentence)
     {
         double sentenceStart = sentence.Timing.StartSec;
         double sentenceEnd = sentence.Timing.EndSec;
@@ -526,7 +535,8 @@ public sealed class PauseDynamicsService : IPauseDynamicsService
             return times;
         }
 
-        var fallbackTimes = ExtractTimesFromScript(sentence.Id, sentenceStart, duration, hydratedSentence?.ScriptText, "Script");
+        var fallbackTimes =
+            ExtractTimesFromScript(sentence.Id, sentenceStart, duration, hydratedSentence?.ScriptText, "Script");
         if (fallbackTimes.Count > 0)
         {
             return fallbackTimes;
@@ -767,7 +777,8 @@ public sealed class PauseDynamicsService : IPauseDynamicsService
 
         if (results.Count < punctuationTimes.Count)
         {
-            Log.Debug("PauseDynamics matched {Matched} of {Expected} punctuation-driven pauses for sentence {SentenceId}",
+            Log.Debug(
+                "PauseDynamics matched {Matched} of {Expected} punctuation-driven pauses for sentence {SentenceId}",
                 results.Count,
                 punctuationTimes.Count,
                 sentence.Id);
@@ -905,7 +916,8 @@ public sealed class PauseDynamicsService : IPauseDynamicsService
         foreach (var kvp in baseline)
         {
             var timing = kvp.Value;
-            clone[kvp.Key] = new SentenceTiming(timing.StartSec, timing.EndSec, timing.FragmentBacked, timing.Confidence);
+            clone[kvp.Key] =
+                new SentenceTiming(timing.StartSec, timing.EndSec, timing.FragmentBacked, timing.Confidence);
         }
 
         return clone;

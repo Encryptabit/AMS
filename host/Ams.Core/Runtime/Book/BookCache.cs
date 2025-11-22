@@ -20,10 +20,10 @@ public class BookCache : IBookCache
     public BookCache(string? cacheDirectory = null)
     {
         _cacheDirectory = cacheDirectory ?? GetDefaultCacheDirectory();
-        
+
         // Ensure cache directory exists
         Directory.CreateDirectory(_cacheDirectory);
-        
+
         _jsonOptions = new JsonSerializerOptions
         {
             WriteIndented = false, // Compact JSON for cache files
@@ -40,14 +40,14 @@ public class BookCache : IBookCache
         try
         {
             var cacheFilePath = GetCacheFilePath(sourceFile);
-            
+
             if (!File.Exists(cacheFilePath))
                 return null;
 
             // Read cached index
             var json = await File.ReadAllTextAsync(cacheFilePath, cancellationToken);
             var cachedIndex = JsonSerializer.Deserialize<BookIndex>(json, _jsonOptions);
-            
+
             if (cachedIndex == null)
                 return null;
 
@@ -80,16 +80,16 @@ public class BookCache : IBookCache
         try
         {
             var cacheFilePath = GetCacheFilePath(bookIndex.SourceFile);
-            
+
             // Ensure cache directory exists
             var cacheDir = Path.GetDirectoryName(cacheFilePath);
             if (cacheDir != null)
                 Directory.CreateDirectory(cacheDir);
-            
+
             // Serialize and write to cache
             var json = JsonSerializer.Serialize(bookIndex, _jsonOptions);
             await File.WriteAllTextAsync(cacheFilePath, json, cancellationToken);
-            
+
             return true;
         }
         catch (Exception ex) when (!(ex is OperationCanceledException || ex is ArgumentException))
@@ -106,13 +106,13 @@ public class BookCache : IBookCache
         try
         {
             var cacheFilePath = GetCacheFilePath(sourceFile);
-            
+
             if (File.Exists(cacheFilePath))
             {
                 await Task.Run(() => File.Delete(cacheFilePath), cancellationToken);
                 return true;
             }
-            
+
             return false;
         }
         catch (Exception ex) when (!(ex is OperationCanceledException || ex is ArgumentException))
@@ -141,7 +141,7 @@ public class BookCache : IBookCache
             var sourceFileInfo = new FileInfo(bookIndex.SourceFile);
             var cacheAge = DateTime.UtcNow - bookIndex.IndexedAt;
             var fileAge = DateTime.UtcNow - sourceFileInfo.LastWriteTimeUtc;
-            
+
             // If the file was modified after the cache was created, it's invalid
             if (sourceFileInfo.LastWriteTimeUtc > bookIndex.IndexedAt)
                 return false;
@@ -150,7 +150,8 @@ public class BookCache : IBookCache
         }
         catch (Exception ex) when (!(ex is OperationCanceledException || ex is ArgumentException))
         {
-            throw new BookCacheException($"Failed to validate cached index for '{bookIndex.SourceFile}': {ex.Message}", ex);
+            throw new BookCacheException($"Failed to validate cached index for '{bookIndex.SourceFile}': {ex.Message}",
+                ex);
         }
     }
 
@@ -192,16 +193,16 @@ public class BookCache : IBookCache
                 var cacheFiles = Directory.GetFiles(_cacheDirectory, "*.json", SearchOption.AllDirectories);
                 var totalSize = cacheFiles.Sum(f => new FileInfo(f).Length);
                 var validCount = 0;
-                
+
                 foreach (var file in cacheFiles)
                 {
                     cancellationToken.ThrowIfCancellationRequested();
-                    
+
                     try
                     {
                         var json = File.ReadAllText(file);
                         var bookIndex = JsonSerializer.Deserialize<BookIndex>(json, _jsonOptions);
-                        
+
                         if (bookIndex != null && File.Exists(bookIndex.SourceFile))
                         {
                             validCount++;
@@ -212,7 +213,7 @@ public class BookCache : IBookCache
                         // Ignore invalid cache files
                     }
                 }
-                
+
                 return new BookCacheStats(cacheFiles.Length, validCount, totalSize);
             }, cancellationToken);
         }
@@ -227,12 +228,12 @@ public class BookCache : IBookCache
         // Create a safe filename from the source file path
         var sourceFileHash = ComputeStringHash(sourceFile);
         var sourceFileName = Path.GetFileNameWithoutExtension(sourceFile);
-        
+
         // Remove invalid filename characters
         var safeFileName = string.Concat(sourceFileName.Where(c => !Path.GetInvalidFileNameChars().Contains(c)));
         if (safeFileName.Length > 50) // Limit length
             safeFileName = safeFileName[..50];
-        
+
         var cacheFileName = $"{safeFileName}_{sourceFileHash[..8]}.json";
         return Path.Combine(_cacheDirectory, cacheFileName);
     }
@@ -242,8 +243,9 @@ public class BookCache : IBookCache
         try
         {
             using var sha256 = SHA256.Create();
-            using var stream = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.Read, bufferSize: 4096, useAsync: true);
-            
+            using var stream = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.Read,
+                bufferSize: 4096, useAsync: true);
+
             var hashBytes = await sha256.ComputeHashAsync(stream, cancellationToken);
             return Convert.ToHexString(hashBytes);
         }
@@ -283,13 +285,13 @@ public record BookCacheStats(
 {
     /// <summary>Gets the total cache size in a human-readable format.</summary>
     public string TotalSizeFormatted => FormatBytes(TotalSizeBytes);
-    
+
     private static string FormatBytes(long bytes)
     {
         const long kb = 1024;
         const long mb = kb * 1024;
         const long gb = mb * 1024;
-        
+
         return bytes switch
         {
             >= gb => $"{bytes / (double)gb:F2} GB",

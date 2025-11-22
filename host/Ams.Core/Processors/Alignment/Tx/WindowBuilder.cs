@@ -10,7 +10,7 @@ public static class WindowBuilder
     {
         var list = anchors.ToList();
         list.Insert(0, (bookStart - 1, asrStart - 1)); // sentinel start
-        list.Add((bookEnd + 1, asrEnd + 1));           // sentinel end
+        list.Add((bookEnd + 1, asrEnd + 1)); // sentinel end
 
         var wins = new List<(int, int, int, int)>(Math.Max(1, list.Count - 1));
         for (int k = 0; k < list.Count - 1; k++)
@@ -27,9 +27,7 @@ public static class WindowBuilder
             if (bLo < bHi || aLo < aHi)
                 wins.Add((bLo, bHi, aLo, aHi));
         }
+
         return wins;
     }
 }
-
-
-

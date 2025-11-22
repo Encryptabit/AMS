@@ -76,7 +76,8 @@ public static class PipelineCommand
         Converters = { new JsonStringEnumConverter() }
     };
 
-    private static readonly Regex PatternTokenRegex = new(@"\{(d{1,2}|um\d+-\d+|um\d+|um\*)([+-]\d+)?\}", RegexOptions.Compiled | RegexOptions.CultureInvariant | RegexOptions.IgnoreCase);
+    private static readonly Regex PatternTokenRegex = new(@"\{(d{1,2}|um\d+-\d+|um\d+|um\*)([+-]\d+)?\}",
+        RegexOptions.Compiled | RegexOptions.CultureInvariant | RegexOptions.IgnoreCase);
 
     private static readonly Dictionary<PipelineStage, (string Label, string Color)> StageStyles = new()
     {
@@ -408,16 +409,30 @@ public static class PipelineCommand
 
         private sealed class NullProgressReporter : IPipelineProgressReporter
         {
-            public void SetQueued(string chapterId) { }
-            public void MarkRunning(string chapterId) { }
-            public void ReportStage(string chapterId, PipelineStage stage, string message) { }
-            public void MarkComplete(string chapterId) { }
-            public void MarkFailed(string chapterId, string message) { }
+            public void SetQueued(string chapterId)
+            {
+            }
+
+            public void MarkRunning(string chapterId)
+            {
+            }
+
+            public void ReportStage(string chapterId, PipelineStage stage, string message)
+            {
+            }
+
+            public void MarkComplete(string chapterId)
+            {
+            }
+
+            public void MarkFailed(string chapterId, string message)
+            {
+            }
         }
     }
 
-private static async Task RunPipelineForMultipleChaptersAsync(
-    PipelineService pipelineService,
+    private static async Task RunPipelineForMultipleChaptersAsync(
+        PipelineService pipelineService,
         FileInfo bookFile,
         DirectoryInfo? workDirOption,
         FileInfo? bookIndexOverride,
@@ -433,8 +448,8 @@ private static async Task RunPipelineForMultipleChaptersAsync(
         int maxMfaParallelism,
         IPipelineProgressReporter? reporter,
         CancellationToken cancellationToken)
-{
-    ArgumentNullException.ThrowIfNull(pipelineService);
+    {
+        ArgumentNullException.ThrowIfNull(pipelineService);
 
         if (chapterFiles is null || chapterFiles.Count == 0)
         {
@@ -443,7 +458,11 @@ private static async Task RunPipelineForMultipleChaptersAsync(
         }
 
         var existingChapters = chapterFiles
-            .Select(file => { file.Refresh(); return file; })
+            .Select(file =>
+            {
+                file.Refresh();
+                return file;
+            })
             .Where(file => file.Exists)
             .ToList();
 
@@ -455,7 +474,8 @@ private static async Task RunPipelineForMultipleChaptersAsync(
 
         if (existingChapters.Count != chapterFiles.Count)
         {
-            Log.Debug("Skipping {Missing} chapter(s) because the WAV file was not found.", chapterFiles.Count - existingChapters.Count);
+            Log.Debug("Skipping {Missing} chapter(s) because the WAV file was not found.",
+                chapterFiles.Count - existingChapters.Count);
         }
 
         maxWorkers = maxWorkers <= 0 ? Math.Max(1, Environment.ProcessorCount) : maxWorkers;
@@ -483,7 +503,8 @@ private static async Task RunPipelineForMultipleChaptersAsync(
             catch (OperationCanceledException oce)
             {
                 reporter?.MarkFailed(chapterId, "Cancelled");
-                errors.Add(new InvalidOperationException($"Pipeline cancelled before starting {chapter.FullName}", oce));
+                errors.Add(new InvalidOperationException($"Pipeline cancelled before starting {chapter.FullName}",
+                    oce));
                 return;
             }
 
@@ -693,7 +714,8 @@ private static async Task RunPipelineForMultipleChaptersAsync(
 
             try
             {
-                RunVerify(root, reportDir, chapter, verifyAll, format, windowMs, stepMs, minDurationMs, mergeGapMs, cancellationToken);
+                RunVerify(root, reportDir, chapter, verifyAll, format, windowMs, stepMs, minDurationMs, mergeGapMs,
+                    cancellationToken);
             }
             catch (OperationCanceledException)
             {
@@ -796,7 +818,9 @@ private static async Task RunPipelineForMultipleChaptersAsync(
 
                 if (!overwrite && File.Exists(targetPath))
                 {
-                    Log.Debug("Skipping {Source}; destination already exists at {Destination} (use --overwrite to replace)", file.FullName, targetPath);
+                    Log.Debug(
+                        "Skipping {Source}; destination already exists at {Destination} (use --overwrite to replace)",
+                        file.FullName, targetPath);
                     continue;
                 }
 
@@ -825,7 +849,8 @@ private static async Task RunPipelineForMultipleChaptersAsync(
         var patternOption = new Option<string>
         (
             "--pattern",
-            description: "Naming template. Use {d}/{dd} (with optional +/- offsets) and {um#} for unmatched text segments."
+            description:
+            "Naming template. Use {d}/{dd} (with optional +/- offsets) and {um#} for unmatched text segments."
         )
         {
             IsRequired = true
@@ -1050,7 +1075,8 @@ private static async Task RunPipelineForMultipleChaptersAsync(
 
             if (hard)
             {
-                Log.Debug("Hard reset: deleting all generated content under {Root} (DOCX files preserved)", root.FullName);
+                Log.Debug("Hard reset: deleting all generated content under {Root} (DOCX files preserved)",
+                    root.FullName);
                 PerformHardReset(root, cancellationToken);
             }
             else
@@ -1075,13 +1101,19 @@ private static async Task RunPipelineForMultipleChaptersAsync(
         var audioOption = new Option<FileInfo?>("--audio", "Path to the chapter audio WAV");
         audioOption.AddAlias("-a");
 
-        var workDirOption = new Option<DirectoryInfo?>("--work-dir", () => null, "Working directory for generated artifacts");
-        var bookIndexOption = new Option<FileInfo?>("--book-index", () => null, "Existing/target BookIndex JSON path (defaults to work-dir/book-index.json)");
-        var chapterIdOption = new Option<string?>("--chapter-id", () => null, "Override output stem (defaults to audio file name)");
-        var forceOption = new Option<bool>("--force", () => false, "Re-run all stages even if outputs are already present");
+        var workDirOption =
+            new Option<DirectoryInfo?>("--work-dir", () => null, "Working directory for generated artifacts");
+        var bookIndexOption = new Option<FileInfo?>("--book-index", () => null,
+            "Existing/target BookIndex JSON path (defaults to work-dir/book-index.json)");
+        var chapterIdOption = new Option<string?>("--chapter-id", () => null,
+            "Override output stem (defaults to audio file name)");
+        var forceOption =
+            new Option<bool>("--force", () => false, "Re-run all stages even if outputs are already present");
         forceOption.AddAlias("-f");
-        var forceIndexOption = new Option<bool>("--force-index", () => false, "Rebuild book index even if it already exists");
-        var avgWpmOption = new Option<double>("--avg-wpm", () => 200.0, "Average WPM used for duration estimation when indexing");
+        var forceIndexOption =
+            new Option<bool>("--force-index", () => false, "Rebuild book index even if it already exists");
+        var avgWpmOption = new Option<double>("--avg-wpm", () => 200.0,
+            "Average WPM used for duration estimation when indexing");
 
         var asrServiceOption = new Option<string>("--asr-service", () => "http://localhost:8000", "ASR service URL");
         asrServiceOption.AddAlias("-s");
@@ -1091,9 +1123,12 @@ private static async Task RunPipelineForMultipleChaptersAsync(
         asrLanguageOption.AddAlias("-l");
 
         var verboseOption = new Option<bool>("--verbose", () => false, "Enable verbose logging for pipeline stages.");
-        var maxWorkersOption = new Option<int>("--max-workers", () => Math.Max(1, Environment.ProcessorCount), "Maximum number of chapters to process in parallel once ASR is complete");
-        var maxMfaOption = new Option<int>("--max-mfa", () =>  Math.Max(1, Environment.ProcessorCount), "Maximum number of concurrent MFA alignment jobs");
-        var progressOption = new Option<bool>("--progress", () => true, "Display live progress UI while running the pipeline");
+        var maxWorkersOption = new Option<int>("--max-workers", () => Math.Max(1, Environment.ProcessorCount),
+            "Maximum number of chapters to process in parallel once ASR is complete");
+        var maxMfaOption = new Option<int>("--max-mfa", () => Math.Max(1, Environment.ProcessorCount),
+            "Maximum number of concurrent MFA alignment jobs");
+        var progressOption =
+            new Option<bool>("--progress", () => true, "Display live progress UI while running the pipeline");
 
         cmd.AddOption(bookOption);
         cmd.AddOption(audioOption);
@@ -1116,7 +1151,8 @@ private static async Task RunPipelineForMultipleChaptersAsync(
             var cancellationToken = context.GetCancellationToken();
             var bookFile = CommandInputResolver.ResolveBookSource(context.ParseResult.GetValueForOption(bookOption));
             var workDir = context.ParseResult.GetValueForOption(workDirOption);
-            var bookIndex = context.ParseResult.GetValueForOption(bookIndexOption) ?? CommandInputResolver.ResolveBookIndex(null, mustExist: false);
+            var bookIndex = context.ParseResult.GetValueForOption(bookIndexOption) ??
+                            CommandInputResolver.ResolveBookIndex(null, mustExist: false);
             var forceAll = context.ParseResult.GetValueForOption(forceOption);
             var forceIndex = context.ParseResult.GetValueForOption(forceIndexOption);
             var avgWpm = context.ParseResult.GetValueForOption(avgWpmOption);
@@ -1186,11 +1222,13 @@ private static async Task RunPipelineForMultipleChaptersAsync(
                     Log.Error(ex, "pipeline run command failed");
                     context.ExitCode = 1;
                 }
+
                 return;
             }
 
             var audioFile = CommandInputResolver.RequireAudio(context.ParseResult.GetValueForOption(audioOption));
-            var chapterId = context.ParseResult.GetValueForOption(chapterIdOption) ?? Path.GetFileNameWithoutExtension(audioFile.Name);
+            var chapterId = context.ParseResult.GetValueForOption(chapterIdOption) ??
+                            Path.GetFileNameWithoutExtension(audioFile.Name);
 
             try
             {
@@ -1277,8 +1315,8 @@ private static async Task RunPipelineForMultipleChaptersAsync(
         return cmd;
     }
 
-private static async Task RunPipelineAsync(
-    PipelineService pipelineService,
+    private static async Task RunPipelineAsync(
+        PipelineService pipelineService,
         FileInfo bookFile,
         FileInfo audioFile,
         DirectoryInfo? workDirOption,
@@ -1353,7 +1391,7 @@ private static async Task RunPipelineAsync(
             ServiceUrl = asrServiceUrl,
             Model = asrModel,
             Language = asrLanguage,
-            EnableWordTimestamps = true 
+            EnableWordTimestamps = true
         };
 
         var useDedicatedMfaProcess = concurrency?.MfaDegree > 1;
@@ -1397,14 +1435,18 @@ private static async Task RunPipelineAsync(
         };
 
         var workspace = CommandInputResolver.ResolveWorkspace(bookIndexFile);
-        var result = await pipelineService.RunChapterAsync(workspace, pipelineOptions, cancellationToken).ConfigureAwait(false);
+        var result = await pipelineService.RunChapterAsync(workspace, pipelineOptions, cancellationToken)
+            .ConfigureAwait(false);
 
         var bookIndexMessage = result.BookIndexBuilt ? "Index built" : "Index ready";
         progress?.ReportStage(chapterStem, PipelineStage.BookIndex, bookIndexMessage);
         progress?.ReportStage(chapterStem, PipelineStage.Asr, result.AsrRan ? "ASR complete" : "ASR cached");
-        progress?.ReportStage(chapterStem, PipelineStage.Anchors, result.AnchorsRan ? "Anchors generated" : "Anchors cached");
-        progress?.ReportStage(chapterStem, PipelineStage.Transcript, result.TranscriptRan ? "Transcript indexed" : "Transcript cached");
-        progress?.ReportStage(chapterStem, PipelineStage.Hydrate, result.HydrateRan ? "Hydrate complete" : "Hydrate cached");
+        progress?.ReportStage(chapterStem, PipelineStage.Anchors,
+            result.AnchorsRan ? "Anchors generated" : "Anchors cached");
+        progress?.ReportStage(chapterStem, PipelineStage.Transcript,
+            result.TranscriptRan ? "Transcript indexed" : "Transcript cached");
+        progress?.ReportStage(chapterStem, PipelineStage.Hydrate,
+            result.HydrateRan ? "Hydrate complete" : "Hydrate cached");
 
         var textGridStatus = result.TextGridFile.Exists
             ? (result.MfaRan ? "MFA aligned" : "MFA cached")
@@ -1504,7 +1546,8 @@ private static async Task RunPipelineAsync(
         {
             cancellationToken.ThrowIfCancellationRequested();
 
-            if (file.Extension.Equals(".docx", StringComparison.OrdinalIgnoreCase) || file.Extension.Equals(".pdf", StringComparison.OrdinalIgnoreCase))
+            if (file.Extension.Equals(".docx", StringComparison.OrdinalIgnoreCase) ||
+                file.Extension.Equals(".pdf", StringComparison.OrdinalIgnoreCase))
             {
                 continue;
             }
@@ -1523,7 +1566,8 @@ private static async Task RunPipelineAsync(
         Log.Debug("Hard reset complete for {Root}", root.FullName);
     }
 
-    private static void RunStats(DirectoryInfo? workDirOption, FileInfo? bookIndexOption, string? chapterName, bool analyzeAll, CancellationToken cancellationToken)
+    private static void RunStats(DirectoryInfo? workDirOption, FileInfo? bookIndexOption, string? chapterName,
+        bool analyzeAll, CancellationToken cancellationToken)
     {
         var root = CommandInputResolver.ResolveDirectory(workDirOption);
         root.Refresh();
@@ -1540,6 +1584,7 @@ private static async Task RunPipelineAsync(
             {
                 Log.Debug("Book index not found at {Path}", bookIndexFile.FullName);
             }
+
             bookIndexFile = null;
         }
 
@@ -1658,8 +1703,10 @@ private static async Task RunPipelineAsync(
                 {
                     var rangeParts = token[2..].Split('-', StringSplitOptions.RemoveEmptyEntries);
                     if (rangeParts.Length != 2 ||
-                        !int.TryParse(rangeParts[0], NumberStyles.Integer, CultureInfo.InvariantCulture, out var startIndex) ||
-                        !int.TryParse(rangeParts[1], NumberStyles.Integer, CultureInfo.InvariantCulture, out var endIndex) ||
+                        !int.TryParse(rangeParts[0], NumberStyles.Integer, CultureInfo.InvariantCulture,
+                            out var startIndex) ||
+                        !int.TryParse(rangeParts[1], NumberStyles.Integer, CultureInfo.InvariantCulture,
+                            out var endIndex) ||
                         startIndex <= 0 || endIndex < startIndex)
                     {
                         throw new InvalidOperationException($"Invalid unmatched range token '{match.Value}'.");
@@ -1679,7 +1726,8 @@ private static async Task RunPipelineAsync(
                 }
                 else
                 {
-                    if (!int.TryParse(token.AsSpan(2), NumberStyles.Integer, CultureInfo.InvariantCulture, out var partIndex) || partIndex <= 0)
+                    if (!int.TryParse(token.AsSpan(2), NumberStyles.Integer, CultureInfo.InvariantCulture,
+                            out var partIndex) || partIndex <= 0)
                     {
                         throw new InvalidOperationException($"Invalid unmatched token '{match.Value}'.");
                     }
@@ -1728,6 +1776,7 @@ private static async Task RunPipelineAsync(
         {
             parts[i] = matches[i].Value;
         }
+
         return parts;
     }
 
@@ -1881,7 +1930,8 @@ private static async Task RunPipelineAsync(
         List<RenameOp> DirectoryOps,
         List<RenameOp> FileOps);
 
-    private static List<DirectoryInfo> ResolveChapterDirectories(DirectoryInfo root, string? chapterName, bool analyzeAll)
+    private static List<DirectoryInfo> ResolveChapterDirectories(DirectoryInfo root, string? chapterName,
+        bool analyzeAll)
     {
         var chapters = new List<DirectoryInfo>();
 
@@ -1920,7 +1970,8 @@ private static async Task RunPipelineAsync(
         return chapters;
     }
 
-    private static ChapterStats? ComputeChapterStats(DirectoryInfo chapterDir, BookIndex? bookIndex, FileInfo? bookIndexFile)
+    private static ChapterStats? ComputeChapterStats(DirectoryInfo chapterDir, BookIndex? bookIndex,
+        FileInfo? bookIndexFile)
     {
         var txFile = chapterDir.EnumerateFiles("*.align.tx.json", SearchOption.TopDirectoryOnly).FirstOrDefault();
         if (txFile is null)
@@ -1963,7 +2014,9 @@ private static async Task RunPipelineAsync(
                 {
                     Log.Debug("Pause policy loaded for {Chapter} from {Path}", chapterDir.Name, policyPath);
                 }
-                var pauseMap = PauseMapBuilder.Build(transcript, bookIndex, hydrated, policy, silences, includeAllIntraSentenceGaps: true);
+
+                var pauseMap = PauseMapBuilder.Build(transcript, bookIndex, hydrated, policy, silences,
+                    includeAllIntraSentenceGaps: true);
                 prosodyStats = pauseMap.Stats;
             }
             catch (Exception ex)
@@ -1975,7 +2028,8 @@ private static async Task RunPipelineAsync(
         return new ChapterStats(chapterDir.Name, audioStats, prosodyStats);
     }
 
-    private static void PrintStatsReport(DirectoryInfo root, FileInfo? bookIndexFile, BookIndex? bookIndex, IReadOnlyList<ChapterStats> chapters, double totalAudioSec)
+    private static void PrintStatsReport(DirectoryInfo root, FileInfo? bookIndexFile, BookIndex? bookIndex,
+        IReadOnlyList<ChapterStats> chapters, double totalAudioSec)
     {
         AnsiConsole.MarkupLine($"[bold]Pipeline Statistics[/] ({root.FullName})");
 
@@ -2032,7 +2086,8 @@ private static async Task RunPipelineAsync(
             }
             else
             {
-                AnsiConsole.MarkupLine("[yellow]Prosody statistics unavailable (book index missing or failed to load).[/]");
+                AnsiConsole.MarkupLine(
+                    "[yellow]Prosody statistics unavailable (book index missing or failed to load).[/]");
             }
         }
     }
@@ -2163,7 +2218,8 @@ private static async Task RunPipelineAsync(
                             {
                                 var variantBuffer = AudioProcessor.Decode(variant.File.FullName);
                                 var variantMono = ToMono(variantBuffer);
-                                var variantTimings = string.Equals(variant.HydratePath, referenceHydratePath, StringComparison.OrdinalIgnoreCase)
+                                var variantTimings = string.Equals(variant.HydratePath, referenceHydratePath,
+                                    StringComparison.OrdinalIgnoreCase)
                                     ? rawTimings
                                     : LoadSentenceTimings(variant.HydratePath);
 
@@ -2229,7 +2285,8 @@ private static async Task RunPipelineAsync(
                             var mismatchText = result.Mismatches.Count.ToString(CultureInfo.InvariantCulture);
                             var reportText = artifacts.Count == 0
                                 ? "[grey]-[/]"
-                                : string.Join("\n", artifacts.Select(path => $"[grey]{Markup.Escape(Path.GetFileName(path))}[/]"));
+                                : string.Join("\n",
+                                    artifacts.Select(path => $"[grey]{Markup.Escape(Path.GetFileName(path))}[/]"));
 
                             table.AddRow(
                                 Markup.Escape(rowLabel),
@@ -2249,11 +2306,11 @@ private static async Task RunPipelineAsync(
                                 result.ExtraSpeechSec,
                                 artifacts.ToArray());
 
-                        processed++;
-                        if (hasIssues)
-                        {
-                            withMismatches++;
-                        }
+                            processed++;
+                            if (hasIssues)
+                            {
+                                withMismatches++;
+                            }
                         }
                     }
                     catch (Exception ex)
@@ -2333,7 +2390,8 @@ private static async Task RunPipelineAsync(
 
     private sealed record ProcessedVariant(string Variant, FileInfo File, bool IsPauseAdjusted, string HydratePath);
 
-    private static IReadOnlyList<ProcessedVariant> ResolveProcessedVariants(DirectoryInfo root, DirectoryInfo chapterDir, string stem, string referenceHydratePath)
+    private static IReadOnlyList<ProcessedVariant> ResolveProcessedVariants(DirectoryInfo root,
+        DirectoryInfo chapterDir, string stem, string referenceHydratePath)
     {
         var variants = new List<ProcessedVariant>();
         var seenPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -2358,7 +2416,8 @@ private static async Task RunPipelineAsync(
             variants.Add(new ProcessedVariant(variant, file, isPauseAdjusted, effectiveHydrate!));
         }
 
-        void TryAddVariant(string variant, bool isPauseAdjusted, IEnumerable<string> candidatePaths, Func<string, string?> hydrateResolver)
+        void TryAddVariant(string variant, bool isPauseAdjusted, IEnumerable<string> candidatePaths,
+            Func<string, string?> hydrateResolver)
         {
             foreach (var path in candidatePaths)
             {
@@ -2393,7 +2452,8 @@ private static async Task RunPipelineAsync(
 
         if (!variants.Any(v => v.Variant == "treated") && Directory.Exists(chapterDir.FullName))
         {
-            var extraTreated = Directory.EnumerateFiles(chapterDir.FullName, "*.treated.wav", SearchOption.AllDirectories);
+            var extraTreated =
+                Directory.EnumerateFiles(chapterDir.FullName, "*.treated.wav", SearchOption.AllDirectories);
             TryAddVariant("treated", false, extraTreated, _ => referenceHydratePath);
         }
 
@@ -2406,8 +2466,10 @@ private static async Task RunPipelineAsync(
 
         if (!variants.Any(v => v.Variant == "pause-adjusted") && Directory.Exists(chapterDir.FullName))
         {
-            var extraAdjusted = Directory.EnumerateFiles(chapterDir.FullName, "*.pause-adjusted.wav", SearchOption.AllDirectories);
-            TryAddVariant("pause-adjusted", true, extraAdjusted, _ => ResolveVariantHydrate(chapterDir, stem) ?? referenceHydratePath);
+            var extraAdjusted = Directory.EnumerateFiles(chapterDir.FullName, "*.pause-adjusted.wav",
+                SearchOption.AllDirectories);
+            TryAddVariant("pause-adjusted", true, extraAdjusted,
+                _ => ResolveVariantHydrate(chapterDir, stem) ?? referenceHydratePath);
         }
 
         return variants;
@@ -2436,7 +2498,8 @@ private static async Task RunPipelineAsync(
         }
 
         // Fallback: look for any pause-adjusted hydrate under the chapter directory
-        var match = Directory.EnumerateFiles(chapterDir.FullName, "*.pause-adjusted.hydrate.json", SearchOption.AllDirectories)
+        var match = Directory
+            .EnumerateFiles(chapterDir.FullName, "*.pause-adjusted.hydrate.json", SearchOption.AllDirectories)
             .FirstOrDefault();
         return match;
     }
@@ -2482,7 +2545,8 @@ private static async Task RunPipelineAsync(
         using var stream = File.OpenRead(hydratePath);
         using var doc = JsonDocument.Parse(stream);
 
-        if (!doc.RootElement.TryGetProperty("sentences", out var sentences) || sentences.ValueKind != JsonValueKind.Array)
+        if (!doc.RootElement.TryGetProperty("sentences", out var sentences) ||
+            sentences.ValueKind != JsonValueKind.Array)
         {
             return new Dictionary<int, SentenceTiming>();
         }
@@ -2583,7 +2647,8 @@ private static async Task RunPipelineAsync(
         return false;
     }
 
-    private static void WriteVerificationCsv(string path, string chapterLabel, string variantLabel, AudioVerificationResult result)
+    private static void WriteVerificationCsv(string path, string chapterLabel, string variantLabel,
+        AudioVerificationResult result)
     {
         using var writer = new StreamWriter(path, false, Encoding.UTF8);
         writer.WriteLine("chapter,variant,type,startSec,endSec,rawDb,treatedDb,deltaDb,sentenceIds");
@@ -2798,6 +2863,7 @@ private static async Task RunPipelineAsync(
             {
                 minWindowRms = rms;
             }
+
             if (rms > maxWindowRms)
             {
                 maxWindowRms = rms;
@@ -2808,6 +2874,7 @@ private static async Task RunPipelineAsync(
         {
             minWindowRms = overallRms;
         }
+
         if (double.IsNegativeInfinity(maxWindowRms))
         {
             maxWindowRms = overallRms;
@@ -2882,10 +2949,17 @@ private static async Task RunPipelineAsync(
     {
         using var stream = file.OpenRead();
         var payload = JsonSerializer.Deserialize<T>(stream, StatsJsonOptions);
-        return payload ?? throw new InvalidOperationException($"Failed to deserialize {typeof(T).Name} from {file.FullName}");
+        return payload ??
+               throw new InvalidOperationException($"Failed to deserialize {typeof(T).Name} from {file.FullName}");
     }
 
-    private sealed record AudioStats(double LengthSec, double SamplePeak, double TruePeak, double OverallRms, double MinWindowRms, double MaxWindowRms);
+    private sealed record AudioStats(
+        double LengthSec,
+        double SamplePeak,
+        double TruePeak,
+        double OverallRms,
+        double MinWindowRms,
+        double MaxWindowRms);
 
     private sealed record ChapterStats(string Chapter, AudioStats Audio, PauseStatsSet? Prosody);
 

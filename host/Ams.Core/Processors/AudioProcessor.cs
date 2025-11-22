@@ -77,11 +77,11 @@ public static partial class AudioProcessor
         {
             return buffer;
         }
-        
+
         var graph = FfFilterGraph.FromBuffer(buffer);
-        
+
         graph.Resample(new ResampleFilterParams(targetSampleRate));
-       
+
         return graph.ToBuffer();
     }
 
@@ -93,7 +93,9 @@ public static partial class AudioProcessor
         }
 
         var opts = options ?? new SilenceDetectOptions();
-        var filter = FormattableString.Invariant($"silencedetect=noise={opts.NoiseDb:F2}dB:d={opts.MinimumDuration.TotalSeconds:F3}");
+        var filter =
+            FormattableString.Invariant(
+                $"silencedetect=noise={opts.NoiseDb:F2}dB:d={opts.MinimumDuration.TotalSeconds:F3}");
 
         var logs = FfFilterGraph.FromBuffer(buffer)
             .Custom(filter)
@@ -111,7 +113,8 @@ public static partial class AudioProcessor
 
         double startSeconds = Math.Max(0, start.TotalSeconds);
         string filter = end.HasValue
-            ? FormattableString.Invariant($"atrim=start={startSeconds:F6}:end={Math.Max(startSeconds, end.Value.TotalSeconds):F6},asetpts=PTS-STARTPTS")
+            ? FormattableString.Invariant(
+                $"atrim=start={startSeconds:F6}:end={Math.Max(startSeconds, end.Value.TotalSeconds):F6},asetpts=PTS-STARTPTS")
             : FormattableString.Invariant($"atrim=start={startSeconds:F6},asetpts=PTS-STARTPTS");
 
         return FfFilterGraphRunner.Apply(buffer, filter);
@@ -161,7 +164,8 @@ public static partial class AudioProcessor
         return FfFilterGraphRunner.Apply(buffer, filter);
     }
 
-    public static LoudnessNormalizationResult NormalizeLoudness(AudioBuffer buffer, LoudnessNormalizeOptions? options = null)
+    public static LoudnessNormalizationResult NormalizeLoudness(AudioBuffer buffer,
+        LoudnessNormalizeOptions? options = null)
     {
         if (buffer is null)
         {
@@ -184,10 +188,12 @@ public static partial class AudioProcessor
 
     private static string BuildLoudnessFirstPassFilter(LoudnessNormalizeOptions options)
     {
-        return FormattableString.Invariant($"loudnorm=I={options.TargetIntegrated:F2}:TP={options.TargetTruePeak:F2}:LRA={options.TargetLoudnessRange:F2}:print_format=json");
+        return FormattableString.Invariant(
+            $"loudnorm=I={options.TargetIntegrated:F2}:TP={options.TargetTruePeak:F2}:LRA={options.TargetLoudnessRange:F2}:print_format=json");
     }
 
-    private static string BuildLoudnessSecondPassFilter(LoudnessNormalizeOptions options, LoudnessMeasurements measurements)
+    private static string BuildLoudnessSecondPassFilter(LoudnessNormalizeOptions options,
+        LoudnessMeasurements measurements)
     {
         var linearValue = options.LinearScaling ? "true" : "false";
         return FormattableString.Invariant(
@@ -196,7 +202,8 @@ public static partial class AudioProcessor
 
     private static class SilenceLogParser
     {
-        private static readonly Regex Pattern = new("silence_(?<kind>start|end|duration):\\s*(?<value>[-+]?\\d+(?:\\.\\d+)?)", RegexOptions.Compiled);
+        private static readonly Regex Pattern =
+            new("silence_(?<kind>start|end|duration):\\s*(?<value>[-+]?\\d+(?:\\.\\d+)?)", RegexOptions.Compiled);
 
         public static IReadOnlyList<SilenceInterval> Parse(IEnumerable<string> logs)
         {
@@ -243,7 +250,8 @@ public static partial class AudioProcessor
                 if (end.HasValue)
                 {
                     var endSeconds = end.Value;
-                    var durationSeconds = duration ?? lastDuration ?? (currentStart.HasValue ? endSeconds - currentStart.Value : 0);
+                    var durationSeconds = duration ??
+                                          lastDuration ?? (currentStart.HasValue ? endSeconds - currentStart.Value : 0);
                     double startSeconds = currentStart ?? (endSeconds - durationSeconds);
 
                     intervals.Add(new SilenceInterval(
@@ -286,7 +294,8 @@ public static partial class AudioProcessor
         {
             if (!root.TryGetProperty(property, out var element))
             {
-                throw new InvalidOperationException(FormattableString.Invariant($"FFmpeg loudnorm output missing '{property}'."));
+                throw new InvalidOperationException(
+                    FormattableString.Invariant($"FFmpeg loudnorm output missing '{property}'."));
             }
 
             var value = element.ValueKind == JsonValueKind.Number

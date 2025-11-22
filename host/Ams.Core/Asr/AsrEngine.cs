@@ -48,6 +48,7 @@ public static class AsrEngineConfig
             return Path.GetFullPath(env.Trim());
         }
 
-        throw new InvalidOperationException("Whisper model path is required. Provide --model-path or set AMS_WHISPER_MODEL_PATH.");
+        throw new InvalidOperationException(
+            "Whisper model path is required. Provide --model-path or set AMS_WHISPER_MODEL_PATH.");
     }
 }

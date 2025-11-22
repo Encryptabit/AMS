@@ -11,7 +11,7 @@ public static class SectionLocator
 {
     private static readonly HashSet<string> HeadingKeywords = new(StringComparer.Ordinal)
     {
-        "chapter","prologue","epilogue","preface","introduction","foreword","prelude","contents"
+        "chapter", "prologue", "epilogue", "preface", "introduction", "foreword", "prelude", "contents"
     };
 
     private static readonly HashSet<string> LeadingChapterKeywords = new(StringComparer.Ordinal)
@@ -127,7 +127,8 @@ public static class SectionLocator
     /// <summary>
     /// Returns the word-index window [start,end] of the detected section, or null.
     /// </summary>
-    public static (int startWord, int endWord)? DetectSectionWindow(BookIndex book, IReadOnlyList<string> asrTokens, int prefixTokenCount = 8)
+    public static (int startWord, int endWord)? DetectSectionWindow(BookIndex book, IReadOnlyList<string> asrTokens,
+        int prefixTokenCount = 8)
     {
         var sec = DetectSection(book, asrTokens, prefixTokenCount);
         return sec == null ? null : (sec.StartWord, sec.EndWord);
@@ -171,7 +172,8 @@ public static class SectionLocator
                 return matches[0].Section;
             }
 
-            var exact = matches.FirstOrDefault(m => string.Equals(m.NormalizedOriginal, variant, StringComparison.Ordinal));
+            var exact = matches.FirstOrDefault(m =>
+                string.Equals(m.NormalizedOriginal, variant, StringComparison.Ordinal));
             if (exact != null)
             {
                 return exact.Section;
@@ -189,6 +191,7 @@ public static class SectionLocator
         {
             if (!string.Equals(a[k], b[k], StringComparison.Ordinal)) break;
         }
+
         return k;
     }
 
@@ -239,6 +242,7 @@ public static class SectionLocator
                 i++;
             }
         }
+
         return result;
     }
 
@@ -283,6 +287,7 @@ public static class SectionLocator
                 value += unit;
                 consumed = 2;
             }
+
             return true;
         }
 
@@ -330,6 +335,7 @@ public static class SectionLocator
             {
                 result += current;
             }
+
             prev = current;
         }
 
@@ -365,6 +371,7 @@ public static class SectionLocator
                 {
                     return keywordNumber;
                 }
+
                 continue;
             }
 
@@ -423,6 +430,7 @@ public static class SectionLocator
                 value += unit;
                 consumed = 2;
             }
+
             return true;
         }
 
@@ -451,6 +459,7 @@ public static class SectionLocator
                     list = new List<SectionCandidate>();
                     byNumber[number.Value] = list;
                 }
+
                 list.Add(candidate);
             }
 
@@ -461,6 +470,7 @@ public static class SectionLocator
                     list = new List<SectionCandidate>();
                     byNormalized[variant] = list;
                 }
+
                 list.Add(candidate);
             }
         }
@@ -499,6 +509,7 @@ public static class SectionLocator
         {
             idx++;
         }
+
         return tokens.Skip(idx).ToList();
     }
 

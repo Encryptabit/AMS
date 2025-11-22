@@ -41,7 +41,7 @@ export async function createPlayer(id, containerSelector, audioUrl, options, dot
         }));
     }
 
-    const state = { ws, dotNetRef };
+    const state = {ws, dotNetRef};
     players.set(id, state);
 
     ws.on('ready', () => {
@@ -67,18 +67,29 @@ export function dispose(id) {
     players.delete(id);
 }
 
-export function playPause(id) { ensure(id).ws.playPause(); }
-export function play(id) { ensure(id).ws.play(); }
-export function pause(id) { ensure(id).ws.pause(); }
+export function playPause(id) {
+    ensure(id).ws.playPause();
+}
+
+export function play(id) {
+    ensure(id).ws.play();
+}
+
+export function pause(id) {
+    ensure(id).ws.pause();
+}
+
 export function seekTo(id, time) {
     const s = ensure(id);
     const duration = s.ws.getDuration();
     if (duration > 0) s.ws.seekTo(time / duration);
 }
+
 export function setRate(id, rate, preservePitch) {
     const s = ensure(id);
     s.ws.setPlaybackRate(rate, preservePitch ?? true);
 }
+
 export async function setAudio(id, audioUrl) {
     const s = ensure(id);
     await s.ws.load(audioUrl);

@@ -266,7 +266,8 @@ public sealed class MergeTimingsCommand
 
         if (!string.IsNullOrWhiteSpace(chapter.Descriptor.RootPath))
         {
-            var label = Path.GetFileName(chapter.Descriptor.RootPath.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
+            var label = Path.GetFileName(chapter.Descriptor.RootPath.TrimEnd(Path.DirectorySeparatorChar,
+                Path.AltDirectorySeparatorChar));
             if (!string.IsNullOrWhiteSpace(label))
             {
                 yield return label;

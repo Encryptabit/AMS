@@ -42,6 +42,7 @@ public static partial class DocumentProcessor
         CancellationToken cancellationToken = default)
     {
         var parseResult = await ParseBookAsync(sourceFile, cancellationToken).ConfigureAwait(false);
-        return await BuildBookIndexAsync(parseResult, sourceFile, options, pronunciationProvider, cancellationToken).ConfigureAwait(false);
+        return await BuildBookIndexAsync(parseResult, sourceFile, options, pronunciationProvider, cancellationToken)
+            .ConfigureAwait(false);
     }
 }

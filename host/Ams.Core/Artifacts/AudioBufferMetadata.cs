@@ -33,7 +33,8 @@ public sealed record AudioBufferMetadata
         };
     }
 
-    public AudioBufferMetadata WithCurrentStream(int sampleRate, int channels, string sampleFormat, string? channelLayout)
+    public AudioBufferMetadata WithCurrentStream(int sampleRate, int channels, string sampleFormat,
+        string? channelLayout)
     {
         return this with
         {

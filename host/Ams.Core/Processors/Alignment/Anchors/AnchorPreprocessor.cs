@@ -66,7 +66,8 @@ public static class AnchorPreprocessor
         return new AsrAnchorView(tokens, filteredToOriginal);
     }
 
-    public static bool TryMapSectionWindow(BookAnchorView view, (int startWord, int endWord) section, out (int startFiltered, int endFiltered) window)
+    public static bool TryMapSectionWindow(BookAnchorView view, (int startWord, int endWord) section,
+        out (int startFiltered, int endFiltered) window)
     {
         int startWord = section.startWord;
         int endWord = section.endWord;
@@ -76,14 +77,23 @@ public static class AnchorPreprocessor
         for (int i = 0; i < view.FilteredToOriginalWord.Count; i++)
         {
             int original = view.FilteredToOriginalWord[i];
-            if (original >= startWord && original <= endWord) { startFiltered = i; break; }
+            if (original >= startWord && original <= endWord)
+            {
+                startFiltered = i;
+                break;
+            }
         }
+
         if (startFiltered >= 0)
         {
             for (int i = view.FilteredToOriginalWord.Count - 1; i >= 0; i--)
             {
                 int original = view.FilteredToOriginalWord[i];
-                if (original >= startWord && original <= endWord) { endFiltered = i; break; }
+                if (original >= startWord && original <= endWord)
+                {
+                    endFiltered = i;
+                    break;
+                }
             }
         }
 
@@ -92,6 +102,7 @@ public static class AnchorPreprocessor
             window = (startFiltered, endFiltered);
             return true;
         }
+
         window = default;
         return false;
     }

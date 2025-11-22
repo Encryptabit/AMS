@@ -25,7 +25,8 @@ internal static unsafe class FfEncoder
         Encode(buffer, output, options ?? new AudioEncodeOptions(), EncoderSink.CustomStream);
     }
 
-    internal static FfFilterGraphRunner.IAudioFrameSink CreateStreamingSink(Stream output, AudioEncodeOptions? options = null)
+    internal static FfFilterGraphRunner.IAudioFrameSink CreateStreamingSink(Stream output,
+        AudioEncodeOptions? options = null)
     {
         ArgumentNullException.ThrowIfNull(output);
         return new StreamingEncoderSink(output, options ?? new AudioEncodeOptions());
@@ -559,11 +560,13 @@ internal static unsafe class FfEncoder
             }
 
             AVFormatContext* formatContext = null;
-            ThrowIfError(avformat_alloc_output_context2(&formatContext, null, "wav", null), nameof(avformat_alloc_output_context2));
+            ThrowIfError(avformat_alloc_output_context2(&formatContext, null, "wav", null),
+                nameof(avformat_alloc_output_context2));
             if (formatContext == null)
             {
                 throw new InvalidOperationException("FFmpeg could not create a WAV format context.");
             }
+
             _formatContext = formatContext;
 
             _stream = avformat_new_stream(_formatContext, codec);
@@ -577,6 +580,7 @@ internal static unsafe class FfEncoder
             {
                 throw new InvalidOperationException("avcodec_alloc_context3 failed");
             }
+
             _codecContext = codecContext;
 
             _codecContext->codec_id = codec->id;
@@ -592,7 +596,8 @@ internal static unsafe class FfEncoder
             avcodec_parameters_from_context(_stream->codecpar, _codecContext);
             _stream->time_base = _codecContext->time_base;
 
-            SetupIo(_formatContext, _output, EncoderSink.CustomStream, ref _customIo, ref _streamHandle, ref _writeCallback);
+            SetupIo(_formatContext, _output, EncoderSink.CustomStream, ref _customIo, ref _streamHandle,
+                ref _writeCallback);
             ThrowIfError(avformat_write_header(_formatContext, null), nameof(avformat_write_header));
 
             var inputLayout = CreateDefaultChannelLayout(_inputChannels);
@@ -639,7 +644,8 @@ internal static unsafe class FfEncoder
                 return;
             }
 
-            var dstCapacity = ComputeResampleOutputSamples(_resampler, _inputSampleRate, _targetSampleRate, frame->nb_samples);
+            var dstCapacity =
+                ComputeResampleOutputSamples(_resampler, _inputSampleRate, _targetSampleRate, frame->nb_samples);
             if (dstCapacity <= 0)
             {
                 dstCapacity = frame->nb_samples;
@@ -673,7 +679,8 @@ internal static unsafe class FfEncoder
                 return;
             }
 
-            FlushResampler(_inputSampleRate, _targetSampleRate, _resampler, _frame, _codecContext, _stream, _formatContext, ref _pts);
+            FlushResampler(_inputSampleRate, _targetSampleRate, _resampler, _frame, _codecContext, _stream,
+                _formatContext, ref _pts);
 
             ThrowIfError(avcodec_send_frame(_codecContext, null), nameof(avcodec_send_frame));
             DrainEncoder(_codecContext, _stream, _formatContext);

@@ -9,11 +9,13 @@ using Ams.Web.Shared.Workspace;
 public sealed class WorkspaceState
 {
     private readonly object _sync = new();
+
     private readonly JsonSerializerOptions _jsonOptions = new()
     {
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
         DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
     };
+
     private BookManager? _bookManager;
 
     public WorkspaceState()
@@ -123,7 +125,8 @@ public sealed class WorkspaceState
         {
             var file = GetConfigFile();
             file.Directory?.Create();
-            var payload = new WorkspaceRequest(BookRoot, BookIndexPath, CrxTemplatePath, CrxDirectoryName, DefaultErrorType);
+            var payload = new WorkspaceRequest(BookRoot, BookIndexPath, CrxTemplatePath, CrxDirectoryName,
+                DefaultErrorType);
             var json = JsonSerializer.Serialize(payload, ApiJsonSerializerContext.Default.WorkspaceRequest);
             File.WriteAllText(file.FullName, json);
         }

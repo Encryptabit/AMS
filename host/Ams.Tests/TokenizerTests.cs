@@ -90,13 +90,13 @@ public class ScriptValidatorTests
 
         var report = validator.Validate("audio.wav", "script.txt", "asr.json", scriptText, asrResponse);
 
-        Assert.Equal(1.0/3.0, report.WordErrorRate, 2); // 1 error out of 3 words
+        Assert.Equal(1.0 / 3.0, report.WordErrorRate, 2); // 1 error out of 3 words
         Assert.Equal(3, report.TotalWords);
         Assert.Equal(2, report.CorrectWords);
         Assert.Equal(1, report.Substitutions);
         Assert.Equal(0, report.Insertions);
         Assert.Equal(0, report.Deletions);
-        
+
         var substitutionFindings = report.Findings.Where(f => f.Type == FindingType.Substitution).ToList();
         Assert.Single(substitutionFindings);
         Assert.Equal("world", substitutionFindings[0].Expected);
@@ -126,7 +126,7 @@ public class ScriptValidatorTests
         Assert.Equal(0, report.Substitutions);
         Assert.Equal(1, report.Insertions);
         Assert.Equal(0, report.Deletions);
-        
+
         var insertionFindings = report.Findings.Where(f => f.Type == FindingType.Extra).ToList();
         Assert.Single(insertionFindings);
         Assert.Equal("beautiful", insertionFindings[0].Actual);
@@ -148,13 +148,13 @@ public class ScriptValidatorTests
 
         var report = validator.Validate("audio.wav", "script.txt", "asr.json", scriptText, asrResponse);
 
-        Assert.Equal(1.0/3.0, report.WordErrorRate, 2); // 1 deletion out of 3 expected words
+        Assert.Equal(1.0 / 3.0, report.WordErrorRate, 2); // 1 deletion out of 3 expected words
         Assert.Equal(3, report.TotalWords);
         Assert.Equal(2, report.CorrectWords);
         Assert.Equal(0, report.Substitutions);
         Assert.Equal(0, report.Insertions);
         Assert.Equal(1, report.Deletions);
-        
+
         var deletionFindings = report.Findings.Where(f => f.Type == FindingType.Missing).ToList();
         Assert.Single(deletionFindings);
         Assert.Equal("beautiful", deletionFindings[0].Expected);
@@ -211,7 +211,7 @@ public class ScriptValidatorTests
         Assert.Equal(2, report.Substitutions); // quick->fast, jumps->leaps
         Assert.Equal(0, report.Insertions);
         Assert.Equal(1, report.Deletions); // missing "the"
-        
+
         var expectedWer = (2 + 0 + 1) / 9.0; // (S + I + D) / N
         Assert.Equal(expectedWer, report.WordErrorRate, 3);
     }

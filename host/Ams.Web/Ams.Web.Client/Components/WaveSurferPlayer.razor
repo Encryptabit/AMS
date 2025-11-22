@@ -8,12 +8,14 @@
     </div>
     <div id="@_waveId" class="ws-canvas"></div>
     <div class="ws-controls">
-        <BitButton ButtonStyle="BitButtonStyle.Standard" IconName="StepBack" OnClick="SkipToStart" />
-        <BitButton ButtonStyle="BitButtonStyle.Primary" IconName="@(_isPlaying ? "Pause" : "Play")" OnClick="TogglePlay" />
-        <BitButton ButtonStyle="BitButtonStyle.Standard" IconName="StepForward" OnClick="SkipToEnd" />
+        <BitButton Variant="BitVariant.Outline" IconName="@BitIconName.Rewind" OnClick="SkipToStart"/>
+        <BitButton Variant="BitVariant.Outline" IconName="@(_isPlaying ? BitIconName.Pause : BitIconName.Play)"
+                   OnClick="TogglePlay"/>
+        <BitButton Variant="BitVariant.Outline" IconName="@BitIconName.FastForward" OnClick="SkipToEnd"/>
+        
         <div class="ws-speed">
             <span>Speed</span>
-            <input type="range" min="0.25" max="3" step="0.05" value="@_playbackRate" @oninput="OnRateChange" />
+            <input type="range" min="0.25" max="3" step="0.05" value="@_playbackRate" @oninput="OnRateChange"/>
             <span>@_playbackRate.ToString("0.00")x</span>
         </div>
     </div>
@@ -56,7 +58,8 @@
 
     private async Task EnsureModule()
     {
-        _module = await JS.InvokeAsync<IJSObjectReference>("import", "/_content/Ams.Web.Client/js/wavesurfer-interop.js");
+        // Load from the client's static assets (served at the app base path).
+        _module = await JS.InvokeAsync<IJSObjectReference>("import", "./js/wavesurfer-interop.js");
     }
 
     private async Task CreatePlayer()
@@ -135,6 +138,7 @@
     {
         if (seconds <= 0) return "0:00";
         var ts = TimeSpan.FromSeconds(seconds);
-        return ts.Hours > 0 ? ts.ToString("h:mm:ss") : ts.ToString("m:ss");
+        return ts.Hours > 0 ? ts.ToString(@"h\:mm\:ss") : ts.ToString(@"m\:ss");
     }
+
 }

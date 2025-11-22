@@ -48,7 +48,8 @@ public static class AnchorPipeline
         else if (sectionOptions.Detect)
         {
             section = SectionLocator.DetectSection(book, asrRawTokens, sectionOptions.AsrPrefixTokens);
-            if (section != null && AnchorPreprocessor.TryMapSectionWindow(bookView, (section.StartWord, section.EndWord), out var mapped))
+            if (section != null &&
+                AnchorPreprocessor.TryMapSectionWindow(bookView, (section.StartWord, section.EndWord), out var mapped))
             {
                 bookWindowFiltered = mapped;
             }
@@ -86,7 +87,8 @@ public static class AnchorPipeline
         IReadOnlyList<(int bLo, int bHi, int aLo, int aHi)>? windows = null;
         if (includeWindows)
         {
-            windows = AnchorDiscovery.BuildWindows(anchors, bookWindowFiltered.bStart, bookWindowFiltered.bEnd, 0, asrView.Tokens.Count - 1);
+            windows = AnchorDiscovery.BuildWindows(anchors, bookWindowFiltered.bStart, bookWindowFiltered.bEnd, 0,
+                asrView.Tokens.Count - 1);
         }
 
         return new AnchorPipelineResult(
@@ -103,6 +105,3 @@ public static class AnchorPipeline
         );
     }
 }
-
-
-

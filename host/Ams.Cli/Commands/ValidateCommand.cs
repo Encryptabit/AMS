@@ -233,7 +233,8 @@ public static class ValidateCommand
                 var repl = ReplContext.Current;
                 if (repl?.ActiveChapterStem is null)
                 {
-                    Log.Error("validate timing init --chapter requires an active chapter. Use 'use <chapter>' first or pass --book.");
+                    Log.Error(
+                        "validate timing init --chapter requires an active chapter. Use 'use <chapter>' first or pass --book.");
                     context.ExitCode = 1;
                     return;
                 }
@@ -277,39 +278,39 @@ public static class ValidateCommand
     private static Command CreateServeCommand()
     {
         var serve = new Command("serve", "Start web viewer for validation reports");
-        
+
         var workDirOption = new Option<DirectoryInfo?>(
             "--work-dir",
             "Directory containing chapter folders with validation reports (defaults to REPL working directory or current directory)");
-        
+
         var portOption = new Option<int>(
             "--port",
             () => 8081,
             "Port to run the web server on");
-        
+
         serve.AddOption(workDirOption);
         serve.AddOption(portOption);
-        
+
         serve.SetHandler(async (InvocationContext context) =>
         {
             var workDirProvided = context.ParseResult.GetValueForOption(workDirOption);
             var port = context.ParseResult.GetValueForOption(portOption);
             var cancellationToken = context.GetCancellationToken();
-            
+
             var workDir = CommandInputResolver.ResolveDirectory(workDirProvided);
             var baseDir = workDir.FullName;
-            
+
             if (!Directory.Exists(baseDir))
             {
                 Log.Error("Work directory not found: {WorkDir}", baseDir);
                 context.ExitCode = 1;
                 return;
             }
-            
+
             Log.Debug("Starting validation report viewer...");
             Log.Debug("Base directory: {BaseDir}", baseDir);
             Log.Debug("Server will run at: http://localhost:{Port}", port);
-            
+
             var pythonScript = ResolveValidationViewerScript();
             if (pythonScript is null)
             {
@@ -317,18 +318,18 @@ public static class ValidateCommand
                 context.ExitCode = 1;
                 return;
             }
-            
+
             var psi = new ProcessStartInfo
             {
                 FileName = "python",
                 UseShellExecute = false,
                 CreateNoWindow = false
             };
-            
+
             psi.ArgumentList.Add(pythonScript);
             psi.ArgumentList.Add(baseDir);
             psi.ArgumentList.Add(port.ToString());
-            
+
             using var process = Process.Start(psi);
             if (process == null)
             {
@@ -336,9 +337,9 @@ public static class ValidateCommand
                 context.ExitCode = 1;
                 return;
             }
-            
+
             Log.Debug("Validation viewer started. Press Ctrl+C to stop.");
-            
+
             try
             {
                 await process.WaitForExitAsync(cancellationToken);
@@ -351,10 +352,11 @@ public static class ValidateCommand
                 {
                     process.Kill(entireProcessTree: true);
                 }
+
                 context.ExitCode = 0;
             }
         });
-        
+
         return serve;
     }
 
@@ -374,14 +376,20 @@ public static class ValidateCommand
             description: "Path to hydrated transcript JSON (e.g., *.align.hydrate.json)");
         hydrateOption.AddAlias("-h");
 
-        var outOption = new Option<FileInfo?>("--out", () => null, "Optional output file. If omitted, prints to console or is derived from chapter.");
+        var outOption = new Option<FileInfo?>("--out", () => null,
+            "Optional output file. If omitted, prints to console or is derived from chapter.");
         outOption.AddAlias("-o");
 
-        var allErrorsOption = new Option<bool>("--show-all", () => true, "Flag to determine whether to display all errors or not");
-        var topSentencesOption = new Option<int>("--top-sentences", () => 10, "Number of highest-WER sentences to display (0 to disable).");
-        var topParagraphsOption = new Option<int>("--top-paragraphs", () => 5, "Number of highest-WER paragraphs to display (0 to disable).");
-        var includeWordsOption = new Option<bool>("--include-words", () => false, "Include word-level alignment tallies when TranscriptIndex is provided.");
-        var includeAllFlaggedOption = new Option<bool>("--include-all-flagged", () => false, "Include parent paragraphs of all flagged sentences, even if the paragraph status is 'ok'.");
+        var allErrorsOption = new Option<bool>("--show-all", () => true,
+            "Flag to determine whether to display all errors or not");
+        var topSentencesOption = new Option<int>("--top-sentences", () => 10,
+            "Number of highest-WER sentences to display (0 to disable).");
+        var topParagraphsOption = new Option<int>("--top-paragraphs", () => 5,
+            "Number of highest-WER paragraphs to display (0 to disable).");
+        var includeWordsOption = new Option<bool>("--include-words", () => false,
+            "Include word-level alignment tallies when TranscriptIndex is provided.");
+        var includeAllFlaggedOption = new Option<bool>("--include-all-flagged", () => false,
+            "Include parent paragraphs of all flagged sentences, even if the paragraph status is 'ok'.");
 
         cmd.AddOption(txOption);
         cmd.AddOption(hydrateOption);
@@ -394,9 +402,12 @@ public static class ValidateCommand
 
         cmd.SetHandler(async context =>
         {
-            var txFile = CommandInputResolver.TryResolveChapterArtifact(context.ParseResult.GetValueForOption(txOption), "align.tx.json", mustExist: true);
-            var hydrateFile = CommandInputResolver.TryResolveChapterArtifact(context.ParseResult.GetValueForOption(hydrateOption), "align.hydrate.json", mustExist: true);
-            var outputFile = CommandInputResolver.TryResolveChapterArtifact(context.ParseResult.GetValueForOption(outOption), "validate.report.txt", mustExist: false);
+            var txFile = CommandInputResolver.TryResolveChapterArtifact(context.ParseResult.GetValueForOption(txOption),
+                "align.tx.json", mustExist: true);
+            var hydrateFile = CommandInputResolver.TryResolveChapterArtifact(
+                context.ParseResult.GetValueForOption(hydrateOption), "align.hydrate.json", mustExist: true);
+            var outputFile = CommandInputResolver.TryResolveChapterArtifact(
+                context.ParseResult.GetValueForOption(outOption), "validate.report.txt", mustExist: false);
             var allErrors = context.ParseResult.GetValueForOption(allErrorsOption);
             var topSentences = context.ParseResult.GetValueForOption(topSentencesOption);
             var topParagraphs = context.ParseResult.GetValueForOption(topParagraphsOption);
@@ -431,13 +442,16 @@ public static class ValidateCommand
                     IncludeWordTallies: includeWords,
                     IncludeAllFlagged: includeAllFlagged);
 
-                var result = await validationService.BuildReportAsync(handle.Chapter, options, context.GetCancellationToken())
+                var result = await validationService
+                    .BuildReportAsync(handle.Chapter, options, context.GetCancellationToken())
                     .ConfigureAwait(false);
 
                 var summarySentences = result.Sentences.Count;
-                var summarySentencesFlagged = result.Sentences.Count(s => !string.Equals(s.Status, "ok", StringComparison.OrdinalIgnoreCase));
+                var summarySentencesFlagged = result.Sentences.Count(s =>
+                    !string.Equals(s.Status, "ok", StringComparison.OrdinalIgnoreCase));
                 var summaryParagraphs = result.Paragraphs.Count;
-                var summaryParagraphsFlagged = result.Paragraphs.Count(p => !string.Equals(p.Status, "ok", StringComparison.OrdinalIgnoreCase));
+                var summaryParagraphsFlagged = result.Paragraphs.Count(p =>
+                    !string.Equals(p.Status, "ok", StringComparison.OrdinalIgnoreCase));
 
                 Console.WriteLine("=== Validation Summary ===");
                 Console.WriteLine($"Sentences : {summarySentences} (flagged {summarySentencesFlagged})");
@@ -445,11 +459,13 @@ public static class ValidateCommand
                 Console.WriteLine();
 
                 var targetFile = outputFile
-                    ?? CommandInputResolver.TryResolveChapterArtifact(null, "validate.report.txt", mustExist: false)
-                    ?? ResolveDefaultReportPath(txFile, hydrateFile);
+                                 ?? CommandInputResolver.TryResolveChapterArtifact(null, "validate.report.txt",
+                                     mustExist: false)
+                                 ?? ResolveDefaultReportPath(txFile, hydrateFile);
 
                 Directory.CreateDirectory(targetFile.DirectoryName ?? Directory.GetCurrentDirectory());
-                await File.WriteAllTextAsync(targetFile.FullName, result.Report, Encoding.UTF8, context.GetCancellationToken());
+                await File.WriteAllTextAsync(targetFile.FullName, result.Report, Encoding.UTF8,
+                    context.GetCancellationToken());
                 handle.Save();
                 Log.Debug("Validation report written to {Output}", targetFile.FullName);
             }
@@ -561,10 +577,12 @@ public static class ValidateCommand
         {
             result = result[..^".treated".Length];
         }
+
         if (result.EndsWith(".pause-adjusted", StringComparison.OrdinalIgnoreCase))
         {
             result = result[..^".pause-adjusted".Length];
         }
+
         if (result.EndsWith(".align", StringComparison.OrdinalIgnoreCase))
         {
             result = result[..^".align".Length];
@@ -590,7 +608,8 @@ public static class ValidateCommand
             PropertyNameCaseInsensitive = true
         });
 
-        return payload ?? throw new InvalidOperationException($"Failed to deserialize {typeof(T).Name} from {file.FullName}");
+        return payload ??
+               throw new InvalidOperationException($"Failed to deserialize {typeof(T).Name} from {file.FullName}");
     }
 
     private static FileInfo? TryResolveBookIndex(string? bookIndexPath, string? fallbackDirectory)
@@ -604,7 +623,8 @@ public static class ValidateCommand
         return new FileInfo(absolute);
     }
 
-    private static string ResolveAudioPath(TranscriptIndex transcript, HydratedTranscript hydrated, FileInfo txFile, FileInfo hydrateFile)
+    private static string ResolveAudioPath(TranscriptIndex transcript, HydratedTranscript hydrated, FileInfo txFile,
+        FileInfo hydrateFile)
     {
         var directories = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var stems = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -699,7 +719,8 @@ public static class ValidateCommand
             return firstAbsolute;
         }
 
-        throw new InvalidOperationException("Transcript does not reference an audioPath in hydrate or transcript JSON.");
+        throw new InvalidOperationException(
+            "Transcript does not reference an audioPath in hydrate or transcript JSON.");
     }
 
     private static FileInfo BuildSiblingFile(string referencePath, string suffix)
@@ -722,7 +743,8 @@ public static class ValidateCommand
         }
     }
 
-    private static Dictionary<int, SentenceTiming> BuildBaselineTimings(TranscriptIndex transcript, HydratedTranscript hydrated)
+    private static Dictionary<int, SentenceTiming> BuildBaselineTimings(TranscriptIndex transcript,
+        HydratedTranscript hydrated)
     {
         var map = new Dictionary<int, SentenceTiming>();
 
@@ -748,7 +770,8 @@ public static class ValidateCommand
         return map;
     }
 
-    private static TranscriptIndex UpdateTranscriptTimings(TranscriptIndex transcript, IReadOnlyDictionary<int, SentenceTiming> timeline)
+    private static TranscriptIndex UpdateTranscriptTimings(TranscriptIndex transcript,
+        IReadOnlyDictionary<int, SentenceTiming> timeline)
     {
         var updatedSentences = transcript.Sentences
             .Select(sentence => timeline.TryGetValue(sentence.Id, out var timing)
@@ -759,7 +782,8 @@ public static class ValidateCommand
         return transcript with { Sentences = updatedSentences };
     }
 
-    private static HydratedTranscript UpdateHydratedTimings(HydratedTranscript hydrated, IReadOnlyDictionary<int, SentenceTiming> timeline)
+    private static HydratedTranscript UpdateHydratedTimings(HydratedTranscript hydrated,
+        IReadOnlyDictionary<int, SentenceTiming> timeline)
     {
         var updatedSentences = hydrated.Sentences
             .Select(sentence => timeline.TryGetValue(sentence.Id, out var timing)
@@ -983,5 +1007,4 @@ public static class ValidateCommand
 
         return true;
     }
-
 }

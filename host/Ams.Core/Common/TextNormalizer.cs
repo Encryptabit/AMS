@@ -8,7 +8,7 @@ public static class TextNormalizer
     private static readonly Regex WhitespaceRegex = new(@"\s+", RegexOptions.Compiled);
     private static readonly Regex PunctuationRegex = new(@"[^\w\s]", RegexOptions.Compiled);
     private static readonly Regex NumbersRegex = new(@"\b\d+\b", RegexOptions.Compiled);
-    
+
     private static readonly Dictionary<string, string> CommonContractions = new(StringComparer.OrdinalIgnoreCase)
     {
         { "don't", "do not" },
@@ -71,7 +71,7 @@ public static class TextNormalizer
         {
             foreach (var (contraction, expansion) in CommonContractions)
             {
-                normalized = Regex.Replace(normalized, @"\b" + Regex.Escape(contraction) + @"\b", 
+                normalized = Regex.Replace(normalized, @"\b" + Regex.Escape(contraction) + @"\b",
                     expansion, RegexOptions.IgnoreCase);
             }
         }
@@ -93,6 +93,7 @@ public static class TextNormalizer
                 {
                     return NumberToWords(number);
                 }
+
                 return match.Value;
             });
         }
@@ -131,12 +132,18 @@ public static class TextNormalizer
     private static string NumberToWords(int number)
     {
         if (number == 0) return "zero";
-        
+
         var ones = new[] { "", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine" };
-        var teens = new[] { "ten", "eleven", "twelve", "thirteen", "fourteen", "fifteen", "sixteen", "seventeen", "eighteen", "nineteen" };
+        var teens = new[]
+        {
+            "ten", "eleven", "twelve", "thirteen", "fourteen", "fifteen", "sixteen", "seventeen", "eighteen", "nineteen"
+        };
         var tens = new[] { "", "", "twenty", "thirty", "forty", "fifty", "sixty", "seventy", "eighty", "ninety" };
-        var hundreds = new[] { "", "one hundred", "two hundred", "three hundred", "four hundred", "five hundred", 
-                              "six hundred", "seven hundred", "eight hundred", "nine hundred" };
+        var hundreds = new[]
+        {
+            "", "one hundred", "two hundred", "three hundred", "four hundred", "five hundred",
+            "six hundred", "seven hundred", "eight hundred", "nine hundred"
+        };
 
         var result = new StringBuilder();
 
@@ -179,10 +186,10 @@ public static class TextNormalizer
     {
         var normalized1 = Normalize(text1);
         var normalized2 = Normalize(text2);
-        
+
         if (normalized1 == normalized2) return 1.0;
         if (string.IsNullOrEmpty(normalized1) || string.IsNullOrEmpty(normalized2)) return 0.0;
-        
+
         // Use Levenshtein distance for similarity
         var distance = LevenshteinMetrics.Distance(normalized1, normalized2);
         var maxLength = Math.Max(normalized1.Length, normalized2.Length);
@@ -190,4 +197,3 @@ public static class TextNormalizer
         return 1.0 - (double)distance / maxLength;
     }
 }
-

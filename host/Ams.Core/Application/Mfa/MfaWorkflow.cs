@@ -104,7 +104,8 @@ public static class MfaWorkflow
         {
             Log.Debug("Generating pronunciations for OOV terms ({OovFile})", sanitizedOovPath);
             var g2pContext = baseContext with { OovListPath = sanitizedOovPath };
-            var g2pResult = await service.GeneratePronunciationsAsync(g2pContext, cancellationToken).ConfigureAwait(false);
+            var g2pResult = await service.GeneratePronunciationsAsync(g2pContext, cancellationToken)
+                .ConfigureAwait(false);
             EnsureSuccess("mfa g2p", g2pResult);
 
             if (!File.Exists(g2pOutputPath) || new FileInfo(g2pOutputPath).Length == 0)
@@ -115,7 +116,8 @@ public static class MfaWorkflow
             {
                 Log.Debug("Adding pronunciations to dictionary ({DictionaryOutput})", customDictionaryPath);
                 var addWordsContext = baseContext with { OovListPath = sanitizedOovPath };
-                var addWordsResult = await service.AddWordsAsync(addWordsContext, cancellationToken).ConfigureAwait(false);
+                var addWordsResult =
+                    await service.AddWordsAsync(addWordsContext, cancellationToken).ConfigureAwait(false);
                 EnsureSuccess("mfa model add_words", addWordsResult);
 
                 customDictionaryAvailable = File.Exists(customDictionaryPath);
@@ -144,15 +146,20 @@ public static class MfaWorkflow
             catch (InvalidOperationException ex) when (!alignUsingCorpus && corpusSource.Exists)
             {
                 alignUsingCorpus = true;
-                Log.Warn("MFA align failed using hydrate transcript ({Message}). Retrying with ASR corpus {Corpus}.", ex.Message, corpusSource.FullName);
-                await WriteLabFileAsync(hydrateFile, chapterContext, labPath, corpusSource, cancellationToken).ConfigureAwait(false);
+                Log.Warn("MFA align failed using hydrate transcript ({Message}). Retrying with ASR corpus {Corpus}.",
+                    ex.Message, corpusSource.FullName);
+                await WriteLabFileAsync(hydrateFile, chapterContext, labPath, corpusSource, cancellationToken)
+                    .ConfigureAwait(false);
                 continue;
             }
         }
 
-        CopyIfExists(Path.Combine(mfaRoot, chapterStem + ".g2p.txt"), Path.Combine(mfaCopyDir, chapterStem + ".g2p.txt"));
-        CopyIfExists(Path.Combine(mfaRoot, chapterStem + ".oov.cleaned.txt"), Path.Combine(mfaCopyDir, chapterStem + ".oov.cleaned.txt"));
-        CopyIfExists(Path.Combine(mfaRoot, chapterStem + ".dictionary.zip"), Path.Combine(mfaCopyDir, chapterStem + ".dictionary.zip"));
+        CopyIfExists(Path.Combine(mfaRoot, chapterStem + ".g2p.txt"),
+            Path.Combine(mfaCopyDir, chapterStem + ".g2p.txt"));
+        CopyIfExists(Path.Combine(mfaRoot, chapterStem + ".oov.cleaned.txt"),
+            Path.Combine(mfaCopyDir, chapterStem + ".oov.cleaned.txt"));
+        CopyIfExists(Path.Combine(mfaRoot, chapterStem + ".dictionary.zip"),
+            Path.Combine(mfaCopyDir, chapterStem + ".dictionary.zip"));
 
         var textGridCandidates = new[]
         {
@@ -205,17 +212,20 @@ public static class MfaWorkflow
     {
         if (corpusSource is { Exists: true })
         {
-            var corpusLines = await File.ReadAllLinesAsync(corpusSource.FullName, cancellationToken).ConfigureAwait(false);
+            var corpusLines = await File.ReadAllLinesAsync(corpusSource.FullName, cancellationToken)
+                .ConfigureAwait(false);
             var normalizedCorpus = PrepareLabLines(corpusLines);
             if (normalizedCorpus.Count > 0)
             {
                 Log.Debug("Using ASR corpus for MFA alignment ({Corpus})", corpusSource.FullName);
-                await File.WriteAllTextAsync(labPath, string.Join(Environment.NewLine, normalizedCorpus), Encoding.UTF8, cancellationToken)
+                await File.WriteAllTextAsync(labPath, string.Join(Environment.NewLine, normalizedCorpus), Encoding.UTF8,
+                        cancellationToken)
                     .ConfigureAwait(false);
                 return;
             }
 
-            Log.Debug("ASR corpus at {Corpus} did not produce usable lines; falling back to hydrate", corpusSource.FullName);
+            Log.Debug("ASR corpus at {Corpus} did not produce usable lines; falling back to hydrate",
+                corpusSource.FullName);
         }
 
         var corpus = chapterContext.Documents.HydratedTranscript?.Sentences.Select(s => s.BookText).ToList() ?? [];
@@ -225,12 +235,14 @@ public static class MfaWorkflow
             var normalized = PrepareLabLines(corpus);
             if (normalized.Count > 0)
             {
-                await File.WriteAllTextAsync(labPath, string.Join(Environment.NewLine, normalized), Encoding.UTF8, cancellationToken).ConfigureAwait(false);
+                await File.WriteAllTextAsync(labPath, string.Join(Environment.NewLine, normalized), Encoding.UTF8,
+                    cancellationToken).ConfigureAwait(false);
                 return;
             }
         }
 
-        throw new InvalidOperationException($"Unable to build MFA corpus lines for chapter {chapterContext.Descriptor.ChapterId}");
+        throw new InvalidOperationException(
+            $"Unable to build MFA corpus lines for chapter {chapterContext.Descriptor.ChapterId}");
     }
 
     private static List<string> PrepareLabLines(IEnumerable<string> rawLines)
@@ -311,6 +323,7 @@ public static class MfaWorkflow
                     message.AppendLine("Stdout:");
                     message.Append(stdoutSnippet);
                 }
+
                 if (stderrSnippet.Length > 0)
                 {
                     message.AppendLine("Stderr:");
@@ -481,7 +494,8 @@ public static class MfaWorkflow
         }
         catch (Exception ex)
         {
-            Log.Debug("Failed to copy MFA artifact from {Source} to {Destination}: {Message}", sourcePath, destinationPath, ex.Message);
+            Log.Debug("Failed to copy MFA artifact from {Source} to {Destination}: {Message}", sourcePath,
+                destinationPath, ex.Message);
         }
     }
 }

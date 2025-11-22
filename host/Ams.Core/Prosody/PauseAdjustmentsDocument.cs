@@ -4,10 +4,13 @@ using System.Text.Json.Serialization;
 namespace Ams.Core.Prosody;
 
 public sealed record PauseAdjustmentsDocument(
-    [property: JsonPropertyName("sourceTranscript")] string SourceTranscript,
-    [property: JsonPropertyName("generatedAtUtc")] DateTime GeneratedAtUtc,
+    [property: JsonPropertyName("sourceTranscript")]
+    string SourceTranscript,
+    [property: JsonPropertyName("generatedAtUtc")]
+    DateTime GeneratedAtUtc,
     [property: JsonPropertyName("policy")] PausePolicySnapshot Policy,
-    [property: JsonPropertyName("adjustments")] IReadOnlyList<PauseAdjust> Adjustments)
+    [property: JsonPropertyName("adjustments")]
+    IReadOnlyList<PauseAdjust> Adjustments)
 {
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -91,15 +94,23 @@ public sealed record PauseAdjustmentsDocument(
 
 public sealed record PausePolicySnapshot(
     [property: JsonPropertyName("comma")] PauseWindowSnapshot Comma,
-    [property: JsonPropertyName("sentence")] PauseWindowSnapshot Sentence,
-    [property: JsonPropertyName("paragraph")] PauseWindowSnapshot Paragraph,
-    [property: JsonPropertyName("headOfChapter")] double HeadOfChapter,
-    [property: JsonPropertyName("postChapterRead")] double PostChapterRead,
+    [property: JsonPropertyName("sentence")]
+    PauseWindowSnapshot Sentence,
+    [property: JsonPropertyName("paragraph")]
+    PauseWindowSnapshot Paragraph,
+    [property: JsonPropertyName("headOfChapter")]
+    double HeadOfChapter,
+    [property: JsonPropertyName("postChapterRead")]
+    double PostChapterRead,
     [property: JsonPropertyName("tail")] double Tail,
-    [property: JsonPropertyName("kneeWidth")] double KneeWidth,
-    [property: JsonPropertyName("ratioInside")] double RatioInside,
-    [property: JsonPropertyName("ratioOutside")] double RatioOutside,
-    [property: JsonPropertyName("preserveTopQuantile")] double PreserveTopQuantile)
+    [property: JsonPropertyName("kneeWidth")]
+    double KneeWidth,
+    [property: JsonPropertyName("ratioInside")]
+    double RatioInside,
+    [property: JsonPropertyName("ratioOutside")]
+    double RatioOutside,
+    [property: JsonPropertyName("preserveTopQuantile")]
+    double PreserveTopQuantile)
 {
     public static PausePolicySnapshot FromPolicy(PausePolicy policy)
     {

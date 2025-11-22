@@ -8,7 +8,6 @@ namespace Ams.Core.Processors.Diffing;
 
 public static class TextDiffAnalyzer
 {
-
     public static TextDiffResult Analyze(string? referenceText, string? hypothesisText)
     {
         var reference = Normalize(referenceText);
@@ -124,7 +123,8 @@ public static class TextDiffAnalyzer
         return TextNormalizer.TokenizeWords(text).ToList();
     }
 
-    private static TokenDiffResult BuildTokenDiff(IReadOnlyList<string> referenceTokens, IReadOnlyList<string> hypothesisTokens)
+    private static TokenDiffResult BuildTokenDiff(IReadOnlyList<string> referenceTokens,
+        IReadOnlyList<string> hypothesisTokens)
     {
         if (referenceTokens.Count == 0 && hypothesisTokens.Count == 0)
         {
@@ -202,6 +202,7 @@ public static class TextDiffAnalyzer
         }
 
         var normalizedCache = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
         string NormalizeToken(string token)
         {
             if (normalizedCache.TryGetValue(token, out var existing))
@@ -234,7 +235,8 @@ public static class TextDiffAnalyzer
                 continue;
             }
 
-            if (!TryMatchGlue(deletes, inserts, NormalizeToken, out var deleteIndex, out var insertSpan, out var mergedText))
+            if (!TryMatchGlue(deletes, inserts, NormalizeToken, out var deleteIndex, out var insertSpan,
+                    out var mergedText))
             {
                 i++;
                 continue;
@@ -368,8 +370,10 @@ public static class TextDiffAnalyzer
                 return i;
             }
         }
+
         return -1;
     }
+
     private static string EncodeTokens(IEnumerable<string> tokens, IReadOnlyList<string> dictionary)
     {
         var indices = new List<char>();
@@ -386,6 +390,7 @@ public static class TextDiffAnalyzer
 
         return new string(indices.ToArray());
     }
+
     private static string MapOperation(Operation op) => op switch
     {
         Operation.DELETE => "delete",

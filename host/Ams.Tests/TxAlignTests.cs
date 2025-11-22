@@ -14,6 +14,7 @@ public class TxAlignTests
             w => Assert.Equal((106, 112, 6, 14), w),
             w => Assert.Equal((113, 120, 15, 25), w));
     }
+
     [Fact]
     public void Rollup_IgnoresInsertionsOutsideGuardSpan()
     {
@@ -190,16 +191,17 @@ public class TxAlignTests
         Assert.InRange(sentence.Metrics.Cer, 0.54, 0.57);
         Assert.Equal("unreliable", sentence.Status);
     }
+
     [Fact]
     public void Align_SimpleNearMatch_YieldsSubNotDelIns()
     {
         var book = new[] { "the", "black", "forest", "was", "dark" };
-        var asr =  new[] { "the", "black", "forest", "felt", "dark" };
-        var anchors = new List<(int,int)> { (0,0) }; // pin start
-        var wins = WindowBuilder.Build(anchors, 0, book.Length-1, 0, asr.Length-1);
+        var asr = new[] { "the", "black", "forest", "felt", "dark" };
+        var anchors = new List<(int, int)> { (0, 0) }; // pin start
+        var wins = WindowBuilder.Build(anchors, 0, book.Length - 1, 0, asr.Length - 1);
 
         var ops = TranscriptAligner.AlignWindows(book, asr, wins,
-            new Dictionary<string,string>(), new HashSet<string>());
+            new Dictionary<string, string>(), new HashSet<string>());
 
         Assert.Equal(3, ops.Count(o => o.op == AlignOp.Match));
         Assert.Equal(1, ops.Count(o => o.op == AlignOp.Sub));

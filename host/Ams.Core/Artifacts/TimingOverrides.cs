@@ -4,14 +4,19 @@ using System.Text.Json.Serialization;
 namespace Ams.Core.Artifacts;
 
 public sealed record SentenceTimingOverride(
-    [property: JsonPropertyName("sentenceId")] int SentenceId,
-    [property: JsonPropertyName("startSec")] double StartSec,
+    [property: JsonPropertyName("sentenceId")]
+    int SentenceId,
+    [property: JsonPropertyName("startSec")]
+    double StartSec,
     [property: JsonPropertyName("endSec")] double EndSec);
 
 public sealed record TimingOverridesDocument(
-    [property: JsonPropertyName("sourceTranscript")] string SourceTranscript,
-    [property: JsonPropertyName("generatedAtUtc")] DateTime GeneratedAtUtc,
-    [property: JsonPropertyName("sentences")] IReadOnlyList<SentenceTimingOverride> Sentences)
+    [property: JsonPropertyName("sourceTranscript")]
+    string SourceTranscript,
+    [property: JsonPropertyName("generatedAtUtc")]
+    DateTime GeneratedAtUtc,
+    [property: JsonPropertyName("sentences")]
+    IReadOnlyList<SentenceTimingOverride> Sentences)
 {
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -35,7 +40,8 @@ public sealed record TimingOverridesDocument(
     {
         if (Sentences.Count == 0)
         {
-            throw new InvalidOperationException("Timing overrides document must contain at least one sentence override.");
+            throw new InvalidOperationException(
+                "Timing overrides document must contain at least one sentence override.");
         }
 
         var directory = Path.GetDirectoryName(path);

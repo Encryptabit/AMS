@@ -11,14 +11,14 @@ public interface IBookParser
     /// Gets the file extensions supported by this parser (e.g., ".docx", ".txt").
     /// </summary>
     IReadOnlyCollection<string> SupportedExtensions { get; }
-    
+
     /// <summary>
     /// Determines if this parser can handle the specified file.
     /// </summary>
     /// <param name="filePath">Path to the file to check</param>
     /// <returns>True if this parser supports the file format</returns>
     bool CanParse(string filePath);
-    
+
     /// <summary>
     /// Extracts raw text content from the specified file.
     /// This method performs format-specific parsing but does not
@@ -90,7 +90,7 @@ public interface IBookCache
     /// <returns>Cached book index or null if not found/invalid</returns>
     /// <exception cref="IOException">Cache file could not be read</exception>
     Task<BookIndex?> GetAsync(string sourceFile, CancellationToken cancellationToken = default);
-    
+
     /// <summary>
     /// Stores a book index in the cache with file integrity validation.
     /// The cache entry will be associated with the SHA256 hash of the source file.
@@ -101,7 +101,7 @@ public interface IBookCache
     /// <exception cref="ArgumentException">Invalid book index</exception>
     /// <exception cref="IOException">Cache file could not be written</exception>
     Task<bool> SetAsync(BookIndex bookIndex, CancellationToken cancellationToken = default);
-    
+
     /// <summary>
     /// Removes a cached book index for the specified source file.
     /// </summary>
@@ -109,7 +109,7 @@ public interface IBookCache
     /// <param name="cancellationToken">Cancellation token</param>
     /// <returns>True if cache entry was removed</returns>
     Task<bool> RemoveAsync(string sourceFile, CancellationToken cancellationToken = default);
-    
+
     /// <summary>
     /// Validates that a cached book index is still current for its source file.
     /// Checks file modification time and content hash.
@@ -118,7 +118,7 @@ public interface IBookCache
     /// <param name="cancellationToken">Cancellation token</param>
     /// <returns>True if the cache entry is still valid</returns>
     Task<bool> IsValidAsync(BookIndex bookIndex, CancellationToken cancellationToken = default);
-    
+
     /// <summary>
     /// Clears all cached book indexes.
     /// </summary>
@@ -131,8 +131,13 @@ public interface IBookCache
 /// </summary>
 public class BookParseException : Exception
 {
-    public BookParseException(string message) : base(message) { }
-    public BookParseException(string message, Exception innerException) : base(message, innerException) { }
+    public BookParseException(string message) : base(message)
+    {
+    }
+
+    public BookParseException(string message, Exception innerException) : base(message, innerException)
+    {
+    }
 }
 
 /// <summary>
@@ -140,8 +145,13 @@ public class BookParseException : Exception
 /// </summary>
 public class BookIndexException : Exception
 {
-    public BookIndexException(string message) : base(message) { }
-    public BookIndexException(string message, Exception innerException) : base(message, innerException) { }
+    public BookIndexException(string message) : base(message)
+    {
+    }
+
+    public BookIndexException(string message, Exception innerException) : base(message, innerException)
+    {
+    }
 }
 
 /// <summary>
@@ -149,7 +159,11 @@ public class BookIndexException : Exception
 /// </summary>
 public class BookCacheException : Exception
 {
-    public BookCacheException(string message) : base(message) { }
-    public BookCacheException(string message, Exception innerException) : base(message, innerException) { }
-}
+    public BookCacheException(string message) : base(message)
+    {
+    }
 
+    public BookCacheException(string message, Exception innerException) : base(message, innerException)
+    {
+    }
+}

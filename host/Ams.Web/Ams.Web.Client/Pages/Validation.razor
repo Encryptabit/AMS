@@ -1,6 +1,7 @@
 @page "/"
 @page "/validation/{BookId?}"
 
+@inherits ComponentBase
 @inject ValidationApiClient Api
 @inject HttpClient Http
 
@@ -13,15 +14,18 @@
 
         @if (_loading)
         {
-            <BitSpinner Size="BitSpinnerSize.Small" Label="Loading" />
+            <BitSpinner Size="BitSpinnerSize.Small" Label="Loading"/>
         }
         else
         {
-            <BitNav TItem="BitNavItem" Items="@_navItems" SelectedKey="@_selectedKey" Mode="BitNavMode.Manual" OnSelect="OnNavSelect" />
+            <BitNav TItem="BitNavItem" Items="@_navItems" SelectedKey="@_selectedKey" Mode="BitNavMode.Manual"
+                    OnSelect="OnNavSelect"/>
         }
 
         <div class="sidebar-footer">
-            <BitButton OnClick="ResetReviews" Style="width:100%" Color="BitColor.Secondary" Variant="BitVariant.Outline" IconName="ArrowReset">Reset reviews</BitButton>
+            <BitButton OnClick="ResetReviews" Style="width:100%" Color="BitColor.Secondary" Variant="BitVariant.Outline"
+                       IconName="ArrowReset">Reset reviews
+            </BitButton>
         </div>
     </aside>
 
@@ -32,7 +36,9 @@
         }
         else if (_loading)
         {
-            <div class="centered"><BitSpinner Size="BitSpinnerSize.Medium" Label="Loading" /></div>
+            <div class="centered">
+                <BitSpinner Size="BitSpinnerSize.Medium" Label="Loading"/>
+            </div>
         }
         else if (_selectedKey == "overview" || _chapter is null)
         {
@@ -40,9 +46,18 @@
             {
                 <h2>Overview</h2>
                 <div class="stat-grid">
-                    <div class="stat-card"><div class="stat-label">Chapters</div><div class="stat-value">@_overview.ChapterCount</div></div>
-                    <div class="stat-card"><div class="stat-label">Sentences</div><div class="stat-value">@_overview.TotalSentences</div></div>
-                    <div class="stat-card"><div class="stat-label">Paragraphs</div><div class="stat-value">@_overview.TotalParagraphs</div></div>
+                    <div class="stat-card">
+                        <div class="stat-label">Chapters</div>
+                        <div class="stat-value">@_overview.ChapterCount</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-label">Sentences</div>
+                        <div class="stat-value">@_overview.TotalSentences</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-label">Paragraphs</div>
+                        <div class="stat-value">@_overview.TotalParagraphs</div>
+                    </div>
                 </div>
 
                 <div class="chapter-cards">
@@ -51,10 +66,11 @@
                         var reviewed = IsReviewed(chapter.Id);
                         <div class="chapter-card" @onclick="() => SelectChapter(chapter.Id)">
                             <div class="chapter-title">@chapter.Id</div>
-                            <div class="chapter-meta">Sentences: @chapter.SentenceCount • Paragraphs: @chapter.ParagraphCount</div>
+                            <div class="chapter-meta">Sentences: @chapter.SentenceCount •
+                                Paragraphs: @chapter.ParagraphCount</div>
                             @if (reviewed)
                             {
-                                <BitTag Color="BitColor.Success" Text="Reviewed" />
+                                <BitTag Color="BitColor.Success" Text="Reviewed"/>
                             }
                         </div>
                     }
@@ -69,13 +85,14 @@
                     <h2>@_chapter.ChapterId</h2>
                     <p class="muted">Sentences @_chapter.SentenceCount • Paragraphs @_chapter.ParagraphCount</p>
                 </div>
-                <BitToggleButton OnChange="ToggleReviewed" IsChecked="@IsReviewed(_chapter.ChapterId)" OffText="Mark reviewed" OnText="Reviewed" IconName="CheckMark" />
+                <BitToggleButton OnChange="ToggleReviewed" IsChecked="@IsReviewed(_chapter.ChapterId)"
+                                 OffText="Mark reviewed" OnText="Reviewed" IconName="CheckMark"/>
             </div>
 
             <div class="badge-row">
-                <BitTag Text="Raw" Color="@(_chapter.Audio.Raw ? BitColor.Primary : BitColor.Tertiary)" />
-                <BitTag Text="Treated" Color="@(_chapter.Audio.Treated ? BitColor.Primary : BitColor.Tertiary)" />
-                <BitTag Text="Filtered" Color="@(_chapter.Audio.Filtered ? BitColor.Primary : BitColor.Tertiary)" />
+                <BitTag Text="Raw" Color="@(_chapter.Audio.Raw ? BitColor.Primary : BitColor.Tertiary)"/>
+                <BitTag Text="Treated" Color="@(_chapter.Audio.Treated ? BitColor.Primary : BitColor.Tertiary)"/>
+                <BitTag Text="Filtered" Color="@(_chapter.Audio.Filtered ? BitColor.Primary : BitColor.Tertiary)"/>
             </div>
 
             @if (!string.IsNullOrEmpty(_audioVariant) && HasAudio(_audioVariant))
@@ -85,41 +102,43 @@
                         @foreach (var variant in _availableVariants)
                         {
                             var selected = variant == _audioVariant;
-                            <BitButton Color="@(selected ? BitColor.Primary : BitColor.Secondary)" Variant="BitVariant.Outline" OnClick="() => SetVariant(variant)">@variant</BitButton>
+                            <BitButton Color="@(selected ? BitColor.Primary : BitColor.Secondary)"
+                                       Variant="BitVariant.Outline"
+                                       OnClick="() => SetVariant(variant)">@variant</BitButton>
                         }
                     </div>
-                    <WaveSurferPlayer AudioUrl="@BuildAudioUrl(_audioVariant)" Title="@($"Audio ({_audioVariant})")" />
+                    <WaveSurferPlayer AudioUrl="@BuildAudioUrl(_audioVariant)" Title="@($"Audio ({_audioVariant})")"/>
                 </div>
             }
 
             <div class="table-wrapper">
                 <table class="data-table">
                     <thead>
-                        <tr>
-                            <th>#</th>
-                            <th>Status</th>
-                            <th>WER</th>
-                            <th>Span WER</th>
-                            <th>Text</th>
-                        </tr>
+                    <tr>
+                        <th>#</th>
+                        <th>Status</th>
+                        <th>WER</th>
+                        <th>Span WER</th>
+                        <th>Text</th>
+                    </tr>
                     </thead>
                     <tbody>
-                        @foreach (var sentence in _chapter.Sentences.Take(200))
+                    @foreach (var sentence in _chapter.Sentences.Take(200))
+                    {
+                        var werClass = sentence.Metrics.Wer switch
                         {
-                            var werClass = sentence.Metrics.Wer switch
-                            {
-                                > 5 => "high",
-                                > 2 => "med",
-                                _ => "low"
-                            };
-                            <tr>
-                                <td>@sentence.Id</td>
-                                <td>@sentence.Status</td>
-                                <td><span class="wer @werClass">@sentence.Metrics.Wer.ToString("0.00")</span></td>
-                                <td>@sentence.Metrics.SpanWer.ToString("0.00")</td>
-                                <td>@sentence.BookText</td>
-                            </tr>
-                        }
+                            > 5 => "high",
+                            > 2 => "med",
+                            _ => "low"
+                        };
+                        <tr>
+                            <td>@sentence.Id</td>
+                            <td>@sentence.Status</td>
+                            <td><span class="wer @werClass">@sentence.Metrics.Wer.ToString("0.00")</span></td>
+                            <td>@sentence.Metrics.SpanWer.ToString("0.00")</td>
+                            <td>@sentence.BookText</td>
+                        </tr>
+                    }
                     </tbody>
                 </table>
             </div>
@@ -293,4 +312,5 @@
             _audioVariant = variant;
         }
     }
+
 }

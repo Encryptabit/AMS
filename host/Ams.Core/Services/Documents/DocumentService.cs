@@ -35,11 +35,14 @@ public sealed class DocumentService : IDocumentService
         }
 
         var parseResult = await DocumentProcessor.ParseBookAsync(sourceFile, cancellationToken).ConfigureAwait(false);
-        var index = await DocumentProcessor.BuildBookIndexAsync(parseResult, sourceFile, options, cancellationToken: cancellationToken).ConfigureAwait(false);
+        var index = await DocumentProcessor
+            .BuildBookIndexAsync(parseResult, sourceFile, options, cancellationToken: cancellationToken)
+            .ConfigureAwait(false);
 
         if (_pronunciationProvider != null)
         {
-            index = await DocumentProcessor.PopulateMissingPhonemesAsync(index, _pronunciationProvider, cancellationToken).ConfigureAwait(false);
+            index = await DocumentProcessor
+                .PopulateMissingPhonemesAsync(index, _pronunciationProvider, cancellationToken).ConfigureAwait(false);
         }
 
         if (_cache != null)
@@ -56,7 +59,8 @@ public sealed class DocumentService : IDocumentService
     {
         if (_pronunciationProvider == null)
         {
-            throw new InvalidOperationException("Pronunciation provider was not supplied when constructing DocumentService.");
+            throw new InvalidOperationException(
+                "Pronunciation provider was not supplied when constructing DocumentService.");
         }
 
         return DocumentProcessor.PopulateMissingPhonemesAsync(index, _pronunciationProvider, cancellationToken);
@@ -69,7 +73,8 @@ public sealed class DocumentService : IDocumentService
     {
         if (_pronunciationProvider == null)
         {
-            throw new InvalidOperationException("Pronunciation provider was not supplied when constructing DocumentService.");
+            throw new InvalidOperationException(
+                "Pronunciation provider was not supplied when constructing DocumentService.");
         }
 
         return BuildIndexAsync(sourceFile, options, forceRefresh: true, cancellationToken);

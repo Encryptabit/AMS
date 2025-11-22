@@ -11,7 +11,8 @@ public class AudioProcessorFilterTests
         {
             if (!Ams.Core.Services.Integrations.FFmpeg.FfSession.FiltersAvailable)
             {
-                Console.WriteLine("Skipping FFmpeg filter tests because avfilter is not available in this environment.");
+                Console.WriteLine(
+                    "Skipping FFmpeg filter tests because avfilter is not available in this environment.");
                 return true;
             }
 

@@ -37,4 +37,10 @@
     <ProjectReference Include="..\..\Ams.Web.Shared\Ams.Web.Shared.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <Content Update="wwwroot\js\wavesurfer-interop.js">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </Content>
+  </ItemGroup>
+
 </Project>

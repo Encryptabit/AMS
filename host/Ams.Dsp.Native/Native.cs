@@ -18,14 +18,16 @@ internal static unsafe class Native
     [DllImport(Dll, EntryPoint = "ams_shutdown", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
     public static extern void ams_shutdown();
 
-    [DllImport(Dll, EntryPoint = "ams_set_parameter", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
+    [DllImport(Dll, EntryPoint = "ams_set_parameter", CallingConvention = CallingConvention.Cdecl,
+        ExactSpelling = true)]
     public static extern void ams_set_parameter(uint id, float value01, uint sampleOffset);
 
     // const float* const* in_ptrs, float* const* out_ptrs, uint32_t nframes
     [DllImport(Dll, EntryPoint = "ams_process", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
     public static extern void ams_process(float** in_ptrs, float** out_ptrs, uint nframes);
 
-    [DllImport(Dll, EntryPoint = "ams_get_latency_samples", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
+    [DllImport(Dll, EntryPoint = "ams_get_latency_samples", CallingConvention = CallingConvention.Cdecl,
+        ExactSpelling = true)]
     public static extern uint ams_get_latency_samples();
 
     // void ams_save_state(uint8_t* buf, size_t* inout_len)

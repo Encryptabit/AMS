@@ -3,7 +3,8 @@ using System.Text.Json.Serialization;
 namespace Ams.Core.Asr;
 
 public sealed record AsrSegment(
-    [property: JsonPropertyName("startSec")] double StartSec,
+    [property: JsonPropertyName("startSec")]
+    double StartSec,
     [property: JsonPropertyName("endSec")] double EndSec,
     [property: JsonPropertyName("text")] string Text
 );
@@ -27,26 +28,19 @@ public sealed record AsrResponse
         Segments = segments ?? Array.Empty<AsrSegment>();
     }
 
-    [JsonPropertyName("modelVersion")]
-    public string ModelVersion { get; init; }
+    [JsonPropertyName("modelVersion")] public string ModelVersion { get; init; }
 
-    [JsonPropertyName("tokens")]
-    public AsrToken[] Tokens { get; init; }
+    [JsonPropertyName("tokens")] public AsrToken[] Tokens { get; init; }
 
-    [JsonPropertyName("segments")]
-    public AsrSegment[] Segments { get; init; }
+    [JsonPropertyName("segments")] public AsrSegment[] Segments { get; init; }
 
-    [JsonIgnore]
-    public bool HasWordTimings => Tokens.Any(t => t.Duration > 0.0001);
+    [JsonIgnore] public bool HasWordTimings => Tokens.Any(t => t.Duration > 0.0001);
 
-    [JsonIgnore]
-    public IReadOnlyList<string> Words => _wordCache ??= BuildWords();
+    [JsonIgnore] public IReadOnlyList<string> Words => _wordCache ??= BuildWords();
 
-    [JsonIgnore]
-    public int WordCount => Words.Count;
+    [JsonIgnore] public int WordCount => Words.Count;
 
-    [JsonIgnore]
-    public bool HasWords => WordCount > 0;
+    [JsonIgnore] public bool HasWords => WordCount > 0;
 
     public string? GetWord(int index) => index >= 0 && index < WordCount ? Words[index] : null;
 
@@ -90,8 +84,9 @@ public sealed record AsrResponse
 }
 
 public record AsrRequest(
-    [property: JsonPropertyName("audio_path")] string AudioPath,
+    [property: JsonPropertyName("audio_path")]
+    string AudioPath,
     [property: JsonPropertyName("model")] string? Model = null,
-    [property: JsonPropertyName("language")] string Language = "en"
+    [property: JsonPropertyName("language")]
+    string Language = "en"
 );
-

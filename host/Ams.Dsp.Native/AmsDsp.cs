@@ -8,8 +8,8 @@ namespace Ams.Dsp.Native;
 /// </summary>
 public sealed unsafe class AmsDsp : IDisposable
 {
-    public const int ExpectedAbiMajor = 1;     // match your Zig side
-    public const int ExpectedAbiMinor = 0;     // bump on breaking/adding changes
+    public const int ExpectedAbiMajor = 1; // match your Zig side
+    public const int ExpectedAbiMinor = 0; // bump on breaking/adding changes
 
     private readonly object _sync = new();
     private bool _initialized;
@@ -19,6 +19,7 @@ public sealed unsafe class AmsDsp : IDisposable
 
     /// <summary>Total channels configured for this instance.</summary>
     public int Channels => checked((int)_channels);
+
     public int MaxBlock => checked((int)_maxBlock);
     public float SampleRate => _sampleRate;
 
@@ -36,11 +37,13 @@ public sealed unsafe class AmsDsp : IDisposable
     {
         if (sampleRate <= 0) throw new ArgumentOutOfRangeException(nameof(sampleRate));
         if (maxBlock == 0) throw new ArgumentOutOfRangeException(nameof(maxBlock));
-        if (channels == 0 || channels > 8) throw new ArgumentOutOfRangeException(nameof(channels), "1..8 supported in this wrapper");
+        if (channels == 0 || channels > 8)
+            throw new ArgumentOutOfRangeException(nameof(channels), "1..8 supported in this wrapper");
 
         Native.ams_get_abi(out var major, out var minor);
         if (major != ExpectedAbiMajor)
-            throw new NotSupportedException($"ams_dsp ABI mismatch. Host expects {ExpectedAbiMajor}.{ExpectedAbiMinor}, DLL reports {major}.{minor}.");
+            throw new NotSupportedException(
+                $"ams_dsp ABI mismatch. Host expects {ExpectedAbiMajor}.{ExpectedAbiMinor}, DLL reports {major}.{minor}.");
 
         var rc = Native.ams_init(sampleRate, maxBlock, channels);
         if (rc != 0) throw new InvalidOperationException($"ams_init failed rc={rc}");
@@ -178,6 +181,7 @@ public sealed unsafe class AmsDsp : IDisposable
             var l = (UIntPtr)size;
             Native.ams_save_state(p, ref l);
         }
+
         return buf;
     }
 
@@ -195,7 +199,8 @@ public sealed unsafe class AmsDsp : IDisposable
     private void ValidatePlanarBuffers(float[][] input, float[][] output, int frames)
     {
         if (input is null || output is null) throw new ArgumentNullException("input/output");
-        if (input.Length != Channels || output.Length != Channels) throw new ArgumentException("channel count mismatch");
+        if (input.Length != Channels || output.Length != Channels)
+            throw new ArgumentException("channel count mismatch");
         for (int ch = 0; ch < Channels; ch++)
         {
             if (input[ch] is null || output[ch] is null) throw new ArgumentNullException($"null plane ch {ch}");
@@ -211,13 +216,20 @@ public sealed unsafe class AmsDsp : IDisposable
             Native.ams_shutdown();
             _initialized = false;
         }
+
         GC.SuppressFinalize(this);
     }
 
     ~AmsDsp()
     {
         if (!_initialized) return;
-        try { Native.ams_shutdown(); }
-        catch { /* best effort during finalization */ }
+        try
+        {
+            Native.ams_shutdown();
+        }
+        catch
+        {
+            /* best effort during finalization */
+        }
     }
 }
