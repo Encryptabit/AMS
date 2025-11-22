@@ -19,6 +19,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Ams.Web", "Ams.Web\Ams.Web\
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Ams.Web.Client", "Ams.Web\Ams.Web.Client\Ams.Web.Client.csproj", "{66A398B7-89CE-4050-A8E8-7FB09D43A101}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Ams.Web.Shared", "Ams.Web.Shared\Ams.Web.Shared.csproj", "{FA4807F1-EACD-4357-8A0F-419C35CEABD3}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -125,6 +127,18 @@ Global
 		{66A398B7-89CE-4050-A8E8-7FB09D43A101}.Release|x64.Build.0 = Release|Any CPU
 		{66A398B7-89CE-4050-A8E8-7FB09D43A101}.Release|x86.ActiveCfg = Release|Any CPU
 		{66A398B7-89CE-4050-A8E8-7FB09D43A101}.Release|x86.Build.0 = Release|Any CPU
+		{FA4807F1-EACD-4357-8A0F-419C35CEABD3}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{FA4807F1-EACD-4357-8A0F-419C35CEABD3}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{FA4807F1-EACD-4357-8A0F-419C35CEABD3}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{FA4807F1-EACD-4357-8A0F-419C35CEABD3}.Debug|x64.Build.0 = Debug|Any CPU
+		{FA4807F1-EACD-4357-8A0F-419C35CEABD3}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{FA4807F1-EACD-4357-8A0F-419C35CEABD3}.Debug|x86.Build.0 = Debug|Any CPU
+		{FA4807F1-EACD-4357-8A0F-419C35CEABD3}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{FA4807F1-EACD-4357-8A0F-419C35CEABD3}.Release|Any CPU.Build.0 = Release|Any CPU
+		{FA4807F1-EACD-4357-8A0F-419C35CEABD3}.Release|x64.ActiveCfg = Release|Any CPU
+		{FA4807F1-EACD-4357-8A0F-419C35CEABD3}.Release|x64.Build.0 = Release|Any CPU
+		{FA4807F1-EACD-4357-8A0F-419C35CEABD3}.Release|x86.ActiveCfg = Release|Any CPU
+		{FA4807F1-EACD-4357-8A0F-419C35CEABD3}.Release|x86.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

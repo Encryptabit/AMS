@@ -2,15 +2,16 @@ using System.Text.Json.Serialization;
 using Ams.Core.Runtime.Book;
 using Ams.Core.Runtime.Workspace;
 using Ams.Core.Runtime.Artifacts;
-using Ams.Web.Api.Dtos.Validation;
-using Ams.Web.Api.Mappers;
-using Ams.Web.Api.Json;
-using Ams.Web.Api.Services;
-using Ams.Web.Api.Payloads;
 using Ams.Core.Artifacts;
 using Ams.Core.Processors;
 using Ams.Core.Runtime.Chapter;
 using Ams.Core.Runtime.Audio;
+using Ams.Web.Api.Mappers;
+using Ams.Web.Api.Json;
+using Ams.Web.Api.Services;
+using Ams.Web.Api.Payloads;
+using Ams.Web.Shared.Validation;
+using Ams.Web.Shared.Workspace;
 
 var builder = WebApplication.CreateSlimBuilder(args);
 
@@ -24,8 +25,17 @@ builder.Services.ConfigureHttpJsonOptions(options =>
 builder.Services.AddSingleton<WorkspaceState>();
 builder.Services.AddSingleton<ValidationMapper>();
 builder.Services.AddSingleton<ReviewedStateService>();
+builder.Services.AddCors(options =>
+{
+    options.AddDefaultPolicy(policy =>
+        policy.AllowAnyOrigin()
+              .AllowAnyMethod()
+              .AllowAnyHeader());
+});
 
 var app = builder.Build();
+
+app.UseCors();
 
 // Workspace endpoints
 app.MapGet("/workspace", (WorkspaceState state) => Results.Ok(state.ToResponse()));
@@ -414,6 +424,3 @@ static bool TryResolveExistingPath(AudioBufferDescriptor desc, ChapterContext ch
 
     return false;
 }
-
-// Records / DTOs
-public sealed record AudioExportRequest(double? Start, double? End, string? Variant);

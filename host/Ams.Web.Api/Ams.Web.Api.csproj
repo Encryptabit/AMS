@@ -14,5 +14,6 @@
 
   <ItemGroup>
     <ProjectReference Include="..\Ams.Core\Ams.Core.csproj" />
+    <ProjectReference Include="..\Ams.Web.Shared\Ams.Web.Shared.csproj" />
   </ItemGroup>
 </Project>

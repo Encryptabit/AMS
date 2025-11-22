@@ -1,4 +1,25 @@
-namespace Ams.Web.Api.Dtos.Validation;
+using System.Collections.Generic;
+
+namespace Ams.Web.Shared.Validation;
+
+public sealed record ValidationChapterSummaryDto(
+    string Id,
+    string Path,
+    bool HasHydrate,
+    int SentenceCount,
+    int ParagraphCount);
+
+public sealed record ValidationOverviewDto(
+    string BookId,
+    int ChapterCount,
+    int TotalSentences,
+    int TotalParagraphs);
+
+public sealed record ValidationReportDto(
+    string ChapterId,
+    string? HydratePath,
+    int SentenceCount,
+    int ParagraphCount);
 
 public sealed record ChapterDetailDto(
     string ChapterId,
@@ -34,6 +55,8 @@ public sealed record AudioAvailabilityDto(
     bool Treated,
     bool Filtered);
 
+public sealed record AudioExportRequest(double? Start, double? End, string? Variant);
+
 public sealed record AudioExportResponse(
     int ErrorNumber,
     string FileName,
@@ -52,3 +75,7 @@ public sealed record DiffDto(IReadOnlyList<DiffOpDto> Ops, DiffStatsDto Stats);
 public sealed record DiffOpDto(string Op, IReadOnlyList<string> Tokens);
 
 public sealed record DiffStatsDto(int ReferenceTokens, int HypothesisTokens, int Matches, int Insertions, int Deletions);
+
+public sealed record ReviewedStatusDto(bool Reviewed, string? TimestampUtc);
+
+public sealed record ReviewedStatusResponse(Dictionary<string, ReviewedStatusDto> Chapters);
