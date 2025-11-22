@@ -4,12 +4,19 @@ using Ams.Web.Api.Payloads;
 using PayloadWorkspaceRequest = Ams.Web.Api.Payloads.WorkspaceRequest;
 using PayloadWorkspaceResponse = Ams.Web.Api.Payloads.WorkspaceResponse;
 using ValidationChapterSummaryDto = Ams.Web.Api.Dtos.Validation.ValidationChapterSummaryDto;
-using ChapterSummaryResponse = Ams.Web.Api.Dtos.Validation.ChapterSummaryResponse;
+using ChapterSummaryResponse = Ams.Web.Api.Payloads.ChapterSummaryResponse;
 using ChapterDetailDto = Ams.Web.Api.Dtos.Validation.ChapterDetailDto;
 using SentenceDto = Ams.Web.Api.Dtos.Validation.SentenceDto;
 using ParagraphDto = Ams.Web.Api.Dtos.Validation.ParagraphDto;
 using AudioAvailabilityDto = Ams.Web.Api.Dtos.Validation.AudioAvailabilityDto;
 using AudioExportResponse = Ams.Web.Api.Dtos.Validation.AudioExportResponse;
+using TimingDto = Ams.Web.Api.Dtos.Validation.TimingDto;
+using RangeDto = Ams.Web.Api.Dtos.Validation.RangeDto;
+using MetricsDto = Ams.Web.Api.Dtos.Validation.MetricsDto;
+using ParagraphMetricsDto = Ams.Web.Api.Dtos.Validation.ParagraphMetricsDto;
+using DiffDto = Ams.Web.Api.Dtos.Validation.DiffDto;
+using DiffOpDto = Ams.Web.Api.Dtos.Validation.DiffOpDto;
+using DiffStatsDto = Ams.Web.Api.Dtos.Validation.DiffStatsDto;
 
 namespace Ams.Web.Api.Json;
 
@@ -32,6 +39,16 @@ namespace Ams.Web.Api.Json;
 [JsonSerializable(typeof(IEnumerable<ParagraphDto>))]
 [JsonSerializable(typeof(AudioAvailabilityDto))]
 [JsonSerializable(typeof(AudioExportResponse))]
+[JsonSerializable(typeof(AudioExportRequest))]
+[JsonSerializable(typeof(TimingDto))]
+[JsonSerializable(typeof(RangeDto))]
+[JsonSerializable(typeof(MetricsDto))]
+[JsonSerializable(typeof(ParagraphMetricsDto))]
+[JsonSerializable(typeof(DiffDto))]
+[JsonSerializable(typeof(DiffOpDto))]
+[JsonSerializable(typeof(DiffStatsDto))]
+[JsonSerializable(typeof(IEnumerable<DiffOpDto>))]
+[JsonSerializable(typeof(IEnumerable<DiffDto>))]
 [JsonSerializable(typeof(ValidationOverviewDto))]
 [JsonSerializable(typeof(ValidationReportDto))]
 [JsonSerializable(typeof(ReviewedStatusDto))]
