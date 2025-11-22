@@ -3,7 +3,7 @@
 <Project Sdk="Microsoft.NET.Sdk.BlazorWebAssembly">
 
   <PropertyGroup>
-    <TargetFramework>net10.0</TargetFramework>
+    <TargetFramework>net9.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <NoDefaultLaunchSettingsFile>true</NoDefaultLaunchSettingsFile>
@@ -11,11 +11,14 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="Microsoft.AspNetCore.Components.WebAssembly" Version="10.0.0" />
+    <PackageReference Include="Microsoft.AspNetCore.Components.WebAssembly" Version="9.0.11" />
   </ItemGroup>
 
   <ItemGroup>
     <PackageReference Include="Bit.BlazorUI" Version="10.1.1" />
+    <PackageReference Include="Bit.BlazorUI.Assets" Version="10.1.1" />
+    <PackageReference Include="Bit.BlazorUI.Extras" Version="10.1.1" />
+    <PackageReference Include="Bit.BlazorUI.Icons" Version="10.1.1" />
 
     <PackageReference Include="Bit.CodeAnalyzers" Version="10.1.1">
         <PrivateAssets>all</PrivateAssets>
@@ -28,6 +31,10 @@
     </PackageReference>
 
     <Using Include="Bit.BlazorUI" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\Ams.Web.Shared\Ams.Web.Shared.csproj" />
   </ItemGroup>
 
 </Project>
