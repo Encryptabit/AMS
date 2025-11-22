@@ -4,7 +4,7 @@ using Ams.Core.Runtime.Artifacts;
 using Ams.Core.Runtime.Book;
 using Ams.Core.Runtime.Workspace;
 using Ams.Web.Api.Json;
-using Ams.Web.Api.Payloads;
+using Ams.Web.Shared.Workspace;
 
 public sealed class WorkspaceState
 {

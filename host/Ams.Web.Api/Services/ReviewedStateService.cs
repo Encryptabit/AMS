@@ -1,7 +1,7 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
-using Ams.Web.Api.Dtos.Validation;
 using Ams.Web.Api.Json;
+using Ams.Web.Shared.Validation;
 
 namespace Ams.Web.Api.Services;
 

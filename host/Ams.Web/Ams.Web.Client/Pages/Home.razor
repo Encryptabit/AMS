@@ -1,3 +1,29 @@
-@page "/"
-<h1>Home</h1>
-<p>Welcome to the AMS Web Client.</p>
+﻿@page "/"
+
+<PageTitle>Home</PageTitle>
+
+<div class="page">
+    <div class="hero @BitCss.Class.Color.Border.Disabled">
+        <div class="container">
+            <BitText Typography="BitTypography.H1" Gutter>
+                Hello World
+            </BitText>
+
+            <BitText Typography="BitTypography.Subtitle1" Gutter>
+                Welcome to your bit Blazor Empty app
+            </BitText>
+        </div>
+    </div>
+
+    <div class="section @BitCss.Class.Color.Border.Disabled">
+        <BitText Typography="BitTypography.H3" Gutter>
+            Counter
+        </BitText>
+        <BitButton OnClick="() => _counter = 0" ButtonStyle="BitButtonStyle.Standard">Reset</BitButton>
+        <BitButton OnClick="() => _counter++">Increase [@_counter]</BitButton>
+    </div>
+ </div>
+
+ @code {
+    int _counter;
+}
