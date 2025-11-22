@@ -21,9 +21,11 @@ internal static unsafe class FfDecoder
         AVFormatContext* formatContext = null;
         try
         {
-            ThrowIfError(avformat_open_input(&formatContext, path, null, null), $"{nameof(avformat_open_input)}({path})");
+            ThrowIfError(avformat_open_input(&formatContext, path, null, null),
+                $"{nameof(avformat_open_input)}({path})");
             var tags = ReadTags(formatContext->metadata);
-            ThrowIfError(avformat_find_stream_info(formatContext, null), $"{nameof(avformat_find_stream_info)}({path})");
+            ThrowIfError(avformat_find_stream_info(formatContext, null),
+                $"{nameof(avformat_find_stream_info)}({path})");
 
             int streamIndex = av_find_best_stream(formatContext, AVMediaType.AVMEDIA_TYPE_AUDIO, -1, -1, null, 0);
             if (streamIndex < 0)
@@ -55,6 +57,7 @@ internal static unsafe class FfDecoder
             {
                 durationSeconds = formatContext->duration / (double)AV_TIME_BASE;
             }
+
             double? startSeconds = stream->start_time != AV_NOPTS_VALUE
                 ? stream->start_time * av_q2d(stream->time_base)
                 : null;
@@ -101,12 +104,14 @@ internal static unsafe class FfDecoder
         AVFormatContext* formatContext = null;
         try
         {
-            ThrowIfError(avformat_open_input(&formatContext, path, null, null), $"{nameof(avformat_open_input)}({path})");
+            ThrowIfError(avformat_open_input(&formatContext, path, null, null),
+                $"{nameof(avformat_open_input)}({path})");
             var container = formatContext->iformat != null
                 ? PtrToStringUtf8(formatContext->iformat->name)
                 : null;
             var tags = ReadTags(formatContext->metadata);
-            ThrowIfError(avformat_find_stream_info(formatContext, null), $"{nameof(avformat_find_stream_info)}({path})");
+            ThrowIfError(avformat_find_stream_info(formatContext, null),
+                $"{nameof(avformat_find_stream_info)}({path})");
 
             int streamIndex = av_find_best_stream(formatContext, AVMediaType.AVMEDIA_TYPE_AUDIO, -1, -1, null, 0);
             if (streamIndex < 0)
@@ -120,6 +125,7 @@ internal static unsafe class FfDecoder
             {
                 throw new InvalidOperationException($"Unsupported codec for '{path}'");
             }
+
             var codecName = PtrToStringUtf8(codec->name);
 
             AVCodecContext* codecContext = avcodec_alloc_context3(codec);
@@ -130,7 +136,8 @@ internal static unsafe class FfDecoder
 
             try
             {
-                ThrowIfError(avcodec_parameters_to_context(codecContext, stream->codecpar), nameof(avcodec_parameters_to_context));
+                ThrowIfError(avcodec_parameters_to_context(codecContext, stream->codecpar),
+                    nameof(avcodec_parameters_to_context));
                 ThrowIfError(avcodec_open2(codecContext, codec, null), nameof(avcodec_open2));
 
                 var sourceSampleRate = codecContext->sample_rate;
@@ -138,15 +145,18 @@ internal static unsafe class FfDecoder
                 {
                     sourceSampleRate = stream->codecpar->sample_rate;
                 }
+
                 if (sourceSampleRate <= 0)
                 {
                     sourceSampleRate = AudioProcessor.DefaultAsrSampleRate;
                 }
+
                 var sourceChannels = codecContext->ch_layout.nb_channels;
                 if (sourceChannels <= 0)
                 {
                     sourceChannels = stream->codecpar->ch_layout.nb_channels;
                 }
+
                 if (sourceChannels <= 0)
                 {
                     sourceChannels = 1;
@@ -236,7 +246,8 @@ internal static unsafe class FfDecoder
                             }
 
                             ThrowIfError(receive, nameof(avcodec_receive_frame));
-                            AppendSamples(frame.Pointer, resampler, needsResample, sourceSampleRate, targetChannels, targetSampleRate, targetFormat, channelSamples, resampleScratch);
+                            AppendSamples(frame.Pointer, resampler, needsResample, sourceSampleRate, targetChannels,
+                                targetSampleRate, targetFormat, channelSamples, resampleScratch);
                         }
                     }
 
@@ -251,7 +262,8 @@ internal static unsafe class FfDecoder
                         }
 
                         ThrowIfError(receive, nameof(avcodec_receive_frame));
-                        AppendSamples(frame.Pointer, resampler, needsResample, sourceSampleRate, targetChannels, targetSampleRate, targetFormat, channelSamples, resampleScratch);
+                        AppendSamples(frame.Pointer, resampler, needsResample, sourceSampleRate, targetChannels,
+                            targetSampleRate, targetFormat, channelSamples, resampleScratch);
                     }
 
                     var length = channelSamples.Count > 0 ? channelSamples[0].Count : 0;
@@ -268,7 +280,9 @@ internal static unsafe class FfDecoder
 
                     var durationSeconds = stream->duration > 0 && stream->time_base.den != 0
                         ? stream->duration * av_q2d(stream->time_base)
-                        : (formatContext->duration != AV_NOPTS_VALUE ? formatContext->duration / (double)AV_TIME_BASE : 0);
+                        : (formatContext->duration != AV_NOPTS_VALUE
+                            ? formatContext->duration / (double)AV_TIME_BASE
+                            : 0);
                     double? startSeconds = stream->start_time != AV_NOPTS_VALUE
                         ? stream->start_time * av_q2d(stream->time_base)
                         : null;
@@ -331,7 +345,8 @@ internal static unsafe class FfDecoder
         IList<List<float>> channelSamples,
         ResampleScratch scratch)
     {
-        var dstNbSamples = ComputeResampleOutputSamples(resampler, sourceSampleRate, targetSampleRate, frame->nb_samples);
+        var dstNbSamples =
+            ComputeResampleOutputSamples(resampler, sourceSampleRate, targetSampleRate, frame->nb_samples);
         var converted = scratch.Rent(targetChannels, dstNbSamples, targetFormat);
 
         var samples = swr_convert(resampler, converted, dstNbSamples, frame->extended_data, frame->nb_samples);
@@ -361,7 +376,8 @@ internal static unsafe class FfDecoder
     {
         if (needsResample)
         {
-            ResampleInto(resampler, sourceSampleRate, frame, targetChannels, targetSampleRate, targetFormat, channelSamples, scratch);
+            ResampleInto(resampler, sourceSampleRate, frame, targetChannels, targetSampleRate, targetFormat,
+                channelSamples, scratch);
             return;
         }
 

@@ -84,7 +84,8 @@ public sealed class AlignmentService : IAlignmentService
         var bookPhonemes = BuildBookPhonemeView(book, pipeline.BookFilteredToOriginalWord, bookView.Tokens.Count);
         var asrPhonemes = await BuildAsrPhonemeViewAsync(asr, asrView, cancellationToken).ConfigureAwait(false);
 
-        var (wordOps, anchorOps) = BuildWordOperations(pipeline, policy, book, asrView, windows, bookPhonemes, asrPhonemes);
+        var (wordOps, anchorOps) =
+            BuildWordOperations(pipeline, policy, book, asrView, windows, bookPhonemes, asrPhonemes);
         var (sentences, paragraphs) = BuildRollups(book, asr, pipeline, wordOps, anchorOps);
         var timedSentences = sentences
             .Select(s => s with { Timing = ComputeTiming(s.ScriptRange, asr) })
@@ -115,7 +116,8 @@ public sealed class AlignmentService : IAlignmentService
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(context);
-        var transcript = context.Documents.Transcript ?? throw new InvalidOperationException("TranscriptIndex is not loaded for this chapter.");
+        var transcript = context.Documents.Transcript ??
+                         throw new InvalidOperationException("TranscriptIndex is not loaded for this chapter.");
         var hydrate = BuildHydratedTranscript(context, transcript);
         context.Documents.HydratedTranscript = hydrate;
         return Task.FromResult(hydrate);
@@ -152,17 +154,20 @@ public sealed class AlignmentService : IAlignmentService
                 : -1,
             AsrPosition: a.Ap)).ToList();
 
-        var windows = pipeline.Windows?.Select(w => new AnchorDocumentWindowSegment(w.bLo, w.bHi, w.aLo, w.aHi)).ToList();
+        var windows = pipeline.Windows?.Select(w => new AnchorDocumentWindowSegment(w.bLo, w.bHi, w.aLo, w.aHi))
+            .ToList();
 
         var document = new AnchorDocument(
             SectionDetected: pipeline.SectionDetected,
-            Section: pipeline.Section is null ? null : new AnchorDocumentSection(
-                pipeline.Section.Id,
-                pipeline.Section.Title,
-                pipeline.Section.Level,
-                pipeline.Section.Kind,
-                pipeline.Section.StartWord,
-                pipeline.Section.EndWord),
+            Section: pipeline.Section is null
+                ? null
+                : new AnchorDocumentSection(
+                    pipeline.Section.Id,
+                    pipeline.Section.Title,
+                    pipeline.Section.Level,
+                    pipeline.Section.Kind,
+                    pipeline.Section.StartWord,
+                    pipeline.Section.EndWord),
             Policy: new AnchorDocumentPolicy(
                 NGram: options.NGram,
                 TargetPerTokens: options.TargetPerTokens,
@@ -220,7 +225,9 @@ public sealed class AlignmentService : IAlignmentService
 
         if (!string.IsNullOrWhiteSpace(descriptor.RootPath))
         {
-            var rootName = Path.GetFileName(descriptor.RootPath.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
+            var rootName =
+                Path.GetFileName(descriptor.RootPath.TrimEnd(Path.DirectorySeparatorChar,
+                    Path.AltDirectorySeparatorChar));
             if (!string.IsNullOrWhiteSpace(rootName))
             {
                 yield return rootName;
@@ -239,7 +246,8 @@ public sealed class AlignmentService : IAlignmentService
     {
         var bookView = AnchorPreprocessor.BuildBookView(book);
         var equiv = new Dictionary<string, string>(StringComparer.Ordinal);
-        var fillers = new HashSet<string>(new[] { "uh", "um", "erm", "uhh", "hmm", "mm", "huh", "like" }, StringComparer.Ordinal);
+        var fillers = new HashSet<string>(new[] { "uh", "um", "erm", "uhh", "hmm", "mm", "huh", "like" },
+            StringComparer.Ordinal);
 
         var opsNm = TranscriptAligner.AlignWindows(
             bookView.Tokens,
@@ -321,7 +329,8 @@ public sealed class AlignmentService : IAlignmentService
         }
         else
         {
-            static bool IsAlignedWord(WordAlign op) => op.BookIdx.HasValue && op.AsrIdx.HasValue && op.Op != AlignOp.Del;
+            static bool IsAlignedWord(WordAlign op) =>
+                op.BookIdx.HasValue && op.AsrIdx.HasValue && op.Op != AlignOp.Del;
 
             var matchedBookIdx = new List<int>();
             matchedBookIdx.AddRange(wordOps.Where(IsAlignedWord).Select(o => o.BookIdx!.Value));
@@ -333,7 +342,8 @@ public sealed class AlignmentService : IAlignmentService
                 secStartWord = matchedBookIdx.First();
                 secEndWord = matchedBookIdx.Last();
 
-                var firstSentence = book.Sentences.FirstOrDefault(s => s.Start <= secStartWord && s.End >= secStartWord);
+                var firstSentence =
+                    book.Sentences.FirstOrDefault(s => s.Start <= secStartWord && s.End >= secStartWord);
                 if (firstSentence != null)
                 {
                     secStartWord = firstSentence.Start;
@@ -367,7 +377,8 @@ public sealed class AlignmentService : IAlignmentService
             asr);
     }
 
-    private static string[][] BuildBookPhonemeView(BookIndex book, IReadOnlyList<int> filteredToOriginal, int filteredCount)
+    private static string[][] BuildBookPhonemeView(BookIndex book, IReadOnlyList<int> filteredToOriginal,
+        int filteredCount)
     {
         var result = new string[filteredCount][];
         for (int i = 0; i < filteredCount; i++)
@@ -408,7 +419,8 @@ public sealed class AlignmentService : IAlignmentService
 
             var word = asr.GetWord(originalIndex);
             var lexeme = PronunciationHelper.NormalizeForLookup(word ?? string.Empty);
-            if (!string.IsNullOrEmpty(lexeme) && pronunciations.TryGetValue(lexeme, out var variants) && variants.Length > 0)
+            if (!string.IsNullOrEmpty(lexeme) && pronunciations.TryGetValue(lexeme, out var variants) &&
+                variants.Length > 0)
             {
                 result[i] = variants;
             }
@@ -450,7 +462,8 @@ public sealed class AlignmentService : IAlignmentService
 
         if (bookEndExclusive <= bookStart)
         {
-            bookEndExclusive = Math.Min(pipeline.BookWindowFiltered.bEnd + 1, bookStart + Math.Max(1, bookSpan + bookPad));
+            bookEndExclusive = Math.Min(pipeline.BookWindowFiltered.bEnd + 1,
+                bookStart + Math.Max(1, bookSpan + bookPad));
         }
 
         if (asrEndExclusive <= asrStart)
@@ -472,8 +485,12 @@ public sealed class AlignmentService : IAlignmentService
         var words = transcript.Words.Select(w => new HydratedWord(
             w.BookIdx,
             w.AsrIdx,
-            w.BookIdx.HasValue && w.BookIdx.Value >= 0 && w.BookIdx.Value < book.Words.Length ? book.Words[w.BookIdx.Value].Text : null,
-            w.AsrIdx.HasValue && w.AsrIdx.Value >= 0 && w.AsrIdx.Value < asr.WordCount ? asr.GetWord(w.AsrIdx.Value) : null,
+            w.BookIdx.HasValue && w.BookIdx.Value >= 0 && w.BookIdx.Value < book.Words.Length
+                ? book.Words[w.BookIdx.Value].Text
+                : null,
+            w.AsrIdx.HasValue && w.AsrIdx.Value >= 0 && w.AsrIdx.Value < asr.WordCount
+                ? asr.GetWord(w.AsrIdx.Value)
+                : null,
             w.Op.ToString(),
             w.Reason,
             w.Score)).ToList();
@@ -530,7 +547,9 @@ public sealed class AlignmentService : IAlignmentService
             var scriptRange = sentence.ScriptRange is null
                 ? null
                 : new HydratedScriptRange(sentence.ScriptRange.Start, sentence.ScriptRange.End);
-            var scriptText = sentence.ScriptRange is null ? string.Empty : JoinAsr(asr, sentence.ScriptRange.Start, sentence.ScriptRange.End);
+            var scriptText = sentence.ScriptRange is null
+                ? string.Empty
+                : JoinAsr(asr, sentence.ScriptRange.Start, sentence.ScriptRange.End);
 
             var diffResult = TextDiffAnalyzer.Analyze(bookText, scriptText);
             var status = ResolveSentenceStatus(diffResult.Metrics);
@@ -579,7 +598,8 @@ public sealed class AlignmentService : IAlignmentService
             paragraphs);
     }
 
-    private static string BuildParagraphScript(IReadOnlyList<int> sentenceIds, IReadOnlyDictionary<int, HydratedSentence> sentenceMap)
+    private static string BuildParagraphScript(IReadOnlyList<int> sentenceIds,
+        IReadOnlyDictionary<int, HydratedSentence> sentenceMap)
     {
         if (sentenceIds.Count == 0)
         {

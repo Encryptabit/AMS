@@ -47,7 +47,8 @@ public sealed class PipelineConcurrencyControl : IDisposable
 
     public static PipelineConcurrencyControl CreateShared(int maxMfaParallelism)
     {
-        return new PipelineConcurrencyControl(bookIndexDegree: maxMfaParallelism, asrDegree: Math.Max(1, maxMfaParallelism), mfaDegree: Math.Max(1, maxMfaParallelism));
+        return new PipelineConcurrencyControl(bookIndexDegree: maxMfaParallelism,
+            asrDegree: Math.Max(1, maxMfaParallelism), mfaDegree: Math.Max(1, maxMfaParallelism));
     }
 
     public bool TryClaimBookIndexForce()
@@ -92,7 +93,8 @@ public sealed class PipelineConcurrencyControl : IDisposable
         var configured = Environment.GetEnvironmentVariable("AMS_MFA_WORKSPACES");
         if (!string.IsNullOrWhiteSpace(configured))
         {
-            foreach (var path in configured.Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+            foreach (var path in configured.Split(Path.PathSeparator,
+                         StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
             {
                 yield return EnsureWorkspace(path);
             }

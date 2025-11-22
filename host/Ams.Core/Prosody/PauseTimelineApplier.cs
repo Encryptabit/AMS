@@ -123,7 +123,8 @@ internal static class PauseTimelineApplier
                 continue;
             }
 
-            ApplyInterSentenceAdjust(result, orderedSentenceIds, indexBySentence, adjust.LeftSentenceId, adjust.RightSentenceId, adjust.TargetDurationSec);
+            ApplyInterSentenceAdjust(result, orderedSentenceIds, indexBySentence, adjust.LeftSentenceId,
+                adjust.RightSentenceId, adjust.TargetDurationSec);
         }
 
         return new PauseTimelineApplyResult(
@@ -154,6 +155,7 @@ internal static class PauseTimelineApplier
             {
                 timeline.Remove(TailSentinelSentenceId);
             }
+
             return;
         }
 
@@ -187,7 +189,8 @@ internal static class PauseTimelineApplier
 
         double newStart = timing.StartSec + delta;
         double newEnd = timing.EndSec + delta;
-        timeline[adjust.LeftSentenceId] = new SentenceTiming(newStart, newEnd, timing.FragmentBacked, timing.Confidence);
+        timeline[adjust.LeftSentenceId] =
+            new SentenceTiming(newStart, newEnd, timing.FragmentBacked, timing.Confidence);
 
         ShiftFollowingSentences(timeline, orderedSentenceIds, indexBySentence, index, delta);
     }
@@ -200,7 +203,8 @@ internal static class PauseTimelineApplier
         int rightId,
         double targetDuration)
     {
-        if (!indexBySentence.TryGetValue(leftId, out var leftIndex) || !indexBySentence.TryGetValue(rightId, out var rightIndex))
+        if (!indexBySentence.TryGetValue(leftId, out var leftIndex) ||
+            !indexBySentence.TryGetValue(rightId, out var rightIndex))
         {
             return;
         }
@@ -259,8 +263,10 @@ internal static class PauseTimelineApplier
         foreach (var kvp in baseline)
         {
             var timing = kvp.Value;
-            clone[kvp.Key] = new SentenceTiming(timing.StartSec, timing.EndSec, timing.FragmentBacked, timing.Confidence);
+            clone[kvp.Key] =
+                new SentenceTiming(timing.StartSec, timing.EndSec, timing.FragmentBacked, timing.Confidence);
         }
+
         return clone;
     }
 }

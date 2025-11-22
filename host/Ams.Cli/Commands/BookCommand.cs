@@ -50,7 +50,8 @@ public static class BookCommand
         var indexOption = new Option<FileInfo?>("--index", "Path to BookIndex JSON to enrich");
         indexOption.AddAlias("-i");
 
-        var outputOption = new Option<FileInfo?>("--out", description: "Optional output path (defaults to overwriting the input index)");
+        var outputOption = new Option<FileInfo?>("--out",
+            description: "Optional output path (defaults to overwriting the input index)");
         outputOption.AddAlias("-o");
 
         var modelOption = new Option<string?>("--g2p-model", () => null, "Optional MFA G2P model name to use");
@@ -79,7 +80,8 @@ public static class BookCommand
         return populate;
     }
 
-    private static async Task PopulatePhonemesAsync(FileInfo indexFile, FileInfo? outputFile, string? g2pModel, CancellationToken cancellationToken)
+    private static async Task PopulatePhonemesAsync(FileInfo indexFile, FileInfo? outputFile, string? g2pModel,
+        CancellationToken cancellationToken)
     {
         if (!indexFile.Exists)
         {
@@ -96,13 +98,14 @@ public static class BookCommand
         };
 
         var index = JsonSerializer.Deserialize<BookIndex>(rawJson, jsonOptions)
-            ?? throw new InvalidOperationException("Failed to deserialize BookIndex JSON.");
+                    ?? throw new InvalidOperationException("Failed to deserialize BookIndex JSON.");
 
         var provider = new MfaPronunciationProvider(g2pModel: g2pModel);
 
-        var enriched = await DocumentProcessor.PopulateMissingPhonemesAsync(index, provider, cancellationToken).ConfigureAwait(false);
+        var enriched = await DocumentProcessor.PopulateMissingPhonemesAsync(index, provider, cancellationToken)
+            .ConfigureAwait(false);
 
-        static bool HasPhonemes(BookWord w) => w.Phonemes is { Length: >0 };
+        static bool HasPhonemes(BookWord w) => w.Phonemes is { Length: > 0 };
 
         var missingAfter = enriched.Words.Count(w => !HasPhonemes(w));
         var missingBefore = index.Words.Count(w => !HasPhonemes(w));
@@ -110,11 +113,13 @@ public static class BookCommand
 
         if (populated <= 0)
         {
-            Log.Debug("No new phoneme entries were populated (missing before={Before}, after={After}).", missingBefore, missingAfter);
+            Log.Debug("No new phoneme entries were populated (missing before={Before}, after={After}).", missingBefore,
+                missingAfter);
         }
         else
         {
-            Log.Debug("Populated phonemes for {Count} words (remaining without phonemes: {Remaining}).", populated, missingAfter);
+            Log.Debug("Populated phonemes for {Count} words (remaining without phonemes: {Remaining}).", populated,
+                missingAfter);
         }
 
         var destination = outputFile ?? indexFile;
@@ -165,7 +170,9 @@ public static class BookCommand
         }
         catch (Exception ex)
         {
-            throw new InvalidOperationException("Failed to parse BookIndex JSON as canonical schema. Ensure schema matches Ams.Core.Runtime.Documents.BookIndex.", ex);
+            throw new InvalidOperationException(
+                "Failed to parse BookIndex JSON as canonical schema. Ensure schema matches Ams.Core.Runtime.Documents.BookIndex.",
+                ex);
         }
 
         if (idx == null)
@@ -221,14 +228,17 @@ public static class BookCommand
                 {
                     var prev = sents[i - 1];
                     if (s.Start != prev.End + 1)
-                        failures.Add($"Sentence {i} does not continue from previous (prev.end={prev.End}, start={s.Start})");
+                        failures.Add(
+                            $"Sentence {i} does not continue from previous (prev.end={prev.End}, start={s.Start})");
                 }
+
                 // Verify word -> sentence mapping
                 for (int w = s.Start; w <= s.End; w++)
                 {
                     if (idx.Words![w].SentenceIndex != s.Index)
                     {
-                        failures.Add($"Word {w} sentenceIndex={idx.Words![w].SentenceIndex} != sentence.Index={s.Index}");
+                        failures.Add(
+                            $"Word {w} sentenceIndex={idx.Words![w].SentenceIndex} != sentence.Index={s.Index}");
                         break;
                     }
                 }
@@ -254,14 +264,17 @@ public static class BookCommand
                 {
                     var prev = paras[i - 1];
                     if (p.Start != prev.End + 1)
-                        failures.Add($"Paragraph {i} does not continue from previous (prev.end={prev.End}, start={p.Start})");
+                        failures.Add(
+                            $"Paragraph {i} does not continue from previous (prev.end={prev.End}, start={p.Start})");
                 }
+
                 // Verify word -> paragraph mapping
                 for (int w = p.Start; w <= p.End; w++)
                 {
                     if (idx.Words![w].ParagraphIndex != p.Index)
                     {
-                        failures.Add($"Word {w} paragraphIndex={idx.Words![w].ParagraphIndex} != paragraph.Index={p.Index}");
+                        failures.Add(
+                            $"Word {w} paragraphIndex={idx.Words![w].ParagraphIndex} != paragraph.Index={p.Index}");
                         break;
                     }
                 }
@@ -290,9 +303,11 @@ public static class BookCommand
                         examples.Add($"... {prev} {cur} ... @ {i - 1}-{i}");
                 }
             }
+
             if (apostropheSplitCount > 0)
             {
-                warnings.Add($"Apostrophe splits detected: {apostropheSplitCount} (e.g., {string.Join("; ", examples)})");
+                warnings.Add(
+                    $"Apostrophe splits detected: {apostropheSplitCount} (e.g., {string.Join("; ", examples)})");
             }
         }
 
@@ -312,6 +327,7 @@ public static class BookCommand
                         list = new List<int>();
                         paraSentences[pStart] = list;
                     }
+
                     list.Add(s.End - s.Start + 1);
                 }
             }
@@ -327,9 +343,11 @@ public static class BookCommand
                         tocLikeParas++;
                 }
             }
+
             if (tocLikeParas > 0)
             {
-                warnings.Add($"Possible TOC bursts: {tocLikeParas} paragraph(s) with many very short sentences (median <= 3 words).");
+                warnings.Add(
+                    $"Possible TOC bursts: {tocLikeParas} paragraph(s) with many very short sentences (median <= 3 words).");
             }
         }
 
@@ -345,9 +363,11 @@ public static class BookCommand
         // Emit results
         Log.Debug("=== Book Verify Results ===");
         Log.Debug("Source file: {SourceFile}", idx.SourceFile);
-        Log.Debug("Words/Sentences/Paragraphs: {WordCount}/{SentenceCount}/{ParagraphCount}", wordsCount, sentencesCount, paragraphsCount);
+        Log.Debug("Words/Sentences/Paragraphs: {WordCount}/{SentenceCount}/{ParagraphCount}", wordsCount,
+            sentencesCount, paragraphsCount);
         Log.Debug("Counts parity: {Status}", failures.Any(f => f.Contains("Totals")) ? "FAIL" : "OK");
-        Log.Debug("Ordering/coverage: {Status}", failures.Except(failures.Where(f=>f.Contains("Totals"))).Any() ? "FAIL" : "OK");
+        Log.Debug("Ordering/coverage: {Status}",
+            failures.Except(failures.Where(f => f.Contains("Totals"))).Any() ? "FAIL" : "OK");
         Log.Debug("Warnings: {WarningCount}", warnings.Count == 0 ? "none" : warnings.Count.ToString());
         Log.Debug("Determinism hash (canonical JSON): {StableHash}", stableHash);
 

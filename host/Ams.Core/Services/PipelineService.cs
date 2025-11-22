@@ -44,7 +44,8 @@ public sealed class PipelineService
         ArgumentNullException.ThrowIfNull(options);
         ValidateOptions(options);
 
-        Directory.CreateDirectory(options.BookIndexFile.Directory?.FullName ?? options.BookIndexFile.DirectoryName ?? ".");
+        Directory.CreateDirectory(options.BookIndexFile.Directory?.FullName ??
+                                  options.BookIndexFile.DirectoryName ?? ".");
 
         var bookIndexBuilt = await EnsureBookIndexAsync(options, cancellationToken).ConfigureAwait(false);
 
@@ -60,12 +61,14 @@ public sealed class PipelineService
         using var handle = workspace.OpenChapter(openOptions);
 
         var chapter = handle.Chapter;
-        var chapterRoot = chapter.Descriptor.RootPath ?? throw new InvalidOperationException("Chapter root path is not configured.");
+        var chapterRoot = chapter.Descriptor.RootPath ??
+                          throw new InvalidOperationException("Chapter root path is not configured.");
 
         bool HasAsrDocument() => chapter.Documents.Asr is not null;
         bool HasAnchorDocument() => chapter.Documents.Anchors is not null;
         bool HasTranscriptDocument() => chapter.Documents.Transcript is not null;
         bool HasHydrateDocument() => chapter.Documents.HydratedTranscript is not null;
+
         bool HasTextGridDocument()
         {
             if (options.MfaOptions?.TextGridFile is { } explicitGrid)
@@ -95,6 +98,7 @@ public sealed class PipelineService
                ?? throw new InvalidOperationException("Hydrate artifact path is not available.");
 
         FileInfo ResolveTreatedFile() => options.TreatedCopyFile ?? chapter.ResolveArtifactFile("treated.wav");
+
         FileInfo TextGridFile()
         {
             if (options.MfaOptions?.TextGridFile is { } explicitGrid)
@@ -123,7 +127,8 @@ public sealed class PipelineService
             await WaitAsync(options.Concurrency?.AsrSemaphore, cancellationToken).ConfigureAwait(false);
             try
             {
-                await _generateTranscript.ExecuteAsync(chapter, options.TranscriptOptions, cancellationToken).ConfigureAwait(false);
+                await _generateTranscript.ExecuteAsync(chapter, options.TranscriptOptions, cancellationToken)
+                    .ConfigureAwait(false);
                 asrRan = true;
                 hasAsr = true;
             }
@@ -152,14 +157,16 @@ public sealed class PipelineService
                 AnchorOptions = (options.AnchorOptions ?? BuildDefaultAnchorOptions()) with { EmitWindows = true }
             };
 
-            await _buildTranscriptIndex.ExecuteAsync(chapter, transcriptOptions, cancellationToken).ConfigureAwait(false);
+            await _buildTranscriptIndex.ExecuteAsync(chapter, transcriptOptions, cancellationToken)
+                .ConfigureAwait(false);
             transcriptRan = true;
             hasTranscript = true;
         }
 
         if (IsStageEnabled(PipelineStage.Hydrate, options) && (options.Force || !hasHydrate))
         {
-            await _hydrateTranscript.ExecuteAsync(chapter, options.HydrationOptions, cancellationToken).ConfigureAwait(false);
+            await _hydrateTranscript.ExecuteAsync(chapter, options.HydrationOptions, cancellationToken)
+                .ConfigureAwait(false);
             hydrateRan = true;
             hasHydrate = true;
         }
@@ -191,7 +198,8 @@ public sealed class PipelineService
                         WorkspaceRoot = workspaceRoot ?? options.MfaOptions?.WorkspaceRoot
                     };
 
-                    var result = await _runMfa.ExecuteAsync(chapter, mfaOptions, cancellationToken).ConfigureAwait(false);
+                    var result = await _runMfa.ExecuteAsync(chapter, mfaOptions, cancellationToken)
+                        .ConfigureAwait(false);
                     mfaRan = true;
                     hasTextGrid = HasTextGridDocument();
                     textGridExists = hasTextGrid;
@@ -329,7 +337,8 @@ public sealed class PipelineService
             else
             {
                 Log.Debug("Book index cache miss for {Book}", bookFile.FullName);
-                bookIndex = await BuildBookIndexInternal(bookFile, options.AverageWordsPerMinute, cancellationToken).ConfigureAwait(false);
+                bookIndex = await BuildBookIndexInternal(bookFile, options.AverageWordsPerMinute, cancellationToken)
+                    .ConfigureAwait(false);
                 await cache.SetAsync(bookIndex, cancellationToken).ConfigureAwait(false);
             }
         }
@@ -340,7 +349,8 @@ public sealed class PipelineService
                 Log.Debug("Force rebuilding book index for {Book}", bookFile.FullName);
             }
 
-            bookIndex = await BuildBookIndexInternal(bookFile, options.AverageWordsPerMinute, cancellationToken).ConfigureAwait(false);
+            bookIndex = await BuildBookIndexInternal(bookFile, options.AverageWordsPerMinute, cancellationToken)
+                .ConfigureAwait(false);
             if (cache is not null)
             {
                 await cache.SetAsync(bookIndex, cancellationToken).ConfigureAwait(false);
@@ -357,9 +367,11 @@ public sealed class PipelineService
         await File.WriteAllTextAsync(options.BookIndexFile.FullName, json, cancellationToken).ConfigureAwait(false);
     }
 
-    private static async Task<BookIndex> BuildBookIndexInternal(FileInfo bookFile, double averageWpm, CancellationToken cancellationToken)
+    private static async Task<BookIndex> BuildBookIndexInternal(FileInfo bookFile, double averageWpm,
+        CancellationToken cancellationToken)
     {
-        var parseResult = await DocumentProcessor.ParseBookAsync(bookFile.FullName, cancellationToken).ConfigureAwait(false);
+        var parseResult = await DocumentProcessor.ParseBookAsync(bookFile.FullName, cancellationToken)
+            .ConfigureAwait(false);
         return await DocumentProcessor.BuildBookIndexAsync(
             parseResult,
             bookFile.FullName,

@@ -21,15 +21,22 @@ public static class DspCommand
     [
         FilterDefinition.Create("highpass", (g, p) => g.HighPass(p), new HighPassFilterParams(Frequency: 35, Poles: 1)),
         FilterDefinition.Create("lowpass", (g, p) => g.LowPass(p), new LowPassFilterParams(Frequency: 14000, Poles: 1)),
-        FilterDefinition.Create("deesser", (g, p) => g.DeEsser(p), new DeEsserFilterParams(NormalizedFrequency: 0.4, Intensity: 0.2, MaxReduction: 0.5, OutputMode: "o")),
+        FilterDefinition.Create("deesser", (g, p) => g.DeEsser(p),
+            new DeEsserFilterParams(NormalizedFrequency: 0.4, Intensity: 0.2, MaxReduction: 0.5, OutputMode: "o")),
         FilterDefinition.Create("denoise", (g, p) => g.FftDenoise(p), new FftDenoiseFilterParams(NoiseReductionDb: 6)),
-        FilterDefinition.Create("ndenoise", (g, p) => g.NeuralDenoise(p), new NeuralDenoiseFilterParams(Model: "models/sh.rnnn", Mix: 0.6)),
+        FilterDefinition.Create("ndenoise", (g, p) => g.NeuralDenoise(p),
+            new NeuralDenoiseFilterParams(Model: "models/sh.rnnn", Mix: 0.6)),
         FilterDefinition.Create("aspectralstats", (g, p) => g.AspectralStats(p), new AspectralStatsFilterParams()),
         FilterDefinition.Create("dynaudnorm", (g, p) => g.DynaudNorm(p), new DynaudNormFilterParams()),
-        FilterDefinition.Create("astats", (g, p) => g.AStats(p), new AStatsFilterParams(EmitMetadata: true, ResetInterval: 1)),
-        FilterDefinition.Create("compressor", (g, p) => g.ACompressor(p), new ACompressorFilterParams(ThresholdDb: -24, Ratio: 1.3, AttackMilliseconds: 5, ReleaseMilliseconds: 120, MakeupDb: 0.5)),
-        FilterDefinition.Create("limiter", (g, p) => g.ALimiter(p), new ALimiterFilterParams(LimitDb: -1.0, AttackMilliseconds: 5, ReleaseMilliseconds: 60)),
-        FilterDefinition.Create("loudnorm", (g, p) => g.LoudNorm(p), new LoudNormFilterParams(TargetI: -18, TargetLra: 7, TargetTp: -2, DualMono: true)),
+        FilterDefinition.Create("astats", (g, p) => g.AStats(p),
+            new AStatsFilterParams(EmitMetadata: true, ResetInterval: 1)),
+        FilterDefinition.Create("compressor", (g, p) => g.ACompressor(p),
+            new ACompressorFilterParams(ThresholdDb: -24, Ratio: 1.3, AttackMilliseconds: 5, ReleaseMilliseconds: 120,
+                MakeupDb: 0.5)),
+        FilterDefinition.Create("limiter", (g, p) => g.ALimiter(p),
+            new ALimiterFilterParams(LimitDb: -1.0, AttackMilliseconds: 5, ReleaseMilliseconds: 60)),
+        FilterDefinition.Create("loudnorm", (g, p) => g.LoudNorm(p),
+            new LoudNormFilterParams(TargetI: -18, TargetLra: 7, TargetTp: -2, DualMono: true)),
         FilterDefinition.Create("resample", (g, p) => g.Resample(p), new ResampleFilterParams(SampleRate: 48000)),
     ];
 
@@ -77,10 +84,12 @@ public static class DspCommand
         };
         chainOption.AddAlias("-c");
 
-        var pluginOption = new Option<string?>("--plugin", "Quick single-node run with the specified plugin (path or friendly name)");
+        var pluginOption = new Option<string?>("--plugin",
+            "Quick single-node run with the specified plugin (path or friendly name)");
         pluginOption.AddAlias("-p");
 
-        var paramOption = new Option<string[]>("--param", () => Array.Empty<string>(), "Parameter override in Plugalyzer syntax (repeatable)");
+        var paramOption = new Option<string[]>("--param", () => Array.Empty<string>(),
+            "Parameter override in Plugalyzer syntax (repeatable)");
         var presetOption = new Option<string?>("--preset", "Optional preset file (.vstpreset)");
         var paramFileOption = new Option<FileInfo?>("--param-file", "JSON automation file to pass to Plugalyzer");
 
@@ -89,7 +98,8 @@ public static class DspCommand
         var outChannelsOption = new Option<int?>("--out-channels", "Override output channel count for all nodes");
         var bitDepthOption = new Option<int?>("--bit-depth", "Override output bit depth for all nodes");
 
-        var workDirOption = new Option<DirectoryInfo?>("--work", "Working directory for intermediates (defaults to temp)");
+        var workDirOption =
+            new Option<DirectoryInfo?>("--work", "Working directory for intermediates (defaults to temp)");
         var keepTempOption = new Option<bool>("--keep-temp", () => false, "Keep intermediate files after completion");
         var overwriteOption = new Option<bool>("--overwrite", () => false, "Overwrite final output if it exists");
 
@@ -157,21 +167,23 @@ public static class DspCommand
 
                 TreatmentChain chain;
                 var chainBaseDirectory = chainFile?.DirectoryName
-                    ?? inputFile.DirectoryName
-                    ?? Directory.GetCurrentDirectory();
+                                         ?? inputFile.DirectoryName
+                                         ?? Directory.GetCurrentDirectory();
 
                 if (chainFile is not null)
                 {
                     chain = await LoadChainAsync(chainFile, cancellationToken).ConfigureAwait(false);
                     if (chain.Nodes.Count == 0)
                     {
-                        throw new InvalidOperationException($"Chain file '{chainFile.FullName}' does not contain any nodes.");
+                        throw new InvalidOperationException(
+                            $"Chain file '{chainFile.FullName}' does not contain any nodes.");
                     }
                 }
                 else
                 {
                     var config = await DspConfigService.LoadAsync(cancellationToken).ConfigureAwait(false);
-                    chain = BuildSingleNodeChain(pluginPath!, paramValues, presetPath, paramFile, chainBaseDirectory, config);
+                    chain = BuildSingleNodeChain(pluginPath!, paramValues, presetPath, paramFile, chainBaseDirectory,
+                        config);
                 }
 
                 await RunChainAsync(chain, inputFile.FullName, outputFile.FullName, chainBaseDirectory,
@@ -227,11 +239,13 @@ public static class DspCommand
     {
         var cmd = new Command("init", "Create or overwrite a filter-chain configuration file");
 
-        var filtersOption = new Option<string[]>("--filters", () => Array.Empty<string>(), "Filters to include (name or 'all')")
-        {
-            AllowMultipleArgumentsPerToken = true
-        };
-        var configOption = new Option<FileInfo?>("--config", () => null, $"Configuration file path (defaults to {DefaultFilterChainFileName})");
+        var filtersOption =
+            new Option<string[]>("--filters", () => Array.Empty<string>(), "Filters to include (name or 'all')")
+            {
+                AllowMultipleArgumentsPerToken = true
+            };
+        var configOption = new Option<FileInfo?>("--config", () => null,
+            $"Configuration file path (defaults to {DefaultFilterChainFileName})");
 
         cmd.AddOption(filtersOption);
         cmd.AddOption(configOption);
@@ -252,7 +266,8 @@ public static class DspCommand
                     {
                         Name = definition.Name,
                         Enabled = true,
-                        Parameters = SerializeParameters(definition.DefaultParameters ?? CreateDefaultParameterInstance(definition))
+                        Parameters = SerializeParameters(definition.DefaultParameters ??
+                                                         CreateDefaultParameterInstance(definition))
                     });
                 }
 
@@ -275,7 +290,8 @@ public static class DspCommand
 
         var inputOption = new Option<FileInfo?>("--input", "Input audio file (defaults to active chapter)");
         inputOption.AddAlias("-i");
-        var configOption = new Option<FileInfo?>("--config", () => null, $"Configuration file path (defaults to {DefaultFilterChainFileName})");
+        var configOption = new Option<FileInfo?>("--config", () => null,
+            $"Configuration file path (defaults to {DefaultFilterChainFileName})");
         var saveOption = new Option<bool>("--save", () => false, "Write filtered audio to disk");
         var outputOption = new Option<FileInfo?>("--output", "Optional output path when using --save");
 
@@ -392,6 +408,7 @@ public static class DspCommand
                 {
                     Console.WriteLine($"      Notes : {node.Description}");
                 }
+
                 if (node.Parameters is { Count: > 0 })
                 {
                     Console.WriteLine($"      Params: {string.Join(", ", node.Parameters)}");
@@ -483,7 +500,8 @@ public static class DspCommand
             var nodes = chain.Nodes.ToList();
             if (index < 0 || index > nodes.Count)
             {
-                throw new ArgumentOutOfRangeException(nameof(index), index, $"Index must be between 0 and {nodes.Count}");
+                throw new ArgumentOutOfRangeException(nameof(index), index,
+                    $"Index must be between 0 and {nodes.Count}");
             }
 
             var baseDirectory = chainFile.DirectoryName ?? Directory.GetCurrentDirectory();
@@ -493,7 +511,8 @@ public static class DspCommand
             var updated = chain with { Nodes = nodes };
 
             await SaveChainAsync(chainFile, updated, token).ConfigureAwait(false);
-            Log.Debug("[dsp] Inserted node '{Name}' at index {Index}", node.Name ?? Path.GetFileNameWithoutExtension(node.Plugin), index);
+            Log.Debug("[dsp] Inserted node '{Name}' at index {Index}",
+                node.Name ?? Path.GetFileNameWithoutExtension(node.Plugin), index);
         });
 
         return cmd;
@@ -538,7 +557,8 @@ public static class DspCommand
             {
                 if (index.Value < 0 || index.Value >= nodes.Count)
                 {
-                    throw new ArgumentOutOfRangeException(nameof(index), index.Value, $"Index must be between 0 and {nodes.Count - 1}");
+                    throw new ArgumentOutOfRangeException(nameof(index), index.Value,
+                        $"Index must be between 0 and {nodes.Count - 1}");
                 }
 
                 removedNode = nodes[index.Value];
@@ -549,7 +569,8 @@ public static class DspCommand
                 var targetName = name!.Trim();
                 var matchIndex = nodes.FindIndex(node =>
                     string.Equals(node.Name, targetName, StringComparison.OrdinalIgnoreCase) ||
-                    string.Equals(Path.GetFileNameWithoutExtension(node.Plugin), targetName, StringComparison.OrdinalIgnoreCase));
+                    string.Equals(Path.GetFileNameWithoutExtension(node.Plugin), targetName,
+                        StringComparison.OrdinalIgnoreCase));
 
                 if (matchIndex < 0)
                 {
@@ -562,7 +583,8 @@ public static class DspCommand
 
             var updated = chain with { Nodes = nodes };
             await SaveChainAsync(chainFile, updated, token).ConfigureAwait(false);
-            Log.Debug("[dsp] Removed node '{Name}'", removedNode.Name ?? Path.GetFileNameWithoutExtension(removedNode.Plugin));
+            Log.Debug("[dsp] Removed node '{Name}'",
+                removedNode.Name ?? Path.GetFileNameWithoutExtension(removedNode.Plugin));
         });
 
         return cmd;
@@ -602,6 +624,7 @@ public static class DspCommand
                 {
                     args.Add($"--sampleRate={sampleRate.Value}");
                 }
+
                 if (blockSize.HasValue)
                 {
                     args.Add($"--blockSize={blockSize.Value}");
@@ -649,7 +672,8 @@ public static class DspCommand
             if (!string.IsNullOrWhiteSpace(filter))
             {
                 items = items.Where(p =>
-                    (!string.IsNullOrWhiteSpace(p.Value.PluginName) && p.Value.PluginName.Contains(filter, StringComparison.OrdinalIgnoreCase)) ||
+                    (!string.IsNullOrWhiteSpace(p.Value.PluginName) &&
+                     p.Value.PluginName.Contains(filter, StringComparison.OrdinalIgnoreCase)) ||
                     p.Key.Contains(filter, StringComparison.OrdinalIgnoreCase));
             }
 
@@ -707,7 +731,8 @@ public static class DspCommand
                     break;
                 case "post":
                     DspSessionState.OutputMode = DspOutputMode.Post;
-                    Console.WriteLine("Output mode set to post (processed files written to chapter artefact directory).");
+                    Console.WriteLine(
+                        "Output mode set to post (processed files written to chapter artefact directory).");
                     break;
                 default:
                     throw new InvalidOperationException("Mode must be 'source' or 'post'.");
@@ -720,7 +745,8 @@ public static class DspCommand
     private static Command CreateOverwriteCommand()
     {
         var cmd = new Command("overwrite", "Get or set the default overwrite behaviour");
-        var stateArgument = new Argument<string?>("state", () => null, "Specify 'on' or 'off' to change overwrite behaviour");
+        var stateArgument =
+            new Argument<string?>("state", () => null, "Specify 'on' or 'off' to change overwrite behaviour");
         cmd.AddArgument(stateArgument);
 
         cmd.SetHandler(context =>
@@ -863,7 +889,8 @@ public static class DspCommand
             foreach (var path in paths)
             {
                 var full = Path.GetFullPath(path);
-                if (config.PluginDirectories.RemoveAll(d => string.Equals(d, full, StringComparison.OrdinalIgnoreCase)) > 0)
+                if (config.PluginDirectories.RemoveAll(d =>
+                        string.Equals(d, full, StringComparison.OrdinalIgnoreCase)) > 0)
                 {
                     removed.Add(full);
                 }
@@ -888,7 +915,8 @@ public static class DspCommand
     private static Command CreateSetDirClearCommand()
     {
         var cmd = new Command("clear", "Remove all configured plugin directories");
-        var confirmOption = new Option<bool>("--yes", "Confirm clearing directories") { Arity = ArgumentArity.ZeroOrOne };
+        var confirmOption = new Option<bool>("--yes", "Confirm clearing directories")
+            { Arity = ArgumentArity.ZeroOrOne };
         cmd.AddOption(confirmOption);
 
         cmd.SetHandler(async context =>
@@ -922,7 +950,8 @@ public static class DspCommand
     {
         var cmd = new Command("init", "Scan plugin directories and cache parameter metadata");
 
-        var pluginOption = new Option<FileInfo?>("--plugin", "Scan a single plugin file (overrides configured directories)");
+        var pluginOption =
+            new Option<FileInfo?>("--plugin", "Scan a single plugin file (overrides configured directories)");
         var forceOption = new Option<bool>("--force", () => false, "Re-scan plugins even if metadata is up to date");
 
         cmd.AddOption(pluginOption);
@@ -954,7 +983,8 @@ public static class DspCommand
                 {
                     if (config.PluginDirectories.Count == 0)
                     {
-                        throw new InvalidOperationException("No plugin directories configured. Use 'dsp set-dir add <path>' first.");
+                        throw new InvalidOperationException(
+                            "No plugin directories configured. Use 'dsp set-dir add <path>' first.");
                     }
 
                     foreach (var directory in config.PluginDirectories)
@@ -986,9 +1016,11 @@ public static class DspCommand
                         {
                             config.Plugins.Remove(path);
                         }
+
                         if (missing.Count > 0)
                         {
-                            Log.Debug("[dsp] Removed {Count} cached plugin entries that no longer exist", missing.Count);
+                            Log.Debug("[dsp] Removed {Count} cached plugin entries that no longer exist",
+                                missing.Count);
                         }
                     }
                 }
@@ -1009,7 +1041,8 @@ public static class DspCommand
                     token.ThrowIfCancellationRequested();
 
                     var lastWrite = File.GetLastWriteTimeUtc(pluginPath);
-                    if (!force && config.Plugins.TryGetValue(pluginPath, out var existing) && existing.PluginModifiedUtc >= lastWrite)
+                    if (!force && config.Plugins.TryGetValue(pluginPath, out var existing) &&
+                        existing.PluginModifiedUtc >= lastWrite)
                     {
                         skipped++;
                         continue;
@@ -1034,6 +1067,7 @@ public static class DspCommand
                                 Log.Error("[dsp] {Line}", line);
                             }
                         }
+
                         continue;
                     }
 
@@ -1055,7 +1089,8 @@ public static class DspCommand
                 }
 
                 await DspConfigService.SaveAsync(config, token).ConfigureAwait(false);
-                Log.Debug("[dsp] Scan complete. Scanned {Scanned}, skipped {Skipped}, failed {Failed}", scanned, skipped, failed);
+                Log.Debug("[dsp] Scan complete. Scanned {Scanned}, skipped {Skipped}, failed {Failed}", scanned,
+                    skipped, failed);
             }
             catch (Exception ex)
             {
@@ -1103,7 +1138,8 @@ public static class DspCommand
         return new FileInfo(Path.Combine(root, DefaultChainFileName));
     }
 
-    private static async Task<TreatmentChain> LoadChainAsync(FileInfo chainFile, CancellationToken cancellationToken, bool createIfMissing = false)
+    private static async Task<TreatmentChain> LoadChainAsync(FileInfo chainFile, CancellationToken cancellationToken,
+        bool createIfMissing = false)
     {
         if (!chainFile.Exists)
         {
@@ -1130,7 +1166,8 @@ public static class DspCommand
         return chain;
     }
 
-    private static async Task SaveChainAsync(FileInfo chainFile, TreatmentChain chain, CancellationToken cancellationToken)
+    private static async Task SaveChainAsync(FileInfo chainFile, TreatmentChain chain,
+        CancellationToken cancellationToken)
     {
         var options = new JsonSerializerOptions
         {
@@ -1208,7 +1245,8 @@ public static class DspCommand
             throw new InvalidOperationException($"Output already exists: {outputPath}. Use --overwrite to replace");
         }
 
-        var workRoot = workDirOption?.FullName ?? Path.Combine(Path.GetTempPath(), "ams", "dsp", DateTime.UtcNow.ToString("yyyyMMddHHmmss"));
+        var workRoot = workDirOption?.FullName ??
+                       Path.Combine(Path.GetTempPath(), "ams", "dsp", DateTime.UtcNow.ToString("yyyyMMddHHmmss"));
         Directory.CreateDirectory(workRoot);
 
         var tempFiles = new List<string>();
@@ -1222,7 +1260,9 @@ public static class DspCommand
                 cancellationToken.ThrowIfCancellationRequested();
 
                 var node = chain.Nodes[index];
-                var nodeName = !string.IsNullOrWhiteSpace(node.Name) ? node.Name! : Path.GetFileNameWithoutExtension(node.Plugin);
+                var nodeName = !string.IsNullOrWhiteSpace(node.Name)
+                    ? node.Name!
+                    : Path.GetFileNameWithoutExtension(node.Plugin);
                 var nodeOutput = ResolveNodeOutput(node, workRoot, index);
 
                 var (inputs, midiInput) = ResolveInputs(node, chainBaseDirectory, initialInput, previousOutput);
@@ -1241,10 +1281,12 @@ public static class DspCommand
 
                 Log.Debug("[dsp] Node {Index}/{Total}: {Name}", index + 1, chain.Nodes.Count, nodeName);
 
-                var exitCode = await PlugalyzerService.RunAsync(args, chainBaseDirectory, cancellationToken).ConfigureAwait(false);
+                var exitCode = await PlugalyzerService.RunAsync(args, chainBaseDirectory, cancellationToken)
+                    .ConfigureAwait(false);
                 if (exitCode != 0)
                 {
-                    throw new InvalidOperationException($"Plugalyzer exited with code {exitCode} for node '{nodeName}'");
+                    throw new InvalidOperationException(
+                        $"Plugalyzer exited with code {exitCode} for node '{nodeName}'");
                 }
 
                 tempFiles.Add(nodeOutput);
@@ -1286,7 +1328,7 @@ public static class DspCommand
             }
         }
     }
-    
+
     private static void ExecuteFilterChain(
         FileInfo inputFile,
         IReadOnlyList<FilterConfig> filters,
@@ -1344,7 +1386,8 @@ public static class DspCommand
     {
         if (!FilterDefinitionMap.TryGetValue(name, out var definition))
         {
-            throw new InvalidOperationException($"Unknown filter '{name}'. Run 'dsp filters' to list available filters.");
+            throw new InvalidOperationException(
+                $"Unknown filter '{name}'. Run 'dsp filters' to list available filters.");
         }
 
         return definition;
@@ -1398,7 +1441,8 @@ public static class DspCommand
         }
         catch (JsonException ex)
         {
-            throw new InvalidOperationException($"Failed to deserialize parameters for filter '{definition.Name}': {ex.Message}", ex);
+            throw new InvalidOperationException(
+                $"Failed to deserialize parameters for filter '{definition.Name}': {ex.Message}", ex);
         }
     }
 
@@ -1509,7 +1553,8 @@ public static class DspCommand
         return (inputs, midi);
     }
 
-    private static string ExpandInputToken(string token, string baseDirectory, string initialInput, string previousOutput)
+    private static string ExpandInputToken(string token, string baseDirectory, string initialInput,
+        string previousOutput)
     {
         if (string.IsNullOrWhiteSpace(token))
         {
@@ -1595,6 +1640,7 @@ public static class DspCommand
                 {
                     continue;
                 }
+
                 args.Add($"--param={parameter}");
             }
         }
@@ -1636,6 +1682,7 @@ public static class DspCommand
         {
             value = value.Replace(c, '_');
         }
+
         return value;
     }
 
@@ -1766,10 +1813,12 @@ public static class DspCommand
                         defaultValue = value;
                         break;
                     case "supports text values":
-                        if (value.Equals("true", StringComparison.OrdinalIgnoreCase) || value.Equals("false", StringComparison.OrdinalIgnoreCase))
+                        if (value.Equals("true", StringComparison.OrdinalIgnoreCase) ||
+                            value.Equals("false", StringComparison.OrdinalIgnoreCase))
                         {
                             supportsText = bool.Parse(value);
                         }
+
                         break;
                 }
             }
@@ -1815,7 +1864,8 @@ public static class DspCommand
         // Attempt to match friendly name or file name from cache
         var matches = config.Plugins.Values
             .Where(meta => string.Equals(meta.PluginName, token, StringComparison.OrdinalIgnoreCase)
-                           || string.Equals(Path.GetFileNameWithoutExtension(meta.Path), token, StringComparison.OrdinalIgnoreCase)
+                           || string.Equals(Path.GetFileNameWithoutExtension(meta.Path), token,
+                               StringComparison.OrdinalIgnoreCase)
                            || string.Equals(meta.Path, token, StringComparison.OrdinalIgnoreCase))
             .Select(meta => meta.Path)
             .Distinct(StringComparer.OrdinalIgnoreCase)
@@ -1828,13 +1878,16 @@ public static class DspCommand
 
         if (matches.Count > 1)
         {
-            throw new InvalidOperationException($"Ambiguous plugin token '{token}'. Matches: {string.Join(", ", matches)}");
+            throw new InvalidOperationException(
+                $"Ambiguous plugin token '{token}'. Matches: {string.Join(", ", matches)}");
         }
 
-        throw new FileNotFoundException($"Unable to resolve plugin '{token}'. Provide a full path or run 'dsp init' to cache it.");
+        throw new FileNotFoundException(
+            $"Unable to resolve plugin '{token}'. Provide a full path or run 'dsp init' to cache it.");
     }
 
-    private static TreatmentNode CreateNodeFromOptions(InvocationContext context, NodeOptionBundle options, string baseDirectory, DspConfig config)
+    private static TreatmentNode CreateNodeFromOptions(InvocationContext context, NodeOptionBundle options,
+        string baseDirectory, DspConfig config)
     {
         var pluginToken = context.ParseResult.GetValueForOption(options.Plugin);
         if (string.IsNullOrWhiteSpace(pluginToken))
@@ -1910,16 +1963,19 @@ public static class DspCommand
             };
             Name = new Option<string?>("--name", "Optional logical name for the node");
             Description = new Option<string?>("--description", "Optional notes for the node");
-            Parameters = new Option<string[]>("--param", () => Array.Empty<string>(), "Parameter override in Plugalyzer syntax (repeatable)");
+            Parameters = new Option<string[]>("--param", () => Array.Empty<string>(),
+                "Parameter override in Plugalyzer syntax (repeatable)");
             ParameterFile = new Option<FileInfo?>("--param-file", "JSON automation file for parameters");
             Preset = new Option<string?>("--preset", "Optional preset file relative to chain");
             SampleRate = new Option<int?>("--sample-rate", "Node sample rate override");
             BlockSize = new Option<int?>("--block-size", "Node block size override");
             OutChannels = new Option<int?>("--out-channels", "Node output channel override");
             BitDepth = new Option<int?>("--bit-depth", "Node output bit depth override");
-            Inputs = new Option<string[]>("--input", () => Array.Empty<string>(), "Explicit inputs (default uses previous output)");
+            Inputs = new Option<string[]>("--input", () => Array.Empty<string>(),
+                "Explicit inputs (default uses previous output)");
             MidiInput = new Option<string?>("--midi-input", "Optional MIDI file token or path");
-            AdditionalArguments = new Option<string[]>("--arg", () => Array.Empty<string>(), "Additional Plugalyzer arguments (repeatable)");
+            AdditionalArguments = new Option<string[]>("--arg", () => Array.Empty<string>(),
+                "Additional Plugalyzer arguments (repeatable)");
             OutputFile = new Option<string?>("--output-file", "Explicit output file name inside working directory");
 
             command.AddOption(Plugin);

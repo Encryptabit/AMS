@@ -29,8 +29,8 @@ builder.Services.AddCors(options =>
 {
     options.AddDefaultPolicy(policy =>
         policy.AllowAnyOrigin()
-              .AllowAnyMethod()
-              .AllowAnyHeader());
+            .AllowAnyMethod()
+            .AllowAnyHeader());
 });
 
 var app = builder.Build();
@@ -54,7 +54,7 @@ app.MapGet("/validation/books/{bookId}/chapters", (ValidationMapper mapper, Work
         var book = state.GetBook(bookId);
 
         var summaries = new List<ChapterSummaryResponse>();
-        
+
         foreach (var descriptor in book.Chapters.Descriptors)
         {
             var chapter = book.Chapters.Load(descriptor.ChapterId);
@@ -131,11 +131,13 @@ app.MapGet("/validation/books/{bookId}/reviewed", (ReviewedStateService reviewed
     return Results.Json(new ReviewedStatusResponse(data), ApiJsonSerializerContext.Default.ReviewedStatusResponse);
 });
 
-app.MapPost("/validation/books/{bookId}/reviewed/{chapterId}", (ReviewedStateService reviewed, string bookId, string chapterId, ReviewedStatusDto body) =>
-{
-    var updated = reviewed.Set(bookId, chapterId, body.Reviewed);
-    return Results.Json(new ReviewedStatusResponse(updated), ApiJsonSerializerContext.Default.ReviewedStatusResponse);
-});
+app.MapPost("/validation/books/{bookId}/reviewed/{chapterId}",
+    (ReviewedStateService reviewed, string bookId, string chapterId, ReviewedStatusDto body) =>
+    {
+        var updated = reviewed.Set(bookId, chapterId, body.Reviewed);
+        return Results.Json(new ReviewedStatusResponse(updated),
+            ApiJsonSerializerContext.Default.ReviewedStatusResponse);
+    });
 
 app.MapPost("/validation/books/{bookId}/reset-reviews", (ReviewedStateService reviewed, string bookId) =>
 {
@@ -161,13 +163,18 @@ app.MapGet("/validation/books/{bookId}/chapters/{chapterId}", (WorkspaceState st
                 s.ScriptRange is null ? null : new RangeDto(s.ScriptRange.Start ?? 0, s.ScriptRange.End ?? 0),
                 s.BookText ?? string.Empty,
                 s.ScriptText ?? string.Empty,
-                new MetricsDto(s.Metrics.Wer, s.Metrics.Cer, s.Metrics.SpanWer, s.Metrics.MissingRuns, s.Metrics.ExtraRuns),
+                new MetricsDto(s.Metrics.Wer, s.Metrics.Cer, s.Metrics.SpanWer, s.Metrics.MissingRuns,
+                    s.Metrics.ExtraRuns),
                 s.Diff is null
                     ? null
                     : new DiffDto(
-                        s.Diff.Ops?.Select(op => new DiffOpDto(op.Operation ?? string.Empty, op.Tokens ?? Array.Empty<string>())).ToArray() ?? Array.Empty<DiffOpDto>(),
-                        s.Diff.Stats is null ? new DiffStatsDto(0, 0, 0, 0, 0) :
-                            new DiffStatsDto(s.Diff.Stats.ReferenceTokens, s.Diff.Stats.HypothesisTokens, s.Diff.Stats.Matches, s.Diff.Stats.Insertions, s.Diff.Stats.Deletions))))
+                        s.Diff.Ops?.Select(op =>
+                                new DiffOpDto(op.Operation ?? string.Empty, op.Tokens ?? Array.Empty<string>()))
+                            .ToArray() ?? Array.Empty<DiffOpDto>(),
+                        s.Diff.Stats is null
+                            ? new DiffStatsDto(0, 0, 0, 0, 0)
+                            : new DiffStatsDto(s.Diff.Stats.ReferenceTokens, s.Diff.Stats.HypothesisTokens,
+                                s.Diff.Stats.Matches, s.Diff.Stats.Insertions, s.Diff.Stats.Deletions))))
             .ToArray();
 
         var paragraphs = (hydrate.Paragraphs ?? Array.Empty<Ams.Core.Artifacts.Hydrate.HydratedParagraph>())
@@ -181,9 +188,13 @@ app.MapGet("/validation/books/{bookId}/chapters/{chapterId}", (WorkspaceState st
                 p.Diff is null
                     ? null
                     : new DiffDto(
-                        p.Diff.Ops?.Select(op => new DiffOpDto(op.Operation ?? string.Empty, op.Tokens ?? Array.Empty<string>())).ToArray() ?? Array.Empty<DiffOpDto>(),
-                        p.Diff.Stats is null ? new DiffStatsDto(0, 0, 0, 0, 0) :
-                            new DiffStatsDto(p.Diff.Stats.ReferenceTokens, p.Diff.Stats.HypothesisTokens, p.Diff.Stats.Matches, p.Diff.Stats.Insertions, p.Diff.Stats.Deletions))))
+                        p.Diff.Ops?.Select(op =>
+                                new DiffOpDto(op.Operation ?? string.Empty, op.Tokens ?? Array.Empty<string>()))
+                            .ToArray() ?? Array.Empty<DiffOpDto>(),
+                        p.Diff.Stats is null
+                            ? new DiffStatsDto(0, 0, 0, 0, 0)
+                            : new DiffStatsDto(p.Diff.Stats.ReferenceTokens, p.Diff.Stats.HypothesisTokens,
+                                p.Diff.Stats.Matches, p.Diff.Stats.Insertions, p.Diff.Stats.Deletions))))
             .ToArray();
 
         var dto = new ChapterDetailDto(
@@ -207,7 +218,8 @@ app.MapGet("/validation/books/{bookId}/chapters/{chapterId}", (WorkspaceState st
 });
 
 // Audio streaming
-app.MapGet("/audio/books/{bookId}/chapters/{chapterId}", (WorkspaceState state, string bookId, string chapterId, string? variant, double? start, double? end) =>
+app.MapGet("/audio/books/{bookId}/chapters/{chapterId}", (WorkspaceState state, string bookId, string chapterId,
+    string? variant, double? start, double? end) =>
 {
     try
     {
@@ -227,64 +239,68 @@ app.MapGet("/audio/books/{bookId}/chapters/{chapterId}", (WorkspaceState state, 
 });
 
 // Audio export (CRX-friendly slice)
-app.MapPost("/audio/books/{bookId}/chapters/{chapterId}/export", async (WorkspaceState state, string bookId, string chapterId, AudioExportRequest body) =>
-{
-    try
+app.MapPost("/audio/books/{bookId}/chapters/{chapterId}/export",
+    async (WorkspaceState state, string bookId, string chapterId, AudioExportRequest body) =>
     {
-        var (book, chapter) = ResolveChapter(state, bookId, chapterId);
-        var buffer = TryLoadBuffer(chapter, body.Variant ?? "treated") ?? TryLoadBuffer(chapter, "raw");
-        if (buffer is null) return Results.NotFound();
-
-        var slice = Slice(buffer, body.Start, body.End);
-        var crxDir = GetCrxDir(book, state);
-        crxDir.Create();
-        var errorNum = NextErrorNumber(crxDir);
-        var exportFile = new FileInfo(Path.Combine(crxDir.FullName, $"{errorNum:000}.wav"));
-        await using (var wav = slice.ToWavStream())
-        await using (var fs = exportFile.Open(FileMode.Create, FileAccess.Write, FileShare.Read))
+        try
         {
-            wav.Position = 0;
-            await wav.CopyToAsync(fs);
-        }
+            var (book, chapter) = ResolveChapter(state, bookId, chapterId);
+            var buffer = TryLoadBuffer(chapter, body.Variant ?? "treated") ?? TryLoadBuffer(chapter, "raw");
+            if (buffer is null) return Results.NotFound();
 
-        var response = new AudioExportResponse(errorNum, exportFile.Name, Path.GetRelativePath(book.Descriptor.RootPath, exportFile.FullName));
-        return Results.Json(response, ApiJsonSerializerContext.Default.AudioExportResponse);
-    }
-    catch (Exception ex)
-    {
-        return Results.Problem(ex.Message);
-    }
-});
+            var slice = Slice(buffer, body.Start, body.End);
+            var crxDir = GetCrxDir(book, state);
+            crxDir.Create();
+            var errorNum = NextErrorNumber(crxDir);
+            var exportFile = new FileInfo(Path.Combine(crxDir.FullName, $"{errorNum:000}.wav"));
+            await using (var wav = slice.ToWavStream())
+            await using (var fs = exportFile.Open(FileMode.Create, FileAccess.Write, FileShare.Read))
+            {
+                wav.Position = 0;
+                await wav.CopyToAsync(fs);
+            }
+
+            var response = new AudioExportResponse(errorNum, exportFile.Name,
+                Path.GetRelativePath(book.Descriptor.RootPath, exportFile.FullName));
+            return Results.Json(response, ApiJsonSerializerContext.Default.AudioExportResponse);
+        }
+        catch (Exception ex)
+        {
+            return Results.Problem(ex.Message);
+        }
+    });
 
 // CRX add (delegates to audio export for now)
-app.MapPost("/validation/books/{bookId}/crx/{chapterId}", async (WorkspaceState state, string bookId, string chapterId, AudioExportRequest body) =>
-{
-    try
+app.MapPost("/validation/books/{bookId}/crx/{chapterId}",
+    async (WorkspaceState state, string bookId, string chapterId, AudioExportRequest body) =>
     {
-        var (book, chapter) = ResolveChapter(state, bookId, chapterId);
-        var buffer = TryLoadBuffer(chapter, body.Variant ?? "treated") ?? TryLoadBuffer(chapter, "raw");
-        if (buffer is null) return Results.NotFound();
-
-        var slice = Slice(buffer, body.Start, body.End);
-        var crxDir = GetCrxDir(book, state);
-        crxDir.Create();
-        var errorNum = NextErrorNumber(crxDir);
-        var exportFile = new FileInfo(Path.Combine(crxDir.FullName, $"{errorNum:000}.wav"));
-        await using (var wav = slice.ToWavStream())
-        await using (var fs = exportFile.Open(FileMode.Create, FileAccess.Write, FileShare.Read))
+        try
         {
-            wav.Position = 0;
-            await wav.CopyToAsync(fs);
-        }
+            var (book, chapter) = ResolveChapter(state, bookId, chapterId);
+            var buffer = TryLoadBuffer(chapter, body.Variant ?? "treated") ?? TryLoadBuffer(chapter, "raw");
+            if (buffer is null) return Results.NotFound();
 
-        var response = new AudioExportResponse(errorNum, exportFile.Name, Path.GetRelativePath(book.Descriptor.RootPath, exportFile.FullName));
-        return Results.Json(response, ApiJsonSerializerContext.Default.AudioExportResponse);
-    }
-    catch (Exception ex)
-    {
-        return Results.Problem(ex.Message);
-    }
-});
+            var slice = Slice(buffer, body.Start, body.End);
+            var crxDir = GetCrxDir(book, state);
+            crxDir.Create();
+            var errorNum = NextErrorNumber(crxDir);
+            var exportFile = new FileInfo(Path.Combine(crxDir.FullName, $"{errorNum:000}.wav"));
+            await using (var wav = slice.ToWavStream())
+            await using (var fs = exportFile.Open(FileMode.Create, FileAccess.Write, FileShare.Read))
+            {
+                wav.Position = 0;
+                await wav.CopyToAsync(fs);
+            }
+
+            var response = new AudioExportResponse(errorNum, exportFile.Name,
+                Path.GetRelativePath(book.Descriptor.RootPath, exportFile.FullName));
+            return Results.Json(response, ApiJsonSerializerContext.Default.AudioExportResponse);
+        }
+        catch (Exception ex)
+        {
+            return Results.Problem(ex.Message);
+        }
+    });
 
 app.Run();
 
@@ -303,7 +319,8 @@ static (BookContext Book, ChapterContext Chapter) ResolveChapter(WorkspaceState 
 
 static bool HasBuffer(ChapterContext chapter, string bufferId)
 {
-    return chapter.Descriptor.AudioBuffers.Any(b => string.Equals(b.BufferId, bufferId, StringComparison.OrdinalIgnoreCase));
+    return chapter.Descriptor.AudioBuffers.Any(b =>
+        string.Equals(b.BufferId, bufferId, StringComparison.OrdinalIgnoreCase));
 }
 
 static AudioBuffer? TryLoadBuffer(ChapterContext chapter, string variant)
@@ -330,6 +347,7 @@ static AudioBuffer? TryLoadBuffer(ChapterContext chapter, string variant)
     {
         // ignore
     }
+
     return null;
 }
 
@@ -350,6 +368,7 @@ static AudioBuffer Slice(AudioBuffer buffer, double? startSec, double? endSec)
     {
         Array.Copy(buffer.Planar[ch], startSample, slice.Planar[ch], 0, length);
     }
+
     return slice;
 }
 
@@ -370,6 +389,7 @@ static int NextErrorNumber(DirectoryInfo crxDir)
             max = Math.Max(max, n);
         }
     }
+
     return max + 1;
 }
 

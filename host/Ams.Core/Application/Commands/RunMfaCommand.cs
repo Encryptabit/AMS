@@ -12,7 +12,8 @@ public sealed class RunMfaCommand
     {
         ArgumentNullException.ThrowIfNull(chapter);
 
-        var chapterRoot = chapter.Descriptor.RootPath ?? throw new InvalidOperationException("Chapter root path is not configured.");
+        var chapterRoot = chapter.Descriptor.RootPath ??
+                          throw new InvalidOperationException("Chapter root path is not configured.");
         var chapterStem = chapter.Descriptor.ChapterId;
 
         var chapterDirectory = options?.ChapterDirectory ?? new DirectoryInfo(chapterRoot);
@@ -32,20 +33,21 @@ public sealed class RunMfaCommand
         }
 
         await MfaWorkflow.RunChapterAsync(
-            chapter,
-            audioFile,
-            hydrateFile,
-            chapterStem,
-            chapterDirectory,
-            cancellationToken,
-            options?.UseDedicatedProcess ?? false,
-            options?.WorkspaceRoot)
+                chapter,
+                audioFile,
+                hydrateFile,
+                chapterStem,
+                chapterDirectory,
+                cancellationToken,
+                options?.UseDedicatedProcess ?? false,
+                options?.WorkspaceRoot)
             .ConfigureAwait(false);
 
-        var alignmentRoot = options?.AlignmentRootDirectory ?? new DirectoryInfo(Path.Combine(chapterRoot, "alignment"));
+        var alignmentRoot =
+            options?.AlignmentRootDirectory ?? new DirectoryInfo(Path.Combine(chapterRoot, "alignment"));
         var textGridFile = options?.TextGridFile
-                             ?? chapter.Documents.GetTextGridFile()
-                             ?? new FileInfo(Path.Combine(alignmentRoot.FullName, "mfa", $"{chapterStem}.TextGrid"));
+                           ?? chapter.Documents.GetTextGridFile()
+                           ?? new FileInfo(Path.Combine(alignmentRoot.FullName, "mfa", $"{chapterStem}.TextGrid"));
 
         chapter.Documents.InvalidateTextGrid();
 

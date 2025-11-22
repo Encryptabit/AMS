@@ -15,7 +15,9 @@ public sealed record FilterChainConfig
         }
 
         await using var stream = path.OpenRead();
-        var config = await JsonSerializer.DeserializeAsync<FilterChainConfig>(stream, SerializerOptions, cancellationToken).ConfigureAwait(false)
+        var config = await JsonSerializer
+                         .DeserializeAsync<FilterChainConfig>(stream, SerializerOptions, cancellationToken)
+                         .ConfigureAwait(false)
                      ?? new FilterChainConfig();
         config.Filters ??= new List<FilterConfig>();
         return config;

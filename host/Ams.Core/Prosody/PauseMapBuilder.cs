@@ -34,7 +34,8 @@ public static class PauseMapBuilder
             intraSentenceSilences,
             includeAllIntraSentenceGaps);
 
-        var sentenceCollectors = CreateSentenceCollectors(transcript, hydratedSentenceMap, bookIndex, sentenceToParagraph);
+        var sentenceCollectors =
+            CreateSentenceCollectors(transcript, hydratedSentenceMap, bookIndex, sentenceToParagraph);
         var paragraphCollectors = CreateParagraphCollectors(paragraphSentenceOrder);
         var chapterCollector = new ChapterCollector(paragraphSentenceOrder.Keys);
 
@@ -46,6 +47,7 @@ public static class PauseMapBuilder
                 {
                     sentenceCollector.AddPause(span);
                 }
+
                 continue;
             }
 
@@ -55,13 +57,15 @@ public static class PauseMapBuilder
             }
 
             int leftParagraphId = leftSentence.ParagraphId;
-            int rightParagraphId = span.RightSentenceId >= 0 && sentenceCollectors.TryGetValue(span.RightSentenceId, out var rightSentence)
+            int rightParagraphId = span.RightSentenceId >= 0 &&
+                                   sentenceCollectors.TryGetValue(span.RightSentenceId, out var rightSentence)
                 ? rightSentence.ParagraphId
                 : leftParagraphId;
 
             var interval = new PauseInterval(span.Class, span.StartSec, span.EndSec, span.HasGapHint);
 
-            if (leftParagraphId >= 0 && leftParagraphId == rightParagraphId && paragraphCollectors.TryGetValue(leftParagraphId, out var paragraphCollector))
+            if (leftParagraphId >= 0 && leftParagraphId == rightParagraphId &&
+                paragraphCollectors.TryGetValue(leftParagraphId, out var paragraphCollector))
             {
                 paragraphCollector.AddPause(leftSentence.SentenceId, interval);
             }
@@ -95,6 +99,7 @@ public static class PauseMapBuilder
         {
             chapterCollector.AbsorbDurations(paragraphCollector.Durations);
         }
+
         var chapterMap = chapterCollector.Build(paragraphMapById);
 
         return chapterMap;
@@ -158,7 +163,8 @@ public static class PauseMapBuilder
         private readonly Dictionary<PauseClass, List<double>> _durations = new();
         private readonly List<PauseInterval> _pauseIntervals = new();
 
-        public SentenceCollector(SentenceAlign sentence, HydratedSentence? hydrated, int paragraphId, BookIndex bookIndex)
+        public SentenceCollector(SentenceAlign sentence, HydratedSentence? hydrated, int paragraphId,
+            BookIndex bookIndex)
         {
             SentenceId = sentence.Id;
             ParagraphId = paragraphId;

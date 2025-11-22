@@ -26,13 +26,16 @@ public static class AsrCommand
         var engineOption = new Option<string>("--engine", () => "whisper", "ASR engine to use (whisper or nemo)");
         engineOption.AddAlias("-e");
 
-        var serviceUrlOption = new Option<string>("--service", () => DefaultServiceUrl, "ASR service URL (Nemo engine)");
+        var serviceUrlOption =
+            new Option<string>("--service", () => DefaultServiceUrl, "ASR service URL (Nemo engine)");
         serviceUrlOption.AddAlias("-s");
 
-        var modelOption = new Option<string>("--model",() => "ASR model identifier (Nemo) or fallback model path (Whisper)");
+        var modelOption =
+            new Option<string>("--model", () => "ASR model identifier (Nemo) or fallback model path (Whisper)");
         modelOption.AddAlias("-m");
 
-        var modelPathOption = new Option<FileInfo?>("--model-path", "Path to Whisper model file (.gguf/.bin); falls back to --model or AMS_WHISPER_MODEL_PATH");
+        var modelPathOption = new Option<FileInfo?>("--model-path",
+            "Path to Whisper model file (.gguf/.bin); falls back to --model or AMS_WHISPER_MODEL_PATH");
 
         var languageOption = new Option<string>("--language", () => "en", "Language code (use \"auto\" for detection)");
         languageOption.AddAlias("-l");
@@ -42,9 +45,12 @@ public static class AsrCommand
         var gpuDeviceOption = new Option<int>("--gpu-device", () => 0, "GPU device index for Whisper");
         var beamSizeOption = new Option<int>("--beam-size", () => 5, "Beam size for Whisper beam search");
         var bestOfOption = new Option<int>("--best-of", () => 1, "Best-of sampling count for Whisper greedy search");
-        var temperatureOption = new Option<double>("--temperature", () => 0.0, "Sampling temperature (0-1) for Whisper");
-        var wordTimestampsOption = new Option<bool>("--word-timestamps", () => false, "Emit word-level timestamps (Whisper)");
-        var flashAttentionOption = new Option<bool>("--flash-attention", () => false, "Enable FlashAttention kernels when building with support");
+        var temperatureOption =
+            new Option<double>("--temperature", () => 0.0, "Sampling temperature (0-1) for Whisper");
+        var wordTimestampsOption =
+            new Option<bool>("--word-timestamps", () => false, "Emit word-level timestamps (Whisper)");
+        var flashAttentionOption = new Option<bool>("--flash-attention", () => false,
+            "Enable FlashAttention kernels when building with support");
         var dtwOption = new Option<bool>("--dtw-timestamps", () => false, "Enable DTW timestamp refinement (Whisper)");
         var parallelOption = new Option<int>(
             "--parallel",
@@ -52,8 +58,10 @@ public static class AsrCommand
             "Process multiple chapters in parallel when using 'mode all' (0 = auto based on CPU cores).");
         parallelOption.AddAlias("-p");
 
-        var bookIndexOption = new Option<FileInfo?>("--book-index", "Path to book-index.json (required for context-aware ASR)");
-        var chapterIdOption = new Option<string?>("--chapter-id", "Override chapter identifier (defaults to audio stem or active chapter)");
+        var bookIndexOption =
+            new Option<FileInfo?>("--book-index", "Path to book-index.json (required for context-aware ASR)");
+        var chapterIdOption = new Option<string?>("--chapter-id",
+            "Override chapter identifier (defaults to audio stem or active chapter)");
 
         runCommand.AddOption(audioOption);
         runCommand.AddOption(outputOption);
@@ -103,8 +111,10 @@ public static class AsrCommand
                     Log.Debug("--parallel ignored because CLI is not running in mode ALL");
                 }
 
-                var bookIndexFile = CommandInputResolver.ResolveBookIndex(parse.GetValueForOption(bookIndexOption), mustExist: true);
-                var chapterId = parse.GetValueForOption(chapterIdOption) ?? Path.GetFileNameWithoutExtension(audio.Name);
+                var bookIndexFile =
+                    CommandInputResolver.ResolveBookIndex(parse.GetValueForOption(bookIndexOption), mustExist: true);
+                var chapterId = parse.GetValueForOption(chapterIdOption) ??
+                                Path.GetFileNameWithoutExtension(audio.Name);
 
                 var workspace = CommandInputResolver.ResolveWorkspace(bookIndexFile);
                 var openOptions = new ChapterOpenOptions
@@ -136,7 +146,8 @@ public static class AsrCommand
                     EnableDtwTimestamps = dtwTimestamps
                 };
 
-                await transcriptCommand.ExecuteAsync(handle.Chapter, transcriptOptions, context.GetCancellationToken()).ConfigureAwait(false);
+                await transcriptCommand.ExecuteAsync(handle.Chapter, transcriptOptions, context.GetCancellationToken())
+                    .ConfigureAwait(false);
                 handle.Save();
 
                 if (output is not null)

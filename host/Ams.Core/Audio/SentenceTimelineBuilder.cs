@@ -5,7 +5,11 @@ namespace Ams.Core.Audio
 {
     using ArtifactSentenceTiming = Ams.Core.Artifacts.SentenceTiming;
 
-    public sealed record SentenceTimelineEntry(int SentenceId, ArtifactSentenceTiming Timing, bool HasTiming, ArtifactSentenceTiming Window);
+    public sealed record SentenceTimelineEntry(
+        int SentenceId,
+        ArtifactSentenceTiming Timing,
+        bool HasTiming,
+        ArtifactSentenceTiming Window);
 
     public static class SentenceTimelineBuilder
     {
@@ -22,42 +26,42 @@ namespace Ams.Core.Audio
             if (audio is null) throw new ArgumentNullException(nameof(audio));
             if (asr is null) throw new ArgumentNullException(nameof(asr));
 
-        var entries = new List<SentenceTimelineEntry>(sentences.Count);
+            var entries = new List<SentenceTimelineEntry>(sentences.Count);
 
-        foreach (var sentence in sentences)
-        {
-            bool isUnreliable = string.Equals(sentence.Status, "unreliable", StringComparison.OrdinalIgnoreCase);
-
-            var baseTiming = fragments != null && fragments.TryGetValue(sentence.Id, out var fragment)
-                ? new ArtifactSentenceTiming(fragment, fragmentBacked: true)
-                : new ArtifactSentenceTiming(sentence.Timing);
-
-            var windowTiming = isUnreliable
-                ? new ArtifactSentenceTiming(TimingRange.Empty)
-                : ComputeWindowFromScript(sentence, asr);
-
-            if (!isUnreliable && windowTiming.Duration > 0)
+            foreach (var sentence in sentences)
             {
-                const double ReliableWindowPad = 0.08; // add small buffer around scripted window
-                double start = Math.Min(windowTiming.StartSec, baseTiming.StartSec) - ReliableWindowPad;
-                double end = Math.Max(windowTiming.EndSec, baseTiming.EndSec) + ReliableWindowPad;
-                windowTiming = new ArtifactSentenceTiming(Math.Max(0.0, start), end);
+                bool isUnreliable = string.Equals(sentence.Status, "unreliable", StringComparison.OrdinalIgnoreCase);
+
+                var baseTiming = fragments != null && fragments.TryGetValue(sentence.Id, out var fragment)
+                    ? new ArtifactSentenceTiming(fragment, fragmentBacked: true)
+                    : new ArtifactSentenceTiming(sentence.Timing);
+
+                var windowTiming = isUnreliable
+                    ? new ArtifactSentenceTiming(TimingRange.Empty)
+                    : ComputeWindowFromScript(sentence, asr);
+
+                if (!isUnreliable && windowTiming.Duration > 0)
+                {
+                    const double ReliableWindowPad = 0.08; // add small buffer around scripted window
+                    double start = Math.Min(windowTiming.StartSec, baseTiming.StartSec) - ReliableWindowPad;
+                    double end = Math.Max(windowTiming.EndSec, baseTiming.EndSec) + ReliableWindowPad;
+                    windowTiming = new ArtifactSentenceTiming(Math.Max(0.0, start), end);
+                }
+
+                double effectiveRms = isUnreliable ? rmsThresholdDb + 2.0 : rmsThresholdDb;
+                double effectiveSearch = isUnreliable ? Math.Max(searchWindowSec, 0.8) : searchWindowSec;
+
+                var energyTiming = CalculateEnergyTiming(
+                    audio,
+                    windowTiming,
+                    baseTiming,
+                    effectiveRms,
+                    effectiveSearch,
+                    stepMs);
+
+                bool hasTiming = energyTiming.Duration > 0;
+                entries.Add(new SentenceTimelineEntry(sentence.Id, energyTiming, hasTiming, windowTiming));
             }
-
-            double effectiveRms = isUnreliable ? rmsThresholdDb + 2.0 : rmsThresholdDb;
-            double effectiveSearch = isUnreliable ? Math.Max(searchWindowSec, 0.8) : searchWindowSec;
-
-            var energyTiming = CalculateEnergyTiming(
-                audio,
-                windowTiming,
-                baseTiming,
-                effectiveRms,
-                effectiveSearch,
-                stepMs);
-
-            bool hasTiming = energyTiming.Duration > 0;
-            entries.Add(new SentenceTimelineEntry(sentence.Id, energyTiming, hasTiming, windowTiming));
-        }
 
             for (int i = 1; i < entries.Count; i++)
             {
@@ -70,53 +74,53 @@ namespace Ams.Core.Audio
                 }
             }
 
-        const double MinUnreliableDuration = 0.45;
-        for (int i = 0; i < entries.Count; i++)
-        {
-            var sentence = sentences[i];
-            if (!string.Equals(sentence.Status, "unreliable", StringComparison.OrdinalIgnoreCase))
+            const double MinUnreliableDuration = 0.45;
+            for (int i = 0; i < entries.Count; i++)
             {
-                continue;
+                var sentence = sentences[i];
+                if (!string.Equals(sentence.Status, "unreliable", StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                var entry = entries[i];
+                double duration = entry.Timing.Duration;
+                if (duration >= MinUnreliableDuration)
+                {
+                    continue;
+                }
+
+                double prevEnd = i > 0 ? entries[i - 1].Timing.EndSec : Math.Max(0.0, entry.Timing.StartSec - 0.2);
+                double nextStart = i + 1 < entries.Count ? entries[i + 1].Timing.StartSec : entry.Timing.EndSec + 0.2;
+
+                double availableLeft = Math.Max(0.0, entry.Timing.StartSec - prevEnd);
+                double availableRight = Math.Max(0.0, nextStart - entry.Timing.EndSec);
+
+                double needed = MinUnreliableDuration - duration;
+                if (needed <= 0)
+                {
+                    continue;
+                }
+
+                double extendLeft = Math.Min(availableLeft, needed / 2.0);
+                double extendRight = Math.Min(availableRight, needed - extendLeft);
+
+                if (extendLeft <= 0 && extendRight <= 0)
+                {
+                    continue;
+                }
+
+                var adjustedTiming = new ArtifactSentenceTiming(
+                    entry.Timing.StartSec - extendLeft,
+                    entry.Timing.EndSec + extendRight,
+                    entry.Timing.FragmentBacked,
+                    entry.Timing.Confidence);
+
+                entries[i] = entry with { Timing = adjustedTiming };
             }
 
-            var entry = entries[i];
-            double duration = entry.Timing.Duration;
-            if (duration >= MinUnreliableDuration)
-            {
-                continue;
-            }
-
-            double prevEnd = i > 0 ? entries[i - 1].Timing.EndSec : Math.Max(0.0, entry.Timing.StartSec - 0.2);
-            double nextStart = i + 1 < entries.Count ? entries[i + 1].Timing.StartSec : entry.Timing.EndSec + 0.2;
-
-            double availableLeft = Math.Max(0.0, entry.Timing.StartSec - prevEnd);
-            double availableRight = Math.Max(0.0, nextStart - entry.Timing.EndSec);
-
-            double needed = MinUnreliableDuration - duration;
-            if (needed <= 0)
-            {
-                continue;
-            }
-
-            double extendLeft = Math.Min(availableLeft, needed / 2.0);
-            double extendRight = Math.Min(availableRight, needed - extendLeft);
-
-            if (extendLeft <= 0 && extendRight <= 0)
-            {
-                continue;
-            }
-
-            var adjustedTiming = new ArtifactSentenceTiming(
-                entry.Timing.StartSec - extendLeft,
-                entry.Timing.EndSec + extendRight,
-                entry.Timing.FragmentBacked,
-                entry.Timing.Confidence);
-
-            entries[i] = entry with { Timing = adjustedTiming };
+            return entries;
         }
-
-        return entries;
-    }
 
         private static ArtifactSentenceTiming CalculateEnergyTiming(
             AudioBuffer audio,
@@ -131,8 +135,9 @@ namespace Ams.Core.Audio
             {
                 return baseTiming;
             }
+
             double exitThresholdDb = rmsThresholdDb - 8.0;
-            
+
             var snapped = AudioProcessor.SnapToEnergy(
                 audio,
                 seed,
@@ -144,7 +149,7 @@ namespace Ams.Core.Audio
                 postRollMs: 10.0,
                 hangoverMs: 30.0);
 
-          //var snapped = AudioProcessor.SnapToEnergyAuto(audio, seed, AutoTuneStyle.Tight);
+            //var snapped = AudioProcessor.SnapToEnergyAuto(audio, seed, AutoTuneStyle.Tight);
             if (windowTiming.Duration > 0)
             {
                 snapped = ClampToWindow(snapped, windowTiming);
@@ -170,7 +175,6 @@ namespace Ams.Core.Audio
             }
 
             return new ArtifactSentenceTiming(start, end, baseTiming.FragmentBacked, baseTiming.Confidence);
-
         }
 
         private static TimingRange ClampToWindow(TimingRange range, ArtifactSentenceTiming window)

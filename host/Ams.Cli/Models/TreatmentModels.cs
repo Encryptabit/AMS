@@ -4,11 +4,16 @@ namespace Ams.Cli.Models;
 
 internal sealed record TreatmentChain(
     [property: JsonPropertyName("name")] string? Name,
-    [property: JsonPropertyName("description")] string? Description,
-    [property: JsonPropertyName("sampleRate")] int? SampleRate,
-    [property: JsonPropertyName("blockSize")] int? BlockSize,
-    [property: JsonPropertyName("outChannels")] int? OutChannels,
-    [property: JsonPropertyName("bitDepth")] int? BitDepth,
+    [property: JsonPropertyName("description")]
+    string? Description,
+    [property: JsonPropertyName("sampleRate")]
+    int? SampleRate,
+    [property: JsonPropertyName("blockSize")]
+    int? BlockSize,
+    [property: JsonPropertyName("outChannels")]
+    int? OutChannels,
+    [property: JsonPropertyName("bitDepth")]
+    int? BitDepth,
     [property: JsonPropertyName("nodes")] IReadOnlyList<TreatmentNode> Nodes)
 {
     public TreatmentChain() : this(null, null, null, null, null, null, Array.Empty<TreatmentNode>())

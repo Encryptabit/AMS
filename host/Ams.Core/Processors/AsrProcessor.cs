@@ -10,7 +10,12 @@ namespace Ams.Core.Processors;
 
 internal static class WhisperFactoryPool
 {
-    private readonly record struct FactoryKey(string ModelPath, bool UseGpu, int GpuDevice, bool UseFlashAttention, bool UseDtw);
+    private readonly record struct FactoryKey(
+        string ModelPath,
+        bool UseGpu,
+        int GpuDevice,
+        bool UseFlashAttention,
+        bool UseDtw);
 
     private sealed class FactoryEntry
     {
@@ -93,7 +98,6 @@ internal static class WhisperFactoryPool
 /// </summary>
 public static class AsrProcessor
 {
-
     public static async Task<AsrResponse> TranscribeFileAsync(
         string audioPath,
         AsrOptions options,

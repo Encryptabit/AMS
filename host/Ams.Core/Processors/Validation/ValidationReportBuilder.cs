@@ -49,6 +49,7 @@ public static class ValidationReportBuilder
                 ids.Add(id);
             }
         }
+
         if (hydratedMap is not null)
         {
             foreach (var id in hydratedMap.Keys)
@@ -192,7 +193,8 @@ public static class ValidationReportBuilder
 
         if (wordTallies is not null)
         {
-            builder.AppendLine($"Words     : {wordTallies.Total} (Match {wordTallies.Match}, Sub {wordTallies.Substitution}, Ins {wordTallies.Insertion}, Del {wordTallies.Deletion})");
+            builder.AppendLine(
+                $"Words     : {wordTallies.Total} (Match {wordTallies.Match}, Sub {wordTallies.Substitution}, Ins {wordTallies.Insertion}, Del {wordTallies.Deletion})");
         }
 
         builder.AppendLine();
@@ -219,7 +221,8 @@ public static class ValidationReportBuilder
 
             foreach (var sentence in sentenceBucket)
             {
-                builder.AppendLine($"  #{sentence.Id} | {FormatDiffStats(sentence.Diff?.Stats)} | Status {sentence.Status}");
+                builder.AppendLine(
+                    $"  #{sentence.Id} | {FormatDiffStats(sentence.Diff?.Stats)} | Status {sentence.Status}");
                 if (!string.IsNullOrWhiteSpace(sentence.BookText))
                 {
                     builder.AppendLine($"    Book   : {TrimText(sentence.BookText)}");
@@ -271,7 +274,8 @@ public static class ValidationReportBuilder
 
             foreach (var paragraph in paragraphBucket)
             {
-                builder.AppendLine($"  #{paragraph.Id} | {FormatDiffStats(paragraph.Diff?.Stats)} | Status {paragraph.Status}");
+                builder.AppendLine(
+                    $"  #{paragraph.Id} | {FormatDiffStats(paragraph.Diff?.Stats)} | Status {paragraph.Status}");
                 if (!string.IsNullOrWhiteSpace(paragraph.BookText))
                 {
                     builder.AppendLine($"    Book   : {TrimText(paragraph.BookText)}");
@@ -285,7 +289,12 @@ public static class ValidationReportBuilder
         return builder.ToString().TrimEnd();
     }
 
-    private sealed record DiffTotals(long ReferenceTokens, long HypothesisTokens, long Matches, long Insertions, long Deletions)
+    private sealed record DiffTotals(
+        long ReferenceTokens,
+        long HypothesisTokens,
+        long Matches,
+        long Insertions,
+        long Deletions)
     {
         public bool HasAny => ReferenceTokens > 0 || HypothesisTokens > 0 || Insertions > 0 || Deletions > 0;
     }
@@ -318,7 +327,8 @@ public static class ValidationReportBuilder
             ? (double)totals.Matches / totals.ReferenceTokens
             : 1.0;
 
-        return $"(ref {totals.ReferenceTokens}, hyp {totals.HypothesisTokens}, match {totals.Matches} ({matchPct:P1}), +{totals.Insertions}, -{totals.Deletions})";
+        return
+            $"(ref {totals.ReferenceTokens}, hyp {totals.HypothesisTokens}, match {totals.Matches} ({matchPct:P1}), +{totals.Insertions}, -{totals.Deletions})";
     }
 
     private static string FormatDiffStats(HydratedDiffStats? stats)
@@ -332,7 +342,8 @@ public static class ValidationReportBuilder
             ? (double)stats.Matches / stats.ReferenceTokens
             : 1.0;
 
-        return $"ref {stats.ReferenceTokens}, hyp {stats.HypothesisTokens}, match {stats.Matches} ({matchPct:P1}), +{stats.Insertions}, -{stats.Deletions}";
+        return
+            $"ref {stats.ReferenceTokens}, hyp {stats.HypothesisTokens}, match {stats.Matches} ({matchPct:P1}), +{stats.Insertions}, -{stats.Deletions}";
     }
 
     private static double ComputeSentenceDiffScore(SentenceView sentence)
@@ -428,5 +439,4 @@ public static class ValidationReportBuilder
 
     private static int ClampToInt(long value)
         => value > int.MaxValue ? int.MaxValue : (int)value;
-
 }

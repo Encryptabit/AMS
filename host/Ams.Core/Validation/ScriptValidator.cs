@@ -17,7 +17,7 @@ public class ScriptValidator(ValidationOptions? options = null)
 
         var scriptText = await File.ReadAllTextAsync(scriptPath);
         var asrJsonText = await File.ReadAllTextAsync(asrJsonPath);
-        
+
         var asrResponse = JsonSerializer.Deserialize<AsrResponse>(asrJsonText);
         if (asrResponse == null)
             throw new InvalidOperationException("Failed to deserialize ASR response");
@@ -25,17 +25,19 @@ public class ScriptValidator(ValidationOptions? options = null)
         return Validate(audioPath, scriptPath, asrJsonPath, scriptText, asrResponse);
     }
 
-    public ValidationReport Validate(string audioPath, string scriptPath, string asrJsonPath, string scriptText, AsrResponse asrResponse)
+    public ValidationReport Validate(string audioPath, string scriptPath, string asrJsonPath, string scriptText,
+        AsrResponse asrResponse)
     {
         var expectedWords = ExtractWordsFromScript(scriptText);
         var actualWords = ExtractWordsFromAsrResponse(asrResponse);
-        
+
         var alignment = AlignWords(expectedWords, actualWords);
         var findings = GenerateFindings(alignment, asrResponse);
         var segmentStats = GenerateSegmentStats(asrResponse, scriptText);
-        
+
         var (correctWords, substitutions, insertions, deletions) = CalculateWordErrorStats(alignment);
-        var wordErrorRate = CalculateWordErrorRate(correctWords, substitutions, insertions, deletions, expectedWords.Count);
+        var wordErrorRate =
+            CalculateWordErrorRate(correctWords, substitutions, insertions, deletions, expectedWords.Count);
         var characterErrorRate = CalculateCharacterErrorRate(scriptText, GetTranscriptText(asrResponse));
 
         return new ValidationReport(
@@ -65,7 +67,7 @@ public class ScriptValidator(ValidationOptions? options = null)
     private List<WordAlignment> ExtractWordsFromAsrResponse(AsrResponse asrResponse)
     {
         var words = new List<WordAlignment>();
-        
+
         for (int i = 0; i < asrResponse.WordCount; i++)
         {
             var word = asrResponse.GetWord(i) ?? string.Empty;
@@ -90,7 +92,7 @@ public class ScriptValidator(ValidationOptions? options = null)
                 });
             }
         }
-        
+
         return words;
     }
 
@@ -106,7 +108,7 @@ public class ScriptValidator(ValidationOptions? options = null)
             dp[i, 0] = i * _options.DeletionCost;
             operations[i, 0] = AlignmentOperation.Delete;
         }
-        
+
         for (int j = 0; j <= actual.Count; j++)
         {
             dp[0, j] = j * _options.InsertionCost;
@@ -120,7 +122,7 @@ public class ScriptValidator(ValidationOptions? options = null)
             {
                 var expectedWord = expected[i - 1];
                 var actualWord = actual[j - 1].Word;
-                
+
                 var matchCost = CalculateMatchCost(expectedWord, actualWord);
                 var substitutionCost = dp[i - 1, j - 1] + matchCost;
                 var deletionCost = dp[i - 1, j] + _options.DeletionCost;
@@ -151,7 +153,7 @@ public class ScriptValidator(ValidationOptions? options = null)
         while (ei > 0 || ai > 0)
         {
             var op = operations[ei, ai];
-            
+
             switch (op)
             {
                 case AlignmentOperation.Match:
@@ -163,9 +165,10 @@ public class ScriptValidator(ValidationOptions? options = null)
                         ActualWord = actual[ai - 1],
                         Cost = dp[ei, ai] - dp[ei - 1, ai - 1]
                     });
-                    ei--; ai--;
+                    ei--;
+                    ai--;
                     break;
-                    
+
                 case AlignmentOperation.Delete:
                     alignment.Add(new AlignmentResult
                     {
@@ -176,7 +179,7 @@ public class ScriptValidator(ValidationOptions? options = null)
                     });
                     ei--;
                     break;
-                    
+
                 case AlignmentOperation.Insert:
                     alignment.Add(new AlignmentResult
                     {
@@ -197,7 +200,7 @@ public class ScriptValidator(ValidationOptions? options = null)
     private double CalculateMatchCost(string expected, string actual)
     {
         if (expected == actual) return 0.0;
-        
+
         var similarity = TextNormalizer.CalculateSimilarity(expected, actual);
         return _options.SubstitutionCost * (1.0 - similarity);
     }
@@ -205,7 +208,7 @@ public class ScriptValidator(ValidationOptions? options = null)
     private List<ValidationFinding> GenerateFindings(List<AlignmentResult> alignment, AsrResponse asrResponse)
     {
         var findings = new List<ValidationFinding>();
-        
+
         foreach (var result in alignment)
         {
             switch (result.Operation)
@@ -218,7 +221,7 @@ public class ScriptValidator(ValidationOptions? options = null)
                         Cost: result.Cost
                     ));
                     break;
-                    
+
                 case AlignmentOperation.Insert:
                     findings.Add(new ValidationFinding(
                         FindingType.Extra,
@@ -229,7 +232,7 @@ public class ScriptValidator(ValidationOptions? options = null)
                         Cost: result.Cost
                     ));
                     break;
-                    
+
                 case AlignmentOperation.Substitute:
                     findings.Add(new ValidationFinding(
                         FindingType.Substitution,
@@ -251,17 +254,17 @@ public class ScriptValidator(ValidationOptions? options = null)
                     throw exception;
             }
         }
-        
+
         return findings;
     }
 
     private List<SegmentStats> GenerateSegmentStats(AsrResponse asrResponse, string scriptText)
     {
         var stats = new List<SegmentStats>();
-        
+
         if (!asrResponse.HasWords)
             return stats;
-        
+
         double startTime = 0;
         double endTime = 0;
         if (asrResponse.HasWordTimings && asrResponse.Tokens.Length > 0)
@@ -278,13 +281,14 @@ public class ScriptValidator(ValidationOptions? options = null)
             startTime = firstSegment.StartSec;
             endTime = lastSegment.EndSec;
         }
-        
+
         var expectedText = TextNormalizer.Normalize(scriptText, _options.ExpandContractions, _options.RemoveNumbers);
         var actualText = string.Join(" ", asrResponse.Words);
-        var normalizedActualText = TextNormalizer.Normalize(actualText, _options.ExpandContractions, _options.RemoveNumbers);
-        
+        var normalizedActualText =
+            TextNormalizer.Normalize(actualText, _options.ExpandContractions, _options.RemoveNumbers);
+
         var segmentWer = CalculateSegmentWER(expectedText, normalizedActualText);
-        
+
         stats.Add(new SegmentStats(
             Index: 0,
             StartTime: startTime,
@@ -294,7 +298,7 @@ public class ScriptValidator(ValidationOptions? options = null)
             WordErrorRate: segmentWer,
             Confidence: 0.0 // No confidence available in word-level response
         ));
-        
+
         return stats;
     }
 
@@ -302,9 +306,9 @@ public class ScriptValidator(ValidationOptions? options = null)
     {
         var expectedWords = TextNormalizer.TokenizeWords(expected);
         var actualWords = TextNormalizer.TokenizeWords(actual);
-        
+
         if (expectedWords.Length == 0) return actualWords.Length > 0 ? 1.0 : 0.0;
-        
+
         var distance = CalculateEditDistance(expectedWords, actualWords);
         return (double)distance / expectedWords.Length;
     }
@@ -312,10 +316,10 @@ public class ScriptValidator(ValidationOptions? options = null)
     private int CalculateEditDistance(string[] s1, string[] s2)
     {
         var dp = new int[s1.Length + 1, s2.Length + 1];
-        
+
         for (int i = 0; i <= s1.Length; i++) dp[i, 0] = i;
         for (int j = 0; j <= s2.Length; j++) dp[0, j] = j;
-        
+
         for (int i = 1; i <= s1.Length; i++)
         {
             for (int j = 1; j <= s2.Length; j++)
@@ -324,14 +328,15 @@ public class ScriptValidator(ValidationOptions? options = null)
                 dp[i, j] = Math.Min(Math.Min(dp[i - 1, j] + 1, dp[i, j - 1] + 1), dp[i - 1, j - 1] + cost);
             }
         }
-        
+
         return dp[s1.Length, s2.Length];
     }
 
-    private (int correct, int substitutions, int insertions, int deletions) CalculateWordErrorStats(List<AlignmentResult> alignment)
+    private (int correct, int substitutions, int insertions, int deletions) CalculateWordErrorStats(
+        List<AlignmentResult> alignment)
     {
         int correct = 0, substitutions = 0, insertions = 0, deletions = 0;
-        
+
         foreach (var result in alignment)
         {
             switch (result.Operation)
@@ -342,11 +347,12 @@ public class ScriptValidator(ValidationOptions? options = null)
                 case AlignmentOperation.Delete: deletions++; break;
             }
         }
-        
+
         return (correct, substitutions, insertions, deletions);
     }
 
-    private double CalculateWordErrorRate(int correct, int substitutions, int insertions, int deletions, int totalExpected)
+    private double CalculateWordErrorRate(int correct, int substitutions, int insertions, int deletions,
+        int totalExpected)
     {
         if (totalExpected == 0) return insertions > 0 ? 1.0 : 0.0;
         return (double)(substitutions + insertions + deletions) / totalExpected;
@@ -354,15 +360,16 @@ public class ScriptValidator(ValidationOptions? options = null)
 
     private double CalculateCharacterErrorRate(string expected, string actual)
     {
-        var normalizedExpected = TextNormalizer.Normalize(expected, _options.ExpandContractions, _options.RemoveNumbers);
+        var normalizedExpected =
+            TextNormalizer.Normalize(expected, _options.ExpandContractions, _options.RemoveNumbers);
         var normalizedActual = TextNormalizer.Normalize(actual, _options.ExpandContractions, _options.RemoveNumbers);
-        
+
         if (string.IsNullOrEmpty(normalizedExpected))
             return string.IsNullOrEmpty(normalizedActual) ? 0.0 : 1.0;
-        
+
         var distance = CalculateEditDistance(normalizedExpected.ToCharArray().Select(c => c.ToString()).ToArray(),
-                                           normalizedActual.ToCharArray().Select(c => c.ToString()).ToArray());
-        
+            normalizedActual.ToCharArray().Select(c => c.ToString()).ToArray());
+
         return (double)distance / normalizedExpected.Length;
     }
 

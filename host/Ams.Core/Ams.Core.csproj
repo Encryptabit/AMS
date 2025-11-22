@@ -1,98 +1,98 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
 
-  <ItemGroup>
-    <ProjectReference Include="..\Ams.Dsp.Native\Ams.Dsp.Native.csproj" />
-  </ItemGroup>
-  
-  <ItemGroup>
-    <None Include="ExtTools\ffmpeg\**\*">
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-        <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
-      <Link>ExtTools\ffmpeg\%(RecursiveDir)%(Filename)%(Extension)</Link>
-    </None>
-    <None Update="..\..\..\..\Users\Jacar\.nuget\packages\whisper.net.runtime.cuda.windows\1.8.1\build\win-x64\ggml-cuda-whisper.dll">
-      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
-    </None>
-  </ItemGroup>
+    <ItemGroup>
+        <ProjectReference Include="..\Ams.Dsp.Native\Ams.Dsp.Native.csproj"/>
+    </ItemGroup>
 
-  <ItemGroup>
-    <None Include="Services\Integrations\FFmpeg\models\**\*">
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
-      <Link>models\%(RecursiveDir)%(Filename)%(Extension)</Link>
-    </None>
-  </ItemGroup>
+    <ItemGroup>
+        <None Include="ExtTools\ffmpeg\**\*">
+            <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+            <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+            <Link>ExtTools\ffmpeg\%(RecursiveDir)%(Filename)%(Extension)</Link>
+        </None>
+        <None Update="..\..\..\..\Users\Jacar\.nuget\packages\whisper.net.runtime.cuda.windows\1.8.1\build\win-x64\ggml-cuda-whisper.dll">
+            <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+        </None>
+    </ItemGroup>
 
-  <ItemGroup>
-    <PackageReference Include="DiffMatchPatch" Version="4.0.0" />
-    <PackageReference Include="DocX" Version="5.0.0" />
-    <PackageReference Include="FFmpeg.AutoGen" Version="7.1.1" />
-    <PackageReference Include="Microsoft.Extensions.Logging" Version="10.0.0" />
-    <PackageReference Include="Microsoft.Extensions.Logging.Console" Version="10.0.0" />
-    <PackageReference Include="PDFiumCore" Version="134.0.6982" />
-    <PackageReference Include="Serilog" Version="4.3.0" />
-    <PackageReference Include="Serilog.Extensions.Logging" Version="8.0.0" />
-    <PackageReference Include="Serilog.Sinks.Console" Version="6.1.1" />
-    <PackageReference Include="Serilog.Sinks.File" Version="7.0.0" />
-    <PackageReference Include="System.Text.Json" Version="10.0.0" />
-    <PackageReference Include="Tesseract" Version="5.2.0" />
-    <PackageReference Include="Whisper.net" Version="1.8.1" />
-    <PackageReference Include="Whisper.net.Runtime.Cuda" Version="1.8.1" />
-  </ItemGroup>
-  <ItemGroup>
-    <None Include="ExtTools\Plugalyzer.exe">
-      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
-    </None>
-  </ItemGroup>
-  <ItemGroup>
-    <Folder Include="Application\Services\" />
-    <Folder Include="Services\Integrations\FFmpeg\models\" />
-  </ItemGroup>
-  <ItemGroup>
-    <None Update="ExtTools\ffmpeg\binaries\avcodec-61.dll">
-      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
-    </None>
-    <None Update="ExtTools\ffmpeg\binaries\avdevice-61.dll">
-      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
-    </None>
-    <None Update="ExtTools\ffmpeg\binaries\avfilter-10.dll">
-      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
-    </None>
-    <None Update="ExtTools\ffmpeg\binaries\avformat-61.dll">
-      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
-    </None>
-    <None Update="ExtTools\ffmpeg\binaries\avutil-59.dll">
-      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
-    </None>
-    <None Update="ExtTools\ffmpeg\binaries\ffmpeg.exe">
-      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
-    </None>
-    <None Update="ExtTools\ffmpeg\binaries\ffplay.exe">
-      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
-    </None>
-    <None Update="ExtTools\ffmpeg\binaries\ffprobe.exe">
-      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
-    </None>
-    <None Update="ExtTools\ffmpeg\binaries\postproc-58.dll">
-      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
-    </None>
-    <None Update="ExtTools\ffmpeg\binaries\swresample-5.dll">
-      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
-    </None>
-    <None Update="ExtTools\ffmpeg\binaries\swscale-8.dll">
-      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
-    </None>
-  </ItemGroup>
-  <Target Name="VerifyPlugalyzerCopy" AfterTargets="CopyFilesOutputgroupOutput">
-    <Message Text="Checking for Plugalyzer.exe in output..." Importance="high" />
-    <Message Text="File exists: $(OutputPath)ExtTools\Plugalyzer.exe" Importance="high" Condition="Exists('$(OutputPath)ExtTools\Plugalyzer.exe')" />
-    <Warning Text="Plugalyzer.exe was not copied to output directory!" Condition="!Exists('$(OutputPath)ExtTools\Plugalyzer.exe')" />
-  </Target>
-  <PropertyGroup>
-    <TargetFramework>net9.0</TargetFramework>
-    <ImplicitUsings>enable</ImplicitUsings>
-    <Nullable>enable</Nullable>
-    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
-  </PropertyGroup>
+    <ItemGroup>
+        <None Include="Services\Integrations\FFmpeg\models\**\*">
+            <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+            <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+            <Link>models\%(RecursiveDir)%(Filename)%(Extension)</Link>
+        </None>
+    </ItemGroup>
+
+    <ItemGroup>
+        <PackageReference Include="DiffMatchPatch" Version="4.0.0"/>
+        <PackageReference Include="DocX" Version="5.0.0"/>
+        <PackageReference Include="FFmpeg.AutoGen" Version="7.1.1"/>
+        <PackageReference Include="Microsoft.Extensions.Logging" Version="10.0.0"/>
+        <PackageReference Include="Microsoft.Extensions.Logging.Console" Version="10.0.0"/>
+        <PackageReference Include="PDFiumCore" Version="134.0.6982"/>
+        <PackageReference Include="Serilog" Version="4.3.0"/>
+        <PackageReference Include="Serilog.Extensions.Logging" Version="8.0.0"/>
+        <PackageReference Include="Serilog.Sinks.Console" Version="6.1.1"/>
+        <PackageReference Include="Serilog.Sinks.File" Version="7.0.0"/>
+        <PackageReference Include="System.Text.Json" Version="10.0.0"/>
+        <PackageReference Include="Tesseract" Version="5.2.0"/>
+        <PackageReference Include="Whisper.net" Version="1.8.1"/>
+        <PackageReference Include="Whisper.net.Runtime.Cuda" Version="1.8.1"/>
+    </ItemGroup>
+    <ItemGroup>
+        <None Include="ExtTools\Plugalyzer.exe">
+            <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+        </None>
+    </ItemGroup>
+    <ItemGroup>
+        <Folder Include="Application\Services\"/>
+        <Folder Include="Services\Integrations\FFmpeg\models\"/>
+    </ItemGroup>
+    <ItemGroup>
+        <None Update="ExtTools\ffmpeg\binaries\avcodec-61.dll">
+            <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+        </None>
+        <None Update="ExtTools\ffmpeg\binaries\avdevice-61.dll">
+            <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+        </None>
+        <None Update="ExtTools\ffmpeg\binaries\avfilter-10.dll">
+            <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+        </None>
+        <None Update="ExtTools\ffmpeg\binaries\avformat-61.dll">
+            <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+        </None>
+        <None Update="ExtTools\ffmpeg\binaries\avutil-59.dll">
+            <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+        </None>
+        <None Update="ExtTools\ffmpeg\binaries\ffmpeg.exe">
+            <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+        </None>
+        <None Update="ExtTools\ffmpeg\binaries\ffplay.exe">
+            <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+        </None>
+        <None Update="ExtTools\ffmpeg\binaries\ffprobe.exe">
+            <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+        </None>
+        <None Update="ExtTools\ffmpeg\binaries\postproc-58.dll">
+            <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+        </None>
+        <None Update="ExtTools\ffmpeg\binaries\swresample-5.dll">
+            <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+        </None>
+        <None Update="ExtTools\ffmpeg\binaries\swscale-8.dll">
+            <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+        </None>
+    </ItemGroup>
+    <Target Name="VerifyPlugalyzerCopy" AfterTargets="CopyFilesOutputgroupOutput">
+        <Message Text="Checking for Plugalyzer.exe in output..." Importance="high"/>
+        <Message Text="File exists: $(OutputPath)ExtTools\Plugalyzer.exe" Importance="high" Condition="Exists('$(OutputPath)ExtTools\Plugalyzer.exe')"/>
+        <Warning Text="Plugalyzer.exe was not copied to output directory!" Condition="!Exists('$(OutputPath)ExtTools\Plugalyzer.exe')"/>
+    </Target>
+    <PropertyGroup>
+        <TargetFramework>net9.0</TargetFramework>
+        <ImplicitUsings>enable</ImplicitUsings>
+        <Nullable>enable</Nullable>
+        <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    </PropertyGroup>
 
 </Project>

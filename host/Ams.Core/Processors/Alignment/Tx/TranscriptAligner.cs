@@ -59,6 +59,7 @@ public static class TranscriptAligner
         {
             return 0.3;
         }
+
         return 1.0;
     }
 
@@ -195,12 +196,12 @@ public static class TranscriptAligner
     {
         if (list == null || index < 0 || index >= list.Count) return null;
         var entry = list[index];
-        return entry is { Length: >0 } ? entry : null;
+        return entry is { Length: > 0 } ? entry : null;
     }
 
     private static bool HasExactPhonemeMatch(string[]? bookPhonemes, string[]? asrPhonemes)
     {
-        if (bookPhonemes is not { Length: >0 } bookList || asrPhonemes is not { Length: >0 } asrList)
+        if (bookPhonemes is not { Length: > 0 } bookList || asrPhonemes is not { Length: > 0 } asrList)
         {
             return false;
         }
@@ -223,7 +224,7 @@ public static class TranscriptAligner
 
     private static bool HasSoftPhonemeMatch(string[]? bookPhonemes, string[]? asrPhonemes, double threshold)
     {
-        if (bookPhonemes is not { Length: >0 } bookList || asrPhonemes is not { Length: >0 } asrList)
+        if (bookPhonemes is not { Length: > 0 } bookList || asrPhonemes is not { Length: > 0 } asrList)
         {
             return false;
         }
@@ -283,6 +284,7 @@ public static class TranscriptAligner
         private static string Normalize(string value)
             => string.Join(' ', Tokenize(value));
     }
+
     // (3.3) Sentence/Paragraph rollups from word ops
     public static (List<SentenceAlign> sents, List<ParagraphAlign> paras) Rollup(
         IReadOnlyList<WordAlign> ops,
@@ -369,7 +371,8 @@ public static class TranscriptAligner
             int? sentenceEndAsr = null;
 
             var anchorAsrIdxs = segment
-                .Where(o => string.Equals(o.Reason, "anchor", StringComparison.Ordinal) && o is { AsrIdx: { } aj, BookIdx: { } bi } && bi >= start && bi <= end)
+                .Where(o => string.Equals(o.Reason, "anchor", StringComparison.Ordinal) &&
+                            o is { AsrIdx: { } aj, BookIdx: { } bi } && bi >= start && bi <= end)
                 .Select(o => o.AsrIdx!.Value)
                 .Distinct()
                 .OrderBy(x => x)
@@ -506,7 +509,8 @@ public static class TranscriptAligner
                 {
                     normalizedMatch = true;
                 }
-                else if (normalizedReference.Length > 0 && string.Equals(normalizedReference, normalizedHypothesis, StringComparison.Ordinal))
+                else if (normalizedReference.Length > 0 &&
+                         string.Equals(normalizedReference, normalizedHypothesis, StringComparison.Ordinal))
                 {
                     normalizedMatch = true;
                 }
@@ -553,7 +557,8 @@ public static class TranscriptAligner
         return (sentsOut, parasOut);
     }
 
-    private static void SynthesizeMissingScriptRanges(List<SentenceAlign> sentences, int asrTokenCount, (int? Start, int? End)[] guardRanges)
+    private static void SynthesizeMissingScriptRanges(List<SentenceAlign> sentences, int asrTokenCount,
+        (int? Start, int? End)[] guardRanges)
     {
         if (sentences.Count == 0 || asrTokenCount <= 0)
         {
@@ -674,6 +679,7 @@ public static class TranscriptAligner
                         {
                             startIdx = upper;
                         }
+
                         if (endIdx < startIdx)
                         {
                             endIdx = startIdx;
@@ -681,7 +687,8 @@ public static class TranscriptAligner
                     }
                 }
 
-                if (sentenceIndex < sentences.Count - 1 && TryGetConcreteRange(sentences[sentenceIndex + 1], out var nextStart, out _))
+                if (sentenceIndex < sentences.Count - 1 &&
+                    TryGetConcreteRange(sentences[sentenceIndex + 1], out var nextStart, out _))
                 {
                     if (endIdx >= nextStart)
                     {
@@ -735,7 +742,8 @@ public static class TranscriptAligner
         return null;
     }
 
-    private static (int? Start, int? End) ComputeGuardRangeForMissingSentence(IReadOnlyList<WordAlign> ops, int sentenceStartWord, int sentenceEndWord)
+    private static (int? Start, int? End) ComputeGuardRangeForMissingSentence(IReadOnlyList<WordAlign> ops,
+        int sentenceStartWord, int sentenceEndWord)
     {
         if (ops.Count == 0)
         {
@@ -841,7 +849,8 @@ public static class TranscriptAligner
         return (null, null);
     }
 
-    private static double ComputeCer(BookIndex? book, AsrResponse? asr, int bookStart, int bookEnd, int? asrStart, int? asrEnd)
+    private static double ComputeCer(BookIndex? book, AsrResponse? asr, int bookStart, int bookEnd, int? asrStart,
+        int? asrEnd)
     {
         var reference = BuildNormalizedWordString(book, bookStart, bookEnd);
         var hypothesis = BuildNormalizedWordString(asr, asrStart, asrEnd);
@@ -911,5 +920,4 @@ public static class TranscriptAligner
             }
         }
     }
-
 }

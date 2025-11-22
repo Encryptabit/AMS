@@ -1,43 +1,43 @@
 <Project>
-  <PropertyGroup>
-    <!-- Resolve paths relative to this targets file -->
-    <DspDir>$(MSBuildThisFileDirectory)..\dsp</DspDir>
-    <!-- Use .so on Linux/WSL, .dll on Windows -->
-    <AmsDspDllPathLib Condition="'$(OS)' != 'Windows_NT'">$(DspDir)/zig-out/lib/libams_dsp.so</AmsDspDllPathLib>
-    <AmsDspDllPathLib Condition="'$(OS)' == 'Windows_NT'">$(DspDir)\zig-out\lib\ams_dsp.dll</AmsDspDllPathLib>
-    <AmsDspDllPathBin Condition="'$(OS)' != 'Windows_NT'">$(DspDir)/zig-out/bin/libams_dsp.so</AmsDspDllPathBin>
-    <AmsDspDllPathBin Condition="'$(OS)' == 'Windows_NT'">$(DspDir)\zig-out\bin\ams_dsp.dll</AmsDspDllPathBin>
+    <PropertyGroup>
+        <!-- Resolve paths relative to this targets file -->
+        <DspDir>$(MSBuildThisFileDirectory)..\dsp</DspDir>
+        <!-- Use .so on Linux/WSL, .dll on Windows -->
+        <AmsDspDllPathLib Condition="'$(OS)' != 'Windows_NT'">$(DspDir)/zig-out/lib/libams_dsp.so</AmsDspDllPathLib>
+        <AmsDspDllPathLib Condition="'$(OS)' == 'Windows_NT'">$(DspDir)\zig-out\lib\ams_dsp.dll</AmsDspDllPathLib>
+        <AmsDspDllPathBin Condition="'$(OS)' != 'Windows_NT'">$(DspDir)/zig-out/bin/libams_dsp.so</AmsDspDllPathBin>
+        <AmsDspDllPathBin Condition="'$(OS)' == 'Windows_NT'">$(DspDir)\zig-out\bin\ams_dsp.dll</AmsDspDllPathBin>
 
-    <!-- Map MSBuild config -> Zig optimize mode -->
-    <ZigOptimize Condition="'$(Configuration)' == 'Release'">ReleaseFast</ZigOptimize>
-    <ZigOptimize Condition="'$(Configuration)' != 'Release'">Debug</ZigOptimize>
-    
-    <!-- Optional: make the zig exe configurable -->
-    <ZigExe>zig</ZigExe>
+        <!-- Map MSBuild config -> Zig optimize mode -->
+        <ZigOptimize Condition="'$(Configuration)' == 'Release'">ReleaseFast</ZigOptimize>
+        <ZigOptimize Condition="'$(Configuration)' != 'Release'">Debug</ZigOptimize>
 
-    <!-- Default to skipping Zig builds unless explicitly requested -->
-    <SkipZig Condition="'$(SkipZig)' == ''">true</SkipZig>
-  </PropertyGroup>
+        <!-- Optional: make the zig exe configurable -->
+        <ZigExe>zig</ZigExe>
 
-  <!-- Build Zig before managed Build -->
-  <Target Name="BuildZig" BeforeTargets="Build" Condition="'$(SkipZig)' != 'true'">
-    <Exec Command="&quot;$(ZigExe)&quot; build -Doptimize=$(ZigOptimize) --cache-dir /tmp/zig-cache"
-          WorkingDirectory="$(DspDir)" />
-  </Target>
+        <!-- Default to skipping Zig builds unless explicitly requested -->
+        <SkipZig Condition="'$(SkipZig)' == ''">true</SkipZig>
+    </PropertyGroup>
 
-  <!-- Copy DLL to each project's output -->
-  <Target Name="CopyAmsDspDll" AfterTargets="Build">
-    <ItemGroup>
-      <_AmsDll Include="$(AmsDspDllPathLib)" Condition="Exists('$(AmsDspDllPathLib)')" />
-      <_AmsDll Include="$(AmsDspDllPathBin)" Condition="Exists('$(AmsDspDllPathBin)')" />
-    </ItemGroup>
+    <!-- Build Zig before managed Build -->
+    <Target Name="BuildZig" BeforeTargets="Build" Condition="'$(SkipZig)' != 'true'">
+        <Exec Command="&quot;$(ZigExe)&quot; build -Doptimize=$(ZigOptimize) --cache-dir /tmp/zig-cache"
+              WorkingDirectory="$(DspDir)"/>
+    </Target>
 
-    <Copy SourceFiles="@(_AmsDll)"
-          DestinationFolder="$(OutDir)"
-          SkipUnchangedFiles="true"
-          Condition="'@(_AmsDll)' != ''" />
+    <!-- Copy DLL to each project's output -->
+    <Target Name="CopyAmsDspDll" AfterTargets="Build">
+        <ItemGroup>
+            <_AmsDll Include="$(AmsDspDllPathLib)" Condition="Exists('$(AmsDspDllPathLib)')"/>
+            <_AmsDll Include="$(AmsDspDllPathBin)" Condition="Exists('$(AmsDspDllPathBin)')"/>
+        </ItemGroup>
 
-    <Warning Text="ams_dsp.dll not found in $(AmsDspDllPathLib) or $(AmsDspDllPathBin). Check Zig build output."
-             Condition="'@(_AmsDll)' == '' and '$(SkipZig)' != 'true'" />
-  </Target>
+        <Copy SourceFiles="@(_AmsDll)"
+              DestinationFolder="$(OutDir)"
+              SkipUnchangedFiles="true"
+              Condition="'@(_AmsDll)' != ''"/>
+
+        <Warning Text="ams_dsp.dll not found in $(AmsDspDllPathLib) or $(AmsDspDllPathBin). Check Zig build output."
+                 Condition="'@(_AmsDll)' == '' and '$(SkipZig)' != 'true'"/>
+    </Target>
 </Project>

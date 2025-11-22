@@ -30,17 +30,25 @@ public static class AlignCommand
         indexOption.AddAlias("-i");
         var asrOption = new Option<FileInfo?>("--asr-json", "Path to ASR JSON") { IsRequired = true };
         asrOption.AddAlias("-j");
-        var outOption = new Option<FileInfo?>("--out", "Output anchors JSON (defaults to <chapter>.align.anchors.json)");
+        var outOption =
+            new Option<FileInfo?>("--out", "Output anchors JSON (defaults to <chapter>.align.anchors.json)");
         outOption.AddAlias("-o");
 
-        var detectSectionOption = new Option<bool>("--detect-section", () => true, "Detect section from ASR prefix and restrict window");
+        var detectSectionOption = new Option<bool>("--detect-section", () => true,
+            "Detect section from ASR prefix and restrict window");
         var ngramOption = new Option<int>("--ngram", () => 3, "Anchor n-gram size");
-        var targetPerTokensOption = new Option<int>("--target-per-tokens", () => 50, "Approx. 1 anchor per N book tokens");
-        var minSeparationOption = new Option<int>("--min-separation", () => 100, "Min token separation when duplicates allowed during relaxation");
-        var crossSentencesOption = new Option<bool>("--cross-sentences", () => false, "Allow anchors to cross sentence boundaries");
-        var domainStopwordsOption = new Option<bool>("--domain-stopwords", () => true, "Use English/domain stopwords for anchors");
-        var asrPrefixTokensOption = new Option<int>("--asr-prefix", () => 8, "ASR tokens to consider for section detection");
-        var emitWindowsOption = new Option<bool>("--emit-windows", () => true, "Also emit search windows between anchors");
+        var targetPerTokensOption =
+            new Option<int>("--target-per-tokens", () => 50, "Approx. 1 anchor per N book tokens");
+        var minSeparationOption = new Option<int>("--min-separation", () => 100,
+            "Min token separation when duplicates allowed during relaxation");
+        var crossSentencesOption =
+            new Option<bool>("--cross-sentences", () => false, "Allow anchors to cross sentence boundaries");
+        var domainStopwordsOption =
+            new Option<bool>("--domain-stopwords", () => true, "Use English/domain stopwords for anchors");
+        var asrPrefixTokensOption =
+            new Option<int>("--asr-prefix", () => 8, "ASR tokens to consider for section detection");
+        var emitWindowsOption =
+            new Option<bool>("--emit-windows", () => true, "Also emit search windows between anchors");
 
         cmd.AddOption(indexOption);
         cmd.AddOption(asrOption);
@@ -60,8 +68,10 @@ public static class AlignCommand
             {
                 var parse = context.ParseResult;
                 var indexFile = CommandInputResolver.ResolveBookIndex(parse.GetValueForOption(indexOption));
-                var asrFile = CommandInputResolver.ResolveChapterArtifact(parse.GetValueForOption(asrOption), "asr.json");
-                var outFile = CommandInputResolver.ResolveChapterArtifact(parse.GetValueForOption(outOption), "align.anchors.json", mustExist: false);
+                var asrFile =
+                    CommandInputResolver.ResolveChapterArtifact(parse.GetValueForOption(asrOption), "asr.json");
+                var outFile = CommandInputResolver.ResolveChapterArtifact(parse.GetValueForOption(outOption),
+                    "align.anchors.json", mustExist: false);
 
                 var options = new AnchorComputationOptions
                 {
@@ -83,10 +93,11 @@ public static class AlignCommand
                 };
 
                 using var handle = workspace.OpenChapter(openOptions);
-                await command.ExecuteAsync(handle.Chapter, options, context.GetCancellationToken()).ConfigureAwait(false);
+                await command.ExecuteAsync(handle.Chapter, options, context.GetCancellationToken())
+                    .ConfigureAwait(false);
                 handle.Save();
                 var anchorsFile = handle.Chapter.Documents.GetAnchorsFile()
-                                   ?? throw new InvalidOperationException("Anchors artifact is not available.");
+                                  ?? throw new InvalidOperationException("Anchors artifact is not available.");
                 CopyIfRequested(anchorsFile, outFile);
             }
             catch (Exception ex)
@@ -112,13 +123,19 @@ public static class AlignCommand
         var outOption = new Option<FileInfo?>("--out", "Output TranscriptIndex JSON");
         outOption.AddAlias("-o");
 
-        var detectSectionOption = new Option<bool>("--detect-section", () => true, "Detect section from ASR prefix and restrict window");
-        var asrPrefixTokensOption = new Option<int>("--asr-prefix", () => 8, "ASR tokens to consider for section detection");
+        var detectSectionOption = new Option<bool>("--detect-section", () => true,
+            "Detect section from ASR prefix and restrict window");
+        var asrPrefixTokensOption =
+            new Option<int>("--asr-prefix", () => 8, "ASR tokens to consider for section detection");
         var ngramOption = new Option<int>("--ngram", () => 3, "Anchor n-gram size");
-        var targetPerTokensOption = new Option<int>("--target-per-tokens", () => 50, "Approx. 1 anchor per N book tokens");
-        var minSeparationOption = new Option<int>("--min-separation", () => 100, "Min token separation when duplicates allowed during relaxation");
-        var crossSentencesOption = new Option<bool>("--cross-sentences", () => false, "Allow anchors to cross sentence boundaries");
-        var domainStopwordsOption = new Option<bool>("--domain-stopwords", () => true, "Use English/domain stopwords for anchors");
+        var targetPerTokensOption =
+            new Option<int>("--target-per-tokens", () => 50, "Approx. 1 anchor per N book tokens");
+        var minSeparationOption = new Option<int>("--min-separation", () => 100,
+            "Min token separation when duplicates allowed during relaxation");
+        var crossSentencesOption =
+            new Option<bool>("--cross-sentences", () => false, "Allow anchors to cross sentence boundaries");
+        var domainStopwordsOption =
+            new Option<bool>("--domain-stopwords", () => true, "Use English/domain stopwords for anchors");
 
         cmd.AddOption(indexOption);
         cmd.AddOption(asrOption);
@@ -138,9 +155,11 @@ public static class AlignCommand
             {
                 var parse = context.ParseResult;
                 var indexFile = CommandInputResolver.ResolveBookIndex(parse.GetValueForOption(indexOption));
-                var asrFile = CommandInputResolver.ResolveChapterArtifact(parse.GetValueForOption(asrOption), "asr.json");
+                var asrFile =
+                    CommandInputResolver.ResolveChapterArtifact(parse.GetValueForOption(asrOption), "asr.json");
                 var audioFile = CommandInputResolver.RequireAudio(parse.GetValueForOption(audioOption));
-                var outFile = CommandInputResolver.ResolveChapterArtifact(parse.GetValueForOption(outOption), "align.tx.json", mustExist: false);
+                var outFile = CommandInputResolver.ResolveChapterArtifact(parse.GetValueForOption(outOption),
+                    "align.tx.json", mustExist: false);
 
                 var anchorOptions = new AnchorComputationOptions
                 {
@@ -171,10 +190,11 @@ public static class AlignCommand
                 };
 
                 using var handle = workspace.OpenChapter(openOptions);
-                await command.ExecuteAsync(handle.Chapter, options, context.GetCancellationToken()).ConfigureAwait(false);
+                await command.ExecuteAsync(handle.Chapter, options, context.GetCancellationToken())
+                    .ConfigureAwait(false);
                 handle.Save();
                 var transcriptFile = handle.Chapter.Documents.GetTranscriptFile()
-                                      ?? throw new InvalidOperationException("Transcript artifact is not available.");
+                                     ?? throw new InvalidOperationException("Transcript artifact is not available.");
                 CopyIfRequested(transcriptFile, outFile);
             }
             catch (Exception ex)
@@ -189,7 +209,8 @@ public static class AlignCommand
 
     private static Command CreateHydrateTx(HydrateTranscriptCommand command)
     {
-        var cmd = new Command("hydrate", "Hydrate a TranscriptIndex with token values from BookIndex and ASR (for debugging)");
+        var cmd = new Command("hydrate",
+            "Hydrate a TranscriptIndex with token values from BookIndex and ASR (for debugging)");
 
         var indexOption = new Option<FileInfo?>("--index", "Path to BookIndex JSON") { IsRequired = true };
         indexOption.AddAlias("-i");
@@ -211,9 +232,12 @@ public static class AlignCommand
             {
                 var parse = context.ParseResult;
                 var indexFile = CommandInputResolver.ResolveBookIndex(parse.GetValueForOption(indexOption));
-                var asrFile = CommandInputResolver.ResolveChapterArtifact(parse.GetValueForOption(asrOption), "asr.json");
-                var txFile = CommandInputResolver.ResolveChapterArtifact(parse.GetValueForOption(txOption), "align.tx.json");
-                var outFile = CommandInputResolver.ResolveChapterArtifact(parse.GetValueForOption(outOption), "align.hydrate.json", mustExist: false);
+                var asrFile =
+                    CommandInputResolver.ResolveChapterArtifact(parse.GetValueForOption(asrOption), "asr.json");
+                var txFile =
+                    CommandInputResolver.ResolveChapterArtifact(parse.GetValueForOption(txOption), "align.tx.json");
+                var outFile = CommandInputResolver.ResolveChapterArtifact(parse.GetValueForOption(outOption),
+                    "align.hydrate.json", mustExist: false);
 
                 var workspace = CommandInputResolver.ResolveWorkspace(indexFile);
                 var openOptions = new ChapterOpenOptions
@@ -227,7 +251,7 @@ public static class AlignCommand
                 await command.ExecuteAsync(handle.Chapter, null, context.GetCancellationToken()).ConfigureAwait(false);
                 handle.Save();
                 var hydrateArtifact = handle.Chapter.Documents.GetHydratedTranscriptFile()
-                                       ?? throw new InvalidOperationException("Hydrate artifact is not available.");
+                                      ?? throw new InvalidOperationException("Hydrate artifact is not available.");
                 CopyIfRequested(hydrateArtifact, outFile);
             }
             catch (Exception ex)

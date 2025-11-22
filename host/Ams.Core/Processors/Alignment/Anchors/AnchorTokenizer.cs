@@ -20,9 +20,7 @@ public static class AnchorTokenizer
                 buf[k++] = char.ToLowerInvariant(c);
             }
         }
+
         return k == 0 ? string.Empty : new string(buf[..k]);
     }
 }
-
-
-

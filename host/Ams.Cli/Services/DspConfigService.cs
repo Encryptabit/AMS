@@ -48,7 +48,8 @@ internal static class DspConfigService
         }
 
         await using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read);
-        var config = await JsonSerializer.DeserializeAsync<DspConfig>(stream, SerializerOptions, cancellationToken).ConfigureAwait(false);
+        var config = await JsonSerializer.DeserializeAsync<DspConfig>(stream, SerializerOptions, cancellationToken)
+            .ConfigureAwait(false);
         config ??= new DspConfig();
 
         NormalizeConfig(config);
@@ -92,4 +93,3 @@ internal static class DspConfigService
         config.Plugins = normalized;
     }
 }
-

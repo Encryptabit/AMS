@@ -18,4 +18,3 @@ public sealed record ManifestV2(
         return dir;
     }
 }
-

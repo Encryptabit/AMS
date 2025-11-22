@@ -50,7 +50,8 @@ public readonly record struct Region(double StartSec, double EndSec)
 
     public bool Overlaps(Region other) => !(EndSec <= other.StartSec || other.EndSec <= StartSec);
 
-    public static Region Merge(Region a, Region b) => new(Math.Min(a.StartSec, b.StartSec), Math.Max(a.EndSec, b.EndSec));
+    public static Region Merge(Region a, Region b) =>
+        new(Math.Min(a.StartSec, b.StartSec), Math.Max(a.EndSec, b.EndSec));
 }
 
 public sealed class FrameFeatures
@@ -92,7 +93,9 @@ public static class FeatureExtraction
 
         if (options.SampleRate > 0 && options.SampleRate != sampleRate)
         {
-            throw new ArgumentException($"Breath detector options specify {options.SampleRate} Hz, but audio is {sampleRate} Hz. Set SampleRate=0 to infer.", nameof(options));
+            throw new ArgumentException(
+                $"Breath detector options specify {options.SampleRate} Hz, but audio is {sampleRate} Hz. Set SampleRate=0 to infer.",
+                nameof(options));
         }
 
         var effectiveOptions = options.SampleRate == 0 ? options with { SampleRate = sampleRate } : options;
@@ -120,7 +123,9 @@ public static class FeatureExtraction
         var opt = options.SampleRate == 0 ? options with { SampleRate = sampleRate } : options;
         if (opt.SampleRate != sampleRate)
         {
-            throw new ArgumentException($"Breath detector options specify {opt.SampleRate} Hz, but samples are {sampleRate} Hz.", nameof(options));
+            throw new ArgumentException(
+                $"Breath detector options specify {opt.SampleRate} Hz, but samples are {sampleRate} Hz.",
+                nameof(options));
         }
 
         var features = ExtractFeatures(monoSamples, sampleRate, startSec, endSec, opt);
@@ -212,7 +217,8 @@ public static class FeatureExtraction
         }
     }
 
-    public static FrameFeatures ExtractFeatures(float[] samples, int sampleRate, double startSec, double endSec, FrameBreathDetectorOptions options)
+    public static FrameFeatures ExtractFeatures(float[] samples, int sampleRate, double startSec, double endSec,
+        FrameBreathDetectorOptions options)
     {
         int n0 = Math.Max(0, (int)Math.Floor(startSec * sampleRate));
         int n1 = Math.Min(samples.Length, (int)Math.Ceiling(endSec * sampleRate));
@@ -256,7 +262,8 @@ public static class FeatureExtraction
         var window = Hann(frame);
         var fft = new Complex[fftSize];
         int nyquistBin = fftSize / 2;
-        int hiSplitBin = (int)Math.Round(Math.Clamp(options.HiSplitHz, 0, sampleRate / 2.0) / (sampleRate / 2.0) * nyquistBin);
+        int hiSplitBin =
+            (int)Math.Round(Math.Clamp(options.HiSplitHz, 0, sampleRate / 2.0) / (sampleRate / 2.0) * nyquistBin);
 
         var power = new double[nyquistBin + 1];
 
@@ -277,6 +284,7 @@ public static class FeatureExtraction
                 {
                     zeroCrossings++;
                 }
+
                 previous = value;
                 fft[j] = new Complex(value, 0);
             }
@@ -311,6 +319,7 @@ public static class FeatureExtraction
                     energyHigh += power[k];
                 }
             }
+
             hfLf[frameIndex] = energyHigh / Math.Max(1e-9, energyLow);
 
             double sumLog = 0.0;
@@ -324,7 +333,8 @@ public static class FeatureExtraction
                 count++;
             }
 
-            flat[frameIndex] = count > 0 ? Math.Clamp(Math.Exp(sumLog / count) / Math.Max(sumLin / count, 1e-12), 0, 1) : 0;
+            flat[frameIndex] =
+                count > 0 ? Math.Clamp(Math.Exp(sumLog / count) / Math.Max(sumLin / count, 1e-12), 0, 1) : 0;
 
             double sx = 0.0, sy = 0.0, sxy = 0.0, sxx = 0.0;
             int samplesUsed = 0;
@@ -340,7 +350,8 @@ public static class FeatureExtraction
                 samplesUsed++;
             }
 
-            slope[frameIndex] = samplesUsed > 1 ? (samplesUsed * sxy - sx * sy) / (samplesUsed * sxx - sx * sx + 1e-12) : 0;
+            slope[frameIndex] =
+                samplesUsed > 1 ? (samplesUsed * sxy - sx * sy) / (samplesUsed * sxx - sx * sx + 1e-12) : 0;
 
             nacf[frameIndex] = NormalizedAutocorrelation(segment, start, frame, sampleRate);
         }
@@ -510,6 +521,7 @@ public static class FeatureExtraction
         {
             mean += source[start + i];
         }
+
         mean /= length;
 
         double best = 0.0;
@@ -559,6 +571,7 @@ public static class FeatureExtraction
                 j ^= bit;
                 bit >>= 1;
             }
+
             j ^= bit;
             if (i < j)
             {

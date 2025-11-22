@@ -122,7 +122,8 @@ public sealed class GenerateTranscriptCommand
         chapter.Documents.Asr = response;
         var corpusText = AsrTranscriptBuilder.BuildCorpusText(response);
         chapter.Documents.AsrTranscriptText = corpusText;
-        Log.Debug("ASR summary: ModelVersion={ModelVersion}, Tokens={TokenCount}", response.ModelVersion, response.Tokens.Length);
+        Log.Debug("ASR summary: ModelVersion={ModelVersion}, Tokens={TokenCount}", response.ModelVersion,
+            response.Tokens.Length);
     }
 
     private static FileInfo ExportBufferToTempFile(AudioBuffer buffer)
@@ -160,7 +161,7 @@ public sealed class GenerateTranscriptCommand
             if (!File.Exists(fullPath))
             {
                 var type = ParseModelAlias(modelOption) ?? ParseModelAlias(Path.GetFileName(fullPath)) ??
-                           GenerateTranscriptOptions.DefaultModelType;
+                    GenerateTranscriptOptions.DefaultModelType;
                 var downloaded = await DownloadModelIfMissingAsync(fullPath, type).ConfigureAwait(false);
                 return (downloaded, type);
             }
@@ -199,7 +200,7 @@ public sealed class GenerateTranscriptCommand
             }
 
             var envType = ParseModelAlias(Path.GetFileName(envPath)) ?? ParseModelAlias(envModel) ??
-                          GenerateTranscriptOptions.DefaultModelType;
+                GenerateTranscriptOptions.DefaultModelType;
             var downloaded = await DownloadModelIfMissingAsync(envPath, envType).ConfigureAwait(false);
             return (downloaded, envType);
         }

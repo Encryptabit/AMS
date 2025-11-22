@@ -37,4 +37,3 @@ public record TimingRange
 
     private static double Round(double value) => Math.Round(value, 6, MidpointRounding.AwayFromZero);
 }
-

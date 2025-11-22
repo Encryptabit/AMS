@@ -20,7 +20,8 @@ public class BookParsingTests
     public async Task Parser_Text_NoNormalization()
     {
         var tmp = Path.GetTempFileName() + ".txt";
-        var content = "Title Line\r\n\r\n“Odin’” can’ end—of—line test.\r\nNext—para with ‘quotes’ and hyphen‑minus - and ellipsis…”";
+        var content =
+            "Title Line\r\n\r\n“Odin’” can’ end—of—line test.\r\nNext—para with ‘quotes’ and hyphen‑minus - and ellipsis…”";
         try
         {
             await File.WriteAllTextAsync(tmp, content);
@@ -30,7 +31,10 @@ public class BookParsingTests
             Assert.NotNull(result.Paragraphs);
             Assert.True(result.Paragraphs!.Count >= 2);
         }
-        finally { if (File.Exists(tmp)) File.Delete(tmp); }
+        finally
+        {
+            if (File.Exists(tmp)) File.Delete(tmp);
+        }
     }
 
     [Fact]
@@ -42,7 +46,10 @@ public class BookParsingTests
             await File.WriteAllTextAsync(tmp, "x");
             await Assert.ThrowsAsync<InvalidOperationException>(() => DocumentProcessor.ParseBookAsync(tmp));
         }
-        finally { if (File.Exists(tmp)) File.Delete(tmp); }
+        finally
+        {
+            if (File.Exists(tmp)) File.Delete(tmp);
+        }
     }
 }
 
@@ -65,7 +72,8 @@ public class BookIndexAcceptanceTests
         {
             await File.WriteAllTextAsync(source, "A title\n\nHello “Odin’” can’ world. Next line.");
             var parsed = await DocumentProcessor.ParseBookAsync(source);
-            var idx1 = await DocumentProcessor.BuildBookIndexAsync(parsed, source, new BookIndexOptions { AverageWpm = 240 });
+            var idx1 = await DocumentProcessor.BuildBookIndexAsync(parsed, source,
+                new BookIndexOptions { AverageWpm = 240 });
             await cache.SetAsync(idx1);
 
             var cached = await cache.GetAsync(source);
@@ -99,7 +107,10 @@ public class BookIndexAcceptanceTests
             Assert.Contains("end—of—line", texts);
             Assert.Contains("test.”", texts);
         }
-        finally { if (File.Exists(source)) File.Delete(source); }
+        finally
+        {
+            if (File.Exists(source)) File.Delete(source);
+        }
     }
 
     [Fact]
@@ -120,7 +131,10 @@ public class BookIndexAcceptanceTests
             Assert.DoesNotContain("endTime", names);
             Assert.DoesNotContain("confidence", names);
         }
-        finally { if (File.Exists(source)) File.Delete(source); }
+        finally
+        {
+            if (File.Exists(source)) File.Delete(source);
+        }
     }
 
     [Fact]
@@ -146,7 +160,10 @@ public class BookIndexAcceptanceTests
             for (int i = 1; i < orderedParas.Length; i++)
                 Assert.Equal(orderedParas[i - 1].End + 1, orderedParas[i].Start);
         }
-        finally { if (File.Exists(source)) File.Delete(source); }
+        finally
+        {
+            if (File.Exists(source)) File.Delete(source);
+        }
     }
 
     [Fact]
@@ -207,10 +224,14 @@ public class BookModelsTests
             };
 
             var index = await DocumentProcessor.BuildBookIndexAsync(parsed, source);
-            var enriched = await DocumentProcessor.PopulateMissingPhonemesAsync(index, new StubPronunciationProvider(pronunciations));
+            var enriched =
+                await DocumentProcessor.PopulateMissingPhonemesAsync(index,
+                    new StubPronunciationProvider(pronunciations));
 
-            Assert.Contains(enriched.Words, w => w.Text == "Hello" && w.Phonemes is { Length: >0 } phon && phon.Contains("HH AH0 L OW1"));
-            Assert.Contains(enriched.Words, w => w.Text == "world." && w.Phonemes is { Length: 1 or >1 } phon && phon.Contains("W ER1 L D"));
+            Assert.Contains(enriched.Words,
+                w => w.Text == "Hello" && w.Phonemes is { Length: > 0 } phon && phon.Contains("HH AH0 L OW1"));
+            Assert.Contains(enriched.Words,
+                w => w.Text == "world." && w.Phonemes is { Length: 1 or > 1 } phon && phon.Contains("W ER1 L D"));
         }
         finally
         {
@@ -247,7 +268,8 @@ public class BookModelsTests
             _map = map;
         }
 
-        public Task<IReadOnlyDictionary<string, string[]>> GetPronunciationsAsync(IEnumerable<string> words, CancellationToken cancellationToken)
+        public Task<IReadOnlyDictionary<string, string[]>> GetPronunciationsAsync(IEnumerable<string> words,
+            CancellationToken cancellationToken)
         {
             return Task.FromResult(_map);
         }

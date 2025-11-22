@@ -2,10 +2,7 @@ namespace Ams.Core.Services.Integrations.FFmpeg;
 
 public sealed record HighPassFilterParams(double Frequency = 70, double Poles = 2);
 
-
 public sealed record ResampleFilterParams(ulong SampleRate = 48000);
-
-
 
 public sealed record LowPassFilterParams(double Frequency = 12000, double Poles = 2);
 
@@ -63,6 +60,7 @@ public sealed record SilenceRemoveFilterParams(
     string StartThreshold = "-50dB",
     int StopPeriods = 0,
     string StopThreshold = "-50dB");
+
 public sealed record AStatsFilterParams(bool EmitMetadata = true, int ResetInterval = 1);
 
 public sealed record EbuR128FilterParams(string FrameLog = "verbose");

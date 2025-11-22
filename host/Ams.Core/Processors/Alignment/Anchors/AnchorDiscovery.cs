@@ -4,9 +4,9 @@ public sealed record Anchor(int Bp, int Ap);
 
 public sealed record AnchorPolicy(
     int NGram = 3,
-    int TargetPerTokens = 50,  // aim ~1 anchor per 50 book tokens
+    int TargetPerTokens = 50, // aim ~1 anchor per 50 book tokens
     bool AllowDuplicates = false,
-    int MinSeparation = 100,   // tokens between duplicate occurrences
+    int MinSeparation = 100, // tokens between duplicate occurrences
     ISet<string>? Stopwords = null,
     bool DisallowBoundaryCross = true
 );
@@ -44,9 +44,9 @@ public static class AnchorDiscovery
         var n = policy.NGram;
 
         var anchors = Collect(bookTokens, bookSentenceIndex, asrTokens, n, stop,
-                              okBook: list => list.Count == 1,
-                              okAsr: list => list.Count == 1,
-                              policy);
+            okBook: list => list.Count == 1,
+            okAsr: list => list.Count == 1,
+            policy);
 
         // Density control
         int desired = Math.Max(1, bookTokens.Count / Math.Max(1, policy.TargetPerTokens));
@@ -56,9 +56,9 @@ public static class AnchorDiscovery
                 => pos.Count <= 2 && (pos.Count == 1 || Math.Abs(pos[1] - pos[0]) >= minSep);
 
             var relaxed = Collect(bookTokens, bookSentenceIndex, asrTokens, n, stop,
-                                  okBook: list => FarApart(list, policy.MinSeparation),
-                                  okAsr: list => FarApart(list, policy.MinSeparation),
-                                  policy);
+                okBook: list => FarApart(list, policy.MinSeparation),
+                okAsr: list => FarApart(list, policy.MinSeparation),
+                policy);
             if (relaxed.Count > anchors.Count) anchors = relaxed;
 
             if (anchors.Count < desired && n > 2)
@@ -76,8 +76,8 @@ public static class AnchorDiscovery
 
     public static List<(int bLo, int bHi, int aLo, int aHi)> BuildWindows(
         IReadOnlyList<Anchor> anchors,
-        int bookStart, int bookEnd,   // inclusive indices
-        int asrStart, int asrEnd)     // inclusive indices
+        int bookStart, int bookEnd, // inclusive indices
+        int asrStart, int asrEnd) // inclusive indices
     {
         var list = anchors.ToList();
         // Add sentinels (never dereference)
@@ -91,14 +91,15 @@ public static class AnchorDiscovery
             var right = list[k + 1];
 
             int bLo = Math.Max(bookStart, left.Bp + 1);
-            int bHi = Math.Min(bookEnd + 1, right.Bp);   // half-open
+            int bHi = Math.Min(bookEnd + 1, right.Bp); // half-open
 
             int aLo = Math.Max(asrStart, left.Ap + 1);
-            int aHi = Math.Min(asrEnd + 1, right.Ap);     // half-open
+            int aHi = Math.Min(asrEnd + 1, right.Ap); // half-open
 
             if (bLo < bHi || aLo < aHi)
                 windows.Add((bLo, bHi, aLo, aHi));
         }
+
         return windows;
     }
 
@@ -116,8 +117,10 @@ public static class AnchorDiscovery
                 list = new List<int>(1);
                 dict[key] = list;
             }
+
             list.Add(i);
         }
+
         return dict;
     }
 
@@ -150,6 +153,7 @@ public static class AnchorDiscovery
 
             anchors.Add(new Anchor(bp, ap));
         }
+
         return anchors;
     }
 
@@ -161,6 +165,7 @@ public static class AnchorDiscovery
             var w = toks[i + k];
             if (!stop.Contains(w)) content++;
         }
+
         if (n >= 3 && content < 2) return false;
 
         var first = toks[i];
@@ -195,6 +200,7 @@ public static class AnchorDiscovery
                 if (pairs[tails[mid]].ap < pairs[i].ap) lo = mid + 1;
                 else hi = mid;
             }
+
             prev[i] = lo > 0 ? tails[lo - 1] : -1;
             tails[lo] = i;
             if (lo == size) size++;
@@ -206,5 +212,3 @@ public static class AnchorDiscovery
         return lis;
     }
 }
-
-

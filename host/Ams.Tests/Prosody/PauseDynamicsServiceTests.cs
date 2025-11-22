@@ -83,7 +83,9 @@ public sealed class PauseDynamicsServiceTests
 
         var transforms = service.PlanTransforms(analysis, policy);
 
-        Assert.Contains(transforms.PauseAdjusts, adjust => Math.Abs(adjust.OriginalDurationSec - spanA.DurationSec) < 1e-6);
-        Assert.DoesNotContain(transforms.PauseAdjusts, adjust => Math.Abs(adjust.OriginalDurationSec - spanB.DurationSec) < 1e-6);
+        Assert.Contains(transforms.PauseAdjusts,
+            adjust => Math.Abs(adjust.OriginalDurationSec - spanA.DurationSec) < 1e-6);
+        Assert.DoesNotContain(transforms.PauseAdjusts,
+            adjust => Math.Abs(adjust.OriginalDurationSec - spanB.DurationSec) < 1e-6);
     }
 }

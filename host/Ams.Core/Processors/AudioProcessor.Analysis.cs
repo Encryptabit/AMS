@@ -93,7 +93,8 @@ public static partial class AudioProcessor
             return CalculateRms(buffer, sIdx, len);
         }
 
-        int ResolveStart(int seedStart, int seedEnd, int localStep, int localSearch, double localEnterLin, double localExitLin)
+        int ResolveStart(int seedStart, int seedEnd, int localStep, int localSearch, double localEnterLin,
+            double localExitLin)
         {
             int maxStart = Math.Max(0, buffer.Length - Math.Max(1, lastEnergyWindowLength));
             int limitRight = Math.Min(maxStart, seedStart + localSearch);
@@ -135,6 +136,7 @@ public static partial class AudioProcessor
         }
 
         int sIdx = start;
+
         double RmsForward(int pos)
         {
             int p = Math.Clamp(pos, 0, Math.Max(0, buffer.Length - 1));

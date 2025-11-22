@@ -29,7 +29,8 @@ public class AsrClient : IDisposable
         return TimeSpan.FromMinutes(15);
     }
 
-    public async Task<AsrResponse> TranscribeAsync(string audioPath, string? model = null, string language = "en", CancellationToken cancellationToken = default)
+    public async Task<AsrResponse> TranscribeAsync(string audioPath, string? model = null, string language = "en",
+        CancellationToken cancellationToken = default)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
 
@@ -48,7 +49,7 @@ public class AsrClient : IDisposable
         try
         {
             var response = await _httpClient.PostAsync($"{_baseUrl}/asr", content, cancellationToken);
-            
+
             if (!response.IsSuccessStatusCode)
             {
                 var error = await response.Content.ReadAsStringAsync(cancellationToken);
@@ -57,10 +58,11 @@ public class AsrClient : IDisposable
 
             var responseJson = await response.Content.ReadAsStringAsync(cancellationToken);
             var result = JsonSerializer.Deserialize<AsrResponse>(responseJson);
-            
+
             return result ?? throw new InvalidOperationException("Failed to deserialize ASR response");
         }
-        catch (TaskCanceledException ex) when (ex.InnerException is TimeoutException || !cancellationToken.IsCancellationRequested)
+        catch (TaskCanceledException ex) when (ex.InnerException is TimeoutException ||
+                                               !cancellationToken.IsCancellationRequested)
         {
             throw new TimeoutException("ASR service request timed out", ex);
         }
@@ -88,6 +90,7 @@ public class AsrClient : IDisposable
             _httpClient.Dispose();
             _disposed = true;
         }
+
         GC.SuppressFinalize(this);
     }
 }

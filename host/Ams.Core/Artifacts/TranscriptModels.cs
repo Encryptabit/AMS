@@ -4,7 +4,13 @@ namespace Ams.Core.Artifacts;
 
 // (1) Enums and POCOs for deterministic transcript indices
 
-public enum AlignOp { Match, Sub, Ins, Del }
+public enum AlignOp
+{
+    Match,
+    Sub,
+    Ins,
+    Del
+}
 
 public sealed record WordAlign(int? BookIdx, int? AsrIdx, AlignOp Op, string Reason, double Score);
 
@@ -12,6 +18,7 @@ public sealed record SentenceMetrics(double Wer, double Cer, double SpanWer, int
 
 // Use explicit range records instead of tuples for stable, readable JSON
 public sealed record IntRange(int Start, int End);
+
 public sealed record ScriptRange(int? Start, int? End);
 
 public sealed record SentenceAlign(
@@ -31,7 +38,12 @@ public sealed record SentenceAlign(
 
 public sealed record ParagraphMetrics(double Wer, double Cer, double Coverage);
 
-public sealed record ParagraphAlign(int Id, IntRange BookRange, IReadOnlyList<int> SentenceIds, ParagraphMetrics Metrics, string Status);
+public sealed record ParagraphAlign(
+    int Id,
+    IntRange BookRange,
+    IReadOnlyList<int> SentenceIds,
+    ParagraphMetrics Metrics,
+    string Status);
 
 public sealed record TranscriptIndex(
     string AudioPath,

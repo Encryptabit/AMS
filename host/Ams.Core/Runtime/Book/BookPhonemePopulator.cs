@@ -34,7 +34,8 @@ public static class BookPhonemePopulator
             }
         }
 
-        Log.Debug("Phoneme population: {MissingCount} tokens missing phonemes; {LexemeCount} unique lexemes queued", index.Words.Count(w => !HasPhonemes(w)), missingLexemes.Count);
+        Log.Debug("Phoneme population: {MissingCount} tokens missing phonemes; {LexemeCount} unique lexemes queued",
+            index.Words.Count(w => !HasPhonemes(w)), missingLexemes.Count);
 
         if (missingLexemes.Count == 0)
         {
@@ -57,7 +58,8 @@ public static class BookPhonemePopulator
             if (!HasPhonemes(word))
             {
                 var lexeme = PronunciationHelper.NormalizeForLookup(word.Text);
-                if (!string.IsNullOrEmpty(lexeme) && pronunciations.TryGetValue(lexeme, out var variants) && variants.Length > 0)
+                if (!string.IsNullOrEmpty(lexeme) && pronunciations.TryGetValue(lexeme, out var variants) &&
+                    variants.Length > 0)
                 {
                     updatedWords[i] = word with { Phonemes = MergeVariants(word.Phonemes, variants) };
                     continue;
@@ -71,7 +73,7 @@ public static class BookPhonemePopulator
     }
 
     private static bool HasPhonemes(BookWord word)
-        => word.Phonemes is { Length: >0 };
+        => word.Phonemes is { Length: > 0 };
 
     private static string[] MergeVariants(string[]? current, string[] incoming)
     {

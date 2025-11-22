@@ -24,8 +24,8 @@ public sealed class BuildTranscriptIndexCommand
         var audioPath = (effective.AudioFile ?? ResolveAudioFile(chapter)).FullName;
 
         var asrFile = effective.AsrFile
-                     ?? chapter.Documents.GetAsrFile()
-                     ?? throw new InvalidOperationException("ASR artifact path could not be resolved.");
+                      ?? chapter.Documents.GetAsrFile()
+                      ?? throw new InvalidOperationException("ASR artifact path could not be resolved.");
 
         var bookIndexFile = effective.BookIndexFile
                             ?? chapter.Book.Documents.GetBookIndexFile()

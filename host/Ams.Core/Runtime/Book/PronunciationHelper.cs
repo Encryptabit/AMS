@@ -52,7 +52,7 @@ public static class PronunciationHelper
             {
                 Flush();
                 int start = i;
-                while (i < token.Length && (char.IsDigit(token[i]) || token[i] == ',' || token[i] == '_' ))
+                while (i < token.Length && (char.IsDigit(token[i]) || token[i] == ',' || token[i] == '_'))
                 {
                     i++;
                 }
@@ -178,6 +178,7 @@ public static class PronunciationHelper
                 {
                     chunkWords += " " + units[unitIndex];
                 }
+
                 parts.Insert(0, chunkWords);
             }
 
@@ -196,7 +197,10 @@ public static class PronunciationHelper
     private static string ChunkToWords(int number)
     {
         var ones = new[] { "", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine" };
-        var teens = new[] { "ten", "eleven", "twelve", "thirteen", "fourteen", "fifteen", "sixteen", "seventeen", "eighteen", "nineteen" };
+        var teens = new[]
+        {
+            "ten", "eleven", "twelve", "thirteen", "fourteen", "fifteen", "sixteen", "seventeen", "eighteen", "nineteen"
+        };
         var tens = new[] { "", "", "twenty", "thirty", "forty", "fifty", "sixty", "seventy", "eighty", "ninety" };
 
         var words = new List<string>();

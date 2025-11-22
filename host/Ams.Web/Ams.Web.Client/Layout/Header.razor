@@ -4,13 +4,19 @@
 <header class="@BitCss.Class.Shadow.S1">
     <div class="container">
         <div class="content">
-            <BitLink Class="logo" Href="/" aria-label="Home page" />
-            <BitLink Class="@($"link {(_currentUrl == "/" ? BitCss.Class.Color.Primary.Main : BitCss.Class.Color.Foreground.Secondary)}")" Href="/">Home</BitLink>
-            <BitLink Class="@($"link {(_currentUrl == "/about" ? BitCss.Class.Color.Primary.Main : BitCss.Class.Color.Foreground.Secondary)}")" Href="/about">About</BitLink>
+            <BitLink Class="logo" Href="/" aria-label="Home page"/>
+            <BitLink
+                Class="@($"link {(_currentUrl == "/" ? BitCss.Class.Color.Primary.Main : BitCss.Class.Color.Foreground.Secondary)}")"
+                Href="/">Home
+            </BitLink>
+            <BitLink
+                Class="@($"link {(_currentUrl == "/about" ? BitCss.Class.Color.Primary.Main : BitCss.Class.Color.Foreground.Secondary)}")"
+                Href="/about">About
+            </BitLink>
         </div>
 
         <div class="right-section">
-            <BitButton OnClick="ToggleTheme" IconName="Clock" />
+            <BitButton OnClick="ToggleTheme" IconName="Clock"/>
         </div>
     </div>
 </header>
@@ -37,4 +43,5 @@
     {
         await _bitThemeManager.ToggleDarkLightAsync();
     }
+
 }

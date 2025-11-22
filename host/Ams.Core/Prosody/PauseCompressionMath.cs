@@ -16,7 +16,8 @@ public static class PauseCompressionMath
         public double Max { get; }
     }
 
-    public static IReadOnlyDictionary<PauseClass, PauseCompressionProfile> BuildProfiles(IEnumerable<PauseSpan> spans, PausePolicy policy)
+    public static IReadOnlyDictionary<PauseClass, PauseCompressionProfile> BuildProfiles(IEnumerable<PauseSpan> spans,
+        PausePolicy policy)
     {
         if (spans is null) throw new ArgumentNullException(nameof(spans));
         if (policy is null) throw new ArgumentNullException(nameof(policy));
@@ -41,7 +42,8 @@ public static class PauseCompressionMath
         return BuildProfiles(durations, policy);
     }
 
-    public static IReadOnlyDictionary<PauseClass, PauseCompressionProfile> BuildProfiles(Dictionary<PauseClass, List<double>> durations, PausePolicy policy)
+    public static IReadOnlyDictionary<PauseClass, PauseCompressionProfile> BuildProfiles(
+        Dictionary<PauseClass, List<double>> durations, PausePolicy policy)
     {
         if (durations is null) throw new ArgumentNullException(nameof(durations));
         if (policy is null) throw new ArgumentNullException(nameof(policy));
@@ -62,7 +64,8 @@ public static class PauseCompressionMath
         return profiles;
     }
 
-    public static bool ShouldPreserve(double duration, PauseClass @class, IReadOnlyDictionary<PauseClass, PauseCompressionProfile> profiles)
+    public static bool ShouldPreserve(double duration, PauseClass @class,
+        IReadOnlyDictionary<PauseClass, PauseCompressionProfile> profiles)
     {
         if (profiles is null) throw new ArgumentNullException(nameof(profiles));
 

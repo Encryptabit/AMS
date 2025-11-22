@@ -19,6 +19,7 @@ public static class MfaProcessSupervisor
 
     private static readonly SemaphoreSlim CommandGate = new(1, 1);
     private static readonly object StartLock = new();
+
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,

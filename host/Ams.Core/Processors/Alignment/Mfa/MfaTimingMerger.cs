@@ -39,7 +39,7 @@ namespace Ams.Core.Processors.Alignment.Mfa
             Action<string>? debugLog = null)
         {
             // 1) Build normalized token streams
-            var tgTokens   = BuildTimedTgTokens(textGridWords);
+            var tgTokens = BuildTimedTgTokens(textGridWords);
             var bookTokens = BuildBookTokens(getBookToken, chapterStartBookIdx, chapterEndBookIdx);
 
             // 2) Global alignment (unk treated as wildcard)
@@ -49,7 +49,7 @@ namespace Ams.Core.Processors.Alignment.Mfa
             var timingMap = BuildBookTimingMap(ar, tgTokens);
 
             // 4) Apply to hydrate words & sentences
-            int wordsUpdated     = ApplyWordTimings(timingMap, wordTargets);
+            int wordsUpdated = ApplyWordTimings(timingMap, wordTargets);
             int sentencesUpdated = ApplySentenceTimings(timingMap, sentenceTargets);
 
             // 5) Log summary
@@ -63,14 +63,14 @@ namespace Ams.Core.Processors.Alignment.Mfa
             return new MergeReport
             {
                 TextGridTokenCount = tgTokens.Count,
-                BookTokenCount     = bookTokens.Count,
-                Pairs              = ar.Pairs.Count,
-                Matches            = ar.Matches,
-                WildMatches        = ar.WildMatches,
-                Insertions         = ar.Insertions,
-                Deletions          = ar.Deletions,
-                WordsUpdated       = wordsUpdated,
-                SentencesUpdated   = sentencesUpdated
+                BookTokenCount = bookTokens.Count,
+                Pairs = ar.Pairs.Count,
+                Matches = ar.Matches,
+                WildMatches = ar.WildMatches,
+                Insertions = ar.Insertions,
+                Deletions = ar.Deletions,
+                WordsUpdated = wordsUpdated,
+                SentencesUpdated = sentencesUpdated
             };
         }
 
@@ -123,6 +123,7 @@ namespace Ams.Core.Processors.Alignment.Mfa
                     list.Add(new BookTok(i, tok));
                     emitted = true;
                 }
+
                 if (!emitted)
                 {
                     // Keep a placeholder so indexing doesn't drift.
@@ -135,10 +136,10 @@ namespace Ams.Core.Processors.Alignment.Mfa
 
         // ---- Global alignment (Needleman–Wunsch) ----------------------------
 
-        private const int MATCH =  2; // exact token match
-        private const int WILD  =  2; // tg == UNK wildcard maps to current book token
-        private const int MISM  = -2; // mismatch
-        private const int GAP   = -1; // insertion / deletion
+        private const int MATCH = 2; // exact token match
+        private const int WILD = 2; // tg == UNK wildcard maps to current book token
+        private const int MISM = -2; // mismatch
+        private const int GAP = -1; // insertion / deletion
 
         private static bool Eq(string a, string b) => a == b;
         private static bool IsWild(string t) => t == UNK;
@@ -150,8 +151,17 @@ namespace Ams.Core.Processors.Alignment.Mfa
             var dp = new int[n + 1, m + 1];
             var bt = new byte[n + 1, m + 1]; // 1=diag, 2=up (book gap), 3=left (tg gap)
 
-            for (int i = 1; i <= n; i++) { dp[i,0] = i * GAP; bt[i,0] = 2; }
-            for (int j = 1; j <= m; j++) { dp[0,j] = j * GAP; bt[0,j] = 3; }
+            for (int i = 1; i <= n; i++)
+            {
+                dp[i, 0] = i * GAP;
+                bt[i, 0] = 2;
+            }
+
+            for (int j = 1; j <= m; j++)
+            {
+                dp[0, j] = j * GAP;
+                bt[0, j] = 3;
+            }
 
             for (int i = 1; i <= n; i++)
             {
@@ -165,9 +175,19 @@ namespace Ams.Core.Processors.Alignment.Mfa
                     int u = dp[i - 1, j] + GAP;
                     int l = dp[i, j - 1] + GAP;
 
-                    int best = d; byte move = 1;
-                    if (u > best) { best = u; move = 2; }
-                    if (l > best) { best = l; move = 3; }
+                    int best = d;
+                    byte move = 1;
+                    if (u > best)
+                    {
+                        best = u;
+                        move = 2;
+                    }
+
+                    if (l > best)
+                    {
+                        best = l;
+                        move = 3;
+                    }
 
                     dp[i, j] = best;
                     bt[i, j] = move;
@@ -200,10 +220,19 @@ namespace Ams.Core.Processors.Alignment.Mfa
                     }
                     // else diag mismatch: skip emitting a pair
 
-                    ii--; jj--;
+                    ii--;
+                    jj--;
                 }
-                else if (move == 2) { deletions++; ii--; }  // gap in tg (drop a book token)
-                else if (move == 3) { insertions++; jj--; } // gap in book (drop a tg token)
+                else if (move == 2)
+                {
+                    deletions++;
+                    ii--;
+                } // gap in tg (drop a book token)
+                else if (move == 3)
+                {
+                    insertions++;
+                    jj--;
+                } // gap in book (drop a tg token)
                 else break;
             }
 
@@ -275,7 +304,7 @@ namespace Ams.Core.Processors.Alignment.Mfa
                 {
                     if (!timingMap.TryGetValue(i, out var t)) continue;
                     start = start is null ? t.start : Math.Min(start.Value, t.start);
-                    end   = end   is null ? t.end   : Math.Max(end.Value, t.end);
+                    end = end is null ? t.end : Math.Max(end.Value, t.end);
                 }
 
                 if (start is not null && end is not null)
@@ -301,8 +330,8 @@ namespace Ams.Core.Processors.Alignment.Mfa
 
             // Unify quotes/dashes
             s = s.Replace('“', '"').Replace('”', '"')
-                 .Replace('‘', '\'').Replace('’', '\'')
-                 .Replace('—', '-').Replace('–', '-');
+                .Replace('‘', '\'').Replace('’', '\'')
+                .Replace('—', '-').Replace('–', '-');
 
             // Lowercase
             s = s.ToLowerInvariant();
@@ -359,10 +388,11 @@ namespace Ams.Core.Processors.Alignment.Mfa
                     {
                         tmp[0] = c;
                         tmp[1] = input[i + 1];
-                        builder.Append(tmp.Slice(0,2));
+                        builder.Append(tmp.Slice(0, 2));
                         i += 2;
                         continue;
                     }
+
                     i++;
                     continue;
                 }
@@ -416,37 +446,42 @@ namespace Ams.Core.Processors.Alignment.Mfa
     /// Sentence adapter: expose its book range [start,end] (inclusive),
     /// and a setter to write timing back on your hydrate sentence.
     /// </summary>
-    public readonly record struct SentenceTarget(int BookStartIdx, int BookEndIdx, Action<double, double, double> SetTiming);
+    public readonly record struct SentenceTarget(
+        int BookStartIdx,
+        int BookEndIdx,
+        Action<double, double, double> SetTiming);
 
     /// <summary> Summary metrics for logging/telemetry. </summary>
     public sealed class MergeReport
     {
         public int TextGridTokenCount { get; init; }
-        public int BookTokenCount     { get; init; }
-        public int Pairs              { get; init; }
-        public int Matches            { get; init; }
-        public int WildMatches        { get; init; }
-        public int Insertions         { get; init; }
-        public int Deletions          { get; init; }
-        public int WordsUpdated       { get; init; }
-        public int SentencesUpdated   { get; init; }
+        public int BookTokenCount { get; init; }
+        public int Pairs { get; init; }
+        public int Matches { get; init; }
+        public int WildMatches { get; init; }
+        public int Insertions { get; init; }
+        public int Deletions { get; init; }
+        public int WordsUpdated { get; init; }
+        public int SentencesUpdated { get; init; }
     }
 
     // -------- Internal DTOs -------------------------------------------------
 
     internal readonly record struct BookTok(int BookIdx, string Tok);
+
     internal readonly record struct TgTok(int TgSeq, string Tok, double Start, double End);
+
     internal readonly record struct Pair(int BookIdx, int TgSeq);
 
     internal sealed class AlignmentResult
     {
         public AlignmentResult(List<Pair> pairs, int matches, int wildMatches, int insertions, int deletions)
         {
-            Pairs       = pairs;
-            Matches     = matches;
+            Pairs = pairs;
+            Matches = matches;
             WildMatches = wildMatches;
-            Insertions  = insertions;
-            Deletions   = deletions;
+            Insertions = insertions;
+            Deletions = deletions;
         }
 
         public List<Pair> Pairs { get; }

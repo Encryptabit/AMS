@@ -47,7 +47,8 @@ public static class LevenshteinMetrics
         return dp[a.Length, b.Length];
     }
 
-    public static int Distance(ReadOnlySpan<string> a, ReadOnlySpan<string> b, StringComparison comparisonType = StringComparison.Ordinal)
+    public static int Distance(ReadOnlySpan<string> a, ReadOnlySpan<string> b,
+        StringComparison comparisonType = StringComparison.Ordinal)
     {
         if (a.IsEmpty)
         {
@@ -85,7 +86,8 @@ public static class LevenshteinMetrics
         return dp[a.Length, b.Length];
     }
 
-    public static double Similarity(ReadOnlySpan<string> a, ReadOnlySpan<string> b, StringComparison comparisonType = StringComparison.Ordinal)
+    public static double Similarity(ReadOnlySpan<string> a, ReadOnlySpan<string> b,
+        StringComparison comparisonType = StringComparison.Ordinal)
     {
         if (a.IsEmpty && b.IsEmpty)
         {

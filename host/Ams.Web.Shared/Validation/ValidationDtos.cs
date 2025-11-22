@@ -74,7 +74,12 @@ public sealed record DiffDto(IReadOnlyList<DiffOpDto> Ops, DiffStatsDto Stats);
 
 public sealed record DiffOpDto(string Op, IReadOnlyList<string> Tokens);
 
-public sealed record DiffStatsDto(int ReferenceTokens, int HypothesisTokens, int Matches, int Insertions, int Deletions);
+public sealed record DiffStatsDto(
+    int ReferenceTokens,
+    int HypothesisTokens,
+    int Matches,
+    int Insertions,
+    int Deletions);
 
 public sealed record ReviewedStatusDto(bool Reviewed, string? TimestampUtc);
 

@@ -33,22 +33,22 @@ public interface IArtifactResolver
     void SavePausePolicy(ChapterContext context, PausePolicy policy);
 
     PauseAdjustmentsDocument? LoadPauseAdjustments(ChapterContext context);
-	    void SavePauseAdjustments(ChapterContext context, PauseAdjustmentsDocument document);
-	
-	    TextGridDocument? LoadTextGrid(ChapterContext context);
-	    void SaveTextGrid(ChapterContext context, TextGridDocument document);
+    void SavePauseAdjustments(ChapterContext context, PauseAdjustmentsDocument document);
 
-	    FileInfo GetBookIndexFile(BookContext context);
+    TextGridDocument? LoadTextGrid(ChapterContext context);
+    void SaveTextGrid(ChapterContext context, TextGridDocument document);
 
-	    FileInfo GetTranscriptFile(ChapterContext context);
-	    FileInfo GetHydratedTranscriptFile(ChapterContext context);
-	    FileInfo GetAnchorsFile(ChapterContext context);
-	    FileInfo GetAsrFile(ChapterContext context);
-	    FileInfo GetAsrTranscriptTextFile(ChapterContext context);
-	    FileInfo GetPausePolicyFile(ChapterContext context);
-	    FileInfo GetPauseAdjustmentsFile(ChapterContext context);
-	    FileInfo GetTextGridFile(ChapterContext context);
+    FileInfo GetBookIndexFile(BookContext context);
 
-	    FileInfo GetChapterArtifactFile(ChapterContext context, string suffix);
-	    FileInfo GetBookArtifactFile(BookContext context, string fileName);
-	}
+    FileInfo GetTranscriptFile(ChapterContext context);
+    FileInfo GetHydratedTranscriptFile(ChapterContext context);
+    FileInfo GetAnchorsFile(ChapterContext context);
+    FileInfo GetAsrFile(ChapterContext context);
+    FileInfo GetAsrTranscriptTextFile(ChapterContext context);
+    FileInfo GetPausePolicyFile(ChapterContext context);
+    FileInfo GetPauseAdjustmentsFile(ChapterContext context);
+    FileInfo GetTextGridFile(ChapterContext context);
+
+    FileInfo GetChapterArtifactFile(ChapterContext context, string suffix);
+    FileInfo GetBookArtifactFile(BookContext context, string fileName);
+}

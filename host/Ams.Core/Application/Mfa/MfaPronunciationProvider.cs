@@ -18,7 +18,8 @@ public sealed class MfaPronunciationProvider : IPronunciationProvider
         _g2pModel = g2pModel ?? MfaService.DefaultG2pModel;
     }
 
-    public async Task<IReadOnlyDictionary<string, string[]>> GetPronunciationsAsync(IEnumerable<string> words, CancellationToken cancellationToken)
+    public async Task<IReadOnlyDictionary<string, string[]>> GetPronunciationsAsync(IEnumerable<string> words,
+        CancellationToken cancellationToken)
     {
         var normalized = words
             .Select(PronunciationHelper.NormalizeForLookup)
@@ -61,7 +62,8 @@ public sealed class MfaPronunciationProvider : IPronunciationProvider
 
             if (atomicWords.Count == 0)
             {
-                return normalized.ToDictionary(lex => lex, lex => Array.Empty<string>(), StringComparer.OrdinalIgnoreCase);
+                return normalized.ToDictionary(lex => lex, lex => Array.Empty<string>(),
+                    StringComparer.OrdinalIgnoreCase);
             }
 
             await File.WriteAllLinesAsync(oovPath, atomicWords.Select(w => w), cancellationToken).ConfigureAwait(false);
@@ -76,7 +78,8 @@ public sealed class MfaPronunciationProvider : IPronunciationProvider
                 G2pOutputPath = outputPath
             };
 
-            var result = await _mfaService.GeneratePronunciationsAsync(context, cancellationToken).ConfigureAwait(false);
+            var result = await _mfaService.GeneratePronunciationsAsync(context, cancellationToken)
+                .ConfigureAwait(false);
             if (result.ExitCode != 0)
             {
                 Log.Debug("MFA g2p exited with code {ExitCode}; falling back to text-only index", result.ExitCode);
@@ -136,14 +139,16 @@ public sealed class MfaPronunciationProvider : IPronunciationProvider
             if (wordPronunciations.Count == 0)
             {
                 var preview = await File.ReadAllTextAsync(outputPath, cancellationToken).ConfigureAwait(false);
-                Log.Debug("MFA g2p output appeared empty; first 200 characters: {Preview}", preview.Length > 200 ? preview[..200] : preview);
+                Log.Debug("MFA g2p output appeared empty; first 200 characters: {Preview}",
+                    preview.Length > 200 ? preview[..200] : preview);
             }
 
             return ComposeLexemePronunciations(lexemeComponents, wordPronunciations);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            Log.Debug("Failed to generate pronunciations via MFA; falling back to text-only index ({Message})", ex.Message);
+            Log.Debug("Failed to generate pronunciations via MFA; falling back to text-only index ({Message})",
+                ex.Message);
             return new Dictionary<string, string[]>(StringComparer.OrdinalIgnoreCase);
         }
         finally
@@ -238,6 +243,7 @@ public sealed class MfaPronunciationProvider : IPronunciationProvider
                     builder.Append(prefix.TrimEnd());
                     builder.Append(' ');
                 }
+
                 builder.Append(variant.Trim());
                 expanded.Add(builder.ToString());
 

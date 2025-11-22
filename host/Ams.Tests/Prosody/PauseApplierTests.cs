@@ -60,7 +60,7 @@ public sealed class PauseApplierTests
     //         new SentenceAlign(
     //             Id: 2,
     //             BookRange: new IntRange(0, 0),
-            //             ScriptRange: null,
+    //             ScriptRange: null,
     //             Timing: new TimingRange(0.4, 0.9),
     //             Metrics: new SentenceMetrics(0, 0, 0, 0, 0),
     //             Status: "ok")

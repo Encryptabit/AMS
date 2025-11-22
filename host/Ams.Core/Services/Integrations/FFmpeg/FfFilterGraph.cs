@@ -95,10 +95,12 @@ public sealed class FfFilterGraph
         {
             args.Add(("channel_layouts", channelLayouts));
         }
+
         if (sampleRate.HasValue)
         {
             args.Add(("sample_rates", FormatDouble(sampleRate.Value)));
         }
+
         return AddFilter("aformat", args, markFormatPinned: true);
     }
 
@@ -133,7 +135,8 @@ public sealed class FfFilterGraph
     /// <summary>
     /// Simple de-esser (libavfilter <c>deesser</c>).
     /// </summary>
-    public FfFilterGraph DeEsser(double normalizedFrequency = 0.5, double intensity = 0, double maxReduction = 0.5, string outputMode = "o") =>
+    public FfFilterGraph DeEsser(double normalizedFrequency = 0.5, double intensity = 0, double maxReduction = 0.5,
+        string outputMode = "o") =>
         DeEsser(new DeEsserFilterParams(normalizedFrequency, intensity, maxReduction, outputMode));
 
     public FfFilterGraph DeEsser(DeEsserFilterParams? parameters)
@@ -178,7 +181,8 @@ public sealed class FfFilterGraph
     /// <summary>
     /// Gentle compressor (libavfilter <c>acompressor</c>).
     /// </summary>
-    public FfFilterGraph ACompressor(double thresholdDb = -18, double ratio = 2.0, double attackMs = 10, double releaseMs = 100, double makeupDb = 2.0) =>
+    public FfFilterGraph ACompressor(double thresholdDb = -18, double ratio = 2.0, double attackMs = 10,
+        double releaseMs = 100, double makeupDb = 2.0) =>
         ACompressor(new ACompressorFilterParams(thresholdDb, ratio, attackMs, releaseMs, makeupDb));
 
     public FfFilterGraph ACompressor(ACompressorFilterParams? parameters)
@@ -210,7 +214,8 @@ public sealed class FfFilterGraph
     /// <summary>
     /// Loudness normalization (libavfilter <c>loudnorm</c>).
     /// </summary>
-    public FfFilterGraph LoudNorm(double targetI = -18, double targetLra = 7, double targetTp = -2, bool dualMono = true) =>
+    public FfFilterGraph LoudNorm(double targetI = -18, double targetLra = 7, double targetTp = -2,
+        bool dualMono = true) =>
         LoudNorm(new LoudNormFilterParams(targetI, targetLra, targetTp, dualMono));
 
     public FfFilterGraph LoudNorm(LoudNormFilterParams? parameters)
@@ -266,7 +271,8 @@ public sealed class FfFilterGraph
     /// <summary>
     /// Silence trimming (libavfilter <c>silenceremove</c>).
     /// </summary>
-    public FfFilterGraph SilenceRemove(string args = "start_periods=0:start_threshold=-50dB:stop_periods=0:stop_threshold=-50dB") =>
+    public FfFilterGraph SilenceRemove(
+        string args = "start_periods=0:start_threshold=-50dB:stop_periods=0:stop_threshold=-50dB") =>
         AddRawFilter("silenceremove", args);
 
     public FfFilterGraph SilenceRemove(SilenceRemoveFilterParams parameters)
@@ -444,7 +450,8 @@ public sealed class FfFilterGraph
         AddFilter(name, kv.AsEnumerable(),
             markFormatPinned: string.Equals(name, "aformat", StringComparison.OrdinalIgnoreCase));
 
-    private FfFilterGraph AddFilter(string name, IEnumerable<(string Key, string? Value)> kvPairs, bool markFormatPinned = false)
+    private FfFilterGraph AddFilter(string name, IEnumerable<(string Key, string? Value)> kvPairs,
+        bool markFormatPinned = false)
     {
         if (_customGraphOverride)
         {

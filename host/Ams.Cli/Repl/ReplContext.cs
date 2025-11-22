@@ -166,7 +166,8 @@ internal sealed class ReplState
             RunAllChapters = true;
             SelectedChapterIndex = null;
         }
-        else if (!string.IsNullOrWhiteSpace(previousName) && SelectChapterByNameInternal(previousName, updateLastSelected: false))
+        else if (!string.IsNullOrWhiteSpace(previousName) &&
+                 SelectChapterByNameInternal(previousName, updateLastSelected: false))
         {
             // selection restored
         }
@@ -196,6 +197,7 @@ internal sealed class ReplState
             var marker = SelectedChapterIndex == i && !RunAllChapters ? "*" : " ";
             Console.WriteLine($"{marker}[{i}] {Chapters[i].Name}");
         }
+
         if (RunAllChapters)
         {
             Console.WriteLine("Mode: ALL chapters");
@@ -214,6 +216,7 @@ internal sealed class ReplState
         {
             Console.WriteLine("Mode              : NONE (no WAV files detected)");
         }
+
         Console.WriteLine($"ASR Service      : {AsrProcessSupervisor.StatusDescription}");
         if (!string.IsNullOrWhiteSpace(AsrProcessSupervisor.BaseUrl))
         {
@@ -297,7 +300,8 @@ internal sealed class ReplState
                 return new FileInfo(chapterCandidate);
             }
 
-            throw new FileNotFoundException($"Derived chapter file not found. Checked: {rootCandidate} and {chapterCandidate}");
+            throw new FileNotFoundException(
+                $"Derived chapter file not found. Checked: {rootCandidate} and {chapterCandidate}");
         }
 
         if (Directory.Exists(chapterDir))
@@ -313,7 +317,8 @@ internal sealed class ReplState
         var fallback = Path.Combine(WorkingDirectory, "book-index.json");
         if (mustExist && !File.Exists(fallback))
         {
-            throw new FileNotFoundException("Book index not found in working directory. Provide --book-index.", fallback);
+            throw new FileNotFoundException("Book index not found in working directory. Provide --book-index.",
+                fallback);
         }
 
         return new FileInfo(fallback);

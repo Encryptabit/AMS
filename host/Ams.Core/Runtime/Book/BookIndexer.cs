@@ -12,7 +12,10 @@ public partial class BookIndexer : IBookIndexer
 {
     private static readonly Regex _blankLineSplit = new("(\r?\n){2,}", RegexOptions.Compiled);
     private static readonly Regex ForcedHyphenBreakRegex = new(@"(?<=\p{L})-\r?\n\s*(?=\p{L})", RegexOptions.Compiled);
-    private static readonly Regex OcrChapterHeaderRegex = new(@"^C(?:H|A|P|T|E|R|\d)*\s*(\d+)$", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
+    private static readonly Regex OcrChapterHeaderRegex =
+        new(@"^C(?:H|A|P|T|E|R|\d)*\s*(\d+)$", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
     private readonly IPronunciationProvider _pronunciationProvider;
 
     public BookIndexer(IPronunciationProvider? pronunciationProvider = null)
@@ -40,7 +43,8 @@ public partial class BookIndexer : IBookIndexer
 
         try
         {
-            pronunciations = await _pronunciationProvider.GetPronunciationsAsync(lexicalTokens, cancellationToken).ConfigureAwait(false);
+            pronunciations = await _pronunciationProvider.GetPronunciationsAsync(lexicalTokens, cancellationToken)
+                .ConfigureAwait(false);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -49,7 +53,9 @@ public partial class BookIndexer : IBookIndexer
 
         try
         {
-            return await Task.Run(() => Process(parseResult, sourceFile, options, paragraphTexts, pronunciations, cancellationToken), cancellationToken);
+            return await Task.Run(
+                () => Process(parseResult, sourceFile, options, paragraphTexts, pronunciations, cancellationToken),
+                cancellationToken);
         }
         catch (Exception ex) when (!(ex is OperationCanceledException || ex is ArgumentException))
         {
@@ -97,10 +103,12 @@ public partial class BookIndexer : IBookIndexer
                 {
                     sectionLevel = 1;
                 }
+
                 if (sectionLevel <= 0 && LooksLikeSectionHeading(trimmedParagraph))
                 {
                     sectionLevel = 1;
                 }
+
                 if (sectionLevel <= 0)
                 {
                     sectionLevel = 1;
@@ -147,7 +155,8 @@ public partial class BookIndexer : IBookIndexer
 
                 string? lexeme = PronunciationHelper.NormalizeForLookup(normalizedToken);
                 string[]? phonemes = null;
-                if (!string.IsNullOrEmpty(lexeme) && pronunciations.TryGetValue(lexeme, out var mapped) && mapped.Length > 0)
+                if (!string.IsNullOrEmpty(lexeme) && pronunciations.TryGetValue(lexeme, out var mapped) &&
+                    mapped.Length > 0)
                 {
                     phonemes = mapped.ToArray();
                 }
@@ -165,7 +174,8 @@ public partial class BookIndexer : IBookIndexer
 
                 if (IsSentenceTerminal(normalizedToken))
                 {
-                    sentences.Add(new SentenceRange(Index: sentenceIndex, Start: sentenceStartWord, End: globalWord - 1));
+                    sentences.Add(
+                        new SentenceRange(Index: sentenceIndex, Start: sentenceStartWord, End: globalWord - 1));
                     sentenceIndex++;
                     sentenceStartWord = globalWord;
                 }
@@ -173,7 +183,8 @@ public partial class BookIndexer : IBookIndexer
 
             if (!paragraphHasLexical)
             {
-                paragraphs.Add(new ParagraphRange(Index: pIndex, Start: paragraphStartWord, End: paragraphStartWord - 1, Kind: "Pause", Style: style));
+                paragraphs.Add(new ParagraphRange(Index: pIndex, Start: paragraphStartWord, End: paragraphStartWord - 1,
+                    Kind: "Pause", Style: style));
                 continue;
             }
 
@@ -184,7 +195,8 @@ public partial class BookIndexer : IBookIndexer
                 sentenceIndex++;
             }
 
-            paragraphs.Add(new ParagraphRange(Index: pIndex, Start: paragraphStartWord, End: globalWord - 1, Kind: kind, Style: style));
+            paragraphs.Add(new ParagraphRange(Index: pIndex, Start: paragraphStartWord, End: globalWord - 1, Kind: kind,
+                Style: style));
         }
 
         var totals = new BookTotals(
@@ -248,6 +260,7 @@ public partial class BookIndexer : IBookIndexer
                 break;
             }
         }
+
         return 1; // treat generic Heading as level 1 if unspecified
     }
 
@@ -307,17 +320,17 @@ public partial class BookIndexer : IBookIndexer
             return false;
 
         return style.Contains("heading", StringComparison.OrdinalIgnoreCase)
-            || style.Contains("title", StringComparison.OrdinalIgnoreCase)
-            || style.Contains("chapter", StringComparison.OrdinalIgnoreCase)
-            || style.Contains("section", StringComparison.OrdinalIgnoreCase)
-            || style.Contains("part", StringComparison.OrdinalIgnoreCase)
-            || style.Contains("book", StringComparison.OrdinalIgnoreCase)
-            || style.Contains("prologue", StringComparison.OrdinalIgnoreCase)
-            || style.Contains("epilogue", StringComparison.OrdinalIgnoreCase)
-            || style.Contains("foreword", StringComparison.OrdinalIgnoreCase)
-            || style.Contains("afterword", StringComparison.OrdinalIgnoreCase)
-            || style.Contains("preface", StringComparison.OrdinalIgnoreCase)
-            || style.Contains("acknowledg", StringComparison.OrdinalIgnoreCase);
+               || style.Contains("title", StringComparison.OrdinalIgnoreCase)
+               || style.Contains("chapter", StringComparison.OrdinalIgnoreCase)
+               || style.Contains("section", StringComparison.OrdinalIgnoreCase)
+               || style.Contains("part", StringComparison.OrdinalIgnoreCase)
+               || style.Contains("book", StringComparison.OrdinalIgnoreCase)
+               || style.Contains("prologue", StringComparison.OrdinalIgnoreCase)
+               || style.Contains("epilogue", StringComparison.OrdinalIgnoreCase)
+               || style.Contains("foreword", StringComparison.OrdinalIgnoreCase)
+               || style.Contains("afterword", StringComparison.OrdinalIgnoreCase)
+               || style.Contains("preface", StringComparison.OrdinalIgnoreCase)
+               || style.Contains("acknowledg", StringComparison.OrdinalIgnoreCase);
     }
 
     private static bool IsNonSectionParagraphStyle(string? style)
@@ -326,14 +339,14 @@ public partial class BookIndexer : IBookIndexer
             return false;
 
         return style.Contains("toc", StringComparison.OrdinalIgnoreCase)
-            || style.Contains("tableofcontents", StringComparison.OrdinalIgnoreCase)
-            || style.Contains("table of contents", StringComparison.OrdinalIgnoreCase)
-            || style.Contains("caption", StringComparison.OrdinalIgnoreCase)
-            || style.Contains("footer", StringComparison.OrdinalIgnoreCase)
-            || style.Contains("header", StringComparison.OrdinalIgnoreCase)
-            || style.Contains("page number", StringComparison.OrdinalIgnoreCase)
-            || style.Contains("pagenumber", StringComparison.OrdinalIgnoreCase)
-            || style.Contains("index", StringComparison.OrdinalIgnoreCase);
+               || style.Contains("tableofcontents", StringComparison.OrdinalIgnoreCase)
+               || style.Contains("table of contents", StringComparison.OrdinalIgnoreCase)
+               || style.Contains("caption", StringComparison.OrdinalIgnoreCase)
+               || style.Contains("footer", StringComparison.OrdinalIgnoreCase)
+               || style.Contains("header", StringComparison.OrdinalIgnoreCase)
+               || style.Contains("page number", StringComparison.OrdinalIgnoreCase)
+               || style.Contains("pagenumber", StringComparison.OrdinalIgnoreCase)
+               || style.Contains("index", StringComparison.OrdinalIgnoreCase);
     }
 
     private static bool LooksLikeStandaloneTitle(string text)
@@ -429,7 +442,8 @@ public partial class BookIndexer : IBookIndexer
         if (sections == null || sections.Count == 0)
             return;
 
-        var candidates = new List<(int Index, SectionRange Section, string Prefix, string Ws, string Number, string BaseKey)>();
+        var candidates =
+            new List<(int Index, SectionRange Section, string Prefix, string Ws, string Number, string BaseKey)>();
 
         for (int i = 0; i < sections.Count; i++)
         {
@@ -583,7 +597,8 @@ public partial class BookIndexer : IBookIndexer
         if (parseResult.Paragraphs != null && parseResult.Paragraphs.Count > 0)
         {
             return parseResult.Paragraphs
-                .Select(p => (Text: NormalizeParagraphText(p.Text), Style: p.Style ?? "Unknown", Kind: p.Kind ?? "Body"))
+                .Select(p => (Text: NormalizeParagraphText(p.Text), Style: p.Style ?? "Unknown",
+                    Kind: p.Kind ?? "Body"))
                 .ToList();
         }
 
@@ -603,7 +618,8 @@ public partial class BookIndexer : IBookIndexer
         return ForcedHyphenBreakRegex.Replace(text, string.Empty);
     }
 
-    private static List<(string Text, string Style, string Kind)> FoldAdjacentHeadings(List<(string Text, string Style, string Kind)> paragraphs)
+    private static List<(string Text, string Style, string Kind)> FoldAdjacentHeadings(
+        List<(string Text, string Style, string Kind)> paragraphs)
     {
         if (paragraphs.Count == 0)
         {
@@ -616,7 +632,8 @@ public partial class BookIndexer : IBookIndexer
         {
             var current = paragraphs[index];
             var trimmed = current.Text?.Trim() ?? string.Empty;
-            bool isHeading = ContainsLexicalContent(trimmed) && ShouldStartSection(trimmed, current.Style, current.Kind);
+            bool isHeading = ContainsLexicalContent(trimmed) &&
+                             ShouldStartSection(trimmed, current.Style, current.Kind);
             if (!isHeading)
             {
                 folded.Add(current);
@@ -632,7 +649,8 @@ public partial class BookIndexer : IBookIndexer
                 var next = paragraphs[nextIndex];
                 var nextTrimmed = next.Text?.Trim() ?? string.Empty;
 
-                bool nextIsHeading = ContainsLexicalContent(nextTrimmed) && ShouldStartSection(nextTrimmed, next.Style, next.Kind);
+                bool nextIsHeading = ContainsLexicalContent(nextTrimmed) &&
+                                     ShouldStartSection(nextTrimmed, next.Style, next.Kind);
 
                 if (!nextIsHeading)
                 {
@@ -733,10 +751,15 @@ public partial class BookIndexer : IBookIndexer
         }
     }
 
-    [GeneratedRegex(@"^\s*(chapter\b|prologue\b|epilogue\b|prelude\b|foreword\b|introduction\b|afterword\b|appendix\b)", RegexOptions.IgnoreCase | RegexOptions.Compiled, "en-US")]
+    [GeneratedRegex(@"^\s*(chapter\b|prologue\b|epilogue\b|prelude\b|foreword\b|introduction\b|afterword\b|appendix\b)",
+        RegexOptions.IgnoreCase | RegexOptions.Compiled, "en-US")]
     private static partial Regex MyRegex();
-    [GeneratedRegex(@"^(?<prefix>\s*chapter)(?<ws>\s+)(?<number>\d+)(?<suffix>\s*[A-Za-z]*)?$", RegexOptions.IgnoreCase | RegexOptions.Compiled, "en-US")]
+
+    [GeneratedRegex(@"^(?<prefix>\s*chapter)(?<ws>\s+)(?<number>\d+)(?<suffix>\s*[A-Za-z]*)?$",
+        RegexOptions.IgnoreCase | RegexOptions.Compiled, "en-US")]
     private static partial Regex MyRegex1();
-    [GeneratedRegex(@"^\s*((\d+|[ivxlcdm]+)\s*[-–.:]\s*[a-zA-Z])", RegexOptions.IgnoreCase | RegexOptions.Compiled, "en-US")]
+
+    [GeneratedRegex(@"^\s*((\d+|[ivxlcdm]+)\s*[-–.:]\s*[a-zA-Z])", RegexOptions.IgnoreCase | RegexOptions.Compiled,
+        "en-US")]
     private static partial Regex MyRegex2();
 }

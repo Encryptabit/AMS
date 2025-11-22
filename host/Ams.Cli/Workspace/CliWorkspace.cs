@@ -41,7 +41,8 @@ internal sealed class CliWorkspace : IWorkspace
 
         var normalized = NormalizeOptions(options);
         var bookIndexFile = normalized.BookIndexFile
-            ?? throw new InvalidOperationException("Book index file could not be resolved for this workspace.");
+                            ?? throw new InvalidOperationException(
+                                "Book index file could not be resolved for this workspace.");
 
         return Book.Chapters.CreateContext(
             bookIndexFile,

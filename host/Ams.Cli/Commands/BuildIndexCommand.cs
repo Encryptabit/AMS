@@ -11,35 +11,41 @@ public static class BuildIndexCommand
     public static Command Create()
     {
         var buildIndexCommand = new Command("build-index", "Build book index from document files");
-        
+
         var bookFileOption = new Option<FileInfo?>("--book", "Path to the book file (DOCX, TXT, MD, RTF)");
         bookFileOption.AddAlias("-b");
 
         var outputOption = new Option<FileInfo?>("--out", "Output book index JSON file");
         outputOption.AddAlias("-o");
-        
-        var forceCacheRefreshOption = new Option<bool>("--force-refresh", () => false, "Force cache refresh even if cached version exists");
+
+        var forceCacheRefreshOption = new Option<bool>("--force-refresh", () => false,
+            "Force cache refresh even if cached version exists");
         forceCacheRefreshOption.AddAlias("-f");
-        
-        var averageWpmOption = new Option<double>("--avg-wpm", () => 200.0, "Average words per minute for duration estimation");
-        var noCacheOption = new Option<bool>("--no-cache", () => false, "Disable caching (don't read from or write to cache)");
-        
+
+        var averageWpmOption =
+            new Option<double>("--avg-wpm", () => 200.0, "Average words per minute for duration estimation");
+        var noCacheOption = new Option<bool>("--no-cache", () => false,
+            "Disable caching (don't read from or write to cache)");
+
         buildIndexCommand.AddOption(bookFileOption);
         buildIndexCommand.AddOption(outputOption);
         buildIndexCommand.AddOption(forceCacheRefreshOption);
         buildIndexCommand.AddOption(averageWpmOption);
         buildIndexCommand.AddOption(noCacheOption);
-        
+
         buildIndexCommand.SetHandler(async context =>
         {
             try
             {
-                var bookFile = CommandInputResolver.ResolveBookSource(context.ParseResult.GetValueForOption(bookFileOption));
-                var outputFile = CommandInputResolver.ResolveBookIndex(context.ParseResult.GetValueForOption(outputOption), mustExist: false);
+                var bookFile =
+                    CommandInputResolver.ResolveBookSource(context.ParseResult.GetValueForOption(bookFileOption));
+                var outputFile =
+                    CommandInputResolver.ResolveBookIndex(context.ParseResult.GetValueForOption(outputOption),
+                        mustExist: false);
                 var forceRefresh = context.ParseResult.GetValueForOption(forceCacheRefreshOption);
                 var averageWpm = context.ParseResult.GetValueForOption(averageWpmOption);
                 var noCache = context.ParseResult.GetValueForOption(noCacheOption);
-                
+
                 await BuildBookIndexAsync(
                     bookFile,
                     outputFile,
@@ -56,10 +62,10 @@ public static class BuildIndexCommand
                 Environment.Exit(1);
             }
         });
-        
+
         return buildIndexCommand;
     }
-    
+
     internal static async Task BuildBookIndexAsync(
         FileInfo bookFile,
         FileInfo outputFile,
@@ -133,7 +139,7 @@ public static class BuildIndexCommand
 
         Log.Debug("Book index saved to {OutputFile}", outputFile.FullName);
     }
-    
+
     private static async Task<BookIndex> ProcessBookFromScratch(
         IBookCache? cache,
         string bookFilePath,
@@ -145,7 +151,8 @@ public static class BuildIndexCommand
         Log.Debug("Parsed {CharacterCount:n0} characters from {BookFile}", parseResult.Text.Length, bookFilePath);
 
         Log.Debug("Building index for {BookFile}", bookFilePath);
-        var bookIndex = await DocumentProcessor.BuildBookIndexAsync(parseResult, bookFilePath, options, cancellationToken: cancellationToken);
+        var bookIndex = await DocumentProcessor.BuildBookIndexAsync(parseResult, bookFilePath, options,
+            cancellationToken: cancellationToken);
         Log.Debug("Index build complete for {BookFile}", bookFilePath);
 
         if (cache != null)
@@ -157,11 +164,11 @@ public static class BuildIndexCommand
 
         return bookIndex;
     }
-    
+
     private static string FormatDuration(double totalSeconds)
     {
         var timeSpan = TimeSpan.FromSeconds(totalSeconds);
-        
+
         if (timeSpan.TotalHours >= 1)
             return $"{(int)timeSpan.TotalHours}h {timeSpan.Minutes}m {timeSpan.Seconds}s";
         else if (timeSpan.TotalMinutes >= 1)

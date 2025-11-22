@@ -111,7 +111,7 @@ public static class AsrProcessSupervisor
                 }
                 catch (Exception ex)
                 {
-                    Log.Debug("Background ASR warmup failed: {0}",ex);
+                    Log.Debug("Background ASR warmup failed: {0}", ex);
                 }
             });
         }
@@ -141,13 +141,15 @@ public static class AsrProcessSupervisor
             if (!IsLocalBaseUrl(baseUrl))
             {
                 _state = SupervisorState.Faulted;
-                throw new InvalidOperationException($"ASR endpoint {baseUrl} is unreachable and not local; cannot auto-start");
+                throw new InvalidOperationException(
+                    $"ASR endpoint {baseUrl} is unreachable and not local; cannot auto-start");
             }
 
             if (IsAutoStartDisabled())
             {
                 _state = SupervisorState.Faulted;
-                throw new InvalidOperationException("ASR service not running and auto-start disabled (set AMS_ASR_DISABLE_AUTOSTART=0 to enable)");
+                throw new InvalidOperationException(
+                    "ASR service not running and auto-start disabled (set AMS_ASR_DISABLE_AUTOSTART=0 to enable)");
             }
 
             if (_process is { HasExited: false })
@@ -265,7 +267,8 @@ public static class AsrProcessSupervisor
         if (startInfo is null)
         {
             _state = SupervisorState.Faulted;
-            throw new InvalidOperationException("Unable to locate asr-nemo startup script. Set AMS_ASR_START_SCRIPT to override.");
+            throw new InvalidOperationException(
+                "Unable to locate asr-nemo startup script. Set AMS_ASR_START_SCRIPT to override.");
         }
 
         Log.Debug("Starting asr-nemo via {File} {Args}", startInfo.FileName, startInfo.Arguments);
@@ -531,7 +534,8 @@ public static class AsrProcessSupervisor
 
         for (int i = 0; i < 8 && current is not null; i++)
         {
-            if (Directory.Exists(Path.Combine(current, "services")) && File.Exists(Path.Combine(current, "ProjectState.md")))
+            if (Directory.Exists(Path.Combine(current, "services")) &&
+                File.Exists(Path.Combine(current, "ProjectState.md")))
             {
                 _repoRoot = current;
                 return _repoRoot;

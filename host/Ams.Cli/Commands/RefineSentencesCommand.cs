@@ -9,7 +9,8 @@ public static class RefineSentencesCommand
 {
     public static Command Create()
     {
-        var cmd = new Command("refine-sentences", "Refine sentence start/end times: start from Aeneas, end from FFmpeg silence");
+        var cmd = new Command("refine-sentences",
+            "Refine sentence start/end times: start from Aeneas, end from FFmpeg silence");
 
         var txOption = new Option<FileInfo?>("--tx-json", description: "TranscriptIndex JSON");
         txOption.AddAlias("-t");
@@ -20,9 +21,12 @@ public static class RefineSentencesCommand
         var outOption = new Option<FileInfo?>("--out", description: "Output refined sentence JSON");
         outOption.AddAlias("-o");
         var langOption = new Option<string>("--language", () => "eng", "Aeneas language code");
-        var useSilenceOption = new Option<bool>("--with-silence", () => true, "Use FFmpeg silencedetect to refine sentence ends");
-        var silenceThreshOption = new Option<double>("--silence-threshold-db", () => -30.0, "Silence threshold in dBFS (e.g., -30)");
-        var silenceMinDurOption = new Option<double>("--silence-min-dur", () => 0.1, "Minimum silence duration in seconds");
+        var useSilenceOption = new Option<bool>("--with-silence", () => true,
+            "Use FFmpeg silencedetect to refine sentence ends");
+        var silenceThreshOption =
+            new Option<double>("--silence-threshold-db", () => -30.0, "Silence threshold in dBFS (e.g., -30)");
+        var silenceMinDurOption =
+            new Option<double>("--silence-min-dur", () => 0.1, "Minimum silence duration in seconds");
 
         cmd.AddOption(txOption);
         cmd.AddOption(asrOption);
@@ -35,10 +39,15 @@ public static class RefineSentencesCommand
 
         cmd.SetHandler(async (context) =>
         {
-            var txFile = CommandInputResolver.ResolveChapterArtifact(context.ParseResult.GetValueForOption(txOption), "align.tx.json");
-            var asrFile = CommandInputResolver.ResolveChapterArtifact(context.ParseResult.GetValueForOption(asrOption), "asr.json");
+            var txFile =
+                CommandInputResolver.ResolveChapterArtifact(context.ParseResult.GetValueForOption(txOption),
+                    "align.tx.json");
+            var asrFile =
+                CommandInputResolver.ResolveChapterArtifact(context.ParseResult.GetValueForOption(asrOption),
+                    "asr.json");
             var audioFile = CommandInputResolver.RequireAudio(context.ParseResult.GetValueForOption(audioOption));
-            var outFile = CommandInputResolver.ResolveChapterArtifact(context.ParseResult.GetValueForOption(outOption), "sentences.refined.json", mustExist: false);
+            var outFile = CommandInputResolver.ResolveChapterArtifact(context.ParseResult.GetValueForOption(outOption),
+                "sentences.refined.json", mustExist: false);
             var lang = context.ParseResult.GetValueForOption(langOption)!;
             var withSilence = context.ParseResult.GetValueForOption(useSilenceOption);
             var silenceDb = context.ParseResult.GetValueForOption(silenceThreshOption);
@@ -58,23 +67,25 @@ public static class RefineSentencesCommand
         return cmd;
     }
 
-    private static async Task RunAsync(FileInfo txFile, FileInfo asrFile, FileInfo audioFile, FileInfo outFile, string language, bool withSilence, double silenceDb, double silenceMin)
+    private static async Task RunAsync(FileInfo txFile, FileInfo asrFile, FileInfo audioFile, FileInfo outFile,
+        string language, bool withSilence, double silenceDb, double silenceMin)
     {
-        Log.Debug("Refining sentences for {TranscriptIndex} using audio {AudioFile}", txFile.FullName, audioFile.FullName);
+        Log.Debug("Refining sentences for {TranscriptIndex} using audio {AudioFile}", txFile.FullName,
+            audioFile.FullName);
 
         var jsonOptions = new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
         var tx = JsonSerializer.Deserialize<TranscriptIndex>(await File.ReadAllTextAsync(txFile.FullName), jsonOptions)
                  ?? throw new InvalidOperationException("Failed to read TX");
         var asr = JsonSerializer.Deserialize<AsrResponse>(await File.ReadAllTextAsync(asrFile.FullName), jsonOptions)
-                 ?? throw new InvalidOperationException("Failed to read ASR");
+                  ?? throw new InvalidOperationException("Failed to read ASR");
 
         var svc = new SentenceRefinementService();
         var refined = await svc.RefineAsync(audioFile.FullName, tx, asr, language, withSilence, silenceDb, silenceMin);
 
-        var outJson = JsonSerializer.Serialize(refined, new JsonSerializerOptions { WriteIndented = true, PropertyNamingPolicy = JsonNamingPolicy.CamelCase });
+        var outJson = JsonSerializer.Serialize(refined,
+            new JsonSerializerOptions { WriteIndented = true, PropertyNamingPolicy = JsonNamingPolicy.CamelCase });
         Directory.CreateDirectory(outFile.DirectoryName!);
         await File.WriteAllTextAsync(outFile.FullName, outJson);
         Log.Debug("Refined sentences written to {OutputFile}", outFile.FullName);
     }
 }
-

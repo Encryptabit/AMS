@@ -12,4 +12,3 @@ internal static class DspSessionState
 
     public static bool OverwriteOutputs { get; set; }
 }
-

@@ -21,7 +21,10 @@ public class BookParser : IBookParser
     private static readonly Regex _paragraphBreakRegex = new(@"(\r?\n){2,}", RegexOptions.Compiled);
     private static readonly Regex PdfSentenceSplitRegex = new(@"(?<=[\.\!\?…])\s+|\n\s*\n+", RegexOptions.Compiled);
     private static readonly Regex MetadataBreakRegex = new(@"(?<=\S)\n(?=[A-Z0-9#©])", RegexOptions.Compiled);
-    private static readonly Regex LeadingPageMarkerRegex = new(@"^\s*(?:#?\d+\s*|[©]{0,1}\d{2,4}\s*)+", RegexOptions.Compiled);
+
+    private static readonly Regex LeadingPageMarkerRegex =
+        new(@"^\s*(?:#?\d+\s*|[©]{0,1}\d{2,4}\s*)+", RegexOptions.Compiled);
+
     private static readonly object PdfInitLock = new();
     private static bool _pdfiumInitialized;
 
@@ -57,7 +60,7 @@ public class BookParser : IBookParser
         try
         {
             var extension = Path.GetExtension(filePath).ToLowerInvariant();
-            
+
             return extension switch
             {
                 ".docx" => await ParseDocxAsync(filePath, cancellationToken),
@@ -68,7 +71,8 @@ public class BookParser : IBookParser
                 _ => throw new InvalidOperationException($"Unsupported file format: {extension}")
             };
         }
-        catch (Exception ex) when (!(ex is ArgumentException || ex is FileNotFoundException || ex is InvalidOperationException))
+        catch (Exception ex) when (!(ex is ArgumentException || ex is FileNotFoundException ||
+                                     ex is InvalidOperationException))
         {
             throw new BookParseException($"Failed to parse file '{filePath}': {ex.Message}", ex);
         }
@@ -126,7 +130,8 @@ public class BookParser : IBookParser
                     AddSuppress(suppressList, title);
                     AddSuppress(suppressList, author);
 
-                    foreach (var kvp in props.Where(kvp => !string.IsNullOrWhiteSpace(kvp.Value) && kvp.Key != "title" && kvp.Key != "creator"))
+                    foreach (var kvp in props.Where(kvp =>
+                                 !string.IsNullOrWhiteSpace(kvp.Value) && kvp.Key != "title" && kvp.Key != "creator"))
                     {
                         var trimmed = kvp.Value!.Trim();
                         metadata[kvp.Key] = trimmed;
@@ -170,7 +175,6 @@ public class BookParser : IBookParser
                     Metadata: metadata.Count > 0 ? metadata : null,
                     Paragraphs: parsedParagraphs
                 );
-                
             }, cancellationToken);
         }
         catch (Exception ex)
@@ -184,15 +188,16 @@ public class BookParser : IBookParser
         try
         {
             var text = await File.ReadAllTextAsync(filePath, Encoding.UTF8, cancellationToken);
-            
+
             // Try to extract title from first line if it looks like a title
             string? title = null;
-            var lines = text.Split(new[] {'\n'}, StringSplitOptions.RemoveEmptyEntries);
+            var lines = text.Split(new[] { '\n' }, StringSplitOptions.RemoveEmptyEntries);
             if (lines.Length > 0)
             {
                 var firstLine = lines[0].TrimEnd('\r');
                 // Heuristic: if first line is short and doesn't end with sentence punctuation, treat as title
-                if (firstLine.Length <= 100 && !firstLine.EndsWith('.') && !firstLine.EndsWith('!') && !firstLine.EndsWith('?'))
+                if (firstLine.Length <= 100 && !firstLine.EndsWith('.') && !firstLine.EndsWith('!') &&
+                    !firstLine.EndsWith('?'))
                 {
                     title = firstLine;
                 }
@@ -486,7 +491,8 @@ public class BookParser : IBookParser
                                         continue;
                                     }
 
-                                    var flattened = Regex.Replace(cleanedSentence.ReplaceLineEndings(" "), "\\s+", " ").Trim();
+                                    var flattened = Regex.Replace(cleanedSentence.ReplaceLineEndings(" "), "\\s+", " ")
+                                        .Trim();
                                     if (string.IsNullOrWhiteSpace(flattened))
                                     {
                                         continue;
@@ -673,7 +679,6 @@ public class BookParser : IBookParser
             }
         } while (changed && working.Length > 0);
 
- 
 
         var normalized = working.Trim();
         if (normalized.Length > 0)
@@ -745,4 +750,3 @@ public class BookParser : IBookParser
         }
     }
 }
-
