@@ -25,10 +25,18 @@ public static class WorkspaceChapterDiscovery
         {
             var chapterId = dir.Name;
 
-            // Register all expected buffers; actual loading is deferred to AudioBufferManager
+            string RawPath(string name) => Path.Combine(dir.FullName, name);
+            string RootPath(string name) => Path.Combine(root.FullName, name);
+
+            // Prefer chapter-local raw, else book-root raw
+            var rawFileName = $"{chapterId}.wav";
+            var rawPath = File.Exists(RawPath(rawFileName))
+                ? RawPath(rawFileName)
+                : RootPath(rawFileName);
+
             var buffers = new List<AudioBufferDescriptor>
             {
-                new("raw", Path.Combine(dir.FullName, $"{chapterId}.wav")),
+                new("raw", rawPath),
                 new("treated", Path.Combine(dir.FullName, $"{chapterId}.treated.wav")),
                 new("filtered", Path.Combine(dir.FullName, $"{chapterId}.filtered.wav"))
             };

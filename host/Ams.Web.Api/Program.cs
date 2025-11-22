@@ -8,6 +8,7 @@ using Ams.Web.Api.Json;
 using Ams.Web.Api.Services;
 using Ams.Web.Api.Payloads;
 using Ams.Core.Artifacts;
+using Ams.Core.Processors;
 using Ams.Core.Runtime.Chapter;
 using Ams.Core.Runtime.Audio;
 
@@ -145,20 +146,34 @@ app.MapGet("/validation/books/{bookId}/chapters/{chapterId}", (WorkspaceState st
             .Select(s => new SentenceDto(
                 s.Id,
                 s.Status ?? string.Empty,
-                s.Timing?.StartSec,
-                s.Timing?.EndSec,
+                s.Timing is null ? null : new TimingDto(s.Timing.StartSec, s.Timing.EndSec, s.Timing.Duration),
+                new RangeDto(s.BookRange.Start, s.BookRange.End),
+                s.ScriptRange is null ? null : new RangeDto(s.ScriptRange.Start ?? 0, s.ScriptRange.End ?? 0),
                 s.BookText ?? string.Empty,
                 s.ScriptText ?? string.Empty,
-                s.Metrics.Wer,
-                s.Metrics.Cer))
+                new MetricsDto(s.Metrics.Wer, s.Metrics.Cer, s.Metrics.SpanWer, s.Metrics.MissingRuns, s.Metrics.ExtraRuns),
+                s.Diff is null
+                    ? null
+                    : new DiffDto(
+                        s.Diff.Ops?.Select(op => new DiffOpDto(op.Operation ?? string.Empty, op.Tokens ?? Array.Empty<string>())).ToArray() ?? Array.Empty<DiffOpDto>(),
+                        s.Diff.Stats is null ? new DiffStatsDto(0, 0, 0, 0, 0) :
+                            new DiffStatsDto(s.Diff.Stats.ReferenceTokens, s.Diff.Stats.HypothesisTokens, s.Diff.Stats.Matches, s.Diff.Stats.Insertions, s.Diff.Stats.Deletions))))
             .ToArray();
 
         var paragraphs = (hydrate.Paragraphs ?? Array.Empty<Ams.Core.Artifacts.Hydrate.HydratedParagraph>())
             .Select(p => new ParagraphDto(
                 p.Id,
                 p.Status ?? string.Empty,
+                new RangeDto(p.BookRange.Start, p.BookRange.End),
                 p.SentenceIds ?? Array.Empty<int>(),
-                p.Metrics.Wer))
+                p.BookText ?? string.Empty,
+                new ParagraphMetricsDto(p.Metrics.Wer, p.Metrics.Cer, p.Metrics.Coverage),
+                p.Diff is null
+                    ? null
+                    : new DiffDto(
+                        p.Diff.Ops?.Select(op => new DiffOpDto(op.Operation ?? string.Empty, op.Tokens ?? Array.Empty<string>())).ToArray() ?? Array.Empty<DiffOpDto>(),
+                        p.Diff.Stats is null ? new DiffStatsDto(0, 0, 0, 0, 0) :
+                            new DiffStatsDto(p.Diff.Stats.ReferenceTokens, p.Diff.Stats.HypothesisTokens, p.Diff.Stats.Matches, p.Diff.Stats.Insertions, p.Diff.Stats.Deletions))))
             .ToArray();
 
         var dto = new ChapterDetailDto(
@@ -192,7 +207,8 @@ app.MapGet("/audio/books/{bookId}/chapters/{chapterId}", (WorkspaceState state, 
 
         var slice = Slice(buffer, start, end);
         var stream = slice.ToWavStream();
-        return Results.File(stream, "audio/wav");
+        stream.Position = 0;
+        return Results.File(stream, "audio/wav", enableRangeProcessing: true);
     }
     catch (Exception ex)
     {
@@ -261,6 +277,143 @@ app.MapPost("/validation/books/{bookId}/crx/{chapterId}", async (WorkspaceState 
 });
 
 app.Run();
+
+// Helpers
+static (BookContext Book, ChapterContext Chapter) ResolveChapter(WorkspaceState state, string bookId, string chapterId)
+{
+    var book = state.GetBook(bookId);
+    if (!book.Chapters.Contains(chapterId))
+    {
+        throw new KeyNotFoundException($"Chapter '{chapterId}' not found in book '{bookId}'.");
+    }
+
+    var chapter = book.Chapters.Load(chapterId);
+    return (book, chapter);
+}
+
+static bool HasBuffer(ChapterContext chapter, string bufferId)
+{
+    return chapter.Descriptor.AudioBuffers.Any(b => string.Equals(b.BufferId, bufferId, StringComparison.OrdinalIgnoreCase));
+}
+
+static AudioBuffer? TryLoadBuffer(ChapterContext chapter, string variant)
+{
+    try
+    {
+        var ctx = ResolveAudioContext(chapter, variant);
+        if (ctx is null) return null;
+
+        var buffer = ctx.Buffer;
+        if (buffer is not null) return buffer;
+
+        var desc = ctx.Descriptor;
+        if (TryResolveExistingPath(desc, chapter, out var path))
+        {
+            return AudioProcessor.Decode(path, new AudioDecodeOptions
+            {
+                TargetSampleRate = desc.SampleRate,
+                TargetChannels = desc.Channels
+            });
+        }
+    }
+    catch
+    {
+        // ignore
+    }
+    return null;
+}
+
+static AudioBuffer Slice(AudioBuffer buffer, double? startSec, double? endSec)
+{
+    if (startSec is null || endSec is null || endSec <= startSec)
+    {
+        return buffer;
+    }
+
+    var startSample = (int)Math.Clamp(startSec.Value * buffer.SampleRate, 0, buffer.Length);
+    var endSample = (int)Math.Clamp(endSec.Value * buffer.SampleRate, startSample, buffer.Length);
+    var length = endSample - startSample;
+    if (length <= 0) return buffer;
+
+    var slice = new AudioBuffer(buffer.Channels, buffer.SampleRate, length, buffer.Metadata);
+    for (var ch = 0; ch < buffer.Channels; ch++)
+    {
+        Array.Copy(buffer.Planar[ch], startSample, slice.Planar[ch], 0, length);
+    }
+    return slice;
+}
+
+static DirectoryInfo GetCrxDir(BookContext book, WorkspaceState state)
+{
+    var root = book.Descriptor.RootPath;
+    var dir = new DirectoryInfo(Path.Combine(root, state.CrxDirectoryName));
+    return dir;
+}
+
+static int NextErrorNumber(DirectoryInfo crxDir)
+{
+    var max = 0;
+    foreach (var file in crxDir.EnumerateFiles("*.wav"))
+    {
+        if (int.TryParse(Path.GetFileNameWithoutExtension(file.Name), out var n))
+        {
+            max = Math.Max(max, n);
+        }
+    }
+    return max + 1;
+}
+
+static AudioBufferContext? ResolveAudioContext(ChapterContext chapter, string variant)
+{
+    var bufferId = variant.ToLowerInvariant() switch
+    {
+        "treated" => "treated",
+        "filtered" => "filtered",
+        "raw" => "raw",
+        _ => variant
+    };
+
+    try
+    {
+        // If specific buffer not found, fall back to first registered
+        AudioBufferContext ctx;
+        try
+        {
+            ctx = chapter.Audio.Load(bufferId);
+        }
+        catch
+        {
+            if (chapter.Descriptor.AudioBuffers.Count == 0) return null;
+            ctx = chapter.Audio.Load(chapter.Descriptor.AudioBuffers[0].BufferId);
+        }
+
+        return ctx;
+    }
+    catch
+    {
+        return null;
+    }
+}
+
+static bool TryResolveExistingPath(AudioBufferDescriptor desc, ChapterContext chapter, out string path)
+{
+    path = desc.Path;
+    if (File.Exists(path))
+    {
+        return true;
+    }
+
+    // Fallback: look in book root for raw filename
+    var bookRoot = chapter.Book.Descriptor.RootPath;
+    var fallback = Path.Combine(bookRoot, Path.GetFileName(desc.Path));
+    if (File.Exists(fallback))
+    {
+        path = fallback;
+        return true;
+    }
+
+    return false;
+}
 
 // Records / DTOs
 public sealed record AudioExportRequest(double? Start, double? End, string? Variant);
