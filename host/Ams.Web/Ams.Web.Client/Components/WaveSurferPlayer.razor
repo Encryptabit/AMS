@@ -1,0 +1,140 @@
+@implements IAsyncDisposable
+@inject IJSRuntime JS
+
+<div class="ws-card">
+    <div class="ws-header">
+        <div>@Title</div>
+        <div class="ws-time">@FormatTime(_currentTime) / @FormatTime(_duration)</div>
+    </div>
+    <div id="@_waveId" class="ws-canvas"></div>
+    <div class="ws-controls">
+        <BitButton ButtonStyle="BitButtonStyle.Standard" IconName="StepBack" OnClick="SkipToStart" />
+        <BitButton ButtonStyle="BitButtonStyle.Primary" IconName="@(_isPlaying ? "Pause" : "Play")" OnClick="TogglePlay" />
+        <BitButton ButtonStyle="BitButtonStyle.Standard" IconName="StepForward" OnClick="SkipToEnd" />
+        <div class="ws-speed">
+            <span>Speed</span>
+            <input type="range" min="0.25" max="3" step="0.05" value="@_playbackRate" @oninput="OnRateChange" />
+            <span>@_playbackRate.ToString("0.00")x</span>
+        </div>
+    </div>
+</div>
+
+@code {
+    [Parameter] public string AudioUrl { get; set; } = string.Empty;
+    [Parameter] public string Title { get; set; } = "Audio";
+    [Parameter] public bool DisableZoom { get; set; }
+    [Parameter] public bool AutoCenter { get; set; } = true;
+    [Parameter] public double Height { get; set; } = 140;
+    [Parameter] public EventCallback<double> OnTimeChanged { get; set; }
+    [Parameter] public EventCallback<double> Ready { get; set; }
+
+    private DotNetObjectReference<WaveSurferPlayer>? _objRef;
+    private string _waveId = $"ws-{Guid.NewGuid():N}";
+    private double _duration;
+    private double _currentTime;
+    private double _playbackRate = 1.0;
+    private bool _isPlaying;
+    private IJSObjectReference? _module;
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            _objRef = DotNetObjectReference.Create(this);
+            await EnsureModule();
+            await CreatePlayer();
+        }
+    }
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (_module is not null)
+        {
+            await _module.InvokeVoidAsync("setAudio", _waveId, AudioUrl);
+        }
+    }
+
+    private async Task EnsureModule()
+    {
+        _module = await JS.InvokeAsync<IJSObjectReference>("import", "/_content/Ams.Web.Client/js/wavesurfer-interop.js");
+    }
+
+    private async Task CreatePlayer()
+    {
+        var opts = new
+        {
+            height = Height,
+            disableZoom = DisableZoom,
+            autoCenter = AutoCenter
+        };
+
+        await _module!.InvokeVoidAsync("createPlayer", _waveId, "#" + _waveId, AudioUrl, opts, _objRef);
+    }
+
+    [JSInvokable]
+    public Task OnReady(double duration)
+    {
+        _duration = duration;
+        StateHasChanged();
+        return Ready.HasDelegate ? Ready.InvokeAsync(duration) : Task.CompletedTask;
+    }
+
+    [JSInvokable]
+    public Task OnTime(double time)
+    {
+        _currentTime = time;
+        StateHasChanged();
+        return OnTimeChanged.HasDelegate ? OnTimeChanged.InvokeAsync(time) : Task.CompletedTask;
+    }
+
+    [JSInvokable]
+    public Task OnEnded()
+    {
+        _isPlaying = false;
+        StateHasChanged();
+        return Task.CompletedTask;
+    }
+
+    private async Task TogglePlay()
+    {
+        await _module!.InvokeVoidAsync("playPause", _waveId);
+        _isPlaying = !_isPlaying;
+    }
+
+    private async Task SkipToStart()
+    {
+        await _module!.InvokeVoidAsync("seekTo", _waveId, 0);
+    }
+
+    private async Task SkipToEnd()
+    {
+        await _module!.InvokeVoidAsync("seekTo", _waveId, _duration);
+    }
+
+    private async Task OnRateChange(ChangeEventArgs e)
+    {
+        if (double.TryParse(e.Value?.ToString(), out var rate))
+        {
+            _playbackRate = rate;
+            await _module!.InvokeVoidAsync("setRate", _waveId, _playbackRate, true);
+        }
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        if (_module is not null)
+        {
+            await _module.InvokeVoidAsync("dispose", _waveId);
+            await _module.DisposeAsync();
+        }
+
+        _objRef?.Dispose();
+    }
+
+    private static string FormatTime(double seconds)
+    {
+        if (seconds <= 0) return "0:00";
+        var ts = TimeSpan.FromSeconds(seconds);
+        return ts.Hours > 0 ? ts.ToString("h:mm:ss") : ts.ToString("m:ss");
+    }
+}

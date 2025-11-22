@@ -1,0 +1,296 @@
+@page "/"
+@page "/validation/{BookId?}"
+
+@inject ValidationApiClient Api
+@inject HttpClient Http
+
+<section class="viewer-shell">
+    <aside class="viewer-sidebar">
+        <div class="sidebar-header">
+            <h3>Validation</h3>
+            <p class="muted">Book: @EffectiveBookId</p>
+        </div>
+
+        @if (_loading)
+        {
+            <BitSpinner Size="BitSpinnerSize.Small" Label="Loading" />
+        }
+        else
+        {
+            <BitNav TItem="BitNavItem" Items="@_navItems" SelectedKey="@_selectedKey" Mode="BitNavMode.Manual" OnSelect="OnNavSelect" />
+        }
+
+        <div class="sidebar-footer">
+            <BitButton OnClick="ResetReviews" Style="width:100%" Color="BitColor.Secondary" Variant="BitVariant.Outline" IconName="ArrowReset">Reset reviews</BitButton>
+        </div>
+    </aside>
+
+    <div class="viewer-main">
+        @if (!string.IsNullOrWhiteSpace(_error))
+        {
+            <BitMessageBar MessageBarType="BitMessageBarType.Error">@_error</BitMessageBar>
+        }
+        else if (_loading)
+        {
+            <div class="centered"><BitSpinner Size="BitSpinnerSize.Medium" Label="Loading" /></div>
+        }
+        else if (_selectedKey == "overview" || _chapter is null)
+        {
+            @if (_overview is not null)
+            {
+                <h2>Overview</h2>
+                <div class="stat-grid">
+                    <div class="stat-card"><div class="stat-label">Chapters</div><div class="stat-value">@_overview.ChapterCount</div></div>
+                    <div class="stat-card"><div class="stat-label">Sentences</div><div class="stat-value">@_overview.TotalSentences</div></div>
+                    <div class="stat-card"><div class="stat-label">Paragraphs</div><div class="stat-value">@_overview.TotalParagraphs</div></div>
+                </div>
+
+                <div class="chapter-cards">
+                    @foreach (var chapter in _chapters)
+                    {
+                        var reviewed = IsReviewed(chapter.Id);
+                        <div class="chapter-card" @onclick="() => SelectChapter(chapter.Id)">
+                            <div class="chapter-title">@chapter.Id</div>
+                            <div class="chapter-meta">Sentences: @chapter.SentenceCount • Paragraphs: @chapter.ParagraphCount</div>
+                            @if (reviewed)
+                            {
+                                <BitTag Color="BitColor.Success" Text="Reviewed" />
+                            }
+                        </div>
+                    }
+                </div>
+            }
+        }
+        else if (_chapter is not null)
+        {
+            <div class="chapter-header">
+                <div>
+                    <p class="eyebrow">Chapter</p>
+                    <h2>@_chapter.ChapterId</h2>
+                    <p class="muted">Sentences @_chapter.SentenceCount • Paragraphs @_chapter.ParagraphCount</p>
+                </div>
+                <BitToggleButton OnChange="ToggleReviewed" IsChecked="@IsReviewed(_chapter.ChapterId)" OffText="Mark reviewed" OnText="Reviewed" IconName="CheckMark" />
+            </div>
+
+            <div class="badge-row">
+                <BitTag Text="Raw" Color="@(_chapter.Audio.Raw ? BitColor.Primary : BitColor.Tertiary)" />
+                <BitTag Text="Treated" Color="@(_chapter.Audio.Treated ? BitColor.Primary : BitColor.Tertiary)" />
+                <BitTag Text="Filtered" Color="@(_chapter.Audio.Filtered ? BitColor.Primary : BitColor.Tertiary)" />
+            </div>
+
+            @if (!string.IsNullOrEmpty(_audioVariant) && HasAudio(_audioVariant))
+            {
+                <div class="audio-row">
+                    <div class="audio-variant-buttons">
+                        @foreach (var variant in _availableVariants)
+                        {
+                            var selected = variant == _audioVariant;
+                            <BitButton Color="@(selected ? BitColor.Primary : BitColor.Secondary)" Variant="BitVariant.Outline" OnClick="() => SetVariant(variant)">@variant</BitButton>
+                        }
+                    </div>
+                    <WaveSurferPlayer AudioUrl="@BuildAudioUrl(_audioVariant)" Title="@($"Audio ({_audioVariant})")" />
+                </div>
+            }
+
+            <div class="table-wrapper">
+                <table class="data-table">
+                    <thead>
+                        <tr>
+                            <th>#</th>
+                            <th>Status</th>
+                            <th>WER</th>
+                            <th>Span WER</th>
+                            <th>Text</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var sentence in _chapter.Sentences.Take(200))
+                        {
+                            var werClass = sentence.Metrics.Wer switch
+                            {
+                                > 5 => "high",
+                                > 2 => "med",
+                                _ => "low"
+                            };
+                            <tr>
+                                <td>@sentence.Id</td>
+                                <td>@sentence.Status</td>
+                                <td><span class="wer @werClass">@sentence.Metrics.Wer.ToString("0.00")</span></td>
+                                <td>@sentence.Metrics.SpanWer.ToString("0.00")</td>
+                                <td>@sentence.BookText</td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        }
+    </div>
+</section>
+
+@code {
+    [Parameter] public string? BookId { get; set; }
+
+    private string EffectiveBookId => string.IsNullOrWhiteSpace(BookId) ? "default" : BookId!;
+
+    private List<ValidationChapterSummaryDto> _chapters = new();
+    private ValidationOverviewDto? _overview;
+    private ReviewedStatusResponse _reviewed = new(new Dictionary<string, ReviewedStatusDto>(StringComparer.OrdinalIgnoreCase));
+    private ChapterDetailDto? _chapter;
+    private bool _loading = true;
+    private string? _error;
+    private string _selectedKey = "overview";
+    private IList<BitNavItem> _navItems = new List<BitNavItem>();
+    private string _audioVariant = string.Empty;
+    private readonly string[] _variantPreference = ["treated", "raw", "filtered"];
+    private IReadOnlyList<string> _availableVariants = Array.Empty<string>();
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadAll();
+    }
+
+    private async Task LoadAll()
+    {
+        _loading = true;
+        _error = null;
+        StateHasChanged();
+
+        try
+        {
+            _chapters = await Api.GetChaptersAsync(EffectiveBookId) ?? new List<ValidationChapterSummaryDto>();
+            _overview = await Api.GetOverviewAsync(EffectiveBookId);
+            _reviewed = await Api.GetReviewedAsync(EffectiveBookId) ?? new ReviewedStatusResponse(new Dictionary<string, ReviewedStatusDto>(StringComparer.OrdinalIgnoreCase));
+
+            BuildNav();
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+        }
+        finally
+        {
+            _loading = false;
+            StateHasChanged();
+        }
+    }
+
+    private void BuildNav()
+    {
+        var items = new List<BitNavItem>
+        {
+            new()
+            {
+                Key = "overview",
+                Text = "Overview",
+                IconName = "AreaChart"
+            }
+        };
+
+        foreach (var chapter in _chapters)
+        {
+            items.Add(new BitNavItem
+            {
+                Key = chapter.Id,
+                Text = chapter.Id,
+                IconName = IsReviewed(chapter.Id) ? "CheckMark" : "Page",
+                AriaLabel = $"{chapter.Id} ({chapter.SentenceCount} sentences)"
+            });
+        }
+
+        _navItems = items;
+    }
+
+    private Task OnNavSelect(BitNavItem item)
+    {
+        if (item.Key is null) return Task.CompletedTask;
+
+        if (item.Key == "overview")
+        {
+            _selectedKey = "overview";
+            _chapter = null;
+            return Task.CompletedTask;
+        }
+
+        return SelectChapter(item.Key);
+    }
+
+    private async Task SelectChapter(string chapterId)
+    {
+        _selectedKey = chapterId;
+        _chapter = null;
+        _error = null;
+        StateHasChanged();
+
+        try
+        {
+            _chapter = await Api.GetChapterDetailAsync(EffectiveBookId, chapterId);
+            if (_chapter is not null)
+            {
+                _availableVariants = new[]
+                {
+                    _chapter.Audio.Treated ? "treated" : null,
+                    _chapter.Audio.Raw ? "raw" : null,
+                    _chapter.Audio.Filtered ? "filtered" : null
+                }.Where(v => v is not null).Select(v => v!).ToArray();
+
+                _audioVariant = _variantPreference.FirstOrDefault(v => HasAudio(v)) ?? _availableVariants.FirstOrDefault() ?? string.Empty;
+            }
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+        }
+        finally
+        {
+            StateHasChanged();
+        }
+    }
+
+    private bool IsReviewed(string chapterId)
+    {
+        return _reviewed.Chapters.TryGetValue(chapterId, out var status) && status.Reviewed;
+    }
+
+    private async Task ToggleReviewed(bool isChecked)
+    {
+        if (_chapter is null) return;
+
+        await Api.SetReviewedAsync(EffectiveBookId, _chapter.ChapterId, isChecked);
+        _reviewed.Chapters[_chapter.ChapterId] = new ReviewedStatusDto(isChecked, DateTime.UtcNow.ToString("o"));
+        BuildNav();
+    }
+
+    private async Task ResetReviews()
+    {
+        await Api.ResetReviewsAsync(EffectiveBookId);
+        _reviewed = new ReviewedStatusResponse(new Dictionary<string, ReviewedStatusDto>(StringComparer.OrdinalIgnoreCase));
+        BuildNav();
+        StateHasChanged();
+    }
+
+    private bool HasAudio(string variant)
+    {
+        return variant switch
+        {
+            "raw" => _chapter?.Audio.Raw == true,
+            "treated" => _chapter?.Audio.Treated == true,
+            "filtered" => _chapter?.Audio.Filtered == true,
+            _ => false
+        };
+    }
+
+    private string BuildAudioUrl(string variant)
+    {
+        var baseUri = Http.BaseAddress?.ToString() ?? string.Empty;
+        if (!baseUri.EndsWith('/')) baseUri += "/";
+        return $"{baseUri}audio/books/{EffectiveBookId}/chapters/{_chapter?.ChapterId}?variant={variant}";
+    }
+
+    private void SetVariant(string variant)
+    {
+        if (HasAudio(variant))
+        {
+            _audioVariant = variant;
+        }
+    }
+}
