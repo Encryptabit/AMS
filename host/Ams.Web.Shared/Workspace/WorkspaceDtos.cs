@@ -12,4 +12,5 @@ public sealed record WorkspaceResponse(
     string? BookIndexPath,
     string? CrxTemplatePath,
     string CrxDirectoryName,
-    string DefaultErrorType);
+    string DefaultErrorType,
+    string? CurrentBookId);

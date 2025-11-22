@@ -1,3 +1,4 @@
+using System.Runtime.CompilerServices;
 using System.Text.Json.Serialization;
 using Ams.Core.Runtime.Book;
 using Ams.Core.Runtime.Workspace;
@@ -47,37 +48,45 @@ app.MapPost("/workspace", (WorkspaceState state, WorkspaceRequest request) =>
 });
 
 // Simple chapters listing using Ams.Core (ChapterManager handles its own cache)
-app.MapGet("/validation/books/{bookId}/chapters", (ValidationMapper mapper, WorkspaceState state, string bookId) =>
-{
-    try
+app.MapGet("/validation/books/{bookId}/chapters",
+    (ValidationMapper mapper, WorkspaceState state, string bookId, CancellationToken ct) =>
     {
-        var book = state.GetBook(bookId);
-
-        var summaries = new List<ChapterSummaryResponse>();
-
-        foreach (var descriptor in book.Chapters.Descriptors)
+        try
         {
-            var chapter = book.Chapters.Load(descriptor.ChapterId);
-            var hydrate = chapter.Documents.HydratedTranscript;
-            var sentenceCount = hydrate?.Sentences?.Count ?? 0;
-            var paragraphCount = hydrate?.Paragraphs?.Count ?? 0;
-
-            summaries.Add(new ChapterSummaryResponse(
-                descriptor.ChapterId,
-                descriptor.RootPath,
-                hydrate is not null,
-                sentenceCount,
-                paragraphCount));
+            var book = state.GetBook(bookId);
+            return Results.Ok(StreamChapters(mapper, book, ct));
         }
+        catch (Exception ex)
+        {
+            return Results.Problem(ex.Message);
+        }
+    });
 
-        var dto = summaries.Select(mapper.Map).ToArray();
-        return Results.Json(dto, ApiJsonSerializerContext.Default.ValidationChapterSummaryDtoArray);
-    }
-    catch (Exception ex)
+static async IAsyncEnumerable<ValidationChapterSummaryDto> StreamChapters(
+    ValidationMapper mapper,
+    BookContext book,
+    [EnumeratorCancellation] CancellationToken ct)
+{
+    foreach (var descriptor in book.Chapters.Descriptors)
     {
-        return Results.Problem(ex.Message);
+        ct.ThrowIfCancellationRequested();
+
+        var chapter = book.Chapters.Load(descriptor.ChapterId);
+        var hydrate = chapter.Documents.HydratedTranscript;
+        var sentenceCount = hydrate?.Sentences?.Count ?? 0;
+        var paragraphCount = hydrate?.Paragraphs?.Count ?? 0;
+
+        yield return mapper.Map(new ChapterSummaryResponse(
+            descriptor.ChapterId,
+            descriptor.RootPath,
+            hydrate is not null,
+            sentenceCount,
+            paragraphCount));
+
+        // Cooperatively yield to avoid blocking the response stream.
+        await Task.Yield();
     }
-});
+}
 
 // Overview
 app.MapGet("/validation/books/{bookId}/overview", (WorkspaceState state, string bookId) =>
