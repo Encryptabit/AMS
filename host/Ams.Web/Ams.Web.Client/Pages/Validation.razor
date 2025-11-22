@@ -14,7 +14,7 @@
 
         @if (_loading)
         {
-            <BitSpinner Size="BitSpinnerSize.Small" Label="Loading"/>
+            <BitSpinnerLoading Size="BitSize.Large" Label="Loading"/>
         }
         else
         {
@@ -32,12 +32,12 @@
     <div class="viewer-main">
         @if (!string.IsNullOrWhiteSpace(_error))
         {
-            <BitMessageBar MessageBarType="BitMessageBarType.Error">@_error</BitMessageBar>
+            <BitMessage Color="BitColor.Error">@_error</BitMessage>
         }
         else if (_loading)
         {
             <div class="centered">
-                <BitSpinner Size="BitSpinnerSize.Medium" Label="Loading"/>
+                <BitSpinnerLoading Size="BitSize.Large" Label="Loading"/>
             </div>
         }
         else if (_selectedKey == "overview" || _chapter is null)
@@ -149,7 +149,8 @@
 @code {
     [Parameter] public string? BookId { get; set; }
 
-    private string EffectiveBookId => string.IsNullOrWhiteSpace(BookId) ? "default" : BookId!;
+    private WorkspaceResponse? _workspace;
+    private string EffectiveBookId => BookId ?? _workspace?.CurrentBookId ?? string.Empty;
 
     private List<ValidationChapterSummaryDto> _chapters = new();
     private ValidationOverviewDto? _overview;
@@ -172,13 +173,68 @@
     {
         _loading = true;
         _error = null;
+        _chapters.Clear();
         StateHasChanged();
 
         try
         {
-            _chapters = await Api.GetChaptersAsync(EffectiveBookId) ?? new List<ValidationChapterSummaryDto>();
-            _overview = await Api.GetOverviewAsync(EffectiveBookId);
-            _reviewed = await Api.GetReviewedAsync(EffectiveBookId) ?? new ReviewedStatusResponse(new Dictionary<string, ReviewedStatusDto>(StringComparer.OrdinalIgnoreCase));
+            _workspace = await Api.GetWorkspaceAsync();
+            if (string.IsNullOrWhiteSpace(EffectiveBookId))
+            {
+                _error = "No book id provided and workspace has no current book. Use /validation/{bookId}.";
+                _loading = false;
+                StateHasChanged();
+                return;
+            }
+
+            var overviewTask = Api.GetOverviewAsync(EffectiveBookId);
+            var reviewedTask = Api.GetReviewedAsync(EffectiveBookId);
+
+            ValidationOverviewDto? overviewFromApi = null;
+            try
+            {
+                overviewFromApi = await overviewTask;
+                _overview = overviewFromApi;
+            }
+            catch (Exception)
+            {
+                // Fall back to client-side aggregation if the overview endpoint fails (e.g., 404).
+            }
+
+            // Show whatever data we have so far.
+            _loading = false;
+            StateHasChanged();
+
+            var totalSentences = 0;
+            var totalParagraphs = 0;
+
+            await foreach (var chapter in Api.StreamChaptersAsync(EffectiveBookId))
+            {
+                if (chapter is null) continue;
+                _chapters.Add(chapter);
+                totalSentences += chapter.SentenceCount;
+                totalParagraphs += chapter.ParagraphCount;
+
+                // If overview isn't available from API, synthesize it from streamed chapters.
+                _overview ??= new ValidationOverviewDto(EffectiveBookId, 0, 0, 0);
+                _overview = _overview with
+                {
+                    ChapterCount = _chapters.Count,
+                    TotalSentences = totalSentences,
+                    TotalParagraphs = totalParagraphs
+                };
+
+                // Refresh UI periodically while streaming.
+                if (_chapters.Count % 5 == 0)
+                {
+                    StateHasChanged();
+                }
+
+                BuildNav();
+            }
+
+            // Ensure reviewed status is populated (for nav badges) after streaming finishes.
+            _reviewed = await reviewedTask ?? new ReviewedStatusResponse(new Dictionary<string, ReviewedStatusDto>(StringComparer.OrdinalIgnoreCase));
 
             BuildNav();
         }

@@ -93,12 +93,17 @@ public sealed class WorkspaceState
         return new BookManager(new[] { bookDescriptor }, FileArtifactResolver.Instance);
     }
 
-    public WorkspaceResponse ToResponse() => new(
-        WorkspaceRoot: BookRoot,
-        BookIndexPath: BookIndexPath,
-        CrxTemplatePath: CrxTemplatePath,
-        CrxDirectoryName: CrxDirectoryName,
-        DefaultErrorType: DefaultErrorType);
+    public WorkspaceResponse ToResponse()
+    {
+        var currentBookId = _bookManager?.Current?.Descriptor.BookId;
+        return new WorkspaceResponse(
+            WorkspaceRoot: BookRoot,
+            BookIndexPath: BookIndexPath,
+            CrxTemplatePath: CrxTemplatePath,
+            CrxDirectoryName: CrxDirectoryName,
+            DefaultErrorType: DefaultErrorType,
+            CurrentBookId: currentBookId);
+    }
 
     private void LoadFromDisk()
     {

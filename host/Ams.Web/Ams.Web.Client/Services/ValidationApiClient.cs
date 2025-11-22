@@ -20,10 +20,10 @@ public sealed class ValidationApiClient
         CancellationToken cancellationToken = default)
         => _http.PostAsJsonAsync("/workspace", request, cancellationToken);
 
-    public Task<List<ValidationChapterSummaryDto>?> GetChaptersAsync(string bookId,
+    public IAsyncEnumerable<ValidationChapterSummaryDto?> StreamChaptersAsync(string bookId,
         CancellationToken cancellationToken = default)
-        => _http.GetFromJsonAsync<List<ValidationChapterSummaryDto>>($"/validation/books/{bookId}/chapters",
-            cancellationToken);
+        => _http.GetFromJsonAsAsyncEnumerable<ValidationChapterSummaryDto>(
+            $"/validation/books/{bookId}/chapters", cancellationToken);
 
     public Task<ValidationOverviewDto?> GetOverviewAsync(string bookId, CancellationToken cancellationToken = default)
         => _http.GetFromJsonAsync<ValidationOverviewDto>($"/validation/books/{bookId}/overview", cancellationToken);

@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using System.Text.Json.Serialization;
 using Ams.Web.Api.Payloads;
 using Ams.Web.Shared.Validation;
@@ -25,11 +26,12 @@ namespace Ams.Web.Api.Json;
 // Central serializer context for minimal APIs (reflection disabled).
 [JsonSerializable(typeof(PayloadWorkspaceRequest))]
 [JsonSerializable(typeof(PayloadWorkspaceResponse))]
+[JsonSerializable(typeof(IEnumerable<PayloadWorkspaceResponse>))]
 [JsonSerializable(typeof(ChapterSummaryResponse[]))]
 [JsonSerializable(typeof(IEnumerable<ChapterSummaryResponse>))]
-[JsonSerializable(typeof(IEnumerable<PayloadWorkspaceResponse>))]
 [JsonSerializable(typeof(ValidationChapterSummaryDto[]))]
 [JsonSerializable(typeof(IEnumerable<ValidationChapterSummaryDto>))]
+[JsonSerializable(typeof(IAsyncEnumerable<ValidationChapterSummaryDto>))]
 [JsonSerializable(typeof(List<ValidationChapterSummaryDto>))]
 [JsonSerializable(typeof(List<ChapterSummaryResponse>))]
 [JsonSerializable(typeof(List<PayloadWorkspaceResponse>))]
