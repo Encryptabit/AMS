@@ -1,5 +1,7 @@
-﻿<!DOCTYPE html>
-<html lang="en">
+@using Bit.BlazorUI
+
+<!DOCTYPE html>
+<html lang="en" bit-theme-system bit-theme-persist bit-theme-default="dark">
 
 <head>
     <base href="/" />
@@ -21,7 +23,7 @@
     <HeadOutlet />
 </head>
 
-<body class="@BitCss.Class.Color.Background.Primary @BitCss.Class.Color.Foreground.Primary">
+<body>
     <Routes />
     <script src="_framework/blazor.web.js"></script>
     <script src="_content/Bit.BlazorUI/scripts/bit.blazorui.js"></script>

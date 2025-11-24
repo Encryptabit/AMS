@@ -2,8 +2,11 @@
 @page "/validation/{BookId?}"
 
 @inherits ComponentBase
+@implements IDisposable
 @inject ValidationApiClient Api
 @inject HttpClient Http
+@inject NavigationManager Nav
+@using Microsoft.AspNetCore.WebUtilities
 
 <section class="viewer-shell">
     <aside class="viewer-sidebar">
@@ -18,7 +21,9 @@
         }
         else
         {
-            <BitNav TItem="BitNavItem" Items="@_navItems" SelectedKey="@_selectedKey" Mode="BitNavMode.Manual"
+            <BitNav TItem="BitNavItem"
+                    Items="@_navItems"
+                    @bind-SelectedKey="_selectedKey"
                     OnSelect="OnNavSelect"/>
         }
 
@@ -64,7 +69,7 @@
                     @foreach (var chapter in _chapters)
                     {
                         var reviewed = IsReviewed(chapter.Id);
-                        <div class="chapter-card" @onclick="() => SelectChapter(chapter.Id)">
+                        <div class="chapter-card" @onclick="() => NavigateToChapter(chapter.Id)">
                             <div class="chapter-title">@chapter.Id</div>
                             <div class="chapter-meta">Sentences: @chapter.SentenceCount •
                                 Paragraphs: @chapter.ParagraphCount</div>
@@ -150,7 +155,10 @@
     [Parameter] public string? BookId { get; set; }
 
     private WorkspaceResponse? _workspace;
-    private string EffectiveBookId => BookId ?? _workspace?.CurrentBookId ?? string.Empty;
+    private string EffectiveBookId => BookId
+                                      ?? _workspace?.CurrentBookId
+                                      ?? DeriveBookId(_workspace?.WorkspaceRoot)
+                                      ?? string.Empty;
 
     private List<ValidationChapterSummaryDto> _chapters = new();
     private ValidationOverviewDto? _overview;
@@ -166,7 +174,13 @@
 
     protected override async Task OnInitializedAsync()
     {
+        Nav.LocationChanged += OnLocationChanged;
         await LoadAll();
+    }
+
+    public void Dispose()
+    {
+        Nav.LocationChanged -= OnLocationChanged;
     }
 
     private async Task LoadAll()
@@ -245,6 +259,7 @@
         finally
         {
             _loading = false;
+            await TrySelectFromQuery();
             StateHasChanged();
         }
     }
@@ -267,6 +282,7 @@
             {
                 Key = chapter.Id,
                 Text = chapter.Id,
+                Url = BuildChapterUrl(chapter.Id),
                 IconName = IsReviewed(chapter.Id) ? "CheckMark" : "Page",
                 AriaLabel = $"{chapter.Id} ({chapter.SentenceCount} sentences)"
             });
@@ -275,18 +291,20 @@
         _navItems = items;
     }
 
-    private Task OnNavSelect(BitNavItem item)
+    private async Task OnNavSelect(BitNavItem item)
     {
-        if (item.Key is null) return Task.CompletedTask;
+        if (item.Key is null) return;
 
         if (item.Key == "overview")
         {
             _selectedKey = "overview";
             _chapter = null;
-            return Task.CompletedTask;
+            Nav.NavigateTo(Nav.Uri.Split('?', 2)[0], false);
+            StateHasChanged();
+            return;
         }
 
-        return SelectChapter(item.Key);
+        NavigateToChapter(item.Key);
     }
 
     private async Task SelectChapter(string chapterId)
@@ -321,6 +339,19 @@
         }
     }
 
+    private async void OnLocationChanged(object? sender, LocationChangedEventArgs args)
+    {
+        try
+        {
+            await TrySelectFromQuery();
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+
     private bool IsReviewed(string chapterId)
     {
         return _reviewed.Chapters.TryGetValue(chapterId, out var status) && status.Reviewed;
@@ -341,6 +372,40 @@
         _reviewed = new ReviewedStatusResponse(new Dictionary<string, ReviewedStatusDto>(StringComparer.OrdinalIgnoreCase));
         BuildNav();
         StateHasChanged();
+    }
+
+    private async Task TrySelectFromQuery()
+    {
+        var uri = Nav.ToAbsoluteUri(Nav.Uri);
+        var query = Microsoft.AspNetCore.WebUtilities.QueryHelpers.ParseQuery(uri.Query);
+        if (query.TryGetValue("chapter", out var value))
+        {
+            var chapterId = value.ToString();
+            if (!string.IsNullOrWhiteSpace(chapterId) && _selectedKey != chapterId)
+            {
+                await SelectChapter(chapterId);
+                _selectedKey = chapterId;
+            }
+        }
+    }
+
+    private void NavigateToChapter(string chapterId)
+    {
+        var url = BuildChapterUrl(chapterId);
+        Nav.NavigateTo(url, false);
+    }
+
+    private string BuildChapterUrl(string chapterId)
+    {
+        return Nav.GetUriWithQueryParameter("chapter", chapterId);
+    }
+
+    private static string? DeriveBookId(string? path)
+    {
+        if (string.IsNullOrWhiteSpace(path)) return null;
+        var trimmed = path.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        var folder = trimmed.Split(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar).LastOrDefault();
+        return string.IsNullOrWhiteSpace(folder) ? null : folder;
     }
 
     private bool HasAudio(string variant)
