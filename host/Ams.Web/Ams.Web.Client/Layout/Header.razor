@@ -39,9 +39,18 @@
         StateHasChanged();
     }
 
-    private async Task ToggleTheme()
+    public async Task ToggleTheme()
     {
         await _bitThemeManager.ToggleDarkLightAsync();
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            // Force dark as the initial theme; user can toggle afterward.
+            await _bitThemeManager.SetThemeAsync("fluent-dark");
+        }
     }
 
 }
