@@ -17,6 +17,7 @@ public sealed class WorkspaceState
     };
 
     private BookManager? _bookManager;
+    private string? _bookId;
 
     public WorkspaceState()
     {
@@ -37,6 +38,7 @@ public sealed class WorkspaceState
             {
                 BookRoot = request.WorkspaceRoot;
                 _bookManager = null; // reset so it will rebuild on next access
+                _bookId = DeriveBookId(BookRoot);
             }
 
             if (!string.IsNullOrWhiteSpace(request.BookIndexPath))
@@ -71,7 +73,7 @@ public sealed class WorkspaceState
     {
         lock (_sync)
         {
-            _bookManager ??= BuildBookManager(bookId);
+            _bookManager ??= BuildBookManager(ResolveBookId(bookId));
             if (!string.Equals(_bookManager.Current.Descriptor.BookId, bookId, StringComparison.OrdinalIgnoreCase))
             {
                 _bookManager.Load(bookId);
@@ -88,14 +90,15 @@ public sealed class WorkspaceState
             throw new InvalidOperationException("WorkspaceRoot is not configured.");
         }
 
+        _bookId = ResolveBookId(bookId);
         var descriptors = WorkspaceChapterDiscovery.Discover(BookRoot);
-        var bookDescriptor = new BookDescriptor(bookId, BookRoot, descriptors);
+        var bookDescriptor = new BookDescriptor(_bookId, BookRoot, descriptors);
         return new BookManager(new[] { bookDescriptor }, FileArtifactResolver.Instance);
     }
 
     public WorkspaceResponse ToResponse()
     {
-        var currentBookId = _bookManager?.Current?.Descriptor.BookId;
+        var currentBookId = _bookManager?.Current?.Descriptor.BookId ?? _bookId ?? DeriveBookId(BookRoot);
         return new WorkspaceResponse(
             WorkspaceRoot: BookRoot,
             BookIndexPath: BookIndexPath,
@@ -150,5 +153,32 @@ public sealed class WorkspaceState
         }
 
         return new FileInfo(Path.Combine(root, "AMS", "validation-viewer", "workspace.json"));
+    }
+
+    private string ResolveBookId(string? bookId = null)
+    {
+        if (!string.IsNullOrWhiteSpace(bookId))
+        {
+            return bookId;
+        }
+
+        if (!string.IsNullOrWhiteSpace(_bookId))
+        {
+            return _bookId;
+        }
+
+        return DeriveBookId(BookRoot) ?? "book";
+    }
+
+    private static string? DeriveBookId(string? path)
+    {
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            return null;
+        }
+
+        var trimmed = Path.TrimEndingDirectorySeparator(path);
+        var folder = Path.GetFileName(trimmed);
+        return string.IsNullOrWhiteSpace(folder) ? null : folder;
     }
 }

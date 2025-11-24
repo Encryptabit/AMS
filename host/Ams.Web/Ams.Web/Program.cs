@@ -12,11 +12,13 @@ builder.Services.AddRazorComponents()
 
 
 builder.Services.AddBitBlazorUIServices();
+var apiBaseUrl = builder.Configuration["ApiBaseUrl"] ?? Environment.GetEnvironmentVariable("ApiBaseUrl");
 builder.Services.AddScoped(sp =>
 {
-    // Use the current request's base URI so the client can call relative API endpoints during prerender.
+    // Use configured API base when present; fall back to the current request host for local dev.
     var navigation = sp.GetRequiredService<NavigationManager>();
-    return new HttpClient { BaseAddress = new Uri(navigation.BaseUri) };
+    var baseAddress = string.IsNullOrWhiteSpace(apiBaseUrl) ? navigation.BaseUri : apiBaseUrl;
+    return new HttpClient { BaseAddress = new Uri(baseAddress) };
 });
 builder.Services.AddScoped<ValidationApiClient>();
 
