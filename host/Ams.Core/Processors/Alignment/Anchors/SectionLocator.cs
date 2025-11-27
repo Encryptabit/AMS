@@ -361,7 +361,17 @@ public static class SectionLocator
             return null;
         }
 
-        for (int i = 0; i < tokens.Count; i++)
+        // Heuristic: filenames like "03_2_title" often start with a track index then the real chapter number.
+        // If the first two tokens are both numeric, prefer the second as the chapter number.
+        int startIndex = 0;
+        if (tokens.Count >= 2 &&
+            TryParseFullNumber(tokens, 0, out _, out _) &&
+            TryParseFullNumber(tokens, 1, out _, out _))
+        {
+            startIndex = 1;
+        }
+
+        for (int i = startIndex; i < tokens.Count; i++)
         {
             var token = tokens[i];
 

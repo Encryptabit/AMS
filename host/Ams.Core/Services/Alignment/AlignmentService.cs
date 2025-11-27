@@ -4,15 +4,19 @@ using Ams.Core.Artifacts.Hydrate;
 using Ams.Core.Processors.Alignment.Anchors;
 using Ams.Core.Processors.Alignment.Tx;
 using Ams.Core.Processors.Diffing;
+using Ams.Core.Common;
 using Ams.Core.Runtime.Book;
 using Ams.Core.Runtime.Chapter;
 using Ams.Core.Services.Interfaces;
+using Microsoft.Extensions.Logging;
+using System.Text.RegularExpressions;
 
 namespace Ams.Core.Services.Alignment;
 
 public sealed class AlignmentService : IAlignmentService
 {
     private readonly IPronunciationProvider _pronunciationProvider;
+    private static readonly ILogger Logger = Log.For<AlignmentService>();
 
     public AlignmentService(IPronunciationProvider? pronunciationProvider = null)
     {
@@ -30,7 +34,7 @@ public sealed class AlignmentService : IAlignmentService
         var bookView = AnchorPreprocessor.BuildBookView(book);
         var asrView = AnchorPreprocessor.BuildAsrView(asr);
         var policy = BuildPolicy(opts);
-        var sectionOverride = ResolveSectionOverride(context, book, opts);
+        var sectionOverride = ResolveSectionOverride(context, book, opts, stage: "anchors");
         var sectionOptions = new SectionDetectOptions(
             Detect: opts.DetectSection && sectionOverride is null,
             AsrPrefixTokens: opts.AsrPrefixTokens);
@@ -60,7 +64,7 @@ public sealed class AlignmentService : IAlignmentService
         var bookView = AnchorPreprocessor.BuildBookView(book);
         var asrView = AnchorPreprocessor.BuildAsrView(asr);
         var policy = BuildPolicy(anchorOpts);
-        var sectionOverride = ResolveSectionOverride(context, book, anchorOpts);
+        var sectionOverride = ResolveSectionOverride(context, book, anchorOpts, stage: "transcript");
         var sectionOptions = new SectionDetectOptions(
             Detect: anchorOpts.DetectSection && sectionOverride is null,
             AsrPrefixTokens: anchorOpts.AsrPrefixTokens);
@@ -72,6 +76,33 @@ public sealed class AlignmentService : IAlignmentService
             sectionOptions,
             includeWindows: true,
             overrideSection: sectionOverride);
+
+        if (sectionOverride is not null)
+        {
+            Logger.LogInformation(
+                "Section override applied for {ChapterId}: {Title} (Id={Id}, Words={StartWord}-{EndWord})",
+                context.Descriptor.ChapterId,
+                sectionOverride.Title,
+                sectionOverride.Id,
+                sectionOverride.StartWord,
+                sectionOverride.EndWord);
+        }
+        else if (pipeline.SectionDetected && pipeline.Section is not null)
+        {
+            Logger.LogInformation(
+                "Section auto-detected for {ChapterId}: {Title} (Id={Id}, Words={StartWord}-{EndWord})",
+                context.Descriptor.ChapterId,
+                pipeline.Section.Title,
+                pipeline.Section.Id,
+                pipeline.Section.StartWord,
+                pipeline.Section.EndWord);
+        }
+        else
+        {
+            Logger.LogInformation(
+                "No section selected for {ChapterId}; aligning against full book",
+                context.Descriptor.ChapterId);
+        }
 
         var windows = pipeline.Windows;
         if (windows is null || windows.Count == 0)
@@ -191,7 +222,8 @@ public sealed class AlignmentService : IAlignmentService
     private SectionRange? ResolveSectionOverride(
         ChapterContext context,
         BookIndex book,
-        AnchorComputationOptions options)
+        AnchorComputationOptions options,
+        string stage)
     {
         if (options.SectionOverride is not null)
         {
@@ -205,14 +237,62 @@ public sealed class AlignmentService : IAlignmentService
 
         foreach (var label in EnumerateLabelCandidates(context))
         {
+            if (TryExtractChapterNumber(label, out var numberFromLabel))
+            {
+                var numericSection = SectionLocator.ResolveSectionByTitle(book, numberFromLabel.ToString());
+                if (numericSection is not null)
+                {
+                    Logger.LogInformation(
+                        "Resolved section ({Stage}) from numeric label '{Label}' → {Number} for {ChapterId}: {Title} (Id={Id}, Words={Start}-{End})",
+                        stage,
+                        label,
+                        numberFromLabel,
+                        context.Descriptor.ChapterId,
+                        numericSection.Title,
+                        numericSection.Id,
+                        numericSection.StartWord,
+                        numericSection.EndWord);
+                    return numericSection;
+                }
+            }
+
             var section = SectionLocator.ResolveSectionByTitle(book, label);
             if (section is not null)
             {
+                Logger.LogInformation(
+                    "Resolved section ({Stage}) from label '{Label}' for {ChapterId}: {Title} (Id={Id}, Words={Start}-{End})",
+                    stage,
+                    label,
+                    context.Descriptor.ChapterId,
+                    section.Title,
+                    section.Id,
+                    section.StartWord,
+                    section.EndWord);
                 return section;
             }
         }
 
+        Logger.LogDebug("Section not resolved from labels for {ChapterId}; will rely on auto-detect",
+            context.Descriptor.ChapterId);
         return null;
+    }
+
+    private static bool TryExtractChapterNumber(string label, out int number)
+    {
+        number = 0;
+        if (string.IsNullOrWhiteSpace(label))
+        {
+            return false;
+        }
+
+        // Patterns like "03_2_Title" or "05-12 Something" -> capture second number if two numbers appear.
+        var match = Regex.Match(label, @"^\s*\d+\s*[_-]\s*(\d+)\b");
+        if (match.Success && int.TryParse(match.Groups[1].Value, out number))
+        {
+            return true;
+        }
+
+        return false;
     }
 
     private static IEnumerable<string> EnumerateLabelCandidates(ChapterContext context)
