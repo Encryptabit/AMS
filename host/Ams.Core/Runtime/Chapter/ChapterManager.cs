@@ -35,8 +35,8 @@ public sealed class ChapterManager : IChapterManager
         _cache = new Dictionary<string, ChapterContext>(StringComparer.OrdinalIgnoreCase);
         _usageNodes = new Dictionary<string, LinkedListNode<string>>(StringComparer.OrdinalIgnoreCase);
         _usageOrder = new LinkedList<string>();
-        // Clamp to descriptor count to avoid int.MaxValue allocations
-        _maxCachedContexts = Math.Max(1, Math.Min(maxCachedContexts, _descriptors.Count == 0 ? 1 : _descriptors.Count));
+        // Preserve caller intent; effective limit is computed dynamically (see MaxCachedContexts).
+        _maxCachedContexts = maxCachedContexts;
         _cursor = 0;
     }
 
@@ -237,7 +237,7 @@ public sealed class ChapterManager : IChapterManager
                 _bookContext.Descriptor.BookId,
                 chapterId,
                 _cache.Count,
-                _maxCachedContexts);
+                MaxCachedContexts);
         }
     }
 
@@ -266,7 +266,7 @@ public sealed class ChapterManager : IChapterManager
                 _bookContext.Descriptor.BookId,
                 descriptor.ChapterId,
                 _cache.Count,
-                _maxCachedContexts);
+                MaxCachedContexts);
             EnsureCapacity();
         }
         else
@@ -277,7 +277,7 @@ public sealed class ChapterManager : IChapterManager
                 _bookContext.Descriptor.BookId,
                 descriptor.ChapterId,
                 _cache.Count,
-                _maxCachedContexts);
+                MaxCachedContexts);
         }
 
         return context;
@@ -308,7 +308,7 @@ public sealed class ChapterManager : IChapterManager
 
     private void EnsureCapacity()
     {
-        while (_cache.Count > _maxCachedContexts && _usageOrder.First is { } lru)
+        while (_cache.Count > MaxCachedContexts && _usageOrder.First is { } lru)
         {
             var lruId = lru.Value;
             _usageOrder.RemoveFirst();
@@ -323,8 +323,23 @@ public sealed class ChapterManager : IChapterManager
                     _bookContext.Descriptor.BookId,
                     lruId,
                     _cache.Count,
-                    _maxCachedContexts);
+                    MaxCachedContexts);
             }
+        }
+    }
+
+    private int MaxCachedContexts
+    {
+        get
+        {
+            if (_maxCachedContexts == DefaultMaxCachedContexts)
+            {
+                // Default: cache up to the number of known chapters; if none are known yet, stay unbounded.
+                return _descriptors.Count == 0 ? int.MaxValue : _descriptors.Count;
+            }
+
+            var descriptorCount = _descriptors.Count == 0 ? _maxCachedContexts : _descriptors.Count;
+            return Math.Max(1, Math.Min(_maxCachedContexts, descriptorCount));
         }
     }
 

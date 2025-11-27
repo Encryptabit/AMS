@@ -87,6 +87,17 @@ public partial class BookIndexer : IBookIndexer
         {
             cancellationToken.ThrowIfCancellationRequested();
             var (pText, style, kind) = paragraphTexts[pIndex];
+            if (ShouldSkipParagraphFromIndex(pText, style, kind))
+            {
+                paragraphs.Add(new ParagraphRange(
+                    Index: pIndex,
+                    Start: globalWord,
+                    End: globalWord - 1,
+                    Kind: "Meta",
+                    Style: style));
+                continue;
+            }
+
             if (string.IsNullOrEmpty(pText))
             {
                 paragraphs.Add(new ParagraphRange(pIndex, globalWord, globalWord - 1, kind, style));
@@ -734,6 +745,22 @@ public partial class BookIndexer : IBookIndexer
         }
 
         return false;
+    }
+
+    private static bool ShouldSkipParagraphFromIndex(string? text, string? style, string? kind)
+    {
+        if (!string.IsNullOrWhiteSpace(style) && IsNonSectionParagraphStyle(style))
+        {
+            return true;
+        }
+
+        var trimmed = text?.Trim();
+        if (string.IsNullOrEmpty(trimmed))
+        {
+            return false;
+        }
+
+        return LooksLikeTableOfContentsEntry(trimmed);
     }
 
     private static string ComputeFileHash(string filePath)

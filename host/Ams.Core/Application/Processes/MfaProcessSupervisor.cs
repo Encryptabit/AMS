@@ -355,15 +355,19 @@ public static class MfaProcessSupervisor
         _startTask = null;
         _isReady = false;
 
-        if (_process is { HasExited: false })
+        if (IsProcessRunning(_process))
         {
             try
             {
-                _process.Kill(true);
+                _process!.Kill(true);
+            }
+            catch (InvalidOperationException)
+            {
+                // Process was never started; nothing to kill.
             }
             catch
             {
-                // ignore
+                // ignore other termination issues
             }
         }
 
@@ -371,10 +375,14 @@ public static class MfaProcessSupervisor
         {
             try
             {
-                if (!_process.HasExited)
+                if (IsProcessRunning(_process))
                 {
                     _process.WaitForExit(2000);
                 }
+            }
+            catch (InvalidOperationException)
+            {
+                // Process object not associated with a running process.
             }
             catch (Exception ex)
             {
@@ -408,6 +416,18 @@ public static class MfaProcessSupervisor
             {
                 _scriptPath = null;
             }
+        }
+    }
+
+    private static bool IsProcessRunning(Process? process)
+    {
+        try
+        {
+            return process is { HasExited: false };
+        }
+        catch (InvalidOperationException)
+        {
+            return false;
         }
     }
 

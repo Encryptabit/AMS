@@ -119,7 +119,13 @@ public class BookParser : IBookParser
                         return;
                     }
 
-                    suppress.Add(value.Trim());
+                    var trimmed = value.Trim();
+                    if (ShouldIgnoreSuppressEntry(trimmed))
+                    {
+                        return;
+                    }
+
+                    suppress.Add(trimmed);
                 }
 
                 if (document.CoreProperties != null)
@@ -691,6 +697,41 @@ public class BookParser : IBookParser
         }
 
         return working;
+    }
+
+    private static bool ShouldIgnoreSuppressEntry(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return true;
+        }
+
+        // Skip purely numeric or date-like metadata (e.g., revision numbers)
+        bool hasLetters = false;
+        foreach (var ch in value)
+        {
+            if (char.IsLetter(ch))
+            {
+                hasLetters = true;
+                break;
+            }
+        }
+
+        if (hasLetters)
+        {
+            return false;
+        }
+
+        // Treat entries that are digits plus common separators as numeric noise
+        foreach (var ch in value)
+        {
+            if (!(char.IsDigit(ch) || char.IsWhiteSpace(ch) || ch is ':' or '-' or '/' or '.'))
+            {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     private static IEnumerable<string> SplitPdfSentences(string text)
