@@ -4,6 +4,8 @@ using System.Linq;
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using System.Globalization;
+using Spectre.Console;
 using Ams.Cli.Utilities;
 using Ams.Core.Artifacts;
 using Ams.Core.Processors;
@@ -29,7 +31,7 @@ public static class DspCommand
         FilterDefinition.Create("aspectralstats", (g, p) => g.AspectralStats(p), new AspectralStatsFilterParams()),
         FilterDefinition.Create("dynaudnorm", (g, p) => g.DynaudNorm(p), new DynaudNormFilterParams()),
         FilterDefinition.Create("astats", (g, p) => g.AStats(p),
-            new AStatsFilterParams(EmitMetadata: true, ResetInterval: 1)),
+            new AStatsFilterParams(EmitMetadata: false, ResetInterval: 0)),
         FilterDefinition.Create("compressor", (g, p) => g.ACompressor(p),
             new ACompressorFilterParams(ThresholdDb: -24, Ratio: 1.3, AttackMilliseconds: 5, ReleaseMilliseconds: 120,
                 MakeupDb: 0.5)),
@@ -292,13 +294,25 @@ public static class DspCommand
         inputOption.AddAlias("-i");
         var configOption = new Option<FileInfo?>("--config", () => null,
             $"Configuration file path (defaults to {DefaultFilterChainFileName})");
+        var filtersOption = new Option<string[]>("--filters", () => Array.Empty<string>(),
+            "Apply named filters ad hoc (uses built-in defaults), bypassing filter-chain config")
+        {
+            AllowMultipleArgumentsPerToken = true
+        };
         var saveOption = new Option<bool>("--save", () => false, "Write filtered audio to disk");
         var outputOption = new Option<FileInfo?>("--output", "Optional output path when using --save");
+        var astatsPrintOption = new Option<bool>("--print-astats", () => false,
+            "If the chain includes astats, print its FFmpeg log output to the console");
+        var rawLogsOption = new Option<bool>("--raw", () => false,
+            "Print all raw FFmpeg filter-graph logs to the console");
 
         cmd.AddOption(inputOption);
         cmd.AddOption(configOption);
+        cmd.AddOption(filtersOption);
         cmd.AddOption(saveOption);
         cmd.AddOption(outputOption);
+        cmd.AddOption(astatsPrintOption);
+        cmd.AddOption(rawLogsOption);
 
         cmd.SetHandler(async context =>
         {
@@ -306,12 +320,25 @@ public static class DspCommand
             try
             {
                 var inputFile = CommandInputResolver.RequireAudio(context.ParseResult.GetValueForOption(inputOption));
-                var configPath = ResolveFilterConfigFile(context.ParseResult.GetValueForOption(configOption));
-                var config = await FilterChainConfig.LoadAsync(configPath, token).ConfigureAwait(false);
-                var enabledFilters = config.Filters.Where(f => f.Enabled).ToList();
-                if (enabledFilters.Count == 0)
+                var selected = context.ParseResult.GetValueForOption(filtersOption);
+                List<FilterConfig> enabledFilters;
+                if (selected is { Length: > 0 })
                 {
-                    throw new InvalidOperationException("No enabled filters found in the filter-chain configuration.");
+                    var definitions = ResolveFilterDefinitions(selected);
+                    enabledFilters = definitions.Select(d => CreateFilterConfig(d)).ToList();
+                    Log.Info("[dsp] Running ad-hoc filters: {Filters}", string.Join(", ", selected));
+                }
+                else
+                {
+                    var configPath = ResolveFilterConfigFile(context.ParseResult.GetValueForOption(configOption));
+                    var config = await FilterChainConfig.LoadAsync(configPath, token).ConfigureAwait(false);
+                    enabledFilters = config.Filters.Where(f => f.Enabled).ToList();
+                    if (enabledFilters.Count == 0)
+                    {
+                        throw new InvalidOperationException("No enabled filters found in the filter-chain configuration.");
+                    }
+                    Log.Info("[dsp] Using filter-chain config {Path} (enabled filters: {Count})",
+                        configPath.FullName, enabledFilters.Count);
                 }
 
                 var save = context.ParseResult.GetValueForOption(saveOption);
@@ -321,7 +348,10 @@ public static class DspCommand
                     throw new InvalidOperationException("--output can only be used with --save.");
                 }
 
-                ExecuteFilterChain(inputFile, enabledFilters, save, outputFile);
+                var printAstats = context.ParseResult.GetValueForOption(astatsPrintOption);
+                var printRaw = context.ParseResult.GetValueForOption(rawLogsOption);
+
+                ExecuteFilterChain(inputFile, enabledFilters, save, outputFile, printAstats, printRaw);
             }
             catch (Exception ex)
             {
@@ -340,11 +370,13 @@ public static class DspCommand
         var inputOption = new Option<FileInfo?>("--input", "Input audio file (defaults to active chapter)");
         var saveOption = new Option<bool>("--save", () => false, "Write filtered audio to disk");
         var outputOption = new Option<FileInfo?>("--output", "Optional output path when using --save");
+        var rawOption = new Option<bool>("--raw", () => false, "Print all raw FFmpeg filter-graph logs to the console");
 
         inputOption.AddAlias("-i");
         cmd.AddOption(inputOption);
         cmd.AddOption(saveOption);
         cmd.AddOption(outputOption);
+        cmd.AddOption(rawOption);
 
         cmd.SetHandler(context =>
         {
@@ -356,12 +388,13 @@ public static class DspCommand
 
                 var save = context.ParseResult.GetValueForOption(saveOption);
                 var outputFile = context.ParseResult.GetValueForOption(outputOption);
+                var printRaw = context.ParseResult.GetValueForOption(rawOption);
                 if (!save && outputFile is not null)
                 {
                     throw new InvalidOperationException("--output can only be used with --save.");
                 }
 
-                ExecuteFilterChain(inputFile, filterConfigs, save, outputFile);
+                ExecuteFilterChain(inputFile, filterConfigs, save, outputFile, printAstats: false, printRaw: printRaw);
             }
             catch (Exception ex)
             {
@@ -1333,7 +1366,9 @@ public static class DspCommand
         FileInfo inputFile,
         IReadOnlyList<FilterConfig> filters,
         bool saveOutput,
-        FileInfo? explicitOutput)
+        FileInfo? explicitOutput,
+        bool printAstats,
+        bool printRaw)
     {
         if (filters.Count == 0)
         {
@@ -1342,6 +1377,18 @@ public static class DspCommand
 
         var buffer = AudioProcessor.Decode(inputFile.FullName);
         var graph = BuildFilterGraph(buffer, filters);
+
+        if (printRaw)
+        {
+            var logs = graph.CaptureLogs();
+            PrintRawLogs(logs);
+        }
+
+        if (printAstats && filters.Any(f => string.Equals(f.Name, "astats", StringComparison.OrdinalIgnoreCase)))
+        {
+            var logs = graph.CaptureLogs();
+            PrintAstatsLogs(logs);
+        }
 
         if (saveOutput)
         {
@@ -1391,6 +1438,45 @@ public static class DspCommand
         }
 
         return definition;
+    }
+
+    private static void PrintRawLogs(IReadOnlyList<string> logs)
+    {
+        if (logs.Count == 0)
+        {
+            AnsiConsole.MarkupLine("[yellow]No filter-graph log output.[/]");
+            return;
+        }
+
+        AnsiConsole.MarkupLine("[bold green]filter-graph raw output[/]");
+        foreach (var line in logs)
+        {
+            AnsiConsole.MarkupLine(Markup.Escape(line));
+        }
+    }
+
+    private static void PrintAstatsLogs(IReadOnlyList<string> logs)
+    {
+        if (logs.Count == 0)
+        {
+            Log.Warn("astats did not emit any log lines.");
+            return;
+        }
+
+        AnsiConsole.MarkupLine("[bold green]astats output[/]");
+        foreach (var line in logs)
+        {
+            // Only show lines that look like astats output to reduce noise
+            if (line.Contains("AStats", StringComparison.OrdinalIgnoreCase) ||
+                line.Contains("Overall", StringComparison.OrdinalIgnoreCase) ||
+                line.Contains("Max level", StringComparison.OrdinalIgnoreCase) ||
+                line.Contains("Min level", StringComparison.OrdinalIgnoreCase) ||
+                line.Contains("DC offset", StringComparison.OrdinalIgnoreCase) ||
+                line.Contains("RMS", StringComparison.OrdinalIgnoreCase))
+            {
+                AnsiConsole.MarkupLine(Markup.Escape(line));
+            }
+        }
     }
 
     private static FfFilterGraph BuildFilterGraph(AudioBuffer buffer, IReadOnlyList<FilterConfig> filters)

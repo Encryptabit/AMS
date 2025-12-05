@@ -1,12 +1,16 @@
 using Ams.Core.Runtime.Artifacts;
 using Ams.Core.Runtime.Audio;
 using Ams.Core.Runtime.Book;
+using Ams.Core.Services.Alignment;
+using Ams.Core.Processors.Alignment.Anchors;
+using Microsoft.Extensions.Logging;
 
 namespace Ams.Core.Runtime.Chapter;
 
 public sealed class ChapterContext
 {
     private readonly IArtifactResolver _resolver;
+    private SectionRange? _resolvedSection;
 
     internal ChapterContext(BookContext book, ChapterDescriptor descriptor)
     {
@@ -41,5 +45,118 @@ public sealed class ChapterContext
         }
 
         return _resolver.GetChapterArtifactFile(this, trimmedSuffix);
+    }
+
+    /// <summary>
+    /// Resolve and cache the book section for this chapter (override > label mapping; auto-detect handled by caller).
+    /// </summary>
+    internal SectionRange? GetOrResolveSection(BookIndex book, AnchorComputationOptions options, string stage,
+        ILogger logger)
+    {
+        if (_resolvedSection is not null)
+        {
+            logger.LogInformation(
+                "Resolved section ({Stage}) from cache for {ChapterId}: {Title} (Id={Id}, Words={Start}-{End})",
+                stage,
+                Descriptor.ChapterId,
+                _resolvedSection.Title,
+                _resolvedSection.Id,
+                _resolvedSection.StartWord,
+                _resolvedSection.EndWord);
+            return _resolvedSection;
+        }
+
+        if (options.SectionOverride is not null)
+        {
+            _resolvedSection = options.SectionOverride;
+            return _resolvedSection;
+        }
+
+        if (options.TryResolveSectionFromLabels)
+        {
+            foreach (var label in EnumerateLabelCandidates())
+            {
+                if (TryExtractChapterNumber(label, out var numberFromLabel))
+                {
+                    var numericSection = SectionLocator.ResolveSectionByTitle(book, numberFromLabel.ToString());
+                    if (numericSection is not null)
+                    {
+                        _resolvedSection = numericSection;
+                        logger.LogInformation(
+                            "Resolved section ({Stage}) from numeric label '{Label}' → {Number} for {ChapterId}: {Title} (Id={Id}, Words={Start}-{End})",
+                            stage,
+                            label,
+                            numberFromLabel,
+                            Descriptor.ChapterId,
+                            numericSection.Title,
+                            numericSection.Id,
+                            numericSection.StartWord,
+                            numericSection.EndWord);
+                        return _resolvedSection;
+                    }
+                }
+
+                var section = SectionLocator.ResolveSectionByTitle(book, label);
+                if (section is not null)
+                {
+                    _resolvedSection = section;
+                    logger.LogInformation(
+                        "Resolved section ({Stage}) from label '{Label}' for {ChapterId}: {Title} (Id={Id}, Words={Start}-{End})",
+                        stage,
+                        label,
+                        Descriptor.ChapterId,
+                        section.Title,
+                        section.Id,
+                        section.StartWord,
+                        section.EndWord);
+                    return _resolvedSection;
+                }
+            }
+        }
+
+        logger.LogDebug("Section not resolved from labels for {ChapterId}; will rely on auto-detect",
+            Descriptor.ChapterId);
+        return null;
+    }
+
+    internal void SetDetectedSection(SectionRange section)
+    {
+        _resolvedSection ??= section;
+    }
+
+    private IEnumerable<string> EnumerateLabelCandidates()
+    {
+        if (!string.IsNullOrWhiteSpace(Descriptor.ChapterId))
+        {
+            yield return Descriptor.ChapterId;
+        }
+
+        if (!string.IsNullOrWhiteSpace(Descriptor.RootPath))
+        {
+            var rootName =
+                Path.GetFileName(Descriptor.RootPath.TrimEnd(Path.DirectorySeparatorChar,
+                    Path.AltDirectorySeparatorChar));
+            if (!string.IsNullOrWhiteSpace(rootName))
+            {
+                yield return rootName;
+            }
+        }
+    }
+
+    private static bool TryExtractChapterNumber(string label, out int number)
+    {
+        number = 0;
+        if (string.IsNullOrWhiteSpace(label))
+        {
+            return false;
+        }
+
+        var match = System.Text.RegularExpressions.Regex.Match(label, @"^\s*\d+\s*[_-]\s*(\d+)\b");
+        if (match.Success && int.TryParse(match.Groups[1].Value, out number))
+        {
+            return true;
+        }
+
+        return false;
     }
 }

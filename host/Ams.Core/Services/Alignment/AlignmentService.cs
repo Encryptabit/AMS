@@ -34,7 +34,7 @@ public sealed class AlignmentService : IAlignmentService
         var bookView = AnchorPreprocessor.BuildBookView(book);
         var asrView = AnchorPreprocessor.BuildAsrView(asr);
         var policy = BuildPolicy(opts);
-        var sectionOverride = ResolveSectionOverride(context, book, opts, stage: "anchors");
+        var sectionOverride = context.GetOrResolveSection(book, opts, stage: "anchors", Logger);
         var sectionOptions = new SectionDetectOptions(
             Detect: opts.DetectSection && sectionOverride is null,
             AsrPrefixTokens: opts.AsrPrefixTokens);
@@ -45,6 +45,10 @@ public sealed class AlignmentService : IAlignmentService
             sectionOptions,
             includeWindows: opts.EmitWindows,
             overrideSection: sectionOverride);
+        if (pipeline.SectionDetected && pipeline.Section is not null)
+        {
+            context.SetDetectedSection(pipeline.Section);
+        }
 
         var document = BuildAnchorDocument(pipeline, opts);
         context.Documents.Anchors = document;
@@ -64,7 +68,7 @@ public sealed class AlignmentService : IAlignmentService
         var bookView = AnchorPreprocessor.BuildBookView(book);
         var asrView = AnchorPreprocessor.BuildAsrView(asr);
         var policy = BuildPolicy(anchorOpts);
-        var sectionOverride = ResolveSectionOverride(context, book, anchorOpts, stage: "transcript");
+        var sectionOverride = context.GetOrResolveSection(book, anchorOpts, stage: "transcript", Logger);
         var sectionOptions = new SectionDetectOptions(
             Detect: anchorOpts.DetectSection && sectionOverride is null,
             AsrPrefixTokens: anchorOpts.AsrPrefixTokens);
@@ -86,9 +90,11 @@ public sealed class AlignmentService : IAlignmentService
                 sectionOverride.Id,
                 sectionOverride.StartWord,
                 sectionOverride.EndWord);
+            context.SetDetectedSection(sectionOverride);
         }
         else if (pipeline.SectionDetected && pipeline.Section is not null)
         {
+            context.SetDetectedSection(pipeline.Section);
             Logger.LogInformation(
                 "Section auto-detected for {ChapterId}: {Title} (Id={Id}, Words={StartWord}-{EndWord})",
                 context.Descriptor.ChapterId,
@@ -217,64 +223,6 @@ public sealed class AlignmentService : IAlignmentService
             Windows: windows);
 
         return document;
-    }
-
-    private SectionRange? ResolveSectionOverride(
-        ChapterContext context,
-        BookIndex book,
-        AnchorComputationOptions options,
-        string stage)
-    {
-        if (options.SectionOverride is not null)
-        {
-            return options.SectionOverride;
-        }
-
-        if (!options.TryResolveSectionFromLabels)
-        {
-            return null;
-        }
-
-        foreach (var label in EnumerateLabelCandidates(context))
-        {
-            if (TryExtractChapterNumber(label, out var numberFromLabel))
-            {
-                var numericSection = SectionLocator.ResolveSectionByTitle(book, numberFromLabel.ToString());
-                if (numericSection is not null)
-                {
-                    Logger.LogInformation(
-                        "Resolved section ({Stage}) from numeric label '{Label}' → {Number} for {ChapterId}: {Title} (Id={Id}, Words={Start}-{End})",
-                        stage,
-                        label,
-                        numberFromLabel,
-                        context.Descriptor.ChapterId,
-                        numericSection.Title,
-                        numericSection.Id,
-                        numericSection.StartWord,
-                        numericSection.EndWord);
-                    return numericSection;
-                }
-            }
-
-            var section = SectionLocator.ResolveSectionByTitle(book, label);
-            if (section is not null)
-            {
-                Logger.LogInformation(
-                    "Resolved section ({Stage}) from label '{Label}' for {ChapterId}: {Title} (Id={Id}, Words={Start}-{End})",
-                    stage,
-                    label,
-                    context.Descriptor.ChapterId,
-                    section.Title,
-                    section.Id,
-                    section.StartWord,
-                    section.EndWord);
-                return section;
-            }
-        }
-
-        Logger.LogDebug("Section not resolved from labels for {ChapterId}; will rely on auto-detect",
-            context.Descriptor.ChapterId);
-        return null;
     }
 
     private static bool TryExtractChapterNumber(string label, out int number)
