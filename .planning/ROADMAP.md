@@ -41,7 +41,10 @@ Key deliverables:
 **Goal**: Crystal-clear documentation of ASR → alignment → MFA → merge flow with exact step order, data inputs/outputs, and intermediate artifacts
 **Depends on**: Phase 1
 **Research**: Unlikely (tracing existing code paths)
-**Plans**: TBD
+**Plans**: 3 plans created
+- 02-01: Pipeline Orchestration Flow (3 tasks)
+- 02-02: Data Flow & Artifacts (3 tasks)
+- 02-03: Indexing Clarification (3 tasks)
 
 Key deliverables:
 - Pipeline step order documentation (precise sequence)
@@ -81,6 +84,6 @@ Phases execute in numeric order: 1 → 2 → 3 → 4
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Discovery | 4/4 | Complete | 2025-12-28 |
-| 2. Pipeline Analysis | 0/TBD | Not started | - |
+| 2. Pipeline Analysis | 1/3 | In progress | - |
 | 3. Code Audit | 0/TBD | Not started | - |
 | 4. Recommendations | 0/TBD | Not started | - |
