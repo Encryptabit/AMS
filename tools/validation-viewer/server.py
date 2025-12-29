@@ -27,6 +27,7 @@ import xlwings as xw
 APPDATA_DIR = Path(os.getenv('APPDATA')) / 'AMS' / 'validation-viewer'
 APPDATA_DIR.mkdir(parents=True, exist_ok=True)
 REVIEWED_STATUS_FILE = APPDATA_DIR / 'reviewed-status.json'
+IGNORED_ERRORS_FILE = APPDATA_DIR / 'ignored-errors.json'
 
 # Default configuration
 BASE_DIR = Path(r"C:\Aethon\InProgress\Vain Glory 2")
@@ -71,6 +72,36 @@ class ValidationReportHandler(BaseHTTPRequestHandler):
         return {}
 
     @staticmethod
+    def load_ignored_errors():
+        """Load ignored error patterns for the current book"""
+        if IGNORED_ERRORS_FILE.exists():
+            try:
+                with open(IGNORED_ERRORS_FILE, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                    book_name = BASE_DIR.name
+                    return set(data.get(book_name, []))
+            except Exception as e:
+                print(f"Error loading ignored errors: {e}")
+        return set()
+
+    @staticmethod
+    def save_ignored_errors(pattern_keys):
+        """Persist ignored error patterns for the current book"""
+        try:
+            all_data = {}
+            if IGNORED_ERRORS_FILE.exists():
+                with open(IGNORED_ERRORS_FILE, 'r', encoding='utf-8') as f:
+                    all_data = json.load(f)
+
+            book_name = BASE_DIR.name
+            all_data[book_name] = list(pattern_keys)
+
+            with open(IGNORED_ERRORS_FILE, 'w', encoding='utf-8') as f:
+                json.dump(all_data, f, indent=2)
+        except Exception as e:
+            print(f"Error saving ignored errors: {e}")
+
+    @staticmethod
     def save_reviewed_status(reviewed_chapters):
         """Save reviewed status to AppData"""
         try:
@@ -102,6 +133,10 @@ class ValidationReportHandler(BaseHTTPRequestHandler):
             self.serve_overview()
         elif path == '/api/reviewed':
             self.serve_reviewed_status()
+        elif path == '/api/errors/aggregate':
+            self.serve_error_aggregate()
+        elif path == '/api/errors/ignored':
+            self.serve_ignored_errors()
         elif path.startswith('/api/report/'):
             chapter_name = path[len('/api/report/'):]
             self.serve_report(chapter_name)
@@ -134,14 +169,25 @@ class ValidationReportHandler(BaseHTTPRequestHandler):
         elif path == '/api/reset-reviews':
             print(f"Matched reset reviews route")
             self.handle_reset_reviews()
+        elif path == '/api/errors/ignore':
+            self.handle_ignore_error()
         else:
             print(f"No route matched for path: {path}")
             self.send_error(404)
+
+    @staticmethod
+    def build_pattern_key(kind, book_text, script_text):
+        return f"{kind}|{book_text}|{script_text}"
 
     def serve_reviewed_status(self):
         """Serve reviewed status for all chapters"""
         reviewed = self.load_reviewed_status()
         self.send_json_response(reviewed)
+
+    def serve_ignored_errors(self):
+        """Serve ignored error patterns for the current book"""
+        ignored = list(self.load_ignored_errors())
+        self.send_json_response({'ignored': ignored})
 
     def handle_mark_reviewed(self, chapter_name):
         """Mark a chapter as reviewed"""
@@ -196,6 +242,36 @@ class ValidationReportHandler(BaseHTTPRequestHandler):
             print(traceback.format_exc())
             self.send_json_response({'error': str(e)}, 500)
 
+    # -----------------------
+    # Ignore list management
+    # -----------------------
+    def handle_ignore_error(self):
+        try:
+            content_length = int(self.headers.get('Content-Length', 0))
+            raw = self.rfile.read(content_length)
+            params = json.loads(raw.decode('utf-8'))
+
+            kind = params.get('type')
+            book_text = params.get('book', '')
+            script_text = params.get('script', '')
+            ignore = bool(params.get('ignore', True))
+
+            key = self.build_pattern_key(kind, book_text, script_text)
+            ignored = self.load_ignored_errors()
+
+            if ignore:
+                ignored.add(key)
+            else:
+                ignored.discard(key)
+
+            self.save_ignored_errors(ignored)
+
+            self.send_json_response({'success': True, 'ignored': list(ignored)})
+        except Exception as e:
+            print(f"Error handling ignore error: {e}")
+            print(traceback.format_exc())
+            self.send_json_response({'error': str(e)}, 500)
+
     def serve_static_file(self, file_path):
         """Serve static files (CSS, JS)"""
         static_dir = SCRIPT_DIR / 'static'
@@ -240,6 +316,206 @@ class ValidationReportHandler(BaseHTTPRequestHandler):
             print(f"Error loading index.html: {e}")
             self.send_error(500)
 
+    # -----------------------
+    # Error aggregation helpers
+    # -----------------------
+    def apply_ignore_to_sentence(self, sentence, ignored_patterns):
+        """Return a copy of sentence with diff ops filtered by ignored patterns.
+        If all errors ignored, status becomes 'ok' and diff cleared."""
+        if not sentence:
+            return sentence, False
+
+        sentence = copy.deepcopy(sentence)
+        diff = sentence.get('diff')
+        if not diff or 'ops' not in diff:
+            return sentence, False
+
+        ops = diff.get('ops', [])
+        filtered_ops = []
+        i = 0
+        had_errors = False
+
+        while i < len(ops):
+            op = ops[i]
+            tokens = op.get('tokens') or []
+
+            if op.get('op') == 'equal' or not tokens:
+                filtered_ops.append(op)
+                i += 1
+                continue
+
+            if op.get('op') == 'delete':
+                deleted = [tokens]
+                j = i + 1
+                # collect consecutive deletes
+                while j < len(ops) and ops[j].get('op') == 'delete':
+                    deleted.append(ops[j].get('tokens') or [])
+                    j += 1
+
+                # collect consecutive inserts after deletes (potential substitution)
+                inserts = []
+                k = j
+                while k < len(ops) and ops[k].get('op') == 'insert':
+                    inserts.append(ops[k].get('tokens') or [])
+                    k += 1
+
+                del_text = ' '.join(sum(deleted, []))
+                ins_text = ' '.join(sum(inserts, []))
+
+                if inserts:
+                    key = self.build_pattern_key('sub', del_text, ins_text)
+                    ignored = key in ignored_patterns
+                    if not ignored:
+                        had_errors = True
+                        filtered_ops.append(op)
+                        # add subsequent deletes
+                        for d in range(i + 1, j):
+                            filtered_ops.append(ops[d])
+                        # add inserts
+                        for ins_idx in range(j, k):
+                            filtered_ops.append(ops[ins_idx])
+                    i = k
+                else:
+                    key = self.build_pattern_key('del', del_text, '')
+                    ignored = key in ignored_patterns
+                    if not ignored:
+                        had_errors = True
+                        # keep all delete ops
+                        for d in range(i, j):
+                            filtered_ops.append(ops[d])
+                    i = j
+                continue
+
+            if op.get('op') == 'insert':
+                inserted = [tokens]
+                j = i + 1
+                while j < len(ops) and ops[j].get('op') == 'insert':
+                    inserted.append(ops[j].get('tokens') or [])
+                    j += 1
+                ins_text = ' '.join(sum(inserted, []))
+                key = self.build_pattern_key('ins', '', ins_text)
+                ignored = key in ignored_patterns
+                if not ignored:
+                    had_errors = True
+                    for ins_idx in range(i, j):
+                        filtered_ops.append(ops[ins_idx])
+                i = j
+                continue
+
+            # default
+            filtered_ops.append(op)
+            i += 1
+
+        # Remove leading/trailing equals with no errors left
+        has_error_ops = any(o.get('op') in ('delete', 'insert') for o in filtered_ops)
+        if not has_error_ops:
+            sentence['status'] = 'ok'
+            sentence['diff'] = {}
+            return sentence, had_errors
+
+        sentence['diff'] = {'ops': filtered_ops}
+        return sentence, had_errors
+
+    def iterate_hydrate_chapters(self):
+        """Yield (chapter_name, hydrate_data) for each hydrate file"""
+        for item in BASE_DIR.iterdir():
+            if not item.is_dir():
+                continue
+            hydrate_path = item / f"{item.name}.align.hydrate.json"
+            if not hydrate_path.exists():
+                continue
+            try:
+                with open(hydrate_path, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                yield item.name, data
+            except Exception as e:
+                print(f"Failed to load hydrate for {item.name}: {e}")
+
+    def collect_error_patterns(self, ignored):
+        patterns = {}
+        for chapter_name, hydrate in self.iterate_hydrate_chapters():
+            for sent in hydrate.get('sentences', []):
+                diff = sent.get('diff') or {}
+                ops = diff.get('ops', [])
+                i = 0
+                while i < len(ops):
+                    op = ops[i]
+                    tokens = op.get('tokens') or []
+                    if not tokens:
+                        i += 1
+                        continue
+                    if op.get('op') == 'delete':
+                        deleted = [tokens]
+                        j = i + 1
+                        while j < len(ops) and ops[j].get('op') == 'delete':
+                            deleted.append(ops[j].get('tokens') or [])
+                            j += 1
+
+                        inserts = []
+                        k = j
+                        while k < len(ops) and ops[k].get('op') == 'insert':
+                            inserts.append(ops[k].get('tokens') or [])
+                            k += 1
+
+                        del_text = ' '.join(sum(deleted, []))
+                        ins_text = ' '.join(sum(inserts, []))
+
+                        if inserts:
+                            key = self.build_pattern_key('sub', del_text, ins_text)
+                            kind = 'sub'
+                        else:
+                            key = self.build_pattern_key('del', del_text, '')
+                            kind = 'del'
+
+                        self._accumulate_pattern(patterns, key, kind, del_text, ins_text, chapter_name, sent.get('id'))
+                        i = k if inserts else j
+                        continue
+
+                    if op.get('op') == 'insert':
+                        inserted = [tokens]
+                        j = i + 1
+                        while j < len(ops) and ops[j].get('op') == 'insert':
+                            inserted.append(ops[j].get('tokens') or [])
+                            j += 1
+                        ins_text = ' '.join(sum(inserted, []))
+                        key = self.build_pattern_key('ins', '', ins_text)
+                        self._accumulate_pattern(patterns, key, 'ins', '', ins_text, chapter_name, sent.get('id'))
+                        i = j
+                        continue
+
+                    i += 1
+
+        # Annotate ignored flag
+        for key, obj in patterns.items():
+            obj['ignored'] = key in ignored
+
+        return patterns
+
+    @staticmethod
+    def _accumulate_pattern(patterns, key, kind, book_text, script_text, chapter_name, sentence_id):
+        entry = patterns.setdefault(key, {
+            'key': key,
+            'type': kind,
+            'book': book_text,
+            'script': script_text,
+            'count': 0,
+            'examples': []
+        })
+        entry['count'] += 1
+        if len(entry['examples']) < 3:
+            entry['examples'].append({'chapter': chapter_name, 'sentenceId': sentence_id})
+
+    def serve_error_aggregate(self):
+        try:
+            ignored = self.load_ignored_errors()
+            patterns = self.collect_error_patterns(ignored)
+            sorted_patterns = sorted(patterns.values(), key=lambda p: p['count'], reverse=True)
+            self.send_json_response({'patterns': sorted_patterns, 'ignored': list(ignored)})
+        except Exception as e:
+            print(f"Error aggregating errors: {e}")
+            print(traceback.format_exc())
+            self.send_json_response({'error': str(e)}, 500)
+
     def extract_hydrate_metrics(self, hydrate_path):
         """Extract summary metrics from hydrate.json"""
         try:
@@ -249,8 +525,11 @@ class ValidationReportHandler(BaseHTTPRequestHandler):
             sentences = hydrate_data.get('sentences', [])
             paragraphs = hydrate_data.get('paragraphs', [])
 
-            # Count flagged sentences
-            flagged_sentences = [s for s in sentences if s.get('status', 'ok') != 'ok']
+            ignored = self.load_ignored_errors()
+
+            # Count flagged sentences after applying ignores
+            filtered_sentences = [self.apply_ignore_to_sentence(s, ignored)[0] for s in sentences]
+            flagged_sentences = [s for s in filtered_sentences if s.get('status', 'ok') != 'ok']
 
             # Calculate average WER
             total_wer = sum(s.get('metrics', {}).get('wer', 0) for s in sentences if 'metrics' in s)
@@ -456,7 +735,8 @@ class ValidationReportHandler(BaseHTTPRequestHandler):
             with open(hydrate_file, 'r', encoding='utf-8') as f:
                 hydrate_data = json.load(f)
 
-            report_data = self.parse_hydrate_to_report(hydrate_data, chapter_name)
+            ignored = self.load_ignored_errors()
+            report_data = self.parse_hydrate_to_report(hydrate_data, chapter_name, ignored)
             self.send_response(200)
             self.send_header('Content-type', 'application/json')
             self.end_headers()
@@ -475,20 +755,26 @@ class ValidationReportHandler(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(error_msg.encode())
 
-    def parse_hydrate_to_report(self, hydrate_data, chapter_name):
+    def parse_hydrate_to_report(self, hydrate_data, chapter_name, ignored_patterns=None):
         """Convert hydrate.json data to report format expected by the UI"""
+        ignored_patterns = ignored_patterns or set()
         sentences = hydrate_data.get('sentences', [])
         paragraphs = hydrate_data.get('paragraphs', [])
 
-        # Calculate statistics
-        flagged_sentences = [s for s in sentences if s.get('status', 'ok') != 'ok']
+        # Apply ignores and calculate statistics
+        filtered_sentences = []
+        for sent in sentences:
+            filtered_sent, _ = self.apply_ignore_to_sentence(sent, ignored_patterns)
+            filtered_sentences.append(filtered_sent)
+
+        flagged_sentences = [s for s in filtered_sentences if s.get('status', 'ok') != 'ok']
         total_wer = sum(s.get('metrics', {}).get('wer', 0) for s in sentences if 'metrics' in s)
         avg_wer = (total_wer / len(sentences) * 100) if sentences else 0
         max_wer = max((s.get('metrics', {}).get('wer', 0) for s in sentences if 'metrics' in s), default=0) * 100
 
         # Convert sentences to UI format
         ui_sentences = []
-        for sent in sentences:
+        for sent in filtered_sentences:
             metrics = sent.get('metrics', {})
             timing = sent.get('timing', {})
             book_range = sent.get('bookRange', {})
@@ -508,7 +794,7 @@ class ValidationReportHandler(BaseHTTPRequestHandler):
                 'bookText': sent.get('bookText', ''),
                 'scriptText': sent.get('scriptText', ''),
                 'excerpt': sent.get('bookText', '')[:100],
-                'diff': sent.get('diff', {}),  # Include the full diff structure
+                'diff': sent.get('diff', {}),  # Already filtered
                 'startTime': timing.get('startSec', 0),
                 'endTime': timing.get('endSec', 0),
                 'bookRangeStart': book_range.get('start'),

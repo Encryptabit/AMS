@@ -71,6 +71,20 @@
         </div>
     </div>
 
+    <!-- Ignore Error Modal -->
+    <div id="ignoreModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">Ignore Error Across Book</div>
+            <div class="modal-body">
+                <div id="ignore-error-list"></div>
+            </div>
+            <div class="modal-footer">
+                <button class="modal-button modal-button-secondary" onclick="closeIgnoreModal()">Cancel</button>
+                <button class="modal-button modal-button-primary" onclick="applyIgnoreSelections()">Ignore Selected</button>
+            </div>
+        </div>
+    </div>
+
     <script src="/static/app.js"></script>
 </body>
 </html>

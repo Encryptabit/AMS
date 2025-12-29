@@ -2,6 +2,12 @@
 let chapters = [];
 let currentChapter = null;
 let currentReport = null;
+let currentSpecialPage = 'overview'; // 'overview', 'patterns', or null
+let errorPatternsCache = [];
+let patternFilterText = '';
+let hasRenderedPatterns = false;
+let ignoredPatterns = new Set();
+let pendingIgnorePatterns = [];
 let pendingCrxData = null;
 let reviewedStatus = {};
 let currentView = 'errors'; // 'errors' or 'playback'
@@ -267,11 +273,23 @@ async function loadReviewedStatus() {
     }
 }
 
+async function loadIgnoredPatterns() {
+    try {
+        const response = await fetch('/api/errors/ignored');
+        const data = await response.json();
+        ignoredPatterns = new Set(data.ignored || []);
+    } catch (error) {
+        console.error('Failed to load ignored patterns:', error);
+        ignoredPatterns = new Set();
+    }
+}
+
 async function loadChapters() {
     try {
         const response = await fetch('/api/chapters');
         chapters = await response.json();
         await loadReviewedStatus();
+        await loadIgnoredPatterns();
         renderChapterList();
     } catch (error) {
         console.error('Failed to load chapters:', error);
@@ -417,9 +435,13 @@ function renderChapterList() {
     const list = document.getElementById('chapter-list');
 
     let html = `
-        <div class="chapter-item overview-item" onclick="loadOverview()">
+        <div class="chapter-item overview-item ${currentSpecialPage === 'overview' ? 'active' : ''}" onclick="loadOverview()">
             <div class="chapter-name">📊 Book Overview</div>
             <div class="chapter-stats">All Chapters</div>
+        </div>
+        <div class="chapter-item patterns-item ${currentSpecialPage === 'patterns' ? 'active' : ''}" onclick="loadErrorPatterns()">
+            <div class="chapter-name">🧩 Error Patterns</div>
+            <div class="chapter-stats">Across entire book</div>
         </div>
     `;
 
@@ -443,6 +465,8 @@ function renderChapterList() {
 // Overview rendering
 async function loadOverview() {
     currentChapter = null;
+    currentSpecialPage = 'overview';
+    hasRenderedPatterns = false;
 
     document.querySelectorAll('.chapter-item').forEach(item => {
         if (item.classList.contains('overview-item')) {
@@ -536,6 +560,8 @@ function renderOverview(overview) {
 // Report loading and rendering
 async function loadReport(chapterName) {
     currentChapter = chapterName;
+    currentSpecialPage = null;
+    hasRenderedPatterns = false;
 
     document.querySelectorAll('.chapter-item').forEach((item) => {
         if (item.classList.contains('overview-item')) {
@@ -889,6 +915,31 @@ function renderReport(report) {
             return werB - werA; // Descending order
         });
 
+    const quickErrorsHtml = filteredSentences.map(s => `
+        <div class="error-card" data-sentence-id="${s.id}">
+            <div class="error-card-header">
+                <span class="error-id">#${s.id}</span>
+                <span class="status-badge ${s.status}">${s.status}</span>
+            </div>
+            <div class="error-metrics">
+                <div class="metric">
+                    <span class="metric-label">WER</span>
+                    <span class="metric-value ${getMetricClass(parseFloat(s.wer?.replace('%', '') || 0))}">${s.wer}</span>
+                </div>
+                <div class="metric">
+                    <span class="metric-label">CER</span>
+                    <span class="metric-value ${getMetricClass(parseFloat(s.cer?.replace('%', '') || 0))}">${s.cer}</span>
+                </div>
+                ${getSentenceTimingDisplay(s) ? `
+                <div class="metric">
+                    <span class="metric-label">Time</span>
+                    <span class="metric-value">${getSentenceTimingDisplay(s)}</span>
+                </div>` : ''}
+            </div>
+            <div class="error-snippet">${getErrorSnippet(s)}</div>
+        </div>
+    `).join('');
+
     const sentencesHtml = filteredSentences.map(s => `
         <div id="sentence-${s.id}" class="sentence-item ${s.status}" data-sentence-id="${s.id}" data-start="${s.startTime}" style="cursor: pointer;">
             <div class="sentence-header">
@@ -942,6 +993,9 @@ function renderReport(report) {
                     </button>
                     <button class="crx-button" data-chapter="${currentChapter}" data-start="${s.startTime}" data-end="${s.endTime}" data-sentence-id="${s.id}" data-excerpt="${escapeHtml(s.excerpt || '')}">
                         Add to CRX
+                    </button>
+                    <button class="ignore-button" data-sentence-id="${s.id}">
+                        Ignore Error…
                     </button>
                 </div>
             ` : ''}
@@ -1021,6 +1075,11 @@ function renderReport(report) {
             </div>
         </div>
 
+        <div class="section-title">Quick Error Grid</div>
+        <div class="error-grid">
+            ${quickErrorsHtml || '<div class="empty-state">No sentence-level errors</div>'}
+        </div>
+
         <div class="section-title">Sentences with Errors (${filteredSentences.length})</div>
         ${sentencesHtml}
 
@@ -1051,6 +1110,15 @@ function renderReport(report) {
             });
         });
 
+        document.querySelectorAll('.ignore-button').forEach(btn => {
+            btn.addEventListener('click', function() {
+                const sentenceId = parseInt(this.getAttribute('data-sentence-id'), 10);
+                if (!isNaN(sentenceId)) {
+                    openIgnoreModal(sentenceId);
+                }
+            });
+        });
+
         // Add click listeners to sentence items in errors view
         document.querySelectorAll('.sentence-item').forEach(item => {
             item.addEventListener('click', function(e) {
@@ -1072,6 +1140,16 @@ function renderReport(report) {
                         }
                         seekToSentence(sentenceId, startTime);
                     }, 100);
+                }
+            });
+        });
+
+        // Quick grid jump-to handlers
+        document.querySelectorAll('.error-card').forEach(card => {
+            card.addEventListener('click', () => {
+                const sentenceId = parseInt(card.getAttribute('data-sentence-id'), 10);
+                if (!isNaN(sentenceId)) {
+                    focusSentence(sentenceId);
                 }
             });
         });
@@ -1113,11 +1191,196 @@ function renderReport(report) {
     }, 0);
 }
 
+// Error patterns view
+async function loadErrorPatterns(keepScrollPosition = false) {
+    currentChapter = null;
+    currentSpecialPage = 'patterns';
+
+    document.querySelectorAll('.chapter-item').forEach(item => {
+        if (item.classList.contains('patterns-item')) {
+            item.classList.add('active');
+        } else {
+            item.classList.remove('active');
+        }
+    });
+
+    const contentDiv = document.getElementById('content');
+    const previousScroll = keepScrollPosition && contentDiv ? contentDiv.scrollTop : 0;
+
+    try {
+        const response = await fetch('/api/errors/aggregate');
+        const data = await response.json();
+        errorPatternsCache = data.patterns || [];
+        hasRenderedPatterns = false; // force full render after fresh data
+        renderErrorPatterns();
+        updateFloatingButton();
+        if (keepScrollPosition && contentDiv) {
+            contentDiv.scrollTop = previousScroll;
+        } else if (contentDiv) {
+            contentDiv.scrollTo({ top: 0, behavior: 'smooth' });
+        }
+    } catch (err) {
+        console.error('Failed to load error patterns', err);
+        document.getElementById('content').innerHTML = '<div id="loading">Failed to load error patterns</div>';
+    }
+}
+
+function renderErrorPatterns(data) {
+    if (data && data.patterns) {
+        errorPatternsCache = data.patterns;
+    }
+
+    const patterns = getFilteredPatterns();
+    const cards = patterns.map(p => {
+        const arrow = '&rarr;';
+        const bookText = p.book || '[missing]';
+        const scriptText = p.script || '[missing]';
+        const ignoredClass = p.ignored ? 'ignored' : '';
+
+        return `
+            <div class="pattern-card ${ignoredClass}" data-key="${p.key}" data-type="${p.type}" data-book="${escapeHtml(bookText)}" data-script="${escapeHtml(scriptText)}">
+                <div class="pattern-header">
+                    <div class="pattern-text">${escapeHtml(bookText)} ${arrow} ${escapeHtml(scriptText)}</div>
+                    <span class="status-badge ${p.ignored ? 'attention' : 'unreliable'}">${p.ignored ? 'ignored' : 'active'}</span>
+                </div>
+                <div class="pattern-meta">
+                    <div class="metric"><span class="metric-label">Count</span><span class="metric-value">${p.count}</span></div>
+                    ${p.examples && p.examples.length ? `<div class="metric"><span class="metric-label">Example</span><span class="metric-value">${p.examples[0].chapter} #${p.examples[0].sentenceId}</span></div>` : ''}
+                </div>
+                <div class="pattern-actions">
+                    <button class="pattern-toggle ${p.ignored ? 'reactivate' : 'ignore'}">${p.ignored ? 'Unignore' : 'Ignore across book'}</button>
+                </div>
+            </div>
+        `;
+    }).join('');
+
+    if (hasRenderedPatterns) {
+        // Update in place to preserve focus
+        const countEl = document.getElementById('pattern-count');
+        if (countEl) countEl.textContent = `Patterns (${patterns.length})`;
+        const grid = document.getElementById('pattern-grid');
+        if (grid) grid.innerHTML = cards || '<div class="empty-state">No error patterns found.</div>';
+        wirePatternToggles();
+        return;
+    }
+
+    // First render: build structure and wire events
+    const content = document.getElementById('content');
+    content.innerHTML = `
+        <div class="report-header">
+            <h1>Error Patterns</h1>
+            <div class="report-meta">
+                <div class="meta-item">Review high-frequency mismatches and choose to ignore them across all chapters.</div>
+            </div>
+        </div>
+        <div class="section-title" style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;">
+            <span id="pattern-count">Patterns (${patterns.length})</span>
+            <div class="pattern-filter">
+                <input id="pattern-filter-input" type="text" placeholder="Filter errors (text match)" value="${escapeHtml(patternFilterText)}" />
+            </div>
+        </div>
+        <div class="pattern-grid" id="pattern-grid">
+            ${cards || '<div class="empty-state">No error patterns found.</div>'}
+        </div>
+    `;
+
+    hasRenderedPatterns = true;
+
+    const filterInput = document.getElementById('pattern-filter-input');
+    if (filterInput) {
+        filterInput.addEventListener('input', (e) => {
+            patternFilterText = e.target.value || '';
+            renderErrorPatterns();
+        });
+    }
+
+    wirePatternToggles();
+}
+
+function wirePatternToggles() {
+    document.querySelectorAll('.pattern-toggle').forEach(btn => {
+        btn.onclick = async (e) => {
+            const card = e.target.closest('.pattern-card');
+            if (!card) return;
+            const key = card.getAttribute('data-key');
+            const type = card.getAttribute('data-type');
+            const book = decodeHtml(card.getAttribute('data-book'));
+            const script = decodeHtml(card.getAttribute('data-script'));
+            const ignore = !card.classList.contains('ignored');
+            await toggleIgnorePattern({ key, type, book, script, ignore });
+            await loadErrorPatterns(true);
+            await loadChapters(); // refresh sidebar counts
+        };
+    });
+}
+
+function getFilteredPatterns() {
+    if (!patternFilterText) return errorPatternsCache;
+    const term = patternFilterText.toLowerCase();
+    return (errorPatternsCache || []).filter(p => {
+        const book = (p.book || '').toLowerCase();
+        const script = (p.script || '').toLowerCase();
+        return book.includes(term) || script.includes(term);
+    });
+}
+
+async function toggleIgnorePattern(pattern) {
+    try {
+        await fetch('/api/errors/ignore', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                type: pattern.type,
+                book: pattern.book,
+                script: pattern.script,
+                ignore: pattern.ignore
+            })
+        });
+    } catch (err) {
+        console.error('Failed to toggle ignore', err);
+        showToast('Failed to update ignore list', 'error');
+    }
+}
+
 // Utility functions
 function getMetricClass(value) {
     if (value >= 50) return 'high';
     if (value >= 10) return 'medium';
     return 'low';
+}
+
+function getSentenceTimingDisplay(sentence) {
+    const { startTime, endTime, timing } = sentence || {};
+    const start = Number(startTime);
+    const end = Number(endTime);
+    const hasNumericTiming = !Number.isNaN(start) && !Number.isNaN(end);
+    if (hasNumericTiming) {
+        return `${formatTime(start)} - ${formatTime(end)}`;
+    }
+    if (timing) return timing;
+    return '';
+}
+
+function getErrorSnippet(sentence) {
+    if (!sentence) return '';
+
+    // If we have structured diff data, render the same visual diff as the main list
+    if (sentence.diff && sentence.diff.ops) {
+        return renderUnifiedDiff(sentence.diff);
+    }
+
+    const scriptText = sentence.scriptText || '';
+    const bookText = sentence.bookText || '';
+
+    // Fall back to side-by-side highlighting
+    const diff = highlightDifferencesVisual(scriptText, bookText, sentence.wordOps || null);
+    if (diff && diff.scriptHighlighted) {
+        return `<div class="diff-inline">${diff.scriptHighlighted}</div>`;
+    }
+
+    if (scriptText) return escapeHtml(scriptText);
+    if (bookText) return escapeHtml(bookText);
+    return 'No transcript available';
 }
 
 function escapeHtml(text) {
@@ -1936,6 +2199,13 @@ document.addEventListener('keydown', (e) => {
     const modal = document.getElementById('crxModal');
     const modalOpen = modal && modal.style.display === 'block';
 
+    // Don't hijack keys when typing in inputs/textareas/contenteditable
+    const targetTag = (e.target && e.target.tagName) ? e.target.tagName.toUpperCase() : '';
+    const isTypingTarget = targetTag === 'INPUT' || targetTag === 'TEXTAREA' || (e.target && e.target.isContentEditable);
+    if (isTypingTarget) {
+        return;
+    }
+
     // If modal is open and spacebar pressed, play/pause modal audio instead
     if (modalOpen && (e.code === 'Space' || e.key === ' ')) {
         e.preventDefault();
@@ -1943,11 +2213,6 @@ document.addEventListener('keydown', (e) => {
         if (crxPlayer && crxPlayer.playPause) {
             crxPlayer.playPause();
         }
-        return;
-    }
-
-    // Don't trigger shortcuts when typing in inputs/textareas
-    if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') {
         return;
     }
 
@@ -2033,6 +2298,139 @@ function toggleMobileChapters() {
             `;
         }).join('');
     }
+}
+
+// Ignore modal helpers
+function buildPatternKey(type, book, script) {
+    return `${type}|${book}|${script}`;
+}
+
+function getSentencePatterns(sentence) {
+    const patterns = [];
+    if (!sentence || !sentence.diff || !Array.isArray(sentence.diff.ops)) return patterns;
+
+    const ops = sentence.diff.ops;
+    let i = 0;
+    while (i < ops.length) {
+        const op = ops[i];
+        const tokens = op.tokens || [];
+        if (!tokens.length) {
+            i++;
+            continue;
+        }
+
+        if (op.op === 'delete') {
+            const deleted = [tokens];
+            let j = i + 1;
+            while (j < ops.length && ops[j].op === 'delete') {
+                deleted.push(ops[j].tokens || []);
+                j++;
+            }
+
+            const inserts = [];
+            let k = j;
+            while (k < ops.length && ops[k].op === 'insert') {
+                inserts.push(ops[k].tokens || []);
+                k++;
+            }
+
+            const delText = deleted.flat().join(' ');
+            const insText = inserts.flat().join(' ');
+
+            if (inserts.length) {
+                const key = buildPatternKey('sub', delText, insText);
+                patterns.push({ key, type: 'sub', book: delText, script: insText });
+                i = k;
+            } else {
+                const key = buildPatternKey('del', delText, '');
+                patterns.push({ key, type: 'del', book: delText, script: '' });
+                i = j;
+            }
+            continue;
+        }
+
+        if (op.op === 'insert') {
+            const inserted = [tokens];
+            let j = i + 1;
+            while (j < ops.length && ops[j].op === 'insert') {
+                inserted.push(ops[j].tokens || []);
+                j++;
+            }
+            const insText = inserted.flat().join(' ');
+            const key = buildPatternKey('ins', '', insText);
+            patterns.push({ key, type: 'ins', book: '', script: insText });
+            i = j;
+            continue;
+        }
+
+        i++;
+    }
+
+    // de-duplicate by key
+    const unique = {};
+    patterns.forEach(p => { unique[p.key] = p; });
+    return Object.values(unique);
+}
+
+function openIgnoreModal(sentenceId) {
+    if (!currentReport) return;
+    const sentence = currentReport.sentences.find(s => s.id === sentenceId);
+    if (!sentence) return;
+
+    pendingIgnorePatterns = getSentencePatterns(sentence);
+    const list = document.getElementById('ignore-error-list');
+    if (!list) return;
+
+    if (pendingIgnorePatterns.length === 0) {
+        list.innerHTML = '<div class="empty-state">No diff data for this sentence.</div>';
+    } else {
+        list.innerHTML = pendingIgnorePatterns.map(p => {
+            const alreadyIgnored = ignoredPatterns.has(p.key);
+            const disabled = alreadyIgnored ? 'disabled' : '';
+            const checked = alreadyIgnored ? '' : 'checked';
+            return `
+                <label class="ignore-row ${alreadyIgnored ? 'already-ignored' : ''}">
+                    <input type="checkbox" data-key="${p.key}" data-type="${p.type}" data-book="${escapeHtml(p.book)}" data-script="${escapeHtml(p.script)}" ${checked} ${disabled}>
+                    <span class="ignore-text">${escapeHtml(p.book || '[del]')} &rarr; ${escapeHtml(p.script || '[ins]')}</span>
+                    ${alreadyIgnored ? '<span class="ignore-badge">Already ignored</span>' : ''}
+                </label>
+            `;
+        }).join('');
+    }
+
+    const modal = document.getElementById('ignoreModal');
+    if (modal) modal.style.display = 'block';
+}
+
+function closeIgnoreModal() {
+    const modal = document.getElementById('ignoreModal');
+    if (modal) modal.style.display = 'none';
+}
+
+async function applyIgnoreSelections() {
+    const checks = Array.from(document.querySelectorAll('#ignore-error-list input[type="checkbox"]:checked'));
+    if (!checks.length) {
+        closeIgnoreModal();
+        return;
+    }
+
+    for (const cb of checks) {
+        const type = cb.getAttribute('data-type');
+        const book = decodeHtml(cb.getAttribute('data-book'));
+        const script = decodeHtml(cb.getAttribute('data-script'));
+        await toggleIgnorePattern({ type, book, script, ignore: true });
+        ignoredPatterns.add(buildPatternKey(type, book, script));
+    }
+
+    closeIgnoreModal();
+    // Refresh views to drop newly ignored errors
+    if (currentChapter) {
+        await loadReport(currentChapter);
+    }
+    if (currentSpecialPage === 'patterns') {
+        await loadErrorPatterns(true);
+    }
+    await loadChapters();
 }
 
 function updateFloatingButton() {
