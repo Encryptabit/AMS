@@ -2,15 +2,16 @@
 
 ## Overview
 
-A systematic audit of the Audio Management System codebase to achieve complete understanding of every file, trace the pipeline flow, identify dead code and over-abstraction, and produce actionable refactoring recommendations. Analysis first, code changes only after approval.
+A systematic audit of the Audio Management System codebase to achieve complete understanding of every file, trace the pipeline flow, identify dead code and over-abstraction, and produce actionable refactoring recommendations. Now executing the refactoring plan to improve codebase health from 6.8 to 8.0.
 
 ## Domain Expertise
 
-None (internal codebase audit - no external domain expertise applicable)
+None (internal codebase refactoring - no external domain expertise applicable)
 
 ## Milestones
 
 - [v1.0 AMS Codebase Audit](milestones/v1.0-ROADMAP.md) (Phases 1-4) - SHIPPED 2025-12-30
+- **v1.1 Execute Refactoring** - Phases 5-7 (in progress)
 
 ## Completed Milestones
 
@@ -41,10 +42,69 @@ None (internal codebase audit - no external domain expertise applicable)
 
 </details>
 
+### v1.1 Execute Refactoring (In Progress)
+
+**Milestone Goal:** Execute prioritized refactoring from ACTION-LIST.md to improve codebase health from 6.8 to 8.0
+
+#### Phase 5: Immediate Cleanup
+**Goal**: Delete dead code, fix warnings, archive dormant projects - quick wins with zero risk
+**Depends on**: v1.0 milestone complete
+**Research**: Unlikely (internal deletion/archival)
+**Plans**: TBD
+
+Plans:
+- [ ] 05-01: TBD (run /gsd:plan-phase 5 to break down)
+
+Key deliverables:
+- Delete OverlayTest (broken project)
+- Delete Wn*.cs placeholders (empty files)
+- Delete Class1.cs, ManifestV2.cs (template artifacts)
+- Delete IAudioService + AudioService (empty service)
+- Fix DateTime warning in Validation.razor
+- Remove IMfaService interface
+- Delete DspDemoRunner, SentenceTimelineBuilder (demo/unused code)
+- Archive Ams.UI.Avalonia, InspectDocX to archive/
+
+#### Phase 6: Utility Extraction
+**Goal**: Extract shared utilities, fix failing tests, consolidate ASR buffer preparation
+**Depends on**: Phase 5
+**Research**: Unlikely (internal refactoring patterns)
+**Plans**: TBD
+
+Plans:
+- [ ] 06-01: TBD (run /gsd:plan-phase 6 to break down)
+
+Key deliverables:
+- Extract ChapterLabelResolver utility from duplicated code
+- Relocate MFA artifacts to Application/Mfa/Models
+- Fix FFmpeg filter tests (locale-dependent decimal formatting)
+- Consolidate ASR buffer preparation to AsrAudioPreparer
+- Remove unused AudioProcessor methods
+
+#### Phase 7: Service Decomposition
+**Goal**: Split AlignmentService god class, consolidate validation, standardize Prosody patterns
+**Depends on**: Phase 6 (ChapterLabelResolver required)
+**Research**: Unlikely (internal refactoring)
+**Plans**: TBD
+
+Plans:
+- [ ] 07-01: TBD (run /gsd:plan-phase 7 to break down)
+
+Key deliverables:
+- AlignmentService decomposition into 4 focused services:
+  - AnchorComputeService
+  - TranscriptIndexService
+  - TranscriptHydrationService
+  - AlignmentService facade
+- Document IBook* interface decisions (KEEP)
+- Consolidate validation files to Application/Validation/
+- Standardize Prosody patterns
+- Improve test coverage for new utilities/services
+
 ## Progress
 
 **Execution Order:**
-Phases execute in numeric order: 1 -> 2 -> 3 -> 4
+Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6 -> 7
 
 | Phase | Milestone | Plans Complete | Status | Completed |
 |-------|-----------|----------------|--------|-----------|
@@ -52,3 +112,6 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4
 | 2. Pipeline Analysis | v1.0 | 3/3 | Complete | 2025-12-28 |
 | 3. Code Audit | v1.0 | 3/3 | Complete | 2025-12-29 |
 | 4. Recommendations | v1.0 | 2/2 | Complete | 2025-12-30 |
+| 5. Immediate Cleanup | v1.1 | 0/? | Not started | - |
+| 6. Utility Extraction | v1.1 | 0/? | Not started | - |
+| 7. Service Decomposition | v1.1 | 0/? | Not started | - |
