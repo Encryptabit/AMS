@@ -362,7 +362,7 @@
         if (_chapter is null) return;
 
         await Api.SetReviewedAsync(EffectiveBookId, _chapter.ChapterId, isChecked);
-        _reviewed.Chapters[_chapter.ChapterId] = new ReviewedStatusDto(isChecked, DateTime.UtcNow.ToString("o"));
+        _reviewed.Chapters[_chapter.ChapterId] = new ReviewedStatusDto(isChecked, DateTimeOffset.UtcNow.ToString("o"));
         BuildNav();
     }
 

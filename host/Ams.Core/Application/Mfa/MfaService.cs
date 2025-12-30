@@ -4,19 +4,7 @@ using Ams.Core.Artifacts.Alignment;
 
 namespace Ams.Core.Application.Mfa;
 
-public interface IMfaService
-{
-    Task<MfaCommandResult> ValidateAsync(MfaChapterContext context, CancellationToken cancellationToken = default);
-
-    Task<MfaCommandResult> GeneratePronunciationsAsync(MfaChapterContext context,
-        CancellationToken cancellationToken = default);
-
-    Task<MfaCommandResult> AddWordsAsync(MfaChapterContext context, CancellationToken cancellationToken = default);
-
-    Task<MfaCommandResult> AlignAsync(MfaChapterContext context, CancellationToken cancellationToken = default);
-}
-
-public sealed class MfaService : IMfaService
+public sealed class MfaService
 {
     internal const string DefaultDictionaryModel = "english_mfa";
     internal const string DefaultAcousticModel = "english_mfa";
