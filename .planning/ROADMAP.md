@@ -50,20 +50,14 @@ None (internal codebase refactoring - no external domain expertise applicable)
 **Goal**: Delete dead code, fix warnings, archive dormant projects - quick wins with zero risk
 **Depends on**: v1.0 milestone complete
 **Research**: Unlikely (internal deletion/archival)
-**Plans**: TBD
+**Plans**: 3
 
 Plans:
-- [ ] 05-01: TBD (run /gsd:plan-phase 5 to break down)
+- [x] 05-01: Delete Dead Code (4 tasks) - Delete OverlayTest, Wn*.cs, templates, unused code - completed 2025-12-30
+- [ ] 05-02: Fix Warning & Remove Interface (2 tasks) - DateTime fix, IMfaService removal
+- [ ] 05-03: Archive Dormant Projects (3 tasks) - Move UI.Avalonia, InspectDocX to archive/
 
-Key deliverables:
-- Delete OverlayTest (broken project)
-- Delete Wn*.cs placeholders (empty files)
-- Delete Class1.cs, ManifestV2.cs (template artifacts)
-- Delete IAudioService + AudioService (empty service)
-- Fix DateTime warning in Validation.razor
-- Remove IMfaService interface
-- Delete DspDemoRunner, SentenceTimelineBuilder (demo/unused code)
-- Archive Ams.UI.Avalonia, InspectDocX to archive/
+Issues addressed: AUD-001, AUD-002, AUD-005, AUD-006, AUD-008, AUD-009, AUD-010, AUD-015, AUD-019, AUD-021, AUD-023, AUD-024, AUD-027
 
 #### Phase 6: Utility Extraction
 **Goal**: Extract shared utilities, fix failing tests, consolidate ASR buffer preparation
@@ -112,6 +106,6 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6 -> 7
 | 2. Pipeline Analysis | v1.0 | 3/3 | Complete | 2025-12-28 |
 | 3. Code Audit | v1.0 | 3/3 | Complete | 2025-12-29 |
 | 4. Recommendations | v1.0 | 2/2 | Complete | 2025-12-30 |
-| 5. Immediate Cleanup | v1.1 | 0/? | Not started | - |
+| 5. Immediate Cleanup | v1.1 | 1/3 | In progress | - |
 | 6. Utility Extraction | v1.1 | 0/? | Not started | - |
 | 7. Service Decomposition | v1.1 | 0/? | Not started | - |
