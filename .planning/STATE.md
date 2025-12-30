@@ -3,7 +3,7 @@
 ## Project Summary
 [IMMUTABLE - Copy verbatim from PROJECT.md on creation. Never edit this section.]
 
-**Building:** Comprehensive audit and refactoring initiative for the Audio Management System (AMS) — achieving complete, ground-truth understanding of every line of code
+**Building:** Comprehensive audit and refactoring initiative for the Audio Management System (AMS) - achieving complete, ground-truth understanding of every line of code
 
 **Core requirements:**
 - Complete call graph exists for every file (including FFmpeg/P/Invoke code manually documented)
@@ -13,47 +13,36 @@
 - Consolidation opportunities identified
 
 **Constraints:**
-- Pipeline must keep working (ASR → alignment → MFA → merge is core product)
+- Pipeline must keep working (ASR -> alignment -> MFA -> merge is core product)
 - No new dependencies
-- Analysis before action — document everything before touching any code
+- Analysis before action - document everything before touching any code
 
 ## Current Position
 
-Phase: 4 of 4 (Recommendations)
-Plan: 2 of 2 in current phase
-Status: Milestone complete
-Last activity: 2025-12-30 - Completed 04-02-PLAN.md
+Phase: 5 of 7 (Immediate Cleanup)
+Plan: Not started
+Status: Ready to plan
+Last activity: 2025-12-30 - Milestone v1.1 created
 
-Progress: ████████████ 100%
+Progress: ████░░░░░░░░ 57% (v1.0 complete, v1.1 starting)
 
-### Phase 1 Plans (Complete)
-- [x] 01-01-PLAN.md: File Inventory & Project Structure (3 tasks) ✓
-- [x] 01-02-PLAN.md: Call Graph Analysis (3 tasks) ✓
-- [x] 01-03-PLAN.md: FFmpeg/P/Invoke Documentation (3 tasks) ✓
-- [x] 01-04-PLAN.md: Module Dependency Map (3 tasks) ✓
+### Phase 5 Plans (Immediate Cleanup)
+- [ ] 05-01-PLAN.md: TBD
 
-### Phase 2 Plans (Complete)
-- [x] 02-01-PLAN.md: Pipeline Orchestration Flow (3 tasks) ✓
-- [x] 02-02-PLAN.md: Data Flow & Artifacts (3 tasks) ✓
-- [x] 02-03-PLAN.md: Indexing Clarification (3 tasks) ✓
+### Phase 6 Plans (Utility Extraction)
+- [ ] 06-01-PLAN.md: TBD
 
-### Phase 3 Plans (Complete)
-- [x] 03-01-PLAN.md: Dead Code Inventory (3 tasks) ✓
-- [x] 03-02-PLAN.md: Responsibility Analysis (3 tasks) ✓
-- [x] 03-03-PLAN.md: Project Audit & Synthesis (3 tasks) ✓
-
-### Phase 4 Plans (Complete)
-- [x] 04-01-PLAN.md: Pruning & Consolidation Plans (3 tasks) ✓
-- [x] 04-02-PLAN.md: Architecture Map & Action Sequencing (3 tasks) ✓
+### Phase 7 Plans (Service Decomposition)
+- [ ] 07-01-PLAN.md: TBD
 
 ## Performance Metrics
 
-**Velocity:**
+**Velocity (v1.0):**
 - Total plans completed: 12
 - Average duration: 6.8 min
 - Total execution time: 1.4 hours
 
-**By Phase:**
+**By Phase (v1.0):**
 
 | Phase | Plans | Total | Avg/Plan |
 |-------|-------|-------|----------|
@@ -62,9 +51,9 @@ Progress: ████████████ 100%
 | 3 | 3/3 | 29 min | 9.7 min |
 | 4 | 2/2 | 19 min | 9.5 min |
 
-**Recent Trend:**
-- Last 5 plans: 03-02 (7 min), 03-03 (9 min), 04-01 (4 min), 04-02 (15 min)
-- Trend: Complete - all 12 plans executed successfully
+**v1.1 Metrics:**
+- Plans completed: 0
+- Target health: 6.8 -> 8.0
 
 *Updated after each plan completion*
 
@@ -86,7 +75,7 @@ Progress: ████████████ 100%
 | 1.2 | FFmpeg is main P/Invoke surface | Focus Plan 01-03 on Ff*.cs files |
 | 1.3 | FFmpeg.AutoGen is interop layer | No direct DllImport, uses NuGet package |
 | 1.3 | FfResampler.cs is placeholder | Empty class, resampling done via filter graph |
-| 1.4 | Clean 3-layer architecture | Presentation → Application → Infrastructure |
+| 1.4 | Clean 3-layer architecture | Presentation -> Application -> Infrastructure |
 | 1.4 | Ams.Core is hub project | 6 projects depend on it |
 | 1.4 | No circular dependencies | Project graph is clean |
 | 4.1 | AlignmentService decomposition: DO NOW | High impact, medium risk, 16-24h effort |
@@ -95,25 +84,34 @@ Progress: ████████████ 100%
 | 4.1 | IBook* interfaces: KEEP | DI value, follow established pattern |
 | 4.2 | All 6 success criteria MET | Evidence in deliverables supports each |
 | 4.2 | 45 actions across 4 timeframes | Immediate/Short/Medium/Long execution path |
-| 4.2 | Health 6.8 → 8.0 projected | Based on scoring methodology |
+| 4.2 | Health 6.8 -> 8.0 projected | Based on scoring methodology |
 
 ### Deferred Issues
 
-None yet.
+From ACTION-LIST.md Section 5:
+- AUD-030: Runtime subsystem decomposition (40h+, low ROI)
+- AUD-028: Web stack authentication (40h+, not needed yet)
+- AUD-029: MFA integration tests (20h+, complex setup)
+- AUD-022: Document loading pattern unification (24h+, needs arch decision)
 
 ### Blockers/Concerns Carried Forward
 
-None yet.
+None.
+
+### Roadmap Evolution
+
+- v1.0 completed: Codebase audit, 4 phases, 12 plans (2025-12-28 to 2025-12-30)
+- v1.1 created: Execute Refactoring, 3 phases (Phase 5-7)
 
 ## Project Alignment
 
-Last checked: Project start
-Status: ✓ Aligned
-Assessment: No work done yet - baseline alignment.
+Last checked: 2025-12-30
+Status: Aligned
+Assessment: v1.0 audit complete, v1.1 refactoring milestone created from ACTION-LIST.md
 Drift notes: None
 
 ## Session Continuity
 
 Last session: 2025-12-30
-Stopped at: Milestone complete - all 12 plans executed
-Resume file: None - ready for /gsd:complete-milestone
+Stopped at: Milestone v1.1 initialization
+Resume file: None
