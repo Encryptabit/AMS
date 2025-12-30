@@ -8,11 +8,11 @@ namespace Ams.Core.Application.Mfa;
 
 public sealed class MfaPronunciationProvider : IPronunciationProvider
 {
-    private readonly IMfaService _mfaService;
+    private readonly MfaService _mfaService;
     private readonly string _g2pModel;
     private const int MaxPronunciationsPerLexeme = 32;
 
-    public MfaPronunciationProvider(IMfaService? mfaService = null, string? g2pModel = null)
+    public MfaPronunciationProvider(MfaService? mfaService = null, string? g2pModel = null)
     {
         _mfaService = mfaService ?? new MfaService();
         _g2pModel = g2pModel ?? MfaService.DefaultG2pModel;
