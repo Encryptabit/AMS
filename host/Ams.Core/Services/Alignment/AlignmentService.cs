@@ -9,7 +9,6 @@ using Ams.Core.Runtime.Book;
 using Ams.Core.Runtime.Chapter;
 using Ams.Core.Services.Interfaces;
 using Microsoft.Extensions.Logging;
-using System.Text.RegularExpressions;
 
 namespace Ams.Core.Services.Alignment;
 
@@ -223,44 +222,6 @@ public sealed class AlignmentService : IAlignmentService
             Windows: windows);
 
         return document;
-    }
-
-    private static bool TryExtractChapterNumber(string label, out int number)
-    {
-        number = 0;
-        if (string.IsNullOrWhiteSpace(label))
-        {
-            return false;
-        }
-
-        // Patterns like "03_2_Title" or "05-12 Something" -> capture second number if two numbers appear.
-        var match = Regex.Match(label, @"^\s*\d+\s*[_-]\s*(\d+)\b");
-        if (match.Success && int.TryParse(match.Groups[1].Value, out number))
-        {
-            return true;
-        }
-
-        return false;
-    }
-
-    private static IEnumerable<string> EnumerateLabelCandidates(ChapterContext context)
-    {
-        var descriptor = context.Descriptor;
-        if (!string.IsNullOrWhiteSpace(descriptor.ChapterId))
-        {
-            yield return descriptor.ChapterId;
-        }
-
-        if (!string.IsNullOrWhiteSpace(descriptor.RootPath))
-        {
-            var rootName =
-                Path.GetFileName(descriptor.RootPath.TrimEnd(Path.DirectorySeparatorChar,
-                    Path.AltDirectorySeparatorChar));
-            if (!string.IsNullOrWhiteSpace(rootName))
-            {
-                yield return rootName;
-            }
-        }
     }
 
     private static (List<WordAlign> WordOps, List<WordAlign> AnchorOps) BuildWordOperations(

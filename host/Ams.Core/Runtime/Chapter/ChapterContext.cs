@@ -1,3 +1,4 @@
+using Ams.Core.Common;
 using Ams.Core.Runtime.Artifacts;
 using Ams.Core.Runtime.Audio;
 using Ams.Core.Runtime.Book;
@@ -74,9 +75,10 @@ public sealed class ChapterContext
 
         if (options.TryResolveSectionFromLabels)
         {
-            foreach (var label in EnumerateLabelCandidates())
+            foreach (var label in ChapterLabelResolver.EnumerateLabelCandidates(
+                Descriptor.ChapterId, Descriptor.RootPath))
             {
-                if (TryExtractChapterNumber(label, out var numberFromLabel))
+                if (ChapterLabelResolver.TryExtractChapterNumber(label, out var numberFromLabel))
                 {
                     var numericSection = SectionLocator.ResolveSectionByTitle(book, numberFromLabel.ToString());
                     if (numericSection is not null)
@@ -122,41 +124,5 @@ public sealed class ChapterContext
     internal void SetDetectedSection(SectionRange section)
     {
         _resolvedSection ??= section;
-    }
-
-    private IEnumerable<string> EnumerateLabelCandidates()
-    {
-        if (!string.IsNullOrWhiteSpace(Descriptor.ChapterId))
-        {
-            yield return Descriptor.ChapterId;
-        }
-
-        if (!string.IsNullOrWhiteSpace(Descriptor.RootPath))
-        {
-            var rootName =
-                Path.GetFileName(Descriptor.RootPath.TrimEnd(Path.DirectorySeparatorChar,
-                    Path.AltDirectorySeparatorChar));
-            if (!string.IsNullOrWhiteSpace(rootName))
-            {
-                yield return rootName;
-            }
-        }
-    }
-
-    private static bool TryExtractChapterNumber(string label, out int number)
-    {
-        number = 0;
-        if (string.IsNullOrWhiteSpace(label))
-        {
-            return false;
-        }
-
-        var match = System.Text.RegularExpressions.Regex.Match(label, @"^\s*\d+\s*[_-]\s*(\d+)\b");
-        if (match.Success && int.TryParse(match.Groups[1].Value, out number))
-        {
-            return true;
-        }
-
-        return false;
     }
 }
