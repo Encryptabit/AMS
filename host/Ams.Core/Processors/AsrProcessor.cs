@@ -4,6 +4,7 @@ using System.IO;
 using System.Text;
 using System.Threading;
 using Ams.Core.Artifacts;
+using Ams.Core.Audio;
 using Whisper.net;
 
 namespace Ams.Core.Processors;
@@ -154,7 +155,7 @@ public static class AsrProcessor
         CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        buffer = NormalizeBuffer(buffer);
+        buffer = AsrAudioPreparer.PrepareForAsr(buffer);
 
         return await TranscribeWithWhisperNetAsync(buffer, options, cancellationToken).ConfigureAwait(false);
     }
@@ -441,44 +442,6 @@ public static class AsrProcessor
         }
 
         return samples;
-    }
-
-    private static AudioBuffer NormalizeBuffer(AudioBuffer buffer)
-    {
-        var working = buffer;
-        if (working.Channels != 1)
-        {
-            working = DownmixToMono(working);
-        }
-
-        if (working.SampleRate != AudioProcessor.DefaultAsrSampleRate)
-        {
-            working = AudioProcessor.Resample(working, AudioProcessor.DefaultAsrSampleRate);
-        }
-
-        return working;
-    }
-
-    private static AudioBuffer DownmixToMono(AudioBuffer buffer)
-    {
-        if (buffer.Channels == 1)
-        {
-            return buffer;
-        }
-
-        var mono = new AudioBuffer(1, buffer.SampleRate, buffer.Length);
-        for (var i = 0; i < buffer.Length; i++)
-        {
-            double sum = 0;
-            for (var ch = 0; ch < buffer.Channels; ch++)
-            {
-                sum += buffer.Planar[ch][i];
-            }
-
-            mono.Planar[0][i] = (float)(sum / buffer.Channels);
-        }
-
-        return mono;
     }
 }
 
