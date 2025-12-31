@@ -116,7 +116,7 @@ public static partial class AudioProcessor
                 $"atrim=start={startSeconds:F6}:end={Math.Max(startSeconds, end.Value.TotalSeconds):F6},asetpts=PTS-STARTPTS")
             : FormattableString.Invariant($"atrim=start={startSeconds:F6},asetpts=PTS-STARTPTS");
 
-        return FfFilterGraphRunner.Apply(buffer, filter);
+        return FfFilterGraph.FromBuffer(buffer).Custom(filter).ToBuffer();
     }
 
     public static AudioBuffer FadeIn(AudioBuffer buffer, TimeSpan duration)
@@ -131,8 +131,8 @@ public static partial class AudioProcessor
             return buffer;
         }
 
-        var filter = FormattableString.Invariant($"afade=t=in:ss=0:d={duration.TotalSeconds:F6}");
-        return FfFilterGraphRunner.Apply(buffer, filter);
+        var filter = FormattableString.Invariant($"afade=t=in:st=0:d={duration.TotalSeconds:F6}");
+        return FfFilterGraph.FromBuffer(buffer).Custom(filter).ToBuffer();
     }
 
     private static class SilenceLogParser

@@ -67,13 +67,22 @@ public class AudioProcessorFilterTests
     }
 
     [Fact]
-    public void FadeIn_SetsLeadingSamplesToZero()
+    public void FadeIn_GraduallyIncreasesAmplitude()
     {
         if (FiltersUnavailable()) return;
         var buffer = CreateBuffer((440, 1.0));
         var faded = AudioProcessor.FadeIn(buffer, TimeSpan.FromMilliseconds(100));
         int fadeSamples = (int)(0.1 * buffer.SampleRate);
-        Assert.True(faded.Planar[0].Take(fadeSamples).All(sample => Math.Abs(sample) < 1e-3f));
+
+        // First 1% of fade duration should be near silence (amplitude ramping from 0)
+        int earlySamples = fadeSamples / 100;
+        var earlyMax = faded.Planar[0].Take(earlySamples).Max(Math.Abs);
+        Assert.True(earlyMax < 0.05f, $"Early samples should be near zero, but max was {earlyMax}");
+
+        // Samples after fade should be at full amplitude (matching original)
+        int postFadeStart = fadeSamples + 100;
+        var postFadeMax = faded.Planar[0].Skip(postFadeStart).Take(100).Max(Math.Abs);
+        Assert.True(postFadeMax > 0.4f, $"Post-fade samples should be at full amplitude, but max was {postFadeMax}");
     }
 
     [Fact]
