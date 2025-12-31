@@ -67,7 +67,7 @@ Issues addressed: AUD-001, AUD-002, AUD-005, AUD-006, AUD-008, AUD-009, AUD-010,
 
 Plans:
 - [x] 06-01: Extract ChapterLabelResolver (2 tasks) - Create utility from duplicated section resolution code - completed 2025-12-31
-- [ ] 06-02: Relocate & Cleanup (2 tasks) - Move MFA artifacts, remove unused AudioProcessor methods
+- [x] 06-02: Relocate & Cleanup (2 tasks) - Move MFA artifacts, remove unused AudioProcessor methods - completed 2025-12-31
 - [ ] 06-03: Fix FFmpeg Tests (2 tasks) - Investigate and fix locale-dependent filter formatting
 - [ ] 06-04: ASR Buffer Consolidation (2 tasks) - Create AsrAudioPreparer utility
 
@@ -105,5 +105,5 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6 -> 7
 | 3. Code Audit | v1.0 | 3/3 | Complete | 2025-12-29 |
 | 4. Recommendations | v1.0 | 2/2 | Complete | 2025-12-30 |
 | 5. Immediate Cleanup | v1.1 | 3/3 | Complete | 2025-12-30 |
-| 6. Utility Extraction | v1.1 | 1/4 | In progress | - |
+| 6. Utility Extraction | v1.1 | 2/4 | In progress | - |
 | 7. Service Decomposition | v1.1 | 0/? | Not started | - |
