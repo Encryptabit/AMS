@@ -3,7 +3,7 @@ using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.Json;
 using System.Threading.Channels;
-using Ams.Core.Artifacts.Alignment;
+using Ams.Core.Application.Mfa.Models;
 
 namespace Ams.Core.Application.Processes;
 

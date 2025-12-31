@@ -1,5 +1,4 @@
 using System.Globalization;
-using System.Text.Json;
 using System.Text.RegularExpressions;
 using Ams.Core.Artifacts;
 using Ams.Core.Services.Integrations.FFmpeg;
@@ -136,70 +135,6 @@ public static partial class AudioProcessor
         return FfFilterGraphRunner.Apply(buffer, filter);
     }
 
-    public static AudioBuffer FadeOut(AudioBuffer buffer, TimeSpan start, TimeSpan duration)
-    {
-        if (buffer is null)
-        {
-            throw new ArgumentNullException(nameof(buffer));
-        }
-
-        if (duration <= TimeSpan.Zero)
-        {
-            return buffer;
-        }
-
-        double startSeconds = Math.Max(0, start.TotalSeconds);
-        var filter = FormattableString.Invariant($"afade=t=out:st={startSeconds:F6}:d={duration.TotalSeconds:F6}");
-        return FfFilterGraphRunner.Apply(buffer, filter);
-    }
-
-    public static AudioBuffer AdjustVolume(AudioBuffer buffer, double gain)
-    {
-        if (buffer is null)
-        {
-            throw new ArgumentNullException(nameof(buffer));
-        }
-
-        var filter = FormattableString.Invariant($"volume={gain:F6}");
-        return FfFilterGraphRunner.Apply(buffer, filter);
-    }
-
-    public static LoudnessNormalizationResult NormalizeLoudness(AudioBuffer buffer,
-        LoudnessNormalizeOptions? options = null)
-    {
-        if (buffer is null)
-        {
-            throw new ArgumentNullException(nameof(buffer));
-        }
-
-        var opts = options ?? new LoudnessNormalizeOptions();
-        var firstPassFilter = BuildLoudnessFirstPassFilter(opts);
-        var measurements = FfFilterGraph
-            .FromBuffer(buffer)
-            .Custom(firstPassFilter)
-            .Measure(LoudnessLogParser.Parse);
-
-        var secondPassFilter = BuildLoudnessSecondPassFilter(opts, measurements);
-        var normalized = FfFilterGraph.FromBuffer(buffer)
-            .Custom(secondPassFilter)
-            .ToBuffer();
-        return new LoudnessNormalizationResult(normalized, measurements, opts);
-    }
-
-    private static string BuildLoudnessFirstPassFilter(LoudnessNormalizeOptions options)
-    {
-        return FormattableString.Invariant(
-            $"loudnorm=I={options.TargetIntegrated:F2}:TP={options.TargetTruePeak:F2}:LRA={options.TargetLoudnessRange:F2}:print_format=json");
-    }
-
-    private static string BuildLoudnessSecondPassFilter(LoudnessNormalizeOptions options,
-        LoudnessMeasurements measurements)
-    {
-        var linearValue = options.LinearScaling ? "true" : "false";
-        return FormattableString.Invariant(
-            $"loudnorm=I={options.TargetIntegrated:F2}:TP={options.TargetTruePeak:F2}:LRA={options.TargetLoudnessRange:F2}:measured_I={measurements.InputIntegrated:F2}:measured_TP={measurements.InputTruePeak:F2}:measured_LRA={measurements.InputLoudnessRange:F2}:measured_thresh={measurements.InputThreshold:F2}:offset={measurements.TargetOffset:F2}:linear={linearValue}:print_format=summary");
-    }
-
     private static class SilenceLogParser
     {
         private static readonly Regex Pattern =
@@ -268,43 +203,6 @@ public static partial class AudioProcessor
         }
     }
 
-    private static class LoudnessLogParser
-    {
-        public static LoudnessMeasurements Parse(IEnumerable<string> logs)
-        {
-            var jsonLine = logs.LastOrDefault(line => line.TrimStart().StartsWith("{", StringComparison.Ordinal));
-            if (jsonLine is null)
-            {
-                throw new InvalidOperationException("FFmpeg loudnorm filter did not produce measurement data.");
-            }
-
-            using var document = JsonDocument.Parse(jsonLine);
-            var root = document.RootElement;
-
-            double integrated = ParseDouble(root, "input_i");
-            double truePeak = ParseDouble(root, "input_tp");
-            double lra = ParseDouble(root, "input_lra");
-            double threshold = ParseDouble(root, "input_thresh");
-            double offset = ParseDouble(root, "target_offset");
-
-            return new LoudnessMeasurements(integrated, truePeak, lra, threshold, offset);
-        }
-
-        private static double ParseDouble(JsonElement root, string property)
-        {
-            if (!root.TryGetProperty(property, out var element))
-            {
-                throw new InvalidOperationException(
-                    FormattableString.Invariant($"FFmpeg loudnorm output missing '{property}'."));
-            }
-
-            var value = element.ValueKind == JsonValueKind.Number
-                ? element.GetDouble()
-                : double.Parse(element.GetString() ?? "0", CultureInfo.InvariantCulture);
-
-            return value;
-        }
-    }
 }
 
 public readonly record struct AudioInfo(
@@ -330,23 +228,3 @@ public sealed record SilenceDetectOptions
 }
 
 public sealed record SilenceInterval(TimeSpan Start, TimeSpan End, TimeSpan Duration);
-
-public sealed record LoudnessNormalizeOptions
-{
-    public double TargetIntegrated { get; init; } = -16.0;
-    public double TargetTruePeak { get; init; } = -1.5;
-    public double TargetLoudnessRange { get; init; } = 11.0;
-    public bool LinearScaling { get; init; } = true;
-}
-
-public sealed record LoudnessMeasurements(
-    double InputIntegrated,
-    double InputTruePeak,
-    double InputLoudnessRange,
-    double InputThreshold,
-    double TargetOffset);
-
-public sealed record LoudnessNormalizationResult(
-    AudioBuffer Buffer,
-    LoudnessMeasurements Measurements,
-    LoudnessNormalizeOptions Options);
