@@ -81,7 +81,7 @@ Issues addressed: AUD-004, AUD-007, AUD-011, AUD-012, AUD-013, AUD-014, AUD-020,
 
 Plans:
 - [x] 07-01: AnchorComputeService Extraction (2 tasks) - Extract anchor computation from AlignmentService - completed 2025-12-31
-- [ ] 07-02: TranscriptIndexService Extraction (2 tasks) - Extract transcript index building
+- [x] 07-02: TranscriptIndexService Extraction (2 tasks) - Extract transcript index building - completed 2025-12-31
 - [ ] 07-03: TranscriptHydrationService & Facade (2 tasks) - Complete decomposition, register DI
 - [ ] 07-04: Validation Consolidation (2 tasks) - Relocate validation files, document IBook* interfaces
 - [ ] 07-05: Prosody Standardization & Tests (2 tasks) - Standardize patterns, add test coverage
@@ -101,4 +101,4 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6 -> 7
 | 4. Recommendations | v1.0 | 2/2 | Complete | 2025-12-30 |
 | 5. Immediate Cleanup | v1.1 | 3/3 | Complete | 2025-12-30 |
 | 6. Utility Extraction | v1.1 | 4/4 | Complete | 2025-12-31 |
-| 7. Service Decomposition | v1.1 | 1/5 | In progress | - |
+| 7. Service Decomposition | v1.1 | 2/5 | In progress | - |
