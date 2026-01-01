@@ -1,0 +1,41 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <VelloRepositoryRoot>C:\Projects\VelloSharp\</VelloRepositoryRoot>
+  </PropertyGroup>
+
+  <!-- VelloSharp source references -->
+  <ItemGroup>
+    <ProjectReference Include="$(VelloRepositoryRoot)bindings\VelloSharp\VelloSharp.csproj" />
+    <ProjectReference Include="$(VelloRepositoryRoot)bindings\VelloSharp.Gpu\VelloSharp.Gpu.csproj" />
+    <ProjectReference Include="$(VelloRepositoryRoot)bindings\VelloSharp.HarfBuzzSharp\HarfBuzzSharp.csproj" />
+    <ProjectReference Include="$(VelloRepositoryRoot)packaging\VelloSharp.Native.Vello\VelloSharp.Native.Vello.csproj" ReferenceOutputAssembly="false" />
+    <ProjectReference Include="$(VelloRepositoryRoot)packaging\VelloSharp.Native.Winit\VelloSharp.Native.Winit.csproj" ReferenceOutputAssembly="false" />
+    <ProjectReference Include="$(VelloRepositoryRoot)packaging\VelloSharp.Native.Kurbo\VelloSharp.Native.Kurbo.csproj" ReferenceOutputAssembly="false" />
+    <ProjectReference Include="$(VelloRepositoryRoot)packaging\VelloSharp.Native.Peniko\VelloSharp.Native.Peniko.csproj" ReferenceOutputAssembly="false" />
+  </ItemGroup>
+
+  <!-- Copy Vello test assets for scene rendering -->
+  <ItemGroup>
+    <Content Include="$(VelloRepositoryRoot)samples\AvaloniaVelloExamples\Assets\vello\**">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <TargetPath>Assets\vello\%(RecursiveDir)%(Filename)%(Extension)</TargetPath>
+    </Content>
+  </ItemGroup>
+
+  <!-- Scene definitions from VelloSharp samples -->
+  <ItemGroup>
+    <Compile Include="$(VelloRepositoryRoot)samples\AvaloniaVelloExamples\Scenes\*.cs" Link="Scenes\%(Filename)%(Extension)" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="SixLabors.ImageSharp" Version="3.1.6" />
+  </ItemGroup>
+
+</Project>

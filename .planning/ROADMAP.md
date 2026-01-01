@@ -102,10 +102,11 @@ Issues addressed: AUD-003, AUD-016, AUD-017, AUD-018, AUD-026, AUD-031
 **Depends on**: v1.1 milestone complete
 **Research**: Likely (new tech, fast-moving APIs)
 **Research topics**: VelloSharp/Avalonia integration, Impeller .NET bindings status, wgpu setup on Windows, GPU memory management
-**Plans**: TBD
+**Plans**: 2
 
 Plans:
-- [ ] 08-01: TBD (run /gsd:plan-phase 8 to break down)
+- [x] 08-01: VelloSharp POC (4 tasks) - NO-GO for .NET UI integrations, pure Winit works - completed 2025-12-31
+- [x] 08-02: Hybrid Window POC (4 tasks) - WPF shell + owned Winit/Vello window validates - completed 2026-01-01
 
 #### Phase 9: Avalonia 12 Foundation
 **Goal**: Set up Avalonia 12 project with chosen GPU renderer, basic application shell, DI integration with Ams.Core
@@ -159,7 +160,7 @@ Phases execute in numeric order: 1 → 2 → ... → 12
 | 5. Immediate Cleanup | v1.1 | 3/3 | Complete | 2025-12-30 |
 | 6. Utility Extraction | v1.1 | 4/4 | Complete | 2025-12-31 |
 | 7. Service Decomposition | v1.1 | 5/5 | Complete | 2025-12-31 |
-| 8. GPU Rendering Research | v2.0 | 0/? | Not started | - |
+| 8. GPU Rendering Research | v2.0 | 2/2 | Complete | 2026-01-01 |
 | 9. Avalonia 12 Foundation | v2.0 | 0/? | Not started | - |
 | 10. Core UI Components | v2.0 | 0/? | Not started | - |
 | 11. Pipeline Integration | v2.0 | 0/? | Not started | - |

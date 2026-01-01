@@ -1,0 +1,71 @@
+<Window x:Class="HybridVelloPoc.Shell.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Hybrid Vello POC - WPF Shell with Owned Winit Window"
+        Width="1280" Height="720"
+        WindowStartupLocation="CenterScreen"
+        Loaded="Window_Loaded"
+        Closing="Window_Closing"
+        LocationChanged="Window_LocationChanged"
+        SizeChanged="Window_SizeChanged"
+        StateChanged="Window_StateChanged"
+        Activated="Window_Activated"
+        Deactivated="Window_Deactivated">
+
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <!-- Menu Bar -->
+        <Menu Grid.Row="0">
+            <MenuItem Header="_File">
+                <MenuItem Header="_Exit" Click="MenuItem_Exit_Click"/>
+            </MenuItem>
+            <MenuItem Header="_View">
+                <MenuItem Header="Previous Scene" Click="MenuItem_PrevScene_Click" InputGestureText="Left"/>
+                <MenuItem Header="Next Scene" Click="MenuItem_NextScene_Click" InputGestureText="Right"/>
+                <Separator/>
+                <MenuItem Header="Toggle Stats" Click="MenuItem_ToggleStats_Click" InputGestureText="S"/>
+                <MenuItem Header="Reset View" Click="MenuItem_ResetView_Click" InputGestureText="Space"/>
+            </MenuItem>
+            <MenuItem Header="_Help">
+                <MenuItem Header="_About" Click="MenuItem_About_Click"/>
+            </MenuItem>
+        </Menu>
+
+        <!-- Content Host - placeholder for Vello window -->
+        <Border x:Name="ContentHost"
+                Grid.Row="1"
+                Background="#FF1E1E2E"
+                BorderBrush="#FF313244"
+                BorderThickness="1">
+            <TextBlock Text="Vello rendering area (owned window will overlay here)"
+                       Foreground="#FF585B70"
+                       HorizontalAlignment="Center"
+                       VerticalAlignment="Center"
+                       FontSize="14"/>
+        </Border>
+
+        <!-- Status Bar -->
+        <StatusBar Grid.Row="2">
+            <StatusBarItem>
+                <TextBlock x:Name="StatusText" Text="Ready"/>
+            </StatusBarItem>
+            <Separator/>
+            <StatusBarItem>
+                <TextBlock x:Name="SceneText" Text="Scene: -"/>
+            </StatusBarItem>
+            <Separator/>
+            <StatusBarItem>
+                <TextBlock x:Name="FpsText" Text="FPS: -"/>
+            </StatusBarItem>
+            <Separator/>
+            <StatusBarItem>
+                <TextBlock x:Name="DpiText" Text="DPI: -"/>
+            </StatusBarItem>
+        </StatusBar>
+    </Grid>
+</Window>
