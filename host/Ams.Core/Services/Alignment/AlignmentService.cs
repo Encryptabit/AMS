@@ -15,11 +15,15 @@ namespace Ams.Core.Services.Alignment;
 public sealed class AlignmentService : IAlignmentService
 {
     private readonly IPronunciationProvider _pronunciationProvider;
+    private readonly IAnchorComputeService _anchorService;
     private static readonly ILogger Logger = Log.For<AlignmentService>();
 
-    public AlignmentService(IPronunciationProvider? pronunciationProvider = null)
+    public AlignmentService(
+        IPronunciationProvider? pronunciationProvider = null,
+        IAnchorComputeService? anchorService = null)
     {
         _pronunciationProvider = pronunciationProvider ?? NullPronunciationProvider.Instance;
+        _anchorService = anchorService ?? new AnchorComputeService();
     }
 
     public Task<AnchorDocument> ComputeAnchorsAsync(
@@ -27,31 +31,7 @@ public sealed class AlignmentService : IAlignmentService
         AnchorComputationOptions? options = null,
         CancellationToken cancellationToken = default)
     {
-        ArgumentNullException.ThrowIfNull(context);
-        var (book, asr) = RequireBookAndAsr(context);
-        var opts = options ?? new AnchorComputationOptions();
-        var bookView = AnchorPreprocessor.BuildBookView(book);
-        var asrView = AnchorPreprocessor.BuildAsrView(asr);
-        var policy = BuildPolicy(opts);
-        var sectionOverride = context.GetOrResolveSection(book, opts, stage: "anchors", Logger);
-        var sectionOptions = new SectionDetectOptions(
-            Detect: opts.DetectSection && sectionOverride is null,
-            AsrPrefixTokens: opts.AsrPrefixTokens);
-        var pipeline = AnchorPipeline.ComputeAnchors(
-            book,
-            asr,
-            policy,
-            sectionOptions,
-            includeWindows: opts.EmitWindows,
-            overrideSection: sectionOverride);
-        if (pipeline.SectionDetected && pipeline.Section is not null)
-        {
-            context.SetDetectedSection(pipeline.Section);
-        }
-
-        var document = BuildAnchorDocument(pipeline, opts);
-        context.Documents.Anchors = document;
-        return Task.FromResult(document);
+        return _anchorService.ComputeAnchorsAsync(context, options, cancellationToken);
     }
 
     public async Task<TranscriptIndex> BuildTranscriptIndexAsync(
