@@ -4,6 +4,7 @@ using System.Threading;
 using Ams.Cli.Repl;
 using Ams.Cli.Commands;
 using Ams.Core.Services;
+using Ams.Core.Services.Alignment;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Ams.Core.Services.Interfaces;
@@ -17,6 +18,9 @@ internal static class Program
         HostApplicationBuilder builder = Host.CreateApplicationBuilder(args);
 
         builder.Services.AddSingleton<IAsrService, AsrService>();
+        builder.Services.AddSingleton<IAnchorComputeService, AnchorComputeService>();
+        builder.Services.AddSingleton<ITranscriptIndexService, TranscriptIndexService>();
+        builder.Services.AddSingleton<ITranscriptHydrationService, TranscriptHydrationService>();
         builder.Services.AddSingleton<IAlignmentService, AlignmentService>();
         builder.Services.AddSingleton<GenerateTranscriptCommand>();
         builder.Services.AddSingleton<ComputeAnchorsCommand>();
