@@ -1,6 +1,6 @@
 using System.Text.Json.Serialization;
 
-namespace Ams.Core.Validation;
+namespace Ams.Core.Application.Validation.Models;
 
 public enum ValidationLevel
 {

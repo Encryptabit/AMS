@@ -3,6 +3,7 @@ using System.Text;
 using System.Threading;
 using Ams.Cli.Repl;
 using Ams.Cli.Commands;
+using Ams.Core.Application.Validation;
 using Ams.Core.Services;
 using Ams.Core.Services.Alignment;
 using Microsoft.Extensions.DependencyInjection;

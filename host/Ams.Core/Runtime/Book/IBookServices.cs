@@ -5,6 +5,11 @@ namespace Ams.Core.Runtime.Book;
 /// Implementations should handle format-specific parsing while providing
 /// a consistent text extraction API.
 /// </summary>
+/// <remarks>
+/// KEEP DECISION (AUD-016): This interface is DI-registered and enables
+/// swapping implementations for different source formats (Markdown, EPUB, etc.)
+/// without changing consuming code. Follows established pattern in codebase.
+/// </remarks>
 public interface IBookParser
 {
     /// <summary>
@@ -54,6 +59,11 @@ public record BookParseResult(
 /// Interface for processing parsed book text into indexed structures.
 /// Handles text segmentation, word extraction, and timing estimation.
 /// </summary>
+/// <remarks>
+/// KEEP DECISION (AUD-017): This interface is DI-registered and enables
+/// alternative indexing strategies (e.g., different tokenization, phoneme sources).
+/// Part of the established Book* service pattern.
+/// </remarks>
 public interface IBookIndexer
 {
     /// <summary>
@@ -79,6 +89,11 @@ public interface IBookIndexer
 /// Provides persistent storage for processed book data with automatic
 /// invalidation when source files change.
 /// </summary>
+/// <remarks>
+/// KEEP DECISION (AUD-018): This interface is DI-registered and enables
+/// swapping cache implementations (memory, disk, distributed).
+/// Part of the established Book* service pattern.
+/// </remarks>
 public interface IBookCache
 {
     /// <summary>
