@@ -1,5 +1,8 @@
 namespace Ams.Core.Prosody;
 
+/// <summary>
+/// Classifies pause types by their structural role in narration.
+/// </summary>
 public enum PauseClass
 {
     Comma,
@@ -11,6 +14,9 @@ public enum PauseClass
     Other
 }
 
+/// <summary>
+/// Defines minimum and maximum duration bounds for a pause category.
+/// </summary>
 public sealed class PauseWindow
 {
     public PauseWindow(double min, double max)
@@ -38,6 +44,10 @@ public sealed class PauseWindow
     public double Max { get; }
 }
 
+/// <summary>
+/// Configuration for pause compression and dynamics processing.
+/// Defines target windows for each pause class and compression parameters.
+/// </summary>
 public sealed class PausePolicy
 {
     public PausePolicy(
@@ -86,6 +96,9 @@ public sealed class PausePolicy
     public double PreserveTopQuantile { get; }
 }
 
+/// <summary>
+/// Configuration for breath detection and gating during pause processing.
+/// </summary>
 public sealed record BreathGateConfig
 {
     public double FrameMs { get; init; } = 10.0;
@@ -100,6 +113,9 @@ public sealed record BreathGateConfig
     public double GuardHeadMs { get; init; } = 20.0;
 }
 
+/// <summary>
+/// Indicates the source/origin of a detected pause span.
+/// </summary>
 public enum PauseProvenance
 {
     ScriptPunctuation,
@@ -109,6 +125,9 @@ public enum PauseProvenance
     Unknown
 }
 
+/// <summary>
+/// Represents a detected pause interval between sentences or within a sentence.
+/// </summary>
 public sealed record PauseSpan(
     int LeftSentenceId,
     int RightSentenceId,
@@ -121,10 +140,19 @@ public sealed record PauseSpan(
     bool CrossesChapterHead,
     PauseProvenance Provenance = PauseProvenance.Unknown);
 
+/// <summary>
+/// Base type for pause transformation operations.
+/// </summary>
 public abstract record PauseTransform;
 
+/// <summary>
+/// Represents a breath sound to be cut from the audio.
+/// </summary>
 public sealed record BreathCut(double StartSec, double EndSec) : PauseTransform;
 
+/// <summary>
+/// Represents a pause duration adjustment operation.
+/// </summary>
 public sealed record PauseAdjust(
     int LeftSentenceId,
     int RightSentenceId,
@@ -138,6 +166,9 @@ public sealed record PauseAdjust(
     public bool IsIntraSentence => LeftSentenceId >= 0 && LeftSentenceId == RightSentenceId;
 }
 
+/// <summary>
+/// Collection of planned pause transformations for a chapter.
+/// </summary>
 public sealed record PauseTransformSet(
     IReadOnlyList<BreathCut> BreathCuts,
     IReadOnlyList<PauseAdjust> PauseAdjusts)
@@ -145,6 +176,9 @@ public sealed record PauseTransformSet(
     public static readonly PauseTransformSet Empty = new(Array.Empty<BreathCut>(), Array.Empty<PauseAdjust>());
 }
 
+/// <summary>
+/// Represents an intra-sentence gap adjustment with source and target timing.
+/// </summary>
 public sealed record PauseIntraGap(
     int SentenceId,
     double SourceStartSec,
@@ -152,6 +186,9 @@ public sealed record PauseIntraGap(
     double TargetStartSec,
     double TargetEndSec);
 
+/// <summary>
+/// Provides standard pause policy presets.
+/// </summary>
 public static class PausePolicyPresets
 {
     public static PausePolicy House() => new();

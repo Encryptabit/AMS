@@ -2,6 +2,9 @@ using SentenceTiming = Ams.Core.Artifacts.SentenceTiming;
 
 namespace Ams.Core.Prosody;
 
+/// <summary>
+/// Statistical summary of pause durations for a category.
+/// </summary>
 public sealed record PauseStats(int Count, double Min, double Median, double Max, double Mean, double Total)
 {
     public static PauseStats Empty { get; } = new(0, 0d, 0d, 0d, 0d, 0d);
@@ -27,6 +30,9 @@ public sealed record PauseStats(int Count, double Min, double Median, double Max
     }
 }
 
+/// <summary>
+/// Collection of pause statistics for all pause classes.
+/// </summary>
 public sealed class PauseStatsSet
 {
     public PauseStatsSet(
@@ -88,6 +94,9 @@ public sealed class PauseStatsSet
     }
 }
 
+/// <summary>
+/// Base class for pause scope containers that aggregate statistics.
+/// </summary>
 public abstract class PauseScopeBase
 {
     protected PauseScopeBase(PauseStatsSet stats)
@@ -105,6 +114,9 @@ public abstract class PauseScopeBase
     public PauseStats Other => Stats.Other;
 }
 
+/// <summary>
+/// Mutable representation of a pause interval with original and current timings.
+/// </summary>
 public sealed class PauseInterval
 {
     public PauseInterval(PauseClass pauseClass, double originalStart, double originalEnd, bool hasHint)
@@ -141,8 +153,12 @@ public sealed class PauseInterval
     }
 }
 
+/// <summary>
+/// Base element in a sentence timeline (words or pauses).
+/// </summary>
 public abstract record SentenceTimelineElement(double OriginalStart);
 
+/// <summary>Word element within a sentence timeline.</summary>
 public sealed record SentenceWordElement(
     int WordIndex,
     string Text,
@@ -151,22 +167,32 @@ public sealed record SentenceWordElement(
     double CurrentStart,
     double CurrentEnd) : SentenceTimelineElement(OriginalStart);
 
+/// <summary>Pause element within a sentence timeline.</summary>
 public sealed record SentencePauseElement(PauseInterval Pause) : SentenceTimelineElement(Pause.OriginalStart);
 
+/// <summary>Base element in a paragraph timeline.</summary>
 public abstract record ParagraphTimelineElement(double OriginalStart);
 
+/// <summary>Sentence element within a paragraph timeline.</summary>
 public sealed record ParagraphSentenceElement(SentencePauseMap Sentence)
     : ParagraphTimelineElement(Sentence.OriginalTiming.StartSec);
 
+/// <summary>Pause element within a paragraph timeline.</summary>
 public sealed record ParagraphPauseElement(PauseInterval Pause) : ParagraphTimelineElement(Pause.OriginalStart);
 
+/// <summary>Base element in a chapter timeline.</summary>
 public abstract record ChapterTimelineElement(double OriginalStart);
 
+/// <summary>Paragraph element within a chapter timeline.</summary>
 public sealed record ChapterParagraphElement(ParagraphPauseMap Paragraph)
     : ChapterTimelineElement(Paragraph.OriginalStart);
 
+/// <summary>Pause element within a chapter timeline.</summary>
 public sealed record ChapterPauseElement(PauseInterval Pause) : ChapterTimelineElement(Pause.OriginalStart);
 
+/// <summary>
+/// Pause map for a single sentence with word and pause timelines.
+/// </summary>
 public sealed class SentencePauseMap : PauseScopeBase
 {
     private readonly IReadOnlyList<SentenceTimelineElement> _timeline;
@@ -202,6 +228,9 @@ public sealed class SentencePauseMap : PauseScopeBase
     }
 }
 
+/// <summary>
+/// Pause map for a paragraph containing sentence pause maps.
+/// </summary>
 public sealed class ParagraphPauseMap : PauseScopeBase
 {
     private readonly IReadOnlyList<ParagraphTimelineElement> _timeline;
@@ -253,6 +282,9 @@ public sealed class ParagraphPauseMap : PauseScopeBase
     }
 }
 
+/// <summary>
+/// Top-level pause map for an entire chapter containing paragraph pause maps.
+/// </summary>
 public sealed class ChapterPauseMap : PauseScopeBase
 {
     private readonly IReadOnlyList<ChapterTimelineElement> _timeline;
