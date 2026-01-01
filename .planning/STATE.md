@@ -27,7 +27,7 @@ v2.0 Desktop UI        [████░░░░░░░░░░░░░░�
 | VelloSharp + WPF | NO-GO | VelloView composition fails |
 | VelloSharp + WinUI | NO-GO | Exit code 22 |
 | VelloSharp + pure Winit | WORKS | Standalone window renders perfectly |
-| **Hybrid WPF+Vello** | **GO** | Owned window bypasses wgpu child limitation |
+| **Hybrid WPF+Vello** | **CONFIRMED GO** | Owned window bypasses wgpu child limitation - runtime validated |
 
 ## Phase 8 Conclusions
 
@@ -37,7 +37,7 @@ v2.0 Desktop UI        [████░░░░░░░░░░░░░░�
 2. Owned windows via `SetWindowLongPtr(GWL_HWNDPARENT)` work
 3. Position sync on move/resize via WPF events
 4. Build validates (0 errors)
-5. **Manual testing required** to confirm runtime rendering
+5. **Runtime testing confirmed** - GPU rendering works perfectly
 
 ### POC Created
 
@@ -52,19 +52,10 @@ poc/HybridVelloPoc/
 
 ## Next Action
 
-**Phase 9: Avalonia 12 Foundation** - now that GPU rendering approach is validated
-
-However, Phase 9 plans are TBD. Options:
-1. **Plan Phase 9** with Avalonia 12 foundation using hybrid pattern
-2. **Manual test 08-02 POC first** to confirm runtime rendering works
+**Phase 9: Avalonia 12 Foundation** - GPU rendering approach validated and confirmed
 
 ```
 /gsd:plan-phase 9
-```
-
-Or run the POC manually:
-```
-cd poc/HybridVelloPoc && dotnet run --project HybridVelloPoc.Shell
 ```
 
 ## Deferred Issues
@@ -74,5 +65,5 @@ None currently.
 ## Session Continuity
 
 Last session: 2026-01-01
-Stopped at: Completed 08-02, Phase 8 complete
-Resume file: None (ready for Phase 9 planning or POC manual test)
+Stopped at: Phase 8 complete, hybrid architecture runtime-validated
+Resume file: None (ready for Phase 9 planning)

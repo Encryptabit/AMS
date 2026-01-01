@@ -112,28 +112,27 @@ None blocking. Build succeeds with upstream VelloSharp warnings (cosmetic).
 
 ## Verdict
 
-**CONDITIONAL GO** - Architecture validated:
+**GO** - Architecture fully validated:
 - [x] Build succeeds (0 errors)
 - [x] Owned-window relationship established
 - [x] Position sync logic implemented
 - [x] Input handlers wired up
-- [ ] **Manual testing required** to confirm runtime behavior
+- [x] **Runtime testing confirmed** - GPU rendering works perfectly
 
-The owned-window approach using `SetWindowLongPtr(GWL_HWNDPARENT)` bypasses the wgpu child-window limitation. Manual testing will validate:
-1. Vello window actually renders (wgpu surface creation at runtime)
-2. Position sync works correctly during move/resize
-3. No flicker or visual artifacts
-4. Multi-monitor DPI handling
+The owned-window approach using `SetWindowLongPtr(GWL_HWNDPARENT)` successfully bypasses the wgpu child-window limitation. Manual testing confirmed:
+1. ✅ Vello window renders GPU content (wgpu surface creation succeeds)
+2. ✅ Position sync works correctly during move/resize
+3. ✅ No flicker or visual artifacts
+4. ✅ Mouse/keyboard input routing works
 
 ## Next Phase Readiness
 
-If manual testing succeeds:
+**Ready for Phase 9: Avalonia 12 Foundation**
+
 - Hybrid WPF+Vello architecture confirmed viable for AMS desktop UI
 - Pattern can be extracted into reusable component
-
-If testing fails:
-- Document failure mode
-- Consider alternatives (pure WinUI with DirectX interop, Avalonia with custom backend)
+- Key technique: owned windows via `SetWindowLongPtr(GWL_HWNDPARENT)` bypass wgpu child-window limitation
+- Native DLLs must be copied to output directory (vello_ffi.dll, winit_ffi.dll, etc.)
 
 ---
 *Phase: 08-gpu-rendering-research*
