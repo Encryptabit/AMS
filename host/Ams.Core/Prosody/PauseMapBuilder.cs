@@ -6,6 +6,9 @@ using SentenceTiming = Ams.Core.Artifacts.SentenceTiming;
 
 namespace Ams.Core.Prosody;
 
+/// <summary>
+/// Builds hierarchical pause maps from transcript data and detected silences.
+/// </summary>
 public static class PauseMapBuilder
 {
     public static ChapterPauseMap Build(

@@ -1,5 +1,9 @@
 namespace Ams.Core.Prosody;
 
+/// <summary>
+/// Mathematical functions for pause duration compression.
+/// Computes target durations based on policy windows and compression profiles.
+/// </summary>
 public static class PauseCompressionMath
 {
     public sealed record PauseCompressionProfile(PauseBounds Bounds, double? PreserveThreshold);

@@ -1,5 +1,8 @@
 namespace Ams.Core.Prosody;
 
+/// <summary>
+/// Summary statistics for a single pause class.
+/// </summary>
 public sealed record PauseClassSummary(
     int Count,
     double TotalDuration,
@@ -33,6 +36,9 @@ public sealed record PauseClassSummary(
     }
 }
 
+/// <summary>
+/// Report containing all detected pause spans and class-level statistics.
+/// </summary>
 public sealed record PauseAnalysisReport(
     IReadOnlyList<PauseSpan> Spans,
     IReadOnlyDictionary<PauseClass, PauseClassSummary> Classes)

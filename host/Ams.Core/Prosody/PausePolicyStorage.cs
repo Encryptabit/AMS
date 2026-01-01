@@ -2,6 +2,9 @@ using System.Text.Json;
 
 namespace Ams.Core.Prosody;
 
+/// <summary>
+/// Persistence utilities for pause policy configurations.
+/// </summary>
 public static class PausePolicyStorage
 {
     private static readonly JsonSerializerOptions JsonOptions = new()
