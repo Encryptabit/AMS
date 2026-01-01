@@ -77,21 +77,16 @@ Issues addressed: AUD-004, AUD-007, AUD-011, AUD-012, AUD-013, AUD-014, AUD-020,
 **Goal**: Split AlignmentService god class, consolidate validation, standardize Prosody patterns
 **Depends on**: Phase 6 (ChapterLabelResolver required)
 **Research**: Unlikely (internal refactoring)
-**Plans**: TBD
+**Plans**: 5
 
 Plans:
-- [ ] 07-01: TBD (run /gsd:plan-phase 7 to break down)
+- [x] 07-01: AnchorComputeService Extraction (2 tasks) - Extract anchor computation from AlignmentService - completed 2025-12-31
+- [ ] 07-02: TranscriptIndexService Extraction (2 tasks) - Extract transcript index building
+- [ ] 07-03: TranscriptHydrationService & Facade (2 tasks) - Complete decomposition, register DI
+- [ ] 07-04: Validation Consolidation (2 tasks) - Relocate validation files, document IBook* interfaces
+- [ ] 07-05: Prosody Standardization & Tests (2 tasks) - Standardize patterns, add test coverage
 
-Key deliverables:
-- AlignmentService decomposition into 4 focused services:
-  - AnchorComputeService
-  - TranscriptIndexService
-  - TranscriptHydrationService
-  - AlignmentService facade
-- Document IBook* interface decisions (KEEP)
-- Consolidate validation files to Application/Validation/
-- Standardize Prosody patterns
-- Improve test coverage for new utilities/services
+Issues addressed: AUD-003, AUD-016, AUD-017, AUD-018, AUD-026, AUD-031
 
 ## Progress
 
@@ -106,4 +101,4 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6 -> 7
 | 4. Recommendations | v1.0 | 2/2 | Complete | 2025-12-30 |
 | 5. Immediate Cleanup | v1.1 | 3/3 | Complete | 2025-12-30 |
 | 6. Utility Extraction | v1.1 | 4/4 | Complete | 2025-12-31 |
-| 7. Service Decomposition | v1.1 | 0/? | Not started | - |
+| 7. Service Decomposition | v1.1 | 1/5 | In progress | - |
