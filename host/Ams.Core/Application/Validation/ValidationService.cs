@@ -1,8 +1,7 @@
-using Ams.Core.Artifacts.Validation;
-using Ams.Core.Processors.Validation;
+using Ams.Core.Application.Validation.Models;
 using Ams.Core.Runtime.Chapter;
 
-namespace Ams.Core.Services;
+namespace Ams.Core.Application.Validation;
 
 public sealed class ValidationService
 {

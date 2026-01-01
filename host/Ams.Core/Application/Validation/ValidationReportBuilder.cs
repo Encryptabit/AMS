@@ -1,9 +1,9 @@
 using System.Text;
+using Ams.Core.Application.Validation.Models;
 using Ams.Core.Artifacts;
 using Ams.Core.Artifacts.Hydrate;
-using Ams.Core.Artifacts.Validation;
 
-namespace Ams.Core.Processors.Validation;
+namespace Ams.Core.Application.Validation;
 
 public static class ValidationReportBuilder
 {
@@ -434,7 +434,7 @@ public static class ValidationReportBuilder
             return normalized;
         }
 
-        return normalized[..maxLength.Value].TrimEnd() + "…";
+        return normalized[..maxLength.Value].TrimEnd() + "...";
     }
 
     private static int ClampToInt(long value)

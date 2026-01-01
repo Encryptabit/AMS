@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Ams.Core.Application.Validation.Models;
 
 namespace Ams.Core.Validation;
 

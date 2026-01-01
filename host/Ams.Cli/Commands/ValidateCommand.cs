@@ -6,12 +6,12 @@ using System.Text.Json;
 using Ams.Core.Artifacts;
 using Ams.Core.Processors;
 using Ams.Core.Artifacts.Hydrate;
-using Ams.Core.Artifacts.Validation;
+using Ams.Core.Application.Validation;
+using Ams.Core.Application.Validation.Models;
 using Ams.Core.Prosody;
 using Ams.Cli.Repl;
 using Ams.Cli.Utilities;
 using Ams.Core.Runtime.Workspace;
-using Ams.Core.Services;
 using SentenceTiming = Ams.Core.Artifacts.SentenceTiming;
 
 namespace Ams.Cli.Commands;

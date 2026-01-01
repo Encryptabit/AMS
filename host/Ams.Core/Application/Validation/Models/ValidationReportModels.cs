@@ -1,6 +1,7 @@
+using Ams.Core.Artifacts;
 using Ams.Core.Artifacts.Hydrate;
 
-namespace Ams.Core.Artifacts.Validation;
+namespace Ams.Core.Application.Validation.Models;
 
 public sealed record SourceInfo(string AudioPath, string ScriptPath, string BookIndexPath, DateTime CreatedAtUtc);
 
