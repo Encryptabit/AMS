@@ -1,4 +1,30 @@
-# Project Milestones: AMS Codebase Audit & Refactoring
+# Project Milestones: AMS Audio Management System
+
+## v1.1 Execute Refactoring (Shipped: 2025-12-31)
+
+**Delivered:** Codebase health improved from 6.8 to 8.0 through systematic refactoring: dead code deletion, AlignmentService decomposition, utility extraction, and test coverage improvements.
+
+**Phases completed:** 5-7 (12 plans total)
+
+**Key accomplishments:**
+- Deleted ~650 lines of dead code (OverlayTest, Wn*.cs, unused templates)
+- Archived dormant projects (UI.Avalonia, InspectDocX)
+- Extracted ChapterLabelResolver utility (eliminated duplication)
+- Decomposed AlignmentService god class into 4 focused services (AnchorComputeService, TranscriptIndexService, HydrationService, AlignmentFacade)
+- Fixed FFmpeg tests (afade parameter, filter graph labels)
+- Created AsrAudioPreparer utility
+- Standardized Prosody patterns with 35 new tests
+- Documented IBook* interfaces
+
+**Stats:**
+- 3 phases, 12 plans, ~26 tasks
+- 2 days from start to ship (2025-12-30 -> 2025-12-31)
+
+**Git range:** `feat(05-01)` -> `feat(07-05)`
+
+**What's next:** v2.0 Desktop UI with GPU-native rendering (Avalonia 12 + VelloSharp/Impeller)
+
+---
 
 ## v1.0 AMS Codebase Audit (Shipped: 2025-12-30)
 
@@ -21,7 +47,5 @@
 - 3 days from start to ship (2025-12-28 -> 2025-12-30)
 
 **Git range:** `feat(01-01)` -> `feat(04-02)`
-
-**What's next:** Execute prioritized refactoring starting with immediate dead code deletion (~2 hours), then AlignmentService decomposition (16-24 hours).
 
 ---

@@ -1,17 +1,19 @@
-# Roadmap: AMS Codebase Audit & Refactoring
+# Roadmap: AMS Audio Management System
 
 ## Overview
 
-A systematic audit of the Audio Management System codebase to achieve complete understanding of every file, trace the pipeline flow, identify dead code and over-abstraction, and produce actionable refactoring recommendations. Now executing the refactoring plan to improve codebase health from 6.8 to 8.0.
+A comprehensive Audio Management System for audio processing, ASR, forced alignment, and audiobook mastering. v1.0-1.1 established ground-truth codebase understanding and refactored to 8.0 health score. v2.0 introduces a desktop UI with GPU-native rendering.
 
 ## Domain Expertise
 
-None (internal codebase refactoring - no external domain expertise applicable)
+- ~/.claude/skills/expertise/audio-dsp/SKILL.md (audio processing patterns)
+- Avalonia 12 + GPU rendering (VelloSharp/Impeller - research in Phase 8)
 
 ## Milestones
 
-- [v1.0 AMS Codebase Audit](milestones/v1.0-ROADMAP.md) (Phases 1-4) - SHIPPED 2025-12-30
-- **v1.1 Execute Refactoring** - Phases 5-7 (in progress)
+- ✅ [v1.0 AMS Codebase Audit](milestones/v1.0-ROADMAP.md) (Phases 1-4) - SHIPPED 2025-12-30
+- ✅ **v1.1 Execute Refactoring** - Phases 5-7 - SHIPPED 2025-12-31
+- 🚧 **v2.0 Desktop UI** - Phases 8-12 (in progress)
 
 ## Completed Milestones
 
@@ -42,7 +44,8 @@ None (internal codebase refactoring - no external domain expertise applicable)
 
 </details>
 
-### v1.1 Execute Refactoring (In Progress)
+<details>
+<summary>✅ v1.1 Execute Refactoring (Phases 5-7) - SHIPPED 2025-12-31</summary>
 
 **Milestone Goal:** Execute prioritized refactoring from ACTION-LIST.md to improve codebase health from 6.8 to 8.0
 
@@ -88,10 +91,64 @@ Plans:
 
 Issues addressed: AUD-003, AUD-016, AUD-017, AUD-018, AUD-026, AUD-031
 
+</details>
+
+### 🚧 v2.0 Desktop UI (In Progress)
+
+**Milestone Goal:** Build a desktop application using Avalonia 12 with GPU-native rendering (Vello or Impeller), connecting to the existing AMS pipeline.
+
+#### Phase 8: GPU Rendering Research
+**Goal**: Evaluate VelloSharp vs Impeller - build minimal POCs, compare performance and developer experience
+**Depends on**: v1.1 milestone complete
+**Research**: Likely (new tech, fast-moving APIs)
+**Research topics**: VelloSharp/Avalonia integration, Impeller .NET bindings status, wgpu setup on Windows, GPU memory management
+**Plans**: TBD
+
+Plans:
+- [ ] 08-01: TBD (run /gsd:plan-phase 8 to break down)
+
+#### Phase 9: Avalonia 12 Foundation
+**Goal**: Set up Avalonia 12 project with chosen GPU renderer, basic application shell, DI integration with Ams.Core
+**Depends on**: Phase 8
+**Research**: Likely (Avalonia 12 preview patterns, renderer integration)
+**Research topics**: Avalonia 12 preview APIs, DI patterns, renderer configuration
+**Plans**: TBD
+
+Plans:
+- [ ] 09-01: TBD
+
+#### Phase 10: Core UI Components
+**Goal**: Book/chapter navigation, pipeline status display, audio waveform visualization shell
+**Depends on**: Phase 9
+**Research**: Unlikely (internal UI patterns)
+**Plans**: TBD
+
+Plans:
+- [ ] 10-01: TBD
+
+#### Phase 11: Pipeline Integration
+**Goal**: Wire existing Ams.Core commands to UI, real-time pipeline progress, chapter context management
+**Depends on**: Phase 10
+**Research**: Unlikely (using existing services)
+**Plans**: TBD
+
+Plans:
+- [ ] 11-01: TBD
+
+#### Phase 12: Audio Visualization
+**Goal**: GPU-rendered waveform display, spectrogram visualization, playback position synchronization
+**Depends on**: Phase 11
+**Research**: Likely (GPU rendering for real-time audio viz)
+**Research topics**: GPU buffer management for audio data, real-time waveform rendering, spectrogram computation
+**Plans**: TBD
+
+Plans:
+- [ ] 12-01: TBD
+
 ## Progress
 
 **Execution Order:**
-Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6 -> 7
+Phases execute in numeric order: 1 → 2 → ... → 12
 
 | Phase | Milestone | Plans Complete | Status | Completed |
 |-------|-----------|----------------|--------|-----------|
@@ -102,3 +159,8 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6 -> 7
 | 5. Immediate Cleanup | v1.1 | 3/3 | Complete | 2025-12-30 |
 | 6. Utility Extraction | v1.1 | 4/4 | Complete | 2025-12-31 |
 | 7. Service Decomposition | v1.1 | 5/5 | Complete | 2025-12-31 |
+| 8. GPU Rendering Research | v2.0 | 0/? | Not started | - |
+| 9. Avalonia 12 Foundation | v2.0 | 0/? | Not started | - |
+| 10. Core UI Components | v2.0 | 0/? | Not started | - |
+| 11. Pipeline Integration | v2.0 | 0/? | Not started | - |
+| 12. Audio Visualization | v2.0 | 0/? | Not started | - |
