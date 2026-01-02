@@ -160,7 +160,7 @@ Phases execute in numeric order: 1 → 2 → ... → 12
 | 5. Immediate Cleanup | v1.1 | 3/3 | Complete | 2025-12-30 |
 | 6. Utility Extraction | v1.1 | 4/4 | Complete | 2025-12-31 |
 | 7. Service Decomposition | v1.1 | 5/5 | Complete | 2025-12-31 |
-| 8. GPU Rendering Research | v2.0 | 2/2 | Complete | 2026-01-01 |
+| 8. GPU Rendering Research | v2.0 | 2/2 + POCs | In Progress | - |
 | 9. Avalonia 12 Foundation | v2.0 | 0/? | Not started | - |
 | 10. Core UI Components | v2.0 | 0/? | Not started | - |
 | 11. Pipeline Integration | v2.0 | 0/? | Not started | - |
