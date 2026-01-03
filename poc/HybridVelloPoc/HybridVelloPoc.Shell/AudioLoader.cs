@@ -1,7 +1,7 @@
 using System.IO;
 using System.IO.MemoryMappedFiles;
 
-namespace SkiaSharpPoc.Shell;
+namespace HybridVelloPoc.Shell;
 
 /// <summary>
 /// Loads and provides sample data from WAV files using memory-mapping for large files.

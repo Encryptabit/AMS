@@ -9,7 +9,6 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
 using VelloSharp;
-using VelloSharp.Scenes;
 
 namespace HybridVelloPoc.Shell;
 
@@ -56,10 +55,12 @@ public sealed class VelloHostController : IWinitEventHandler, IDisposable
     private readonly Scene _scene;
     private readonly Stopwatch _clock;
     private readonly Stopwatch _frameTimer;
+    private readonly Stopwatch _fpsUpdateTimer;
     private readonly object _syncLock = new();
 
-    private ManagedSceneHost? _host;
-    private IReadOnlyList<ExampleScene> _scenes = Array.Empty<ExampleScene>();
+    private AudioLoader? _audioLoader;
+    private WaveformRenderer? _waveformRenderer;
+    private FrameTimer? _renderFrameTimer;
 
     private WgpuInstance? _wgpuInstance;
     private WgpuAdapter? _wgpuAdapter;
@@ -84,9 +85,13 @@ public sealed class VelloHostController : IWinitEventHandler, IDisposable
     private uint _width = 800;
     private uint _height = 600;
     private double _scaleFactor = 1.0;
-    private int _sceneIndex;
-    private Matrix3x2 _viewTransform = Matrix3x2.Identity;
-    private RgbaColor _baseColor = RgbaColor.FromBytes(12, 16, 20);
+    private RgbaColor _baseColor = RgbaColor.FromBytes(30, 30, 46); // Dark background matching SkiaSharpPoc
+
+    // View transform state (matching SkiaSharpPoc)
+    private float _offsetX;
+    private float _scaleX = 1.0f;
+    private const float MinScale = 0.001f;
+    private const float MaxScale = 1000.0f;
 
     private bool _pointerDown;
     private Vector2? _pointerPosition;
@@ -102,10 +107,11 @@ public sealed class VelloHostController : IWinitEventHandler, IDisposable
     private readonly Queue<double> _frameTimes = new();
     private double _frameTimeSum;
     private const int MaxFrameSamples = 60;
+    private const int FpsUpdateIntervalMs = 125;
 
-    public event Action<string, int, int>? SceneChanged;
     public event Action<double>? FpsUpdated;
     public event Action<string>? StatusUpdated;
+    public event Action<string>? AudioInfoUpdated;
 
     public VelloHostController(IntPtr wpfHwnd, Window wpfWindow, Border contentHost)
     {
@@ -116,6 +122,7 @@ public sealed class VelloHostController : IWinitEventHandler, IDisposable
         _scene = new Scene();
         _clock = Stopwatch.StartNew();
         _frameTimer = Stopwatch.StartNew();
+        _fpsUpdateTimer = Stopwatch.StartNew();
     }
 
     public void Start()
@@ -225,10 +232,10 @@ public sealed class VelloHostController : IWinitEventHandler, IDisposable
                 break;
             case WinitEventKind.AboutToWait:
                 ProcessPendingUpdates();
-                if (_needsRedraw && _surfaceValid && _winitWindow is not null && _windowVisible)
+                if (_surfaceValid && _winitWindow is not null && _windowVisible && _needsRedraw)
                 {
-                    _winitWindow.RequestRedraw();
                     _needsRedraw = false;
+                    _winitWindow.RequestRedraw();
                 }
                 break;
             case WinitEventKind.MouseInput:
@@ -255,7 +262,7 @@ public sealed class VelloHostController : IWinitEventHandler, IDisposable
     private void HandleWindowCreated(WinitEventLoopContext context, in WinitEventArgs args)
     {
         _winitWindow = context.GetWindow() ?? throw new InvalidOperationException("Window handle unavailable.");
-        context.SetControlFlow(WinitControlFlow.Poll);
+        context.SetControlFlow(WinitControlFlow.Wait);
 
         _width = Math.Max(1u, args.Width);
         _height = Math.Max(1u, args.Height);
@@ -292,8 +299,8 @@ public sealed class VelloHostController : IWinitEventHandler, IDisposable
         EnsureGpuContext(descriptor);
         ConfigureSurface(_width, _height);
 
-        // Initialize scenes
-        InitializeScenes();
+        // Initialize waveform rendering
+        InitializeWaveformRendering();
 
         RequestRedraw();
     }
@@ -320,10 +327,10 @@ public sealed class VelloHostController : IWinitEventHandler, IDisposable
         var position = new Vector2((float)args.MouseX, (float)args.MouseY);
         if (_pointerDown && _pointerPosition is Vector2 previous)
         {
-            var delta = position - previous;
-            if (delta.LengthSquared() > 0f)
+            var deltaX = position.X - previous.X;
+            if (Math.Abs(deltaX) > 0f)
             {
-                _viewTransform = Matrix3x2.CreateTranslation(delta) * _viewTransform;
+                _offsetX += deltaX;
                 RequestRedraw();
             }
         }
@@ -335,7 +342,7 @@ public sealed class VelloHostController : IWinitEventHandler, IDisposable
         if (_pointerPosition is not Vector2 position)
             return;
 
-        const double baseFactor = 1.05;
+        const double baseFactor = 1.1;
         const double pixelsPerLine = 20.0;
         double exponent = args.ScrollDeltaKind switch
         {
@@ -344,13 +351,17 @@ public sealed class VelloHostController : IWinitEventHandler, IDisposable
             _ => 0.0,
         };
 
-        var scale = (float)Math.Pow(baseFactor, exponent);
-        if (float.IsFinite(scale) && scale > 0f)
+        var zoomFactor = (float)Math.Pow(baseFactor, exponent);
+        if (float.IsFinite(zoomFactor) && zoomFactor > 0f)
         {
-            var translation = Matrix3x2.CreateTranslation(-position) *
-                              Matrix3x2.CreateScale(scale) *
-                              Matrix3x2.CreateTranslation(position);
-            _viewTransform = translation * _viewTransform;
+            // Zoom around mouse position (matching SkiaSharpPoc logic)
+            var oldScale = _scaleX;
+            _scaleX = Math.Clamp(_scaleX * zoomFactor, MinScale, MaxScale);
+
+            // Adjust offset to zoom around mouse position
+            var scaleRatio = _scaleX / oldScale;
+            _offsetX = position.X - (position.X - _offsetX) * scaleRatio;
+
             RequestRedraw();
         }
     }
@@ -363,29 +374,11 @@ public sealed class VelloHostController : IWinitEventHandler, IDisposable
         var code = (uint)args.KeyCode;
         switch (code)
         {
-            case 80: // ArrowLeft
-                ChangeScene(-1);
-                break;
-            case 81: // ArrowRight
-                ChangeScene(1);
-                break;
             case 62: // Space
                 ResetView();
                 break;
             case 37: // KeyS
                 ToggleStats();
-                break;
-            case 35: // KeyQ
-            case 23: // KeyE
-                if (_pointerPosition is Vector2 pivot)
-                {
-                    var angle = code == 23 ? -0.05f : 0.05f;
-                    var rotation = Matrix3x2.CreateTranslation(-pivot) *
-                                   Matrix3x2.CreateRotation(angle) *
-                                   Matrix3x2.CreateTranslation(pivot);
-                    _viewTransform = rotation * _viewTransform;
-                    RequestRedraw();
-                }
                 break;
         }
     }
@@ -565,35 +558,66 @@ public sealed class VelloHostController : IWinitEventHandler, IDisposable
         _surfaceValid = true;
     }
 
-    private void InitializeScenes()
+    private void InitializeWaveformRendering()
     {
-        var assetRoot = Path.Combine(AppContext.BaseDirectory, "Assets", "vello");
-        _host = ManagedSceneHost.Create(Directory.Exists(assetRoot) ? assetRoot : null);
-        _scenes = _host.Scenes;
-        if (_scenes.Count > 0)
+        _waveformRenderer = new WaveformRenderer();
+        _renderFrameTimer = new FrameTimer();
+
+        // Try to load the sample audio file
+        var samplePath = Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "audio_sample.wav");
+        if (!File.Exists(samplePath))
         {
-            RaiseSceneChanged();
+            // Try alternate path from solution root
+            samplePath = Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "..", "audio_sample.wav");
+        }
+
+        if (File.Exists(samplePath))
+        {
+            try
+            {
+                _audioLoader = new AudioLoader(samplePath);
+                var info = $"Loaded: {Path.GetFileName(samplePath)} ({_audioLoader.Duration:F2}s, {_audioLoader.SampleRate}Hz, {_audioLoader.Channels}ch)";
+                RaiseStatusUpdated(info);
+                AudioInfoUpdated?.Invoke(info);
+            }
+            catch (Exception ex)
+            {
+                RaiseStatusUpdated($"Error loading audio: {ex.Message}");
+            }
+        }
+        else
+        {
+            RaiseStatusUpdated("No audio file found. Place audio_sample.wav in poc/ folder.");
         }
     }
 
     private void RenderFrame()
     {
-        if (_wgpuSurface is null || _wgpuRenderer is null || !_surfaceValid || _host is null || !_windowVisible)
+        if (_wgpuSurface is null || _wgpuRenderer is null || !_surfaceValid || _waveformRenderer is null || !_windowVisible)
             return;
+
+        _renderFrameTimer?.BeginFrame();
 
         var elapsedMs = _frameTimer.Elapsed.TotalMilliseconds;
         _frameTimer.Restart();
         UpdateFrameStats(elapsedMs);
 
-        if (_scenes.Count == 0)
-            return;
+        // Clear scene and render waveform
+        _scene.Reset();
 
-        var elapsedSeconds = _clock.Elapsed.TotalSeconds;
-        var index = Math.Clamp(_sceneIndex, 0, _scenes.Count - 1);
-        var result = _host.Render(index, _scene, elapsedSeconds, true, 1, _viewTransform);
+        var width = (int)_width;
+        var height = (int)_height;
 
-        if (result.BaseColor.HasValue)
-            _baseColor = result.BaseColor.Value;
+        if (_audioLoader != null)
+        {
+            // Calculate visible sample range based on view transform (matching SkiaSharpPoc)
+            var samplesPerPixel = _audioLoader.TotalSamples / (float)width / _scaleX;
+            var startSample = (long)Math.Max(0, -_offsetX * samplesPerPixel);
+            var endSample = (long)Math.Min(_audioLoader.TotalSamples, startSample + (long)(width * samplesPerPixel));
+
+            // Use identity transform for waveform rendering (transform is baked into sample calculation)
+            _waveformRenderer.Render(_scene, _audioLoader, width, height, startSample, endSample, Matrix3x2.Identity);
+        }
 
         WgpuSurfaceTexture? surfaceTexture = null;
         WgpuTextureView? textureView = null;
@@ -638,10 +662,12 @@ public sealed class VelloHostController : IWinitEventHandler, IDisposable
             surfaceTexture?.Dispose();
         }
 
-        // Request next frame for animated scenes
-        if (_scenes[index].Animated || _statsVisible)
+        _renderFrameTimer?.EndFrame();
+
+        // Update FPS display
+        if (_renderFrameTimer != null)
         {
-            RequestRedraw();
+            TryRaiseFpsUpdated(_renderFrameTimer.CurrentFps);
         }
     }
 
@@ -662,24 +688,7 @@ public sealed class VelloHostController : IWinitEventHandler, IDisposable
         {
             var avgMs = _frameTimeSum / _frameTimes.Count;
             var fps = avgMs > 0 ? 1000.0 / avgMs : 0;
-            RaiseFpsUpdated(fps);
-        }
-    }
-
-    public void ChangeScene(int delta)
-    {
-        if (_scenes.Count == 0)
-            return;
-
-        var next = (_sceneIndex + delta) % _scenes.Count;
-        if (next < 0)
-            next += _scenes.Count;
-
-        if (_sceneIndex != next)
-        {
-            _sceneIndex = next;
-            RaiseSceneChanged();
-            RequestRedraw();
+            TryRaiseFpsUpdated(fps);
         }
     }
 
@@ -691,11 +700,16 @@ public sealed class VelloHostController : IWinitEventHandler, IDisposable
 
     public void ResetView()
     {
-        _viewTransform = Matrix3x2.Identity;
+        _offsetX = 0;
+        _scaleX = 1.0f;
         RequestRedraw();
     }
 
-    private void RequestRedraw() => _needsRedraw = true;
+    private void RequestRedraw()
+    {
+        _needsRedraw = true;
+        _winitWindow?.RequestRedraw();
+    }
 
     private void DestroySurface()
     {
@@ -732,22 +746,22 @@ public sealed class VelloHostController : IWinitEventHandler, IDisposable
         _ => format,
     };
 
-    private void RaiseSceneChanged()
-    {
-        if (_scenes.Count > 0 && _sceneIndex < _scenes.Count)
-        {
-            SceneChanged?.Invoke(_scenes[_sceneIndex].Name, _sceneIndex, _scenes.Count);
-        }
-    }
-
     private void RaiseFpsUpdated(double fps) => FpsUpdated?.Invoke(fps);
+    private void TryRaiseFpsUpdated(double fps)
+    {
+        if (_fpsUpdateTimer.ElapsedMilliseconds < FpsUpdateIntervalMs)
+            return;
+
+        _fpsUpdateTimer.Restart();
+        RaiseFpsUpdated(fps);
+    }
     private void RaiseStatusUpdated(string status) => StatusUpdated?.Invoke(status);
 
     public void Dispose()
     {
         Stop();
         DestroyAllGpuResources();
-        _host?.Dispose();
+        _audioLoader?.Dispose();
         _scene.Dispose();
     }
 }

@@ -6,10 +6,10 @@ Audio Management System - CLI and core library for audio processing, ASR, forced
 
 ## Current Position
 
-**Milestone**: v2.0 Desktop UI
-**Phase**: 8.1 - SkiaSharp vs VelloSharp Comparison POC
-**Plan**: 1/2 - In progress
-**Status**: SkiaSharp POC complete - ready for VelloSharp comparison
+**Milestone**: v2.0 Desktop UI - ON ICE
+**Phase**: 8.1 - SkiaSharp vs VelloSharp Comparison POC (paused)
+**Plan**: 1/2 - Exploration complete
+**Status**: Desktop UI deferred - pivoting to Blazor validation viewer
 
 ## Progress
 
@@ -28,6 +28,20 @@ v2.0 Desktop UI        [████░░░░░░░░░░░░░░�
 | VelloSharp + WinUI | NO-GO | Exit code 22 |
 | VelloSharp + pure Winit | WORKS | Standalone window renders perfectly |
 | **Hybrid WPF+Vello** | **CONFIRMED GO** | Owned window bypasses wgpu child limitation - runtime validated |
+| **Desktop UI v2.0** | **ON ICE** | Complexity too high for current needs - pivot to Blazor |
+
+## Phase 8.1 Conclusions (POC Exploration)
+
+**Decision: Defer desktop UI, pursue Blazor validation viewer instead**
+
+Key findings from POC work:
+1. **SkiaSharp GPU (SKGLElement)**: OpenGL context creation fails on WPF (OpenTK/SDL2 compatibility)
+2. **SkiaSharp CPU (SKElement)**: Works but not GPU-accelerated
+3. **VelloSharp**: Requires complex owned-window architecture due to wgpu limitations
+4. **Both**: Required mipmap infrastructure for acceptable waveform performance
+5. **Blazor + wavesurfer.js**: Battle-tested solution, works immediately
+
+The effort to build a native desktop waveform viewer exceeds the value for current validation needs.
 
 ## Phase 8 Conclusions
 
@@ -52,10 +66,15 @@ poc/HybridVelloPoc/
 
 ## Next Action
 
-**Execute Phase 8.1 Plan 2** - Build VelloSharp waveform POC & compare
+**Blazor Validation Viewer** - Convert validation viewer to Blazor app with wavesurfer.js
+
+Options to discuss:
+1. Blazor Server (simpler, real-time connection to AMS pipeline)
+2. Blazor WebAssembly (standalone, can run offline)
+3. Blazor Hybrid (MAUI shell, native feel)
 
 ```
-/gsd:execute-plan .planning/phases/08.1-skiasharp-vello-comparison/08.1-02-PLAN.md
+/gsd:discuss-phase blazor-validation-viewer
 ```
 
 ## Deferred Issues
@@ -69,7 +88,7 @@ None currently.
 ## Session Continuity
 
 Last session: 2026-01-03
-Stopped at: Completed 08.1-01-PLAN.md (SkiaSharp POC)
-Resume file: .planning/phases/08.1-skiasharp-vello-comparison/08.1-02-PLAN.md
+Stopped at: Desktop UI v2.0 put on ice after POC exploration
+Decision: Pivot to Blazor validation viewer
 
-Resume with `/gsd:execute-plan` to build VelloSharp POC and compare
+Resume with `/gsd:discuss-phase blazor-validation-viewer` to plan new approach

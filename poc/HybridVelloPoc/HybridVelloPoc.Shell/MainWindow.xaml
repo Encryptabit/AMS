@@ -25,9 +25,6 @@
                 <MenuItem Header="_Exit" Click="MenuItem_Exit_Click"/>
             </MenuItem>
             <MenuItem Header="_View">
-                <MenuItem Header="Previous Scene" Click="MenuItem_PrevScene_Click" InputGestureText="Left"/>
-                <MenuItem Header="Next Scene" Click="MenuItem_NextScene_Click" InputGestureText="Right"/>
-                <Separator/>
                 <MenuItem Header="Toggle Stats" Click="MenuItem_ToggleStats_Click" InputGestureText="S"/>
                 <MenuItem Header="Reset View" Click="MenuItem_ResetView_Click" InputGestureText="Space"/>
             </MenuItem>
@@ -53,10 +50,6 @@
         <StatusBar Grid.Row="2">
             <StatusBarItem>
                 <TextBlock x:Name="StatusText" Text="Ready"/>
-            </StatusBarItem>
-            <Separator/>
-            <StatusBarItem>
-                <TextBlock x:Name="SceneText" Text="Scene: -"/>
             </StatusBarItem>
             <Separator/>
             <StatusBarItem>

@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.IO;
 using System.Windows;
 using System.Windows.Input;
@@ -15,6 +16,12 @@ public partial class MainWindow : Window
 {
     private readonly WaveformRenderer _waveformRenderer;
     private readonly FrameTimer _frameTimer;
+    private readonly Stopwatch _uiUpdateTimer;
+    private const int UiUpdateIntervalMs = 125;
+    private string _statsOverlayText = string.Empty;
+    private readonly SKPaint _statsBackgroundPaint;
+    private readonly SKPaint _statsTextPaint;
+    private readonly SKFont _statsFont;
     private AudioLoader? _audioLoader;
 
     // View transform state
@@ -35,6 +42,19 @@ public partial class MainWindow : Window
         InitializeComponent();
         _waveformRenderer = new WaveformRenderer();
         _frameTimer = new FrameTimer();
+        _uiUpdateTimer = Stopwatch.StartNew();
+        _statsBackgroundPaint = new SKPaint
+        {
+            Color = new SKColor(0, 0, 0, 180),
+            Style = SKPaintStyle.Fill,
+            IsAntialias = false
+        };
+        _statsTextPaint = new SKPaint
+        {
+            Color = SKColors.White,
+            IsAntialias = true
+        };
+        _statsFont = new SKFont(SKTypeface.FromFamilyName("Consolas"), 14);
     }
 
     private void Window_Loaded(object sender, RoutedEventArgs e)
@@ -76,17 +96,19 @@ public partial class MainWindow : Window
         }
     }
 
-    private void SkiaCanvas_PaintSurface(object sender, SKPaintGLSurfaceEventArgs e)
+    private void SkiaCanvas_PaintSurface(object sender, SKPaintSurfaceEventArgs e)
     {
         _frameTimer.BeginFrame();
 
         var canvas = e.Surface.Canvas;
-        var width = e.BackendRenderTarget.Width;
-        var height = e.BackendRenderTarget.Height;
+        var width = e.Info.Width;
+        var height = e.Info.Height;
 
         // Clear background
         canvas.Clear(new SKColor(30, 30, 46)); // Dark background matching reference
 
+        float? startTime = null;
+        float? endTime = null;
         if (_audioLoader != null)
         {
             // Calculate visible sample range based on view transform
@@ -96,14 +118,9 @@ public partial class MainWindow : Window
 
             _waveformRenderer.Render(canvas, _audioLoader, width, height, startSample, endSample, _offsetX, _scaleX);
 
-            // Update time range display
-            var startTime = startSample / (float)_audioLoader.SampleRate;
-            var endTime = endSample / (float)_audioLoader.SampleRate;
-            Dispatcher.InvokeAsync(() =>
-            {
-                TimeRangeText.Text = $"Time: {startTime:F2}s - {endTime:F2}s";
-                ZoomText.Text = $"Zoom: {_scaleX:F2}x";
-            });
+            // Capture time range for UI update (throttled below)
+            startTime = startSample / (float)_audioLoader.SampleRate;
+            endTime = endSample / (float)_audioLoader.SampleRate;
         }
 
         // Draw stats overlay if enabled
@@ -114,42 +131,45 @@ public partial class MainWindow : Window
 
         _frameTimer.EndFrame();
 
-        // Update status bar FPS
-        Dispatcher.InvokeAsync(() =>
+        // Throttle UI updates to avoid per-frame allocations and UI churn
+        if (_uiUpdateTimer.ElapsedMilliseconds >= UiUpdateIntervalMs)
         {
-            FpsText.Text = $"FPS: {_frameTimer.CurrentFps:F1} | Frame: {_frameTimer.AvgFrameTimeMs:F2}ms (min {_frameTimer.MinFrameTimeMs:F2} / max {_frameTimer.MaxFrameTimeMs:F2})";
-        });
+            _uiUpdateTimer.Restart();
+            if (startTime.HasValue && endTime.HasValue)
+            {
+                TimeRangeText.Text = $"Time: {startTime.Value:F2}s - {endTime.Value:F2}s";
+                ZoomText.Text = $"Zoom: {_scaleX:F2}x";
+            }
+
+            _statsOverlayText =
+                $"FPS: {_frameTimer.CurrentFps:F1}\n" +
+                $"Frame: {_frameTimer.AvgFrameTimeMs:F2}ms\n" +
+                $"Min: {_frameTimer.MinFrameTimeMs:F2}ms\n" +
+                $"Max: {_frameTimer.MaxFrameTimeMs:F2}ms";
+
+            FpsText.Text =
+                $"FPS: {_frameTimer.CurrentFps:F1} | Frame: {_frameTimer.AvgFrameTimeMs:F2}ms " +
+                $"(min {_frameTimer.MinFrameTimeMs:F2} / max {_frameTimer.MaxFrameTimeMs:F2})";
+        }
     }
 
     private void DrawStatsOverlay(SKCanvas canvas, int width)
     {
-        var stats = $"FPS: {_frameTimer.CurrentFps:F1}\nFrame: {_frameTimer.AvgFrameTimeMs:F2}ms\nMin: {_frameTimer.MinFrameTimeMs:F2}ms\nMax: {_frameTimer.MaxFrameTimeMs:F2}ms";
+        if (string.IsNullOrEmpty(_statsOverlayText))
+            return;
 
-        using var bgPaint = new SKPaint
-        {
-            Color = new SKColor(0, 0, 0, 180),
-            Style = SKPaintStyle.Fill
-        };
-
-        using var font = new SKFont(SKTypeface.FromFamilyName("Consolas"), 14);
-        using var textPaint = new SKPaint
-        {
-            Color = SKColors.White,
-            IsAntialias = true
-        };
-
-        var lines = stats.Split('\n');
-        var lineHeight = font.Size + 4;
+        var lines = _statsOverlayText.Split('\n');
+        var lineHeight = _statsFont.Size + 4;
         var boxWidth = 150;
         var boxHeight = lines.Length * lineHeight + 10;
         var boxX = width - boxWidth - 10;
         var boxY = 10;
 
-        canvas.DrawRect(boxX, boxY, boxWidth, boxHeight, bgPaint);
+        canvas.DrawRect(boxX, boxY, boxWidth, boxHeight, _statsBackgroundPaint);
 
         for (int i = 0; i < lines.Length; i++)
         {
-            canvas.DrawText(lines[i], boxX + 8, boxY + 18 + i * lineHeight, SKTextAlign.Left, font, textPaint);
+            canvas.DrawText(lines[i], boxX + 8, boxY + 18 + i * lineHeight, SKTextAlign.Left, _statsFont, _statsTextPaint);
         }
     }
 
@@ -266,5 +286,8 @@ public partial class MainWindow : Window
     {
         base.OnClosed(e);
         _audioLoader?.Dispose();
+        _statsFont.Dispose();
+        _statsTextPaint.Dispose();
+        _statsBackgroundPaint.Dispose();
     }
 }

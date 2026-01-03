@@ -25,7 +25,6 @@ public partial class MainWindow : Window
         try
         {
             _velloController = new VelloHostController(wpfHwnd, this, ContentHost);
-            _velloController.SceneChanged += OnSceneChanged;
             _velloController.FpsUpdated += OnFpsUpdated;
             _velloController.StatusUpdated += OnStatusUpdated;
 
@@ -99,14 +98,6 @@ public partial class MainWindow : Window
         }
     }
 
-    private void OnSceneChanged(string sceneName, int sceneIndex, int totalScenes)
-    {
-        Dispatcher.InvokeAsync(() =>
-        {
-            SceneText.Text = $"Scene: {sceneName} ({sceneIndex + 1}/{totalScenes})";
-        });
-    }
-
     private void OnFpsUpdated(double fps)
     {
         Dispatcher.InvokeAsync(() =>
@@ -129,16 +120,6 @@ public partial class MainWindow : Window
         Close();
     }
 
-    private void MenuItem_PrevScene_Click(object sender, RoutedEventArgs e)
-    {
-        _velloController?.ChangeScene(-1);
-    }
-
-    private void MenuItem_NextScene_Click(object sender, RoutedEventArgs e)
-    {
-        _velloController?.ChangeScene(1);
-    }
-
     private void MenuItem_ToggleStats_Click(object sender, RoutedEventArgs e)
     {
         _velloController?.ToggleStats();
@@ -152,17 +133,12 @@ public partial class MainWindow : Window
     private void MenuItem_About_Click(object sender, RoutedEventArgs e)
     {
         MessageBox.Show(
-            "Hybrid Vello POC\n\n" +
-            "This proof-of-concept demonstrates hosting a GPU-accelerated Vello/Winit window " +
-            "as an owned window of a WPF shell.\n\n" +
-            "The Vello window is positioned over the ContentHost area and synchronized " +
-            "with the WPF window's position, size, and state.\n\n" +
+            "Hybrid Vello POC - Waveform Rendering\n\n" +
+            "This proof-of-concept demonstrates GPU-accelerated waveform rendering " +
+            "using VelloSharp in a hybrid WPF+Winit architecture.\n\n" +
             "Controls:\n" +
-            "- Left/Right: Change scene\n" +
-            "- Up/Down: Adjust complexity\n" +
-            "- Mouse drag: Pan\n" +
-            "- Mouse wheel: Zoom\n" +
-            "- Q/E: Rotate\n" +
+            "- Mouse drag: Pan waveform\n" +
+            "- Mouse wheel: Zoom in/out\n" +
             "- S: Toggle stats\n" +
             "- Space: Reset view",
             "About Hybrid Vello POC",

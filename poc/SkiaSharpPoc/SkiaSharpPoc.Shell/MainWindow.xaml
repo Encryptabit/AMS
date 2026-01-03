@@ -31,17 +31,17 @@
             </MenuItem>
         </Menu>
 
-        <!-- Content Host - SKGLElement for GPU-accelerated SkiaSharp rendering -->
+        <!-- Content Host - SKElement for SkiaSharp rendering (CPU, more compatible) -->
         <Border Grid.Row="1"
                 Background="#FF1E1E2E"
                 BorderBrush="#FF313244"
                 BorderThickness="1">
-            <skia:SKGLElement x:Name="SkiaCanvas"
-                              PaintSurface="SkiaCanvas_PaintSurface"
-                              MouseDown="SkiaCanvas_MouseDown"
-                              MouseUp="SkiaCanvas_MouseUp"
-                              MouseMove="SkiaCanvas_MouseMove"
-                              MouseWheel="SkiaCanvas_MouseWheel"/>
+            <skia:SKElement x:Name="SkiaCanvas"
+                            PaintSurface="SkiaCanvas_PaintSurface"
+                            MouseDown="SkiaCanvas_MouseDown"
+                            MouseUp="SkiaCanvas_MouseUp"
+                            MouseMove="SkiaCanvas_MouseMove"
+                            MouseWheel="SkiaCanvas_MouseWheel"/>
         </Border>
 
         <!-- Status Bar -->
