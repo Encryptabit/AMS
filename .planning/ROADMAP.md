@@ -108,9 +108,20 @@ Plans:
 - [x] 08-01: VelloSharp POC (4 tasks) - NO-GO for .NET UI integrations, pure Winit works - completed 2025-12-31
 - [x] 08-02: Hybrid Window POC (4 tasks) - WPF shell + owned Winit/Vello window validates - completed 2026-01-01
 
+#### Phase 8.1: SkiaSharp vs VelloSharp Comparison POC
+**Goal**: Compare SkiaSharp GPU-accelerated rendering against the validated WPF+VelloSharp owned window approach to make final renderer decision before committing to architecture
+**Depends on**: Phase 8
+**Research**: Likely (SkiaSharp GPU backends, performance benchmarking)
+**Research topics**: SkiaSharp hardware acceleration on Windows, GPU backend configuration (OpenGL/Vulkan/D3D), performance comparison methodology
+**Plans**: 2
+
+Plans:
+- [x] 08.1-01: SkiaSharp Waveform POC (3 tasks) - Build GPU-accelerated waveform renderer - completed 2026-01-03
+- [ ] 08.1-02: Comparison & Decision (3 tasks) - Side-by-side comparison, make renderer choice
+
 #### Phase 9: Avalonia 12 Foundation
 **Goal**: Set up Avalonia 12 project with chosen GPU renderer, basic application shell, DI integration with Ams.Core
-**Depends on**: Phase 8
+**Depends on**: Phase 8.1
 **Research**: Likely (Avalonia 12 preview patterns, renderer integration)
 **Research topics**: Avalonia 12 preview APIs, DI patterns, renderer configuration
 **Plans**: TBD
@@ -160,7 +171,8 @@ Phases execute in numeric order: 1 → 2 → ... → 12
 | 5. Immediate Cleanup | v1.1 | 3/3 | Complete | 2025-12-30 |
 | 6. Utility Extraction | v1.1 | 4/4 | Complete | 2025-12-31 |
 | 7. Service Decomposition | v1.1 | 5/5 | Complete | 2025-12-31 |
-| 8. GPU Rendering Research | v2.0 | 2/2 + POCs | In Progress | - |
+| 8. GPU Rendering Research | v2.0 | 2/2 | Complete | 2026-01-01 |
+| 8.1. SkiaSharp vs VelloSharp POC | v2.0 | 1/2 | In progress | - |
 | 9. Avalonia 12 Foundation | v2.0 | 0/? | Not started | - |
 | 10. Core UI Components | v2.0 | 0/? | Not started | - |
 | 11. Pipeline Integration | v2.0 | 0/? | Not started | - |

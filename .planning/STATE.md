@@ -7,16 +7,16 @@ Audio Management System - CLI and core library for audio processing, ASR, forced
 ## Current Position
 
 **Milestone**: v2.0 Desktop UI
-**Phase**: 8 of 12 - GPU Rendering Research (CONTINUING)
-**Plan**: 2/2 complete, exploring additional options
-**Status**: Hybrid WPF+Vello validated, user wants to explore more POCs before Phase 9
+**Phase**: 8.1 - SkiaSharp vs VelloSharp Comparison POC
+**Plan**: 1/2 - In progress
+**Status**: SkiaSharp POC complete - ready for VelloSharp comparison
 
 ## Progress
 
 ```
 v1.0 Codebase Audit    [████████████████████] 100% - SHIPPED
 v1.1 Execute Refactor  [████████████████████] 100% - SHIPPED
-v2.0 Desktop UI        [████░░░░░░░░░░░░░░░░]  17% - In Progress (Phase 8 complete)
+v2.0 Desktop UI        [████░░░░░░░░░░░░░░░░]  20% - In Progress (Phase 8.1: 1/2)
 ```
 
 ## Key Decisions (v2.0)
@@ -52,27 +52,24 @@ poc/HybridVelloPoc/
 
 ## Next Action
 
-**Continue Phase 8 exploration** - Evaluate additional GPU rendering options before committing to architecture
-
-Potential areas to explore:
-- Impeller (Flutter's renderer) .NET bindings
-- SkiaSharp with hardware acceleration
-- Direct2D/DirectX interop approaches
-- Other Rust 2D renderers with .NET bindings
-- Pure Avalonia 12 with SkiaSharp backend (no Vello)
+**Execute Phase 8.1 Plan 2** - Build VelloSharp waveform POC & compare
 
 ```
-/gsd:progress
+/gsd:execute-plan .planning/phases/08.1-skiasharp-vello-comparison/08.1-02-PLAN.md
 ```
 
 ## Deferred Issues
 
 None currently.
 
+## Roadmap Evolution
+
+- Phase 8.1 inserted: SkiaSharp vs VelloSharp comparison POC before committing to architecture
+
 ## Session Continuity
 
-Last session: 2026-01-01
-Stopped at: Phase 8 POC exploration - hybrid WPF+Vello validated, exploring more options
-Resume file: None
+Last session: 2026-01-03
+Stopped at: Completed 08.1-01-PLAN.md (SkiaSharp POC)
+Resume file: .planning/phases/08.1-skiasharp-vello-comparison/08.1-02-PLAN.md
 
-Resume with `/gsd:progress` to continue exploration
+Resume with `/gsd:execute-plan` to build VelloSharp POC and compare
