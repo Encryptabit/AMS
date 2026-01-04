@@ -1,0 +1,27 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net9.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <BuiltInComInteropSupport>true</BuiltInComInteropSupport>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <AvaloniaUseCompiledBindingsByDefault>true</AvaloniaUseCompiledBindingsByDefault>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Avalonia 11.3.6 (matches VelloSharp build) -->
+    <PackageReference Include="Avalonia" Version="11.3.6" />
+    <PackageReference Include="Avalonia.Desktop" Version="11.3.6" />
+    <PackageReference Include="Avalonia.Themes.Fluent" Version="11.3.6" />
+    <PackageReference Include="Avalonia.Fonts.Inter" Version="11.3.6" />
+    <!-- VelloSharp 0.5.0-alpha.3 (Winit has threading bug on Windows) -->
+    <PackageReference Include="VelloSharp" Version="0.5.0-alpha.3" />
+    <PackageReference Include="VelloSharp.Gpu" Version="0.5.0-alpha.3" />
+    <PackageReference Include="VelloSharp.Avalonia.Vello" Version="0.5.0-alpha.3" />
+    <PackageReference Include="VelloSharp.Avalonia.Controls" Version="0.5.0-alpha.3" />
+    <PackageReference Include="VelloSharp.Native.Vello.win-x64" Version="0.5.0-alpha.3" />
+  </ItemGroup>
+
+</Project>

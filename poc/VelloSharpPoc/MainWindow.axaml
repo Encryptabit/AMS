@@ -1,0 +1,38 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:vello="clr-namespace:VelloSharp.Avalonia.Controls;assembly=VelloSharp.Avalonia.Controls"
+        x:Class="VelloSharpPoc.MainWindow"
+        Title="VelloSharp POC - Animated Waveform"
+        Width="800" Height="600">
+
+    <Grid>
+        <!-- Use VelloAnimatedCanvasControl for continuous animation -->
+        <vello:VelloAnimatedCanvasControl x:Name="VelloCanvas"
+                                          Draw="OnDraw"
+                                          IsPlaying="True"
+                                          FrameRate="60"
+                                          HorizontalAlignment="Stretch"
+                                          VerticalAlignment="Stretch" />
+
+        <!-- FPS overlay -->
+        <TextBlock x:Name="FpsText"
+                   Text="FPS: --"
+                   Foreground="White"
+                   Background="#80000000"
+                   Padding="8,4"
+                   HorizontalAlignment="Left"
+                   VerticalAlignment="Top"
+                   Margin="10"
+                   FontSize="14"
+                   FontFamily="Consolas" />
+
+        <!-- Status text -->
+        <TextBlock Text="VelloSharp GPU Rendering Active"
+                   Foreground="White"
+                   HorizontalAlignment="Center"
+                   VerticalAlignment="Bottom"
+                   Margin="20"
+                   FontSize="12"
+                   Opacity="0.7" />
+    </Grid>
+</Window>
