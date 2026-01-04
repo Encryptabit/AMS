@@ -6,6 +6,7 @@
 
   <ItemGroup>
     <PackageReference Include="Bit.BlazorUI" Version="10.3.0" />
+    <PackageReference Include="Bit.BlazorUI.Icons" Version="10.3.0" />
     <PackageReference Include="Toolbelt.Blazor.HotKeys2" Version="6.1.0" />
   </ItemGroup>
 

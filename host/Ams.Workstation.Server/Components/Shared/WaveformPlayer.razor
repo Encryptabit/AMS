@@ -1,0 +1,325 @@
+@inject IJSRuntime JS
+@implements IAsyncDisposable
+
+<div class="waveform-player">
+    <div class="waveform-header">
+        <span class="waveform-title">@Title</span>
+        <span class="waveform-time">@FormatTime(CurrentTime) / @FormatTime(Duration)</span>
+    </div>
+    <div id="@_elementId" class="waveform-container">
+        @if (!_isReady)
+        {
+            <div class="waveform-loading">
+                <BitProgress Circular="true" />
+                <span>Loading waveform...</span>
+            </div>
+        }
+    </div>
+    <div class="waveform-controls">
+        <BitButton Variant="BitVariant.Text" OnClick="SkipToStart" Title="Skip to start" IsEnabled="_isReady" IconName="@BitIconName.Previous" Color="BitColor.Secondary" />
+        <BitButton Variant="BitVariant.Fill" OnClick="PlayPause" Title="@(IsPlaying ? "Pause" : "Play")" IsEnabled="_isReady" IconName="@(IsPlaying ? BitIconName.Pause : BitIconName.Play)" />
+        <BitButton Variant="BitVariant.Text" OnClick="SkipToEnd" Title="Skip to end" IsEnabled="_isReady" IconName="@BitIconName.Next" Color="BitColor.Secondary" />
+        <div class="waveform-speed-section">
+            <input type="range"
+                   min="0.5"
+                   max="2"
+                   step="0.1"
+                   value="@PlaybackRate"
+                   @oninput="OnRateInput"
+                   title="Playback speed"
+                   class="waveform-speed-slider"
+                   disabled="@(!_isReady)" />
+            <span class="waveform-speed-value">@PlaybackRate.ToString("0.0")x</span>
+        </div>
+    </div>
+    @if (!string.IsNullOrEmpty(_errorMessage))
+    {
+        <div class="waveform-error">
+            <BitIcon IconName="@BitIconName.Warning" />
+            <span>@_errorMessage</span>
+        </div>
+    }
+</div>
+
+@code {
+    private string _elementId = $"waveform-{Guid.NewGuid():N}";
+    private IJSObjectReference? _module;
+    private DotNetObjectReference<WaveformPlayer>? _dotNetRef;
+    private bool _isReady;
+    private string? _errorMessage;
+    private string? _loadedAudioUrl;
+
+    /// <summary>
+    /// The URL of the audio file to load and display.
+    /// </summary>
+    [Parameter]
+    public string? AudioUrl { get; set; }
+
+    /// <summary>
+    /// Title displayed above the waveform.
+    /// </summary>
+    [Parameter]
+    public string Title { get; set; } = "Audio";
+
+    /// <summary>
+    /// Callback fired when the current playback time changes.
+    /// </summary>
+    [Parameter]
+    public EventCallback<double> TimeUpdated { get; set; }
+
+    /// <summary>
+    /// Callback fired when the waveform is ready (audio loaded and decoded).
+    /// </summary>
+    [Parameter]
+    public EventCallback OnReady { get; set; }
+
+    /// <summary>
+    /// Callback fired when playback finishes.
+    /// </summary>
+    [Parameter]
+    public EventCallback OnFinished { get; set; }
+
+    /// <summary>
+    /// Callback fired when seeking occurs (user clicks on waveform).
+    /// </summary>
+    [Parameter]
+    public EventCallback<double> OnSeek { get; set; }
+
+    /// <summary>
+    /// Whether audio is currently playing.
+    /// </summary>
+    public bool IsPlaying { get; private set; }
+
+    /// <summary>
+    /// Current playback time in seconds.
+    /// </summary>
+    public double CurrentTime { get; private set; }
+
+    /// <summary>
+    /// Total audio duration in seconds.
+    /// </summary>
+    public double Duration { get; private set; }
+
+    /// <summary>
+    /// Current playback rate (0.5 - 2.0).
+    /// </summary>
+    public double PlaybackRate { get; private set; } = 1.0;
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            await InitializeWaveSurfer();
+        }
+    }
+
+    protected override async Task OnParametersSetAsync()
+    {
+        // If AudioUrl changed after initial render, reload audio
+        if (_module != null && AudioUrl != _loadedAudioUrl && !string.IsNullOrEmpty(AudioUrl))
+        {
+            _isReady = false;
+            _errorMessage = null;
+            CurrentTime = 0;
+            Duration = 0;
+            IsPlaying = false;
+            StateHasChanged(); // Update UI before loading new audio
+            await LoadAudioAsync(AudioUrl);
+        }
+    }
+
+    private async Task InitializeWaveSurfer()
+    {
+        try
+        {
+            _module = await JS.InvokeAsync<IJSObjectReference>("import", "./js/waveform-interop.js");
+            _dotNetRef = DotNetObjectReference.Create(this);
+
+            var options = new
+            {
+                height = 128,
+                waveColor = "#4a9eff",
+                progressColor = "#1177bb",
+                cursorColor = "#ffffff"
+            };
+
+            await _module.InvokeVoidAsync("createWaveSurfer", _elementId, options);
+            await _module.InvokeVoidAsync("registerCallbacks", _elementId, _dotNetRef);
+
+            if (!string.IsNullOrEmpty(AudioUrl))
+            {
+                await LoadAudioAsync(AudioUrl);
+            }
+        }
+        catch (Exception ex)
+        {
+            _errorMessage = $"Failed to initialize waveform: {ex.Message}";
+            StateHasChanged();
+        }
+    }
+
+    private async Task LoadAudioAsync(string url)
+    {
+        if (_module == null) return;
+
+        try
+        {
+            _loadedAudioUrl = url;
+            await _module.InvokeVoidAsync("loadAudio", _elementId, url);
+        }
+        catch (Exception ex)
+        {
+            _errorMessage = $"Failed to load audio: {ex.Message}";
+            StateHasChanged();
+        }
+    }
+
+    /// <summary>
+    /// Toggle play/pause state.
+    /// </summary>
+    public async Task PlayPause()
+    {
+        if (_module == null || !_isReady) return;
+        await _module.InvokeVoidAsync("playPause", _elementId);
+    }
+
+    /// <summary>
+    /// Start playback.
+    /// </summary>
+    public async Task Play()
+    {
+        if (_module == null || !_isReady) return;
+        await _module.InvokeVoidAsync("play", _elementId);
+    }
+
+    /// <summary>
+    /// Pause playback.
+    /// </summary>
+    public async Task Pause()
+    {
+        if (_module == null || !_isReady) return;
+        await _module.InvokeVoidAsync("pause", _elementId);
+    }
+
+    /// <summary>
+    /// Seek to a specific time in seconds.
+    /// </summary>
+    public async Task SeekTo(double seconds)
+    {
+        if (_module == null || !_isReady) return;
+        await _module.InvokeVoidAsync("seekTo", _elementId, seconds);
+    }
+
+    private async Task SkipToStart()
+    {
+        if (_module == null || !_isReady) return;
+        await _module.InvokeVoidAsync("seekToStart", _elementId);
+    }
+
+    private async Task SkipToEnd()
+    {
+        if (_module == null || !_isReady) return;
+        await _module.InvokeVoidAsync("seekToEnd", _elementId);
+    }
+
+    private async Task OnRateInput(ChangeEventArgs e)
+    {
+        if (_module == null || !_isReady) return;
+        if (double.TryParse(e.Value?.ToString(), out var rate))
+        {
+            PlaybackRate = rate;
+            await _module.InvokeVoidAsync("setPlaybackRate", _elementId, rate, true);
+        }
+    }
+
+    /// <summary>
+    /// Set the playback rate programmatically.
+    /// </summary>
+    public async Task SetPlaybackRate(double rate, bool preservePitch = true)
+    {
+        if (_module == null || !_isReady) return;
+        PlaybackRate = rate;
+        await _module.InvokeVoidAsync("setPlaybackRate", _elementId, rate, preservePitch);
+    }
+
+    // Callback methods invoked from JavaScript
+
+    [JSInvokable]
+    public async Task OnWaveformReady(double duration)
+    {
+        Duration = duration;
+        _isReady = true;
+        _errorMessage = null;
+        StateHasChanged();
+        await OnReady.InvokeAsync();
+    }
+
+    [JSInvokable]
+    public async Task OnTimeUpdate(double currentTime)
+    {
+        CurrentTime = currentTime;
+        StateHasChanged();
+        await TimeUpdated.InvokeAsync(currentTime);
+    }
+
+    [JSInvokable]
+    public async Task OnSeeking(double time)
+    {
+        CurrentTime = time;
+        StateHasChanged();
+        await OnSeek.InvokeAsync(time);
+    }
+
+    [JSInvokable]
+    public async Task OnPlaybackFinished()
+    {
+        IsPlaying = false;
+        StateHasChanged();
+        await OnFinished.InvokeAsync();
+    }
+
+    [JSInvokable]
+    public Task OnPlayStateChanged(bool isPlaying)
+    {
+        IsPlaying = isPlaying;
+        StateHasChanged();
+        return Task.CompletedTask;
+    }
+
+    [JSInvokable]
+    public Task OnError(string error)
+    {
+        _errorMessage = error;
+        StateHasChanged();
+        return Task.CompletedTask;
+    }
+
+    private static string FormatTime(double seconds)
+    {
+        if (double.IsNaN(seconds) || double.IsInfinity(seconds)) return "0:00";
+        var mins = (int)(seconds / 60);
+        var secs = (int)(seconds % 60);
+        return $"{mins}:{secs:D2}";
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        if (_module != null)
+        {
+            try
+            {
+                await _module.InvokeVoidAsync("destroy", _elementId);
+                await _module.DisposeAsync();
+            }
+            catch (JSDisconnectedException)
+            {
+                // Circuit disconnected, no cleanup needed
+            }
+            catch (Exception)
+            {
+                // Ignore disposal errors
+            }
+        }
+        _dotNetRef?.Dispose();
+    }
+}

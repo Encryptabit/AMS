@@ -6,52 +6,51 @@
 
 <div class="chapter-review">
     <BitStack Horizontal="false" Gap="1rem" Style="height: 100%;">
-        <div class="review-header">
-            <BitActionButton IconName="ChevronLeft"
-                             Href="/proof"
-                             Color="BitColor.SecondaryForeground">
-                Back to Proof
-            </BitActionButton>
-            <BitText Typography="BitTypography.H5">
-                @Uri.UnescapeDataString(ChapterName ?? "Unknown Chapter")
-            </BitText>
-        </div>
-
-        <BitCard FullSize="true" Class="review-placeholder">
+        <BitCard FullSize="true" Class="review-content">
             <BitStack Horizontal="false" Gap="1.5rem">
-                <div>
-                    <BitText Typography="BitTypography.Subtitle1">Chapter Review</BitText>
-                    <BitText Typography="BitTypography.Body2" Color="BitColor.SecondaryForeground">
-                        This is where the waveform visualization and sentence list will be displayed.
-                    </BitText>
+                @* Waveform Player *@
+                <div class="waveform-section">
+                    <WaveformPlayer
+                        AudioUrl="@GetAudioUrl()"
+                        Title="@GetDisplayTitle()"
+                        TimeUpdated="HandleTimeUpdate"
+                        OnReady="HandleWaveformReady"
+                        OnSeek="HandleSeek"
+                        OnFinished="HandlePlaybackFinished" />
                 </div>
 
-                <BitStack Horizontal="false" Gap="1rem">
-                    <div class="panel-preview">
-                        <BitText Typography="BitTypography.Caption1" Color="BitColor.SecondaryForeground"
-                                 Style="text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 0.5rem;">
-                            Waveform Panel
+                @* Current Time Display *@
+                <BitCard Background="BitColorKind.Secondary" Class="time-display">
+                    <BitStack Horizontal="true" Gap="1rem" VerticalAlign="BitAlignment.Center">
+                        <BitText Typography="BitTypography.Body2" Color="BitColor.SecondaryForeground">
+                            Current Position:
                         </BitText>
-                        <div class="panel-mock waveform-mock">
-                            <BitText Color="BitColor.SecondaryForeground">
-                                Waveform visualization coming in Plan 3
-                            </BitText>
-                        </div>
-                    </div>
-
-                    <div class="panel-preview">
-                        <BitText Typography="BitTypography.Caption1" Color="BitColor.SecondaryForeground"
-                                 Style="text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 0.5rem;">
-                            Sentence List Panel
+                        <BitText Typography="BitTypography.Subtitle2" Style="font-family: monospace;">
+                            @FormatTime(_currentTime)
                         </BitText>
-                        <div class="panel-mock sentence-mock">
-                            <BitText Color="BitColor.SecondaryForeground">
-                                Sentence list with timing data coming in Plan 4
-                            </BitText>
-                        </div>
-                    </div>
-                </BitStack>
+                        @if (_isWaveformReady)
+                        {
+                            <BitBadge Appearance="BitAppearance.Primary" Color="BitColor.Success">
+                                Ready
+                            </BitBadge>
+                        }
+                    </BitStack>
+                </BitCard>
 
+                @* Placeholder for Sentence List (Plan 4) *@
+                <div class="panel-preview">
+                    <BitText Typography="BitTypography.Caption1" Color="BitColor.SecondaryForeground"
+                             Style="text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 0.5rem;">
+                        Sentence List Panel
+                    </BitText>
+                    <div class="panel-mock sentence-mock">
+                        <BitText Color="BitColor.SecondaryForeground">
+                            Sentence list with timing data coming in Plan 4
+                        </BitText>
+                    </div>
+                </div>
+
+                @* Chapter Info *@
                 <BitCard Background="BitColorKind.Secondary" Class="chapter-info">
                     <BitText Typography="BitTypography.Subtitle2" Color="BitColor.SecondaryForeground"
                              Style="margin-bottom: 0.5rem;">
@@ -84,6 +83,9 @@
 </div>
 
 @code {
+    private double _currentTime;
+    private bool _isWaveformReady;
+
     [Parameter]
     public string? ChapterName { get; set; }
 
@@ -94,6 +96,56 @@
         {
             State.CurrentChapter = Uri.UnescapeDataString(ChapterName);
         }
+
+        // Reset waveform ready state when chapter changes
+        _isWaveformReady = false;
+        _currentTime = 0;
+    }
+
+    private string GetAudioUrl()
+    {
+        // TODO: In Plan 4, use workspace to get actual chapter audio path
+        // For now, use the chapter endpoint which will fall back to sample audio
+        if (!string.IsNullOrEmpty(ChapterName))
+        {
+            return $"/api/audio/chapter/{Uri.EscapeDataString(ChapterName)}";
+        }
+        return "/api/audio"; // Falls back to sample audio
+    }
+
+    private string GetDisplayTitle()
+    {
+        return Uri.UnescapeDataString(ChapterName ?? "Audio");
+    }
+
+    private void HandleTimeUpdate(double time)
+    {
+        _currentTime = time;
+    }
+
+    private void HandleWaveformReady()
+    {
+        _isWaveformReady = true;
+        StateHasChanged();
+    }
+
+    private void HandleSeek(double time)
+    {
+        _currentTime = time;
+    }
+
+    private void HandlePlaybackFinished()
+    {
+        // Could add logic here for auto-advance to next chapter
+    }
+
+    private static string FormatTime(double seconds)
+    {
+        if (double.IsNaN(seconds) || double.IsInfinity(seconds)) return "0:00.000";
+        var mins = (int)(seconds / 60);
+        var secs = (int)(seconds % 60);
+        var ms = (int)((seconds % 1) * 1000);
+        return $"{mins}:{secs:D2}.{ms:D3}";
     }
 }
 
@@ -104,14 +156,17 @@
         flex-direction: column;
     }
 
-    .review-header {
-        display: flex;
-        flex-direction: column;
-        gap: 0.5rem;
+    .review-content {
+        flex: 1;
+        overflow: auto;
     }
 
-    .review-placeholder {
-        flex: 1;
+    .waveform-section {
+        width: 100%;
+    }
+
+    .time-display {
+        padding: 0.75rem 1rem;
     }
 
     .panel-preview {
@@ -126,10 +181,6 @@
         background-color: var(--bit-clr-bg-sec);
         border: 1px dashed var(--bit-clr-brd-sec);
         border-radius: 4px;
-    }
-
-    .waveform-mock {
-        height: 120px;
     }
 
     .sentence-mock {

@@ -1,0 +1,126 @@
+/* WaveformPlayer Component Styles */
+
+.waveform-player {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    background-color: var(--bit-clr-bg-pri);
+    border: 1px solid var(--bit-clr-brd-pri);
+    border-radius: 6px;
+    padding: 1rem;
+}
+
+.waveform-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.waveform-title {
+    font-weight: 600;
+    color: var(--bit-clr-fg-pri);
+    font-size: 0.875rem;
+}
+
+.waveform-time {
+    font-family: monospace;
+    font-size: 0.875rem;
+    color: var(--bit-clr-fg-sec);
+}
+
+.waveform-container {
+    position: relative;
+    min-height: 128px;
+    background-color: var(--bit-clr-bg-sec);
+    border-radius: 4px;
+    overflow: hidden;
+}
+
+.waveform-loading {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    color: var(--bit-clr-fg-sec);
+    font-size: 0.875rem;
+}
+
+.waveform-controls {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.waveform-speed-section {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin-left: auto;
+    padding-left: 1rem;
+}
+
+.waveform-speed-slider {
+    width: 100px;
+    height: 4px;
+    -webkit-appearance: none;
+    appearance: none;
+    background: var(--bit-clr-bg-ter);
+    border-radius: 2px;
+    outline: none;
+    cursor: pointer;
+}
+
+.waveform-speed-slider::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    background: var(--bit-clr-pri);
+    cursor: pointer;
+    transition: transform 0.1s ease;
+}
+
+.waveform-speed-slider::-webkit-slider-thumb:hover {
+    transform: scale(1.1);
+}
+
+.waveform-speed-slider::-moz-range-thumb {
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    background: var(--bit-clr-pri);
+    cursor: pointer;
+    border: none;
+}
+
+.waveform-speed-slider:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.waveform-speed-value {
+    font-family: monospace;
+    font-size: 0.75rem;
+    color: var(--bit-clr-fg-sec);
+    min-width: 32px;
+    text-align: right;
+}
+
+.waveform-error {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.5rem;
+    background-color: var(--bit-clr-err-bg);
+    border: 1px solid var(--bit-clr-err);
+    border-radius: 4px;
+    color: var(--bit-clr-err);
+    font-size: 0.875rem;
+}
