@@ -93,69 +93,60 @@ Issues addressed: AUD-003, AUD-016, AUD-017, AUD-018, AUD-026, AUD-031
 
 </details>
 
-### 🚧 v2.0 Desktop UI (In Progress)
+### 🚧 v2.0 Blazor Workstation (In Progress)
 
-**Milestone Goal:** Build a desktop application using Avalonia 12 with GPU-native rendering (Vello or Impeller), connecting to the existing AMS pipeline.
+**Milestone Goal:** Build a Blazor Server workstation for audiobook production with Prep/Proof/Polish workflow areas, replacing the Python validation-viewer.
+
+<details>
+<summary>Phase 8/8.1: Native Desktop UI Research (ON ICE)</summary>
 
 #### Phase 8: GPU Rendering Research
 **Goal**: Evaluate VelloSharp vs Impeller - build minimal POCs, compare performance and developer experience
-**Depends on**: v1.1 milestone complete
-**Research**: Likely (new tech, fast-moving APIs)
-**Research topics**: VelloSharp/Avalonia integration, Impeller .NET bindings status, wgpu setup on Windows, GPU memory management
-**Plans**: 2
+**Status**: Complete - informed decision to pivot to Blazor
 
 Plans:
-- [x] 08-01: VelloSharp POC (4 tasks) - NO-GO for .NET UI integrations, pure Winit works - completed 2025-12-31
-- [x] 08-02: Hybrid Window POC (4 tasks) - WPF shell + owned Winit/Vello window validates - completed 2026-01-01
+- [x] 08-01: VelloSharp POC - NO-GO for .NET UI integrations - completed 2025-12-31
+- [x] 08-02: Hybrid Window POC - WPF + owned Vello window validates - completed 2026-01-01
 
 #### Phase 8.1: SkiaSharp vs VelloSharp Comparison POC
-**Goal**: Compare SkiaSharp GPU-accelerated rendering against the validated WPF+VelloSharp owned window approach to make final renderer decision before committing to architecture
-**Depends on**: Phase 8
-**Research**: Likely (SkiaSharp GPU backends, performance benchmarking)
-**Research topics**: SkiaSharp hardware acceleration on Windows, GPU backend configuration (OpenGL/Vulkan/D3D), performance comparison methodology
-**Plans**: 2
+**Goal**: Compare GPU rendering approaches
+**Status**: Paused - Blazor pivot decision made
 
 Plans:
-- [x] 08.1-01: SkiaSharp Waveform POC (3 tasks) - Build GPU-accelerated waveform renderer - completed 2026-01-03
-- [ ] 08.1-02: Comparison & Decision (3 tasks) - Side-by-side comparison, make renderer choice
+- [x] 08.1-01: SkiaSharp Waveform POC - completed 2026-01-03
+- [-] 08.1-02: Comparison & Decision - skipped (pivoted to Blazor)
 
-#### Phase 9: Avalonia 12 Foundation
-**Goal**: Set up Avalonia 12 project with chosen GPU renderer, basic application shell, DI integration with Ams.Core
-**Depends on**: Phase 8.1
-**Research**: Likely (Avalonia 12 preview patterns, renderer integration)
-**Research topics**: Avalonia 12 preview APIs, DI patterns, renderer configuration
-**Plans**: TBD
+</details>
+
+#### Phase 9: Blazor Audiobook Workstation
+**Goal**: Build Blazor Server workstation with Prep/Proof/Polish architecture, port validation-viewer to Proof area
+**Depends on**: v1.1 milestone complete
+**Research**: Complete (09-RESEARCH.md)
+**Plans**: 4
 
 Plans:
-- [ ] 09-01: TBD
+- [ ] 09-01: Project Foundation & DI (3 tasks) - Create Blazor Server project, configure Ams.Core integration
+- [ ] 09-02: Layout Shell & Navigation (4 tasks) - MainLayout with area navigation, chapter selection
+- [ ] 09-03: Waveform Component & JS Interop (4 tasks) - wavesurfer.js integration, WaveformPlayer component
+- [ ] 09-04: Proof Area & Sentence List (4 tasks) - Chapter review workflow with keyboard shortcuts
 
-#### Phase 10: Core UI Components
-**Goal**: Book/chapter navigation, pipeline status display, audio waveform visualization shell
+#### Phase 10: Ams.Core Data Integration
+**Goal**: Connect workstation to real Ams.Core data - load books, chapters, hydrate.json, audio files
 **Depends on**: Phase 9
-**Research**: Unlikely (internal UI patterns)
+**Research**: Unlikely (using existing Ams.Core types)
 **Plans**: TBD
 
-Plans:
-- [ ] 10-01: TBD
-
-#### Phase 11: Pipeline Integration
-**Goal**: Wire existing Ams.Core commands to UI, real-time pipeline progress, chapter context management
+#### Phase 11: Prep Area Implementation
+**Goal**: Pipeline orchestration UI - run ASR, alignment, MFA from workstation
 **Depends on**: Phase 10
-**Research**: Unlikely (using existing services)
+**Research**: Unlikely (using existing PipelineService)
 **Plans**: TBD
 
-Plans:
-- [ ] 11-01: TBD
-
-#### Phase 12: Audio Visualization
-**Goal**: GPU-rendered waveform display, spectrogram visualization, playback position synchronization
+#### Phase 12: Polish Area Foundation
+**Goal**: Take replacement workflow, batch editing foundations
 **Depends on**: Phase 11
-**Research**: Likely (GPU rendering for real-time audio viz)
-**Research topics**: GPU buffer management for audio data, real-time waveform rendering, spectrogram computation
+**Research**: Unlikely (extending Proof patterns)
 **Plans**: TBD
-
-Plans:
-- [ ] 12-01: TBD
 
 ## Progress
 
@@ -171,9 +162,9 @@ Phases execute in numeric order: 1 → 2 → ... → 12
 | 5. Immediate Cleanup | v1.1 | 3/3 | Complete | 2025-12-30 |
 | 6. Utility Extraction | v1.1 | 4/4 | Complete | 2025-12-31 |
 | 7. Service Decomposition | v1.1 | 5/5 | Complete | 2025-12-31 |
-| 8. GPU Rendering Research | v2.0 | 2/2 | Complete | 2026-01-01 |
-| 8.1. SkiaSharp vs VelloSharp POC | v2.0 | 1/2 | In progress | - |
-| 9. Avalonia 12 Foundation | v2.0 | 0/? | Not started | - |
-| 10. Core UI Components | v2.0 | 0/? | Not started | - |
-| 11. Pipeline Integration | v2.0 | 0/? | Not started | - |
-| 12. Audio Visualization | v2.0 | 0/? | Not started | - |
+| 8. GPU Rendering Research | v2.0 | 2/2 | Complete (on ice) | 2026-01-01 |
+| 8.1. SkiaSharp vs VelloSharp POC | v2.0 | 1/2 | Paused (pivoted) | 2026-01-03 |
+| 9. Blazor Workstation | v2.0 | 0/4 | Planned | - |
+| 10. Ams.Core Data Integration | v2.0 | 0/? | Not started | - |
+| 11. Prep Area Implementation | v2.0 | 0/? | Not started | - |
+| 12. Polish Area Foundation | v2.0 | 0/? | Not started | - |

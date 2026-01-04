@@ -2,22 +2,31 @@
 
 ## Brief Summary
 
-Audio Management System - CLI and core library for audio processing, ASR, forced alignment, and audiobook mastering. v2.0 adds desktop UI with GPU-native rendering.
+Audio Management System - CLI and core library for audio processing, ASR, forced alignment, and audiobook mastering. v2.0 pivoted from native desktop UI to Blazor workstation.
 
 ## Current Position
 
-**Milestone**: v2.0 Desktop UI - ON ICE
-**Phase**: 8.1 - SkiaSharp vs VelloSharp Comparison POC (paused)
-**Plan**: 1/2 - Exploration complete
-**Status**: Desktop UI deferred - pivoting to Blazor validation viewer
+**Milestone**: v2.0 Blazor Workstation
+**Phase**: 9 - Blazor Audiobook Workstation
+**Plan**: 0/4 - Ready to execute
+**Status**: Planning complete, ready to build
 
 ## Progress
 
 ```
 v1.0 Codebase Audit    [████████████████████] 100% - SHIPPED
 v1.1 Execute Refactor  [████████████████████] 100% - SHIPPED
-v2.0 Desktop UI        [████░░░░░░░░░░░░░░░░]  20% - In Progress (Phase 8.1: 1/2)
+v2.0 Blazor Workstation[██░░░░░░░░░░░░░░░░░░]  10% - Phase 9 planned (0/4 plans)
 ```
+
+## Phase 9 Plans
+
+| Plan | Name | Tasks | Status |
+|------|------|-------|--------|
+| 09-01 | Project Foundation & DI | 3 | Pending |
+| 09-02 | Layout Shell & Navigation | 4 | Pending |
+| 09-03 | Waveform Component & JS Interop | 4 | Pending |
+| 09-04 | Proof Area & Sentence List | 4 | Pending |
 
 ## Key Decisions (v2.0)
 
@@ -27,15 +36,19 @@ v2.0 Desktop UI        [████░░░░░░░░░░░░░░�
 | VelloSharp + WPF | NO-GO | VelloView composition fails |
 | VelloSharp + WinUI | NO-GO | Exit code 22 |
 | VelloSharp + pure Winit | WORKS | Standalone window renders perfectly |
-| **Hybrid WPF+Vello** | **CONFIRMED GO** | Owned window bypasses wgpu child limitation - runtime validated |
-| **Desktop UI v2.0** | **ON ICE** | Complexity too high for current needs - pivot to Blazor |
+| Hybrid WPF+Vello | CONFIRMED GO | Owned window bypasses wgpu child limitation |
+| **Desktop UI v2.0** | **ON ICE** | Complexity too high for current needs |
+| **Blazor Server** | **CHOSEN** | Direct Ams.Core integration, wavesurfer.js for audio |
 
-## Phase 8.1 Conclusions (POC Exploration)
+## Phase 8/8.1 Conclusions (Archived)
 
-**Decision: Defer desktop UI, pursue Blazor validation viewer instead**
+<details>
+<summary>Native Desktop UI POC Results</summary>
+
+**Decision: Defer desktop UI, pursue Blazor workstation instead**
 
 Key findings from POC work:
-1. **SkiaSharp GPU (SKGLElement)**: OpenGL context creation fails on WPF (OpenTK/SDL2 compatibility)
+1. **SkiaSharp GPU (SKGLElement)**: OpenGL context creation fails on WPF
 2. **SkiaSharp CPU (SKElement)**: Works but not GPU-accelerated
 3. **VelloSharp**: Requires complex owned-window architecture due to wgpu limitations
 4. **Both**: Required mipmap infrastructure for acceptable waveform performance
@@ -43,52 +56,33 @@ Key findings from POC work:
 
 The effort to build a native desktop waveform viewer exceeds the value for current validation needs.
 
-## Phase 8 Conclusions
-
-**Architecture Validated:** WPF shell + owned Winit/Vello window
-
-1. wgpu requires top-level windows (child windows fail surface creation)
-2. Owned windows via `SetWindowLongPtr(GWL_HWNDPARENT)` work
-3. Position sync on move/resize via WPF events
-4. Build validates (0 errors)
-5. **Runtime testing confirmed** - GPU rendering works perfectly
-
 ### POC Created
 
 ```
-poc/HybridVelloPoc/
-├── HybridVelloPoc.sln
-└── HybridVelloPoc.Shell/
-    ├── App.xaml(.cs)
-    ├── MainWindow.xaml(.cs)
-    └── VelloHostController.cs  (753 lines - core hosting logic)
+poc/HybridVelloPoc/    - WPF + owned Vello window (validated)
+poc/SkiaSharpPoc/      - WPF + SkiaSharp (CPU only worked)
+poc/VelloSharpPoc/     - Avalonia + VelloSharp (child window fails)
 ```
+
+</details>
 
 ## Next Action
 
-**Blazor Validation Viewer** - Convert validation viewer to Blazor app with wavesurfer.js
-
-Options to discuss:
-1. Blazor Server (simpler, real-time connection to AMS pipeline)
-2. Blazor WebAssembly (standalone, can run offline)
-3. Blazor Hybrid (MAUI shell, native feel)
-
+Execute Phase 9 Plan 1:
 ```
-/gsd:discuss-phase blazor-validation-viewer
+/gsd:execute-plan .planning/phases/09-blazor-workstation/09-01-PLAN.md
 ```
 
 ## Deferred Issues
 
 None currently.
 
-## Roadmap Evolution
+## Removed Projects
 
-- Phase 8.1 inserted: SkiaSharp vs VelloSharp comparison POC before committing to architecture
+- `host/Ams.Web*` - Removed in favor of Ams.Workstation.Server (Blazor Server approach)
 
 ## Session Continuity
 
 Last session: 2026-01-03
-Stopped at: Desktop UI v2.0 put on ice after POC exploration
-Decision: Pivot to Blazor validation viewer
-
-Resume with `/gsd:discuss-phase blazor-validation-viewer` to plan new approach
+Branch: `blazor-workstation`
+Status: Phase 9 plans created, ready to execute 09-01-PLAN.md
