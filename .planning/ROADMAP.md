@@ -125,7 +125,7 @@ Plans:
 **Plans**: 4
 
 Plans:
-- [ ] 09-01: Project Foundation & DI (3 tasks) - Create Blazor Server project, configure Ams.Core integration
+- [x] 09-01: Project Foundation & DI (3 tasks) - Create Blazor Server project, configure Ams.Core integration - completed 2026-01-04
 - [ ] 09-02: Layout Shell & Navigation (4 tasks) - MainLayout with area navigation, chapter selection
 - [ ] 09-03: Waveform Component & JS Interop (4 tasks) - wavesurfer.js integration, WaveformPlayer component
 - [ ] 09-04: Proof Area & Sentence List (4 tasks) - Chapter review workflow with keyboard shortcuts
@@ -164,7 +164,7 @@ Phases execute in numeric order: 1 → 2 → ... → 12
 | 7. Service Decomposition | v1.1 | 5/5 | Complete | 2025-12-31 |
 | 8. GPU Rendering Research | v2.0 | 2/2 | Complete (on ice) | 2026-01-01 |
 | 8.1. SkiaSharp vs VelloSharp POC | v2.0 | 1/2 | Paused (pivoted) | 2026-01-03 |
-| 9. Blazor Workstation | v2.0 | 0/4 | Planned | - |
+| 9. Blazor Workstation | v2.0 | 1/4 | In progress | - |
 | 10. Ams.Core Data Integration | v2.0 | 0/? | Not started | - |
 | 11. Prep Area Implementation | v2.0 | 0/? | Not started | - |
 | 12. Polish Area Foundation | v2.0 | 0/? | Not started | - |
