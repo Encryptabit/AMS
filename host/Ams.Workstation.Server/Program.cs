@@ -14,8 +14,8 @@ builder.Services.AddRazorComponents()
 builder.Services.AddControllers();
 builder.Services.AddHotKeys2();
 
-// Workstation state - scoped per circuit (owns BlazorWorkspace)
-builder.Services.AddScoped<WorkstationState>();
+// Blazor workspace - scoped per circuit
+builder.Services.AddScoped<BlazorWorkspace>();
 
 // Chapter data service - scoped per circuit for sentence loading
 builder.Services.AddScoped<ChapterDataService>();

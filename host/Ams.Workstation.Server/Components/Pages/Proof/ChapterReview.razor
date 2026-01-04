@@ -1,100 +1,115 @@
 @page "/proof/{ChapterName}"
-@inject Ams.Workstation.Server.Services.WorkstationState State
+@inject Ams.Workstation.Server.Services.BlazorWorkspace Workspace
 @inject NavigationManager Navigation
 
 <PageTitle>@ChapterName - Proof - AMS Workstation</PageTitle>
 
-<div class="chapter-review">
-    <BitStack Horizontal="false" Gap="1rem" Style="height: 100%;">
-        <BitCard FullSize="true" Class="review-content">
-            <BitStack Horizontal="false" Gap="1.5rem">
-                @* Waveform Player *@
-                <div class="waveform-section">
-                    <WaveformPlayer
-                        AudioUrl="@GetAudioUrl()"
-                        Title="@GetDisplayTitle()"
-                        TimeUpdated="HandleTimeUpdate"
-                        OnReady="HandleWaveformReady"
-                        OnSeek="HandleSeek"
-                        OnFinished="HandlePlaybackFinished" />
-                </div>
 
-                @* Current Time Display *@
-                <BitCard Background="BitColorKind.Secondary" Class="time-display">
-                    <BitStack Horizontal="true" Gap="1rem" VerticalAlign="BitAlignment.Center">
-                        <BitText Typography="BitTypography.Body2" Color="BitColor.SecondaryForeground">
-                            Current Position:
-                        </BitText>
-                        <BitText Typography="BitTypography.Subtitle2" Style="font-family: monospace;">
-                            @FormatTime(_currentTime)
-                        </BitText>
-                        @if (_isWaveformReady)
-                        {
-                            <BitBadge Appearance="BitAppearance.Primary" Color="BitColor.Success">
-                                Ready
-                            </BitBadge>
-                        }
-                    </BitStack>
-                </BitCard>
+<BitGrid Columns="12">
+    <BitGridItem ColumnSpan="12" style="min-width: 0;">
+        <section class="proof-review">
+            <WaveformPlayer
+                AudioUrl="@GetAudioUrl()"
+                Title="@GetDisplayTitle()"
+                TimeUpdated="HandleTimeUpdate"
+                OnReady="HandleWaveformReady"
+                OnSeek="HandleSeek"
+                OnFinished="HandlePlaybackFinished"/>
+        </section>
+    </BitGridItem>
+    <BitGridItem ColumnSpan="12">
+        <SentenceList></SentenceList>
+    </BitGridItem>
+</BitGrid>
 
-                @* Placeholder for Sentence List (Plan 4) *@
-                <div class="panel-preview">
-                    <BitText Typography="BitTypography.Caption1" Color="BitColor.SecondaryForeground"
-                             Style="text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 0.5rem;">
-                        Sentence List Panel
-                    </BitText>
-                    <div class="panel-mock sentence-mock">
-                        <BitText Color="BitColor.SecondaryForeground">
-                            Sentence list with timing data coming in Plan 4
-                        </BitText>
-                    </div>
-                </div>
 
-                @* Chapter Info *@
-                <BitCard Background="BitColorKind.Secondary" Class="chapter-info">
-                    <BitText Typography="BitTypography.Subtitle2" Color="BitColor.SecondaryForeground"
-                             Style="margin-bottom: 0.5rem;">
-                        Current State
-                    </BitText>
-                    <BitStack Horizontal="false" Gap="0.25rem">
-                        <BitStack Horizontal="true" Gap="0.5rem">
-                            <BitText Typography="BitTypography.Body2" Color="BitColor.SecondaryForeground">Chapter:</BitText>
-                            <BitText Typography="BitTypography.Body2" Style="font-family: monospace;">
-                                @Uri.UnescapeDataString(ChapterName ?? "N/A")
-                            </BitText>
-                        </BitStack>
-                        <BitStack Horizontal="true" Gap="0.5rem">
-                            <BitText Typography="BitTypography.Body2" Color="BitColor.SecondaryForeground">Working Directory:</BitText>
-                            <BitText Typography="BitTypography.Body2" Style="font-family: monospace;">
-                                @(State.WorkingDirectory ?? "No directory set")
-                            </BitText>
-                        </BitStack>
-                        <BitStack Horizontal="true" Gap="0.5rem">
-                            <BitText Typography="BitTypography.Body2" Color="BitColor.SecondaryForeground">Workspace:</BitText>
-                            <BitText Typography="BitTypography.Body2" Style="font-family: monospace;">
-                                @(State.Workspace != null ? "Ready" : "Not initialized")
-                            </BitText>
-                        </BitStack>
-                    </BitStack>
-                </BitCard>
-            </BitStack>
-        </BitCard>
-    </BitStack>
-</div>
+@* *@
+@* <BitStack Horizontal="false" Gap="1rem" Style="height: 100%;"> *@
+@*     <BitCard FullSize="true" Class="review-content"> *@
+@*         <BitStack Horizontal="false" Gap="1.5rem"> *@
+@*             $1$ Waveform Player #1# *@
+@*             <div class="waveform-section"> *@
+@*                 *@
+@*             </div> *@
+@* *@
+@*             $1$ Current Time Display #1# *@
+@*             <BitCard Background="BitColorKind.Secondary" Class="time-display"> *@
+@*                 <BitStack Horizontal="true" Gap="1rem" VerticalAlign="BitAlignment.Center"> *@
+@*                     <BitText Typography="BitTypography.Body2" Color="BitColor.SecondaryForeground"> *@
+@*                         Current Position: *@
+@*                     </BitText> *@
+@*                     <BitText Typography="BitTypography.Subtitle2" Style="font-family: monospace;"> *@
+@*                         @FormatTime(_currentTime) *@
+@*                     </BitText> *@
+@*                     @if (_isWaveformReady) *@
+@*                     { *@
+@*                         <BitBadge Appearance="BitAppearance.Primary" Color="BitColor.Success"> *@
+@*                             Ready *@
+@*                         </BitBadge> *@
+@*                     } *@
+@*                 </BitStack> *@
+@*             </BitCard> *@
+@* *@
+@*             $1$ Placeholder for Sentence List (Plan 4) #1# *@
+@*             <div class="panel-preview"> *@
+@*                 <BitText Typography="BitTypography.Caption1" Color="BitColor.SecondaryForeground" *@
+@*                          Style="text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 0.5rem;"> *@
+@*                     Sentence List Panel *@
+@*                 </BitText> *@
+@*                 <div class="panel-mock sentence-mock"> *@
+@*                     <BitText Color="BitColor.SecondaryForeground"> *@
+@*                         Sentence list with timing data coming in Plan 4 *@
+@*                     </BitText> *@
+@*                 </div> *@
+@*             </div> *@
+@* *@
+@*             $1$ Chapter Info #1# *@
+@*             <BitCard Background="BitColorKind.Secondary" Class="chapter-info"> *@
+@*                 <BitText Typography="BitTypography.Subtitle2" Color="BitColor.SecondaryForeground" *@
+@*                          Style="margin-bottom: 0.5rem;"> *@
+@*                     Current State *@
+@*                 </BitText> *@
+@*                 <BitStack Horizontal="false" Gap="0.25rem"> *@
+@*                     <BitStack Horizontal="true" Gap="0.5rem"> *@
+@*                         <BitText Typography="BitTypography.Body2" Color="BitColor.SecondaryForeground">Chapter:</BitText> *@
+@*                         <BitText Typography="BitTypography.Body2" Style="font-family: monospace;"> *@
+@*                             @Uri.UnescapeDataString(ChapterName ?? "N/A") *@
+@*                         </BitText> *@
+@*                     </BitStack> *@
+@*                     <BitStack Horizontal="true" Gap="0.5rem"> *@
+@*                         <BitText Typography="BitTypography.Body2" Color="BitColor.SecondaryForeground">Working Directory:</BitText> *@
+@*                         <BitText Typography="BitTypography.Body2" Style="font-family: monospace;"> *@
+@*                             @(State.WorkingDirectory ?? "No directory set") *@
+@*                         </BitText> *@
+@*                     </BitStack> *@
+@*                     <BitStack Horizontal="true" Gap="0.5rem"> *@
+@*                         <BitText Typography="BitTypography.Body2" Color="BitColor.SecondaryForeground">Workspace:</BitText> *@
+@*                         <BitText Typography="BitTypography.Body2" Style="font-family: monospace;"> *@
+@*                             @(State.Workspace != null ? "Ready" : "Not initialized") *@
+@*                         </BitText> *@
+@*                     </BitStack> *@
+@*                 </BitStack> *@
+@*             </BitCard> *@
+@*         </BitStack> *@
+@*     </BitCard> *@
+@* </BitStack> *@
 
 @code {
     private double _currentTime;
     private bool _isWaveformReady;
 
-    [Parameter]
-    public string? ChapterName { get; set; }
+    [Parameter] public string? ChapterName { get; set; }
 
     protected override void OnParametersSet()
     {
-        // Update the current chapter in state
+        // Ensure chapter is selected (opens handle if not already)
         if (!string.IsNullOrEmpty(ChapterName))
         {
-            State.CurrentChapter = Uri.UnescapeDataString(ChapterName);
+            var decodedName = Uri.UnescapeDataString(ChapterName);
+            if (Workspace.CurrentChapterName != decodedName)
+            {
+                Workspace.SelectChapter(decodedName);
+            }
         }
 
         // Reset waveform ready state when chapter changes
@@ -110,6 +125,7 @@
         {
             return $"/api/audio/chapter/{Uri.EscapeDataString(ChapterName)}";
         }
+
         return "/api/audio"; // Falls back to sample audio
     }
 
@@ -147,47 +163,7 @@
         var ms = (int)((seconds % 1) * 1000);
         return $"{mins}:{secs:D2}.{ms:D3}";
     }
+
 }
 
-<style>
-    .chapter-review {
-        height: 100%;
-        display: flex;
-        flex-direction: column;
-    }
 
-    .review-content {
-        flex: 1;
-        overflow: auto;
-    }
-
-    .waveform-section {
-        width: 100%;
-    }
-
-    .time-display {
-        padding: 0.75rem 1rem;
-    }
-
-    .panel-preview {
-        display: flex;
-        flex-direction: column;
-    }
-
-    .panel-mock {
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        background-color: var(--bit-clr-bg-sec);
-        border: 1px dashed var(--bit-clr-brd-sec);
-        border-radius: 4px;
-    }
-
-    .sentence-mock {
-        height: 200px;
-    }
-
-    .chapter-info {
-        padding: 1rem;
-    }
-</style>

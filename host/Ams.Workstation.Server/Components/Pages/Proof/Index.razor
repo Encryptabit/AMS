@@ -1,5 +1,5 @@
 @page "/proof"
-@inject Ams.Workstation.Server.Services.WorkstationState State
+@inject Ams.Workstation.Server.Services.BlazorWorkspace Workspace
 
 <PageTitle>Proof - AMS Workstation</PageTitle>
 
@@ -12,7 +12,7 @@
             </BitText>
         </div>
 
-        @if (State.HasBookIndex)
+        @if (Workspace.HasBookIndex)
         {
             <BitCard>
                 <BitText Typography="BitTypography.Subtitle2" Color="BitColor.SecondaryForeground"
@@ -20,14 +20,14 @@
                     Select a Chapter to Review
                 </BitText>
 
-                @if (State.AvailableChapters.Count == 0)
+                @if (Workspace.AvailableChapters.Count == 0)
                 {
                     <BitText Color="BitColor.SecondaryForeground">No chapters available.</BitText>
                 }
                 else
                 {
                     <BitBasicList TItem="string"
-                                  Items="State.AvailableChapters"
+                                  Items="Workspace.AvailableChapters"
                                   Class="chapters">
                         <RowTemplate Context="chapter">
                             <BitLink Href="@($"/proof/{Uri.EscapeDataString(chapter)}")"

@@ -1,5 +1,5 @@
 @page "/"
-@inject Ams.Workstation.Server.Services.WorkstationState State
+@inject Ams.Workstation.Server.Services.BlazorWorkspace Workspace
 @inject NavigationManager Navigation
 
 <PageTitle>AMS Workstation - Home</PageTitle>
@@ -13,7 +13,7 @@
             </BitText>
         </div>
 
-        @if (string.IsNullOrEmpty(State.WorkingDirectory))
+        @if (string.IsNullOrEmpty(Workspace.WorkingDirectory))
         {
             <BitCard Class="getting-started">
                 <BitStack Horizontal="false" Gap="1rem">
@@ -39,11 +39,11 @@
                             Current Workspace
                         </BitText>
                         <BitText Typography="BitTypography.Body1" Style="font-family: monospace;">
-                            @State.WorkingDirectory
+                            @Workspace.WorkingDirectory
                         </BitText>
                     </div>
 
-                    @if (State.HasBookIndex)
+                    @if (Workspace.HasBookIndex)
                     {
                         <div>
                             <BitText Typography="BitTypography.Caption1" Color="BitColor.SecondaryForeground"
@@ -51,7 +51,7 @@
                                 Available Chapters
                             </BitText>
                             <BitText Typography="BitTypography.Body1">
-                                @State.AvailableChapters.Count chapters found
+                                @Workspace.AvailableChapters.Count chapters found
                             </BitText>
                         </div>
 
@@ -61,7 +61,7 @@
                                 Workspace Status
                             </BitText>
                             <BitText Typography="BitTypography.Body1">
-                                @(State.Workspace != null ? "Initialized" : "Not initialized")
+                                @(Workspace.IsInitialized ? "Initialized" : "Not initialized")
                             </BitText>
                         </div>
 

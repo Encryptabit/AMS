@@ -36,10 +36,10 @@ export function createWaveSurfer(elementId, options) {
         normalize: true,
         backend: 'MediaElement',
         pixelRatio: window.devicePixelRatio || 1,
-        minPxPerSec: 100, // Let it fit to container width without scrolling
+        minPxPerSec: 100,
         autoScroll: true,
         autoCenter: true,
-        disableZoom: false,
+        disableZoom: true,
         scrollParent: true,
         fillParent: false,
         barHeight: options.barHeight || 1,

@@ -1,6 +1,7 @@
+@using System.IO
 @implements IDisposable
 @inject NavigationManager NavigationManager
-@inject Ams.Workstation.Server.Services.WorkstationState State
+@inject Ams.Workstation.Server.Services.BlazorWorkspace Workspace
 
 <div class="header-controls">
     <div class="header-nav">
@@ -22,7 +23,7 @@
     </div>
 
     <div class="header-chapter">
-        @if (State.AvailableChapters.Count > 0)
+        @if (Workspace.AvailableChapters.Count > 0)
         {
             <BitDropdown TItem="BitDropdownItem<string>"
                          TValue="string"
@@ -72,15 +73,15 @@
         NavigationManager.LocationChanged += OnLocationChanged;
 
         // Restore state
-        if (!string.IsNullOrEmpty(State.WorkingDirectory))
+        if (!string.IsNullOrEmpty(Workspace.WorkingDirectory))
         {
-            workingDirectory = State.WorkingDirectory;
+            workingDirectory = Workspace.WorkingDirectory;
             RefreshChapterList();
         }
 
-        if (!string.IsNullOrEmpty(State.CurrentChapter))
+        if (!string.IsNullOrEmpty(Workspace.CurrentChapterName))
         {
-            selectedChapter = State.CurrentChapter;
+            selectedChapter = Workspace.CurrentChapterName;
         }
     }
 
@@ -128,7 +129,7 @@
             return;
         }
 
-        if (!State.SetWorkingDirectory(trimmedPath))
+        if (!Workspace.SetWorkingDirectory(trimmedPath))
         {
             errorMessage = $"Failed to initialize workspace: {trimmedPath}";
             return;
@@ -142,9 +143,9 @@
     {
         chapterItems.Clear();
 
-        if (State.HasBookIndex && State.AvailableChapters.Count > 0)
+        if (Workspace.HasBookIndex && Workspace.AvailableChapters.Count > 0)
         {
-            chapterItems = State.AvailableChapters
+            chapterItems = Workspace.AvailableChapters
                 .Select(c => new BitDropdownItem<string> { Text = c, Value = c })
                 .ToList();
         }
@@ -152,9 +153,8 @@
 
     private void OnChapterChange(string? chapter)
     {
-        if (!string.IsNullOrEmpty(chapter))
+        if (!string.IsNullOrEmpty(chapter) && Workspace.SelectChapter(chapter))
         {
-            State.CurrentChapter = chapter;
             NavigationManager.NavigateTo($"/proof/{Uri.EscapeDataString(chapter)}");
         }
     }
