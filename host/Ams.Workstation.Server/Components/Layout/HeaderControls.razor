@@ -1,0 +1,171 @@
+@implements IDisposable
+@inject NavigationManager NavigationManager
+@inject Ams.Workstation.Server.Services.WorkstationState State
+
+<div class="header-controls">
+    <div class="header-nav">
+        <BitButton Variant="@(IsActive("prep") ? BitVariant.Fill : BitVariant.Text)"
+                   Color="BitColor.Primary"
+                   OnClick="@(() => Navigate("prep"))">
+            Prep
+        </BitButton>
+        <BitButton Variant="@(IsActive("proof") ? BitVariant.Fill : BitVariant.Text)"
+                   Color="BitColor.Primary"
+                   OnClick="@(() => Navigate("proof"))">
+            Proof
+        </BitButton>
+        <BitButton Variant="@(IsActive("polish") ? BitVariant.Fill : BitVariant.Text)"
+                   Color="BitColor.Primary"
+                   OnClick="@(() => Navigate("polish"))">
+            Polish
+        </BitButton>
+    </div>
+
+    <div class="header-chapter">
+        @if (State.AvailableChapters.Count > 0)
+        {
+            <BitDropdown TItem="BitDropdownItem<string>"
+                         TValue="string"
+                         Items="@chapterItems"
+                         @bind-Value="selectedChapter"
+                         Placeholder="Select chapter"
+                         Style="min-width: 200px;"
+                         OnChange="OnChapterChange" />
+        }
+    </div>
+
+    <div class="header-directory">
+        <BitTextField @bind-Value="workingDirectory"
+                      Immediate="true"
+                      Placeholder="Working directory..."
+                      Style="width: 300px;"
+                      OnKeyDown="OnDirectoryKeyDown" />
+        <BitButton Variant="BitVariant.Fill"
+                   Color="BitColor.Primary"
+                   Size="BitSize.Small"
+                   OnClick="SetDirectory"
+                   IsEnabled="@(!string.IsNullOrWhiteSpace(workingDirectory))">
+            Set
+        </BitButton>
+    </div>
+</div>
+
+@if (!string.IsNullOrEmpty(errorMessage))
+{
+    <div class="error-toast">
+        <BitMessage Color="BitColor.Error" OnDismiss="DismissError">
+            @errorMessage
+        </BitMessage>
+    </div>
+}
+
+@code {
+    private string workingDirectory = string.Empty;
+    private string? selectedChapter;
+    private string? errorMessage;
+    private string? currentPath;
+    private List<BitDropdownItem<string>> chapterItems = new();
+
+    protected override void OnInitialized()
+    {
+        UpdateCurrentPath();
+        NavigationManager.LocationChanged += OnLocationChanged;
+
+        // Restore state
+        if (!string.IsNullOrEmpty(State.WorkingDirectory))
+        {
+            workingDirectory = State.WorkingDirectory;
+            RefreshChapterList();
+        }
+
+        if (!string.IsNullOrEmpty(State.CurrentChapter))
+        {
+            selectedChapter = State.CurrentChapter;
+        }
+    }
+
+    private void OnLocationChanged(object? sender, LocationChangedEventArgs e)
+    {
+        UpdateCurrentPath();
+        StateHasChanged();
+    }
+
+    private void UpdateCurrentPath()
+    {
+        var uri = new Uri(NavigationManager.Uri);
+        currentPath = uri.AbsolutePath.TrimStart('/').ToLowerInvariant();
+    }
+
+    private bool IsActive(string route) => currentPath?.StartsWith(route) == true;
+
+    private void Navigate(string route)
+    {
+        NavigationManager.NavigateTo($"/{route}");
+    }
+
+    private void OnDirectoryKeyDown(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter")
+        {
+            SetDirectory();
+        }
+    }
+
+    private void SetDirectory()
+    {
+        errorMessage = null;
+
+        if (string.IsNullOrWhiteSpace(workingDirectory))
+        {
+            return;
+        }
+
+        var trimmedPath = workingDirectory.Trim();
+
+        if (!Directory.Exists(trimmedPath))
+        {
+            errorMessage = $"Directory does not exist: {trimmedPath}";
+            return;
+        }
+
+        if (!State.SetWorkingDirectory(trimmedPath))
+        {
+            errorMessage = $"Failed to initialize workspace: {trimmedPath}";
+            return;
+        }
+
+        RefreshChapterList();
+        StateHasChanged();
+    }
+
+    private void RefreshChapterList()
+    {
+        chapterItems.Clear();
+
+        if (State.HasBookIndex && State.AvailableChapters.Count > 0)
+        {
+            chapterItems = State.AvailableChapters
+                .Select(c => new BitDropdownItem<string> { Text = c, Value = c })
+                .ToList();
+        }
+    }
+
+    private void OnChapterChange(string? chapter)
+    {
+        if (!string.IsNullOrEmpty(chapter))
+        {
+            State.CurrentChapter = chapter;
+            NavigationManager.NavigateTo($"/proof/{Uri.EscapeDataString(chapter)}");
+        }
+    }
+
+    private void DismissError()
+    {
+        errorMessage = null;
+    }
+
+    public void Dispose()
+    {
+        NavigationManager.LocationChanged -= OnLocationChanged;
+    }
+}

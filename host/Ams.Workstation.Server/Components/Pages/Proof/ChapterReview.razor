@@ -1,0 +1,142 @@
+@page "/proof/{ChapterName}"
+@inject Ams.Workstation.Server.Services.WorkstationState State
+@inject NavigationManager Navigation
+
+<PageTitle>@ChapterName - Proof - AMS Workstation</PageTitle>
+
+<div class="chapter-review">
+    <BitStack Horizontal="false" Gap="1rem" Style="height: 100%;">
+        <div class="review-header">
+            <BitActionButton IconName="ChevronLeft"
+                             Href="/proof"
+                             Color="BitColor.SecondaryForeground">
+                Back to Proof
+            </BitActionButton>
+            <BitText Typography="BitTypography.H5">
+                @Uri.UnescapeDataString(ChapterName ?? "Unknown Chapter")
+            </BitText>
+        </div>
+
+        <BitCard FullSize="true" Class="review-placeholder">
+            <BitStack Horizontal="false" Gap="1.5rem">
+                <div>
+                    <BitText Typography="BitTypography.Subtitle1">Chapter Review</BitText>
+                    <BitText Typography="BitTypography.Body2" Color="BitColor.SecondaryForeground">
+                        This is where the waveform visualization and sentence list will be displayed.
+                    </BitText>
+                </div>
+
+                <BitStack Horizontal="false" Gap="1rem">
+                    <div class="panel-preview">
+                        <BitText Typography="BitTypography.Caption1" Color="BitColor.SecondaryForeground"
+                                 Style="text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 0.5rem;">
+                            Waveform Panel
+                        </BitText>
+                        <div class="panel-mock waveform-mock">
+                            <BitText Color="BitColor.SecondaryForeground">
+                                Waveform visualization coming in Plan 3
+                            </BitText>
+                        </div>
+                    </div>
+
+                    <div class="panel-preview">
+                        <BitText Typography="BitTypography.Caption1" Color="BitColor.SecondaryForeground"
+                                 Style="text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 0.5rem;">
+                            Sentence List Panel
+                        </BitText>
+                        <div class="panel-mock sentence-mock">
+                            <BitText Color="BitColor.SecondaryForeground">
+                                Sentence list with timing data coming in Plan 4
+                            </BitText>
+                        </div>
+                    </div>
+                </BitStack>
+
+                <BitCard Background="BitColorKind.Secondary" Class="chapter-info">
+                    <BitText Typography="BitTypography.Subtitle2" Color="BitColor.SecondaryForeground"
+                             Style="margin-bottom: 0.5rem;">
+                        Current State
+                    </BitText>
+                    <BitStack Horizontal="false" Gap="0.25rem">
+                        <BitStack Horizontal="true" Gap="0.5rem">
+                            <BitText Typography="BitTypography.Body2" Color="BitColor.SecondaryForeground">Chapter:</BitText>
+                            <BitText Typography="BitTypography.Body2" Style="font-family: monospace;">
+                                @Uri.UnescapeDataString(ChapterName ?? "N/A")
+                            </BitText>
+                        </BitStack>
+                        <BitStack Horizontal="true" Gap="0.5rem">
+                            <BitText Typography="BitTypography.Body2" Color="BitColor.SecondaryForeground">Working Directory:</BitText>
+                            <BitText Typography="BitTypography.Body2" Style="font-family: monospace;">
+                                @(State.WorkingDirectory ?? "No directory set")
+                            </BitText>
+                        </BitStack>
+                        <BitStack Horizontal="true" Gap="0.5rem">
+                            <BitText Typography="BitTypography.Body2" Color="BitColor.SecondaryForeground">Workspace:</BitText>
+                            <BitText Typography="BitTypography.Body2" Style="font-family: monospace;">
+                                @(State.Workspace != null ? "Ready" : "Not initialized")
+                            </BitText>
+                        </BitStack>
+                    </BitStack>
+                </BitCard>
+            </BitStack>
+        </BitCard>
+    </BitStack>
+</div>
+
+@code {
+    [Parameter]
+    public string? ChapterName { get; set; }
+
+    protected override void OnParametersSet()
+    {
+        // Update the current chapter in state
+        if (!string.IsNullOrEmpty(ChapterName))
+        {
+            State.CurrentChapter = Uri.UnescapeDataString(ChapterName);
+        }
+    }
+}
+
+<style>
+    .chapter-review {
+        height: 100%;
+        display: flex;
+        flex-direction: column;
+    }
+
+    .review-header {
+        display: flex;
+        flex-direction: column;
+        gap: 0.5rem;
+    }
+
+    .review-placeholder {
+        flex: 1;
+    }
+
+    .panel-preview {
+        display: flex;
+        flex-direction: column;
+    }
+
+    .panel-mock {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background-color: var(--bit-clr-bg-sec);
+        border: 1px dashed var(--bit-clr-brd-sec);
+        border-radius: 4px;
+    }
+
+    .waveform-mock {
+        height: 120px;
+    }
+
+    .sentence-mock {
+        height: 200px;
+    }
+
+    .chapter-info {
+        padding: 1rem;
+    }
+</style>

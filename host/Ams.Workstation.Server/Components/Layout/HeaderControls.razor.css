@@ -1,0 +1,35 @@
+/* HeaderControls scoped styles */
+
+.header-controls {
+    display: flex;
+    align-items: center;
+    gap: 1.5rem;
+    flex: 1;
+}
+
+.header-nav {
+    display: flex;
+    gap: 0.25rem;
+    flex-shrink: 0;
+}
+
+.header-chapter {
+    flex-shrink: 0;
+}
+
+.header-directory {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin-left: auto;
+}
+
+.error-toast {
+    position: fixed;
+    bottom: 1rem;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 1000;
+    max-width: 500px;
+    width: 90%;
+}

@@ -8,15 +8,15 @@ Audio Management System - CLI and core library for audio processing, ASR, forced
 
 **Milestone**: v2.0 Blazor Workstation
 **Phase**: 9 - Blazor Audiobook Workstation
-**Plan**: 1/4 - In progress
-**Status**: Executing phase plans
+**Plan**: 2/4 - Complete
+**Status**: Ready for next plan
 
 ## Progress
 
 ```
 v1.0 Codebase Audit    [████████████████████] 100% - SHIPPED
 v1.1 Execute Refactor  [████████████████████] 100% - SHIPPED
-v2.0 Blazor Workstation[███░░░░░░░░░░░░░░░░░]  15% - Phase 9 executing (1/4 plans)
+v2.0 Blazor Workstation[██████░░░░░░░░░░░░░░]  30% - Phase 9 executing (2/4 plans)
 ```
 
 ## Phase 9 Plans
@@ -24,7 +24,7 @@ v2.0 Blazor Workstation[███░░░░░░░░░░░░░░░�
 | Plan | Name | Tasks | Status |
 |------|------|-------|--------|
 | 09-01 | Project Foundation & DI | 3 | Complete |
-| 09-02 | Layout Shell & Navigation | 4 | Pending |
+| 09-02 | Ams.Core Integration & Layout Shell | 6 | Complete |
 | 09-03 | Waveform Component & JS Interop | 4 | Pending |
 | 09-04 | Proof Area & Sentence List | 4 | Pending |
 
@@ -39,6 +39,8 @@ v2.0 Blazor Workstation[███░░░░░░░░░░░░░░░�
 | Hybrid WPF+Vello | CONFIRMED GO | Owned window bypasses wgpu child limitation |
 | **Desktop UI v2.0** | **ON ICE** | Complexity too high for current needs |
 | **Blazor Server** | **CHOSEN** | Direct Ams.Core integration, wavesurfer.js for audio |
+| book-index sections | sections[].title | Chapter list from sections array, not chapters |
+| State persistence | LocalAppData | %LOCALAPPDATA%\AMS\workstation-state.json |
 
 ## Phase 8/8.1 Conclusions (Archived)
 
@@ -68,9 +70,9 @@ poc/VelloSharpPoc/     - Avalonia + VelloSharp (child window fails)
 
 ## Next Action
 
-Execute Phase 9 Plan 2:
+Execute Phase 9 Plan 3 (Waveform Component):
 ```
-/gsd:execute-plan .planning/phases/09-blazor-workstation/09-02-PLAN.md
+/gsd:execute-plan .planning/phases/09-blazor-workstation/09-03-PLAN.md
 ```
 
 ## Deferred Issues
@@ -83,6 +85,6 @@ None currently.
 
 ## Session Continuity
 
-Last session: 2026-01-04
+Last session: 2026-01-03
 Branch: `blazor-workstation`
-Status: Phase 9 Plan 1 complete, ready for 09-02-PLAN.md
+Status: Phase 9 Plan 2 complete, ready for 09-03-PLAN.md

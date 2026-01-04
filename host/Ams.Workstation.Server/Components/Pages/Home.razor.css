@@ -1,0 +1,31 @@
+/* Home page scoped styles */
+
+.home-container {
+    max-width: 700px;
+    margin: 0 auto;
+    padding: 2rem 0;
+}
+
+.welcome-header {
+    text-align: center;
+}
+
+.getting-started,
+.workspace-info,
+.quick-links {
+    width: 100%;
+}
+
+.steps-list {
+    margin: 0;
+    padding-left: 1.5rem;
+    opacity: 0.8;
+}
+
+.steps-list li {
+    margin-bottom: 0.5rem;
+}
+
+.steps-list li:last-child {
+    margin-bottom: 0;
+}

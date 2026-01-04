@@ -1,0 +1,98 @@
+@page "/proof"
+@inject Ams.Workstation.Server.Services.WorkstationState State
+
+<PageTitle>Proof - AMS Workstation</PageTitle>
+
+<div class="proof-index">
+    <BitStack Horizontal="false" Gap="1.5rem">
+        <div class="proof-header">
+            <BitText Typography="BitTypography.H4">Proof Area</BitText>
+            <BitText Typography="BitTypography.Body1" Color="BitColor.SecondaryForeground">
+                Review and validate chapter alignments.
+            </BitText>
+        </div>
+
+        @if (State.HasBookIndex)
+        {
+            <BitCard>
+                <BitText Typography="BitTypography.Subtitle2" Color="BitColor.SecondaryForeground"
+                         Style="margin-bottom: 1rem; text-transform: uppercase; letter-spacing: 0.05em;">
+                    Select a Chapter to Review
+                </BitText>
+
+                @if (State.AvailableChapters.Count == 0)
+                {
+                    <BitText Color="BitColor.SecondaryForeground">No chapters available.</BitText>
+                }
+                else
+                {
+                    <BitBasicList TItem="string"
+                                  Items="State.AvailableChapters"
+                                  Class="chapters">
+                        <RowTemplate Context="chapter">
+                            <BitLink Href="@($"/proof/{Uri.EscapeDataString(chapter)}")"
+                                     Class="chapter-link">
+                                <BitStack Horizontal="true" Gap="0.5rem" VerticalAlign="BitAlignment.Center">
+                                    <BitIcon IconName="TextDocument" />
+                                    <span class="chapter-name">@chapter</span>
+                                </BitStack>
+                                <BitIcon IconName="ChevronRight" Color="BitColor.SecondaryForeground" />
+                            </BitLink>
+                        </RowTemplate>
+                    </BitBasicList>
+                }
+            </BitCard>
+        }
+        else
+        {
+            <BitMessage Color="BitColor.Info">
+                <BitStack Horizontal="false" Gap="0.5rem">
+                    <BitText Typography="BitTypography.Body1">
+                        No working directory set or book-index.json not found.
+                    </BitText>
+                    <BitButton Variant="BitVariant.Outline"
+                               Color="BitColor.Primary"
+                               Href="/">
+                        Go to Home to set a working directory
+                    </BitButton>
+                </BitStack>
+            </BitMessage>
+        }
+    </BitStack>
+</div>
+
+<style>
+    .proof-index {
+        max-width: 800px;
+    }
+
+    .chapters {
+        list-style: none;
+        margin: 0;
+        padding: 0;
+    }
+
+    .chapter-link {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 1rem;
+        text-decoration: none;
+        transition: background-color 0.15s ease;
+        border-radius: 4px;
+        border-bottom: 1px solid var(--bit-clr-brd-sec);
+    }
+
+    .chapter-link:last-child {
+        border-bottom: none;
+    }
+
+    .chapter-link:hover {
+        background-color: var(--bit-clr-bg-sec-hover);
+        text-decoration: none;
+    }
+
+    .chapter-name {
+        font-weight: 500;
+    }
+</style>

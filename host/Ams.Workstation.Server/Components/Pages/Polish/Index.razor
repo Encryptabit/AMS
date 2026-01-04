@@ -1,0 +1,91 @@
+@page "/polish"
+
+<PageTitle>Polish - AMS Workstation</PageTitle>
+
+<div class="area-placeholder">
+    <BitStack Horizontal="false" Gap="1rem" HorizontalAlign="BitAlignment.Center">
+        <div class="placeholder-icon">
+            <BitIcon IconName="Equalizer" Style="font-size: 2rem;" />
+        </div>
+
+        <BitText Typography="BitTypography.H4">Polish Area</BitText>
+        <BitText Typography="BitTypography.Body1" Color="BitColor.SecondaryForeground">
+            Take replacement, batch editing, and prosody analysis.
+        </BitText>
+
+        <BitTag Color="BitColor.SecondaryForeground">Future Phase</BitTag>
+
+        <BitCard Class="placeholder-features">
+            <BitText Typography="BitTypography.Subtitle2" Color="BitColor.SecondaryForeground"
+                     Style="text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 1rem;">
+                Planned Features
+            </BitText>
+            <ul class="feature-list">
+                <li>
+                    <BitIcon IconName="Switch" Style="margin-right: 0.5rem;" />
+                    Take replacement workflow
+                </li>
+                <li>
+                    <BitIcon IconName="Edit" Style="margin-right: 0.5rem;" />
+                    Batch editing operations
+                </li>
+                <li>
+                    <BitIcon IconName="CRMReport" Style="margin-right: 0.5rem;" />
+                    Prosody analysis and visualization
+                </li>
+                <li>
+                    <BitIcon IconName="Volume3" Style="margin-right: 0.5rem;" />
+                    Final mastering adjustments
+                </li>
+                <li>
+                    <BitIcon IconName="CloudDownload" Style="margin-right: 0.5rem;" />
+                    Export and delivery preparation
+                </li>
+            </ul>
+        </BitCard>
+    </BitStack>
+</div>
+
+<style>
+    .area-placeholder {
+        max-width: 600px;
+        margin: 0 auto;
+        text-align: center;
+        padding: 2rem 0;
+    }
+
+    .placeholder-icon {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 80px;
+        height: 80px;
+        background-color: rgba(107, 117, 129, 0.1);
+        border: 2px solid rgba(107, 117, 129, 0.3);
+        border-radius: 16px;
+        color: #6b7581;
+    }
+
+    .placeholder-features {
+        text-align: left;
+        width: 100%;
+        max-width: 400px;
+    }
+
+    .feature-list {
+        list-style: none;
+        margin: 0;
+        padding: 0;
+    }
+
+    .feature-list li {
+        display: flex;
+        align-items: center;
+        padding: 0.5rem 0;
+        border-bottom: 1px solid var(--bit-clr-brd-sec);
+    }
+
+    .feature-list li:last-child {
+        border-bottom: none;
+    }
+</style>

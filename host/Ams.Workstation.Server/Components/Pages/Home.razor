@@ -1,7 +1,122 @@
-﻿@page "/"
+@page "/"
+@inject Ams.Workstation.Server.Services.WorkstationState State
+@inject NavigationManager Navigation
 
-<PageTitle>Home</PageTitle>
+<PageTitle>AMS Workstation - Home</PageTitle>
 
-<h1>Hello, world!</h1>
+<div class="home-container">
+    <BitStack Horizontal="false" Gap="2rem" HorizontalAlign="BitAlignment.Center">
+        <div class="welcome-header">
+            <BitText Typography="BitTypography.H3">Welcome to AMS Workstation</BitText>
+            <BitText Typography="BitTypography.Body1" Color="BitColor.SecondaryForeground">
+                Audio Management System - Audiobook Mastering Workstation
+            </BitText>
+        </div>
 
-Welcome to your new app.
+        @if (string.IsNullOrEmpty(State.WorkingDirectory))
+        {
+            <BitCard Class="getting-started">
+                <BitStack Horizontal="false" Gap="1rem">
+                    <BitText Typography="BitTypography.Subtitle1">Getting Started</BitText>
+                    <BitText Typography="BitTypography.Body2" Color="BitColor.SecondaryForeground">
+                        Enter a working directory path in the header bar above and click "Set" to load your workspace.
+                    </BitText>
+                    <ol class="steps-list">
+                        <li>Set your working directory (top right)</li>
+                        <li>If no book-index.json exists, use Prep to build one</li>
+                        <li>Select a chapter from the dropdown to begin review</li>
+                    </ol>
+                </BitStack>
+            </BitCard>
+        }
+        else
+        {
+            <BitCard Class="workspace-info">
+                <BitStack Horizontal="false" Gap="1rem">
+                    <div>
+                        <BitText Typography="BitTypography.Caption1" Color="BitColor.SecondaryForeground"
+                                 Style="text-transform: uppercase; letter-spacing: 0.05em;">
+                            Current Workspace
+                        </BitText>
+                        <BitText Typography="BitTypography.Body1" Style="font-family: monospace;">
+                            @State.WorkingDirectory
+                        </BitText>
+                    </div>
+
+                    @if (State.HasBookIndex)
+                    {
+                        <div>
+                            <BitText Typography="BitTypography.Caption1" Color="BitColor.SecondaryForeground"
+                                     Style="text-transform: uppercase; letter-spacing: 0.05em;">
+                                Available Chapters
+                            </BitText>
+                            <BitText Typography="BitTypography.Body1">
+                                @State.AvailableChapters.Count chapters found
+                            </BitText>
+                        </div>
+
+                        <div>
+                            <BitText Typography="BitTypography.Caption1" Color="BitColor.SecondaryForeground"
+                                     Style="text-transform: uppercase; letter-spacing: 0.05em;">
+                                Workspace Status
+                            </BitText>
+                            <BitText Typography="BitTypography.Body1">
+                                @(State.Workspace != null ? "Initialized" : "Not initialized")
+                            </BitText>
+                        </div>
+
+                        <BitMessage Color="BitColor.Success">
+                            <BitStack Horizontal="true" Gap="0.5rem" VerticalAlign="BitAlignment.Center">
+                                <BitIcon IconName="CheckMark" />
+                                <span>Workspace ready. Select a chapter from the dropdown above to begin.</span>
+                            </BitStack>
+                        </BitMessage>
+                    }
+                    else
+                    {
+                        <BitMessage Color="BitColor.Warning">
+                            <BitStack Horizontal="false" Gap="0.5rem">
+                                <BitText Typography="BitTypography.Body2">
+                                    No book-index.json found in this directory.
+                                </BitText>
+                                <BitButton Variant="BitVariant.Fill"
+                                           Color="BitColor.Primary"
+                                           OnClick="NavigateToPrep">
+                                    Go to Prep to build index
+                                </BitButton>
+                            </BitStack>
+                        </BitMessage>
+                    }
+                </BitStack>
+            </BitCard>
+        }
+
+        <BitCard Class="quick-links">
+            <BitText Typography="BitTypography.Subtitle2" Color="BitColor.SecondaryForeground"
+                     Style="text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 1rem;">
+                Quick Links
+            </BitText>
+            <BitStack Horizontal="true" Gap="1rem" Wrap="true">
+                <BitButton Variant="BitVariant.Outline" Href="/prep">
+                    <BitIcon IconName="Processing" Style="margin-right: 0.5rem;" />
+                    Prep Area
+                </BitButton>
+                <BitButton Variant="BitVariant.Outline" Href="/proof">
+                    <BitIcon IconName="CheckList" Style="margin-right: 0.5rem;" />
+                    Proof Area
+                </BitButton>
+                <BitButton Variant="BitVariant.Outline" Href="/polish">
+                    <BitIcon IconName="Equalizer" Style="margin-right: 0.5rem;" />
+                    Polish Area
+                </BitButton>
+            </BitStack>
+        </BitCard>
+    </BitStack>
+</div>
+
+@code {
+    private void NavigateToPrep()
+    {
+        Navigation.NavigateTo("/prep");
+    }
+}
