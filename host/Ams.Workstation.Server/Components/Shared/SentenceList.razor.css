@@ -1,0 +1,81 @@
+/* SentenceList Component Styles - minimal CSS using BitUI theme variables */
+
+/* Card wrapper - BitCard handles most styling */
+::deep .sentence-list-card {
+    overflow-y: auto;
+}
+
+/* Header section */
+.sentence-list-header {
+    padding: 0.75rem 1rem;
+    border-bottom: 1px solid var(--bit-clr-brd-sec);
+}
+
+/* List container - BitBasicList handles structure */
+::deep .sentence-items {
+    list-style: none;
+    margin: 0;
+    padding: 0.5rem;
+}
+
+/* Individual sentence item */
+.sentence-item {
+    padding: 0.75rem 1rem;
+    margin-bottom: 0.25rem;
+    background: var(--bit-clr-bg-sec);
+    border-radius: 4px;
+    border-left: 3px solid transparent;
+    cursor: pointer;
+    transition: background-color 0.15s ease, border-color 0.15s ease;
+}
+
+.sentence-item:hover {
+    background: var(--bit-clr-bg-sec-hover);
+    border-left-color: var(--bit-clr-pri);
+}
+
+/* Active/playing state */
+.sentence-item.playing {
+    background: var(--bit-clr-pri-bg);
+    border-left-color: var(--bit-clr-pri);
+}
+
+/* Status indicators via left border */
+.sentence-item.status-warning {
+    border-left-color: var(--bit-clr-wrn);
+}
+
+.sentence-item.status-error {
+    border-left-color: var(--bit-clr-err);
+}
+
+/* Sentence ID accent color */
+.sentence-id {
+    font-weight: 600;
+    color: var(--bit-clr-sec);
+}
+
+/* Sentence text spacing */
+.sentence-text {
+    margin-top: 0.25rem;
+    line-height: 1.5;
+}
+
+/* Diff highlighting for sentence text */
+.sentence-text ::deep .diff-deleted,
+.sentence-text ::deep .diff-delete {
+    background-color: var(--bit-clr-err-bg);
+    color: var(--bit-clr-err);
+    text-decoration: line-through;
+    padding: 2px 4px;
+    border-radius: 3px;
+}
+
+.sentence-text ::deep .diff-inserted,
+.sentence-text ::deep .diff-insert {
+    background-color: var(--bit-clr-suc-bg);
+    color: var(--bit-clr-suc);
+    padding: 2px 4px;
+    border-radius: 3px;
+    font-weight: 500;
+}

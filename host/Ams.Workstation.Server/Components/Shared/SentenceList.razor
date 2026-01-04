@@ -1,0 +1,183 @@
+@using Ams.Workstation.Server.Models
+@inject IJSRuntime JS
+
+<BitCard Class="sentence-list-card">
+    <BitStack Horizontal="false" Gap="0">
+        @* Header *@
+        <div class="sentence-list-header">
+            <BitStack Horizontal="true" HorizontalAlign="BitAlignment.SpaceBetween" VerticalAlign="BitAlignment.Center">
+                <BitText Typography="BitTypography.Subtitle2">Chapter Sentences</BitText>
+                <BitText Typography="BitTypography.Caption1" Color="BitColor.SecondaryForeground">
+                    Click to seek | Arrow keys to navigate
+                </BitText>
+            </BitStack>
+        </div>
+
+        @* Sentence list *@
+        @if (Sentences == null || !Sentences.Any())
+        {
+            <BitStack HorizontalAlign="BitAlignment.Center" VerticalAlign="BitAlignment.Center" Style="padding: 2rem;">
+                <BitText Color="BitColor.SecondaryForeground" Style="font-style: italic;">
+                    No sentences loaded
+                </BitText>
+            </BitStack>
+        }
+        else
+        {
+            <BitBasicList TItem="SentenceViewModel"
+                          Items="Sentences.ToList()"
+                          Class="sentence-items">
+                <RowTemplate Context="sentence">
+                    <div class="@GetSentenceClasses(sentence)"
+                         id="@GetSentenceElementId(sentence.Id)"
+                         @onclick="() => HandleSentenceClick(sentence)">
+                        <BitStack Horizontal="true" HorizontalAlign="BitAlignment.SpaceBetween" VerticalAlign="BitAlignment.Center">
+                            <BitText Typography="BitTypography.Caption1" Color="BitColor.SecondaryForeground">
+                                <span class="sentence-id">#@sentence.Id</span>
+                            </BitText>
+                            <BitText Typography="BitTypography.Caption2" Color="BitColor.SecondaryForeground" Style="font-family: monospace;">
+                                @FormatTime(sentence.StartTime) - @FormatTime(sentence.EndTime)
+                            </BitText>
+                        </BitStack>
+                        <div class="sentence-text">
+                            @if (sentence.HasDiff && !string.IsNullOrEmpty(sentence.DiffHtml))
+                            {
+                                @((MarkupString)sentence.DiffHtml)
+                            }
+                            else
+                            {
+                                <BitText Typography="BitTypography.Body2">@sentence.Text</BitText>
+                            }
+                        </div>
+                    </div>
+                </RowTemplate>
+            </BitBasicList>
+        }
+    </BitStack>
+</BitCard>
+
+@code {
+    private int? _lastScrolledToId;
+
+    /// <summary>
+    /// The list of sentences to display.
+    /// </summary>
+    [Parameter]
+    public IEnumerable<SentenceViewModel>? Sentences { get; set; }
+
+    /// <summary>
+    /// The ID of the currently active sentence (used for external selection).
+    /// </summary>
+    [Parameter]
+    public int? ActiveSentenceId { get; set; }
+
+    /// <summary>
+    /// The current playback time in seconds (used for time-sync).
+    /// </summary>
+    [Parameter]
+    public double CurrentTime { get; set; }
+
+    /// <summary>
+    /// Callback when a sentence is selected by clicking.
+    /// </summary>
+    [Parameter]
+    public EventCallback<SentenceViewModel> OnSentenceSelected { get; set; }
+
+    /// <summary>
+    /// Gets the sentence containing the current time, or the ActiveSentenceId if set.
+    /// </summary>
+    private SentenceViewModel? GetCurrentSentence()
+    {
+        if (Sentences == null) return null;
+
+        // If ActiveSentenceId is explicitly set, use it
+        if (ActiveSentenceId.HasValue)
+        {
+            return Sentences.FirstOrDefault(s => s.Id == ActiveSentenceId.Value);
+        }
+
+        // Otherwise, find sentence containing current time
+        return Sentences.FirstOrDefault(s => CurrentTime >= s.StartTime && CurrentTime < s.EndTime);
+    }
+
+    private bool IsPlaying(SentenceViewModel sentence)
+    {
+        var current = GetCurrentSentence();
+        return current != null && current.Id == sentence.Id;
+    }
+
+    private string GetSentenceClasses(SentenceViewModel sentence)
+    {
+        var classes = new List<string> { "sentence-item" };
+
+        // Playing/active state
+        if (IsPlaying(sentence))
+        {
+            classes.Add("playing");
+        }
+
+        // Status-based styling
+        switch (sentence.Status)
+        {
+            case "error":
+                classes.Add("status-error");
+                break;
+            case "warning":
+                classes.Add("status-warning");
+                break;
+            default:
+                if (sentence.HasDiff)
+                {
+                    classes.Add("status-warning");
+                }
+                break;
+        }
+
+        return string.Join(" ", classes);
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        var current = GetCurrentSentence();
+        if (current != null && current.Id != _lastScrolledToId)
+        {
+            _lastScrolledToId = current.Id;
+            await ScrollToSentence(current.Id);
+        }
+    }
+
+    private async Task ScrollToSentence(int sentenceId)
+    {
+        try
+        {
+            var elementId = GetSentenceElementId(sentenceId);
+            await JS.InvokeVoidAsync("eval", $@"
+                (function() {{
+                    var el = document.getElementById('{elementId}');
+                    if (el) {{
+                        el.scrollIntoView({{ behavior: 'smooth', block: 'center' }});
+                    }}
+                }})();
+            ");
+        }
+        catch
+        {
+            // Ignore scroll errors (e.g., circuit disconnected)
+        }
+    }
+
+    private async Task HandleSentenceClick(SentenceViewModel sentence)
+    {
+        await OnSentenceSelected.InvokeAsync(sentence);
+    }
+
+    private static string GetSentenceElementId(int id) => $"sentence-{id}";
+
+    private static string FormatTime(double seconds)
+    {
+        if (double.IsNaN(seconds) || double.IsInfinity(seconds)) return "0:00";
+        var mins = (int)(seconds / 60);
+        var secs = (int)(seconds % 60);
+        return $"{mins}:{secs:D2}";
+    }
+}

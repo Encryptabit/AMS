@@ -17,6 +17,9 @@ builder.Services.AddHotKeys2();
 // Workstation state - scoped per circuit (owns BlazorWorkspace)
 builder.Services.AddScoped<WorkstationState>();
 
+// Chapter data service - scoped per circuit for sentence loading
+builder.Services.AddScoped<ChapterDataService>();
+
 // Ams.Core services - stateless services for alignment/ASR operations
 // Note: PipelineService and ValidationService require command dependencies
 // that are CLI-specific. Add them when needed with proper command registration.

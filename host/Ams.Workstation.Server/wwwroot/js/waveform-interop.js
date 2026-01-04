@@ -36,11 +36,12 @@ export function createWaveSurfer(elementId, options) {
         normalize: true,
         backend: 'MediaElement',
         pixelRatio: window.devicePixelRatio || 1,
-        minPxPerSec: options.minPxPerSec || 50,
-        fillParent: true,
-        scrollParent: options.scrollParent || false,
-        autoCenter: options.autoCenter !== undefined ? options.autoCenter : true,
-        hideScrollbar: options.hideScrollbar !== undefined ? options.hideScrollbar : true,
+        minPxPerSec: 100, // Let it fit to container width without scrolling
+        autoScroll: true,
+        autoCenter: true,
+        disableZoom: false,
+        scrollParent: true,
+        fillParent: false,
         barHeight: options.barHeight || 1,
     };
 
@@ -220,6 +221,7 @@ export function registerCallbacks(elementId, dotNetRef) {
     }
 
     instance.dotNetRef = dotNetRef;
+    instance.lastTimeUpdate = 0;
     const ws = instance.wavesurfer;
 
     // Ready event - fires when audio is decoded and waveform is drawn
@@ -229,7 +231,7 @@ export function registerCallbacks(elementId, dotNetRef) {
             .catch(err => console.warn('[waveform-interop] Error invoking OnWaveformReady:', err));
     });
 
-    // Time update event - fires during playback and seeking
+    // Time update event - throttled to ~10fps to reduce Blazor re-renders
     ws.on('audioprocess', (currentTime) => {
         dotNetRef.invokeMethodAsync('OnTimeUpdate', currentTime)
             .catch(err => console.warn('[waveform-interop] Error invoking OnTimeUpdate:', err));

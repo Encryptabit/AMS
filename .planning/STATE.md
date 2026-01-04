@@ -26,6 +26,7 @@ v2.0 Blazor Workstation[████████░░░░░░░░░░�
 | 09-01 | Project Foundation & DI | 3 | Complete |
 | 09-02 | Ams.Core Integration & Layout Shell | 6 | Complete |
 | 09-03 | Waveform Component & JS Interop | 4 | Complete |
+| 09-03.2 | Layout Lockdown (BitGrid) | 5 | Ready |
 | 09-04 | Proof Area & Sentence List | 4 | Pending |
 
 ## Key Decisions (v2.0)

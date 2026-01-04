@@ -128,6 +128,7 @@ Plans:
 - [x] 09-01: Project Foundation & DI (3 tasks) - Create Blazor Server project, configure Ams.Core integration - completed 2026-01-04
 - [x] 09-02: Ams.Core Integration & Layout Shell (6 tasks) - BlazorWorkspace, section loading, persistent state, navigation - completed 2026-01-03
 - [x] 09-03: Waveform Component & JS Interop (4 tasks) - wavesurfer.js integration, WaveformPlayer component - completed 2026-01-04
+- [ ] 09-03.2: Layout Lockdown (TBD tasks) - BitGrid adoption for all pages and components (INSERTED)
 - [ ] 09-04: Proof Area & Sentence List (4 tasks) - Chapter review workflow with keyboard shortcuts
 
 #### Phase 10: Ams.Core Data Integration
