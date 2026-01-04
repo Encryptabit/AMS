@@ -10,6 +10,10 @@
     <PackageReference Include="Toolbelt.Blazor.HotKeys2" Version="6.1.0" />
   </ItemGroup>
 
+  <ItemGroup>
+    <Folder Include="wwwroot\audio\" />
+  </ItemGroup>
+
   <PropertyGroup>
     <TargetFramework>net10.0</TargetFramework>
     <Nullable>enable</Nullable>
