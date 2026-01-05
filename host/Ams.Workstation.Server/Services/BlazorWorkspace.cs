@@ -1,7 +1,9 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Text.Json;
+using Ams.Core.Processors.Alignment.Anchors;
 using Ams.Core.Runtime.Artifacts;
 using Ams.Core.Runtime.Book;
 using Ams.Core.Runtime.Chapter;
@@ -11,7 +13,7 @@ namespace Ams.Workstation.Server.Services;
 
 /// <summary>
 /// Blazor workspace implementation following the CliWorkspace pattern.
-/// Scoped per circuit - each browser session gets its own instance.
+/// Singleton - single-user workstation with shared state across all requests.
 ///
 /// Data access follows explicit drill-down pattern:
 ///   workspace.Book.Chapters.CreateContext(...).Context.Audio.Current.Buffer
@@ -28,6 +30,9 @@ public sealed class BlazorWorkspace : IWorkspace, IDisposable
     private ChapterContextHandle? _currentChapterHandle;
     private string? _rootPath;
     private bool _disposed;
+
+    // Maps display title (e.g., "CHAPTER 3") to WAV stem (e.g., "03_CultistOfCerebon2_Ch3")
+    private readonly Dictionary<string, string> _stemByTitle = new(StringComparer.OrdinalIgnoreCase);
 
     public BlazorWorkspace()
     {
@@ -150,12 +155,16 @@ public sealed class BlazorWorkspace : IWorkspace, IDisposable
     /// Selects a chapter by name, opening its context handle.
     /// The handle remains open until another chapter is selected or workspace is disposed.
     /// </summary>
-    /// <param name="chapterName">The chapter name to select.</param>
+    /// <param name="chapterName">The chapter name (display title) to select.</param>
     /// <returns>True if chapter was opened successfully.</returns>
     public bool SelectChapter(string chapterName)
     {
-        if (string.IsNullOrEmpty(chapterName) || _manager == null)
+        if (string.IsNullOrEmpty(chapterName) || _manager == null || string.IsNullOrEmpty(_rootPath))
             return false;
+
+        // Resolve display title to WAV stem
+        // If not found in mapping, assume chapterName IS the stem (direct usage)
+        var chapterStem = _stemByTitle.GetValueOrDefault(chapterName, chapterName);
 
         // Dispose previous handle
         _currentChapterHandle?.Dispose();
@@ -163,17 +172,23 @@ public sealed class BlazorWorkspace : IWorkspace, IDisposable
 
         try
         {
+            // WAV files are in the root directory, not inside the chapter folder
+            var audioPath = Path.Combine(_rootPath, $"{chapterStem}.wav");
+            var chapterDir = Path.Combine(_rootPath, chapterStem);
+
             _currentChapterHandle = OpenChapter(new ChapterOpenOptions
             {
-                ChapterId = chapterName
+                ChapterId = chapterStem,
+                AudioFile = File.Exists(audioPath) ? new FileInfo(audioPath) : null,
+                ChapterDirectory = Directory.Exists(chapterDir) ? new DirectoryInfo(chapterDir) : null
             });
-            CurrentChapterName = chapterName;
+            CurrentChapterName = chapterName; // Store display name for UI
             SavePersistedState();
             return true;
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"Failed to open chapter '{chapterName}': {ex.Message}");
+            Console.WriteLine($"Failed to open chapter '{chapterName}' (stem: {chapterStem}): {ex.Message}");
             CurrentChapterName = null;
             return false;
         }
@@ -190,6 +205,7 @@ public sealed class BlazorWorkspace : IWorkspace, IDisposable
         _rootPath = null;
         CurrentChapterName = null;
         AvailableChapters.Clear();
+        _stemByTitle.Clear();
         SavePersistedState();
     }
 
@@ -219,30 +235,60 @@ public sealed class BlazorWorkspace : IWorkspace, IDisposable
         if (string.IsNullOrEmpty(_rootPath)) return;
 
         var indexPath = Path.Combine(_rootPath, "book-index.json");
+        _stemByTitle.Clear();
+
         try
         {
-            using var stream = File.OpenRead(indexPath);
-            using var doc = JsonDocument.Parse(stream);
-
-            // Book-index uses "sections" array with title, level, kind, etc.
-            if (doc.RootElement.TryGetProperty("sections", out var sections))
+            // Load book index for section matching
+            var bookIndexJson = File.ReadAllText(indexPath);
+            var bookIndex = JsonSerializer.Deserialize<BookIndex>(bookIndexJson, new JsonSerializerOptions
             {
-                foreach (var section in sections.EnumerateArray())
+                PropertyNameCaseInsensitive = true
+            });
+
+            if (bookIndex?.Sections == null || bookIndex.Sections.Length == 0)
+            {
+                Console.WriteLine("No sections found in book-index.json");
+                return;
+            }
+
+            // Scan for WAV files in root directory
+            var wavFiles = Directory.GetFiles(_rootPath, "*.wav", SearchOption.TopDirectoryOnly)
+                .Select(Path.GetFileNameWithoutExtension)
+                .Where(stem => !string.IsNullOrEmpty(stem))
+                .ToList();
+
+            // Match each WAV file to a section using SectionLocator
+            foreach (var wavStem in wavFiles)
+            {
+                var section = SectionLocator.ResolveSectionByTitle(bookIndex, wavStem);
+                if (section?.Title != null)
                 {
-                    if (section.TryGetProperty("title", out var titleProp))
+                    // Store mapping: title -> stem
+                    if (!_stemByTitle.ContainsKey(section.Title))
                     {
-                        var title = titleProp.GetString();
-                        if (!string.IsNullOrEmpty(title))
-                        {
-                            AvailableChapters.Add(title);
-                        }
+                        _stemByTitle[section.Title] = wavStem!;
+                        AvailableChapters.Add(section.Title);
                     }
                 }
             }
+
+            // Sort chapters by their order in the book index
+            var sectionOrder = bookIndex.Sections
+                .Select((s, i) => (s.Title, Index: i))
+                .Where(x => x.Title != null)
+                .ToDictionary(x => x.Title!, x => x.Index, StringComparer.OrdinalIgnoreCase);
+
+            AvailableChapters.Sort((a, b) =>
+            {
+                var aIdx = sectionOrder.GetValueOrDefault(a, int.MaxValue);
+                var bIdx = sectionOrder.GetValueOrDefault(b, int.MaxValue);
+                return aIdx.CompareTo(bIdx);
+            });
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"Failed to load book-index.json: {ex.Message}");
+            Console.WriteLine($"Failed to load chapters: {ex.Message}");
         }
     }
 

@@ -1,5 +1,6 @@
 using System;
 using System.IO;
+using Ams.Workstation.Server.Services;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Logging;
@@ -8,7 +9,7 @@ namespace Ams.Workstation.Server.Controllers;
 
 /// <summary>
 /// Serves audio files for the waveform player.
-/// Note: In Plan 4, this will integrate with Ams.Core for proper chapter audio paths.
+/// Streams audio from AudioBufferContext when a chapter is loaded.
 /// </summary>
 [ApiController]
 [Route("api/[controller]")]
@@ -16,11 +17,16 @@ public class AudioController : ControllerBase
 {
     private readonly IWebHostEnvironment _environment;
     private readonly ILogger<AudioController> _logger;
+    private readonly BlazorWorkspace _workspace;
 
-    public AudioController(IWebHostEnvironment environment, ILogger<AudioController> logger)
+    public AudioController(
+        IWebHostEnvironment environment,
+        ILogger<AudioController> logger,
+        BlazorWorkspace workspace)
     {
         _environment = environment;
         _logger = logger;
+        _workspace = workspace;
     }
 
     /// <summary>
@@ -56,21 +62,41 @@ public class AudioController : ControllerBase
     }
 
     /// <summary>
-    /// Gets the audio URL for a chapter.
-    /// In Plan 4, this will resolve the chapter name to its actual audio path via Ams.Core.
+    /// Gets the audio for a chapter from the workspace's AudioBufferContext.
+    /// Streams WAV data from the loaded AudioBuffer.
     /// </summary>
     [HttpGet("chapter/{chapterName}")]
     public IActionResult GetChapterAudio(string chapterName)
     {
-        // TODO: In Plan 4, integrate with workspace to get actual chapter audio path
-        // For now, return sample audio for testing
-        var samplePath = Path.Combine(_environment.WebRootPath, "audio", "sample.wav");
-        if (System.IO.File.Exists(samplePath))
+        if (_workspace.CurrentChapterHandle is null)
         {
-            return ServeAudioFile(samplePath);
+            _logger.LogWarning("GetChapterAudio called but no chapter is loaded");
+            return NotFound("No chapter loaded");
         }
 
-        return NotFound($"Audio for chapter '{chapterName}' not found (sample audio not configured)");
+        try
+        {
+            var audioContext = _workspace.CurrentChapterHandle.Chapter.Audio.Current;
+            var buffer = audioContext.Buffer;
+
+            if (buffer is null)
+            {
+                _logger.LogWarning("Audio buffer not available for chapter '{ChapterName}'", chapterName);
+                return NotFound("Audio buffer not available");
+            }
+
+            _logger.LogDebug(
+                "Streaming audio for chapter '{ChapterName}': {Channels}ch, {SampleRate}Hz, {Length} samples",
+                chapterName, buffer.Channels, buffer.SampleRate, buffer.Length);
+
+            var stream = buffer.ToWavStream();
+            return File(stream, "audio/wav", enableRangeProcessing: true);
+        }
+        catch (InvalidOperationException ex)
+        {
+            _logger.LogWarning(ex, "No audio buffers registered for chapter '{ChapterName}'", chapterName);
+            return NotFound($"No audio buffers available for chapter '{chapterName}'");
+        }
     }
 
     private IActionResult ServeAudioFile(string filePath)

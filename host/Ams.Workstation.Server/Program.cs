@@ -14,11 +14,12 @@ builder.Services.AddRazorComponents()
 builder.Services.AddControllers();
 builder.Services.AddHotKeys2();
 
-// Blazor workspace - scoped per circuit
-builder.Services.AddScoped<BlazorWorkspace>();
+// Blazor workspace - singleton for single-user workstation
+// Allows API controllers and Blazor circuits to share the same state
+builder.Services.AddSingleton<BlazorWorkspace>();
 
-// Chapter data service - scoped per circuit for sentence loading
-builder.Services.AddScoped<ChapterDataService>();
+// Chapter data service - singleton (reads from workspace)
+builder.Services.AddSingleton<ChapterDataService>();
 
 // Ams.Core services - stateless services for alignment/ASR operations
 // Note: PipelineService and ValidationService require command dependencies
