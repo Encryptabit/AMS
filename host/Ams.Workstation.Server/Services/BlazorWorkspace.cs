@@ -3,7 +3,6 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Text.Json;
-using Ams.Core.Processors.Alignment.Anchors;
 using Ams.Core.Runtime.Artifacts;
 using Ams.Core.Runtime.Book;
 using Ams.Core.Runtime.Chapter;
@@ -234,57 +233,28 @@ public sealed class BlazorWorkspace : IWorkspace, IDisposable
     {
         if (string.IsNullOrEmpty(_rootPath)) return;
 
-        var indexPath = Path.Combine(_rootPath, "book-index.json");
         _stemByTitle.Clear();
 
         try
         {
-            // Load book index for section matching
-            var bookIndexJson = File.ReadAllText(indexPath);
-            var bookIndex = JsonSerializer.Deserialize<BookIndex>(bookIndexJson, new JsonSerializerOptions
-            {
-                PropertyNameCaseInsensitive = true
-            });
+            // Use ChapterDiscoveryService to scan WAV files and match to book index sections
+            var discoveredChapters = ChapterDiscoveryService.DiscoverChapters(_rootPath);
 
-            if (bookIndex?.Sections == null || bookIndex.Sections.Length == 0)
+            if (discoveredChapters.Count == 0)
             {
-                Console.WriteLine("No sections found in book-index.json");
+                Console.WriteLine("No chapters discovered in working directory");
                 return;
             }
 
-            // Scan for WAV files in root directory
-            var wavFiles = Directory.GetFiles(_rootPath, "*.wav", SearchOption.TopDirectoryOnly)
-                .Select(Path.GetFileNameWithoutExtension)
-                .Where(stem => !string.IsNullOrEmpty(stem))
-                .ToList();
-
-            // Match each WAV file to a section using SectionLocator
-            foreach (var wavStem in wavFiles)
+            // Populate mappings from discovered chapters
+            foreach (var chapter in discoveredChapters)
             {
-                var section = SectionLocator.ResolveSectionByTitle(bookIndex, wavStem);
-                if (section?.Title != null)
+                if (!_stemByTitle.ContainsKey(chapter.DisplayTitle))
                 {
-                    // Store mapping: title -> stem
-                    if (!_stemByTitle.ContainsKey(section.Title))
-                    {
-                        _stemByTitle[section.Title] = wavStem!;
-                        AvailableChapters.Add(section.Title);
-                    }
+                    _stemByTitle[chapter.DisplayTitle] = chapter.Stem;
+                    AvailableChapters.Add(chapter.DisplayTitle);
                 }
             }
-
-            // Sort chapters by their order in the book index
-            var sectionOrder = bookIndex.Sections
-                .Select((s, i) => (s.Title, Index: i))
-                .Where(x => x.Title != null)
-                .ToDictionary(x => x.Title!, x => x.Index, StringComparer.OrdinalIgnoreCase);
-
-            AvailableChapters.Sort((a, b) =>
-            {
-                var aIdx = sectionOrder.GetValueOrDefault(a, int.MaxValue);
-                var bIdx = sectionOrder.GetValueOrDefault(b, int.MaxValue);
-                return aIdx.CompareTo(bIdx);
-            });
         }
         catch (Exception ex)
         {

@@ -8,7 +8,7 @@ Audio Management System - CLI and core library for audio processing, ASR, forced
 
 **Milestone**: v2.0 Blazor Workstation
 **Phase**: 9 - Blazor Audiobook Workstation
-**Plan**: 4/4 - Complete
+**Plan**: 5/5 - Complete
 **Status**: Phase complete
 
 ## Progress
@@ -27,8 +27,12 @@ v2.0 Blazor Workstation[██████████░░░░░░░░�
 | 09-02 | Ams.Core Integration & Layout Shell | 6 | Complete |
 | 09-03 | Waveform Component & JS Interop | 4 | Complete |
 | 09-04 | Real Data Integration (Audio + Sentences) | 4 | Complete |
-| 09-05 | Keyboard Nav & SentenceList Component | - | Pending |
+| 09-05 | Chapter Discovery Consolidation | 3 | Complete |
 | 09-06 | Layout Lockdown (BitGrid) | 5 | Deferred |
+
+## Future Objectives (Unscheduled)
+
+- Keyboard Navigation & SentenceList Component enhancements
 
 ## Key Decisions (v2.0)
 
@@ -87,7 +91,7 @@ None currently.
 
 ## Session Continuity
 
-Last session: 2026-01-04
+Last session: 2026-01-08
 Branch: `blazor-workstation`
-Status: Phase 9 complete (all 4 plans executed)
-Note: Real data integration working - audio streams from AudioBuffer, sentences from HydratedTranscript
+Status: Phase 9 complete (all 5 plans executed)
+Note: ChapterDiscoveryService consolidates chapter scanning logic from CLI REPL and BlazorWorkspace
