@@ -21,6 +21,10 @@ builder.Services.AddSingleton<BlazorWorkspace>();
 // Chapter data service - singleton (reads from workspace)
 builder.Services.AddSingleton<ChapterDataService>();
 
+// Proof/Validation services - transient (stateless computation)
+builder.Services.AddTransient<ValidationMetricsService>();
+builder.Services.AddTransient<ProofReportService>();
+
 // Ams.Core services - stateless services for alignment/ASR operations
 // Note: PipelineService and ValidationService require command dependencies
 // that are CLI-specific. Add them when needed with proper command registration.

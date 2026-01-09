@@ -131,11 +131,19 @@ Plans:
 - [x] 09-04: Real Data Integration (4 tasks) - Audio streaming from AudioBuffer, sentences from HydratedTranscript - completed 2026-01-04
 - [x] 09-05: Chapter Discovery Consolidation (3 tasks) - ChapterDiscoveryService in Ams.Core, BlazorWorkspace refactor - completed 2026-01-08
 
-#### Phase 10: Ams.Core Data Integration
-**Goal**: Connect workstation to real Ams.Core data - load books, chapters, hydrate.json, audio files
+#### Phase 10: Proof Feature Parity
+**Goal**: Complete validation-viewer feature parity in Proof area - overview, error patterns, diff visualization, review tracking, CRX export
 **Depends on**: Phase 9
-**Research**: Unlikely (using existing Ams.Core types)
-**Plans**: TBD
+**Research**: Complete (comprehensive validation-viewer analysis)
+**Plans**: 6
+
+Plans:
+- [x] 10-01: Proof Backend Services (3 tasks) - ValidationMetricsService, ProofReportService, ProofApiController - completed 2026-01-09
+- [ ] 10-02: Book Overview Page (3 tasks) - Stats grid, chapter cards, navigation
+- [ ] 10-03: Error Patterns Aggregation (3 tasks) - ErrorPatternService, aggregation endpoint, patterns page
+- [ ] 10-04: Errors View Enhancement (3 tasks) - WER-sorted sentences, diff visualization, error cards
+- [ ] 10-05: Review Status & Ignored Patterns (3 tasks) - Persistence services, API endpoints, UI updates
+- [ ] 10-06: Audio Export & CRX Foundation (3 tasks) - Segment export, CRX service, export modal
 
 #### Phase 11: Prep Area Implementation
 **Goal**: Pipeline orchestration UI - run ASR, alignment, MFA from workstation
@@ -166,6 +174,6 @@ Phases execute in numeric order: 1 → 2 → ... → 12
 | 8. GPU Rendering Research | v2.0 | 2/2 | Complete (on ice) | 2026-01-01 |
 | 8.1. SkiaSharp vs VelloSharp POC | v2.0 | 1/2 | Paused (pivoted) | 2026-01-03 |
 | 9. Blazor Workstation | v2.0 | 5/5 | Complete | 2026-01-08 |
-| 10. Ams.Core Data Integration | v2.0 | 0/? | Not started | - |
+| 10. Proof Feature Parity | v2.0 | 1/6 | In progress | - |
 | 11. Prep Area Implementation | v2.0 | 0/? | Not started | - |
 | 12. Polish Area Foundation | v2.0 | 0/? | Not started | - |
