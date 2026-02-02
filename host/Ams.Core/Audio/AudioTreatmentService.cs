@@ -1,5 +1,3 @@
-using System.Globalization;
-using System.Text;
 using Ams.Core.Artifacts;
 using Ams.Core.Processors;
 using Ams.Core.Runtime.Chapter;
@@ -80,13 +78,16 @@ public sealed class AudioTreatmentService
         return await TreatChapterCoreAsync(chapter, roomtoneBuffer, outputPath, options, cancellationToken);
     }
 
-    private async Task<TreatmentResult> TreatChapterCoreAsync(
+    private Task<TreatmentResult> TreatChapterCoreAsync(
         ChapterContext chapter,
         AudioBuffer roomtoneBuffer,
         string outputPath,
         TreatmentOptions? options,
         CancellationToken cancellationToken)
     {
+        // CancellationToken check at entry point
+        cancellationToken.ThrowIfCancellationRequested();
+
         var opts = options ?? new TreatmentOptions();
 
         // Get chapter audio from the AudioBufferManager
@@ -113,103 +114,77 @@ public sealed class AudioTreatmentService
             "Speech boundaries: title={TitleStart:F3}s-{TitleEnd:F3}s, content={ContentStart:F3}s-{ContentEnd:F3}s",
             titleStart, titleEnd, contentStart, contentEnd);
 
-        // Create temp directory for intermediate files
-        var tempDir = Path.Combine(Path.GetTempPath(), "ams", "treat", Guid.NewGuid().ToString("N"));
-        Directory.CreateDirectory(tempDir);
+        // Check if we have a separate title segment (titleStart >= 0 AND has positive duration)
+        bool hasTitle = titleStart >= 0 && titleEnd > titleStart;
 
-        try
+        // Build segments in-memory (no temp files)
+        var segments = new List<AudioBuffer>();
+
+        // Preroll (always present)
+        var prerollBuffer = PrepareRoomtoneSegment(roomtoneBuffer, opts.PrerollSeconds);
+        segments.Add(prerollBuffer);
+
+        double titleDuration = 0;
+        if (hasTitle)
         {
-            // Check if we have a separate title segment (titleStart >= 0 AND has positive duration)
-            bool hasTitle = titleStart >= 0 && titleEnd > titleStart;
-            var segmentFiles = new List<string>();
-
-            // Preroll (always present)
-            var prerollPath = Path.Combine(tempDir, "01-preroll.wav");
-            var prerollBuffer = PrepareRoomtoneSegment(roomtoneBuffer, opts.PrerollSeconds);
-            AudioProcessor.EncodeWav(prerollPath, prerollBuffer);
-            segmentFiles.Add(prerollPath);
-
-            double titleDuration = 0;
-            if (hasTitle)
-            {
-                // Extract title segment
-                Log.Debug("Extracting title segment: {Start:F3}s - {End:F3}s", titleStart, titleEnd);
-                var titlePath = Path.Combine(tempDir, "02-title.wav");
-                var titleBuffer = AudioProcessor.Trim(
-                    chapterBuffer,
-                    TimeSpan.FromSeconds(titleStart),
-                    TimeSpan.FromSeconds(titleEnd));
-                AudioProcessor.EncodeWav(titlePath, titleBuffer);
-                segmentFiles.Add(titlePath);
-                titleDuration = titleEnd - titleStart;
-
-                // Gap between title and content
-                var gapPath = Path.Combine(tempDir, "03-gap.wav");
-                var gapBuffer = PrepareRoomtoneSegment(roomtoneBuffer, opts.ChapterToContentGapSeconds);
-                AudioProcessor.EncodeWav(gapPath, gapBuffer);
-                segmentFiles.Add(gapPath);
-            }
-
-            // Validate content segment has positive duration
-            if (contentEnd <= contentStart)
-            {
-                throw new InvalidOperationException(
-                    $"Content segment has zero or negative duration: {contentStart:F3}s - {contentEnd:F3}s");
-            }
-
-            // Extract content segment
-            Log.Debug("Extracting content segment: {Start:F3}s - {End:F3}s", contentStart, contentEnd);
-            var contentPath = Path.Combine(tempDir, "04-content.wav");
-            var contentBuffer = AudioProcessor.Trim(
+            // Extract title segment
+            Log.Debug("Extracting title segment: {Start:F3}s - {End:F3}s", titleStart, titleEnd);
+            var titleBuffer = AudioProcessor.Trim(
                 chapterBuffer,
-                TimeSpan.FromSeconds(contentStart),
-                TimeSpan.FromSeconds(contentEnd));
-            AudioProcessor.EncodeWav(contentPath, contentBuffer);
-            segmentFiles.Add(contentPath);
+                TimeSpan.FromSeconds(titleStart),
+                TimeSpan.FromSeconds(titleEnd));
+            segments.Add(titleBuffer);
+            titleDuration = titleEnd - titleStart;
 
-            // Postroll (always present)
-            var postrollPath = Path.Combine(tempDir, "05-postroll.wav");
-            var postrollBuffer = PrepareRoomtoneSegment(roomtoneBuffer, opts.PostrollSeconds);
-            AudioProcessor.EncodeWav(postrollPath, postrollBuffer);
-            segmentFiles.Add(postrollPath);
-
-            // Use FFmpeg concat demuxer to assemble final audio
-            await ConcatAudioFilesAsync(
-                segmentFiles,
-                outputPath,
-                tempDir,
-                cancellationToken);
-
-            // Calculate total duration
-            var totalDuration = opts.PrerollSeconds
-                + titleDuration
-                + (hasTitle ? opts.ChapterToContentGapSeconds : 0)
-                + (contentEnd - contentStart)
-                + opts.PostrollSeconds;
-
-            return new TreatmentResult(
-                outputPath,
-                hasTitle ? titleStart : -1,
-                hasTitle ? titleEnd : -1,
-                contentStart,
-                contentEnd,
-                totalDuration);
+            // Gap between title and content
+            var gapBuffer = PrepareRoomtoneSegment(roomtoneBuffer, opts.ChapterToContentGapSeconds);
+            segments.Add(gapBuffer);
         }
-        finally
+
+        // Validate content segment has positive duration
+        if (contentEnd <= contentStart)
         {
-            // Cleanup temp directory
-            try
-            {
-                if (Directory.Exists(tempDir))
-                {
-                    Directory.Delete(tempDir, recursive: true);
-                }
-            }
-            catch
-            {
-                // Best-effort cleanup
-            }
+            throw new InvalidOperationException(
+                $"Content segment has zero or negative duration: {contentStart:F3}s - {contentEnd:F3}s");
         }
+
+        // Extract content segment
+        Log.Debug("Extracting content segment: {Start:F3}s - {End:F3}s", contentStart, contentEnd);
+        var contentBuffer = AudioProcessor.Trim(
+            chapterBuffer,
+            TimeSpan.FromSeconds(contentStart),
+            TimeSpan.FromSeconds(contentEnd));
+        segments.Add(contentBuffer);
+
+        // Postroll (always present)
+        var postrollBuffer = PrepareRoomtoneSegment(roomtoneBuffer, opts.PostrollSeconds);
+        segments.Add(postrollBuffer);
+
+        // Concatenate all segments in-memory
+        var concatenatedBuffer = AudioBuffer.Concat(segments);
+
+        // Single encode to disk
+        var outputDir = Path.GetDirectoryName(outputPath);
+        if (!string.IsNullOrEmpty(outputDir))
+        {
+            Directory.CreateDirectory(outputDir);
+        }
+        AudioProcessor.EncodeWav(outputPath, concatenatedBuffer);
+
+        // Calculate total duration
+        var totalDuration = opts.PrerollSeconds
+            + titleDuration
+            + (hasTitle ? opts.ChapterToContentGapSeconds : 0)
+            + (contentEnd - contentStart)
+            + opts.PostrollSeconds;
+
+        return Task.FromResult(new TreatmentResult(
+            outputPath,
+            hasTitle ? titleStart : -1,
+            hasTitle ? titleEnd : -1,
+            contentStart,
+            contentEnd,
+            totalDuration));
     }
 
     /// <summary>
@@ -344,73 +319,4 @@ public sealed class AudioTreatmentService
         return buffer;
     }
 
-    /// <summary>
-    /// Concatenates multiple audio files using FFmpeg concat demuxer.
-    /// </summary>
-    private static async Task ConcatAudioFilesAsync(
-        IReadOnlyList<string> inputFiles,
-        string outputPath,
-        string tempDir,
-        CancellationToken cancellationToken)
-    {
-        // Create concat list file
-        var concatListPath = Path.Combine(tempDir, "concat.txt");
-        var listBuilder = new StringBuilder();
-        foreach (var file in inputFiles)
-        {
-            // FFmpeg concat demuxer requires forward slashes and escaping
-            var escaped = file.Replace("\\", "/").Replace("'", "'\\''");
-            listBuilder.AppendLine(CultureInfo.InvariantCulture, $"file '{escaped}'");
-        }
-        await File.WriteAllTextAsync(concatListPath, listBuilder.ToString(), cancellationToken);
-
-        // Ensure output directory exists
-        var outputDir = Path.GetDirectoryName(outputPath);
-        if (!string.IsNullOrEmpty(outputDir))
-        {
-            Directory.CreateDirectory(outputDir);
-        }
-
-        // Run FFmpeg concat demuxer
-        var psi = new System.Diagnostics.ProcessStartInfo
-        {
-            FileName = "ffmpeg",
-            UseShellExecute = false,
-            CreateNoWindow = true,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true
-        };
-
-        psi.ArgumentList.Add("-y");
-        psi.ArgumentList.Add("-f");
-        psi.ArgumentList.Add("concat");
-        psi.ArgumentList.Add("-safe");
-        psi.ArgumentList.Add("0");
-        psi.ArgumentList.Add("-i");
-        psi.ArgumentList.Add(concatListPath);
-        psi.ArgumentList.Add("-c");
-        psi.ArgumentList.Add("copy");
-        psi.ArgumentList.Add(outputPath);
-
-        using var process = System.Diagnostics.Process.Start(psi);
-        if (process == null)
-        {
-            throw new InvalidOperationException("Failed to start FFmpeg process.");
-        }
-
-        // Must read stdout/stderr asynchronously to prevent deadlock when buffers fill
-        var stderrTask = process.StandardError.ReadToEndAsync(cancellationToken);
-        var stdoutTask = process.StandardOutput.ReadToEndAsync(cancellationToken);
-
-        await process.WaitForExitAsync(cancellationToken);
-
-        var stderr = await stderrTask;
-        await stdoutTask; // Discard stdout but ensure it's drained
-
-        if (process.ExitCode != 0)
-        {
-            throw new InvalidOperationException(
-                $"FFmpeg concat failed with exit code {process.ExitCode}: {stderr}");
-        }
-    }
 }

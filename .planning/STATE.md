@@ -7,17 +7,23 @@ Audio Management System - CLI and core library for audio processing, ASR, forced
 ## Current Position
 
 **Milestone**: v2.0 Blazor Workstation
-**Phase**: 10.1 - Audio Treatment (INSERTED)
-**Plan**: 0/1 planned
-**Status**: Ready to execute
+**Phase**: 10.1.1 - Treatment Optimization (INSERTED)
+**Plan**: 1/1 (complete)
+**Status**: Phase complete
 
 ## Progress
 
 ```
 v1.0 Codebase Audit    [████████████████████] 100% - SHIPPED
 v1.1 Execute Refactor  [████████████████████] 100% - SHIPPED
-v2.0 Blazor Workstation[██████████░░░░░░░░░░]  52% - Phase 10 in progress
+v2.0 Blazor Workstation[████████████░░░░░░░░]  57% - Phase 10.1.1 complete
 ```
+
+## Phase 10.1 Plans
+
+| Plan | Name | Tasks | Status |
+|------|------|-------|--------|
+| 10.1-01 | AudioTreatmentService + TreatCommand | 3 | Complete |
 
 ## Phase 9 Plans
 
@@ -76,9 +82,9 @@ poc/VelloSharpPoc/     - Avalonia + VelloSharp (child window fails)
 
 ## Next Action
 
-Execute Phase 10.1 (inserted):
+Phase 10.1.1 complete. Resume Phase 10 (Proof Feature Parity):
 ```
-/gsd:execute-plan .planning/phases/10.1-audio-treatment/10.1-01-PLAN.md
+/gsd:plan-phase 10-02
 ```
 
 ## Deferred Issues
@@ -93,5 +99,5 @@ None currently.
 
 Last session: 2026-02-02
 Branch: `blazor-workstation`
-Status: Phase 10.1 planned (Audio Treatment - inserted detour)
-Note: AudioTreatmentService + TreatCommand CLI planned for production-ready chapter WAV assembly
+Status: Phase 10.1.1 complete (Treatment Optimization)
+Note: Optimized AudioTreatmentService with in-memory buffer concat, no temp files, no external FFmpeg process.

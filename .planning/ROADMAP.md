@@ -145,9 +145,26 @@ Plans:
 **Depends on**: Phase 10-01 complete
 **Research**: None (uses existing FFmpeg/AudioProcessor patterns)
 **Plans**: 1
+**Status**: Complete
 
 Plans:
-- [ ] 10.1-01: Audio Treatment Service & CLI (3 tasks) - AudioTreatmentService, TreatCommand, verification
+- [x] 10.1-01: Audio Treatment Service & CLI (3 tasks) - AudioTreatmentService, TreatCommand, verification - completed 2026-02-02
+
+#### Phase 10.1.1: Treatment Optimization (INSERTED)
+**Goal**: Optimize AudioTreatmentService to use in-memory buffer manipulation, remove external FFmpeg process and temp files
+**Depends on**: Phase 10.1 complete
+**Research**: None (uses existing FfFilterGraph/AudioBuffer patterns)
+**Plans**: 1
+**Status**: Complete
+
+Plans:
+- [x] 10.1.1-01: In-memory buffer concatenation & service refactor (2 tasks) - completed 2026-02-02
+
+**Optimization targets:**
+- Remove external FFmpeg process spawning (use internal FfFilterGraph)
+- Remove temp file artifacts (no intermediate WAV files)
+- In-memory buffer concatenation
+- Single encode to disk at the end
 
 #### Phase 10 (continued): Proof Feature Parity
 - [ ] 10-02: Book Overview Page (3 tasks) - Stats grid, chapter cards, navigation
@@ -186,6 +203,7 @@ Phases execute in numeric order: 1 → 2 → ... → 12
 | 8.1. SkiaSharp vs VelloSharp POC | v2.0 | 1/2 | Paused (pivoted) | 2026-01-03 |
 | 9. Blazor Workstation | v2.0 | 5/5 | Complete | 2026-01-08 |
 | 10. Proof Feature Parity | v2.0 | 1/6 | Paused (10.1 inserted) | - |
-| 10.1. Audio Treatment | v2.0 | 0/1 | Ready | - |
+| 10.1. Audio Treatment | v2.0 | 1/1 | Complete | 2026-02-02 |
+| 10.1.1. Treatment Optimization | v2.0 | 1/1 | Complete | 2026-02-02 |
 | 11. Prep Area Implementation | v2.0 | 0/? | Not started | - |
 | 12. Polish Area Foundation | v2.0 | 0/? | Not started | - |
