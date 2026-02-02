@@ -17,7 +17,7 @@ public static class TreatCommand
 
         var roomtoneOption = new Option<FileInfo?>(
             "--roomtone",
-            "Path to roomtone.wav file (defaults to book directory)");
+            "Override roomtone.wav file (defaults to book's roomtone.wav via Book.Audio.Roomtone)");
         roomtoneOption.AddAlias("-r");
 
         var prerollOption = new Option<double?>(
@@ -72,16 +72,6 @@ public static class TreatCommand
                 var bookIndexFile = CommandInputResolver.ResolveBookIndex(null, mustExist: true);
                 var workspace = CommandInputResolver.ResolveWorkspace(bookIndexFile);
 
-                // Resolve roomtone path
-                var roomtonePath = ResolveRoomtonePath(roomtoneValue, workspace.RootPath);
-                if (!File.Exists(roomtonePath))
-                {
-                    Log.Error("Roomtone file not found: {Path}", roomtonePath);
-                    Log.Error("Expected roomtone.wav in book directory. Create or specify with --roomtone.");
-                    context.ExitCode = 1;
-                    return;
-                }
-
                 // Build treatment options
                 var options = new TreatmentOptions();
                 if (prerollValue.HasValue)
@@ -134,15 +124,54 @@ public static class TreatCommand
                 Log.Info("Treating chapter: {Chapter}", chapterId);
 
                 var service = new AudioTreatmentService();
-                var result = await service.TreatChapterAsync(
-                    chapter,
-                    roomtonePath,
-                    outputPath,
-                    options,
-                    cancellationToken);
+                AudioTreatmentService.TreatmentResult result;
 
-                Log.Info("  Title: {Start:F2}s - {End:F2}s",
-                    result.TitleStartSec, result.TitleEndSec);
+                if (roomtoneValue is not null)
+                {
+                    // Use explicit roomtone override
+                    if (!roomtoneValue.Exists)
+                    {
+                        Log.Error("Roomtone file not found: {Path}", roomtoneValue.FullName);
+                        context.ExitCode = 1;
+                        return;
+                    }
+
+                    Log.Debug("Using roomtone override: {Path}", roomtoneValue.FullName);
+                    result = await service.TreatChapterAsync(
+                        chapter,
+                        roomtoneValue.FullName,
+                        outputPath,
+                        options,
+                        cancellationToken);
+                }
+                else
+                {
+                    // Use book's roomtone via Book.Audio.Roomtone
+                    if (!chapter.Book.Audio.HasRoomtone)
+                    {
+                        Log.Error("Roomtone file not found: {Path}", chapter.Book.Audio.RoomtonePath);
+                        Log.Error("Create a roomtone.wav file in the book directory or specify with --roomtone.");
+                        context.ExitCode = 1;
+                        return;
+                    }
+
+                    Log.Debug("Using book roomtone: {Path}", chapter.Book.Audio.RoomtonePath);
+                    result = await service.TreatChapterAsync(
+                        chapter,
+                        outputPath,
+                        options,
+                        cancellationToken);
+                }
+
+                if (result.TitleStartSec >= 0)
+                {
+                    Log.Info("  Title: {Start:F2}s - {End:F2}s",
+                        result.TitleStartSec, result.TitleEndSec);
+                }
+                else
+                {
+                    Log.Info("  Title: (none detected)");
+                }
                 Log.Info("  Content: {Start:F2}s - {End:F2}s",
                     result.ContentStartSec, result.ContentEndSec);
                 Log.Info("  Output: {Path} ({Duration:F1}s)",
@@ -161,16 +190,5 @@ public static class TreatCommand
         });
 
         return cmd;
-    }
-
-    private static string ResolveRoomtonePath(FileInfo? provided, string workspaceRoot)
-    {
-        if (provided is not null)
-        {
-            return provided.FullName;
-        }
-
-        // Default to roomtone.wav in workspace root
-        return Path.Combine(workspaceRoot, "roomtone.wav");
     }
 }

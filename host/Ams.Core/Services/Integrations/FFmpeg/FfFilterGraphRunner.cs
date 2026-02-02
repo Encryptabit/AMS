@@ -154,14 +154,23 @@ namespace Ams.Core.Services.Integrations.FFmpeg
                 while (offset < total)
                 {
                     int take = Math.Min(ChunkSamples, total - offset);
-                    SendFrame(state, offset, take, pts);
+                    bool continueFeeding = SendFrame(state, offset, take, pts);
+                    if (!continueFeeding)
+                    {
+                        // Filter signaled it doesn't need more input (e.g., atrim reached end time)
+                        break;
+                    }
                     pts += take;
                     offset += take;
                     Drain();
                 }
             }
 
-            private void SendFrame(GraphInputState state, int offset, int sampleCount, long pts)
+            /// <summary>
+            /// Sends a frame to the filter graph.
+            /// Returns false if the filter signals EOF (doesn't need more input), true otherwise.
+            /// </summary>
+            private bool SendFrame(GraphInputState state, int offset, int sampleCount, long pts)
             {
                 var frame = state.Frame;
                 if (frame == null)
@@ -182,8 +191,14 @@ namespace Ams.Core.Services.Integrations.FFmpeg
                         dst[baseIndex + ch] = planar[ch][offset + i];
                 }
 
-                FfUtils.ThrowIfError(ffmpeg.av_buffersrc_add_frame_flags(state.Source, frame, BufferSrcFlagKeepRef),
-                    nameof(ffmpeg.av_buffersrc_add_frame_flags));
+                int ret = ffmpeg.av_buffersrc_add_frame_flags(state.Source, frame, BufferSrcFlagKeepRef);
+
+                // AVERROR_EOF means the filter doesn't need more input (e.g., atrim reached end time)
+                if (ret == ffmpeg.AVERROR_EOF)
+                    return false;
+
+                FfUtils.ThrowIfError(ret, nameof(ffmpeg.av_buffersrc_add_frame_flags));
+                return true;
             }
 
             private void Drain(bool final = false)

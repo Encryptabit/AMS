@@ -7,9 +7,9 @@ Audio Management System - CLI and core library for audio processing, ASR, forced
 ## Current Position
 
 **Milestone**: v2.0 Blazor Workstation
-**Phase**: 10 - Proof Feature Parity
-**Plan**: 1/6 complete
-**Status**: In progress
+**Phase**: 10.1 - Audio Treatment (INSERTED)
+**Plan**: 0/1 planned
+**Status**: Ready to execute
 
 ## Progress
 
@@ -76,9 +76,9 @@ poc/VelloSharpPoc/     - Avalonia + VelloSharp (child window fails)
 
 ## Next Action
 
-Continue Phase 10:
+Execute Phase 10.1 (inserted):
 ```
-/gsd:execute-plan .planning/phases/10-proof-feature-parity/10-02-PLAN.md
+/gsd:execute-plan .planning/phases/10.1-audio-treatment/10.1-01-PLAN.md
 ```
 
 ## Deferred Issues
@@ -91,7 +91,7 @@ None currently.
 
 ## Session Continuity
 
-Last session: 2026-01-09
+Last session: 2026-02-02
 Branch: `blazor-workstation`
-Status: Phase 10 plan 1 complete (Proof Backend Services)
-Note: ValidationMetricsService + ProofReportService + ProofApiController created
+Status: Phase 10.1 planned (Audio Treatment - inserted detour)
+Note: AudioTreatmentService + TreatCommand CLI planned for production-ready chapter WAV assembly

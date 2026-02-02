@@ -139,6 +139,17 @@ Plans:
 
 Plans:
 - [x] 10-01: Proof Backend Services (3 tasks) - ValidationMetricsService, ProofReportService, ProofApiController - completed 2026-01-09
+
+#### Phase 10.1: Audio Treatment (INSERTED)
+**Goal**: Create audio treatment pipeline for production-ready chapter WAV files with roomtone spacing
+**Depends on**: Phase 10-01 complete
+**Research**: None (uses existing FFmpeg/AudioProcessor patterns)
+**Plans**: 1
+
+Plans:
+- [ ] 10.1-01: Audio Treatment Service & CLI (3 tasks) - AudioTreatmentService, TreatCommand, verification
+
+#### Phase 10 (continued): Proof Feature Parity
 - [ ] 10-02: Book Overview Page (3 tasks) - Stats grid, chapter cards, navigation
 - [ ] 10-03: Error Patterns Aggregation (3 tasks) - ErrorPatternService, aggregation endpoint, patterns page
 - [ ] 10-04: Errors View Enhancement (3 tasks) - WER-sorted sentences, diff visualization, error cards
@@ -174,6 +185,7 @@ Phases execute in numeric order: 1 → 2 → ... → 12
 | 8. GPU Rendering Research | v2.0 | 2/2 | Complete (on ice) | 2026-01-01 |
 | 8.1. SkiaSharp vs VelloSharp POC | v2.0 | 1/2 | Paused (pivoted) | 2026-01-03 |
 | 9. Blazor Workstation | v2.0 | 5/5 | Complete | 2026-01-08 |
-| 10. Proof Feature Parity | v2.0 | 1/6 | In progress | - |
+| 10. Proof Feature Parity | v2.0 | 1/6 | Paused (10.1 inserted) | - |
+| 10.1. Audio Treatment | v2.0 | 0/1 | Ready | - |
 | 11. Prep Area Implementation | v2.0 | 0/? | Not started | - |
 | 12. Polish Area Foundation | v2.0 | 0/? | Not started | - |

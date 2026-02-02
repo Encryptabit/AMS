@@ -25,6 +25,34 @@ public sealed class AudioTreatmentService
     /// <summary>
     /// Treats a chapter audio by assembling:
     /// [preroll roomtone] -> [title segment] -> [gap roomtone] -> [content segment] -> [postroll roomtone]
+    /// Uses roomtone from the book's audio context.
+    /// </summary>
+    /// <param name="chapter">The chapter context containing the audio buffer.</param>
+    /// <param name="outputPath">Path for the output treated.wav file.</param>
+    /// <param name="options">Treatment options (timing durations, thresholds).</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>Treatment result with timing information.</returns>
+    public async Task<TreatmentResult> TreatChapterAsync(
+        ChapterContext chapter,
+        string outputPath,
+        TreatmentOptions? options = null,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(chapter);
+        ArgumentException.ThrowIfNullOrWhiteSpace(outputPath);
+
+        var roomtoneBuffer = chapter.Book.Audio.Roomtone
+            ?? throw new InvalidOperationException(
+                $"Roomtone not found at {chapter.Book.Audio.RoomtonePath}. " +
+                "Create a roomtone.wav file in the book directory.");
+
+        return await TreatChapterCoreAsync(chapter, roomtoneBuffer, outputPath, options, cancellationToken);
+    }
+
+    /// <summary>
+    /// Treats a chapter audio by assembling:
+    /// [preroll roomtone] -> [title segment] -> [gap roomtone] -> [content segment] -> [postroll roomtone]
+    /// Uses an explicit roomtone file path.
     /// </summary>
     /// <param name="chapter">The chapter context containing the audio buffer.</param>
     /// <param name="roomtonePath">Path to the roomtone.wav file.</param>
@@ -48,6 +76,17 @@ public sealed class AudioTreatmentService
             throw new FileNotFoundException($"Roomtone file not found: {roomtonePath}", roomtonePath);
         }
 
+        var roomtoneBuffer = AudioProcessor.Decode(roomtonePath);
+        return await TreatChapterCoreAsync(chapter, roomtoneBuffer, outputPath, options, cancellationToken);
+    }
+
+    private async Task<TreatmentResult> TreatChapterCoreAsync(
+        ChapterContext chapter,
+        AudioBuffer roomtoneBuffer,
+        string outputPath,
+        TreatmentOptions? options,
+        CancellationToken cancellationToken)
+    {
         var opts = options ?? new TreatmentOptions();
 
         // Get chapter audio from the AudioBufferManager
@@ -70,64 +109,88 @@ public sealed class AudioTreatmentService
             silenceIntervals,
             opts.TitleContentGapThreshold);
 
+        Log.Debug(
+            "Speech boundaries: title={TitleStart:F3}s-{TitleEnd:F3}s, content={ContentStart:F3}s-{ContentEnd:F3}s",
+            titleStart, titleEnd, contentStart, contentEnd);
+
         // Create temp directory for intermediate files
         var tempDir = Path.Combine(Path.GetTempPath(), "ams", "treat", Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(tempDir);
 
         try
         {
-            // Extract segments and prepare roomtone segments
-            var prerollPath = Path.Combine(tempDir, "01-preroll.wav");
-            var titlePath = Path.Combine(tempDir, "02-title.wav");
-            var gapPath = Path.Combine(tempDir, "03-gap.wav");
-            var contentPath = Path.Combine(tempDir, "04-content.wav");
-            var postrollPath = Path.Combine(tempDir, "05-postroll.wav");
+            // Check if we have a separate title segment (titleStart >= 0 AND has positive duration)
+            bool hasTitle = titleStart >= 0 && titleEnd > titleStart;
+            var segmentFiles = new List<string>();
 
-            // Extract title segment
-            var titleBuffer = AudioProcessor.Trim(
-                chapterBuffer,
-                TimeSpan.FromSeconds(titleStart),
-                TimeSpan.FromSeconds(titleEnd));
-            AudioProcessor.EncodeWav(titlePath, titleBuffer);
+            // Preroll (always present)
+            var prerollPath = Path.Combine(tempDir, "01-preroll.wav");
+            var prerollBuffer = PrepareRoomtoneSegment(roomtoneBuffer, opts.PrerollSeconds);
+            AudioProcessor.EncodeWav(prerollPath, prerollBuffer);
+            segmentFiles.Add(prerollPath);
+
+            double titleDuration = 0;
+            if (hasTitle)
+            {
+                // Extract title segment
+                Log.Debug("Extracting title segment: {Start:F3}s - {End:F3}s", titleStart, titleEnd);
+                var titlePath = Path.Combine(tempDir, "02-title.wav");
+                var titleBuffer = AudioProcessor.Trim(
+                    chapterBuffer,
+                    TimeSpan.FromSeconds(titleStart),
+                    TimeSpan.FromSeconds(titleEnd));
+                AudioProcessor.EncodeWav(titlePath, titleBuffer);
+                segmentFiles.Add(titlePath);
+                titleDuration = titleEnd - titleStart;
+
+                // Gap between title and content
+                var gapPath = Path.Combine(tempDir, "03-gap.wav");
+                var gapBuffer = PrepareRoomtoneSegment(roomtoneBuffer, opts.ChapterToContentGapSeconds);
+                AudioProcessor.EncodeWav(gapPath, gapBuffer);
+                segmentFiles.Add(gapPath);
+            }
+
+            // Validate content segment has positive duration
+            if (contentEnd <= contentStart)
+            {
+                throw new InvalidOperationException(
+                    $"Content segment has zero or negative duration: {contentStart:F3}s - {contentEnd:F3}s");
+            }
 
             // Extract content segment
+            Log.Debug("Extracting content segment: {Start:F3}s - {End:F3}s", contentStart, contentEnd);
+            var contentPath = Path.Combine(tempDir, "04-content.wav");
             var contentBuffer = AudioProcessor.Trim(
                 chapterBuffer,
                 TimeSpan.FromSeconds(contentStart),
                 TimeSpan.FromSeconds(contentEnd));
             AudioProcessor.EncodeWav(contentPath, contentBuffer);
+            segmentFiles.Add(contentPath);
 
-            // Load and prepare roomtone segments
-            var roomtoneBuffer = AudioProcessor.Decode(roomtonePath);
-
-            // Ensure roomtone is long enough; loop if needed
-            var prerollBuffer = PrepareRoomtoneSegment(roomtoneBuffer, opts.PrerollSeconds);
-            AudioProcessor.EncodeWav(prerollPath, prerollBuffer);
-
-            var gapBuffer = PrepareRoomtoneSegment(roomtoneBuffer, opts.ChapterToContentGapSeconds);
-            AudioProcessor.EncodeWav(gapPath, gapBuffer);
-
+            // Postroll (always present)
+            var postrollPath = Path.Combine(tempDir, "05-postroll.wav");
             var postrollBuffer = PrepareRoomtoneSegment(roomtoneBuffer, opts.PostrollSeconds);
             AudioProcessor.EncodeWav(postrollPath, postrollBuffer);
+            segmentFiles.Add(postrollPath);
 
             // Use FFmpeg concat demuxer to assemble final audio
             await ConcatAudioFilesAsync(
-                new[] { prerollPath, titlePath, gapPath, contentPath, postrollPath },
+                segmentFiles,
                 outputPath,
                 tempDir,
                 cancellationToken);
 
             // Calculate total duration
             var totalDuration = opts.PrerollSeconds
-                + (titleEnd - titleStart)
-                + opts.ChapterToContentGapSeconds
+                + titleDuration
+                + (hasTitle ? opts.ChapterToContentGapSeconds : 0)
                 + (contentEnd - contentStart)
                 + opts.PostrollSeconds;
 
             return new TreatmentResult(
                 outputPath,
-                titleStart,
-                titleEnd,
+                hasTitle ? titleStart : -1,
+                hasTitle ? titleEnd : -1,
                 contentStart,
                 contentEnd,
                 totalDuration);
@@ -164,7 +227,8 @@ public sealed class AudioTreatmentService
         if (silenceIntervals.Count == 0)
         {
             // No silence detected - treat entire audio as content, no separate title
-            return (0.0, 0.0, 0.0, audioDuration);
+            // Use negative titleEnd to signal "no title segment"
+            return (-1.0, -1.0, 0.0, audioDuration);
         }
 
         // Find first speech onset (end of first silence if it starts at 0, else 0)
@@ -237,16 +301,32 @@ public sealed class AudioTreatmentService
     /// </summary>
     private static AudioBuffer PrepareRoomtoneSegment(AudioBuffer roomtone, double durationSeconds)
     {
-        double roomtoneDuration = roomtone.Length / (double)roomtone.SampleRate;
-
-        if (roomtoneDuration >= durationSeconds)
+        if (roomtone.Length == 0)
         {
-            // Roomtone is long enough, just trim
-            return AudioProcessor.Trim(roomtone, TimeSpan.Zero, TimeSpan.FromSeconds(durationSeconds));
+            throw new InvalidOperationException("Roomtone buffer is empty (0 samples).");
         }
 
-        // Need to loop roomtone
+        if (durationSeconds <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(durationSeconds),
+                $"Duration must be positive, got {durationSeconds}");
+        }
+
+        double roomtoneDuration = roomtone.Length / (double)roomtone.SampleRate;
+        Log.Debug(
+            "PrepareRoomtoneSegment: roomtone={RoomtoneDuration:F3}s ({Samples} samples), target={TargetDuration:F3}s",
+            roomtoneDuration,
+            roomtone.Length,
+            durationSeconds);
+
+        // Always loop to target duration - simpler and avoids FFmpeg trim edge cases
         int targetSamples = (int)(durationSeconds * roomtone.SampleRate);
+        if (targetSamples <= 0)
+        {
+            throw new InvalidOperationException(
+                $"Target samples is {targetSamples} (duration={durationSeconds}s, sampleRate={roomtone.SampleRate})");
+        }
+
         var buffer = new AudioBuffer(roomtone.Channels, roomtone.SampleRate, targetSamples);
 
         for (int ch = 0; ch < roomtone.Channels; ch++)
@@ -318,11 +398,17 @@ public sealed class AudioTreatmentService
             throw new InvalidOperationException("Failed to start FFmpeg process.");
         }
 
+        // Must read stdout/stderr asynchronously to prevent deadlock when buffers fill
+        var stderrTask = process.StandardError.ReadToEndAsync(cancellationToken);
+        var stdoutTask = process.StandardOutput.ReadToEndAsync(cancellationToken);
+
         await process.WaitForExitAsync(cancellationToken);
+
+        var stderr = await stderrTask;
+        await stdoutTask; // Discard stdout but ensure it's drained
 
         if (process.ExitCode != 0)
         {
-            var stderr = await process.StandardError.ReadToEndAsync(cancellationToken);
             throw new InvalidOperationException(
                 $"FFmpeg concat failed with exit code {process.ExitCode}: {stderr}");
         }

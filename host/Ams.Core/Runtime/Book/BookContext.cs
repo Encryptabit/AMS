@@ -13,6 +13,7 @@ public sealed class BookContext
         _resolver = resolver ?? throw new ArgumentNullException(nameof(resolver));
         Documents = new BookDocuments(this, _resolver);
         Chapters = new ChapterManager(this);
+        Audio = new BookAudio(this);
     }
 
     internal IArtifactResolver Resolver => _resolver;
@@ -20,6 +21,7 @@ public sealed class BookContext
     public BookDescriptor Descriptor { get; }
     public BookDocuments Documents { get; }
     public ChapterManager Chapters { get; }
+    public BookAudio Audio { get; }
 
     public void Save()
     {
