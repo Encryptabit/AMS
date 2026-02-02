@@ -2093,64 +2093,98 @@ function renderUnifiedDiff(diff) {
         return '<div class="diff-empty">No diff data available</div>';
     }
 
-    const parts = [];
-    let i = 0;
+    // First pass: collect all delete and insert tokens with their positions
+    // to enable word-level pairing across equal ops
+    const allDeletes = [];
+    const allInserts = [];
+    const equalRanges = []; // track where equals appear
 
-    while (i < diff.ops.length) {
+    let tokenPosition = 0;
+    for (let i = 0; i < diff.ops.length; i++) {
         const op = diff.ops[i];
         const tokens = op.tokens || [];
+        if (tokens.length === 0) continue;
 
-        if (tokens.length === 0) {
-            i++;
-            continue;
+        if (op.op === 'delete') {
+            tokens.forEach(t => allDeletes.push({ token: t, origPos: tokenPosition++ }));
+        } else if (op.op === 'insert') {
+            tokens.forEach(t => allInserts.push({ token: t, origPos: tokenPosition++ }));
+        } else if (op.op === 'equal') {
+            equalRanges.push({ start: tokenPosition, tokens: tokens });
+            tokenPosition += tokens.length;
+        }
+    }
+
+    // Pair deletes with inserts using fuzzy matching (Levenshtein-like)
+    const pairings = []; // {del: string, ins: string}
+    const usedInserts = new Set();
+
+    for (const del of allDeletes) {
+        let bestMatch = null;
+        let bestScore = Infinity;
+
+        for (let j = 0; j < allInserts.length; j++) {
+            if (usedInserts.has(j)) continue;
+            const ins = allInserts[j];
+            const score = levenshteinDistance(del.token.toLowerCase(), ins.token.toLowerCase());
+            // Only match if reasonably similar (distance < 50% of longer string)
+            const maxLen = Math.max(del.token.length, ins.token.length);
+            if (score < maxLen * 0.6 && score < bestScore) {
+                bestScore = score;
+                bestMatch = j;
+            }
         }
 
-        const text = tokens.join(' ');
+        if (bestMatch !== null) {
+            pairings.push({ del: del.token, ins: allInserts[bestMatch].token });
+            usedInserts.add(bestMatch);
+        } else {
+            pairings.push({ del: del.token, ins: null });
+        }
+    }
+
+    // Add unpaired inserts
+    for (let j = 0; j < allInserts.length; j++) {
+        if (!usedInserts.has(j)) {
+            pairings.push({ del: null, ins: allInserts[j].token });
+        }
+    }
+
+    // Now render in the order of the original ops, but with paired substitutions
+    const parts = [];
+    let pairingIndex = 0;
+
+    for (let i = 0; i < diff.ops.length; i++) {
+        const op = diff.ops[i];
+        const tokens = op.tokens || [];
+        if (tokens.length === 0) continue;
 
         if (op.op === 'equal') {
-            parts.push(escapeHtml(text));
-            i++;
+            parts.push(escapeHtml(tokens.join(' ')));
         } else if (op.op === 'delete') {
-            // Collect consecutive deletes
-            const deletedTexts = [text];
-            let j = i + 1;
-            while (j < diff.ops.length && diff.ops[j].op === 'delete') {
-                const delTokens = diff.ops[j].tokens || [];
-                if (delTokens.length > 0) {
-                    deletedTexts.push(delTokens.join(' '));
+            // Render each delete token with its paired insert
+            for (const token of tokens) {
+                const pair = pairings.find(p => p.del === token && p.del !== null);
+                if (pair) {
+                    if (pair.ins) {
+                        parts.push(`<span class="diff-substitution"><span class="diff-deleted">${escapeHtml(pair.del)}</span><span class="diff-inserted">${escapeHtml(pair.ins)}</span></span>`);
+                        pair.del = null; // mark as rendered
+                        pair.ins = null;
+                    } else {
+                        parts.push(`<span class="diff-deleted">${escapeHtml(token)}</span>`);
+                        pair.del = null;
+                    }
                 }
-                j++;
-            }
-
-            // Check if followed by inserts (substitution)
-            const insertedTexts = [];
-            let k = j;
-            while (k < diff.ops.length && diff.ops[k].op === 'insert') {
-                const insTokens = diff.ops[k].tokens || [];
-                if (insTokens.length > 0) {
-                    insertedTexts.push(insTokens.join(' '));
-                }
-                k++;
-            }
-
-            if (insertedTexts.length > 0) {
-                // Substitution: show as deleted → inserted
-                const deletedStr = deletedTexts.map(t => escapeHtml(t)).join(' ');
-                const insertedStr = insertedTexts.map(t => escapeHtml(t)).join(' ');
-                parts.push(`<span class="diff-substitution"><span class="diff-deleted">${deletedStr}</span> → <span class="diff-inserted">${insertedStr}</span></span>`);
-                i = k;
-            } else {
-                // Pure deletion
-                const deletedStr = deletedTexts.map(t => escapeHtml(t)).join(' ');
-                parts.push(`<span class="diff-deleted">${deletedStr}</span>`);
-                i = j;
             }
         } else if (op.op === 'insert') {
-            // Pure insertion (not part of a substitution)
-            parts.push(`<span class="diff-inserted">${escapeHtml(text)}</span>`);
-            i++;
-        } else {
-            i++;
+            // Only render inserts that weren't paired with deletes
+            for (const token of tokens) {
+                const pair = pairings.find(p => p.ins === token && p.del === null);
+                if (pair) {
+                    parts.push(`<span class="diff-inserted">${escapeHtml(token)}</span>`);
+                    pair.ins = null;
+                }
+            }
         }
     }
 
@@ -2159,6 +2193,36 @@ function renderUnifiedDiff(diff) {
     }
 
     return '<div class="diff-inline">' + parts.join(' ') + '</div>';
+}
+
+// Levenshtein distance for fuzzy word matching
+function levenshteinDistance(a, b) {
+    if (a.length === 0) return b.length;
+    if (b.length === 0) return a.length;
+
+    const matrix = [];
+    for (let i = 0; i <= b.length; i++) {
+        matrix[i] = [i];
+    }
+    for (let j = 0; j <= a.length; j++) {
+        matrix[0][j] = j;
+    }
+
+    for (let i = 1; i <= b.length; i++) {
+        for (let j = 1; j <= a.length; j++) {
+            if (b.charAt(i - 1) === a.charAt(j - 1)) {
+                matrix[i][j] = matrix[i - 1][j - 1];
+            } else {
+                matrix[i][j] = Math.min(
+                    matrix[i - 1][j - 1] + 1,
+                    matrix[i][j - 1] + 1,
+                    matrix[i - 1][j] + 1
+                );
+            }
+        }
+    }
+
+    return matrix[b.length][a.length];
 }
 
 // Toast notifications

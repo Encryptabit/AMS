@@ -531,9 +531,20 @@ class ValidationReportHandler(BaseHTTPRequestHandler):
             filtered_sentences = [self.apply_ignore_to_sentence(s, ignored)[0] for s in sentences]
             flagged_sentences = [s for s in filtered_sentences if s.get('status', 'ok') != 'ok']
 
-            # Calculate average WER
-            total_wer = sum(s.get('metrics', {}).get('wer', 0) for s in sentences if 'metrics' in s)
-            avg_wer = (total_wer / len(sentences) * 100) if sentences else 0
+            # Calculate average WER only for sentences that still have errors after ignoring patterns
+            # Build a set of indices for flagged sentences
+            flagged_indices = set()
+            for i, fs in enumerate(filtered_sentences):
+                if fs.get('status', 'ok') != 'ok':
+                    flagged_indices.add(i)
+
+            # Sum WER only for sentences that are still flagged
+            total_wer = sum(
+                sentences[i].get('metrics', {}).get('wer', 0)
+                for i in flagged_indices
+                if 'metrics' in sentences[i]
+            )
+            avg_wer = (total_wer / len(flagged_indices) * 100) if flagged_indices else 0
 
             return {
                 'sentenceCount': len(sentences),
