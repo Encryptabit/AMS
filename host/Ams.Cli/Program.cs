@@ -69,6 +69,7 @@ internal static class Program
         rootCommand.AddCommand(RefineSentencesCommand.Create());
         rootCommand.AddCommand(PipelineCommand.Create(pipelineService));
         rootCommand.AddCommand(DspCommand.Create());
+        rootCommand.AddCommand(TreatCommand.Create());
 
         var replCommand = new Command("repl", "Start interactive REPL");
         replCommand.SetHandler(async () => await StartRepl(rootCommand));
