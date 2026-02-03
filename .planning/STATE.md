@@ -7,19 +7,30 @@ Audio Management System - CLI and core library for audio processing, ASR, forced
 ## Current Position
 
 **Milestone**: v2.0 Blazor Workstation
-**Phase**: 10.1.1 - Treatment Optimization (INSERTED)
-**Plan**: 1/1 (complete)
-**Status**: Phase complete
+**Phase**: 10 - Proof Feature Parity
+**Plan**: 2/6 (complete)
+**Status**: Ready for Plan 10-03
 
 ## Progress
 
 ```
 v1.0 Codebase Audit    [████████████████████] 100% - SHIPPED
 v1.1 Execute Refactor  [████████████████████] 100% - SHIPPED
-v2.0 Blazor Workstation[████████████░░░░░░░░]  57% - Phase 10.1.1 complete
+v2.0 Blazor Workstation[██████████████░░░░░░]  67% - Plan 10-02 complete
 ```
 
-## Phase 10.1 Plans
+## Phase 10 Plans
+
+| Plan | Name | Tasks | Status |
+|------|------|-------|--------|
+| 10-01 | Proof Backend Services | 3 | Complete |
+| 10-02 | Book Overview Page | 4 | Complete |
+| 10-03 | Error Patterns Aggregation | 3 | Pending |
+| 10-04 | Errors View Enhancement | 3 | Pending |
+| 10-05 | Review Status & Ignored Patterns | 3 | Pending |
+| 10-06 | Audio Export & CRX Foundation | 3 | Pending |
+
+## Phase 10.1 Plans (INSERTED - Complete)
 
 | Plan | Name | Tasks | Status |
 |------|------|-------|--------|
@@ -82,10 +93,15 @@ poc/VelloSharpPoc/     - Avalonia + VelloSharp (child window fails)
 
 ## Next Action
 
-Phase 10.1.1 complete. Resume Phase 10 (Proof Feature Parity):
+Plan 10-02 complete. Continue with Plan 10-03 (Error Patterns Aggregation):
 ```
-/gsd:plan-phase 10-02
+/gsd:execute-plan .planning/phases/10-proof-feature-parity/10-03-PLAN.md
 ```
+
+## Deferred UI Refinements (for Plan 10-04)
+
+- Selection flash: Active sentence should briefly flash lighter shade when selected
+- Conditional left border: Only show colored border for sentences with errors
 
 ## Deferred Issues
 
@@ -99,5 +115,5 @@ None currently.
 
 Last session: 2026-02-02
 Branch: `blazor-workstation`
-Status: Phase 10.1.1 complete (Treatment Optimization)
-Note: Optimized AudioTreatmentService with in-memory buffer concat, no temp files, no external FFmpeg process.
+Status: Plan 10-02 complete (Book Overview Page)
+Note: Fixed flagging logic, added BitGrid layout, layout-level centering. UI refinements (selection flash, conditional border) deferred to 10-04.

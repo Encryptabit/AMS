@@ -9,6 +9,7 @@
 .sentence-list-header {
     padding: 0.75rem 1rem;
     border-bottom: 1px solid var(--bit-clr-brd-sec);
+    width: 100%;
 }
 
 /* List container - BitBasicList handles structure */
@@ -16,6 +17,7 @@
     list-style: none;
     margin: 0;
     padding: 0.5rem;
+    width: 100%;
 }
 
 /* Individual sentence item */

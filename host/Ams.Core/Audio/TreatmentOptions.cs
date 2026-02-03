@@ -23,7 +23,7 @@ public sealed record TreatmentOptions
     /// <summary>
     /// Threshold in dB for silence detection (used to find speech boundaries).
     /// </summary>
-    public double SilenceThresholdDb { get; init; } = -50.0;
+    public double SilenceThresholdDb { get; init; } = -55.0;
 
     /// <summary>
     /// Minimum duration of silence to consider as a gap (seconds).

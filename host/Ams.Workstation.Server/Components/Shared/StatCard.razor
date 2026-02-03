@@ -1,0 +1,28 @@
+<BitCard Class="stat-card">
+    <BitStack Horizontal="false" Gap="0.25rem" HorizontalAlign="BitAlignment.Center">
+        <BitText Typography="BitTypography.Caption1" Color="BitColor.SecondaryForeground"
+                 Style="text-transform: uppercase; letter-spacing: 0.05em;">
+            @Title
+        </BitText>
+        <BitText Typography="BitTypography.H3">@Value</BitText>
+        @if (!string.IsNullOrEmpty(Detail))
+        {
+            <BitText Typography="BitTypography.Caption2" Color="BitColor.SecondaryForeground">
+                @Detail
+            </BitText>
+        }
+    </BitStack>
+</BitCard>
+
+@code {
+    [Parameter] public string Title { get; set; } = "";
+    [Parameter] public string Value { get; set; } = "";
+    [Parameter] public string? Detail { get; set; }
+}
+
+<style>
+    .stat-card {
+        text-align: center;
+        padding: 1.5rem 1rem;
+    }
+</style>

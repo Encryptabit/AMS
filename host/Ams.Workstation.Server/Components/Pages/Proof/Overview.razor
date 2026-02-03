@@ -1,0 +1,147 @@
+@page "/proof/overview"
+@inject Ams.Workstation.Server.Services.BlazorWorkspace Workspace
+@inject Ams.Workstation.Server.Services.ValidationMetricsService MetricsService
+@inject NavigationManager Navigation
+
+<PageTitle>Book Overview - AMS Workstation</PageTitle>
+
+<BitStack Horizontal="false" HorizontalAlign="BitAlignment.Center" Gap="1.5rem">
+    @* Header *@
+    <div class="overview-header">
+        <BitText Typography="BitTypography.H4">Book Overview</BitText>
+        <BitText Typography="BitTypography.Body1" Color="BitColor.SecondaryForeground">
+            Validation status across all chapters
+        </BitText>
+    </div>
+
+    @if (_loading)
+    {
+        <BitStack HorizontalAlign="BitAlignment.Center" VerticalAlign="BitAlignment.Center" Style="padding: 2rem;">
+            <BitProgress Circular="true" />
+        </BitStack>
+    }
+    else if (_overview != null)
+    {
+        @* Stats Grid *@
+        <BitGrid Columns="3" Gap="1rem">
+            <BitGridItem>
+                <StatCard Title="Total Chapters" Value="@_overview.ChapterCount.ToString()" />
+            </BitGridItem>
+            <BitGridItem>
+                <StatCard Title="Total Sentences"
+                          Value="@_overview.TotalSentences.ToString()"
+                          Detail="@($"Flagged: {_overview.TotalFlaggedSentences} | Avg WER: {_overview.AvgSentenceWer}")" />
+            </BitGridItem>
+            <BitGridItem>
+                <StatCard Title="Total Paragraphs"
+                          Value="@_overview.TotalParagraphs.ToString()"
+                          Detail="@($"Flagged: {_overview.TotalFlaggedParagraphs}")" />
+            </BitGridItem>
+        </BitGrid>
+
+        @* Chapter Grid *@
+        <div class="chapter-section">
+            <BitText Typography="BitTypography.Subtitle1" Style="margin-bottom: 1rem;">
+                Chapters
+            </BitText>
+            <BitGrid Columns="4" Gap="1rem">
+                @foreach (var chapter in _overview.Chapters)
+                {
+                    <BitGridItem>
+                        <ChapterCard Chapter="chapter"
+                                     OnClick="() => NavigateToChapter(chapter.Name)" />
+                    </BitGridItem>
+                }
+            </BitGrid>
+        </div>
+    }
+    else
+    {
+        <BitMessage Color="BitColor.Warning">
+            No overview data available. Set a working directory first.
+        </BitMessage>
+    }
+</BitStack>
+
+@code {
+    private bool _loading = true;
+    private Ams.Workstation.Server.Services.BookOverview? _overview;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadOverviewAsync();
+    }
+
+    private async Task LoadOverviewAsync()
+    {
+        _loading = true;
+
+        try
+        {
+            if (!Workspace.IsInitialized)
+            {
+                _overview = null;
+                return;
+            }
+
+            // Use cached overview if available
+            if (Workspace.CachedBookOverview != null)
+            {
+                _overview = Workspace.CachedBookOverview;
+                return;
+            }
+
+            // Compute metrics by iterating through chapters
+            // Book-index is cached at book level, chapter handles are cached per-chapter
+            var chapterMetrics = new List<(string ChapterName, Ams.Workstation.Server.Services.ChapterMetrics Metrics)>();
+            var previousChapter = Workspace.CurrentChapterName;
+
+            foreach (var chapterName in Workspace.AvailableChapters)
+            {
+                if (!Workspace.SelectChapter(chapterName))
+                    continue;
+
+                var hydrate = Workspace.CurrentChapterHandle?.Chapter.Documents.HydratedTranscript;
+                if (hydrate == null)
+                    continue;
+
+                var metrics = MetricsService.ComputeChapterMetrics(hydrate);
+                chapterMetrics.Add((chapterName, metrics));
+            }
+
+            // Restore previous chapter selection
+            if (!string.IsNullOrEmpty(previousChapter))
+            {
+                Workspace.SelectChapter(previousChapter);
+            }
+
+            _overview = MetricsService.ComputeBookOverview(chapterMetrics);
+
+            // Cache for future page loads
+            if (_overview != null)
+            {
+                Workspace.SetCachedBookOverview(_overview);
+            }
+        }
+        finally
+        {
+            _loading = false;
+            await Task.CompletedTask;
+        }
+    }
+
+    private void NavigateToChapter(string chapterName)
+    {
+        Navigation.NavigateTo($"/proof/{Uri.EscapeDataString(chapterName)}");
+    }
+}
+
+<style>
+    .overview-header {
+        margin-bottom: 1rem;
+    }
+
+    .chapter-section {
+        margin-top: 1rem;
+    }
+</style>

@@ -117,7 +117,10 @@ public sealed class ChapterManager : IChapterManager
         var chapterRoot =
             ResolveChapterRoot(chapterDirectory, audioFile, asrFile, bookIndexFile.Directory, chapterStem);
         var audioPath = audioFile?.FullName ?? Path.Combine(chapterRoot, $"{chapterStem}.wav");
-        var bookIndex = LoadJson<BookIndex>(bookIndexFile.FullName);
+
+        // Use cached book-index if available (book stays in memory while open)
+        var bookIndex = reloadBookIndex ? null : _bookContext.Documents.BookIndex;
+        bookIndex ??= LoadJson<BookIndex>(bookIndexFile.FullName);
 
         var aliases = BuildAliasSet(chapterStem, chapterRoot, bookIndex, out var matchedSection);
 

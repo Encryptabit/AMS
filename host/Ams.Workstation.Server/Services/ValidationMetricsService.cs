@@ -1,6 +1,8 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
+using System.Text.Json;
 using Ams.Core.Artifacts.Hydrate;
 
 namespace Ams.Workstation.Server.Services;
@@ -132,12 +134,58 @@ public class ValidationMetricsService
     }
 
     /// <summary>
+    /// Compute full book overview by reading hydrate files directly from disk.
+    /// Much faster than going through full chapter context loading.
+    /// </summary>
+    /// <param name="workspace">The workspace to get chapter info from.</param>
+    /// <returns>Book overview with all chapter metrics, or null if workspace not initialized.</returns>
+    public BookOverview? ComputeBookOverviewDirect(BlazorWorkspace workspace)
+    {
+        if (!workspace.IsInitialized || string.IsNullOrEmpty(workspace.WorkingDirectory))
+            return null;
+
+        var chapterMetrics = new List<(string ChapterName, ChapterMetrics Metrics)>();
+
+        foreach (var chapterName in workspace.AvailableChapters)
+        {
+            var stem = workspace.GetStemForChapter(chapterName);
+            if (string.IsNullOrEmpty(stem)) continue;
+
+            var hydratePath = Path.Combine(workspace.WorkingDirectory, stem, $"{stem}.align.hydrate.json");
+            if (!File.Exists(hydratePath)) continue;
+
+            try
+            {
+                var json = File.ReadAllText(hydratePath);
+                var hydrate = JsonSerializer.Deserialize<HydratedTranscript>(json);
+                if (hydrate == null) continue;
+
+                var metrics = ComputeChapterMetrics(hydrate);
+                chapterMetrics.Add((chapterName, metrics));
+            }
+            catch
+            {
+                // Skip chapters that fail to load
+            }
+        }
+
+        return ComputeBookOverview(chapterMetrics);
+    }
+
+    /// <summary>
     /// Determines if a sentence is flagged (needs review).
+    /// A sentence is flagged if it has insertions or deletions in its diff,
+    /// or if Status is not "ok" when no diff stats are available.
     /// </summary>
     private static bool IsSentenceFlagged(HydratedSentence sentence)
     {
-        return !string.Equals(sentence.Status, "ok", StringComparison.OrdinalIgnoreCase)
-               || sentence.Diff != null;
+        var stats = sentence.Diff?.Stats;
+        if (stats is null)
+        {
+            return !string.Equals(sentence.Status, "ok", StringComparison.OrdinalIgnoreCase);
+        }
+
+        return stats.Insertions > 0 || stats.Deletions > 0;
     }
 
     /// <summary>

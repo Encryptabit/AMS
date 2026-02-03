@@ -33,6 +33,9 @@ public sealed class BlazorWorkspace : IWorkspace, IDisposable
     // Maps display title (e.g., "CHAPTER 3") to WAV stem (e.g., "03_CultistOfCerebon2_Ch3")
     private readonly Dictionary<string, string> _stemByTitle = new(StringComparer.OrdinalIgnoreCase);
 
+    // Cache chapter handles to avoid re-creating contexts (LRU managed by ChapterManager)
+    private readonly Dictionary<string, ChapterContextHandle> _chapterHandles = new(StringComparer.OrdinalIgnoreCase);
+
     public BlazorWorkspace()
     {
         LoadPersistedState();
@@ -110,6 +113,11 @@ public sealed class BlazorWorkspace : IWorkspace, IDisposable
     /// </summary>
     public ChapterContextHandle? CurrentChapterHandle => _currentChapterHandle;
 
+    /// <summary>
+    /// Cached book overview metrics. Computed on first access, invalidated when working directory changes.
+    /// </summary>
+    public BookOverview? CachedBookOverview { get; private set; }
+
     #endregion
 
     #region Workspace Lifecycle
@@ -127,10 +135,15 @@ public sealed class BlazorWorkspace : IWorkspace, IDisposable
         if (!Directory.Exists(trimmed)) return false;
 
         // Dispose previous state
-        _currentChapterHandle?.Dispose();
+        foreach (var handle in _chapterHandles.Values)
+        {
+            handle.Dispose();
+        }
+        _chapterHandles.Clear();
         _currentChapterHandle = null;
         CurrentChapterName = null;
         AvailableChapters.Clear();
+        CachedBookOverview = null; // Invalidate cached overview
 
         _rootPath = Path.GetFullPath(trimmed);
 
@@ -152,7 +165,7 @@ public sealed class BlazorWorkspace : IWorkspace, IDisposable
 
     /// <summary>
     /// Selects a chapter by name, opening its context handle.
-    /// The handle remains open until another chapter is selected or workspace is disposed.
+    /// Chapters remain cached until workspace is disposed (LRU managed by ChapterManager).
     /// </summary>
     /// <param name="chapterName">The chapter name (display title) to select.</param>
     /// <returns>True if chapter was opened successfully.</returns>
@@ -165,9 +178,14 @@ public sealed class BlazorWorkspace : IWorkspace, IDisposable
         // If not found in mapping, assume chapterName IS the stem (direct usage)
         var chapterStem = _stemByTitle.GetValueOrDefault(chapterName, chapterName);
 
-        // Dispose previous handle
-        _currentChapterHandle?.Dispose();
-        _currentChapterHandle = null;
+        // Check if we already have this chapter cached
+        if (_chapterHandles.TryGetValue(chapterStem, out var existingHandle))
+        {
+            _currentChapterHandle = existingHandle;
+            CurrentChapterName = chapterName;
+            SavePersistedState();
+            return true;
+        }
 
         try
         {
@@ -175,12 +193,15 @@ public sealed class BlazorWorkspace : IWorkspace, IDisposable
             var audioPath = Path.Combine(_rootPath, $"{chapterStem}.wav");
             var chapterDir = Path.Combine(_rootPath, chapterStem);
 
-            _currentChapterHandle = OpenChapter(new ChapterOpenOptions
+            var handle = OpenChapter(new ChapterOpenOptions
             {
                 ChapterId = chapterStem,
                 AudioFile = File.Exists(audioPath) ? new FileInfo(audioPath) : null,
                 ChapterDirectory = Directory.Exists(chapterDir) ? new DirectoryInfo(chapterDir) : null
             });
+
+            _chapterHandles[chapterStem] = handle;
+            _currentChapterHandle = handle;
             CurrentChapterName = chapterName; // Store display name for UI
             SavePersistedState();
             return true;
@@ -198,14 +219,35 @@ public sealed class BlazorWorkspace : IWorkspace, IDisposable
     /// </summary>
     public void Clear()
     {
-        _currentChapterHandle?.Dispose();
+        foreach (var handle in _chapterHandles.Values)
+        {
+            handle.Dispose();
+        }
+        _chapterHandles.Clear();
         _currentChapterHandle = null;
         _manager = null;
         _rootPath = null;
         CurrentChapterName = null;
         AvailableChapters.Clear();
         _stemByTitle.Clear();
+        CachedBookOverview = null;
         SavePersistedState();
+    }
+
+    /// <summary>
+    /// Sets the cached book overview. Called by ValidationMetricsService after computing.
+    /// </summary>
+    public void SetCachedBookOverview(BookOverview overview)
+    {
+        CachedBookOverview = overview;
+    }
+
+    /// <summary>
+    /// Gets the WAV stem for a chapter display title.
+    /// </summary>
+    public string? GetStemForChapter(string displayTitle)
+    {
+        return _stemByTitle.GetValueOrDefault(displayTitle);
     }
 
     #endregion
@@ -332,6 +374,11 @@ public sealed class BlazorWorkspace : IWorkspace, IDisposable
     {
         if (_disposed) return;
         _disposed = true;
-        _currentChapterHandle?.Dispose();
+        foreach (var handle in _chapterHandles.Values)
+        {
+            handle.Dispose();
+        }
+        _chapterHandles.Clear();
+        _currentChapterHandle = null;
     }
 }

@@ -1,0 +1,81 @@
+@using Ams.Workstation.Server.Services
+
+<BitCard Class="@GetCardClass()" @onclick="HandleClick" Style="cursor: pointer;">
+    <BitStack Horizontal="false" Gap="0.5rem">
+        <BitText Typography="BitTypography.Subtitle2">@Chapter.Name</BitText>
+        <div class="chapter-metrics">
+            <span class="metric">
+                <span class="label">Sentences:</span>
+                <span class="value">@Chapter.Metrics.SentenceCount (@Chapter.Metrics.SentenceFlagged flagged)</span>
+            </span>
+            <span class="metric">
+                <span class="label">Avg WER:</span>
+                <span class="value @GetWerClass()">@Chapter.Metrics.SentenceAvgWer</span>
+            </span>
+        </div>
+    </BitStack>
+</BitCard>
+
+@code {
+    [Parameter] public ProofChapterInfo Chapter { get; set; } = default!;
+    [Parameter] public EventCallback OnClick { get; set; }
+
+    private async Task HandleClick() => await OnClick.InvokeAsync();
+
+    private string GetCardClass()
+    {
+        var statusClass = GetStatusClass();
+        return string.IsNullOrEmpty(statusClass) ? "chapter-card" : $"chapter-card {statusClass}";
+    }
+
+    private string GetStatusClass()
+    {
+        // Future: add "reviewed" class when review status is implemented
+        return "";
+    }
+
+    private string GetWerClass()
+    {
+        // Parse WER percentage and classify
+        if (double.TryParse(Chapter.Metrics.SentenceAvgWer.TrimEnd('%'), out var wer))
+        {
+            if (wer >= 10) return "wer-high";
+            if (wer >= 5) return "wer-medium";
+        }
+        return "wer-low";
+    }
+}
+
+<style>
+    .chapter-card {
+        transition: background-color 0.15s ease;
+        padding: 1rem;
+    }
+
+    .chapter-card:hover {
+        background-color: var(--bit-clr-bg-sec-hover);
+    }
+
+    .chapter-metrics {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 1rem;
+    }
+
+    .metric .label {
+        color: var(--bit-clr-fg-sec);
+        margin-right: 0.25rem;
+    }
+
+    .wer-high {
+        color: #f48771;
+    }
+
+    .wer-medium {
+        color: #dcdcaa;
+    }
+
+    .wer-low {
+        color: #4ec9b0;
+    }
+</style>

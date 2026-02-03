@@ -4,7 +4,7 @@
 <PageTitle>Proof - AMS Workstation</PageTitle>
 
 <div class="proof-index">
-    <BitStack Horizontal="false" Gap="1.5rem">
+    <BitStack Horizontal="false" HorizontalAlign="BitAlignment.Center" Gap="1.5rem">
         <div class="proof-header">
             <BitText Typography="BitTypography.H4">Proof Area</BitText>
             <BitText Typography="BitTypography.Body1" Color="BitColor.SecondaryForeground">
@@ -14,6 +14,17 @@
 
         @if (Workspace.HasBookIndex)
         {
+            @* Book Overview Link *@
+            <BitCard Class="overview-link" Style="margin-bottom: 1rem;">
+                <BitLink Href="/proof/overview" Style="display: flex; align-items: center; gap: 0.5rem; text-decoration: none;">
+                    <BitIcon IconName="ViewDashboard" />
+                    <BitText Typography="BitTypography.Subtitle2">Book Overview</BitText>
+                    <BitText Typography="BitTypography.Caption2" Color="BitColor.SecondaryForeground">
+                        View all chapters
+                    </BitText>
+                </BitLink>
+            </BitCard>
+
             <BitCard>
                 <BitText Typography="BitTypography.Subtitle2" Color="BitColor.SecondaryForeground"
                          Style="margin-bottom: 1rem; text-transform: uppercase; letter-spacing: 0.05em;">
@@ -64,6 +75,7 @@
 <style>
     .proof-index {
         max-width: 800px;
+        margin: 0 auto;
     }
 
     .chapters {
@@ -94,5 +106,14 @@
 
     .chapter-name {
         font-weight: 500;
+    }
+
+    .overview-link {
+        background-color: var(--bit-clr-bg-sec);
+        transition: background-color 0.15s ease;
+    }
+
+    .overview-link:hover {
+        background-color: var(--bit-clr-bg-sec-hover);
     }
 </style>
