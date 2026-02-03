@@ -1,0 +1,132 @@
+@page "/proof/patterns"
+@inject NavigationManager Navigation
+@inject ErrorPatternService ErrorPatternService
+@using Ams.Workstation.Server.Models
+@using Ams.Workstation.Server.Services
+
+<PageTitle>Error Patterns - AMS Workstation</PageTitle>
+
+<BitStack Horizontal="false" Gap="1.5rem">
+    <div class="patterns-header">
+        <BitText Typography="BitTypography.H4">Error Patterns</BitText>
+        <BitText Typography="BitTypography.Body1" Color="BitColor.SecondaryForeground">
+            Recurring differences across all chapters
+        </BitText>
+    </div>
+
+    @* Filter input *@
+    <BitTextField @bind-Value="_filterText"
+                  Placeholder="Filter patterns..."
+                  OnChange="HandleFilterChange"
+                  Style="max-width: 400px;" />
+
+    @if (_loading)
+    {
+        <BitStack HorizontalAlign="BitAlignment.Center" VerticalAlign="BitAlignment.Center" Style="padding: 2rem;">
+            <BitProgress Circular="true" />
+        </BitStack>
+    }
+    else if (_patterns != null && _patterns.Patterns.Count > 0)
+    {
+        <BitText Typography="BitTypography.Caption1" Color="BitColor.SecondaryForeground">
+            Showing @FilteredPatterns.Count() of @_patterns.Patterns.Count patterns
+        </BitText>
+
+        <div class="patterns-grid">
+            @foreach (var pattern in FilteredPatterns)
+            {
+                <PatternCard Pattern="pattern"
+                             OnToggleIgnore="() => ToggleIgnore(pattern)"
+                             OnExampleClick="NavigateToExample" />
+            }
+        </div>
+
+        @if (!FilteredPatterns.Any())
+        {
+            <BitText Color="BitColor.SecondaryForeground" Style="font-style: italic;">
+                No patterns match the filter.
+            </BitText>
+        }
+    }
+    else if (_patterns != null && _patterns.Patterns.Count == 0)
+    {
+        <BitMessage Color="BitColor.Success">
+            No error patterns found. All sentences match perfectly.
+        </BitMessage>
+    }
+    else
+    {
+        <BitMessage Color="BitColor.Warning">
+            No pattern data available. Set a working directory first.
+        </BitMessage>
+    }
+</BitStack>
+
+@code {
+    private ErrorPatternsResult? _patterns;
+    private string _filterText = "";
+    private bool _loading = true;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadPatterns();
+    }
+
+    private async Task LoadPatterns()
+    {
+        _loading = true;
+        StateHasChanged();
+
+        try
+        {
+            // Run on thread pool to avoid blocking the UI
+            _patterns = await Task.Run(() => ErrorPatternService.AggregatePatterns());
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Failed to load error patterns: {ex.Message}");
+            _patterns = null;
+        }
+
+        _loading = false;
+        StateHasChanged();
+    }
+
+    private IEnumerable<ErrorPattern> FilteredPatterns =>
+        _patterns?.Patterns.Where(p =>
+            string.IsNullOrEmpty(_filterText) ||
+            p.Book.Contains(_filterText, StringComparison.OrdinalIgnoreCase) ||
+            p.Script.Contains(_filterText, StringComparison.OrdinalIgnoreCase)
+        ) ?? Enumerable.Empty<ErrorPattern>();
+
+    private void HandleFilterChange(string? value)
+    {
+        _filterText = value ?? "";
+        StateHasChanged();
+    }
+
+    private Task ToggleIgnore(ErrorPattern pattern)
+    {
+        // Ignore toggle deferred to Plan 05 (persistence required)
+        // For now, just log or do nothing
+        Console.WriteLine($"Toggle ignore for pattern: {pattern.Key}");
+        return Task.CompletedTask;
+    }
+
+    private void NavigateToExample(PatternExample example)
+    {
+        Navigation.NavigateTo($"/proof/{Uri.EscapeDataString(example.Chapter)}?sentenceId={example.SentenceId}");
+    }
+}
+
+<style>
+    .patterns-header {
+        margin-bottom: 0.5rem;
+    }
+
+    .patterns-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+        gap: 1rem;
+    }
+</style>
