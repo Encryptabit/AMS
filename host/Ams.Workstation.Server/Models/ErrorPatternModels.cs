@@ -18,8 +18,10 @@ public record ErrorPattern(
     string Book,
     string Script,
     int Count,
-    bool Ignored,
-    IReadOnlyList<PatternExample> Examples);
+    IReadOnlyList<PatternExample> Examples)
+{
+    public bool Ignored { get; set; }
+}
 
 /// <summary>
 /// Reference to a specific occurrence of an error pattern.

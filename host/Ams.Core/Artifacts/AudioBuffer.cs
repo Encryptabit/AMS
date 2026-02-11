@@ -110,6 +110,7 @@ public sealed class AudioBuffer
         var result = new AudioBuffer(channels, sampleRate, (int)totalLength, first.Metadata);
 
         // Copy samples from each buffer
+        // TODO: Review this process, there's a better way, manually copying the array isn't the way.
         int offset = 0;
         foreach (var buf in bufferList)
         {

@@ -1,4 +1,3 @@
-using System;
 using System.Collections.Generic;
 using System.Linq;
 using Ams.Core.Artifacts.Hydrate;
@@ -18,6 +17,7 @@ namespace Ams.Workstation.Server.Services;
 public class ErrorPatternService
 {
     private readonly BlazorWorkspace _workspace;
+    private const int MinimumOccurrences = 5;
 
     public ErrorPatternService(BlazorWorkspace workspace)
     {
@@ -31,18 +31,16 @@ public class ErrorPatternService
     /// <returns>Aggregated patterns sorted by occurrence count (descending).</returns>
     public ErrorPatternsResult AggregatePatterns(ISet<string>? ignoredKeys = null)
     {
-        var patterns = new Dictionary<string, (string Type, string Book, string Script, int Count, List<PatternExample> Examples)>();
+        var patterns = new Dictionary<string, PatternAggregate>();
         ignoredKeys ??= new HashSet<string>();
-
-        // Save current chapter to restore later
-        var previousChapter = _workspace.CurrentChapterName;
 
         // Iterate all available chapters
         foreach (var chapterTitle in _workspace.AvailableChapters)
         {
-            var hydrate = LoadHydratedTranscript(chapterTitle);
-            if (hydrate == null)
+            if (!_workspace.TryGetHydratedTranscript(chapterTitle, out var hydrate) || hydrate is null)
+            {
                 continue;
+            }
 
             // Extract patterns from each sentence's diff
             foreach (var sentence in hydrate.Sentences)
@@ -51,39 +49,32 @@ public class ErrorPatternService
                 {
                     var key = BuildKey(type, book, script);
 
-                    if (patterns.TryGetValue(key, out var existing))
+                    if (!patterns.TryGetValue(key, out var aggregate))
                     {
-                        patterns[key] = (type, book, script, existing.Count + 1, existing.Examples);
-                        existing.Examples.Add(new PatternExample(chapterTitle, sentence.Id));
+                        aggregate = new PatternAggregate(type, book, script);
+                        patterns[key] = aggregate;
                     }
-                    else
+
+                    aggregate.Count++;
+                    if (aggregate.Examples.Count < 3)
                     {
-                        patterns[key] = (type, book, script, 1, new List<PatternExample>
-                        {
-                            new PatternExample(chapterTitle, sentence.Id)
-                        });
+                        aggregate.Examples.Add(new PatternExample(chapterTitle, sentence.Id));
                     }
                 }
             }
         }
 
-        // Restore previous chapter selection
-        if (!string.IsNullOrEmpty(previousChapter))
-        {
-            _workspace.SelectChapter(previousChapter);
-        }
-
         // Build final result with top 3 examples each, sorted by count descending
         var result = patterns
+            .Where(kvp => kvp.Value.Count >= MinimumOccurrences)
             .Select(kvp => new ErrorPattern(
                 Key: kvp.Key,
                 Type: kvp.Value.Type,
                 Book: kvp.Value.Book,
                 Script: kvp.Value.Script,
                 Count: kvp.Value.Count,
-                Ignored: ignoredKeys.Contains(kvp.Key),
-                Examples: kvp.Value.Examples.Take(3).ToList()
-            ))
+                Examples: kvp.Value.Examples
+            ) { Ignored = ignoredKeys.Contains(kvp.Key) })
             .OrderByDescending(p => p.Count)
             .ToList();
 
@@ -145,23 +136,21 @@ public class ErrorPatternService
         => $"{type}|{book}|{script}";
 
     /// <summary>
-    /// Load HydratedTranscript for a chapter by selecting it in the workspace.
+    /// In-memory aggregation state for a single pattern key.
     /// </summary>
-    private HydratedTranscript? LoadHydratedTranscript(string chapterName)
+    private sealed class PatternAggregate
     {
-        // If the requested chapter is already selected, just return its hydrate
-        if (_workspace.CurrentChapterName == chapterName && _workspace.CurrentChapterHandle != null)
+        public PatternAggregate(string type, string book, string script)
         {
-            return _workspace.CurrentChapterHandle.Chapter.Documents.HydratedTranscript;
+            Type = type;
+            Book = book;
+            Script = script;
         }
 
-        // Select the requested chapter
-        if (!_workspace.SelectChapter(chapterName))
-        {
-            return null;
-        }
-
-        // Get the hydrate from the now-selected chapter
-        return _workspace.CurrentChapterHandle?.Chapter.Documents.HydratedTranscript;
+        public string Type { get; }
+        public string Book { get; }
+        public string Script { get; }
+        public int Count { get; set; }
+        public List<PatternExample> Examples { get; } = new(3);
     }
 }

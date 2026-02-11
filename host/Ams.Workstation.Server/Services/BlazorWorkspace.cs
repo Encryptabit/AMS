@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Text.Json;
+using Ams.Core.Artifacts.Hydrate;
 using Ams.Core.Runtime.Artifacts;
 using Ams.Core.Runtime.Book;
 using Ams.Core.Runtime.Chapter;
@@ -117,6 +118,45 @@ public sealed class BlazorWorkspace : IWorkspace, IDisposable
     /// Cached book overview metrics. Computed on first access, invalidated when working directory changes.
     /// </summary>
     public BookOverview? CachedBookOverview { get; private set; }
+
+    /// <summary>
+    /// Try to load the hydrated transcript for a chapter without changing the current selection.
+    /// </summary>
+    public bool TryGetHydratedTranscript(string chapterName, out HydratedTranscript? hydrated)
+    {
+        hydrated = null;
+
+        if (string.IsNullOrEmpty(chapterName) || _manager == null || string.IsNullOrEmpty(_rootPath))
+            return false;
+
+        var chapterStem = _stemByTitle.GetValueOrDefault(chapterName, chapterName);
+
+        if (!_chapterHandles.TryGetValue(chapterStem, out var handle))
+        {
+            try
+            {
+                var audioPath = Path.Combine(_rootPath, $"{chapterStem}.wav");
+                var chapterDir = Path.Combine(_rootPath, chapterStem);
+
+                handle = OpenChapter(new ChapterOpenOptions
+                {
+                    ChapterId = chapterStem,
+                    AudioFile = File.Exists(audioPath) ? new FileInfo(audioPath) : null,
+                    ChapterDirectory = Directory.Exists(chapterDir) ? new DirectoryInfo(chapterDir) : null
+                });
+
+                _chapterHandles[chapterStem] = handle;
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Failed to open chapter '{chapterName}' (stem: {chapterStem}) for hydrate: {ex.Message}");
+                return false;
+            }
+        }
+
+        hydrated = handle.Chapter.Documents.HydratedTranscript;
+        return hydrated != null;
+    }
 
     #endregion
 

@@ -1,39 +1,37 @@
 @using Ams.Workstation.Server.Models
 
-<BitCard Class="@GetCardClass()">
-    <BitStack Horizontal="false" Gap="0.5rem">
-        <div class="pattern-header">
-            <BitBadge Color="@GetTypeColor()">@Pattern.Type.ToUpper()</BitBadge>
-            <span class="pattern-count">@Pattern.Count occurrences</span>
-        </div>
-        <div class="pattern-text">
-            @if (!string.IsNullOrEmpty(Pattern.Book))
-            {
-                <span class="book-text">"@Pattern.Book"</span>
-            }
-            @if (!string.IsNullOrEmpty(Pattern.Book) && !string.IsNullOrEmpty(Pattern.Script))
-            {
-                <span class="arrow"> -> </span>
-            }
-            @if (!string.IsNullOrEmpty(Pattern.Script))
-            {
-                <span class="script-text">"@Pattern.Script"</span>
-            }
-        </div>
-        <div class="pattern-examples">
-            @foreach (var ex in Pattern.Examples.Take(3))
-            {
-                <BitLink OnClick="() => OnExampleClick.InvokeAsync(ex)">
-                    @ex.Chapter #@ex.SentenceId
-                </BitLink>
-            }
-        </div>
-        <BitButton Variant="BitVariant.Outline"
-                   Color="@(Pattern.Ignored ? BitColor.Secondary : BitColor.Primary)"
-                   OnClick="() => OnToggleIgnore.InvokeAsync()"
-                   Size="BitSize.Small">
-            @(Pattern.Ignored ? "Unignore" : "Ignore across book")
-        </BitButton>
+<BitCard FullSize="true" Style="@GetCardStyle()">
+    <BitStack Horizontal="false" Gap="0.25rem" Style="height: 100%;">
+        <BitStack Horizontal="true" HorizontalAlign="BitAlignment.SpaceBetween">
+            <BitText Typography="BitTypography.Caption1" Style="@GetTypeStyle()">
+                @Pattern.Type.ToUpper()
+            </BitText>
+            <BitText Typography="BitTypography.Caption1" Color="BitColor.SecondaryForeground">
+                @Pattern.Count
+            </BitText>
+        </BitStack>
+
+        @if (!string.IsNullOrEmpty(Pattern.Book))
+        {
+            <BitText Typography="BitTypography.Body2" Style="color: #f48771; font-family: monospace;">
+                "@Pattern.Book"
+            </BitText>
+        }
+        @if (!string.IsNullOrEmpty(Pattern.Script))
+        {
+            <BitText Typography="BitTypography.Body2" Style="color: #4ec9b0; font-family: monospace;">
+                "@Pattern.Script"
+            </BitText>
+        }
+
+        <BitStack HorizontalAlign="BitAlignment.Center"  Style="margin-top: auto; justify-content: flex-end;">
+            <BitButton Variant="BitVariant.Fill"
+                       Color="@(Pattern.Ignored ? BitColor.Secondary : BitColor.Primary)"
+                       OnClick="() => OnToggleIgnore.InvokeAsync()"
+                       Size="BitSize.Small">
+                @(Pattern.Ignored ? "Unignore" : "Ignore")
+            </BitButton>
+        </BitStack>
     </BitStack>
 </BitCard>
 
@@ -42,69 +40,15 @@
     [Parameter] public EventCallback OnToggleIgnore { get; set; }
     [Parameter] public EventCallback<PatternExample> OnExampleClick { get; set; }
 
-    private string GetCardClass()
-    {
-        return Pattern.Ignored ? "pattern-card ignored" : "pattern-card";
-    }
+    private string GetCardStyle() => Pattern.Ignored
+        ? "height: 116px; opacity: 0.4;"
+        : "height: 116px;";
 
-    private BitColor GetTypeColor() => Pattern.Type switch
+    private string GetTypeStyle() => Pattern.Type switch
     {
-        "del" => BitColor.Error,
-        "ins" => BitColor.Success,
-        "sub" => BitColor.Warning,
-        _ => BitColor.Primary
+        "del" => "color: #f48771; font-weight: 600;",
+        "ins" => "color: #4ec9b0; font-weight: 600;",
+        "sub" => "color: #dcdcaa; font-weight: 600;",
+        _ => "font-weight: 600;"
     };
 }
-
-<style>
-    .pattern-card {
-        padding: 1rem;
-        transition: opacity 0.15s ease, background-color 0.15s ease;
-    }
-
-    .pattern-card.ignored {
-        opacity: 0.5;
-    }
-
-    .pattern-card:hover {
-        background-color: var(--bit-clr-bg-sec-hover);
-    }
-
-    .pattern-header {
-        display: flex;
-        align-items: center;
-        gap: 0.5rem;
-    }
-
-    .pattern-count {
-        color: var(--bit-clr-fg-sec);
-        font-size: 0.875rem;
-    }
-
-    .pattern-text {
-        font-family: var(--bit-font-mono, monospace);
-        font-size: 0.9rem;
-        padding: 0.5rem;
-        background-color: var(--bit-clr-bg-sec);
-        border-radius: 4px;
-        word-break: break-word;
-    }
-
-    .book-text {
-        color: #f48771;
-    }
-
-    .script-text {
-        color: #4ec9b0;
-    }
-
-    .arrow {
-        color: var(--bit-clr-fg-sec);
-    }
-
-    .pattern-examples {
-        display: flex;
-        gap: 0.5rem;
-        flex-wrap: wrap;
-    }
-</style>

@@ -1,18 +1,19 @@
 @page "/proof/patterns"
 @inject NavigationManager Navigation
+@inject BlazorWorkspace Workspace
 @inject ErrorPatternService ErrorPatternService
 @using Ams.Workstation.Server.Models
 @using Ams.Workstation.Server.Services
 
 <PageTitle>Error Patterns - AMS Workstation</PageTitle>
 
-<BitStack Horizontal="false" Gap="1.5rem">
-    <div class="patterns-header">
+<BitStack Horizontal="false" Gap="1.5rem" Style="height: auto;">
+    <BitStack Horizontal="false" Gap="0.25rem">
         <BitText Typography="BitTypography.H4">Error Patterns</BitText>
         <BitText Typography="BitTypography.Body1" Color="BitColor.SecondaryForeground">
             Recurring differences across all chapters
         </BitText>
-    </div>
+    </BitStack>
 
     @* Filter input *@
     <BitTextField @bind-Value="_filterText"
@@ -32,14 +33,16 @@
             Showing @FilteredPatterns.Count() of @_patterns.Patterns.Count patterns
         </BitText>
 
-        <div class="patterns-grid">
+        <BitGrid Columns="6" Spacing="0.5rem">
             @foreach (var pattern in FilteredPatterns)
             {
-                <PatternCard Pattern="pattern"
-                             OnToggleIgnore="() => ToggleIgnore(pattern)"
-                             OnExampleClick="NavigateToExample" />
+                <BitGridItem>
+                    <PatternCard Pattern="pattern"
+                                 OnToggleIgnore="() => ToggleIgnore(pattern)"
+                                 OnExampleClick="NavigateToExample" />
+                </BitGridItem>
             }
-        </div>
+        </BitGrid>
 
         @if (!FilteredPatterns.Any())
         {
@@ -79,8 +82,15 @@
 
         try
         {
-            // Run on thread pool to avoid blocking the UI
-            _patterns = await Task.Run(() => ErrorPatternService.AggregatePatterns());
+            if (!Workspace.IsInitialized || !Workspace.HasBookIndex)
+            {
+                _patterns = null;
+            }
+            else
+            {
+                await Task.Yield();
+                _patterns = ErrorPatternService.AggregatePatterns();
+            }
         }
         catch (Exception ex)
         {
@@ -107,9 +117,9 @@
 
     private Task ToggleIgnore(ErrorPattern pattern)
     {
-        // Ignore toggle deferred to Plan 05 (persistence required)
-        // For now, just log or do nothing
-        Console.WriteLine($"Toggle ignore for pattern: {pattern.Key}");
+        // In-memory toggle - persistence deferred to Plan 05
+        pattern.Ignored = !pattern.Ignored;
+        StateHasChanged();
         return Task.CompletedTask;
     }
 
@@ -119,14 +129,3 @@
     }
 }
 
-<style>
-    .patterns-header {
-        margin-bottom: 0.5rem;
-    }
-
-    .patterns-grid {
-        display: grid;
-        grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
-        gap: 1rem;
-    }
-</style>
