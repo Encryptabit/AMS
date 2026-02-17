@@ -10,9 +10,6 @@
             <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
             <Link>ExtTools\ffmpeg\%(RecursiveDir)%(Filename)%(Extension)</Link>
         </None>
-        <None Update="..\..\..\..\Users\Jacar\.nuget\packages\whisper.net.runtime.cuda.windows\1.8.1\build\win-x64\ggml-cuda-whisper.dll">
-            <CopyToOutputDirectory>Always</CopyToOutputDirectory>
-        </None>
     </ItemGroup>
 
     <ItemGroup>
@@ -36,8 +33,31 @@
         <PackageReference Include="Serilog.Sinks.File" Version="7.0.0"/>
         <PackageReference Include="System.Text.Json" Version="10.0.0"/>
         <PackageReference Include="Tesseract" Version="5.2.0"/>
-        <PackageReference Include="Whisper.net" Version="1.8.1"/>
-        <PackageReference Include="Whisper.net.Runtime.Cuda" Version="1.8.1"/>
+        <PackageReference Include="Whisper.net" Version="1.9.0" />
+        <PackageReference Include="Whisper.net.Runtime" Version="1.9.0" />
+        <PackageReference Include="Whisper.net.Runtime.Cuda" Version="1.9.0" />
+    </ItemGroup>
+    <PropertyGroup>
+        <CopyCudaToolkitDlls Condition="'$(CopyCudaToolkitDlls)' == '' and '$(OS)' == 'Windows_NT'">true</CopyCudaToolkitDlls>
+        <CudaToolkitBinDir Condition="'$(CudaToolkitBinDir)' == '' and '$(CUDA_PATH)' != ''">$(CUDA_PATH)\bin\x64</CudaToolkitBinDir>
+        <CudaToolkitBinDir Condition="'$(CudaToolkitBinDir)' == ''">C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v13.0\bin\x64</CudaToolkitBinDir>
+    </PropertyGroup>
+    <ItemGroup Condition="'$(CopyCudaToolkitDlls)' == 'true' and '$(OS)' == 'Windows_NT' and Exists('$(CudaToolkitBinDir)\cudart64_13.dll') and Exists('$(CudaToolkitBinDir)\cublas64_13.dll') and Exists('$(CudaToolkitBinDir)\cublasLt64_13.dll')">
+        <None Include="$(CudaToolkitBinDir)\cudart64_13.dll">
+            <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+            <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+            <TargetPath>runtimes\cuda\win-x64\cudart64_13.dll</TargetPath>
+        </None>
+        <None Include="$(CudaToolkitBinDir)\cublas64_13.dll">
+            <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+            <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+            <TargetPath>runtimes\cuda\win-x64\cublas64_13.dll</TargetPath>
+        </None>
+        <None Include="$(CudaToolkitBinDir)\cublasLt64_13.dll">
+            <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+            <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+            <TargetPath>runtimes\cuda\win-x64\cublasLt64_13.dll</TargetPath>
+        </None>
     </ItemGroup>
     <ItemGroup>
         <None Include="ExtTools\Plugalyzer.exe">
@@ -87,6 +107,10 @@
         <Message Text="Checking for Plugalyzer.exe in output..." Importance="high"/>
         <Message Text="File exists: $(OutputPath)ExtTools\Plugalyzer.exe" Importance="high" Condition="Exists('$(OutputPath)ExtTools\Plugalyzer.exe')"/>
         <Warning Text="Plugalyzer.exe was not copied to output directory!" Condition="!Exists('$(OutputPath)ExtTools\Plugalyzer.exe')"/>
+    </Target>
+    <Target Name="WarnMissingCudaToolkitDlls" BeforeTargets="Build;Publish"
+            Condition="'$(CopyCudaToolkitDlls)' == 'true' and '$(OS)' == 'Windows_NT' and (!Exists('$(CudaToolkitBinDir)\cudart64_13.dll') or !Exists('$(CudaToolkitBinDir)\cublas64_13.dll') or !Exists('$(CudaToolkitBinDir)\cublasLt64_13.dll'))">
+        <Warning Text="CUDA 13 runtime DLLs were not found under '$(CudaToolkitBinDir)'. Whisper.NET CUDA may fail unless these DLLs are in PATH or copied next to runtimes/cuda/win-x64."/>
     </Target>
     <PropertyGroup>
         <TargetFramework>net9.0</TargetFramework>
