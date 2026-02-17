@@ -396,58 +396,11 @@ public static class TranscriptAligner
                 int startAsr = baseStart.Value;
                 int endAsr = baseEnd.Value;
 
-                int prevAnchorAsr = opsList
-                    .Take(minIndex)
-                    .Where(o => string.Equals(o.Reason, "anchor", StringComparison.Ordinal) && o.AsrIdx != null)
-                    .Select(o => o.AsrIdx!.Value)
-                    .LastOrDefault(-1);
-                int nextAnchorAsr = opsList
-                    .Skip(maxIndex + 1)
-                    .Where(o => string.Equals(o.Reason, "anchor", StringComparison.Ordinal) && o.AsrIdx != null)
-                    .Select(o => o.AsrIdx!.Value)
-                    .FirstOrDefault(int.MaxValue);
-
-                int leftGuard = prevAnchorAsr + 1;
-                int rightGuard = nextAnchorAsr - 1;
-
-                int probe = minIndex - 1;
-                while (probe >= 0)
-                {
-                    var probeOp = opsList[probe];
-                    if (probeOp.AsrIdx is not { } probeAsr)
-                    {
-                        probe--;
-                        continue;
-                    }
-
-                    if (probeOp.BookIdx is { } bi && bi < start) break;
-                    if (probeOp.Op != AlignOp.Ins) break;
-                    if (probeAsr < leftGuard) break;
-                    startAsr = Math.Min(startAsr, probeAsr);
-                    probe--;
-                }
-
-                probe = maxIndex + 1;
-                while (probe < opsList.Count)
-                {
-                    var probeOp = opsList[probe];
-                    if (probeOp.AsrIdx is not int probeAsr)
-                    {
-                        probe++;
-                        continue;
-                    }
-
-                    if (probeOp.BookIdx is int bi && bi > end) break;
-                    if (probeOp.Op != AlignOp.Ins) break;
-                    if (probeAsr > rightGuard) break;
-                    endAsr = Math.Max(endAsr, probeAsr);
-                    probe++;
-                }
-
+                // Keep sentence ownership strict: do not extend into neighboring insertion runs.
+                // This avoids cross-sentence bleed where adjacent sentence words get absorbed.
                 if (startAsr > endAsr)
                 {
-                    startAsr = baseStart.Value;
-                    endAsr = baseEnd.Value;
+                    (startAsr, endAsr) = (endAsr, startAsr);
                 }
 
                 guardStart = startAsr;

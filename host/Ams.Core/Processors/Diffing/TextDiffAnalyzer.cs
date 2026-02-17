@@ -1,7 +1,6 @@
 using System.Text;
 using Ams.Core.Artifacts;
 using Ams.Core.Artifacts.Hydrate;
-using Ams.Core.Runtime.Book;
 using DiffMatchPatch;
 
 namespace Ams.Core.Processors.Diffing;
@@ -10,23 +9,57 @@ public static class TextDiffAnalyzer
 {
     public static TextDiffResult Analyze(string? referenceText, string? hypothesisText)
     {
-        var reference = Normalize(referenceText);
-        var hypothesis = Normalize(hypothesisText);
+        var scoringReference = NormalizeForScoring(referenceText);
+        var scoringHypothesis = NormalizeForScoring(hypothesisText);
+        var scoringReferenceTokens = Tokenize(scoringReference);
+        var scoringHypothesisTokens = Tokenize(scoringHypothesis);
 
-        var referenceTokens = Tokenize(reference);
-        var hypothesisTokens = Tokenize(hypothesis);
+        var displayReference = NormalizeForDisplay(referenceText);
+        var displayHypothesis = NormalizeForDisplay(hypothesisText);
+        var displayReferenceTokens = Tokenize(displayReference);
+        var displayHypothesisTokens = Tokenize(displayHypothesis);
 
-        var tokenDiff = BuildTokenDiff(referenceTokens, hypothesisTokens);
+        var displayTokenDiff = BuildTokenDiff(displayReferenceTokens, displayHypothesisTokens);
 
-        var ops = new List<HydratedDiffOp>(tokenDiff.Diffs.Count);
+        var ops = new List<HydratedDiffOp>(displayTokenDiff.Diffs.Count);
+        foreach (var diff in displayTokenDiff.Diffs)
+        {
+            var tokens = DecodeTokens(diff.text, displayTokenDiff.Dictionary);
+            if (tokens.Count == 0)
+            {
+                continue;
+            }
+
+            var op = new HydratedDiffOp(MapOperation(diff.operation), tokens.ToArray());
+            ops.Add(op);
+        }
+
+        var displayStats = BuildStats(displayReferenceTokens.Count, displayHypothesisTokens.Count, displayTokenDiff.Diffs);
+
+        // Keep scoring normalization independent from reviewer-facing diff tokens.
+        var scoringTokenDiff = BuildTokenDiff(scoringReferenceTokens, scoringHypothesisTokens);
+        var scoringStats = BuildStats(scoringReferenceTokens.Count, scoringHypothesisTokens.Count, scoringTokenDiff.Diffs);
+
+        var metrics = BuildMetrics(scoringReference, scoringHypothesis, scoringStats);
+        var coverage = scoringStats.ReferenceTokens == 0
+            ? (scoringStats.HypothesisTokens == 0 ? 1.0 : 0.0)
+            : Math.Max(0.0,
+                1.0 - Math.Min(1.0, (double)scoringStats.Deletions / Math.Max(1.0, scoringStats.ReferenceTokens)));
+
+        var diffPayload = new HydratedDiff(ops, displayStats);
+        return new TextDiffResult(metrics, diffPayload, coverage);
+    }
+
+    private static HydratedDiffStats BuildStats(int referenceTokenCount, int hypothesisTokenCount, IReadOnlyList<Diff> diffs)
+    {
         int equalTokens = 0;
         int insertTokens = 0;
         int deleteTokens = 0;
 
-        foreach (var diff in tokenDiff.Diffs)
+        foreach (var diff in diffs)
         {
-            var tokens = DecodeTokens(diff.text, tokenDiff.Dictionary);
-            if (tokens.Count == 0)
+            var tokenCount = diff.text.Length;
+            if (tokenCount == 0)
             {
                 continue;
             }
@@ -34,34 +67,23 @@ public static class TextDiffAnalyzer
             switch (diff.operation)
             {
                 case Operation.EQUAL:
-                    equalTokens += tokens.Count;
+                    equalTokens += tokenCount;
                     break;
                 case Operation.INSERT:
-                    insertTokens += tokens.Count;
+                    insertTokens += tokenCount;
                     break;
                 case Operation.DELETE:
-                    deleteTokens += tokens.Count;
+                    deleteTokens += tokenCount;
                     break;
             }
-
-            var op = new HydratedDiffOp(MapOperation(diff.operation), tokens.ToArray());
-            ops.Add(op);
         }
 
-        var stats = new HydratedDiffStats(
-            ReferenceTokens: referenceTokens.Count,
-            HypothesisTokens: hypothesisTokens.Count,
+        return new HydratedDiffStats(
+            ReferenceTokens: referenceTokenCount,
+            HypothesisTokens: hypothesisTokenCount,
             Matches: equalTokens,
             Insertions: insertTokens,
             Deletions: deleteTokens);
-
-        var metrics = BuildMetrics(reference, hypothesis, stats);
-        var coverage = stats.ReferenceTokens == 0
-            ? (stats.HypothesisTokens == 0 ? 1.0 : 0.0)
-            : Math.Max(0.0, 1.0 - Math.Min(1.0, (double)stats.Deletions / Math.Max(1.0, stats.ReferenceTokens)));
-
-        var diffPayload = new HydratedDiff(ops, stats);
-        return new TextDiffResult(metrics, diffPayload, coverage);
     }
 
     private static SentenceMetrics BuildMetrics(string reference, string hypothesis, HydratedDiffStats stats)
@@ -108,10 +130,15 @@ public static class TextDiffAnalyzer
         return Math.Min(1.0, ((reference.Length - equalChars) + insertChars) / refLength);
     }
 
-    private static string Normalize(string? value)
+    private static string NormalizeForScoring(string? value)
         => string.IsNullOrWhiteSpace(value)
             ? string.Empty
             : TextNormalizer.Normalize(value, expandContractions: true, removeNumbers: false);
+
+    private static string NormalizeForDisplay(string? value)
+        => string.IsNullOrWhiteSpace(value)
+            ? string.Empty
+            : TextNormalizer.Normalize(value, expandContractions: false, removeNumbers: false);
 
     private static List<string> Tokenize(string text)
     {
@@ -168,7 +195,6 @@ public static class TextDiffAnalyzer
         var dmp = new diff_match_patch();
         var diffs = dmp.diff_main(encodedReference, encodedHypothesis, false);
         dmp.diff_cleanupSemantic(diffs);
-        PostProcessGlueTokens(diffs, dictionary);
 
         return new TokenDiffResult(diffs, dictionary);
     }
@@ -191,204 +217,6 @@ public static class TextDiffAnalyzer
         }
 
         return tokens;
-    }
-
-
-    private static void PostProcessGlueTokens(List<Diff> diffs, IReadOnlyList<string> dictionary)
-    {
-        if (diffs.Count < 2)
-        {
-            return;
-        }
-
-        var normalizedCache = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-
-        string NormalizeToken(string token)
-        {
-            if (normalizedCache.TryGetValue(token, out var existing))
-            {
-                return existing;
-            }
-
-            var normalized = string.Concat(PronunciationHelper.ExtractPronunciationParts(token));
-            normalizedCache[token] = normalized;
-            return normalized;
-        }
-
-        int i = 0;
-        while (i < diffs.Count - 1)
-        {
-            var first = diffs[i];
-            var second = diffs[i + 1];
-
-            if (!IsGlueCandidate(first, second))
-            {
-                i++;
-                continue;
-            }
-
-            var deletes = DecodeTokens(first.text, dictionary).ToList();
-            var inserts = DecodeTokens(second.text, dictionary).ToList();
-            if (deletes.Count == 0 || inserts.Count == 0)
-            {
-                i++;
-                continue;
-            }
-
-            if (!TryMatchGlue(deletes, inserts, NormalizeToken, out var deleteIndex, out var insertSpan,
-                    out var mergedText))
-            {
-                i++;
-                continue;
-            }
-
-            var replacement = new List<Diff>();
-
-            if (deleteIndex >= 0 && deleteIndex < deletes.Count)
-            {
-                deletes.RemoveAt(deleteIndex);
-                if (deletes.Count > 0)
-                {
-                    replacement.Add(new Diff(Operation.DELETE, EncodeTokens(deletes, dictionary)));
-                }
-            }
-            else
-            {
-                replacement.Add(new Diff(first.operation, first.text));
-            }
-
-            replacement.Add(new Diff(Operation.EQUAL, EncodeTokens(new[] { mergedText }, dictionary)));
-
-            if (insertSpan.length > 0 && insertSpan.start < inserts.Count)
-            {
-                inserts.RemoveRange(insertSpan.start, Math.Min(insertSpan.length, inserts.Count - insertSpan.start));
-                if (inserts.Count > 0)
-                {
-                    replacement.Add(new Diff(Operation.INSERT, EncodeTokens(inserts, dictionary)));
-                }
-            }
-            else
-            {
-                replacement.Add(new Diff(second.operation, second.text));
-            }
-
-            diffs.RemoveAt(i + 1);
-            diffs.RemoveAt(i);
-            diffs.InsertRange(i, replacement);
-
-            i = Math.Max(0, i - 1);
-        }
-    }
-
-    private static bool IsGlueCandidate(Diff first, Diff second)
-        => ((first.operation == Operation.DELETE && second.operation == Operation.INSERT)
-            || (first.operation == Operation.INSERT && second.operation == Operation.DELETE))
-           && first.text.Length > 0
-           && second.text.Length > 0;
-
-    private static bool TryMatchGlue(
-        List<string> deletes,
-        List<string> inserts,
-        Func<string, string> normalize,
-        out int deleteIndex,
-        out (int start, int length) insertSpan,
-        out string mergedText)
-    {
-        deleteIndex = -1;
-        insertSpan = (0, 0);
-        mergedText = string.Empty;
-
-        var normalizedInserts = inserts.Select(normalize).ToList();
-        var normalizedDeletes = deletes.Select(normalize).ToList();
-
-        for (int di = 0; di < normalizedDeletes.Count; di++)
-        {
-            var deleteToken = normalizedDeletes[di];
-            if (string.IsNullOrEmpty(deleteToken))
-            {
-                continue;
-            }
-
-            for (int start = 0; start < normalizedInserts.Count; start++)
-            {
-                var builder = new StringBuilder();
-                int length = 0;
-                for (int span = start; span < normalizedInserts.Count; span++)
-                {
-                    builder.Append(normalizedInserts[span]);
-                    length++;
-
-                    if (builder.ToString().Equals(deleteToken, StringComparison.OrdinalIgnoreCase))
-                    {
-                        deleteIndex = di;
-                        insertSpan = (start, length);
-                        mergedText = deletes[di];
-                        return true;
-                    }
-                }
-            }
-        }
-
-        for (int ii = 0; ii < normalizedInserts.Count; ii++)
-        {
-            var insertToken = normalizedInserts[ii];
-            if (string.IsNullOrEmpty(insertToken))
-            {
-                continue;
-            }
-
-            for (int start = 0; start < normalizedDeletes.Count; start++)
-            {
-                var builder = new StringBuilder();
-                int length = 0;
-                for (int span = start; span < normalizedDeletes.Count; span++)
-                {
-                    builder.Append(normalizedDeletes[span]);
-                    length++;
-
-                    if (builder.ToString().Equals(insertToken, StringComparison.OrdinalIgnoreCase))
-                    {
-                        deleteIndex = start;
-                        insertSpan = (ii, 1);
-                        mergedText = inserts[ii];
-                        return true;
-                    }
-                }
-            }
-        }
-
-        return false;
-    }
-
-
-    private static int IndexOfToken(IReadOnlyList<string> dictionary, string token)
-    {
-        for (int i = 0; i < dictionary.Count; i++)
-        {
-            if (string.Equals(dictionary[i], token, StringComparison.Ordinal))
-            {
-                return i;
-            }
-        }
-
-        return -1;
-    }
-
-    private static string EncodeTokens(IEnumerable<string> tokens, IReadOnlyList<string> dictionary)
-    {
-        var indices = new List<char>();
-        foreach (var token in tokens)
-        {
-            var index = IndexOfToken(dictionary, token);
-            if (index < 0)
-            {
-                continue;
-            }
-
-            indices.Add((char)index);
-        }
-
-        return new string(indices.ToArray());
     }
 
     private static string MapOperation(Operation op) => op switch

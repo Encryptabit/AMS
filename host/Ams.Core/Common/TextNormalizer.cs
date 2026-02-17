@@ -6,7 +6,8 @@ namespace Ams.Core.Common;
 public static class TextNormalizer
 {
     private static readonly Regex WhitespaceRegex = new(@"\s+", RegexOptions.Compiled);
-    private static readonly Regex PunctuationRegex = new(@"[^\w\s]", RegexOptions.Compiled);
+    // Preserve apostrophes so contractions like "he'd" remain a single token when not expanded.
+    private static readonly Regex PunctuationRegex = new(@"[^\w\s']", RegexOptions.Compiled);
     private static readonly Regex NumbersRegex = new(@"\b\d+\b", RegexOptions.Compiled);
 
     private static readonly Dictionary<string, string> CommonContractions = new(StringComparer.OrdinalIgnoreCase)

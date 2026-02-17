@@ -185,6 +185,10 @@ Plans:
 **Research**: Unlikely (extending Proof patterns)
 **Plans**: TBD
 
+### Quick Plans (Ad-hoc)
+
+- [x] quick-001: Simplify alignment/diff pipeline errors (deterministic UI diff rendering, glue-heuristic removal, stricter sentence ownership) - completed 2026-02-17
+
 ## Progress
 
 **Execution Order:**

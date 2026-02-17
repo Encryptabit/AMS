@@ -1014,30 +1014,73 @@ class ValidationReportHandler(BaseHTTPRequestHandler):
             word_ops_by_sentence = {}
             words = hydrate_data.get('words') or []
             if words:
+                def to_int(value):
+                    if isinstance(value, int):
+                        return value
+                    if isinstance(value, str):
+                        value = value.strip()
+                        if re.fullmatch(r'-?\d+', value):
+                            return int(value)
+                    return None
+
                 # Map each book word index to its sentence ID for quick lookup
                 book_to_sentence = {}
+                script_ranges = []
                 for sent in hydrate_data['sentences']:
                     book_range = sent.get('bookRange') or {}
-                    start = book_range.get('start')
-                    end = book_range.get('end')
+                    start = to_int(book_range.get('start'))
+                    end = to_int(book_range.get('end'))
                     if start is None or end is None:
-                        continue
-                    if end < start:
-                        start, end = end, start
+                        pass
+                    else:
+                        if end < start:
+                            start, end = end, start
 
-                    for idx in range(start, end + 1):
-                        book_to_sentence[idx] = sent['id']
+                        for idx in range(start, end + 1):
+                            book_to_sentence[idx] = sent['id']
+
+                    script_range = sent.get('scriptRange') or {}
+                    script_start = to_int(script_range.get('start'))
+                    script_end = to_int(script_range.get('end'))
+                    if script_start is not None and script_end is not None:
+                        if script_end < script_start:
+                            script_start, script_end = script_end, script_start
+                        script_ranges.append((sent['id'], script_start, script_end))
 
                     word_ops_by_sentence.setdefault(sent['id'], [])
 
-                last_sentence_id = None
+                script_ranges.sort(key=lambda r: (r[1], r[2], r[0]))
+
+                def sentence_from_asr_idx(asr_idx):
+                    if asr_idx is None or not script_ranges:
+                        return None
+
+                    containing = [sid for sid, start, end in script_ranges if start <= asr_idx <= end]
+                    if containing:
+                        return containing[0]
+
+                    nearest_id = None
+                    nearest_distance = None
+                    for sid, start, end in script_ranges:
+                        if asr_idx < start:
+                            distance = start - asr_idx
+                        else:
+                            distance = asr_idx - end
+
+                        if nearest_distance is None or distance < nearest_distance:
+                            nearest_distance = distance
+                            nearest_id = sid
+
+                    return nearest_id
+
                 for word in words:
                     sentence_id = None
-                    book_idx = word.get('bookIdx')
+                    book_idx = to_int(word.get('bookIdx'))
+                    asr_idx = to_int(word.get('asrIdx'))
                     if book_idx is not None:
                         sentence_id = book_to_sentence.get(book_idx)
                     if sentence_id is None:
-                        sentence_id = last_sentence_id
+                        sentence_id = sentence_from_asr_idx(asr_idx)
                     if sentence_id is None:
                         continue
 
@@ -1045,10 +1088,11 @@ class ValidationReportHandler(BaseHTTPRequestHandler):
                         'op': word.get('op'),
                         'reason': word.get('reason'),
                         'bookWord': (word.get('bookWord') or '').strip(),
-                        'asrWord': (word.get('asrWord') or '').strip()
+                        'asrWord': (word.get('asrWord') or '').strip(),
+                        'bookIdx': book_idx,
+                        'asrIdx': asr_idx
                     }
                     word_ops_by_sentence.setdefault(sentence_id, []).append(entry)
-                    last_sentence_id = sentence_id
 
             # Add paragraph ID to each sentence
             for sentence in report_data['sentences']:
