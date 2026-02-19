@@ -7,24 +7,35 @@
                 @Pattern.Type.ToUpper()
             </BitText>
             <BitText Typography="BitTypography.Caption1" Color="BitColor.SecondaryForeground">
-                @Pattern.Count
+                @Pattern.Count occurrences
             </BitText>
         </BitStack>
 
-        @if (!string.IsNullOrEmpty(Pattern.Book))
-        {
-            <BitText Typography="BitTypography.Body2" Style="color: #f48771; font-family: monospace;">
-                "@Pattern.Book"
-            </BitText>
-        }
-        @if (!string.IsNullOrEmpty(Pattern.Script))
-        {
-            <BitText Typography="BitTypography.Body2" Style="color: #4ec9b0; font-family: monospace;">
-                "@Pattern.Script"
-            </BitText>
-        }
+        <div style="font-family: monospace; font-size: 0.85rem; line-height: 1.4;">
+            @if (!string.IsNullOrEmpty(Pattern.Book))
+            {
+                <span style="color: #f48771;">"@Pattern.Book"</span>
+            }
+            @if (!string.IsNullOrEmpty(Pattern.Book) && !string.IsNullOrEmpty(Pattern.Script))
+            {
+                <span style="color: #888; margin: 0 0.25rem;">&#8594;</span>
+            }
+            @if (!string.IsNullOrEmpty(Pattern.Script))
+            {
+                <span style="color: #4ec9b0;">"@Pattern.Script"</span>
+            }
+        </div>
 
-        <BitStack HorizontalAlign="BitAlignment.Center"  Style="margin-top: auto; justify-content: flex-end;">
+        <div style="display: flex; gap: 0.5rem; flex-wrap: wrap;">
+            @foreach (var ex in Pattern.Examples.Take(3))
+            {
+                <BitLink OnClick="() => OnExampleClick.InvokeAsync(ex)" Style="font-size: 0.75rem;">
+                    @ex.Chapter #@ex.SentenceId
+                </BitLink>
+            }
+        </div>
+
+        <BitStack HorizontalAlign="BitAlignment.Center" Style="margin-top: auto; justify-content: flex-end;">
             <BitButton Variant="BitVariant.Fill"
                        Color="@(Pattern.Ignored ? BitColor.Secondary : BitColor.Primary)"
                        OnClick="() => OnToggleIgnore.InvokeAsync()"
@@ -41,8 +52,8 @@
     [Parameter] public EventCallback<PatternExample> OnExampleClick { get; set; }
 
     private string GetCardStyle() => Pattern.Ignored
-        ? "height: 116px; opacity: 0.4;"
-        : "height: 116px;";
+        ? "opacity: 0.4;"
+        : "";
 
     private string GetTypeStyle() => Pattern.Type switch
     {
