@@ -1,0 +1,13 @@
+@using Ams.Workstation.Server.Models
+
+@* Stub - full implementation in Task 3 *@
+<div class="sentence-error-card-stub">
+    <span>#@Sentence.Id - @Sentence.BookText</span>
+</div>
+
+@code {
+    [Parameter] public SentenceReport Sentence { get; set; } = default!;
+    [Parameter] public EventCallback OnPlayAudio { get; set; }
+    [Parameter] public EventCallback OnExport { get; set; }
+    [Parameter] public EventCallback OnCrx { get; set; }
+}

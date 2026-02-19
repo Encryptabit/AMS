@@ -1,0 +1,13 @@
+@using Ams.Workstation.Server.Models
+
+@* Stub - full implementation in Task 3 *@
+<div class="error-card-stub" @onclick="HandleClick">
+    <span>#@Sentence.Id - WER: @Sentence.Wer</span>
+</div>
+
+@code {
+    [Parameter] public SentenceReport Sentence { get; set; } = default!;
+    [Parameter] public EventCallback OnClick { get; set; }
+
+    private async Task HandleClick() => await OnClick.InvokeAsync();
+}

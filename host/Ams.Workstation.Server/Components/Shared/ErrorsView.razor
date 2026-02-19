@@ -1,9 +1,89 @@
 @using Ams.Workstation.Server.Models
 
-@* Stub - full implementation in Task 2 *@
-<div>Errors View placeholder</div>
+<BitStack Horizontal="false" Gap="1.5rem">
+    @if (Report == null)
+    {
+        <BitStack HorizontalAlign="BitAlignment.Center" VerticalAlign="BitAlignment.Center" Style="padding: 2rem;">
+            <BitProgress Circular="true" />
+        </BitStack>
+    }
+    else
+    {
+        @* Stats Grid *@
+        <BitGrid Columns="2" Spacing="1rem">
+            <BitGridItem>
+                <StatCard Title="Sentences"
+                          Value="@Report.Stats.SentenceCount.ToString()"
+                          Detail="@($"Flagged: {Report.Stats.FlaggedCount} | Avg WER: {Report.Stats.AvgWer} | Max: {Report.Stats.MaxWer}")" />
+            </BitGridItem>
+            <BitGridItem>
+                <StatCard Title="Paragraphs"
+                          Value="@Report.Stats.ParagraphCount.ToString()"
+                          Detail="@($"Avg WER: {Report.Stats.ParagraphAvgWer} | Coverage: {Report.Stats.AvgCoverage}")" />
+            </BitGridItem>
+        </BitGrid>
+
+        @* Quick Error Grid (top 12 errors) *@
+        <div>
+            <BitText Typography="BitTypography.Subtitle2" Style="margin-bottom: 0.5rem;">
+                Quick Error Grid
+            </BitText>
+            <div class="error-grid">
+                @foreach (var sentence in ErrorSentences.Take(12))
+                {
+                    <ErrorCard Sentence="sentence"
+                               OnClick="() => OnPlaySentence.InvokeAsync(sentence)" />
+                }
+            </div>
+        </div>
+
+        @* Detailed Sentences *@
+        <div>
+            <BitText Typography="BitTypography.Subtitle2" Style="margin-bottom: 0.5rem;">
+                Sentences with Errors (@ErrorSentences.Count())
+            </BitText>
+            @foreach (var sentence in ErrorSentences)
+            {
+                <SentenceErrorCard Sentence="sentence"
+                                   OnPlayAudio="() => OnPlaySentence.InvokeAsync(sentence)"
+                                   OnExport="() => HandleExport(sentence)"
+                                   OnCrx="() => HandleCrx(sentence)" />
+            }
+        </div>
+    }
+</BitStack>
 
 @code {
     [Parameter] public ChapterReport? Report { get; set; }
     [Parameter] public EventCallback<SentenceReport> OnPlaySentence { get; set; }
+
+    private IEnumerable<SentenceReport> ErrorSentences =>
+        Report?.Sentences
+            .Where(s => s.Diff != null || s.Status != "ok")
+            .OrderByDescending(s => ParseWer(s.Wer))
+        ?? Enumerable.Empty<SentenceReport>();
+
+    private double ParseWer(string wer)
+    {
+        if (double.TryParse(wer.TrimEnd('%'), out var v)) return v;
+        return 0;
+    }
+
+    private void HandleExport(SentenceReport sentence)
+    {
+        // Export deferred to Plan 06
+    }
+
+    private void HandleCrx(SentenceReport sentence)
+    {
+        // CRX deferred to Plan 06
+    }
 }
+
+<style>
+    .error-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+        gap: 0.75rem;
+    }
+</style>
