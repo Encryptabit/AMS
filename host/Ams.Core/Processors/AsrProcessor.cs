@@ -182,6 +182,30 @@ public static class AsrProcessor
         AsrOptions options,
         CancellationToken cancellationToken)
     {
+        var response = await RunWhisperPassAsync(buffer, options, cancellationToken).ConfigureAwait(false);
+
+        if (!ShouldRetryWithoutDtw(options, buffer, response, out var audioDurationSec, out var transcriptEndSec,
+                out var coverage))
+        {
+            return response;
+        }
+
+        Log.Warn(
+            "DTW timestamps appear truncated for model '{Model}' (end={TranscriptEnd:F2}s, audio={AudioDuration:F2}s, coverage={Coverage:P1}). Retrying once with DTW disabled.",
+            options.ModelPath,
+            transcriptEndSec,
+            audioDurationSec,
+            coverage);
+
+        var fallbackOptions = options with { UseDtwTimestamps = false };
+        return await RunWhisperPassAsync(buffer, fallbackOptions, cancellationToken).ConfigureAwait(false);
+    }
+
+    private static async Task<AsrResponse> RunWhisperPassAsync(
+        AudioBuffer buffer,
+        AsrOptions options,
+        CancellationToken cancellationToken)
+    {
         var factoryOptions = CreateFactoryOptions(options);
 
         using var factoryHandle = WhisperFactoryPool.Acquire(options.ModelPath, factoryOptions, out var factory);
@@ -221,6 +245,78 @@ public static class AsrProcessor
         }
     }
 
+    private static bool ShouldRetryWithoutDtw(
+        AsrOptions options,
+        AudioBuffer buffer,
+        AsrResponse response,
+        out double audioDurationSec,
+        out double transcriptEndSec,
+        out double coverage)
+    {
+        audioDurationSec = ComputeAudioDurationSeconds(buffer);
+        transcriptEndSec = ComputeTranscriptEndSeconds(response);
+        coverage = audioDurationSec > 0 ? transcriptEndSec / audioDurationSec : 0;
+
+        if (!IsDtwEffectivelyEnabled(options))
+        {
+            return false;
+        }
+
+        if (audioDurationSec < DtwFallbackMinAudioSeconds)
+        {
+            return false;
+        }
+
+        if (transcriptEndSec <= 0)
+        {
+            return true;
+        }
+
+        return coverage < DtwFallbackCoverageThreshold &&
+               (audioDurationSec - transcriptEndSec) >= DtwFallbackMinimumShortfallSeconds;
+    }
+
+    private static bool IsDtwEffectivelyEnabled(AsrOptions options) =>
+        options.UseDtwTimestamps &&
+        options.EnableWordTimestamps &&
+        ResolveDtwPreset(options.ModelPath).HasValue;
+
+    private static double ComputeAudioDurationSeconds(AudioBuffer buffer) =>
+        buffer.SampleRate > 0 ? buffer.Length / (double)buffer.SampleRate : 0;
+
+    private static double ComputeTranscriptEndSeconds(AsrResponse response)
+    {
+        var maxEnd = 0d;
+        if (response.Segments is { Length: > 0 })
+        {
+            foreach (var segment in response.Segments)
+            {
+                if (segment.EndSec > maxEnd)
+                {
+                    maxEnd = segment.EndSec;
+                }
+            }
+        }
+
+        if (response.Tokens is { Length: > 0 })
+        {
+            foreach (var token in response.Tokens)
+            {
+                var tokenEnd = token.StartTime + Math.Max(0, token.Duration);
+                if (tokenEnd > maxEnd)
+                {
+                    maxEnd = tokenEnd;
+                }
+            }
+        }
+
+        return maxEnd;
+    }
+
+    private const double DtwFallbackMinAudioSeconds = 90d;
+    private const double DtwFallbackCoverageThreshold = 0.70d;
+    private const double DtwFallbackMinimumShortfallSeconds = 30d;
+
     private static int _whisperInflight;
 
     private static void EnsureModelPath(string modelPath)
@@ -236,14 +332,106 @@ public static class AsrProcessor
         }
     }
 
-    private static WhisperFactoryOptions CreateFactoryOptions(AsrOptions options) =>
-        new()
+    private static WhisperFactoryOptions CreateFactoryOptions(AsrOptions options)
+    {
+        var dtwRequested = options.UseDtwTimestamps && options.EnableWordTimestamps;
+        var dtwPreset = dtwRequested ? ResolveDtwPreset(options.ModelPath) : null;
+        var dtwEnabled = dtwRequested && dtwPreset.HasValue;
+
+        if (dtwRequested && !dtwPreset.HasValue)
+        {
+            Log.Warn(
+                "DTW timestamps requested but no alignment-head preset could be inferred for model '{Model}'. DTW is disabled to avoid native runtime errors.",
+                options.ModelPath);
+        }
+
+        return new WhisperFactoryOptions
         {
             UseGpu = options.UseGpu,
             GpuDevice = options.GpuDevice,
             UseFlashAttention = options.UseFlashAttention,
-            UseDtwTimeStamps = options.UseDtwTimestamps && options.EnableWordTimestamps
+            UseDtwTimeStamps = dtwEnabled,
+            HeadsPreset = dtwPreset ?? WhisperAlignmentHeadsPreset.None
         };
+    }
+
+    private static WhisperAlignmentHeadsPreset? ResolveDtwPreset(string modelPath)
+    {
+        if (string.IsNullOrWhiteSpace(modelPath))
+        {
+            return null;
+        }
+
+        var name = Path.GetFileName(modelPath).ToLowerInvariant().Replace('_', '-');
+
+        if (name.Contains("large-v3-turbo", StringComparison.Ordinal))
+        {
+            return WhisperAlignmentHeadsPreset.LargeV3Turbo;
+        }
+
+        if (name.Contains("large-v3", StringComparison.Ordinal))
+        {
+            return WhisperAlignmentHeadsPreset.LargeV3;
+        }
+
+        if (name.Contains("large-v2", StringComparison.Ordinal))
+        {
+            return WhisperAlignmentHeadsPreset.LargeV2;
+        }
+
+        if (name.Contains("large-v1", StringComparison.Ordinal) ||
+            name.Contains("ggml-large.bin", StringComparison.Ordinal) ||
+            name.Equals("large.bin", StringComparison.Ordinal))
+        {
+            return WhisperAlignmentHeadsPreset.LargeV1;
+        }
+
+        if (name.Contains("medium.en", StringComparison.Ordinal) ||
+            name.Contains("medium-en", StringComparison.Ordinal))
+        {
+            return WhisperAlignmentHeadsPreset.MediumEn;
+        }
+
+        if (name.Contains("medium", StringComparison.Ordinal))
+        {
+            return WhisperAlignmentHeadsPreset.Medium;
+        }
+
+        if (name.Contains("small.en", StringComparison.Ordinal) ||
+            name.Contains("small-en", StringComparison.Ordinal))
+        {
+            return WhisperAlignmentHeadsPreset.SmallEn;
+        }
+
+        if (name.Contains("small", StringComparison.Ordinal))
+        {
+            return WhisperAlignmentHeadsPreset.Small;
+        }
+
+        if (name.Contains("base.en", StringComparison.Ordinal) ||
+            name.Contains("base-en", StringComparison.Ordinal))
+        {
+            return WhisperAlignmentHeadsPreset.BaseEn;
+        }
+
+        if (name.Contains("base", StringComparison.Ordinal))
+        {
+            return WhisperAlignmentHeadsPreset.Base;
+        }
+
+        if (name.Contains("tiny.en", StringComparison.Ordinal) ||
+            name.Contains("tiny-en", StringComparison.Ordinal))
+        {
+            return WhisperAlignmentHeadsPreset.TinyEn;
+        }
+
+        if (name.Contains("tiny", StringComparison.Ordinal))
+        {
+            return WhisperAlignmentHeadsPreset.Tiny;
+        }
+
+        return null;
+    }
 
     private static WhisperProcessorBuilder ConfigureBuilder(
         WhisperFactory factory,
@@ -458,4 +646,4 @@ public sealed record AsrOptions(
     bool NoSpeechBoost = true,
     int GpuDevice = 0,
     bool UseFlashAttention = true,
-    bool UseDtwTimestamps = true);
+    bool UseDtwTimestamps = false);

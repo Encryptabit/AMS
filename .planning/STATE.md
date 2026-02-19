@@ -50,6 +50,8 @@ v2.0 Blazor Workstation[██████████████░░░░�
 ## Future Objectives (Unscheduled)
 
 - Keyboard Navigation & SentenceList Component enhancements
+- Switchable alignment mode (DTW chunked vs MFA) for workflow-specific precision/speed tradeoffs
+  - Plan: `.planning/quick/002-switchable-dtw-mfa-alignment-mode/002-PLAN.md`
 
 ## Key Decisions (v2.0)
 

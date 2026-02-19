@@ -299,7 +299,7 @@ public sealed record GenerateTranscriptOptions
 {
     public static string DefaultServiceUrl => "http://127.0.0.1:5000";
     public static GenerateTranscriptOptions Default { get; } = new();
-    public static GgmlType DefaultModelType => GgmlType.LargeV3Turbo;
+    public static GgmlType DefaultModelType => GgmlType.LargeV3;
 
     public AsrEngine? Engine { get; init; }
     public string ServiceUrl { get; init; } = DefaultServiceUrl;
@@ -309,10 +309,10 @@ public sealed record GenerateTranscriptOptions
     public int Threads { get; init; }
     public bool UseGpu { get; init; } = true;
     public int GpuDevice { get; init; }
-    public int BeamSize { get; init; } = 5;
+    public int BeamSize { get; init; } = 8;
     public int BestOf { get; init; } = 1;
     public double Temperature { get; init; }
-    public bool EnableWordTimestamps { get; init; }
+    public bool EnableWordTimestamps { get; init; } = true;
     public bool EnableFlashAttention { get; init; }
-    public bool EnableDtwTimestamps { get; init; }
+    public bool EnableDtwTimestamps { get; init; } = false;
 }

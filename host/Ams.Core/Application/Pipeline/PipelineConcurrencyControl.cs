@@ -45,10 +45,12 @@ public sealed class PipelineConcurrencyControl : IDisposable
         return new PipelineConcurrencyControl(bookIndexDegree, asrDegree, mfaDegree);
     }
 
-    public static PipelineConcurrencyControl CreateShared(int maxMfaParallelism)
+    public static PipelineConcurrencyControl CreateShared(int maxAsrParallelism, int maxMfaParallelism)
     {
-        return new PipelineConcurrencyControl(bookIndexDegree: maxMfaParallelism,
-            asrDegree: Math.Max(1, maxMfaParallelism), mfaDegree: Math.Max(1, maxMfaParallelism));
+        return new PipelineConcurrencyControl(
+            bookIndexDegree: 1,
+            asrDegree: Math.Max(1, maxAsrParallelism),
+            mfaDegree: Math.Max(1, maxMfaParallelism));
     }
 
     public bool TryClaimBookIndexForce()

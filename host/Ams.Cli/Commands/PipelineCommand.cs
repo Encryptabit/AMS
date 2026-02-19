@@ -445,6 +445,7 @@ public static class PipelineCommand
         bool verbose,
         IReadOnlyList<FileInfo> chapterFiles,
         int maxWorkers,
+        int maxAsrParallelism,
         int maxMfaParallelism,
         IPipelineProgressReporter? reporter,
         CancellationToken cancellationToken)
@@ -479,15 +480,17 @@ public static class PipelineCommand
         }
 
         maxWorkers = maxWorkers <= 0 ? Math.Max(1, Environment.ProcessorCount) : maxWorkers;
+        maxAsrParallelism = maxAsrParallelism <= 0 ? 1 : maxAsrParallelism;
         maxMfaParallelism = maxMfaParallelism <= 0 ? Math.Max(1, Environment.ProcessorCount / 2) : maxMfaParallelism;
 
         Log.Debug(
-            "Starting parallel pipeline run for {Count} chapter(s) (maxWorkers={Workers}, maxMfa={Mfa}).",
+            "Starting parallel pipeline run for {Count} chapter(s) (maxWorkers={Workers}, maxAsr={Asr}, maxMfa={Mfa}).",
             existingChapters.Count,
             maxWorkers,
+            maxAsrParallelism,
             maxMfaParallelism);
 
-        using var concurrency = PipelineConcurrencyControl.CreateShared(maxMfaParallelism);
+        using var concurrency = PipelineConcurrencyControl.CreateShared(maxAsrParallelism, maxMfaParallelism);
         using var workerSemaphore = new SemaphoreSlim(maxWorkers, maxWorkers);
         var errors = new ConcurrentBag<Exception>();
 
@@ -1124,7 +1127,9 @@ public static class PipelineCommand
 
         var verboseOption = new Option<bool>("--verbose", () => false, "Enable verbose logging for pipeline stages.");
         var maxWorkersOption = new Option<int>("--max-workers", () => Math.Max(1, Environment.ProcessorCount),
-            "Maximum number of chapters to process in parallel once ASR is complete");
+            "Maximum number of chapters to process in parallel");
+        var maxAsrOption = new Option<int>("--max-asr", () => 1,
+            "Maximum number of concurrent ASR jobs (use 1 for large Whisper GPU models)");
         var maxMfaOption = new Option<int>("--max-mfa", () => Math.Max(1, Environment.ProcessorCount),
             "Maximum number of concurrent MFA alignment jobs");
         var progressOption =
@@ -1143,6 +1148,7 @@ public static class PipelineCommand
         cmd.AddOption(asrLanguageOption);
         cmd.AddOption(verboseOption);
         cmd.AddOption(maxWorkersOption);
+        cmd.AddOption(maxAsrOption);
         cmd.AddOption(maxMfaOption);
         cmd.AddOption(progressOption);
 
@@ -1161,6 +1167,7 @@ public static class PipelineCommand
             var asrLanguage = context.ParseResult.GetValueForOption(asrLanguageOption) ?? "en";
             var verbose = context.ParseResult.GetValueForOption(verboseOption);
             var maxWorkers = context.ParseResult.GetValueForOption(maxWorkersOption);
+            var maxAsr = context.ParseResult.GetValueForOption(maxAsrOption);
             var maxMfa = context.ParseResult.GetValueForOption(maxMfaOption);
             var showProgress = context.ParseResult.GetValueForOption(progressOption);
             if (showProgress && Log.IsDebugLoggingEnabled())
@@ -1192,6 +1199,7 @@ public static class PipelineCommand
                                 verbose,
                                 repl.Chapters,
                                 maxWorkers,
+                                maxAsr,
                                 maxMfa,
                                 reporter,
                                 cancellationToken));
@@ -1212,6 +1220,7 @@ public static class PipelineCommand
                             verbose,
                             repl.Chapters,
                             maxWorkers,
+                            maxAsr,
                             maxMfa,
                             reporter: null,
                             cancellationToken).ConfigureAwait(false);
