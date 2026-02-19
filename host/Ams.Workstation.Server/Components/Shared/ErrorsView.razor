@@ -1,6 +1,6 @@
 @using Ams.Workstation.Server.Models
 
-<BitStack Horizontal="false" Gap="1.5rem">
+<BitStack Horizontal="false" Gap="1.5rem" AutoHeight="true">
     @if (Report == null)
     {
         <BitStack HorizontalAlign="BitAlignment.Center" VerticalAlign="BitAlignment.Center" Style="padding: 2rem;">
@@ -10,7 +10,8 @@
     else
     {
         @* Stats Grid *@
-        <BitGrid Columns="2" Spacing="1rem">
+        <BitGrid Columns="4" Spacing="1rem" Style="width: 100%;">
+            <BitGridItem ColumnSpan="1" />
             <BitGridItem>
                 <StatCard Title="Sentences"
                           Value="@Report.Stats.SentenceCount.ToString()"
@@ -21,25 +22,32 @@
                           Value="@Report.Stats.ParagraphCount.ToString()"
                           Detail="@($"Avg WER: {Report.Stats.ParagraphAvgWer} | Coverage: {Report.Stats.AvgCoverage}")" />
             </BitGridItem>
+            <BitGridItem ColumnSpan="1" />
         </BitGrid>
 
-        @* Quick Error Grid (top 12 errors) *@
-        <div>
-            <BitText Typography="BitTypography.Subtitle2" Style="margin-bottom: 0.5rem;">
-                Quick Error Grid
-            </BitText>
-            <div class="error-grid">
-                @foreach (var sentence in ErrorSentences.Take(12))
-                {
-                    <ErrorCard Sentence="sentence"
-                               OnClick="() => OnPlaySentence.InvokeAsync(sentence)" />
-                }
-            </div>
-        </div>
+        @* Chapter Error Patterns *@
+        @if (ChapterPatterns != null && ChapterPatterns.Count > 0)
+        {
+            <BitStack Horizontal="false" Gap="0.5rem">
+                <BitText Typography="BitTypography.Subtitle2">
+                    Error Patterns (@ChapterPatterns.Count)
+                </BitText>
+                <BitGrid Columns="4" ColumnsSm="2" ColumnsMd="3" Spacing="0.75rem">
+                    @foreach (var pattern in ChapterPatterns.Take(12))
+                    {
+                        <BitGridItem>
+                            <PatternCard Pattern="pattern"
+                                         OnToggleIgnore="() => ToggleIgnore(pattern)"
+                                         OnExampleClick="HandleExampleClick" />
+                        </BitGridItem>
+                    }
+                </BitGrid>
+            </BitStack>
+        }
 
         @* Detailed Sentences *@
-        <div>
-            <BitText Typography="BitTypography.Subtitle2" Style="margin-bottom: 0.5rem;">
+        <BitStack Horizontal="false" Gap="0.75rem">
+            <BitText Typography="BitTypography.Subtitle1">
                 Sentences with Errors (@ErrorSentences.Count())
             </BitText>
             @foreach (var sentence in ErrorSentences)
@@ -49,24 +57,46 @@
                                    OnExport="() => HandleExport(sentence)"
                                    OnCrx="() => HandleCrx(sentence)" />
             }
-        </div>
+        </BitStack>
     }
 </BitStack>
 
 @code {
     [Parameter] public ChapterReport? Report { get; set; }
+    [Parameter] public IReadOnlyList<ErrorPattern>? ChapterPatterns { get; set; }
     [Parameter] public EventCallback<SentenceReport> OnPlaySentence { get; set; }
 
     private IEnumerable<SentenceReport> ErrorSentences =>
         Report?.Sentences
-            .Where(s => s.Diff != null || s.Status != "ok")
+            .Where(s => s.Status != "ok" || HasNonEqualDiffOps(s.Diff))
             .OrderByDescending(s => ParseWer(s.Wer))
+            .ThenBy(s => s.Id)
         ?? Enumerable.Empty<SentenceReport>();
+
+    private static bool HasNonEqualDiffOps(DiffReport? diff) =>
+        diff?.Ops.Any(op => op.Op != "equal") == true;
 
     private double ParseWer(string wer)
     {
         if (double.TryParse(wer.TrimEnd('%'), out var v)) return v;
         return 0;
+    }
+
+    private void ToggleIgnore(ErrorPattern pattern)
+    {
+        // In-memory toggle — persistence deferred to Plan 05
+        pattern.Ignored = !pattern.Ignored;
+        StateHasChanged();
+    }
+
+    private void HandleExampleClick(PatternExample example)
+    {
+        // Find matching sentence and trigger play
+        var sentence = Report?.Sentences.FirstOrDefault(s => s.Id == example.SentenceId);
+        if (sentence != null)
+        {
+            OnPlaySentence.InvokeAsync(sentence);
+        }
     }
 
     private void HandleExport(SentenceReport sentence)
@@ -79,11 +109,3 @@
         // CRX deferred to Plan 06
     }
 }
-
-<style>
-    .error-grid {
-        display: grid;
-        grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
-        gap: 0.75rem;
-    }
-</style>

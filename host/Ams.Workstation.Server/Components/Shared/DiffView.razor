@@ -5,15 +5,24 @@
     {
         @if (op.Op == "equal")
         {
-            <span class="diff-equal">@string.Join(" ", op.Tokens) </span>
+            @foreach (var token in op.Tokens)
+            {
+                <span class="diff-token">@token</span>
+            }
         }
         else if (op.Op == "delete")
         {
-            <span class="diff-delete">@string.Join(" ", op.Tokens) </span>
+            @foreach (var token in op.Tokens)
+            {
+                <span class="diff-token diff-delete">@token</span>
+            }
         }
         else if (op.Op == "insert")
         {
-            <span class="diff-insert">@string.Join(" ", op.Tokens) </span>
+            @foreach (var token in op.Tokens)
+            {
+                <span class="diff-token diff-insert">@token</span>
+            }
         }
     }
 </div>
@@ -24,18 +33,23 @@
 
 <style>
     .diff-view {
-        background: var(--bit-clr-bg-sec);
-        padding: 0.75rem;
-        border-radius: 4px;
-        line-height: 1.6;
+        line-height: 1.8;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.25rem;
+    }
+    .diff-token {
+        padding: 2px 4px;
+        border-radius: 3px;
     }
     .diff-delete {
-        background-color: rgba(244, 135, 113, 0.3);
+        background-color: var(--bit-clr-err-bg);
+        color: var(--bit-clr-err);
         text-decoration: line-through;
-        color: #f48771;
     }
     .diff-insert {
-        background-color: rgba(78, 201, 176, 0.3);
-        color: #4ec9b0;
+        background-color: var(--bit-clr-suc-bg);
+        color: var(--bit-clr-suc);
+        font-weight: 500;
     }
 </style>

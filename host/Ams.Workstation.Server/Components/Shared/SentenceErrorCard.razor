@@ -1,56 +1,60 @@
 @using Ams.Workstation.Server.Models
 
-<BitCard Class="@($"sentence-error-card {GetStatusClass()}")">
-    <BitStack Horizontal="false" Gap="0.75rem">
-        @* Header *@
-        <BitStack Horizontal="true" HorizontalAlign="BitAlignment.SpaceBetween">
-            <BitStack Horizontal="true" Gap="1rem" VerticalAlign="BitAlignment.Center">
-                <BitText Typography="BitTypography.Subtitle2">#@Sentence.Id</BitText>
-                <span class="metrics">
-                    WER: <span class="@GetWerClass()">@Sentence.Wer</span> |
-                    CER: @Sentence.Cer
-                </span>
-                <span class="status-badge @Sentence.Status">@Sentence.Status</span>
-            </BitStack>
-            <BitText Typography="BitTypography.Caption2" Color="BitColor.SecondaryForeground">
-                @Sentence.Timing
+<BitCard Style="@GetBorderStyle()" FullWidth="true">
+    <BitStack Horizontal="false" Gap="0.5rem" Style="padding: 1rem;">
+        @* Header: ID + WER/CER + Status badge + metadata all horizontal *@
+        <BitStack Horizontal="true" Gap="1rem" VerticalAlign="BitAlignment.Center" Wrap="true">
+            <BitText Typography="BitTypography.Body1" Style="font-weight: 600;">#@Sentence.Id</BitText>
+            <BitText Typography="BitTypography.Caption1">
+                WER: <span style="color: var(@GetWerColor());">@Sentence.Wer</span>
+                &nbsp;&nbsp;CER: @Sentence.Cer
             </BitText>
+            <BitTag Text="@Sentence.Status.ToUpper()"
+                    Color="GetStatusColor()"
+                    Size="BitSize.Small"
+                    Variant="BitVariant.Fill" />
+            <BitText Typography="BitTypography.Caption1" Color="BitColor.SecondaryForeground">Book range: @Sentence.BookRange</BitText>
+            <BitText Typography="BitTypography.Caption1" Color="BitColor.SecondaryForeground">Script range: @Sentence.ScriptRange</BitText>
+            <BitText Typography="BitTypography.Caption1" Color="BitColor.SecondaryForeground">Timing: @Sentence.Timing</BitText>
         </BitStack>
 
-        @* Book Text *@
-        <div class="text-section">
-            <BitText Typography="BitTypography.Caption1" Color="BitColor.SecondaryForeground">
-                Manuscript
-            </BitText>
-            <BitText Typography="BitTypography.Body2">@Sentence.BookText</BitText>
-        </div>
+        @* Manuscript *@
+        <BitCard Background="BitColorKind.Primary" NoShadow="true" FullWidth="true">
+            <BitStack Horizontal="false" Gap="0.4rem" Style="padding: 0.75rem;">
+                <BitText Typography="BitTypography.Overline">MANUSCRIPT</BitText>
+                <BitText Typography="BitTypography.Body2" Style="line-height: 1.6;">@Sentence.BookText</BitText>
+            </BitStack>
+        </BitCard>
 
-        @* Diff View *@
+        @* Transcript (Diff) *@
         @if (Sentence.Diff != null)
         {
-            <div class="text-section">
-                <BitText Typography="BitTypography.Caption1" Color="BitColor.SecondaryForeground">
-                    Differences
-                </BitText>
-                <DiffView Diff="Sentence.Diff" />
-            </div>
+            <BitCard Background="BitColorKind.Primary" NoShadow="true" FullWidth="true">
+                <BitStack Horizontal="false" Gap="0.4rem" Style="padding: 0.75rem;">
+                    <BitText Typography="BitTypography.Overline">TRANSCRIPT</BitText>
+                    <DiffView Diff="Sentence.Diff" />
+                </BitStack>
+            </BitCard>
         }
 
         @* Action Buttons *@
-        <BitStack Horizontal="true" Gap="0.5rem">
-            <BitButton Variant="BitVariant.Outline" Size="BitSize.Small"
+        <BitStack Horizontal="true" Gap="0.5rem" Wrap="true" HorizontalAlign="BitAlignment.Center">
+            <BitButton Variant="BitVariant.Fill" Size="BitSize.Medium"
+                       Color="BitColor.Primary"
                        OnClick="() => OnPlayAudio.InvokeAsync()">
-                Play
+                Play Audio Segment
             </BitButton>
-            <BitButton Variant="BitVariant.Outline" Size="BitSize.Small"
-                       Color="BitColor.Success"
+            <BitButton Variant="BitVariant.Outline" Size="BitSize.Medium"
                        OnClick="() => OnExport.InvokeAsync()">
-                Export
+                Export Audio
             </BitButton>
-            <BitButton Variant="BitVariant.Outline" Size="BitSize.Small"
-                       Color="BitColor.Tertiary"
+            <BitButton Variant="BitVariant.Outline" Size="BitSize.Medium"
                        OnClick="() => OnCrx.InvokeAsync()">
                 Add to CRX
+            </BitButton>
+            <BitButton Variant="BitVariant.Text" Size="BitSize.Medium"
+                       OnClick="() => {}">
+                Ignore Error...
             </BitButton>
         </BitStack>
     </BitStack>
@@ -62,62 +66,28 @@
     [Parameter] public EventCallback OnExport { get; set; }
     [Parameter] public EventCallback OnCrx { get; set; }
 
-    private string GetStatusClass() => Sentence.Status switch
+    private string GetBorderStyle() => Sentence.Status switch
     {
-        "unreliable" => "unreliable",
-        "attention" => "attention",
-        _ => ""
+        "unreliable" => "border-left: 3px solid var(--bit-clr-err); margin-bottom: 0.75rem;",
+        "attention" => "border-left: 3px solid var(--bit-clr-wrn); margin-bottom: 0.75rem;",
+        _ => "border-left: 3px solid transparent; margin-bottom: 0.75rem;"
     };
 
-    private string GetWerClass()
+    private BitColor GetStatusColor() => Sentence.Status switch
+    {
+        "unreliable" => BitColor.Error,
+        "attention" => BitColor.Warning,
+        "ok" => BitColor.Success,
+        _ => BitColor.Secondary
+    };
+
+    private string GetWerColor()
     {
         if (double.TryParse(Sentence.Wer.TrimEnd('%'), out var wer))
         {
-            if (wer >= 50) return "wer-high";
-            if (wer >= 10) return "wer-medium";
+            if (wer >= 50) return "--bit-clr-err";
+            if (wer >= 10) return "--bit-clr-wrn";
         }
-        return "wer-low";
+        return "--bit-clr-suc";
     }
 }
-
-<style>
-    .sentence-error-card {
-        margin-bottom: 0.75rem;
-    }
-    .sentence-error-card.unreliable {
-        border-left: 4px solid #f48771;
-    }
-    .sentence-error-card.attention {
-        border-left: 4px solid #dcdcaa;
-    }
-    .text-section {
-        display: flex;
-        flex-direction: column;
-        gap: 0.25rem;
-    }
-    .metrics {
-        font-size: 0.85rem;
-    }
-    .status-badge {
-        font-size: 0.7rem;
-        padding: 0.1rem 0.4rem;
-        border-radius: 3px;
-        text-transform: uppercase;
-        font-weight: 600;
-    }
-    .status-badge.unreliable {
-        background-color: rgba(244, 135, 113, 0.2);
-        color: #f48771;
-    }
-    .status-badge.attention {
-        background-color: rgba(220, 220, 170, 0.2);
-        color: #dcdcaa;
-    }
-    .status-badge.ok {
-        background-color: rgba(78, 201, 176, 0.2);
-        color: #4ec9b0;
-    }
-    .wer-high { color: #f48771; }
-    .wer-medium { color: #dcdcaa; }
-    .wer-low { color: #4ec9b0; }
-</style>

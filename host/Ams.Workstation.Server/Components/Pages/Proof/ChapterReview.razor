@@ -2,12 +2,13 @@
 @inject Ams.Workstation.Server.Services.BlazorWorkspace Workspace
 @inject Ams.Workstation.Server.Services.ChapterDataService ChapterDataService
 @inject Ams.Workstation.Server.Services.ProofReportService ProofReportService
+@inject Ams.Workstation.Server.Services.ErrorPatternService ErrorPatternService
 @inject NavigationManager Navigation
 @using Ams.Workstation.Server.Models
 
 <PageTitle>@ChapterName - Proof - AMS Workstation</PageTitle>
 
-<div class="view-toggle">
+<BitStack Horizontal="true" Gap="0.5rem" AutoHeight="true" HorizontalAlign="BitAlignment.Center" Style="margin-bottom: 1rem;">
     <BitButton Variant="@(_currentView == "errors" ? BitVariant.Fill : BitVariant.Outline)"
                OnClick="@(() => SwitchView("errors"))">
         Errors View
@@ -16,7 +17,7 @@
                OnClick="@(() => SwitchView("playback"))">
         Playback View
     </BitButton>
-</div>
+</BitStack>
 
 @if (_currentView == "playback")
 {
@@ -41,7 +42,7 @@
 }
 else
 {
-    <ErrorsView Report="_report" OnPlaySentence="HandlePlayFromErrors" />
+    <ErrorsView Report="_report" ChapterPatterns="_chapterPatterns" OnPlaySentence="HandlePlayFromErrors" />
 }
 
 
@@ -52,6 +53,7 @@ else
     private List<SentenceViewModel> _sentences = new();
     private string _currentView = "playback";
     private ChapterReport? _report;
+    private IReadOnlyList<ErrorPattern>? _chapterPatterns;
 
     [Parameter] public string? ChapterName { get; set; }
 
@@ -85,6 +87,7 @@ else
         if (hydrate != null)
         {
             _report = ProofReportService.BuildReport(chapterName, hydrate);
+            _chapterPatterns = ErrorPatternService.AggregatePatternsForChapter(chapterName, hydrate).Patterns;
         }
     }
 
@@ -166,11 +169,3 @@ else
     }
 
 }
-
-<style>
-    .view-toggle {
-        display: flex;
-        gap: 0.5rem;
-        margin-bottom: 1rem;
-    }
-</style>

@@ -3,6 +3,7 @@
 /* Card wrapper - BitCard handles most styling */
 ::deep .sentence-list-card {
     overflow-y: auto;
+    scroll-behavior: smooth;
 }
 
 /* Header section */
@@ -17,6 +18,12 @@
     list-style: none;
     margin: 0;
     padding: 0.5rem;
+    width: 100%;
+    box-sizing: border-box;
+}
+
+/* Ensure list items stretch full width */
+::deep .sentence-items li {
     width: 100%;
 }
 

@@ -1,19 +1,22 @@
 @using Ams.Workstation.Server.Models
 
-<BitCard Class="error-card" Style="cursor: pointer;" @onclick="HandleClick">
-    <BitStack Horizontal="false" Gap="0.25rem">
-        <BitStack Horizontal="true" HorizontalAlign="BitAlignment.SpaceBetween">
-            <BitText Typography="BitTypography.Caption1">#@Sentence.Id</BitText>
-            <span class="status-badge @Sentence.Status">@Sentence.Status</span>
+<BitCard FullSize="true" Style="cursor: pointer;" @onclick="HandleClick">
+    <BitStack Horizontal="false" Gap="0.25rem" Style="padding: 0.75rem;">
+        <BitStack Horizontal="true" HorizontalAlign="BitAlignment.SpaceBetween" VerticalAlign="BitAlignment.Center">
+            <BitText Typography="BitTypography.Body2" Style="font-weight: 600;">#@Sentence.Id</BitText>
+            <BitTag Text="@Sentence.Status.ToUpper()"
+                    Color="GetStatusColor()"
+                    Size="BitSize.Small"
+                    Variant="BitVariant.Fill" />
         </BitStack>
-        <div class="error-metrics">
-            <span class="metric">WER: <span class="@GetWerClass()">@Sentence.Wer</span></span>
-            <span class="metric">CER: @Sentence.Cer</span>
-        </div>
-        <BitText Typography="BitTypography.Caption2" Color="BitColor.SecondaryForeground"
-                 Style="white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">
-            @Sentence.Excerpt
-        </BitText>
+        <BitText Typography="BitTypography.Caption1">WER: @Sentence.Wer &nbsp; CER: @Sentence.Cer</BitText>
+        @if (!string.IsNullOrEmpty(Sentence.BookText))
+        {
+            <BitText Typography="BitTypography.Caption2" Color="BitColor.SecondaryForeground"
+                     Style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
+                @Sentence.BookText
+            </BitText>
+        }
     </BitStack>
 </BitCard>
 
@@ -23,46 +26,11 @@
 
     private async Task HandleClick() => await OnClick.InvokeAsync();
 
-    private string GetWerClass()
+    private BitColor GetStatusColor() => Sentence.Status switch
     {
-        if (double.TryParse(Sentence.Wer.TrimEnd('%'), out var wer))
-        {
-            if (wer >= 50) return "wer-high";
-            if (wer >= 10) return "wer-medium";
-        }
-        return "wer-low";
-    }
+        "unreliable" => BitColor.Error,
+        "attention" => BitColor.Warning,
+        "ok" => BitColor.Success,
+        _ => BitColor.Secondary
+    };
 }
-
-<style>
-    .error-card {
-        padding: 0.5rem;
-    }
-    .error-metrics {
-        display: flex;
-        gap: 0.75rem;
-        font-size: 0.8rem;
-    }
-    .status-badge {
-        font-size: 0.7rem;
-        padding: 0.1rem 0.4rem;
-        border-radius: 3px;
-        text-transform: uppercase;
-        font-weight: 600;
-    }
-    .status-badge.unreliable {
-        background-color: rgba(244, 135, 113, 0.2);
-        color: #f48771;
-    }
-    .status-badge.attention {
-        background-color: rgba(220, 220, 170, 0.2);
-        color: #dcdcaa;
-    }
-    .status-badge.ok {
-        background-color: rgba(78, 201, 176, 0.2);
-        color: #4ec9b0;
-    }
-    .wer-high { color: #f48771; }
-    .wer-medium { color: #dcdcaa; }
-    .wer-low { color: #4ec9b0; }
-</style>

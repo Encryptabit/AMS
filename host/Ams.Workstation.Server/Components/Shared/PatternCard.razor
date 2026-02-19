@@ -14,15 +14,15 @@
         <div style="font-family: monospace; font-size: 0.85rem; line-height: 1.4;">
             @if (!string.IsNullOrEmpty(Pattern.Book))
             {
-                <span style="color: #f48771;">"@Pattern.Book"</span>
+                <span class="pattern-del">"@Pattern.Book"</span>
             }
             @if (!string.IsNullOrEmpty(Pattern.Book) && !string.IsNullOrEmpty(Pattern.Script))
             {
-                <span style="color: #888; margin: 0 0.25rem;">&#8594;</span>
+                <span style="color: var(--bit-clr-fg-sec); margin: 0 0.25rem;">&#8594;</span>
             }
             @if (!string.IsNullOrEmpty(Pattern.Script))
             {
-                <span style="color: #4ec9b0;">"@Pattern.Script"</span>
+                <span class="pattern-ins">"@Pattern.Script"</span>
             }
         </div>
 
@@ -57,9 +57,18 @@
 
     private string GetTypeStyle() => Pattern.Type switch
     {
-        "del" => "color: #f48771; font-weight: 600;",
-        "ins" => "color: #4ec9b0; font-weight: 600;",
-        "sub" => "color: #dcdcaa; font-weight: 600;",
+        "del" => "color: var(--bit-clr-err); font-weight: 600;",
+        "ins" => "color: var(--bit-clr-suc); font-weight: 600;",
+        "sub" => "color: var(--bit-clr-wrn); font-weight: 600;",
         _ => "font-weight: 600;"
     };
 }
+
+<style>
+    .pattern-del {
+        color: var(--bit-clr-err);
+    }
+    .pattern-ins {
+        color: var(--bit-clr-suc);
+    }
+</style>

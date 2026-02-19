@@ -82,6 +82,57 @@ public class ErrorPatternService
     }
 
     /// <summary>
+    /// Aggregate error patterns for a single chapter.
+    /// </summary>
+    /// <param name="chapterTitle">Chapter display name for pattern examples.</param>
+    /// <param name="hydrate">The hydrated transcript to extract patterns from.</param>
+    /// <param name="ignoredKeys">Set of pattern keys to mark as ignored.</param>
+    /// <returns>Aggregated patterns sorted by occurrence count (descending).</returns>
+    public ErrorPatternsResult AggregatePatternsForChapter(
+        string chapterTitle,
+        HydratedTranscript hydrate,
+        ISet<string>? ignoredKeys = null)
+    {
+        var patterns = new Dictionary<string, PatternAggregate>();
+        ignoredKeys ??= new HashSet<string>();
+
+        foreach (var sentence in hydrate.Sentences)
+        {
+            foreach (var (type, book, script) in ExtractPatterns(sentence.Diff))
+            {
+                var key = BuildKey(type, book, script);
+
+                if (!patterns.TryGetValue(key, out var aggregate))
+                {
+                    aggregate = new PatternAggregate(type, book, script);
+                    patterns[key] = aggregate;
+                }
+
+                aggregate.Count++;
+                if (aggregate.Examples.Count < 3)
+                {
+                    aggregate.Examples.Add(new PatternExample(chapterTitle, sentence.Id));
+                }
+            }
+        }
+
+        // No minimum occurrence threshold for single-chapter patterns
+        var result = patterns
+            .Select(kvp => new ErrorPattern(
+                Key: kvp.Key,
+                Type: kvp.Value.Type,
+                Book: kvp.Value.Book,
+                Script: kvp.Value.Script,
+                Count: kvp.Value.Count,
+                Examples: kvp.Value.Examples
+            ) { Ignored = ignoredKeys.Contains(kvp.Key) })
+            .OrderByDescending(p => p.Count)
+            .ToList();
+
+        return new ErrorPatternsResult(result, ignoredKeys.ToList());
+    }
+
+    /// <summary>
     /// Extract patterns from a single sentence's diff operations.
     /// </summary>
     /// <remarks>

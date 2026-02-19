@@ -1,7 +1,7 @@
 @using Ams.Workstation.Server.Models
 @inject IJSRuntime JS
 
-<BitCard Class="sentence-list-card">
+<BitCard Class="sentence-list-card" FullWidth="true">
     <BitStack Horizontal="false" Gap="0">
         @* Header *@
         <div class="sentence-list-header">
@@ -26,7 +26,8 @@
         {
             <BitBasicList TItem="SentenceViewModel"
                           Items="Sentences.ToList()"
-                          Class="sentence-items">
+                          Class="sentence-items"
+                          Style="width: 100%;">
                 <RowTemplate Context="sentence">
                     <div class="@GetSentenceClasses(sentence)"
                          id="@GetSentenceElementId(sentence.Id)"
@@ -35,7 +36,7 @@
                             <BitText Typography="BitTypography.Caption1" Color="BitColor.SecondaryForeground">
                                 <span class="sentence-id">#@sentence.Id</span>
                             </BitText>
-                            <BitText Typography="BitTypography.Caption2" Color="BitColor.SecondaryForeground" Style="font-family: monospace;">
+                            <BitText Typography="BitTypography.Body2" Color="BitColor.SecondaryForeground" Style="font-family: monospace;">
                                 @FormatTime(sentence.StartTime) - @FormatTime(sentence.EndTime)
                             </BitText>
                         </BitStack>
@@ -126,7 +127,7 @@
                 classes.Add("status-warning");
                 break;
             default:
-                if (sentence.HasDiff)
+                if (sentence.HasDiff && !string.IsNullOrEmpty(sentence.DiffHtml))
                 {
                     classes.Add("status-warning");
                 }
@@ -154,7 +155,18 @@
             await JS.InvokeVoidAsync("eval", $@"
                 (function() {{
                     var el = document.getElementById('{elementId}');
-                    if (el) {{
+                    if (!el) return;
+                    // Walk up to find the scrollable container
+                    var container = el.parentElement;
+                    while (container && container.scrollHeight <= container.clientHeight) {{
+                        container = container.parentElement;
+                    }}
+                    if (container) {{
+                        var elRect = el.getBoundingClientRect();
+                        var cRect = container.getBoundingClientRect();
+                        var targetTop = container.scrollTop + (elRect.top - cRect.top) - (cRect.height / 2) + (elRect.height / 2);
+                        container.scrollTo({{ top: targetTop, behavior: 'smooth' }});
+                    }} else {{
                         el.scrollIntoView({{ behavior: 'smooth', block: 'center' }});
                     }}
                 }})();

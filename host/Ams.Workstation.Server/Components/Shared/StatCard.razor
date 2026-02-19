@@ -1,4 +1,4 @@
-<BitCard Class="stat-card">
+<BitCard FullWidth="true" Style="text-align: center; padding: 1.5rem 1rem;">
     <BitStack Horizontal="false" Gap="0.25rem" HorizontalAlign="BitAlignment.Center">
         <BitText Typography="BitTypography.Caption1" Color="BitColor.SecondaryForeground"
                  Style="text-transform: uppercase; letter-spacing: 0.05em;">
@@ -19,10 +19,3 @@
     [Parameter] public string Value { get; set; } = "";
     [Parameter] public string? Detail { get; set; }
 }
-
-<style>
-    .stat-card {
-        text-align: center;
-        padding: 1.5rem 1rem;
-    }
-</style>

@@ -45,7 +45,7 @@ public class ChapterDataService
             StartTime = s.Timing?.StartSec ?? 0,
             EndTime = s.Timing?.EndSec ?? 0,
             Status = s.Status ?? "ok",
-            HasDiff = s.Diff is not null,
+            HasDiff = s.Diff?.Ops?.Any(op => op.Operation != "equal") == true,
             DiffHtml = BuildDiffHtml(s.Diff)
         }).ToList();
 
