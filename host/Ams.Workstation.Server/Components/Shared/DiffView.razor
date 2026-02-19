@@ -1,0 +1,41 @@
+@using Ams.Workstation.Server.Models
+
+<div class="diff-view">
+    @foreach (var op in Diff.Ops)
+    {
+        @if (op.Op == "equal")
+        {
+            <span class="diff-equal">@string.Join(" ", op.Tokens) </span>
+        }
+        else if (op.Op == "delete")
+        {
+            <span class="diff-delete">@string.Join(" ", op.Tokens) </span>
+        }
+        else if (op.Op == "insert")
+        {
+            <span class="diff-insert">@string.Join(" ", op.Tokens) </span>
+        }
+    }
+</div>
+
+@code {
+    [Parameter] public DiffReport Diff { get; set; } = default!;
+}
+
+<style>
+    .diff-view {
+        background: var(--bit-clr-bg-sec);
+        padding: 0.75rem;
+        border-radius: 4px;
+        line-height: 1.6;
+    }
+    .diff-delete {
+        background-color: rgba(244, 135, 113, 0.3);
+        text-decoration: line-through;
+        color: #f48771;
+    }
+    .diff-insert {
+        background-color: rgba(78, 201, 176, 0.3);
+        color: #4ec9b0;
+    }
+</style>

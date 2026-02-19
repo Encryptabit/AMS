@@ -1,13 +1,68 @@
 @using Ams.Workstation.Server.Models
 
-@* Stub - full implementation in Task 3 *@
-<div class="error-card-stub" @onclick="HandleClick">
-    <span>#@Sentence.Id - WER: @Sentence.Wer</span>
-</div>
+<BitCard Class="error-card" Style="cursor: pointer;" @onclick="HandleClick">
+    <BitStack Horizontal="false" Gap="0.25rem">
+        <BitStack Horizontal="true" HorizontalAlign="BitAlignment.SpaceBetween">
+            <BitText Typography="BitTypography.Caption1">#@Sentence.Id</BitText>
+            <span class="status-badge @Sentence.Status">@Sentence.Status</span>
+        </BitStack>
+        <div class="error-metrics">
+            <span class="metric">WER: <span class="@GetWerClass()">@Sentence.Wer</span></span>
+            <span class="metric">CER: @Sentence.Cer</span>
+        </div>
+        <BitText Typography="BitTypography.Caption2" Color="BitColor.SecondaryForeground"
+                 Style="white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">
+            @Sentence.Excerpt
+        </BitText>
+    </BitStack>
+</BitCard>
 
 @code {
     [Parameter] public SentenceReport Sentence { get; set; } = default!;
     [Parameter] public EventCallback OnClick { get; set; }
 
     private async Task HandleClick() => await OnClick.InvokeAsync();
+
+    private string GetWerClass()
+    {
+        if (double.TryParse(Sentence.Wer.TrimEnd('%'), out var wer))
+        {
+            if (wer >= 50) return "wer-high";
+            if (wer >= 10) return "wer-medium";
+        }
+        return "wer-low";
+    }
 }
+
+<style>
+    .error-card {
+        padding: 0.5rem;
+    }
+    .error-metrics {
+        display: flex;
+        gap: 0.75rem;
+        font-size: 0.8rem;
+    }
+    .status-badge {
+        font-size: 0.7rem;
+        padding: 0.1rem 0.4rem;
+        border-radius: 3px;
+        text-transform: uppercase;
+        font-weight: 600;
+    }
+    .status-badge.unreliable {
+        background-color: rgba(244, 135, 113, 0.2);
+        color: #f48771;
+    }
+    .status-badge.attention {
+        background-color: rgba(220, 220, 170, 0.2);
+        color: #dcdcaa;
+    }
+    .status-badge.ok {
+        background-color: rgba(78, 201, 176, 0.2);
+        color: #4ec9b0;
+    }
+    .wer-high { color: #f48771; }
+    .wer-medium { color: #dcdcaa; }
+    .wer-low { color: #4ec9b0; }
+</style>
