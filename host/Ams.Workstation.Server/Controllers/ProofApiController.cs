@@ -19,17 +19,20 @@ public class ProofApiController : ControllerBase
     private readonly BlazorWorkspace _workspace;
     private readonly ValidationMetricsService _metricsService;
     private readonly ProofReportService _reportService;
+    private readonly ErrorPatternService _errorPatternService;
     private readonly ILogger<ProofApiController> _logger;
 
     public ProofApiController(
         BlazorWorkspace workspace,
         ValidationMetricsService metricsService,
         ProofReportService reportService,
+        ErrorPatternService errorPatternService,
         ILogger<ProofApiController> logger)
     {
         _workspace = workspace;
         _metricsService = metricsService;
         _reportService = reportService;
+        _errorPatternService = errorPatternService;
         _logger = logger;
     }
 
@@ -140,6 +143,35 @@ public class ProofApiController : ControllerBase
         {
             _logger.LogError(ex, "Failed to build report for chapter '{ChapterName}'", decodedName);
             return NotFound($"Failed to load chapter '{decodedName}': {ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// GET /api/proof/errors/aggregate - Aggregated error patterns across all chapters.
+    /// </summary>
+    /// <remarks>
+    /// Performance consideration: This endpoint loads all chapters' hydrate files and processes
+    /// all sentences. For large books (50+ chapters, 10k+ sentences), this may be slow (5-10s).
+    /// Future optimization: cache patterns in BlazorWorkspace after first aggregation.
+    /// </remarks>
+    [HttpGet("errors/aggregate")]
+    public ActionResult<ErrorPatternsResult> GetErrorPatterns()
+    {
+        if (!_workspace.IsInitialized)
+        {
+            return BadRequest("Workspace not initialized. Set working directory first.");
+        }
+
+        try
+        {
+            // For now, pass empty ignored set (persistence added in Plan 05)
+            var result = _errorPatternService.AggregatePatterns();
+            return Ok(result);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to aggregate error patterns");
+            return StatusCode(500, $"Failed to aggregate patterns: {ex.Message}");
         }
     }
 
