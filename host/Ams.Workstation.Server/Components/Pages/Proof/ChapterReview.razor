@@ -1,108 +1,57 @@
 @page "/proof/{ChapterName}"
 @inject Ams.Workstation.Server.Services.BlazorWorkspace Workspace
 @inject Ams.Workstation.Server.Services.ChapterDataService ChapterDataService
+@inject Ams.Workstation.Server.Services.ProofReportService ProofReportService
 @inject NavigationManager Navigation
 @using Ams.Workstation.Server.Models
 
 <PageTitle>@ChapterName - Proof - AMS Workstation</PageTitle>
 
+<div class="view-toggle">
+    <BitButton Variant="@(_currentView == "errors" ? BitVariant.Fill : BitVariant.Outline)"
+               OnClick="@(() => SwitchView("errors"))">
+        Errors View
+    </BitButton>
+    <BitButton Variant="@(_currentView == "playback" ? BitVariant.Fill : BitVariant.Outline)"
+               OnClick="@(() => SwitchView("playback"))">
+        Playback View
+    </BitButton>
+</div>
 
-<BitGrid Columns="12">
-    <BitGridItem ColumnSpan="12" style="min-width: 0;">
-            <WaveformPlayer
-                @ref="_waveformPlayer"
-                AudioUrl="@GetAudioUrl()"
-                Title="@GetDisplayTitle()"
-                TimeUpdated="HandleTimeUpdate"
-                OnReady="HandleWaveformReady"
-                OnSeek="HandleSeek"
-                OnFinished="HandlePlaybackFinished"/>
-    </BitGridItem>
-    <BitGridItem ColumnSpan="12">
-        <SentenceList
-            Sentences="@_sentences"
-            CurrentTime="@_currentTime"
-            OnSentenceSelected="HandleSentenceSelected" />
-    </BitGridItem>
-</BitGrid>
+@if (_currentView == "playback")
+{
+    <BitGrid Columns="12">
+        <BitGridItem ColumnSpan="12" style="min-width: 0;">
+                <WaveformPlayer
+                    @ref="_waveformPlayer"
+                    AudioUrl="@GetAudioUrl()"
+                    Title="@GetDisplayTitle()"
+                    TimeUpdated="HandleTimeUpdate"
+                    OnReady="HandleWaveformReady"
+                    OnSeek="HandleSeek"
+                    OnFinished="HandlePlaybackFinished"/>
+        </BitGridItem>
+        <BitGridItem ColumnSpan="12">
+            <SentenceList
+                Sentences="@_sentences"
+                CurrentTime="@_currentTime"
+                OnSentenceSelected="HandleSentenceSelected" />
+        </BitGridItem>
+    </BitGrid>
+}
+else
+{
+    <ErrorsView Report="_report" OnPlaySentence="HandlePlayFromErrors" />
+}
 
-
-@* *@
-@* <BitStack Horizontal="false" Gap="1rem" Style="height: 100%;"> *@
-@*     <BitCard FullSize="true" Class="review-content"> *@
-@*         <BitStack Horizontal="false" Gap="1.5rem"> *@
-@*             $1$ Waveform Player #1# *@
-@*             <div class="waveform-section"> *@
-@*                 *@
-@*             </div> *@
-@* *@
-@*             $1$ Current Time Display #1# *@
-@*             <BitCard Background="BitColorKind.Secondary" Class="time-display"> *@
-@*                 <BitStack Horizontal="true" Gap="1rem" VerticalAlign="BitAlignment.Center"> *@
-@*                     <BitText Typography="BitTypography.Body2" Color="BitColor.SecondaryForeground"> *@
-@*                         Current Position: *@
-@*                     </BitText> *@
-@*                     <BitText Typography="BitTypography.Subtitle2" Style="font-family: monospace;"> *@
-@*                         @FormatTime(_currentTime) *@
-@*                     </BitText> *@
-@*                     @if (_isWaveformReady) *@
-@*                     { *@
-@*                         <BitBadge Appearance="BitAppearance.Primary" Color="BitColor.Success"> *@
-@*                             Ready *@
-@*                         </BitBadge> *@
-@*                     } *@
-@*                 </BitStack> *@
-@*             </BitCard> *@
-@* *@
-@*             $1$ Placeholder for Sentence List (Plan 4) #1# *@
-@*             <div class="panel-preview"> *@
-@*                 <BitText Typography="BitTypography.Caption1" Color="BitColor.SecondaryForeground" *@
-@*                          Style="text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 0.5rem;"> *@
-@*                     Sentence List Panel *@
-@*                 </BitText> *@
-@*                 <div class="panel-mock sentence-mock"> *@
-@*                     <BitText Color="BitColor.SecondaryForeground"> *@
-@*                         Sentence list with timing data coming in Plan 4 *@
-@*                     </BitText> *@
-@*                 </div> *@
-@*             </div> *@
-@* *@
-@*             $1$ Chapter Info #1# *@
-@*             <BitCard Background="BitColorKind.Secondary" Class="chapter-info"> *@
-@*                 <BitText Typography="BitTypography.Subtitle2" Color="BitColor.SecondaryForeground" *@
-@*                          Style="margin-bottom: 0.5rem;"> *@
-@*                     Current State *@
-@*                 </BitText> *@
-@*                 <BitStack Horizontal="false" Gap="0.25rem"> *@
-@*                     <BitStack Horizontal="true" Gap="0.5rem"> *@
-@*                         <BitText Typography="BitTypography.Body2" Color="BitColor.SecondaryForeground">Chapter:</BitText> *@
-@*                         <BitText Typography="BitTypography.Body2" Style="font-family: monospace;"> *@
-@*                             @Uri.UnescapeDataString(ChapterName ?? "N/A") *@
-@*                         </BitText> *@
-@*                     </BitStack> *@
-@*                     <BitStack Horizontal="true" Gap="0.5rem"> *@
-@*                         <BitText Typography="BitTypography.Body2" Color="BitColor.SecondaryForeground">Working Directory:</BitText> *@
-@*                         <BitText Typography="BitTypography.Body2" Style="font-family: monospace;"> *@
-@*                             @(State.WorkingDirectory ?? "No directory set") *@
-@*                         </BitText> *@
-@*                     </BitStack> *@
-@*                     <BitStack Horizontal="true" Gap="0.5rem"> *@
-@*                         <BitText Typography="BitTypography.Body2" Color="BitColor.SecondaryForeground">Workspace:</BitText> *@
-@*                         <BitText Typography="BitTypography.Body2" Style="font-family: monospace;"> *@
-@*                             @(State.Workspace != null ? "Ready" : "Not initialized") *@
-@*                         </BitText> *@
-@*                     </BitStack> *@
-@*                 </BitStack> *@
-@*             </BitCard> *@
-@*         </BitStack> *@
-@*     </BitCard> *@
-@* </BitStack> *@
 
 @code {
     private double _currentTime;
     private bool _isWaveformReady;
     private WaveformPlayer? _waveformPlayer;
     private List<SentenceViewModel> _sentences = new();
+    private string _currentView = "playback";
+    private ChapterReport? _report;
 
     [Parameter] public string? ChapterName { get; set; }
 
@@ -119,11 +68,30 @@
 
             // Load sentences for this chapter
             await LoadSentencesAsync(decodedName);
+
+            // Load proof report for errors view
+            LoadReport(decodedName);
         }
 
         // Reset waveform ready state when chapter changes
         _isWaveformReady = false;
         _currentTime = 0;
+    }
+
+    private void LoadReport(string chapterName)
+    {
+        // Direct service call - NO HttpClient
+        var hydrate = Workspace.CurrentChapterHandle?.Chapter.Documents.HydratedTranscript;
+        if (hydrate != null)
+        {
+            _report = ProofReportService.BuildReport(chapterName, hydrate);
+        }
+    }
+
+    private void SwitchView(string view)
+    {
+        _currentView = view;
+        StateHasChanged();
     }
 
     private async Task LoadSentencesAsync(string chapterName)
@@ -178,6 +146,16 @@
         }
     }
 
+    private async Task HandlePlayFromErrors(SentenceReport sentence)
+    {
+        _currentView = "playback";
+        StateHasChanged();
+        if (_waveformPlayer != null)
+        {
+            await _waveformPlayer.SeekTo(sentence.StartTime);
+        }
+    }
+
     private static string FormatTime(double seconds)
     {
         if (double.IsNaN(seconds) || double.IsInfinity(seconds)) return "0:00.000";
@@ -189,4 +167,10 @@
 
 }
 
-
+<style>
+    .view-toggle {
+        display: flex;
+        gap: 0.5rem;
+        margin-bottom: 1rem;
+    }
+</style>
