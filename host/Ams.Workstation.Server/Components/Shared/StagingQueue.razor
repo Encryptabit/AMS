@@ -1,0 +1,18 @@
+@using Ams.Workstation.Server.Models
+
+<div class="staging-queue">
+    <BitText Typography="BitTypography.Subtitle2">Staging Queue</BitText>
+    <BitText Typography="BitTypography.Caption1" Color="BitColor.SecondaryForeground">
+        No replacements staged.
+    </BitText>
+</div>
+
+@code {
+    [Parameter] public string? ChapterStem { get; set; }
+    [Parameter] public IReadOnlyList<StagedReplacement>? Items { get; set; }
+    [Parameter] public EventCallback<string> OnApply { get; set; }
+    [Parameter] public EventCallback<string> OnRevert { get; set; }
+    [Parameter] public EventCallback<string> OnRemove { get; set; }
+    [Parameter] public EventCallback OnApplyAll { get; set; }
+    [Parameter] public EventCallback<string> OnPreview { get; set; }
+}

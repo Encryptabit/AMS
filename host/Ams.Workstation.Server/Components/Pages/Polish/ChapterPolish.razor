@@ -1,0 +1,323 @@
+@page "/polish/{ChapterName}"
+@inject Ams.Workstation.Server.Services.PolishService PolishService
+@inject Ams.Workstation.Server.Services.StagingQueueService StagingQueueService
+@inject Ams.Workstation.Server.Services.BlazorWorkspace Workspace
+@inject Ams.Workstation.Server.Services.CrxService CrxService
+@inject NavigationManager Navigation
+@inject IJSRuntime JS
+@using Ams.Workstation.Server.Models
+@using Ams.Core.Artifacts.Hydrate
+@implements IAsyncDisposable
+
+<PageTitle>@ChapterName - Polish - AMS Workstation</PageTitle>
+
+<BitStack Horizontal="false" Gap="1rem" AutoHeight="true">
+    @* Header *@
+    <BitStack Horizontal="true" Gap="0.5rem" VerticalAlign="BitAlignment.Center" AutoHeight="true">
+        <BitButton Variant="BitVariant.Text" IconName="@BitIconName.Back" OnClick="NavigateBack" Title="Back to Polish" />
+        <BitText Typography="BitTypography.H5">@Uri.UnescapeDataString(ChapterName ?? "")</BitText>
+        @if (_stagedItems is { Count: > 0 })
+        {
+            <BitTag Color="BitColor.Info" Style="margin-left: auto;">
+                @_stagedItems.Count staged
+            </BitTag>
+        }
+    </BitStack>
+
+    @* Waveform *@
+    <WaveformPlayer
+        @ref="_waveformPlayer"
+        AudioUrl="@GetAudioUrl()"
+        Title="@GetDisplayTitle()"
+        TimeUpdated="HandleTimeUpdate"
+        OnReady="HandleWaveformReady"
+        OnSeek="HandleSeek"
+        OnRegionUpdated="HandleRegionUpdated" />
+
+    @* Controls row *@
+    <BitStack Horizontal="true" Gap="0.5rem" AutoHeight="true">
+        <BitButton Variant="BitVariant.Outline"
+                   IconName="@BitIconName.Upload"
+                   IsEnabled="@(!_isProcessing)"
+                   OnClick="ShowImporter">
+            Import Pickup
+        </BitButton>
+        @if (_stagedItems is { Count: > 0 } && _stagedItems.Any(s => s.Status == ReplacementStatus.Staged))
+        {
+            <BitButton Variant="BitVariant.Fill"
+                       Color="BitColor.Success"
+                       IconName="@BitIconName.Accept"
+                       IsEnabled="@(!_isProcessing)"
+                       OnClick="HandleApplyAll">
+                Apply All
+            </BitButton>
+        }
+        @if (_isProcessing)
+        {
+            <BitProgress Circular="true" Style="width: 24px; height: 24px;" />
+            <BitText Typography="BitTypography.Caption1" Color="BitColor.SecondaryForeground">Processing...</BitText>
+        }
+    </BitStack>
+
+    @if (!string.IsNullOrEmpty(_statusMessage))
+    {
+        <BitMessage Color="@_statusColor">
+            @_statusMessage
+        </BitMessage>
+    }
+
+    @* Two-column layout *@
+    <BitGrid Columns="12">
+        <BitGridItem ColumnSpan="7" Style="min-width: 0;">
+            <PickupImporter
+                ChapterStem="@GetChapterStem()"
+                FlaggedSentences="@_flaggedSentences"
+                OnMatchesReady="HandleMatchesReady"
+                OnStageRequested="HandleStageRequested" />
+        </BitGridItem>
+        <BitGridItem ColumnSpan="5" Style="min-width: 0;">
+            <StagingQueue
+                ChapterStem="@GetChapterStem()"
+                Items="@_stagedItems"
+                OnApply="HandleApply"
+                OnRevert="HandleRevert"
+                OnRemove="HandleRemove"
+                OnApplyAll="HandleApplyAll"
+                OnPreview="HandlePreview" />
+        </BitGridItem>
+    </BitGrid>
+</BitStack>
+
+@code {
+    private WaveformPlayer? _waveformPlayer;
+    private double _currentTime;
+    private bool _isWaveformReady;
+    private bool _isProcessing;
+    private string? _statusMessage;
+    private BitColor _statusColor = BitColor.Info;
+
+    private IReadOnlyList<StagedReplacement>? _stagedItems;
+    private IReadOnlyList<HydratedSentence>? _flaggedSentences;
+
+    [Parameter] public string? ChapterName { get; set; }
+
+    protected override void OnParametersSet()
+    {
+        if (string.IsNullOrEmpty(ChapterName)) return;
+
+        var decodedName = Uri.UnescapeDataString(ChapterName);
+
+        // Select chapter in workspace
+        if (Workspace.CurrentChapterName != decodedName)
+        {
+            Workspace.SelectChapter(decodedName);
+        }
+
+        // Load staged replacements
+        var stem = GetChapterStem();
+        if (!string.IsNullOrEmpty(stem))
+        {
+            _stagedItems = StagingQueueService.GetQueue(stem);
+        }
+
+        // Load flagged sentences (those with CRX errors or diff errors)
+        LoadFlaggedSentences(decodedName);
+    }
+
+    private void LoadFlaggedSentences(string chapterName)
+    {
+        if (Workspace.TryGetHydratedTranscript(chapterName, out var hydrated) && hydrated != null)
+        {
+            // Flag sentences that have diffs (errors) as candidates for pickup replacement
+            _flaggedSentences = hydrated.Sentences
+                .Where(s => s.Status == "error" || (s.Diff?.Ops?.Count ?? 0) > 0)
+                .ToList();
+        }
+    }
+
+    private string GetAudioUrl()
+    {
+        if (!string.IsNullOrEmpty(ChapterName))
+        {
+            return $"/api/audio/chapter/{Uri.EscapeDataString(ChapterName)}";
+        }
+        return "/api/audio";
+    }
+
+    private string GetDisplayTitle()
+    {
+        return Uri.UnescapeDataString(ChapterName ?? "Audio");
+    }
+
+    private string GetChapterStem()
+    {
+        if (string.IsNullOrEmpty(ChapterName)) return "";
+        var decodedName = Uri.UnescapeDataString(ChapterName);
+        return Workspace.GetStemForChapter(decodedName) ?? decodedName;
+    }
+
+    private void NavigateBack()
+    {
+        Navigation.NavigateTo("/polish");
+    }
+
+    private void HandleTimeUpdate(double time)
+    {
+        _currentTime = time;
+        StateHasChanged();
+    }
+
+    private void HandleWaveformReady()
+    {
+        _isWaveformReady = true;
+        StateHasChanged();
+    }
+
+    private void HandleSeek(double time)
+    {
+        _currentTime = time;
+    }
+
+    private void HandleRegionUpdated((string Id, double Start, double End) region)
+    {
+        // Region boundary updates from waveform player are handled by PickupImporter
+        // via its own WaveformPlayer instance. This handler is for the main chapter waveform.
+    }
+
+    private void ShowImporter()
+    {
+        // PickupImporter is always visible in the left column; this button
+        // scrolls to it or could toggle visibility in future.
+    }
+
+    private void HandleMatchesReady(List<PickupMatch> matches)
+    {
+        _statusMessage = $"Found {matches.Count} match{(matches.Count == 1 ? "" : "es")} in pickup file.";
+        _statusColor = matches.Count > 0 ? BitColor.Success : BitColor.Warning;
+        StateHasChanged();
+    }
+
+    private void HandleStageRequested(StagedReplacement replacement)
+    {
+        // Refresh the staging queue after a new item is staged
+        var stem = GetChapterStem();
+        if (!string.IsNullOrEmpty(stem))
+        {
+            _stagedItems = StagingQueueService.GetQueue(stem);
+        }
+        _statusMessage = $"Staged replacement for sentence {replacement.SentenceId}.";
+        _statusColor = BitColor.Info;
+        StateHasChanged();
+    }
+
+    private async Task HandleApply(string replacementId)
+    {
+        _isProcessing = true;
+        StateHasChanged();
+
+        try
+        {
+            var (resultBuffer, timingDelta) = await PolishService.ApplyReplacementAsync(replacementId, CancellationToken.None);
+            _statusMessage = $"Applied replacement. Timing delta: {timingDelta:+0.000;-0.000}s";
+            _statusColor = BitColor.Success;
+        }
+        catch (Exception ex)
+        {
+            _statusMessage = $"Apply failed: {ex.Message}";
+            _statusColor = BitColor.Error;
+        }
+        finally
+        {
+            RefreshQueue();
+            _isProcessing = false;
+            StateHasChanged();
+        }
+    }
+
+    private async Task HandleRevert(string replacementId)
+    {
+        _isProcessing = true;
+        StateHasChanged();
+
+        try
+        {
+            var (resultBuffer, timingDelta) = await PolishService.RevertReplacementAsync(replacementId, CancellationToken.None);
+            _statusMessage = $"Reverted replacement. Timing delta: {timingDelta:+0.000;-0.000}s";
+            _statusColor = BitColor.Warning;
+        }
+        catch (Exception ex)
+        {
+            _statusMessage = $"Revert failed: {ex.Message}";
+            _statusColor = BitColor.Error;
+        }
+        finally
+        {
+            RefreshQueue();
+            _isProcessing = false;
+            StateHasChanged();
+        }
+    }
+
+    private void HandleRemove(string replacementId)
+    {
+        StagingQueueService.Unstage(replacementId);
+        RefreshQueue();
+        _statusMessage = "Removed staged replacement.";
+        _statusColor = BitColor.Info;
+        StateHasChanged();
+    }
+
+    private async Task HandleApplyAll()
+    {
+        if (_stagedItems is null) return;
+
+        _isProcessing = true;
+        StateHasChanged();
+
+        var applied = 0;
+        var failed = 0;
+
+        foreach (var item in _stagedItems.Where(s => s.Status == ReplacementStatus.Staged))
+        {
+            try
+            {
+                await PolishService.ApplyReplacementAsync(item.Id, CancellationToken.None);
+                applied++;
+            }
+            catch
+            {
+                failed++;
+            }
+        }
+
+        RefreshQueue();
+        _isProcessing = false;
+        _statusMessage = $"Applied {applied} replacement{(applied == 1 ? "" : "s")}{(failed > 0 ? $", {failed} failed" : "")}.";
+        _statusColor = failed > 0 ? BitColor.Warning : BitColor.Success;
+        StateHasChanged();
+    }
+
+    private async Task HandlePreview(string replacementId)
+    {
+        if (_waveformPlayer is null || !_isWaveformReady) return;
+
+        var item = _stagedItems?.FirstOrDefault(s => s.Id == replacementId);
+        if (item is null) return;
+
+        await _waveformPlayer.PlaySegment(item.OriginalStartSec, item.OriginalEndSec);
+    }
+
+    private void RefreshQueue()
+    {
+        var stem = GetChapterStem();
+        if (!string.IsNullOrEmpty(stem))
+        {
+            _stagedItems = StagingQueueService.GetQueue(stem);
+        }
+    }
+
+    public ValueTask DisposeAsync()
+    {
+        return ValueTask.CompletedTask;
+    }
+}

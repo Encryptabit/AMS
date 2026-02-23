@@ -1,0 +1,16 @@
+@using Ams.Workstation.Server.Models
+@using Ams.Core.Artifacts.Hydrate
+
+<div class="pickup-importer">
+    <BitText Typography="BitTypography.Subtitle2">Pickup Importer</BitText>
+    <BitText Typography="BitTypography.Caption1" Color="BitColor.SecondaryForeground">
+        Import pickup recordings to match against flagged sentences.
+    </BitText>
+</div>
+
+@code {
+    [Parameter] public string? ChapterStem { get; set; }
+    [Parameter] public IReadOnlyList<HydratedSentence>? FlaggedSentences { get; set; }
+    [Parameter] public EventCallback<List<PickupMatch>> OnMatchesReady { get; set; }
+    [Parameter] public EventCallback<StagedReplacement> OnStageRequested { get; set; }
+}

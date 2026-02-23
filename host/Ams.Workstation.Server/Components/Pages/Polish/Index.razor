@@ -1,91 +1,139 @@
 @page "/polish"
+@inject Ams.Workstation.Server.Services.BlazorWorkspace Workspace
+@inject Ams.Workstation.Server.Services.CrxService CrxService
+@inject NavigationManager Navigation
 
 <PageTitle>Polish - AMS Workstation</PageTitle>
 
-<div class="area-placeholder">
-    <BitStack Horizontal="false" Gap="1rem" HorizontalAlign="BitAlignment.Center">
-        <div class="placeholder-icon">
-            <BitIcon IconName="Equalizer" Style="font-size: 2rem;" />
+<div class="polish-index">
+    <BitStack Horizontal="false" HorizontalAlign="BitAlignment.Center" Gap="1.5rem" AutoHeight="true">
+        <div class="polish-header">
+            <BitText Typography="BitTypography.H4">Polish Area</BitText>
+            <BitText Typography="BitTypography.Body1" Color="BitColor.SecondaryForeground">
+                Take replacement, pickup import, and audio staging.
+            </BitText>
         </div>
 
-        <BitText Typography="BitTypography.H4">Polish Area</BitText>
-        <BitText Typography="BitTypography.Body1" Color="BitColor.SecondaryForeground">
-            Take replacement, batch editing, and prosody analysis.
-        </BitText>
+        @if (Workspace.HasBookIndex)
+        {
+            <BitCard>
+                <BitText Typography="BitTypography.Subtitle2" Color="BitColor.SecondaryForeground"
+                         Style="margin-bottom: 1rem; text-transform: uppercase; letter-spacing: 0.05em;">
+                    Select a Chapter to Polish
+                </BitText>
 
-        <BitTag Color="BitColor.SecondaryForeground">Future Phase</BitTag>
-
-        <BitCard Class="placeholder-features">
-            <BitText Typography="BitTypography.Subtitle2" Color="BitColor.SecondaryForeground"
-                     Style="text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 1rem;">
-                Planned Features
-            </BitText>
-            <ul class="feature-list">
-                <li>
-                    <BitIcon IconName="Switch" Style="margin-right: 0.5rem;" />
-                    Take replacement workflow
-                </li>
-                <li>
-                    <BitIcon IconName="Edit" Style="margin-right: 0.5rem;" />
-                    Batch editing operations
-                </li>
-                <li>
-                    <BitIcon IconName="CRMReport" Style="margin-right: 0.5rem;" />
-                    Prosody analysis and visualization
-                </li>
-                <li>
-                    <BitIcon IconName="Volume3" Style="margin-right: 0.5rem;" />
-                    Final mastering adjustments
-                </li>
-                <li>
-                    <BitIcon IconName="CloudDownload" Style="margin-right: 0.5rem;" />
-                    Export and delivery preparation
-                </li>
-            </ul>
-        </BitCard>
+                @if (Workspace.AvailableChapters.Count == 0)
+                {
+                    <BitText Color="BitColor.SecondaryForeground">No chapters available.</BitText>
+                }
+                else
+                {
+                    <BitBasicList TItem="string"
+                                  Items="Workspace.AvailableChapters"
+                                  Class="chapters">
+                        <RowTemplate Context="chapter">
+                            <BitLink Href="@($"/polish/{Uri.EscapeDataString(chapter)}")"
+                                     Class="chapter-link">
+                                <BitStack Horizontal="true" Gap="0.5rem" VerticalAlign="BitAlignment.Center" AutoHeight="true">
+                                    <BitIcon IconName="Equalizer" />
+                                    <span class="chapter-name">@chapter</span>
+                                    @{ var errorCount = GetCrxErrorCount(chapter); }
+                                    @if (errorCount > 0)
+                                    {
+                                        <BitTag Color="BitColor.Error" Style="margin-left: 0.5rem;">
+                                            @errorCount CRX
+                                        </BitTag>
+                                    }
+                                    else
+                                    {
+                                        <BitTag Color="BitColor.Success" Style="margin-left: 0.5rem;">
+                                            OK
+                                        </BitTag>
+                                    }
+                                </BitStack>
+                                <BitIcon IconName="ChevronRight" Color="BitColor.SecondaryForeground" />
+                            </BitLink>
+                        </RowTemplate>
+                    </BitBasicList>
+                }
+            </BitCard>
+        }
+        else
+        {
+            <BitMessage Color="BitColor.Info">
+                <BitStack Horizontal="false" Gap="0.5rem" AutoHeight="true">
+                    <BitText Typography="BitTypography.Body1">
+                        No working directory set or book-index.json not found.
+                    </BitText>
+                    <BitButton Variant="BitVariant.Outline"
+                               Color="BitColor.Primary"
+                               Href="/">
+                        Go to Home to set a working directory
+                    </BitButton>
+                </BitStack>
+            </BitMessage>
+        }
     </BitStack>
 </div>
 
+@code {
+    private IReadOnlyList<Ams.Workstation.Server.Models.CrxEntry>? _crxEntries;
+
+    protected override void OnInitialized()
+    {
+        try
+        {
+            _crxEntries = CrxService.GetEntries();
+        }
+        catch
+        {
+            _crxEntries = null;
+        }
+    }
+
+    private int GetCrxErrorCount(string chapterName)
+    {
+        if (_crxEntries is null || _crxEntries.Count == 0)
+            return 0;
+
+        return _crxEntries.Count(e =>
+            string.Equals(e.Chapter, chapterName, StringComparison.OrdinalIgnoreCase));
+    }
+}
+
 <style>
-    .area-placeholder {
-        max-width: 600px;
+    .polish-index {
+        max-width: 800px;
         margin: 0 auto;
-        text-align: center;
-        padding: 2rem 0;
     }
 
-    .placeholder-icon {
-        display: inline-flex;
-        align-items: center;
-        justify-content: center;
-        width: 80px;
-        height: 80px;
-        background-color: rgba(107, 117, 129, 0.1);
-        border: 2px solid rgba(107, 117, 129, 0.3);
-        border-radius: 16px;
-        color: #6b7581;
-    }
-
-    .placeholder-features {
-        text-align: left;
-        width: 100%;
-        max-width: 400px;
-    }
-
-    .feature-list {
+    .chapters {
         list-style: none;
         margin: 0;
         padding: 0;
     }
 
-    .feature-list li {
+    .chapter-link {
         display: flex;
+        justify-content: space-between;
         align-items: center;
-        padding: 0.5rem 0;
+        padding: 1rem;
+        text-decoration: none;
+        transition: background-color 0.15s ease;
+        border-radius: 4px;
         border-bottom: 1px solid var(--bit-clr-brd-sec);
     }
 
-    .feature-list li:last-child {
+    .chapter-link:last-child {
         border-bottom: none;
+    }
+
+    .chapter-link:hover {
+        background-color: var(--bit-clr-bg-sec-hover);
+        text-decoration: none;
+    }
+
+    .chapter-name {
+        font-weight: 500;
     }
 </style>
