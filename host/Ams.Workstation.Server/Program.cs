@@ -34,6 +34,10 @@ builder.Services.AddSingleton<IgnoredPatternsService>();
 builder.Services.AddTransient<AudioExportService>();
 builder.Services.AddTransient<CrxService>();
 
+// Polish area services - singleton (shared state, persistent queue and undo storage)
+builder.Services.AddSingleton<StagingQueueService>();
+builder.Services.AddSingleton<UndoService>();
+
 // Ams.Core services - stateless services for alignment/ASR operations
 // Note: PipelineService and ValidationService require command dependencies
 // that are CLI-specific. Add them when needed with proper command registration.
