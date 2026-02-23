@@ -190,10 +190,21 @@ Plans:
 **Plans**: TBD
 
 #### Phase 12: Polish Area Foundation
-**Goal**: Take replacement workflow, batch editing foundations
+**Goal**: Take replacement workflow with pickup import/ASR matching/crossfade splice, batch editing foundations (rename, shift, pre/post roll), multi-waveform stacked view, non-destructive staging queue with undo, and post-replacement verification with Proof sync
 **Depends on**: Phase 11
-**Research**: Unlikely (extending Proof patterns)
-**Plans**: TBD
+**Research**: Complete (12-RESEARCH.md)
+**Plans**: 8 plans
+**Requirements:** REQ-TAKE, REQ-BATCH, REQ-MULTI, REQ-SPLICE, REQ-VERIFY, REQ-UNDO, REQ-STAGE
+
+Plans:
+- [ ] 12-01-PLAN.md -- AudioSpliceService (crossfade via FFmpeg acrossfade) + Polish domain models
+- [ ] 12-02-PLAN.md -- StagingQueueService + UndoService (non-destructive staging + versioned segment backup)
+- [ ] 12-03-PLAN.md -- PickupMatchingService (ASR-based via Whisper.NET) + PolishService orchestrator
+- [ ] 12-04-PLAN.md -- Waveform interop extensions (draggable regions, playhead sync, segment playback)
+- [ ] 12-05-PLAN.md -- Polish UI: landing page, ChapterPolish view, PickupImporter, StagingQueue components
+- [ ] 12-06-PLAN.md -- MultiWaveformView + BatchEditor page + BatchOperationService
+- [ ] 12-07-PLAN.md -- PolishVerificationService (auto re-validate, listen-with-context, Proof sync)
+- [ ] 12-08-PLAN.md -- End-to-end verification checkpoint
 
 ### Quick Plans (Ad-hoc)
 
@@ -221,4 +232,13 @@ Phases execute in numeric order: 1 → 2 → ... → 12
 | 10.1.1. Treatment Optimization | v2.0 | 1/1 | Complete | 2026-02-02 |
 | 10.2. CRX Excel & Cleanup | v2.0 | Complete    | 2026-02-23 | - |
 | 11. Prep Area Implementation | v2.0 | 0/? | Not started | - |
-| 12. Polish Area Foundation | v2.0 | 0/? | Not started | - |
+| 12. Polish Area Foundation | v2.0 | 0/8 | Planned | - |
+
+### Phase 13: Pickup Substitution
+
+**Goal:** [To be planned]
+**Depends on:** Phase 12
+**Plans:** 0 plans
+
+Plans:
+- [ ] TBD (run /gsd:plan-phase 13 to break down)
