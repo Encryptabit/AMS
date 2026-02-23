@@ -1,0 +1,27 @@
+{
+  "version": 1,
+  "entries": [
+    {
+      "entry_id": "1771817203786-uledrh",
+      "gate": "plan",
+      "phase": "10.2",
+      "review_id": "937e1d34-d009-4d2b-aff1-e0ef35df49cf",
+      "status": "approved",
+      "artifact_hash": "b5b71ae2c6ed9bc5debc8a609966cbee9539012432dd00e9c1f0c27f65d6d64a",
+      "note": null,
+      "recorded_at": "2026-02-23T03:26:43.786Z"
+    },
+    {
+      "entry_id": "1771818300772-1qnrr0",
+      "gate": "execute",
+      "phase": "10.2",
+      "review_id": "6eb609fb-3a5f-4d6b-8e48-1d0681965967",
+      "status": "approved",
+      "artifact_hash": "472f3839afdbcc9f8f45718eaf99ae6707a330cd29f536e151f039321e6c5b3b",
+      "note": null,
+      "recorded_at": "2026-02-23T03:45:00.772Z"
+    }
+  ],
+  "overrides": [],
+  "updated_at": "2026-02-23T03:45:00.773Z"
+}
