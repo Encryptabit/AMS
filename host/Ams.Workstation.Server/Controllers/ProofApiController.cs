@@ -20,6 +20,8 @@ public class ProofApiController : ControllerBase
     private readonly ValidationMetricsService _metricsService;
     private readonly ProofReportService _reportService;
     private readonly ErrorPatternService _errorPatternService;
+    private readonly ReviewedStatusService _reviewedStatusService;
+    private readonly IgnoredPatternsService _ignoredPatternsService;
     private readonly ILogger<ProofApiController> _logger;
 
     public ProofApiController(
@@ -27,12 +29,16 @@ public class ProofApiController : ControllerBase
         ValidationMetricsService metricsService,
         ProofReportService reportService,
         ErrorPatternService errorPatternService,
+        ReviewedStatusService reviewedStatusService,
+        IgnoredPatternsService ignoredPatternsService,
         ILogger<ProofApiController> logger)
     {
         _workspace = workspace;
         _metricsService = metricsService;
         _reportService = reportService;
         _errorPatternService = errorPatternService;
+        _reviewedStatusService = reviewedStatusService;
+        _ignoredPatternsService = ignoredPatternsService;
         _logger = logger;
     }
 
@@ -174,6 +180,59 @@ public class ProofApiController : ControllerBase
             return StatusCode(500, $"Failed to aggregate patterns: {ex.Message}");
         }
     }
+
+    /// <summary>
+    /// GET /api/proof/reviewed - All reviewed chapter statuses for current book.
+    /// </summary>
+    [HttpGet("reviewed")]
+    public ActionResult<Dictionary<string, ReviewedEntry>> GetReviewedStatus()
+    {
+        return Ok(_reviewedStatusService.GetAll());
+    }
+
+    /// <summary>
+    /// POST /api/proof/reviewed/{chapterName} - Mark a chapter as reviewed or not.
+    /// </summary>
+    [HttpPost("reviewed/{chapterName}")]
+    public ActionResult MarkReviewed(string chapterName, [FromBody] ReviewedRequest request)
+    {
+        _reviewedStatusService.SetReviewed(Uri.UnescapeDataString(chapterName), request.Reviewed);
+        return Ok(new { success = true });
+    }
+
+    /// <summary>
+    /// POST /api/proof/reset-reviews - Reset all reviewed statuses for current book.
+    /// </summary>
+    [HttpPost("reset-reviews")]
+    public ActionResult ResetReviews()
+    {
+        _reviewedStatusService.ResetAll();
+        return Ok(new { success = true });
+    }
+
+    /// <summary>
+    /// GET /api/proof/errors/ignored - Get all ignored pattern keys for current book.
+    /// </summary>
+    [HttpGet("errors/ignored")]
+    public ActionResult<IEnumerable<string>> GetIgnoredPatterns()
+    {
+        return Ok(_ignoredPatternsService.GetIgnoredKeys());
+    }
+
+    /// <summary>
+    /// POST /api/proof/errors/ignore - Set ignore status for a specific error pattern.
+    /// </summary>
+    [HttpPost("errors/ignore")]
+    public ActionResult ToggleIgnorePattern([FromBody] IgnorePatternRequest request)
+    {
+        _ignoredPatternsService.SetIgnored(
+            ErrorPatternService.BuildKey(request.Type, request.Book, request.Script),
+            request.Ignore);
+        return Ok(new { success = true });
+    }
+
+    public record ReviewedRequest(bool Reviewed);
+    public record IgnorePatternRequest(string Type, string Book, string Script, bool Ignore);
 
     /// <summary>
     /// Load HydratedTranscript for a chapter by selecting it in the workspace.
