@@ -66,7 +66,7 @@ public class PolishVerificationService
         var asrReady = AsrAudioPreparer.PrepareForAsr(segment);
 
         // 3. Run ASR on the segment
-        var asrOptions = BuildAsrOptions();
+        var asrOptions = await BuildAsrOptionsAsync(ct).ConfigureAwait(false);
         var asrResponse = await AsrProcessor.TranscribeBufferAsync(asrReady, asrOptions, ct)
             .ConfigureAwait(false);
 
@@ -171,11 +171,12 @@ public class PolishVerificationService
     }
 
     /// <summary>
-    /// Builds default ASR options using the environment-configured Whisper model.
+    /// Builds default ASR options, resolving the Whisper model path with auto-download fallback.
     /// </summary>
-    private static AsrOptions BuildAsrOptions()
+    private static async Task<AsrOptions> BuildAsrOptionsAsync(CancellationToken ct)
     {
-        var modelPath = AsrEngineConfig.ResolveModelPath(null);
+        ct.ThrowIfCancellationRequested();
+        var (modelPath, _) = await AsrEngineConfig.ResolveModelPathAsync().ConfigureAwait(false);
         return new AsrOptions(
             ModelPath: modelPath,
             Language: "en",

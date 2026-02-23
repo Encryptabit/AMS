@@ -2,7 +2,6 @@ using Ams.Core.Artifacts;
 using Ams.Core.Application.Processes;
 using Ams.Core.Processors;
 using Ams.Core.Runtime.Chapter;
-using Whisper.net.Ggml;
 using Ams.Core.Services.Interfaces;
 
 namespace Ams.Core.Application.Commands;
@@ -46,7 +45,7 @@ public sealed class GenerateTranscriptCommand
         GenerateTranscriptOptions options,
         CancellationToken cancellationToken)
     {
-        var (modelPath, modelType) = await ResolveWhisperModelAsync(options.Model, options.ModelPath)
+        var (modelPath, modelType) = await AsrEngineConfig.ResolveModelPathAsync(options.Model, options.ModelPath)
             .ConfigureAwait(false);
 
         Log.Debug("Whisper model resolved: Path={ModelPath}, Type={ModelType}", modelPath, modelType);
@@ -151,155 +150,12 @@ public sealed class GenerateTranscriptCommand
         }
     }
 
-    private static async Task<(string Path, GgmlType Type)> ResolveWhisperModelAsync(
-        string? modelOption,
-        FileInfo? modelPath)
-    {
-        if (modelPath is not null)
-        {
-            var fullPath = Path.GetFullPath(modelPath.FullName);
-            if (!File.Exists(fullPath))
-            {
-                var type = ParseModelAlias(modelOption) ?? ParseModelAlias(Path.GetFileName(fullPath)) ??
-                    GenerateTranscriptOptions.DefaultModelType;
-                var downloaded = await DownloadModelIfMissingAsync(fullPath, type).ConfigureAwait(false);
-                return (downloaded, type);
-            }
-
-            var inferred = ParseModelAlias(Path.GetFileName(fullPath)) ??
-                           GenerateTranscriptOptions.DefaultModelType;
-            return (fullPath, inferred);
-        }
-
-        if (!string.IsNullOrWhiteSpace(modelOption))
-        {
-            var trimmed = modelOption.Trim();
-            if (File.Exists(trimmed))
-            {
-                var inferred = ParseModelAlias(Path.GetFileName(trimmed)) ??
-                               GenerateTranscriptOptions.DefaultModelType;
-                return (Path.GetFullPath(trimmed), inferred);
-            }
-
-            if (TryParseModelAlias(trimmed, out var aliasType))
-            {
-                var downloaded = await DownloadModelIfMissingAsync(null, aliasType).ConfigureAwait(false);
-                return (downloaded, aliasType);
-            }
-        }
-
-        var envModel = Environment.GetEnvironmentVariable(AsrEngineConfig.WhisperModelPathEnvironmentVariable);
-        if (!string.IsNullOrWhiteSpace(envModel))
-        {
-            var envPath = Path.GetFullPath(envModel);
-            if (File.Exists(envPath))
-            {
-                var inferred = ParseModelAlias(Path.GetFileName(envPath)) ??
-                               GenerateTranscriptOptions.DefaultModelType;
-                return (envPath, inferred);
-            }
-
-            var envType = ParseModelAlias(Path.GetFileName(envPath)) ?? ParseModelAlias(envModel) ??
-                GenerateTranscriptOptions.DefaultModelType;
-            var downloaded = await DownloadModelIfMissingAsync(envPath, envType).ConfigureAwait(false);
-            return (downloaded, envType);
-        }
-
-        var defaultPath = await DownloadModelIfMissingAsync(null, GenerateTranscriptOptions.DefaultModelType)
-            .ConfigureAwait(false);
-        return (defaultPath, GenerateTranscriptOptions.DefaultModelType);
-    }
-
-    private static async Task<string> DownloadModelIfMissingAsync(string? destinationPath, GgmlType type)
-    {
-        var fileName = GetDefaultModelFileName(type);
-        var targetPath = destinationPath ?? Path.Combine(AppContext.BaseDirectory, "models", fileName);
-        targetPath = Path.GetFullPath(targetPath);
-
-        if (File.Exists(targetPath))
-        {
-            Log.Debug("Using cached Whisper model at {ModelPath}", targetPath);
-            return targetPath;
-        }
-
-        var directory = Path.GetDirectoryName(targetPath);
-        if (!string.IsNullOrEmpty(directory))
-        {
-            Directory.CreateDirectory(directory);
-        }
-
-        Log.Info("Downloading Whisper model {ModelType} to {ModelPath}", type, targetPath);
-        await using var modelStream = await WhisperGgmlDownloader.Default.GetGgmlModelAsync(type)
-            .ConfigureAwait(false);
-        await using var fileWriter = File.Open(targetPath, FileMode.Create, FileAccess.Write, FileShare.None);
-        await modelStream.CopyToAsync(fileWriter).ConfigureAwait(false);
-        Log.Info("Whisper model ready at {ModelPath}", targetPath);
-
-        return targetPath;
-    }
-
-    private static string GetDefaultModelFileName(GgmlType type)
-    {
-        var suffix = type switch
-        {
-            GgmlType.Base => "base",
-            GgmlType.Small => "small",
-            GgmlType.Medium => "medium",
-            GgmlType.LargeV1 => "large-v1",
-            GgmlType.LargeV2 => "large-v2",
-            GgmlType.LargeV3 => "large-v3",
-            GgmlType.LargeV3Turbo => "large-v3-turbo",
-            _ => "base"
-        };
-
-        return $"ggml-{suffix}.bin";
-    }
-
-    private static GgmlType? ParseModelAlias(string? value)
-    {
-        if (string.IsNullOrWhiteSpace(value))
-        {
-            return null;
-        }
-
-        var trimmed = value.Trim().ToLowerInvariant().Replace(".bin", string.Empty);
-        return trimmed switch
-        {
-            "tiny" => GgmlType.Tiny,
-            "tiny.en" => GgmlType.TinyEn,
-            "base" => GgmlType.Base,
-            "base.en" => GgmlType.BaseEn,
-            "small" => GgmlType.Small,
-            "small.en" => GgmlType.SmallEn,
-            "medium" => GgmlType.Medium,
-            "medium.en" => GgmlType.MediumEn,
-            "large" or "large-v1" => GgmlType.LargeV1,
-            "large-v2" => GgmlType.LargeV2,
-            "large-v3" => GgmlType.LargeV3,
-            "large-v3-turbo" => GgmlType.LargeV3Turbo,
-            _ => null
-        };
-    }
-
-    private static bool TryParseModelAlias(string value, out GgmlType type)
-    {
-        var parsed = ParseModelAlias(value);
-        if (parsed.HasValue)
-        {
-            type = parsed.Value;
-            return true;
-        }
-
-        type = GenerateTranscriptOptions.DefaultModelType;
-        return false;
-    }
 }
 
 public sealed record GenerateTranscriptOptions
 {
     public static string DefaultServiceUrl => "http://127.0.0.1:5000";
     public static GenerateTranscriptOptions Default { get; } = new();
-    public static GgmlType DefaultModelType => GgmlType.LargeV3;
 
     public AsrEngine? Engine { get; init; }
     public string ServiceUrl { get; init; } = DefaultServiceUrl;

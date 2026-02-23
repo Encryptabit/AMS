@@ -60,7 +60,7 @@ public class PickupMatchingService
         var segments = DeriveSegments(pickupBuffer, silences);
 
         // 4. Process each segment through ASR and match
-        var asrOptions = BuildAsrOptions();
+        var asrOptions = await BuildAsrOptionsAsync(ct).ConfigureAwait(false);
         var matches = new List<PickupMatch>();
 
         foreach (var segment in segments)
@@ -140,7 +140,7 @@ public class PickupMatchingService
         var asrReady = AsrAudioPreparer.PrepareForAsr(pickupBuffer);
 
         // Run ASR on entire file
-        var asrOptions = BuildAsrOptions();
+        var asrOptions = await BuildAsrOptionsAsync(ct).ConfigureAwait(false);
         var asrResponse = await AsrProcessor.TranscribeBufferAsync(asrReady, asrOptions, ct)
             .ConfigureAwait(false);
 
@@ -248,11 +248,12 @@ public class PickupMatchingService
     }
 
     /// <summary>
-    /// Builds default ASR options using the environment-configured Whisper model.
+    /// Builds default ASR options, resolving the Whisper model path with auto-download fallback.
     /// </summary>
-    private static AsrOptions BuildAsrOptions()
+    private static async Task<AsrOptions> BuildAsrOptionsAsync(CancellationToken ct)
     {
-        var modelPath = AsrEngineConfig.ResolveModelPath(null);
+        ct.ThrowIfCancellationRequested();
+        var (modelPath, _) = await AsrEngineConfig.ResolveModelPathAsync().ConfigureAwait(false);
         return new AsrOptions(
             ModelPath: modelPath,
             Language: "en",
