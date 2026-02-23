@@ -28,6 +28,7 @@ builder.Services.AddTransient<ErrorPatternService>();
 
 // Persistence services - singleton (shared state across circuits)
 builder.Services.AddSingleton<ReviewedStatusService>();
+builder.Services.AddSingleton<IgnoredPatternsService>();
 
 // Ams.Core services - stateless services for alignment/ASR operations
 // Note: PipelineService and ValidationService require command dependencies
