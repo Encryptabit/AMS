@@ -2,6 +2,7 @@
 @inject NavigationManager Navigation
 @inject BlazorWorkspace Workspace
 @inject ErrorPatternService ErrorPatternService
+@inject IgnoredPatternsService IgnoredPatternsService
 @using Ams.Workstation.Server.Models
 @using Ams.Workstation.Server.Services
 
@@ -89,7 +90,7 @@
             else
             {
                 await Task.Yield();
-                _patterns = ErrorPatternService.AggregatePatterns();
+                _patterns = ErrorPatternService.AggregatePatterns(IgnoredPatternsService.GetIgnoredKeys());
             }
         }
         catch (Exception ex)
@@ -117,7 +118,9 @@
 
     private Task ToggleIgnore(ErrorPattern pattern)
     {
-        // In-memory toggle - persistence deferred to Plan 05
+        // Persist via IgnoredPatternsService (direct service call, NOT HTTP)
+        IgnoredPatternsService.ToggleIgnored(pattern.Key);
+        // Update local state
         pattern.Ignored = !pattern.Ignored;
         StateHasChanged();
         return Task.CompletedTask;

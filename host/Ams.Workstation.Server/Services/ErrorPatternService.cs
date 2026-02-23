@@ -29,7 +29,7 @@ public class ErrorPatternService
     /// </summary>
     /// <param name="ignoredKeys">Set of pattern keys to mark as ignored.</param>
     /// <returns>Aggregated patterns sorted by occurrence count (descending).</returns>
-    public ErrorPatternsResult AggregatePatterns(ISet<string>? ignoredKeys = null)
+    public ErrorPatternsResult AggregatePatterns(IReadOnlySet<string>? ignoredKeys = null)
     {
         var patterns = new Dictionary<string, PatternAggregate>();
         ignoredKeys ??= new HashSet<string>();
@@ -91,7 +91,7 @@ public class ErrorPatternService
     public ErrorPatternsResult AggregatePatternsForChapter(
         string chapterTitle,
         HydratedTranscript hydrate,
-        ISet<string>? ignoredKeys = null)
+        IReadOnlySet<string>? ignoredKeys = null)
     {
         var patterns = new Dictionary<string, PatternAggregate>();
         ignoredKeys ??= new HashSet<string>();
