@@ -1,16 +1,279 @@
 @using Ams.Workstation.Server.Models
+@using Ams.Workstation.Server.Services
 @using Ams.Core.Artifacts.Hydrate
+@inject PickupMatchingService PickupMatchingService
+@inject PolishService PolishService
 
-<div class="pickup-importer">
+<BitStack Horizontal="false" Gap="1rem" AutoHeight="true">
     <BitText Typography="BitTypography.Subtitle2">Pickup Importer</BitText>
-    <BitText Typography="BitTypography.Caption1" Color="BitColor.SecondaryForeground">
-        Import pickup recordings to match against flagged sentences.
-    </BitText>
-</div>
+
+    @* File selection *@
+    <BitStack Horizontal="true" Gap="0.5rem" VerticalAlign="BitAlignment.Center" AutoHeight="true">
+        <BitTextField @bind-Value="_pickupFilePath"
+                      Placeholder="Paste pickup WAV file path..."
+                      Style="flex: 1;"
+                      IsEnabled="@(!_isProcessing)" />
+        <BitButton Variant="BitVariant.Fill"
+                   OnClick="HandleImport"
+                   IsEnabled="@(!string.IsNullOrWhiteSpace(_pickupFilePath) && !_isProcessing)">
+            Use File
+        </BitButton>
+    </BitStack>
+
+    @* Processing indicator *@
+    @if (_isProcessing)
+    {
+        <BitStack Horizontal="true" Gap="0.5rem" VerticalAlign="BitAlignment.Center" AutoHeight="true">
+            <BitProgress Circular="true" Style="width: 24px; height: 24px;" />
+            <BitText Typography="BitTypography.Body2" Color="BitColor.SecondaryForeground">
+                Matching pickups...
+            </BitText>
+        </BitStack>
+    }
+
+    @* Error display *@
+    @if (!string.IsNullOrEmpty(_errorMessage))
+    {
+        <BitMessage Color="BitColor.Error">
+            @_errorMessage
+        </BitMessage>
+    }
+
+    @* Match results *@
+    @if (_matches is { Count: > 0 })
+    {
+        <BitText Typography="BitTypography.Subtitle2" Color="BitColor.SecondaryForeground"
+                 Style="text-transform: uppercase; letter-spacing: 0.05em;">
+            Matches (@_matches.Count)
+        </BitText>
+
+        <BitStack Horizontal="false" Gap="0.75rem" AutoHeight="true">
+            @foreach (var match in _matches)
+            {
+                var isSelected = _selectedMatch == match;
+                <BitCard Style="@(isSelected ? "border-left: 3px solid var(--bit-clr-pri);" : "")"
+                         OnClick="@(() => SelectMatch(match))">
+                    <BitStack Horizontal="false" Gap="0.5rem" AutoHeight="true">
+                        @* Recognized text *@
+                        <BitText Typography="BitTypography.Body2">
+                            @TruncateText(match.RecognizedText, 120)
+                        </BitText>
+
+                        @* Matched sentence info *@
+                        @{
+                            var sentence = FindSentence(match.SentenceId);
+                        }
+                        @if (sentence != null)
+                        {
+                            <BitText Typography="BitTypography.Caption1" Color="BitColor.SecondaryForeground">
+                                Sentence @match.SentenceId: @TruncateText(sentence.BookText, 80)
+                            </BitText>
+                        }
+
+                        @* Confidence and time range *@
+                        <BitStack Horizontal="true" Gap="0.5rem" VerticalAlign="BitAlignment.Center" AutoHeight="true">
+                            <BitTag Color="@GetConfidenceColor(match.Confidence)">
+                                @($"{match.Confidence:P0}")
+                            </BitTag>
+                            <BitText Typography="BitTypography.Caption1" Color="BitColor.SecondaryForeground">
+                                @($"{match.PickupStartSec:F1}s - {match.PickupEndSec:F1}s")
+                            </BitText>
+                            <div style="margin-left: auto;">
+                                <BitButton Variant="BitVariant.Outline"
+                                           Color="BitColor.Success"
+                                           Size="BitSize.Small"
+                                           OnClick="@(() => StageMatch(match))"
+                                           IsEnabled="@(!_isProcessing)">
+                                    Stage
+                                </BitButton>
+                            </div>
+                        </BitStack>
+                    </BitStack>
+                </BitCard>
+            }
+        </BitStack>
+    }
+    else if (_matches is { Count: 0 } && !_isProcessing && !string.IsNullOrEmpty(_lastProcessedFile))
+    {
+        <BitMessage Color="BitColor.Warning">
+            No matches found in the pickup file.
+        </BitMessage>
+    }
+
+    @* Pickup waveform for selected match *@
+    @if (_selectedMatch != null && !string.IsNullOrWhiteSpace(_pickupFilePath))
+    {
+        <BitText Typography="BitTypography.Subtitle2" Color="BitColor.SecondaryForeground"
+                 Style="text-transform: uppercase; letter-spacing: 0.05em;">
+            Pickup Preview
+        </BitText>
+        <WaveformPlayer
+            @ref="_pickupWaveform"
+            AudioUrl="@GetPickupAudioUrl()"
+            Title="Pickup"
+            Height="80"
+            OnReady="HandlePickupWaveformReady"
+            OnRegionUpdated="HandleRegionBoundsUpdated" />
+    }
+</BitStack>
 
 @code {
     [Parameter] public string? ChapterStem { get; set; }
     [Parameter] public IReadOnlyList<HydratedSentence>? FlaggedSentences { get; set; }
     [Parameter] public EventCallback<List<PickupMatch>> OnMatchesReady { get; set; }
     [Parameter] public EventCallback<StagedReplacement> OnStageRequested { get; set; }
+
+    private string? _pickupFilePath;
+    private List<PickupMatch>? _matches;
+    private bool _isProcessing;
+    private string? _errorMessage;
+    private string? _lastProcessedFile;
+    private PickupMatch? _selectedMatch;
+    private WaveformPlayer? _pickupWaveform;
+    private bool _pickupWaveformReady;
+
+    private async Task HandleImport()
+    {
+        if (string.IsNullOrWhiteSpace(_pickupFilePath)) return;
+        if (FlaggedSentences is null || FlaggedSentences.Count == 0)
+        {
+            _errorMessage = "No flagged sentences to match against.";
+            return;
+        }
+
+        _isProcessing = true;
+        _errorMessage = null;
+        _matches = null;
+        _selectedMatch = null;
+        _pickupWaveformReady = false;
+        StateHasChanged();
+
+        try
+        {
+            var results = await PickupMatchingService.MatchPickupAsync(
+                _pickupFilePath.Trim(),
+                FlaggedSentences,
+                CancellationToken.None);
+
+            _matches = results;
+            _lastProcessedFile = _pickupFilePath;
+            await OnMatchesReady.InvokeAsync(results);
+        }
+        catch (System.IO.FileNotFoundException)
+        {
+            _errorMessage = "Pickup file not found. Check the file path.";
+        }
+        catch (Exception ex)
+        {
+            _errorMessage = $"Import failed: {ex.Message}";
+        }
+        finally
+        {
+            _isProcessing = false;
+            StateHasChanged();
+        }
+    }
+
+    private async Task SelectMatch(PickupMatch match)
+    {
+        _selectedMatch = match;
+        _pickupWaveformReady = false;
+        StateHasChanged();
+
+        // Wait for waveform to render before adding region
+        // The region will be added in HandlePickupWaveformReady
+    }
+
+    private async Task HandlePickupWaveformReady()
+    {
+        _pickupWaveformReady = true;
+
+        if (_selectedMatch != null && _pickupWaveform != null)
+        {
+            await _pickupWaveform.AddEditableRegion(
+                $"match-{_selectedMatch.SentenceId}",
+                _selectedMatch.PickupStartSec,
+                _selectedMatch.PickupEndSec,
+                "rgba(74, 158, 255, 0.3)");
+        }
+    }
+
+    private void HandleRegionBoundsUpdated((string Id, double Start, double End) region)
+    {
+        if (_selectedMatch == null || _matches == null) return;
+
+        // Update the match boundaries when user drags the region
+        var index = _matches.IndexOf(_selectedMatch);
+        if (index >= 0)
+        {
+            _matches[index] = _selectedMatch with
+            {
+                PickupStartSec = region.Start,
+                PickupEndSec = region.End
+            };
+            _selectedMatch = _matches[index];
+            StateHasChanged();
+        }
+    }
+
+    private void StageMatch(PickupMatch match)
+    {
+        if (string.IsNullOrWhiteSpace(ChapterStem) || string.IsNullOrWhiteSpace(_pickupFilePath))
+            return;
+
+        // Find the original sentence timing for the matched sentence
+        var sentence = FindSentence(match.SentenceId);
+        if (sentence?.Timing == null)
+        {
+            _errorMessage = $"Sentence {match.SentenceId} has no timing data.";
+            StateHasChanged();
+            return;
+        }
+
+        try
+        {
+            var replacement = PolishService.StageReplacement(
+                ChapterStem,
+                match,
+                _pickupFilePath.Trim(),
+                sentence.Timing.StartSec,
+                sentence.Timing.EndSec);
+
+            OnStageRequested.InvokeAsync(replacement);
+        }
+        catch (Exception ex)
+        {
+            _errorMessage = $"Stage failed: {ex.Message}";
+            StateHasChanged();
+        }
+    }
+
+    private HydratedSentence? FindSentence(int sentenceId)
+    {
+        return FlaggedSentences?.FirstOrDefault(s => s.Id == sentenceId);
+    }
+
+    private string GetPickupAudioUrl()
+    {
+        // For Blazor Server, we need to serve the pickup file through an API endpoint.
+        // For now, use a file-based URL pattern that the audio controller can resolve.
+        if (!string.IsNullOrWhiteSpace(_pickupFilePath))
+        {
+            return $"/api/audio/file?path={Uri.EscapeDataString(_pickupFilePath.Trim())}";
+        }
+        return "";
+    }
+
+    private static BitColor GetConfidenceColor(double confidence)
+    {
+        if (confidence >= 0.8) return BitColor.Success;
+        if (confidence >= 0.5) return BitColor.Warning;
+        return BitColor.Error;
+    }
+
+    private static string TruncateText(string text, int maxLength)
+    {
+        if (string.IsNullOrEmpty(text)) return "";
+        return text.Length <= maxLength ? text : text[..maxLength] + "...";
+    }
 }
