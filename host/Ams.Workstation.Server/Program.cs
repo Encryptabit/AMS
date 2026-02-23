@@ -37,6 +37,7 @@ builder.Services.AddTransient<CrxService>();
 // Polish area services - singleton (shared state, persistent queue and undo storage)
 builder.Services.AddSingleton<StagingQueueService>();
 builder.Services.AddSingleton<UndoService>();
+builder.Services.AddSingleton<PreviewBufferService>();
 
 // Polish area services - transient (stateless matching and orchestration)
 builder.Services.AddTransient<PickupMatchingService>();

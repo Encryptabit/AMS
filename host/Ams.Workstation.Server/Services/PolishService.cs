@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
 using Ams.Core.Artifacts;
@@ -22,17 +23,20 @@ public class PolishService
     private readonly StagingQueueService _stagingQueue;
     private readonly UndoService _undoService;
     private readonly PickupMatchingService _pickupMatching;
+    private readonly PreviewBufferService _previewBuffer;
 
     public PolishService(
         BlazorWorkspace workspace,
         StagingQueueService stagingQueue,
         UndoService undoService,
-        PickupMatchingService pickupMatching)
+        PickupMatchingService pickupMatching,
+        PreviewBufferService previewBuffer)
     {
         _workspace = workspace;
         _stagingQueue = stagingQueue;
         _undoService = undoService;
         _pickupMatching = pickupMatching;
+        _previewBuffer = previewBuffer;
     }
 
     /// <summary>
@@ -93,8 +97,41 @@ public class PolishService
     }
 
     /// <summary>
+    /// Generates a preview by splicing the pickup into the chapter buffer in memory.
+    /// The result is cached in <see cref="PreviewBufferService"/> for streaming via the API
+    /// but is NOT written to disk.
+    /// </summary>
+    /// <param name="replacementId">ID of the staged replacement to preview.</param>
+    /// <returns>The spliced preview buffer.</returns>
+    public AudioBuffer GeneratePreview(string replacementId)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(replacementId);
+
+        var item = FindStagedItem(replacementId);
+        var chapterBuffer = GetCurrentChapterBuffer();
+
+        var pickupBuffer = AudioProcessor.Decode(item.PickupSourcePath);
+        var pickupTrimmed = AudioProcessor.Trim(
+            pickupBuffer,
+            TimeSpan.FromSeconds(item.PickupStartSec),
+            TimeSpan.FromSeconds(item.PickupEndSec));
+
+        var resultBuffer = AudioSpliceService.ReplaceSegment(
+            chapterBuffer,
+            item.OriginalStartSec,
+            item.OriginalEndSec,
+            pickupTrimmed,
+            item.CrossfadeDurationSec,
+            item.CrossfadeCurve);
+
+        _previewBuffer.Set(resultBuffer);
+        return resultBuffer;
+    }
+
+    /// <summary>
     /// Applies a staged replacement: backs up the original segment, splices in
-    /// the pickup audio with crossfade, and records the timing delta.
+    /// the pickup audio with crossfade, writes the result to corrected.wav,
+    /// and records the timing delta.
     /// </summary>
     /// <param name="replacementId">ID of the staged replacement to apply.</param>
     /// <param name="ct">Cancellation token.</param>
@@ -108,7 +145,7 @@ public class PolishService
         // 1. Get staged item
         var item = FindStagedItem(replacementId);
 
-        // 2. Load chapter audio from workspace
+        // 2. Load chapter audio from workspace (corrected > treated > raw)
         var chapterBuffer = GetCurrentChapterBuffer();
 
         // 3. Decode and trim pickup audio
@@ -143,7 +180,10 @@ public class PolishService
         // 6. Calculate timing delta
         var timingDelta = pickupDuration - originalDuration;
 
-        // 7. Update status to Applied
+        // 7. Persist corrected.wav to disk
+        PersistCorrectedBuffer(resultBuffer);
+
+        // 8. Update status to Applied
         _stagingQueue.UpdateStatus(replacementId, ReplacementStatus.Applied);
 
         return (resultBuffer, timingDelta);
@@ -151,7 +191,7 @@ public class PolishService
 
     /// <summary>
     /// Reverts a previously applied replacement by restoring the original audio segment
-    /// from the undo backup.
+    /// from the undo backup, then persists the result to corrected.wav.
     /// </summary>
     /// <param name="replacementId">ID of the replacement to revert.</param>
     /// <param name="ct">Cancellation token.</param>
@@ -191,7 +231,10 @@ public class PolishService
         // 6. Timing delta is negative of original delta
         var timingDelta = undoRecord.OriginalDurationSec - replacementDuration;
 
-        // 7. Update status to Reverted
+        // 7. Persist corrected.wav to disk
+        PersistCorrectedBuffer(resultBuffer);
+
+        // 8. Update status to Reverted
         _stagingQueue.UpdateStatus(replacementId, ReplacementStatus.Reverted);
 
         return (resultBuffer, timingDelta);
@@ -211,7 +254,21 @@ public class PolishService
 
     private StagedReplacement FindStagedItem(string replacementId)
     {
-        // Search across all chapters for the replacement
+        // Resolve the current chapter stem so we can search its full queue
+        // (GetAllQueued only returns Staged items; we need Applied items too for preview/revert)
+        var handle = _workspace.CurrentChapterHandle;
+        if (handle is not null)
+        {
+            var stem = handle.Chapter.Descriptor.ChapterId;
+            var chapterQueue = _stagingQueue.GetQueue(stem);
+            foreach (var item in chapterQueue)
+            {
+                if (item.Id == replacementId)
+                    return item;
+            }
+        }
+
+        // Fall back to Staged-only cross-chapter search
         var allQueued = _stagingQueue.GetAllQueued();
         foreach (var item in allQueued)
         {
@@ -219,17 +276,54 @@ public class PolishService
                 return item;
         }
 
-        // Also check non-Staged items (Applied status items for revert scenarios)
-        // Fall back to searching all chapters
-        throw new InvalidOperationException($"Staged replacement '{replacementId}' not found.");
+        throw new InvalidOperationException($"Replacement '{replacementId}' not found.");
     }
 
+    /// <summary>
+    /// Resolves the best available chapter audio buffer: corrected.wav > treated.wav > raw.
+    /// Uses direct AudioProcessor.Decode to avoid moving AudioBufferManager cursor.
+    /// </summary>
     private AudioBuffer GetCurrentChapterBuffer()
     {
         var handle = _workspace.CurrentChapterHandle
             ?? throw new InvalidOperationException("No chapter is currently selected.");
 
-        return handle.Chapter.Audio.Current.Buffer;
+        var chapter = handle.Chapter;
+        var descriptor = chapter.Descriptor;
+        var correctedPath = Path.Combine(descriptor.RootPath, $"{descriptor.ChapterId}.corrected.wav");
+
+        if (File.Exists(correctedPath))
+            return AudioProcessor.Decode(correctedPath);
+
+        var treatedPath = Path.Combine(descriptor.RootPath, $"{descriptor.ChapterId}.treated.wav");
+        if (File.Exists(treatedPath))
+            return AudioProcessor.Decode(treatedPath);
+
+        // Fall back to raw buffer via AudioBufferManager
+        return chapter.Audio.Current.Buffer
+            ?? throw new InvalidOperationException("No audio buffer available for the current chapter.");
+    }
+
+    /// <summary>
+    /// Writes the result buffer to {stem}.corrected.wav and flushes the cached
+    /// "corrected" AudioBufferContext so it reloads from disk on next access.
+    /// Also clears any preview buffer.
+    /// </summary>
+    private void PersistCorrectedBuffer(AudioBuffer buffer)
+    {
+        var handle = _workspace.CurrentChapterHandle
+            ?? throw new InvalidOperationException("No chapter is currently selected.");
+
+        var descriptor = handle.Chapter.Descriptor;
+        var correctedPath = Path.Combine(descriptor.RootPath, $"{descriptor.ChapterId}.corrected.wav");
+
+        AudioProcessor.EncodeWav(correctedPath, buffer);
+
+        // Flush the cached buffer so next load picks up the new file
+        handle.Chapter.Audio.Deallocate("corrected");
+
+        // Clear any in-memory preview
+        _previewBuffer.Clear();
     }
 
     #endregion

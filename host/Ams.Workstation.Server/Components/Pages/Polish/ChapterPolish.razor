@@ -4,6 +4,7 @@
 @inject Ams.Workstation.Server.Services.StagingQueueService StagingQueueService
 @inject Ams.Workstation.Server.Services.BlazorWorkspace Workspace
 @inject Ams.Workstation.Server.Services.CrxService CrxService
+@inject Ams.Workstation.Server.Services.PreviewBufferService PreviewBufferService
 @inject NavigationManager Navigation
 @inject IJSRuntime JS
 @using Ams.Workstation.Server.Models
@@ -116,6 +117,11 @@
     private IReadOnlyList<StagedReplacement>? _stagedItems;
     private IReadOnlyList<HydratedSentence>? _flaggedSentences;
 
+    // Preview/corrected state
+    private bool _isPreviewMode;
+    private long _previewVersion;
+    private long _correctedVersion;
+
     // Verification state
     private RevalidationResult? _verificationResult;
     private double? _verificationSegmentStart;
@@ -160,16 +166,21 @@
 
     private string GetAudioUrl()
     {
-        if (!string.IsNullOrEmpty(ChapterName))
-        {
-            return $"/api/audio/chapter/{Uri.EscapeDataString(ChapterName)}";
-        }
-        return "/api/audio";
+        if (string.IsNullOrEmpty(ChapterName))
+            return "/api/audio";
+
+        if (_isPreviewMode)
+            return $"/api/audio/preview?v={_previewVersion}";
+
+        return $"/api/audio/chapter/{Uri.EscapeDataString(ChapterName)}/corrected?v={_correctedVersion}";
     }
 
     private string GetDisplayTitle()
     {
-        return Uri.UnescapeDataString(ChapterName ?? "Audio");
+        var title = Uri.UnescapeDataString(ChapterName ?? "Audio");
+        if (_isPreviewMode) return $"{title} (Preview)";
+        if (_correctedVersion > 0) return $"{title} (Corrected)";
+        return title;
     }
 
     private string GetChapterStem()
@@ -237,6 +248,7 @@
     {
         _isProcessing = true;
         _verificationResult = null;
+        _isPreviewMode = false;
         StateHasChanged();
 
         try
@@ -245,6 +257,7 @@
             var item = _stagedItems?.FirstOrDefault(s => s.Id == replacementId);
 
             var (resultBuffer, timingDelta) = await PolishService.ApplyReplacementAsync(replacementId, CancellationToken.None);
+            _correctedVersion++;
             _statusMessage = $"Applied replacement. Timing delta: {timingDelta:+0.000;-0.000}s. Re-validating...";
             _statusColor = BitColor.Success;
             StateHasChanged();
@@ -271,11 +284,13 @@
     private async Task HandleRevert(string replacementId)
     {
         _isProcessing = true;
+        _isPreviewMode = false;
         StateHasChanged();
 
         try
         {
             var (resultBuffer, timingDelta) = await PolishService.RevertReplacementAsync(replacementId, CancellationToken.None);
+            _correctedVersion++;
             _statusMessage = $"Reverted replacement. Timing delta: {timingDelta:+0.000;-0.000}s";
             _statusColor = BitColor.Warning;
         }
@@ -306,12 +321,13 @@
         if (_stagedItems is null) return;
 
         _isProcessing = true;
+        _isPreviewMode = false;
         StateHasChanged();
 
         var applied = 0;
         var failed = 0;
 
-        foreach (var item in _stagedItems.Where(s => s.Status == ReplacementStatus.Staged))
+        foreach (var item in _stagedItems.Where(s => s.Status == ReplacementStatus.Staged).ToList())
         {
             try
             {
@@ -324,6 +340,7 @@
             }
         }
 
+        _correctedVersion++;
         RefreshQueue();
         _isProcessing = false;
         _statusMessage = $"Applied {applied} replacement{(applied == 1 ? "" : "s")}{(failed > 0 ? $", {failed} failed" : "")}.";
@@ -338,7 +355,45 @@
         var item = _stagedItems?.FirstOrDefault(s => s.Id == replacementId);
         if (item is null) return;
 
-        await _waveformPlayer.PlaySegment(item.OriginalStartSec, item.OriginalEndSec);
+        // Applied items are already in the corrected waveform — exit preview mode so
+        // the waveform source switches back to the corrected audio URL
+        if (item.Status == ReplacementStatus.Applied)
+        {
+            if (_isPreviewMode)
+            {
+                _isPreviewMode = false;
+                StateHasChanged();
+                await Task.Delay(200);
+            }
+            await _waveformPlayer.PlaySegment(item.OriginalStartSec, item.OriginalEndSec);
+            return;
+        }
+
+        // Staged items: generate an in-memory splice preview
+        try
+        {
+            _isProcessing = true;
+            StateHasChanged();
+
+            PolishService.GeneratePreview(replacementId);
+            _previewVersion = PreviewBufferService.Version;
+            _isPreviewMode = true;
+            StateHasChanged();
+
+            // Brief delay for waveform to start loading the new URL
+            await Task.Delay(200);
+            await _waveformPlayer.PlaySegment(item.OriginalStartSec, item.OriginalEndSec);
+        }
+        catch (Exception ex)
+        {
+            _statusMessage = $"Preview failed: {ex.Message}";
+            _statusColor = BitColor.Error;
+        }
+        finally
+        {
+            _isProcessing = false;
+            StateHasChanged();
+        }
     }
 
     private void RefreshQueue()

@@ -19,15 +19,18 @@ public class AudioController : ControllerBase
     private readonly IWebHostEnvironment _environment;
     private readonly ILogger<AudioController> _logger;
     private readonly BlazorWorkspace _workspace;
+    private readonly PreviewBufferService _previewBuffer;
 
     public AudioController(
         IWebHostEnvironment environment,
         ILogger<AudioController> logger,
-        BlazorWorkspace workspace)
+        BlazorWorkspace workspace,
+        PreviewBufferService previewBuffer)
     {
         _environment = environment;
         _logger = logger;
         _workspace = workspace;
+        _previewBuffer = previewBuffer;
     }
 
     /// <summary>
@@ -186,6 +189,67 @@ public class AudioController : ControllerBase
         {
             _logger.LogError(ex, "Failed to serve region audio for chapter '{ChapterName}'", chapterName);
             return StatusCode(500, $"Failed to serve region audio: {ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// Serves the in-memory preview buffer from PreviewBufferService.
+    /// Returns 404 if no preview has been generated yet.
+    /// </summary>
+    [HttpGet("preview")]
+    public IActionResult GetPreviewAudio()
+    {
+        var buffer = _previewBuffer.Buffer;
+        if (buffer is null)
+        {
+            return NotFound("No preview buffer available");
+        }
+
+        var stream = buffer.ToWavStream();
+        return File(stream, "audio/wav", enableRangeProcessing: true);
+    }
+
+    /// <summary>
+    /// Serves the corrected chapter audio from disk.
+    /// Falls back to treated.wav, then raw audio if corrected.wav does not exist.
+    /// </summary>
+    [HttpGet("chapter/{chapterName}/corrected")]
+    public IActionResult GetCorrectedChapterAudio(string chapterName)
+    {
+        if (_workspace.CurrentChapterHandle is null)
+        {
+            return NotFound("No chapter loaded");
+        }
+
+        var descriptor = _workspace.CurrentChapterHandle.Chapter.Descriptor;
+        var correctedPath = Path.Combine(descriptor.RootPath, $"{descriptor.ChapterId}.corrected.wav");
+
+        if (System.IO.File.Exists(correctedPath))
+        {
+            _logger.LogDebug("Serving corrected audio for chapter '{ChapterName}'", chapterName);
+            return ServeAudioFile(correctedPath);
+        }
+
+        var treatedPath = Path.Combine(descriptor.RootPath, $"{descriptor.ChapterId}.treated.wav");
+        if (System.IO.File.Exists(treatedPath))
+        {
+            _logger.LogDebug("Corrected not found, falling back to treated for chapter '{ChapterName}'", chapterName);
+            return ServeAudioFile(treatedPath);
+        }
+
+        // Fall back to raw buffer
+        try
+        {
+            var buffer = _workspace.CurrentChapterHandle.Chapter.Audio.Current.Buffer;
+            if (buffer is null)
+                return NotFound("No audio available");
+
+            var stream = buffer.ToWavStream();
+            return File(stream, "audio/wav", enableRangeProcessing: true);
+        }
+        catch (InvalidOperationException)
+        {
+            return NotFound("No audio available");
         }
     }
 

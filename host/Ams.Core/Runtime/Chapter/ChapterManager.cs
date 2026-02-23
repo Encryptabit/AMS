@@ -132,6 +132,9 @@ public sealed class ChapterManager : IChapterManager
         var treatedPath = Path.Combine(chapterRoot, $"{chapterStem}.treated.wav");
         bufferList.Add(new AudioBufferDescriptor("treated", treatedPath));
 
+        var correctedPath = Path.Combine(chapterRoot, $"{chapterStem}.corrected.wav");
+        bufferList.Add(new AudioBufferDescriptor("corrected", correctedPath));
+
         var filteredPath = Path.Combine(chapterRoot, $"{chapterStem}.filtered.wav");
         bufferList.Add(new AudioBufferDescriptor("filtered", filteredPath));
 
