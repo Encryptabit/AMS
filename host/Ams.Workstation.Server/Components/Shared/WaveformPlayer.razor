@@ -92,6 +92,13 @@
     public EventCallback<double> OnSeek { get; set; }
 
     /// <summary>
+    /// Callback fired when a draggable region's boundaries are updated by the user.
+    /// Receives (regionId, newStart, newEnd).
+    /// </summary>
+    [Parameter]
+    public EventCallback<(string Id, double Start, double End)> OnRegionUpdated { get; set; }
+
+    /// <summary>
     /// Whether audio is currently playing.
     /// </summary>
     public bool IsPlaying { get; private set; }
@@ -254,6 +261,42 @@
         await _module.InvokeVoidAsync("setPlaybackRate", _elementId, rate, preservePitch);
     }
 
+    /// <summary>
+    /// Adds a draggable, resizable region to the waveform for boundary editing.
+    /// </summary>
+    public async Task AddEditableRegion(string id, double start, double end, string? color = null)
+    {
+        if (_module == null || !_isReady) return;
+        await _module.InvokeVoidAsync("addEditableRegion", _elementId, id, start, end, color, _dotNetRef);
+    }
+
+    /// <summary>
+    /// Updates a region's boundaries programmatically.
+    /// </summary>
+    public async Task UpdateRegionBounds(string id, double start, double end)
+    {
+        if (_module == null || !_isReady) return;
+        await _module.InvokeVoidAsync("updateRegionBounds", _elementId, id, start, end);
+    }
+
+    /// <summary>
+    /// Plays a segment of audio from startSec to endSec, then pauses.
+    /// </summary>
+    public async Task PlaySegment(double startSec, double endSec)
+    {
+        if (_module == null || !_isReady) return;
+        await _module.InvokeVoidAsync("playSegment", _elementId, startSec, endSec);
+    }
+
+    /// <summary>
+    /// Sets the zoom level in pixels per second.
+    /// </summary>
+    public async Task SetZoom(int pxPerSec)
+    {
+        if (_module == null || !_isReady) return;
+        await _module.InvokeVoidAsync("setZoom", _elementId, pxPerSec);
+    }
+
     // Callback methods invoked from JavaScript
 
     [JSInvokable]
@@ -304,6 +347,12 @@
         _errorMessage = error;
         StateHasChanged();
         return Task.CompletedTask;
+    }
+
+    [JSInvokable]
+    public async Task OnRegionBoundsUpdated(string regionId, double start, double end)
+    {
+        await OnRegionUpdated.InvokeAsync((regionId, start, end));
     }
 
     private static string FormatTime(double seconds)
