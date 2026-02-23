@@ -1,0 +1,174 @@
+@using Ams.Workstation.Server.Models
+@using Ams.Workstation.Server.Services
+@inject CrxService CrxService
+
+<div class="crx-modal-overlay @(_isVisible ? "visible" : "")" @onclick="Close">
+    <div class="crx-modal" @onclick:stopPropagation>
+        <div class="crx-modal-header">
+            <BitText Typography="BitTypography.H5">Add to CRX</BitText>
+            <BitButton Variant="BitVariant.Text" OnClick="Close" IconName="Cancel" />
+        </div>
+
+        <div class="crx-modal-body">
+            <BitStack Horizontal="false" Gap="1rem" AutoHeight="true">
+                <BitDropdown TItem="BitDropdownItem<string>" TValue="string"
+                             @bind-Value="_errorType"
+                             Label="Error Type"
+                             Items="_errorTypeItems" />
+
+                <div class="padding-control">
+                    <BitText Typography="BitTypography.Body2">Tail Padding: @_paddingMs ms</BitText>
+                    <input type="range" min="0" max="200" step="10"
+                           @bind="_paddingMs" @bind:event="oninput" />
+                </div>
+
+                <BitTextField @bind-Value="_comments"
+                              Label="Comments"
+                              IsMultiline="true"
+                              Rows="3" />
+
+                <div class="crx-preview">
+                    <BitText Typography="BitTypography.Caption1" Color="BitColor.SecondaryForeground">
+                        Audio Preview
+                    </BitText>
+                    <audio controls style="width: 100%;">
+                        <source src="@GetPreviewUrl()" type="audio/wav" />
+                    </audio>
+                    <BitText Typography="BitTypography.Caption2" Color="BitColor.SecondaryForeground">
+                        @FormatTime(_startTime) -> @FormatTime(_endTime + _paddingMs / 1000.0)
+                    </BitText>
+                </div>
+            </BitStack>
+        </div>
+
+        <div class="crx-modal-footer">
+            <BitButton Variant="BitVariant.Outline" OnClick="Close">Cancel</BitButton>
+            <BitButton Variant="BitVariant.Fill" Color="BitColor.Primary"
+                       OnClick="Submit" IsEnabled="@(!_submitting)">
+                @(_submitting ? "Submitting..." : "Add to CRX")
+            </BitButton>
+        </div>
+    </div>
+</div>
+
+@code {
+    private bool _isVisible;
+    private string _chapterName = "";
+    private double _startTime;
+    private double _endTime;
+    private int _sentenceId;
+    private string _excerpt = "";
+    private string _errorType = "MR";
+    private string _comments = "";
+    private int _paddingMs = 50;
+    private bool _submitting;
+
+    // Pre-built dropdown items (follows HeaderControls.razor pattern)
+    private readonly List<BitDropdownItem<string>> _errorTypeItems = ErrorTypes.All
+        .Select(t => new BitDropdownItem<string> { Value = t, Text = t })
+        .ToList();
+
+    [Parameter] public EventCallback<CrxSubmitResult> OnSubmitted { get; set; }
+
+    public void Open(string chapterName, double start, double end, int sentenceId, string excerpt)
+    {
+        _chapterName = chapterName;
+        _startTime = start;
+        _endTime = end;
+        _sentenceId = sentenceId;
+        _excerpt = excerpt;
+        _comments = excerpt;
+        _errorType = "MR";
+        _paddingMs = 50;
+        _isVisible = true;
+        StateHasChanged();
+    }
+
+    public void Close()
+    {
+        _isVisible = false;
+        StateHasChanged();
+    }
+
+    private string GetPreviewUrl()
+    {
+        // Audio URL for browser <audio> element - this IS an HTTP path (fetched by browser, not Blazor C#)
+        var end = _endTime + (_paddingMs / 1000.0);
+        return $"/api/audio/chapter/{Uri.EscapeDataString(_chapterName)}?start={_startTime}&end={end}";
+    }
+
+    private async Task Submit()
+    {
+        _submitting = true;
+        StateHasChanged();
+        try
+        {
+            // Direct service call (NOT HttpClient)
+            await Task.Yield(); // Allow UI to update before blocking call
+            var request = new CrxSubmitRequest(
+                Start: _startTime,
+                End: _endTime,
+                SentenceId: _sentenceId,
+                ErrorType: _errorType,
+                Comments: _comments,
+                Excerpt: _excerpt,
+                PaddingMs: _paddingMs
+            );
+
+            var result = CrxService.Submit(_chapterName, request);
+            await OnSubmitted.InvokeAsync(result);
+            Close();
+        }
+        finally
+        {
+            _submitting = false;
+        }
+    }
+
+    private static string FormatTime(double seconds)
+    {
+        var ts = TimeSpan.FromSeconds(seconds);
+        return $"{(int)ts.TotalMinutes}:{ts.Seconds:D2}.{ts.Milliseconds:D3}";
+    }
+}
+
+<style>
+    .crx-modal-overlay {
+        position: fixed;
+        inset: 0;
+        background: rgba(0, 0, 0, 0.5);
+        display: none;
+        align-items: center;
+        justify-content: center;
+        z-index: 1000;
+    }
+    .crx-modal-overlay.visible {
+        display: flex;
+    }
+    .crx-modal {
+        background: var(--bit-clr-bg-pri);
+        border-radius: 8px;
+        min-width: 500px;
+        max-width: 600px;
+    }
+    .crx-modal-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 1rem;
+        border-bottom: 1px solid var(--bit-clr-brd-sec);
+    }
+    .crx-modal-body {
+        padding: 1rem;
+    }
+    .crx-modal-footer {
+        display: flex;
+        justify-content: flex-end;
+        gap: 0.5rem;
+        padding: 1rem;
+        border-top: 1px solid var(--bit-clr-brd-sec);
+    }
+    .padding-control input {
+        width: 100%;
+    }
+</style>

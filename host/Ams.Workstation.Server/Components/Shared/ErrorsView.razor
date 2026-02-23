@@ -65,6 +65,8 @@
     [Parameter] public ChapterReport? Report { get; set; }
     [Parameter] public IReadOnlyList<ErrorPattern>? ChapterPatterns { get; set; }
     [Parameter] public EventCallback<SentenceReport> OnPlaySentence { get; set; }
+    [Parameter] public EventCallback<SentenceReport> OnExportSentence { get; set; }
+    [Parameter] public EventCallback<SentenceReport> OnCrxSentence { get; set; }
 
     private IEnumerable<SentenceReport> ErrorSentences =>
         Report?.Sentences
@@ -99,13 +101,13 @@
         }
     }
 
-    private void HandleExport(SentenceReport sentence)
+    private async Task HandleExport(SentenceReport sentence)
     {
-        // Export deferred to Plan 06
+        await OnExportSentence.InvokeAsync(sentence);
     }
 
-    private void HandleCrx(SentenceReport sentence)
+    private async Task HandleCrx(SentenceReport sentence)
     {
-        // CRX deferred to Plan 06
+        await OnCrxSentence.InvokeAsync(sentence);
     }
 }

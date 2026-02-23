@@ -4,6 +4,7 @@
 @inject Ams.Workstation.Server.Services.ProofReportService ProofReportService
 @inject Ams.Workstation.Server.Services.ErrorPatternService ErrorPatternService
 @inject Ams.Workstation.Server.Services.ReviewedStatusService ReviewedStatusService
+@inject Ams.Workstation.Server.Services.AudioExportService AudioExportService
 @inject NavigationManager Navigation
 @using Ams.Workstation.Server.Models
 
@@ -48,8 +49,21 @@
 }
 else
 {
-    <ErrorsView Report="_report" ChapterPatterns="_chapterPatterns" OnPlaySentence="HandlePlayFromErrors" />
+    <ErrorsView Report="_report" ChapterPatterns="_chapterPatterns"
+                OnPlaySentence="HandlePlayFromErrors"
+                OnExportSentence="HandleExportFromErrors"
+                OnCrxSentence="HandleCrxFromErrors" />
 }
+
+@if (!string.IsNullOrEmpty(_exportMessage))
+{
+    <BitText Typography="BitTypography.Caption1" Color="BitColor.SecondaryForeground"
+             Style="text-align: center; padding: 0.5rem;">
+        @_exportMessage
+    </BitText>
+}
+
+<CrxModal @ref="_crxModal" OnSubmitted="HandleCrxSubmitted" />
 
 
 @code {
@@ -61,6 +75,8 @@ else
     private ChapterReport? _report;
     private IReadOnlyList<ErrorPattern>? _chapterPatterns;
     private bool _isReviewed;
+    private CrxModal? _crxModal;
+    private string? _exportMessage;
 
     [Parameter] public string? ChapterName { get; set; }
 
@@ -175,6 +191,41 @@ else
         var decoded = Uri.UnescapeDataString(ChapterName);
         _isReviewed = !_isReviewed;
         ReviewedStatusService.SetReviewed(decoded, _isReviewed);
+        StateHasChanged();
+    }
+
+    private void HandleExportFromErrors(SentenceReport sentence)
+    {
+        if (string.IsNullOrEmpty(ChapterName)) return;
+        try
+        {
+            var result = AudioExportService.ExportSegment(sentence.StartTime, sentence.EndTime);
+            _exportMessage = $"Exported: {result.Filename}";
+        }
+        catch (Exception ex)
+        {
+            _exportMessage = $"Export failed: {ex.Message}";
+        }
+        StateHasChanged();
+    }
+
+    private void HandleCrxFromErrors(SentenceReport sentence)
+    {
+        if (string.IsNullOrEmpty(ChapterName)) return;
+        var decoded = Uri.UnescapeDataString(ChapterName);
+        _crxModal?.Open(decoded, sentence.StartTime, sentence.EndTime, sentence.Id, sentence.Excerpt);
+    }
+
+    private void HandleCrxSubmitted(CrxSubmitResult result)
+    {
+        if (result.Success)
+        {
+            _exportMessage = $"CRX #{result.ErrorNumber} added ({result.AudioFile})";
+        }
+        else
+        {
+            _exportMessage = $"CRX failed: {result.Error}";
+        }
         StateHasChanged();
     }
 
