@@ -1,0 +1,385 @@
+@page "/polish/batch"
+@inject Ams.Workstation.Server.Services.BatchOperationService BatchService
+@inject Ams.Workstation.Server.Services.BlazorWorkspace Workspace
+@inject NavigationManager Navigation
+@using Ams.Workstation.Server.Models
+
+<PageTitle>Batch Operations - Polish - AMS Workstation</PageTitle>
+
+<BitStack Horizontal="false" Gap="1rem" AutoHeight="true">
+    @* Header *@
+    <BitStack Horizontal="true" Gap="0.5rem" VerticalAlign="BitAlignment.Center" AutoHeight="true">
+        <BitButton Variant="BitVariant.Text" IconName="@BitIconName.Back" OnClick="NavigateBack" Title="Back to Polish" />
+        <BitText Typography="BitTypography.H5">Batch Operations</BitText>
+    </BitStack>
+
+    @if (!Workspace.IsInitialized)
+    {
+        <BitMessage Color="BitColor.Warning">
+            No workspace loaded. Set a working directory first.
+        </BitMessage>
+    }
+    else
+    {
+        @* Chapter Selection *@
+        <BitCard>
+            <BitStack Horizontal="false" Gap="0.5rem" AutoHeight="true">
+                <BitStack Horizontal="true" Gap="0.5rem" VerticalAlign="BitAlignment.Center" AutoHeight="true">
+                    <BitText Typography="BitTypography.Subtitle1">Chapter Selection</BitText>
+                    <div style="margin-left: auto;">
+                        <BitButton Variant="BitVariant.Text" OnClick="SelectAll" Size="BitSize.Small">Select All</BitButton>
+                        <BitButton Variant="BitVariant.Text" OnClick="DeselectAll" Size="BitSize.Small">Deselect All</BitButton>
+                    </div>
+                </BitStack>
+
+                <div class="chapter-selection-list">
+                    @for (var i = 0; i < _chapters.Count; i++)
+                    {
+                        var index = i;
+                        <BitCheckbox Label="@_chapters[index].ChapterStem"
+                                     Value="@_chapters[index].Selected"
+                                     OnChange="@(val => HandleChapterToggle(index, val))" />
+                    }
+                </div>
+
+                <BitText Typography="BitTypography.Caption1" Color="BitColor.SecondaryForeground">
+                    @_selectedCount of @_chapters.Count selected
+                </BitText>
+            </BitStack>
+        </BitCard>
+
+        @* Operation Tabs *@
+        <BitPivot SelectedKey="@_activeTab" OnItemClick="HandleTabChange">
+            <BitPivotItem HeaderText="Rename" Key="rename" IconName="@BitIconName.Rename" />
+            <BitPivotItem HeaderText="Shift" Key="shift" IconName="@BitIconName.Clock" />
+            <BitPivotItem HeaderText="Pre/Post Roll" Key="prepostroll" IconName="@BitIconName.Trim" />
+            <BitPivotItem HeaderText="DSP" Key="dsp" IconName="@BitIconName.Equalizer" />
+        </BitPivot>
+
+        @* Tab Content *@
+        <BitCard>
+            @switch (_activeTab)
+            {
+                case "rename":
+                    <BitStack Horizontal="false" Gap="0.75rem" AutoHeight="true">
+                        <BitText Typography="BitTypography.Subtitle2">Batch Rename</BitText>
+                        <BitText Typography="BitTypography.Caption1" Color="BitColor.SecondaryForeground">
+                            Apply a naming pattern across selected chapters. Use {N} for chapter number, {N:D2} for zero-padded.
+                        </BitText>
+                        <BitTextField Label="Naming Pattern"
+                                     @bind-Value="_renamePattern"
+                                     Placeholder="Chapter {N:D2}" />
+                        @if (_selectedCount > 0)
+                        {
+                            <BitText Typography="BitTypography.Caption1" Color="BitColor.SecondaryForeground">
+                                Preview: @GetRenamePreview()
+                            </BitText>
+                        }
+                        <BitButton Variant="BitVariant.Fill"
+                                   Color="BitColor.Primary"
+                                   IconName="@BitIconName.Accept"
+                                   IsEnabled="@(_selectedCount > 0 && !string.IsNullOrWhiteSpace(_renamePattern))"
+                                   OnClick="StageRename">
+                            Stage Rename
+                        </BitButton>
+                    </BitStack>
+                    break;
+
+                case "shift":
+                    <BitStack Horizontal="false" Gap="0.75rem" AutoHeight="true">
+                        <BitText Typography="BitTypography.Subtitle2">Batch Timing Shift</BitText>
+                        <BitText Typography="BitTypography.Caption1" Color="BitColor.SecondaryForeground">
+                            Adjust the gap between chapter title and content start.
+                        </BitText>
+                        <BitStack Horizontal="true" Gap="0.5rem" VerticalAlign="BitAlignment.Center" AutoHeight="true">
+                            <BitNumberField Label="Shift (seconds)"
+                                            @bind-Value="_shiftSeconds"
+                                            Step="0.1"
+                                            Min="-30"
+                                            Max="30" />
+                            <BitText Typography="BitTypography.Body1" Style="padding-top: 1.5rem;">
+                                @(_shiftSeconds >= 0 ? "forward" : "backward")
+                            </BitText>
+                        </BitStack>
+                        <BitButton Variant="BitVariant.Fill"
+                                   Color="BitColor.Primary"
+                                   IconName="@BitIconName.Accept"
+                                   IsEnabled="@(_selectedCount > 0 && _shiftSeconds != 0)"
+                                   OnClick="StageShift">
+                            Stage Shift
+                        </BitButton>
+                    </BitStack>
+                    break;
+
+                case "prepostroll":
+                    <BitStack Horizontal="false" Gap="0.75rem" AutoHeight="true">
+                        <BitText Typography="BitTypography.Subtitle2">Pre/Post Roll Standardization</BitText>
+                        <BitText Typography="BitTypography.Caption1" Color="BitColor.SecondaryForeground">
+                            Standardize silence before and after chapter content across selected chapters.
+                        </BitText>
+                        <BitStack Horizontal="true" Gap="1rem" AutoHeight="true">
+                            <BitNumberField Label="Pre-roll (seconds)"
+                                            @bind-Value="_preRollSeconds"
+                                            Step="0.5"
+                                            Min="0"
+                                            Max="10" />
+                            <BitNumberField Label="Post-roll (seconds)"
+                                            @bind-Value="_postRollSeconds"
+                                            Step="0.5"
+                                            Min="0"
+                                            Max="10" />
+                        </BitStack>
+                        <BitButton Variant="BitVariant.Fill"
+                                   Color="BitColor.Primary"
+                                   IconName="@BitIconName.Accept"
+                                   IsEnabled="@(_selectedCount > 0)"
+                                   OnClick="StagePrePostRoll">
+                            Stage Standardization
+                        </BitButton>
+                    </BitStack>
+                    break;
+
+                case "dsp":
+                    <BitStack Horizontal="false" Gap="0.75rem" AutoHeight="true"
+                              HorizontalAlign="BitAlignment.Center" Style="padding: 2rem 0;">
+                        <BitIcon IconName="@BitIconName.Equalizer" Style="font-size: 2rem; opacity: 0.5;" />
+                        <BitText Typography="BitTypography.Subtitle2" Color="BitColor.SecondaryForeground">
+                            DSP Operations -- Coming Soon
+                        </BitText>
+                        <BitText Typography="BitTypography.Caption1" Color="BitColor.SecondaryForeground">
+                            Batch DSP processing (EQ, compression, normalization) is deferred per locked decision.
+                            This will be available once the DSP pipeline is implemented.
+                        </BitText>
+                    </BitStack>
+                    break;
+            }
+        </BitCard>
+
+        @* Status Message *@
+        @if (!string.IsNullOrEmpty(_statusMessage))
+        {
+            <BitMessage Color="@_statusColor">
+                @_statusMessage
+            </BitMessage>
+        }
+
+        @* Multi-Waveform Preview *@
+        @if (_waveformConfigs.Count > 0)
+        {
+            <BitCard>
+                <BitStack Horizontal="false" Gap="0.5rem" AutoHeight="true">
+                    <BitText Typography="BitTypography.Subtitle2">Waveform Preview</BitText>
+                    <MultiWaveformView Chapters="@_waveformConfigs" OnTimeChanged="HandleTimeChanged" />
+                </BitStack>
+            </BitCard>
+        }
+
+        @* Batch History *@
+        @if (_history.Count > 0)
+        {
+            <BitCard>
+                <BitStack Horizontal="false" Gap="0.5rem" AutoHeight="true">
+                    <BitText Typography="BitTypography.Subtitle2">Staged Operations</BitText>
+                    @foreach (var op in _history)
+                    {
+                        <BitStack Horizontal="true" Gap="0.5rem" VerticalAlign="BitAlignment.Center" AutoHeight="true"
+                                  Style="border-bottom: 1px solid var(--bit-clr-brd-sec); padding: 0.25rem 0;">
+                            <BitTag Color="@GetOperationColor(op.Type)">@op.Type</BitTag>
+                            <BitText Typography="BitTypography.Body2">@op.Description</BitText>
+                        </BitStack>
+                    }
+                </BitStack>
+            </BitCard>
+        }
+
+        @* Apply All *@
+        @if (_history.Count > 0)
+        {
+            <BitButton Variant="BitVariant.Fill"
+                       Color="BitColor.Success"
+                       IconName="@BitIconName.Accept"
+                       Style="align-self: flex-end;"
+                       OnClick="ApplyAll">
+                Apply All Staged (@_history.Count)
+            </BitButton>
+        }
+    }
+</BitStack>
+
+@code {
+    private List<BatchTarget> _chapters = new();
+    private int _selectedCount;
+    private string _activeTab = "rename";
+
+    // Rename
+    private string _renamePattern = "Chapter {N:D2}";
+
+    // Shift
+    private double _shiftSeconds;
+
+    // Pre/Post Roll
+    private double _preRollSeconds = 1.0;
+    private double _postRollSeconds = 2.0;
+
+    // Status
+    private string? _statusMessage;
+    private BitColor _statusColor = BitColor.Info;
+
+    // Waveform
+    private List<MultiWaveformView.ChapterWaveformConfig> _waveformConfigs = new();
+
+    // History
+    private IReadOnlyList<BatchOperation> _history = Array.Empty<BatchOperation>();
+
+    protected override void OnInitialized()
+    {
+        _chapters = BatchService.GetAvailableChapters();
+        _history = BatchService.GetBatchHistory();
+    }
+
+    private void NavigateBack()
+    {
+        Navigation.NavigateTo("/polish");
+    }
+
+    private void SelectAll()
+    {
+        for (var i = 0; i < _chapters.Count; i++)
+        {
+            _chapters[i] = _chapters[i] with { Selected = true };
+        }
+        UpdateSelection();
+    }
+
+    private void DeselectAll()
+    {
+        for (var i = 0; i < _chapters.Count; i++)
+        {
+            _chapters[i] = _chapters[i] with { Selected = false };
+        }
+        UpdateSelection();
+    }
+
+    private void HandleChapterToggle(int index, bool selected)
+    {
+        _chapters[index] = _chapters[index] with { Selected = selected };
+        UpdateSelection();
+    }
+
+    private void HandleTabChange(BitPivotItem item)
+    {
+        _activeTab = item.Key ?? "rename";
+    }
+
+    private void UpdateSelection()
+    {
+        _selectedCount = _chapters.Count(c => c.Selected);
+        UpdateWaveformConfigs();
+        StateHasChanged();
+    }
+
+    private void UpdateWaveformConfigs()
+    {
+        _waveformConfigs = _chapters
+            .Where(c => c.Selected)
+            .Select(c => new MultiWaveformView.ChapterWaveformConfig(
+                ChapterName: c.ChapterStem,
+                AudioUrl: $"/api/audio/chapter/{Uri.EscapeDataString(c.ChapterStem)}/region?start=0&end=60",
+                RegionStartSec: 0,
+                RegionEndSec: 60,
+                Height: 80))
+            .ToList();
+    }
+
+    private IReadOnlyList<string> GetSelectedStems()
+    {
+        return _chapters.Where(c => c.Selected).Select(c => c.ChapterStem).ToList();
+    }
+
+    private string GetRenamePreview()
+    {
+        var selected = GetSelectedStems();
+        if (selected.Count == 0) return "";
+
+        var previews = selected.Take(3).Select((stem, i) =>
+        {
+            var number = i + 1;
+            var name = _renamePattern
+                .Replace("{N:D2}", number.ToString("D2"))
+                .Replace("{N}", number.ToString());
+            return $"{stem} -> {name}";
+        });
+
+        var result = string.Join(", ", previews);
+        if (selected.Count > 3) result += $", ... (+{selected.Count - 3} more)";
+        return result;
+    }
+
+    private void StageRename()
+    {
+        var selected = GetSelectedStems();
+        if (selected.Count == 0 || string.IsNullOrWhiteSpace(_renamePattern)) return;
+
+        BatchService.CreateBatchRename(selected, _renamePattern);
+        _history = BatchService.GetBatchHistory();
+        _statusMessage = $"Staged rename for {selected.Count} chapter(s).";
+        _statusColor = BitColor.Info;
+        StateHasChanged();
+    }
+
+    private void StageShift()
+    {
+        var selected = GetSelectedStems();
+        if (selected.Count == 0 || _shiftSeconds == 0) return;
+
+        BatchService.CreateBatchShift(selected, _shiftSeconds);
+        _history = BatchService.GetBatchHistory();
+        _statusMessage = $"Staged shift ({_shiftSeconds:+0.00;-0.00}s) for {selected.Count} chapter(s).";
+        _statusColor = BitColor.Info;
+        StateHasChanged();
+    }
+
+    private void StagePrePostRoll()
+    {
+        var selected = GetSelectedStems();
+        if (selected.Count == 0) return;
+
+        BatchService.CreateBatchPrePostRoll(selected, _preRollSeconds, _postRollSeconds);
+        _history = BatchService.GetBatchHistory();
+        _statusMessage = $"Staged pre/post roll standardization for {selected.Count} chapter(s).";
+        _statusColor = BitColor.Info;
+        StateHasChanged();
+    }
+
+    private void ApplyAll()
+    {
+        // TODO: Implement actual batch application via PolishService when ready
+        _statusMessage = "Batch application is not yet implemented. Operations are staged for future execution.";
+        _statusColor = BitColor.Warning;
+        StateHasChanged();
+    }
+
+    private void HandleTimeChanged(double time)
+    {
+        // Synchronized time from multi-waveform view
+    }
+
+    private static BitColor GetOperationColor(BatchOperationType type) => type switch
+    {
+        BatchOperationType.Rename => BitColor.Info,
+        BatchOperationType.Shift => BitColor.Warning,
+        BatchOperationType.PrePostRoll => BitColor.Success,
+        _ => BitColor.SecondaryForeground
+    };
+}
+
+<style>
+    .chapter-selection-list {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.5rem;
+        padding: 0.5rem 0;
+        max-height: 200px;
+        overflow-y: auto;
+    }
+</style>
