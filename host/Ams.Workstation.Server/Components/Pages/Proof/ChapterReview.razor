@@ -3,6 +3,7 @@
 @inject Ams.Workstation.Server.Services.ChapterDataService ChapterDataService
 @inject Ams.Workstation.Server.Services.ProofReportService ProofReportService
 @inject Ams.Workstation.Server.Services.ErrorPatternService ErrorPatternService
+@inject Ams.Workstation.Server.Services.ReviewedStatusService ReviewedStatusService
 @inject NavigationManager Navigation
 @using Ams.Workstation.Server.Models
 
@@ -16,6 +17,11 @@
     <BitButton Variant="@(_currentView == "playback" ? BitVariant.Fill : BitVariant.Outline)"
                OnClick="@(() => SwitchView("playback"))">
         Playback View
+    </BitButton>
+    <BitButton Variant="@(_isReviewed ? BitVariant.Fill : BitVariant.Outline)"
+               Color="@(_isReviewed ? BitColor.Success : BitColor.Primary)"
+               OnClick="ToggleReviewed">
+        @(_isReviewed ? "Reviewed" : "Mark as Reviewed")
     </BitButton>
 </BitStack>
 
@@ -54,6 +60,7 @@ else
     private string _currentView = "playback";
     private ChapterReport? _report;
     private IReadOnlyList<ErrorPattern>? _chapterPatterns;
+    private bool _isReviewed;
 
     [Parameter] public string? ChapterName { get; set; }
 
@@ -73,6 +80,9 @@ else
 
             // Load proof report for errors view
             LoadReport(decodedName);
+
+            // Load reviewed status (direct service call)
+            _isReviewed = ReviewedStatusService.IsReviewed(decodedName);
         }
 
         // Reset waveform ready state when chapter changes
@@ -157,6 +167,15 @@ else
         {
             await _waveformPlayer.SeekTo(sentence.StartTime);
         }
+    }
+
+    private void ToggleReviewed()
+    {
+        if (string.IsNullOrEmpty(ChapterName)) return;
+        var decoded = Uri.UnescapeDataString(ChapterName);
+        _isReviewed = !_isReviewed;
+        ReviewedStatusService.SetReviewed(decoded, _isReviewed);
+        StateHasChanged();
     }
 
     private static string FormatTime(double seconds)
