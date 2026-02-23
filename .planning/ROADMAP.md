@@ -168,10 +168,10 @@ Plans:
 
 #### Phase 10 (continued): Proof Feature Parity
 - [x] 10-02: Book Overview Page (4 tasks) - Stats grid, chapter cards, navigation - completed 2026-02-02
-- [ ] 10-03: Error Patterns Aggregation (3 tasks) - ErrorPatternService, aggregation endpoint, patterns page
-- [ ] 10-04: Errors View Enhancement (3 tasks) - WER-sorted sentences, diff visualization, error cards
-- [ ] 10-05: Review Status & Ignored Patterns (3 tasks) - Persistence services, API endpoints, UI updates
-- [ ] 10-06: Audio Export & CRX Foundation (3 tasks) - Segment export, CRX service, export modal
+- [x] 10-03: Error Patterns Aggregation (3 tasks) - ErrorPatternService, aggregation endpoint, patterns page - completed 2026-02-17
+- [x] 10-04: Errors View Enhancement (3 tasks) - WER-sorted sentences, diff visualization, error cards - completed 2026-02-17
+- [x] 10-05: Review Status & Ignored Patterns (3 tasks) - Persistence services, API endpoints, UI updates - completed 2026-02-22
+- [x] 10-06: Audio Export & CRX Foundation (3 tasks) - Segment export, CRX service, CRX modal with diff-based comment gen - completed 2026-02-23
 
 #### Phase 11: Prep Area Implementation
 **Goal**: Pipeline orchestration UI - run ASR, alignment, MFA from workstation
@@ -206,7 +206,7 @@ Phases execute in numeric order: 1 → 2 → ... → 12
 | 8. GPU Rendering Research | v2.0 | 2/2 | Complete (on ice) | 2026-01-01 |
 | 8.1. SkiaSharp vs VelloSharp POC | v2.0 | 1/2 | Paused (pivoted) | 2026-01-03 |
 | 9. Blazor Workstation | v2.0 | 5/5 | Complete | 2026-01-08 |
-| 10. Proof Feature Parity | v2.0 | 2/6 | In progress | - |
+| 10. Proof Feature Parity | v2.0 | 6/6 | Complete | 2026-02-23 |
 | 10.1. Audio Treatment | v2.0 | 1/1 | Complete | 2026-02-02 |
 | 10.1.1. Treatment Optimization | v2.0 | 1/1 | Complete | 2026-02-02 |
 | 11. Prep Area Implementation | v2.0 | 0/? | Not started | - |
