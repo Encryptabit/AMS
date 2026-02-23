@@ -1,11 +1,128 @@
 @using Ams.Workstation.Server.Models
 
-<div class="staging-queue">
-    <BitText Typography="BitTypography.Subtitle2">Staging Queue</BitText>
-    <BitText Typography="BitTypography.Caption1" Color="BitColor.SecondaryForeground">
-        No replacements staged.
-    </BitText>
-</div>
+<BitStack Horizontal="false" Gap="0.75rem" AutoHeight="true">
+    @* Header *@
+    <BitStack Horizontal="true" Gap="0.5rem" VerticalAlign="BitAlignment.Center" AutoHeight="true">
+        <BitText Typography="BitTypography.Subtitle2">Staging Queue</BitText>
+        @if (Items is { Count: > 0 })
+        {
+            <BitTag Color="BitColor.Info">@Items.Count</BitTag>
+        }
+        <div style="margin-left: auto;">
+            @if (Items is { Count: > 0 } && Items.Any(i => i.Status == ReplacementStatus.Staged))
+            {
+                <BitButton Variant="BitVariant.Outline"
+                           Color="BitColor.Success"
+                           Size="BitSize.Small"
+                           OnClick="OnApplyAll">
+                    Apply All
+                </BitButton>
+            }
+        </div>
+    </BitStack>
+
+    @* Empty state *@
+    @if (Items is null || Items.Count == 0)
+    {
+        <BitCard>
+            <BitText Typography="BitTypography.Body2" Color="BitColor.SecondaryForeground"
+                     Style="text-align: center; padding: 1rem;">
+                No replacements staged.
+            </BitText>
+        </BitCard>
+    }
+    else
+    {
+        @* Item list *@
+        <BitStack Horizontal="false" Gap="0.5rem" AutoHeight="true">
+            @foreach (var item in Items)
+            {
+                <BitCard>
+                    <BitStack Horizontal="false" Gap="0.5rem" AutoHeight="true">
+                        @* Sentence ID and excerpt *@
+                        <BitStack Horizontal="true" Gap="0.5rem" VerticalAlign="BitAlignment.Center" AutoHeight="true">
+                            <BitText Typography="BitTypography.Body2" Style="font-weight: 500;">
+                                Sentence @item.SentenceId
+                            </BitText>
+                            <BitTag Color="@GetStatusColor(item.Status)">
+                                @item.Status.ToString()
+                            </BitTag>
+                        </BitStack>
+
+                        @* Time range *@
+                        <BitText Typography="BitTypography.Caption1" Color="BitColor.SecondaryForeground">
+                            @($"{item.OriginalStartSec:F1}s - {item.OriginalEndSec:F1}s")
+                        </BitText>
+
+                        @* Crossfade info *@
+                        <BitText Typography="BitTypography.Caption2" Color="BitColor.SecondaryForeground">
+                            @($"{item.CrossfadeDurationSec * 1000:F0}ms {item.CrossfadeCurve}") crossfade
+                        </BitText>
+
+                        @* Action buttons *@
+                        <BitStack Horizontal="true" Gap="0.25rem" AutoHeight="true">
+                            @switch (item.Status)
+                            {
+                                case ReplacementStatus.Staged:
+                                    <BitButton Variant="BitVariant.Text"
+                                               Size="BitSize.Small"
+                                               IconName="@BitIconName.Play"
+                                               Title="Preview"
+                                               OnClick="@(() => OnPreview.InvokeAsync(item.Id))" />
+                                    <BitButton Variant="BitVariant.Text"
+                                               Size="BitSize.Small"
+                                               Color="BitColor.Success"
+                                               IconName="@BitIconName.Accept"
+                                               Title="Apply"
+                                               OnClick="@(() => OnApply.InvokeAsync(item.Id))" />
+                                    <BitButton Variant="BitVariant.Text"
+                                               Size="BitSize.Small"
+                                               Color="BitColor.Error"
+                                               IconName="@BitIconName.Cancel"
+                                               Title="Remove"
+                                               OnClick="@(() => OnRemove.InvokeAsync(item.Id))" />
+                                    break;
+
+                                case ReplacementStatus.Applied:
+                                    <BitButton Variant="BitVariant.Text"
+                                               Size="BitSize.Small"
+                                               IconName="@BitIconName.Play"
+                                               Title="Preview"
+                                               OnClick="@(() => OnPreview.InvokeAsync(item.Id))" />
+                                    <BitButton Variant="BitVariant.Text"
+                                               Size="BitSize.Small"
+                                               Color="BitColor.Warning"
+                                               IconName="@BitIconName.Undo"
+                                               Title="Revert"
+                                               OnClick="@(() => OnRevert.InvokeAsync(item.Id))" />
+                                    break;
+
+                                case ReplacementStatus.Reverted:
+                                    <BitButton Variant="BitVariant.Text"
+                                               Size="BitSize.Small"
+                                               Color="BitColor.Error"
+                                               IconName="@BitIconName.Cancel"
+                                               Title="Remove"
+                                               OnClick="@(() => OnRemove.InvokeAsync(item.Id))" />
+                                    break;
+
+                                case ReplacementStatus.Failed:
+                                    <BitTag Color="BitColor.Error">Failed</BitTag>
+                                    <BitButton Variant="BitVariant.Text"
+                                               Size="BitSize.Small"
+                                               Color="BitColor.Error"
+                                               IconName="@BitIconName.Cancel"
+                                               Title="Remove"
+                                               OnClick="@(() => OnRemove.InvokeAsync(item.Id))" />
+                                    break;
+                            }
+                        </BitStack>
+                    </BitStack>
+                </BitCard>
+            }
+        </BitStack>
+    }
+</BitStack>
 
 @code {
     [Parameter] public string? ChapterStem { get; set; }
@@ -15,4 +132,13 @@
     [Parameter] public EventCallback<string> OnRemove { get; set; }
     [Parameter] public EventCallback OnApplyAll { get; set; }
     [Parameter] public EventCallback<string> OnPreview { get; set; }
+
+    private static BitColor GetStatusColor(ReplacementStatus status) => status switch
+    {
+        ReplacementStatus.Staged => BitColor.Info,
+        ReplacementStatus.Applied => BitColor.Success,
+        ReplacementStatus.Reverted => BitColor.Warning,
+        ReplacementStatus.Failed => BitColor.Error,
+        _ => BitColor.SecondaryForeground
+    };
 }
