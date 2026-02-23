@@ -8,8 +8,8 @@ Audio Management System - CLI and core library for audio processing, ASR, forced
 
 **Milestone**: v2.0 Blazor Workstation
 **Phase**: 12 - Polish Area Foundation
-**Plan**: 7/8 (complete)
-**Status**: Plan 12-06 complete; Multi-waveform stacked view, batch operations, and region audio endpoint
+**Plan**: 8/8
+**Status**: Plan 12-07 complete; Post-replacement verification service, context player, and Proof sync
 
 ## Progress
 
@@ -29,7 +29,7 @@ v2.0 Blazor Workstation[██████████████████�
 | 12-04 | Waveform Region Editing | 2 | Complete |
 | 12-05 | Polish Page Layout | 3 | Complete |
 | 12-06 | Multi-Waveform & Batch Operations | 2 | Complete |
-| 12-07 | Batch Operations | - | Pending |
+| 12-07 | Post-Replacement Verification | 2 | Complete |
 | 12-08 | Result Verification | - | Pending |
 
 ## Phase 10 Plans
@@ -105,6 +105,9 @@ v2.0 Blazor Workstation[██████████████████�
 | syncPlayheads per-waveform | Individual SeekTo calls via JS interop | Each waveform may have different region offsets, so sync individually |
 | BatchOperationService lifetime | Transient | Batch history in-memory, operations staged through StagingQueueService |
 | DSP tab | Placeholder only | Deferred per locked architectural decision |
+| Revalidation pass threshold | 0.9 Levenshtein similarity | High enough for quality, allows minor ASR variance |
+| Revalidation history | In-memory per chapter | Ephemeral verification state, cleared on chapter switch |
+| SyncToProof granularity | Per-chapter via ReviewedStatusService | Aligns with existing Proof area chapter-level tracking |
 
 ## Phase 8/8.1 Conclusions (Archived)
 
@@ -140,7 +143,7 @@ poc/VelloSharpPoc/     - Avalonia + VelloSharp (child window fails)
 
 ## Next Action
 
-Plan 12-06 complete. Multi-waveform stacked view, batch operations page, and region audio endpoint delivered. Ready for plan 12-07.
+Plan 12-07 complete. Post-replacement verification loop delivered (ASR re-validation, listen-with-context, Proof sync). Ready for plan 12-08.
 
 ## Deferred UI Refinements (for Plan 10-04)
 
@@ -157,7 +160,7 @@ None currently.
 
 ## Session Continuity
 
-Last session: 2026-02-23 10:18 PST
+Last session: 2026-02-23 10:34 PST
 Branch: `blazor-workstation`
-Stopped at: Completed 12-06-PLAN.md
-Note: Phase 12 plan 06 executed -- MultiWaveformView, BatchEditor page, BatchOperationService, AudioController region endpoint.
+Stopped at: Completed 12-07-PLAN.md
+Note: Phase 12 plan 07 executed -- PolishVerificationService, ContextPlayer, ChapterPolish verification integration, Proof area sync.
