@@ -41,6 +41,7 @@ builder.Services.AddSingleton<UndoService>();
 // Polish area services - transient (stateless matching and orchestration)
 builder.Services.AddTransient<PickupMatchingService>();
 builder.Services.AddTransient<PolishService>();
+builder.Services.AddTransient<PolishVerificationService>();
 builder.Services.AddTransient<BatchOperationService>();
 
 // Ams.Core services - stateless services for alignment/ASR operations
