@@ -30,6 +30,9 @@ builder.Services.AddTransient<ErrorPatternService>();
 builder.Services.AddSingleton<ReviewedStatusService>();
 builder.Services.AddSingleton<IgnoredPatternsService>();
 
+// Audio export service - transient (stateless, uses workspace for audio access)
+builder.Services.AddTransient<AudioExportService>();
+
 // Ams.Core services - stateless services for alignment/ASR operations
 // Note: PipelineService and ValidationService require command dependencies
 // that are CLI-specific. Add them when needed with proper command registration.
