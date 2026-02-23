@@ -8,8 +8,8 @@ Audio Management System - CLI and core library for audio processing, ASR, forced
 
 **Milestone**: v2.0 Blazor Workstation
 **Phase**: 12 - Polish Area Foundation
-**Plan**: 6/8 (complete)
-**Status**: Plan 12-05 complete; Polish area UI with landing page, chapter polish view, pickup importer, and staging queue
+**Plan**: 7/8 (complete)
+**Status**: Plan 12-06 complete; Multi-waveform stacked view, batch operations, and region audio endpoint
 
 ## Progress
 
@@ -28,7 +28,7 @@ v2.0 Blazor Workstation[██████████████████�
 | 12-03 | Pickup Matching & Polish Orchestration | 2 | Complete |
 | 12-04 | Waveform Region Editing | 2 | Complete |
 | 12-05 | Polish Page Layout | 3 | Complete |
-| 12-06 | Pickup Matching UI | - | Pending |
+| 12-06 | Multi-Waveform & Batch Operations | 2 | Complete |
 | 12-07 | Batch Operations | - | Pending |
 | 12-08 | Result Verification | - | Pending |
 
@@ -101,6 +101,10 @@ v2.0 Blazor Workstation[██████████████████�
 | Polish page two-column layout | BitGrid 7/5 split | Importer (left) + staging queue (right) for ergonomic Polish workflow |
 | CRX counts on Polish landing | CrxService.GetEntries() filtered | Per-chapter error count from shared CRX Excel data |
 | Flagged sentence selection | error status + diff ops | Sentences eligible for pickup replacement have errors or non-empty diffs |
+| Region endpoint decode | AudioProcessor.Decode with start/duration | Partial disk decode for memory-efficient multi-chapter loading |
+| syncPlayheads per-waveform | Individual SeekTo calls via JS interop | Each waveform may have different region offsets, so sync individually |
+| BatchOperationService lifetime | Transient | Batch history in-memory, operations staged through StagingQueueService |
+| DSP tab | Placeholder only | Deferred per locked architectural decision |
 
 ## Phase 8/8.1 Conclusions (Archived)
 
@@ -136,7 +140,7 @@ poc/VelloSharpPoc/     - Avalonia + VelloSharp (child window fails)
 
 ## Next Action
 
-Plan 12-05 complete. Polish area UI delivered -- landing page, chapter polish view, pickup importer, staging queue. Ready for plan 12-06.
+Plan 12-06 complete. Multi-waveform stacked view, batch operations page, and region audio endpoint delivered. Ready for plan 12-07.
 
 ## Deferred UI Refinements (for Plan 10-04)
 
@@ -153,7 +157,7 @@ None currently.
 
 ## Session Continuity
 
-Last session: 2026-02-23 10:12 PST
+Last session: 2026-02-23 10:18 PST
 Branch: `blazor-workstation`
-Stopped at: Completed 12-05-PLAN.md
-Note: Phase 12 plan 05 executed -- Polish area UI with 4 Razor components (Index, ChapterPolish, PickupImporter, StagingQueue).
+Stopped at: Completed 12-06-PLAN.md
+Note: Phase 12 plan 06 executed -- MultiWaveformView, BatchEditor page, BatchOperationService, AudioController region endpoint.
