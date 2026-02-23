@@ -22,6 +22,8 @@ public class ProofApiController : ControllerBase
     private readonly ErrorPatternService _errorPatternService;
     private readonly ReviewedStatusService _reviewedStatusService;
     private readonly IgnoredPatternsService _ignoredPatternsService;
+    private readonly AudioExportService _audioExportService;
+    private readonly CrxService _crxService;
     private readonly ILogger<ProofApiController> _logger;
 
     public ProofApiController(
@@ -31,6 +33,8 @@ public class ProofApiController : ControllerBase
         ErrorPatternService errorPatternService,
         ReviewedStatusService reviewedStatusService,
         IgnoredPatternsService ignoredPatternsService,
+        AudioExportService audioExportService,
+        CrxService crxService,
         ILogger<ProofApiController> logger)
     {
         _workspace = workspace;
@@ -39,6 +43,8 @@ public class ProofApiController : ControllerBase
         _errorPatternService = errorPatternService;
         _reviewedStatusService = reviewedStatusService;
         _ignoredPatternsService = ignoredPatternsService;
+        _audioExportService = audioExportService;
+        _crxService = crxService;
         _logger = logger;
     }
 
@@ -241,6 +247,64 @@ public class ProofApiController : ControllerBase
         return Ok(new { success = true });
     }
 
+    /// <summary>
+    /// POST /api/proof/export/{chapterName} - Export an audio segment to the CRX folder.
+    /// </summary>
+    [HttpPost("export/{chapterName}")]
+    public ActionResult<ExportResult> ExportAudioSegment(
+        string chapterName,
+        [FromBody] ExportRequest request)
+    {
+        if (!_workspace.IsInitialized)
+            return BadRequest("Workspace not initialized");
+
+        var decoded = Uri.UnescapeDataString(chapterName);
+        if (_workspace.CurrentChapterName != decoded)
+            _workspace.SelectChapter(decoded);
+
+        try
+        {
+            var result = _audioExportService.ExportSegment(
+                request.Start,
+                request.End,
+                request.PaddingMs);
+            return Ok(result);
+        }
+        catch (Exception ex)
+        {
+            return BadRequest(new { success = false, error = ex.Message });
+        }
+    }
+
+    /// <summary>
+    /// POST /api/proof/crx/{chapterName} - Submit a CRX entry (export audio + record metadata).
+    /// </summary>
+    [HttpPost("crx/{chapterName}")]
+    public ActionResult<CrxSubmitResult> SubmitCrx(
+        string chapterName,
+        [FromBody] CrxSubmitRequest request)
+    {
+        if (!_workspace.IsInitialized)
+            return BadRequest("Workspace not initialized");
+
+        var decoded = Uri.UnescapeDataString(chapterName);
+        if (_workspace.CurrentChapterName != decoded)
+            _workspace.SelectChapter(decoded);
+
+        var result = _crxService.Submit(decoded, request);
+        return Ok(result);
+    }
+
+    /// <summary>
+    /// GET /api/proof/crx - Get all CRX entries for the current book.
+    /// </summary>
+    [HttpGet("crx")]
+    public ActionResult<IEnumerable<CrxEntry>> GetCrxEntries()
+    {
+        return Ok(_crxService.GetEntries());
+    }
+
+    public record ExportRequest(double Start, double End, int SentenceId, int PaddingMs = 0);
     public record ReviewedRequest(bool Reviewed);
     public record IgnorePatternRequest(string Type, string Book, string Script, bool Ignore);
 
