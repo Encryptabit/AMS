@@ -301,6 +301,8 @@ public class ProofApiController : ControllerBase
     [HttpGet("crx")]
     public ActionResult<IEnumerable<CrxEntry>> GetCrxEntries()
     {
+        if (!_workspace.IsInitialized)
+            return BadRequest("Workspace not initialized");
         return Ok(_crxService.GetEntries());
     }
 

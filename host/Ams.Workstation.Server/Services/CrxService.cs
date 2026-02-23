@@ -64,7 +64,7 @@ public class CrxService
 
     public IReadOnlyList<CrxEntry> GetEntries()
     {
-        var path = GetCrxJsonPath();
+        var path = GetCrxJsonPath(createDir: false);
         if (!File.Exists(path)) return Array.Empty<CrxEntry>();
 
         try
@@ -88,10 +88,11 @@ public class CrxService
         File.WriteAllText(path, json);
     }
 
-    private string GetCrxJsonPath()
+    private string GetCrxJsonPath(bool createDir = true)
     {
         var crxFolder = Path.Combine(_workspace.RootPath, "CRX");
-        Directory.CreateDirectory(crxFolder);
+        if (createDir)
+            Directory.CreateDirectory(crxFolder);
         var bookName = Path.GetFileName(_workspace.RootPath.TrimEnd(Path.DirectorySeparatorChar));
         return Path.Combine(crxFolder, $"{bookName}_CRX.json");
     }
