@@ -50,6 +50,11 @@
     private string? _loadedAudioUrl;
 
     /// <summary>
+    /// The DOM element ID used by this waveform instance (for JS interop sync).
+    /// </summary>
+    public string ElementId => _elementId;
+
+    /// <summary>
     /// The URL of the audio file to load and display.
     /// </summary>
     [Parameter]

@@ -1,5 +1,6 @@
 using System;
 using System.IO;
+using Ams.Core.Processors;
 using Ams.Workstation.Server.Services;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc;
@@ -110,6 +111,81 @@ public class AudioController : ControllerBase
         {
             _logger.LogWarning(ex, "No audio buffers registered for chapter '{ChapterName}'", chapterName);
             return NotFound($"No audio buffers available for chapter '{chapterName}'");
+        }
+    }
+
+    /// <summary>
+    /// Serves a partial region of a chapter's audio by decoding only the requested time range.
+    /// Uses the workspace to resolve the chapter's audio file path and decodes directly from disk
+    /// with start/duration parameters for memory-efficient partial loading.
+    /// </summary>
+    [HttpGet("chapter/{chapterName}/region")]
+    public IActionResult GetChapterRegionAudio(string chapterName, [FromQuery] double start, [FromQuery] double end)
+    {
+        if (start < 0)
+        {
+            return BadRequest("Start must be >= 0");
+        }
+
+        if (end <= start)
+        {
+            return BadRequest("End must be greater than start");
+        }
+
+        if (!_workspace.IsInitialized || string.IsNullOrEmpty(_workspace.WorkingDirectory))
+        {
+            return NotFound("Workspace not initialized");
+        }
+
+        try
+        {
+            // Resolve chapter name to stem and audio file path
+            var stem = _workspace.GetStemForChapter(chapterName) ?? chapterName;
+            var audioPath = Path.Combine(_workspace.WorkingDirectory, $"{stem}.wav");
+
+            if (!System.IO.File.Exists(audioPath))
+            {
+                // Try treated audio path
+                var treatedPath = Path.Combine(_workspace.WorkingDirectory, stem, $"{stem}.treated.wav");
+                if (System.IO.File.Exists(treatedPath))
+                {
+                    audioPath = treatedPath;
+                }
+                else
+                {
+                    _logger.LogWarning("Audio file not found for chapter '{ChapterName}' at '{Path}'", chapterName, audioPath);
+                    return NotFound($"Audio file not found for chapter '{chapterName}'");
+                }
+            }
+
+            // Validate end does not exceed duration
+            var info = AudioProcessor.Probe(audioPath);
+            var duration = info.Duration.TotalSeconds;
+
+            if (start >= duration)
+            {
+                return BadRequest($"Start ({start:F2}s) exceeds audio duration ({duration:F2}s)");
+            }
+
+            var clampedEnd = Math.Min(end, duration);
+            var regionDuration = clampedEnd - start;
+
+            _logger.LogDebug(
+                "Serving region audio for chapter '{ChapterName}': {Start:F2}s - {End:F2}s",
+                chapterName, start, clampedEnd);
+
+            // Decode only the requested region from disk
+            var buffer = AudioProcessor.Decode(audioPath, new AudioDecodeOptions(
+                Start: TimeSpan.FromSeconds(start),
+                Duration: TimeSpan.FromSeconds(regionDuration)));
+
+            var stream = buffer.ToWavStream();
+            return File(stream, "audio/wav", enableRangeProcessing: true);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to serve region audio for chapter '{ChapterName}'", chapterName);
+            return StatusCode(500, $"Failed to serve region audio: {ex.Message}");
         }
     }
 
