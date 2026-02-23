@@ -9,7 +9,7 @@ Audio Management System - CLI and core library for audio processing, ASR, forced
 **Milestone**: v2.0 Blazor Workstation
 **Phase**: 12 - Polish Area Foundation
 **Plan**: 6/8 (complete)
-**Status**: Plan 12-03 complete; pickup matching service and polish orchestrator delivered
+**Status**: Plan 12-05 complete; Polish area UI with landing page, chapter polish view, pickup importer, and staging queue
 
 ## Progress
 
@@ -27,7 +27,7 @@ v2.0 Blazor Workstation[██████████████████�
 | 12-02 | Staging Queue & Undo Services | 2 | Complete |
 | 12-03 | Pickup Matching & Polish Orchestration | 2 | Complete |
 | 12-04 | Waveform Region Editing | 2 | Complete |
-| 12-05 | Polish Page Layout | - | Pending |
+| 12-05 | Polish Page Layout | 3 | Complete |
 | 12-06 | Pickup Matching UI | - | Pending |
 | 12-07 | Batch Operations | - | Pending |
 | 12-08 | Result Verification | - | Pending |
@@ -98,6 +98,9 @@ v2.0 Blazor Workstation[██████████████████�
 | Undo versioning | Versioned segment files + manifest.json | sent{id}.v{N}.original.wav with per-chapter JSON manifest |
 | ASR model path for Polish | AsrEngineConfig.ResolveModelPath | Uses AMS_WHISPER_MODEL_PATH env var, consistent with CLI pattern |
 | Pickup text normalization | Inline simple normalization | Avoids contraction expansion that would reduce ASR match fidelity |
+| Polish page two-column layout | BitGrid 7/5 split | Importer (left) + staging queue (right) for ergonomic Polish workflow |
+| CRX counts on Polish landing | CrxService.GetEntries() filtered | Per-chapter error count from shared CRX Excel data |
+| Flagged sentence selection | error status + diff ops | Sentences eligible for pickup replacement have errors or non-empty diffs |
 
 ## Phase 8/8.1 Conclusions (Archived)
 
@@ -133,7 +136,7 @@ poc/VelloSharpPoc/     - Avalonia + VelloSharp (child window fails)
 
 ## Next Action
 
-Plan 12-03 complete. Pickup matching and Polish orchestration services delivered. Ready for next pending plan.
+Plan 12-05 complete. Polish area UI delivered -- landing page, chapter polish view, pickup importer, staging queue. Ready for plan 12-06.
 
 ## Deferred UI Refinements (for Plan 10-04)
 
@@ -150,7 +153,7 @@ None currently.
 
 ## Session Continuity
 
-Last session: 2026-02-23 10:00 PST
+Last session: 2026-02-23 10:12 PST
 Branch: `blazor-workstation`
-Stopped at: Completed 12-03-PLAN.md
-Note: Phase 12 plan 03 executed -- PickupMatchingService and PolishService with DI registration.
+Stopped at: Completed 12-05-PLAN.md
+Note: Phase 12 plan 05 executed -- Polish area UI with 4 Razor components (Index, ChapterPolish, PickupImporter, StagingQueue).
