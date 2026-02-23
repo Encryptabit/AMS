@@ -34,6 +34,10 @@ public class CrxService
     {
         try
         {
+            // Ensure Excel template/workbook is ready before exporting audio
+            // to avoid orphan WAV files if the template is missing
+            EnsureExcelReady();
+
             var exportResult = _audioExportService.ExportSegment(
                 request.Start,
                 request.End,
@@ -52,7 +56,16 @@ public class CrxService
                 CreatedAt: DateTime.UtcNow
             );
 
-            AppendCrxEntry(entry);
+            try
+            {
+                AppendCrxEntry(entry);
+            }
+            catch
+            {
+                // Clean up orphan WAV file if Excel write fails
+                TryDeleteExportedFile(exportResult.Path);
+                throw;
+            }
 
             return new CrxSubmitResult(
                 Success: true,
@@ -153,6 +166,24 @@ public class CrxService
         worksheet.Cell(targetRow, 8).Value = entry.Comments;
 
         workbook.Save();
+    }
+
+    /// <summary>
+    /// Validate that the Excel workbook is ready (template exists or file already created).
+    /// Called before audio export to fail fast and avoid orphan WAV files.
+    /// </summary>
+    private void EnsureExcelReady()
+    {
+        var excelPath = GetCrxExcelPath();
+        if (!File.Exists(excelPath) && !File.Exists(CrxTemplatePath))
+            throw new FileNotFoundException(
+                $"CRX template not found at {CrxTemplatePath}");
+    }
+
+    private static void TryDeleteExportedFile(string path)
+    {
+        try { if (File.Exists(path)) File.Delete(path); }
+        catch { /* best-effort cleanup */ }
     }
 
     /// <summary>
