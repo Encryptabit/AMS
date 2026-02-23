@@ -1,8 +1,15 @@
 @using Ams.Workstation.Server.Services
+@inject ReviewedStatusService ReviewedStatusService
 
 <BitCard Class="@GetCardClass()" @onclick="HandleClick" Style="cursor: pointer;">
     <BitStack Horizontal="false" Gap="0.5rem">
-        <BitText Typography="BitTypography.Subtitle2">@Chapter.Name</BitText>
+        <BitStack Horizontal="true" Gap="0.5rem" VerticalAlign="BitAlignment.Center" AutoHeight="true">
+            <BitText Typography="BitTypography.Subtitle2">@Chapter.Name</BitText>
+            @if (IsReviewed)
+            {
+                <span class="reviewed-badge">reviewed</span>
+            }
+        </BitStack>
         <div class="chapter-metrics">
             <span class="metric">
                 <span class="label">Sentences:</span>
@@ -20,6 +27,8 @@
     [Parameter] public ProofChapterInfo Chapter { get; set; } = default!;
     [Parameter] public EventCallback OnClick { get; set; }
 
+    private bool IsReviewed => ReviewedStatusService.IsReviewed(Chapter.Name);
+
     private async Task HandleClick() => await OnClick.InvokeAsync();
 
     private string GetCardClass()
@@ -30,8 +39,7 @@
 
     private string GetStatusClass()
     {
-        // Future: add "reviewed" class when review status is implemented
-        return "";
+        return IsReviewed ? "reviewed" : "";
     }
 
     private string GetWerClass()
@@ -77,5 +85,19 @@
 
     .wer-low {
         color: #4ec9b0;
+    }
+
+    .chapter-card.reviewed {
+        border-left: 3px solid #4ec9b0;
+    }
+
+    .reviewed-badge {
+        font-size: 0.65rem;
+        padding: 0.1rem 0.3rem;
+        border-radius: 3px;
+        background-color: rgba(78, 201, 176, 0.2);
+        color: #4ec9b0;
+        text-transform: uppercase;
+        font-weight: 600;
     }
 </style>
