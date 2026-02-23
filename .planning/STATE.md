@@ -104,10 +104,15 @@ poc/VelloSharpPoc/     - Avalonia + VelloSharp (child window fails)
 
 </details>
 
+## Accumulated Context
+
+### Roadmap Evolution
+
+- Phase 13 added: Pickup Substitution
+
 ## Next Action
 
-Phase 10.2 complete. CRX now writes to Excel (.xlsx) matching publisher workflow.
-ProofApiController removed (14 dead endpoints). All Blazor components work via DI.
+Phase 12 context gathered. Ready for `/gsd:plan-phase 12`.
 
 ## Deferred UI Refinements (for Plan 10-04)
 
@@ -124,7 +129,7 @@ None currently.
 
 ## Session Continuity
 
-Last session: 2026-02-22 19:36 PST
+Last session: 2026-02-23 09:10 PST
 Branch: `blazor-workstation`
-Status: Phase 10.2 complete (1/1 plans)
-Note: Plan 10.2-01 replaced CrxService JSON persistence with Excel (.xlsx) via ClosedXML, removed ProofApiController (14 unused endpoints).
+Status: Phase 12 context gathered
+Note: Phase 12 (Polish Area Foundation) context captured — take replacement flow, batch editing scope, result verification decisions. Ready for planning.
