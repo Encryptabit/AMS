@@ -13,17 +13,20 @@
     "reasoning_effort": "high",
     "wsl_distro": "Ubuntu",
     "max_pool_size": 5,
-    "scaling_ratio": 3.0,
-    "idle_timeout_seconds": 300.0,
-    "max_ttl_seconds": 3600.0,
-    "claim_timeout_seconds": 1200.0,
-    "spawn_cooldown_seconds": 10.0,
+    "scaling_ratio": 3,
+    "idle_timeout_seconds": 300,
+    "max_ttl_seconds": 3600,
+    "claim_timeout_seconds": 1200,
+    "spawn_cooldown_seconds": 10,
     "prompt_template_path": "reviewer_prompt.md",
-    "background_check_interval_seconds": 30.0
+    "background_check_interval_seconds": 30
   },
   "workflow": {
     "research": true,
     "plan_check": true,
     "verifier": true
+  },
+  "review": {
+    "enabled": true
   }
 }

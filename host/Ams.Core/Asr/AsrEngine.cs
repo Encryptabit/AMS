@@ -15,7 +15,7 @@ public static class AsrEngineConfig
     public const string WhisperModelPathEnvironmentVariable = "AMS_WHISPER_MODEL_PATH";
 
     /// <summary>Default Whisper model type when none is specified.</summary>
-    public static GgmlType DefaultModelType => GgmlType.LargeV3;
+    public static GgmlType DefaultModelType => GgmlType.LargeV3Turbo;
 
     public static AsrEngine Resolve(string? engineOption = null)
     {

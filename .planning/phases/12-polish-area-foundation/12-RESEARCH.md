@@ -8,7 +8,7 @@
 
 Phase 12 builds the Polish area of the Blazor workstation, transforming the current placeholder into a full take-replacement workflow with batch editing foundations. The core technical challenges are: (1) building an ASR-based pickup matching service that auto-maps pickup recordings to CRX target sentences, (2) implementing audio splice/crossfade operations in Ams.Core using the existing FFmpeg filter graph infrastructure, (3) extending the wavesurfer.js interop layer to support draggable/resizable regions for boundary adjustment and multiple synchronized waveform instances for the multi-chapter stacked view, and (4) building a non-destructive staging queue pattern with undo support.
 
-The existing codebase provides strong foundations. `AudioProcessor` already has `Trim`, `FadeIn`, and `AudioBuffer.Concat`. The `FfFilterGraph` already supports multiple labeled inputs (via `WithInput`) and a `Custom()` clause, which can compose the FFmpeg `acrossfade` filter for crossfade splicing. The `AsrClient` (Nemo) and `AsrProcessor` (Whisper) provide two ASR paths for pickup text recognition. The wavesurfer.js v7 regions plugin is already loaded via CDN and the JS interop already includes `initRegions`, `addRegion`, `clearRegions`, `removeRegion`, `highlightRegion`, and `playRegion` -- though regions are currently non-draggable/non-resizable and need extension for boundary editing.
+The existing codebase provides strong foundations. `AudioProcessor` already has `Trim`, `FadeIn`, and `AudioBuffer.Concat`. The `FfFilterGraph` already supports multiple labeled inputs (via `WithInput`) and a `Custom()` clause, which can compose the FFmpeg `acrossfade` filter for crossfade splicing. The `AsrProcessor` (Whisper.NET, in-proc) provides the ASR path for pickup text recognition (Nemo ASR is obsolete and marked for removal). The wavesurfer.js v7 regions plugin is already loaded via CDN and the JS interop already includes `initRegions`, `addRegion`, `clearRegions`, `removeRegion`, `highlightRegion`, and `playRegion` -- though regions are currently non-draggable/non-resizable and need extension for boundary editing.
 
 **Primary recommendation:** Build a `PolishService` in the workstation and an `AudioSpliceService` in Ams.Core. The splice service handles crossfade segment replacement using `FfFilterGraph` with two inputs + `acrossfade`. The Polish service orchestrates pickup import, ASR matching, staging, and application. Extend `WaveformPlayer` to support draggable regions via new JS interop functions, and create a `MultiWaveformView` component for the stacked chapter layout.
 
@@ -64,8 +64,7 @@ The existing codebase provides strong foundations. `AudioProcessor` already has 
 ### Supporting (Already Available)
 | Library | Version | Purpose | When to Use |
 |---------|---------|---------|-------------|
-| AsrClient (Nemo HTTP) | internal | External ASR service | Pickup file transcription via Nemo |
-| AsrProcessor (Whisper.NET) | internal | Local ASR engine | Pickup file transcription via Whisper |
+| AsrProcessor (Whisper.NET) | internal | Local ASR engine (sole ASR path) | Pickup file transcription |
 | FfFilterGraph | internal | FFmpeg filter composition | All audio splice/crossfade operations |
 | AudioBuffer | internal | In-memory audio representation | Buffer manipulation, concat, encode |
 | AudioProcessor | internal | Trim, FadeIn, DetectSilence, etc. | Segment extraction and analysis |
@@ -228,7 +227,7 @@ public async Task<List<PickupMatch>> MatchPickupToSentences(
 ### Anti-Patterns to Avoid
 - **Direct file mutation without staging:** Never modify the treated WAV directly. Always go through the staging queue so operations are non-destructive and undoable.
 - **Loading full chapter buffers for multi-waveform:** Multiple 30+ minute WAV files decoded simultaneously will exhaust memory. Use partial decoding with `AudioDecodeOptions.Start/Duration`.
-- **Synchronous ASR calls on UI thread:** ASR (whether Nemo HTTP or Whisper local) is slow. Always use `async Task` with progress indication.
+- **Synchronous ASR calls on UI thread:** Whisper.NET ASR is slow. Always use `async Task` with progress indication.
 - **Custom audio manipulation outside Ams.Core:** All audio operations MUST go through `AudioProcessor` / `FfFilterGraph`. No raw sample manipulation in the Workstation project.
 
 ## Don't Hand-Roll
@@ -343,7 +342,7 @@ public sealed class AudioSpliceService
 ### Pickup Matching via ASR
 ```csharp
 // PickupMatchingService.cs -- NEW in Workstation Services
-// Uses existing AsrClient (Nemo) or AsrProcessor (Whisper)
+// Uses AsrProcessor (Whisper.NET in-proc) -- sole ASR engine
 
 public sealed class PickupMatchingService
 {
@@ -503,16 +502,13 @@ Use `region-update-end` event (not `region-update`) to send final boundaries to 
 - `AudioProcessor.Trim` with start/end: already works
 - `AudioBuffer.Concat`: already works
 - `AudioProcessor.DetectSilence`: already works for session file segmentation
-- `AsrClient.TranscribeAsync`: already works for Nemo-based pickup ASR
-- `AsrProcessor.TranscribeBufferAsync`: already works for Whisper-based pickup ASR
+- `AsrProcessor.TranscribeBufferAsync`: the sole ASR path for pickup recognition (Nemo obsolete)
 - wavesurfer.js regions with `drag: true, resize: true`: CDN loaded, just not used in current interop
 
 ## Open Questions
 
-1. **Which ASR engine for pickup matching?**
-   - What we know: Both Nemo (HTTP service at localhost:8765) and Whisper (local .NET) are available. Nemo requires the service running; Whisper requires a model file.
-   - What's unclear: Which engine the user prefers for the workstation context. Nemo may already be running for pipeline work.
-   - Recommendation: Default to Nemo if the service is reachable (health check), fall back to Whisper. Make configurable via Polish settings.
+1. **ASR engine for pickup matching: RESOLVED**
+   - **Decision:** Whisper.NET (in-proc via `AsrProcessor`) is the sole ASR engine. Nemo ASR is obsolete and marked for removal. All pickup matching uses `AsrProcessor.TranscribeBufferAsync`.
 
 2. **Batch pre/post roll standardization specifics**
    - What we know: `AudioTreatmentService` already handles pre/post roll with roomtone. Batch standardization means applying consistent pre/post roll across selected chapters.
@@ -531,8 +527,7 @@ Use `region-update-end` event (not `region-update`) to send final boundaries to 
 - Codebase analysis: `Ams.Core/Services/Integrations/FFmpeg/FfFilterGraph.cs` -- multi-input support via WithInput()
 - Codebase analysis: `Ams.Core/Services/Integrations/FFmpeg/FfFilterGraphRunner.cs` -- Apply(IReadOnlyList<GraphInput>) already supports multi-input
 - Codebase analysis: `Ams.Core/Artifacts/AudioBuffer.cs` -- Concat, format validation
-- Codebase analysis: `Ams.Core/Asr/AsrClient.cs` -- Nemo HTTP ASR path
-- Codebase analysis: `Ams.Core/Processors/AsrProcessor.cs` -- Whisper.NET local ASR path
+- Codebase analysis: `Ams.Core/Processors/AsrProcessor.cs` -- Whisper.NET in-proc ASR (sole engine)
 - Codebase analysis: `Ams.Workstation.Server/wwwroot/js/waveform-interop.js` -- existing regions support (non-draggable)
 - Codebase analysis: `Ams.Workstation.Server/Components/Shared/WaveformPlayer.razor` -- existing wavesurfer Blazor wrapper
 - Codebase analysis: `Ams.Workstation.Server/Controllers/AudioController.cs` -- existing segment streaming with start/end params
@@ -552,7 +547,7 @@ Use `region-update-end` event (not `region-update`) to send final boundaries to 
 - Standard stack: HIGH -- all libraries already in codebase, no new dependencies
 - Architecture: HIGH -- patterns follow established Proof area conventions, FFmpeg multi-input verified in code
 - Audio splice/crossfade: HIGH -- `FfFilterGraphRunner.Apply(IReadOnlyList<GraphInput>)` verified to accept multiple inputs; `acrossfade` filter documented
-- ASR pickup matching: HIGH -- both Nemo and Whisper ASR paths verified in codebase
+- ASR pickup matching: HIGH -- Whisper.NET (AsrProcessor) verified in codebase as sole ASR engine
 - Wavesurfer regions (draggable): MEDIUM -- v7 supports `drag: true, resize: true` per docs, but not yet tested in this codebase's interop layer
 - Multi-waveform sync: MEDIUM -- no built-in sync in wavesurfer.js, requires custom JS implementation
 - Pitfalls: HIGH -- based on direct codebase analysis and known FFmpeg constraints

@@ -20,8 +20,28 @@
       "artifact_hash": "472f3839afdbcc9f8f45718eaf99ae6707a330cd29f536e151f039321e6c5b3b",
       "note": null,
       "recorded_at": "2026-02-23T03:45:00.772Z"
+    },
+    {
+      "entry_id": "1771837913418-vmnjdg",
+      "gate": "discuss",
+      "phase": "12",
+      "review_id": "9f2bfdee-db60-47a7-9c19-b7fb4d4dd67e",
+      "status": "approved",
+      "artifact_hash": "e0fb951e5ca7e7962a0b09c2091ece86eaf93672ed46ce096f4ea8e1fc4b45bc",
+      "note": null,
+      "recorded_at": "2026-02-23T09:11:53.418Z"
+    },
+    {
+      "entry_id": "1771839801676-pb6bxb",
+      "gate": "plan",
+      "phase": "12",
+      "review_id": "70578ace-4665-40a9-a8b7-7dae4c725cd9",
+      "status": "approved",
+      "artifact_hash": "7bec1fc95705b86f09f1d5d3cabf0eae1b028f2bd350f496602ad0a396d93679",
+      "note": null,
+      "recorded_at": "2026-02-23T09:43:21.676Z"
     }
   ],
   "overrides": [],
-  "updated_at": "2026-02-23T03:45:00.773Z"
+  "updated_at": "2026-02-23T09:43:21.677Z"
 }
