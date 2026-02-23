@@ -8,15 +8,15 @@ Audio Management System - CLI and core library for audio processing, ASR, forced
 
 **Milestone**: v2.0 Blazor Workstation
 **Phase**: 10 - Proof Feature Parity
-**Plan**: 5/6 (complete)
-**Status**: Plan 10-05 complete; awaiting human verification checkpoint
+**Plan**: 6/6 (complete)
+**Status**: Phase 10 complete; all plans delivered
 
 ## Progress
 
 ```
 v1.0 Codebase Audit    [████████████████████] 100% - SHIPPED
 v1.1 Execute Refactor  [████████████████████] 100% - SHIPPED
-v2.0 Blazor Workstation[██████████████████░░]  83% - Plan 10-05 complete
+v2.0 Blazor Workstation[████████████████████] 100% - Phase 10 complete
 ```
 
 ## Phase 10 Plans
@@ -28,7 +28,7 @@ v2.0 Blazor Workstation[██████████████████�
 | 10-03 | Error Patterns Aggregation | 3 | Complete |
 | 10-04 | Errors View Enhancement | 3 | Complete |
 | 10-05 | Review Status & Ignored Patterns | 6 | Complete |
-| 10-06 | Audio Export & CRX Foundation | 3 | Pending |
+| 10-06 | Audio Export & CRX Foundation | 3 | Complete |
 
 ## Phase 10.1 Plans (INSERTED - Complete)
 
@@ -69,6 +69,8 @@ v2.0 Blazor Workstation[██████████████████�
 | Diff pipeline stabilization | Deterministic op-order + strict sentence ownership | Remove synthetic diff artifacts (hybrids/reorder/boundary bleed) in reviewer workflows |
 | Persistence services | Singleton + LocalAppData JSON | ReviewedStatusService and IgnoredPatternsService persist per-book state |
 | AggregatePatterns param type | IReadOnlySet<string> | Compatible with IgnoredPatternsService.GetIgnoredKeys() return type |
+| Audio segment export | AudioProcessor.Trim + ToWavStream | FFmpeg atrim for segment extraction, sequential WAV numbering in CRX folder |
+| CRX tracking format | JSON (not Excel) | Excel integration deferred; JSON provides core functionality |
 
 ## Phase 8/8.1 Conclusions (Archived)
 
@@ -98,11 +100,9 @@ poc/VelloSharpPoc/     - Avalonia + VelloSharp (child window fails)
 
 ## Next Action
 
-Plan 10-05 complete. Human verification checkpoint pending.
-After verification, continue with Plan 10-06 (Audio Export & CRX Foundation):
-```
-/gsd:execute-plan .planning/phases/10-proof-feature-parity/10-06-PLAN.md
-```
+Phase 10 complete. All 6 plans delivered validation-viewer feature parity.
+Human verification checkpoint pending for Plan 10-06 (audio export + CRX workflow).
+Excel CRX integration deferred to future phase.
 
 ## Deferred UI Refinements (for Plan 10-04)
 
@@ -119,7 +119,7 @@ None currently.
 
 ## Session Continuity
 
-Last session: 2026-02-22 16:10 PST
+Last session: 2026-02-22 16:49 PST
 Branch: `blazor-workstation`
-Status: Plan 10-05 complete (Review Status & Ignored Patterns persistence)
-Note: Plans 10-03 through 10-05 complete. Persistence services for reviewed chapters and ignored patterns now wired into Blazor pages with direct service injection.
+Status: Phase 10 complete (all 6 plans)
+Note: Plan 10-06 added AudioExportService (WAV segment extraction via AudioProcessor.Trim), CrxService (JSON tracking), CrxModal (Blazor UI), and wired export/CRX buttons through ErrorsView to ChapterReview.
