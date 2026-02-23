@@ -26,6 +26,9 @@ builder.Services.AddTransient<ValidationMetricsService>();
 builder.Services.AddTransient<ProofReportService>();
 builder.Services.AddTransient<ErrorPatternService>();
 
+// Persistence services - singleton (shared state across circuits)
+builder.Services.AddSingleton<ReviewedStatusService>();
+
 // Ams.Core services - stateless services for alignment/ASR operations
 // Note: PipelineService and ValidationService require command dependencies
 // that are CLI-specific. Add them when needed with proper command registration.
