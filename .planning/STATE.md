@@ -8,8 +8,8 @@ Audio Management System - CLI and core library for audio processing, ASR, forced
 
 **Milestone**: v2.0 Blazor Workstation
 **Phase**: 12 - Polish Area Foundation
-**Plan**: 4/8 (complete)
-**Status**: Plan 12-04 complete; waveform editable regions, sync, and segment playback delivered
+**Plan**: 5/8 (complete)
+**Status**: Plan 12-02 complete; staging queue and undo services delivered
 
 ## Progress
 
@@ -24,7 +24,7 @@ v2.0 Blazor Workstation[██████████████████�
 | Plan | Name | Tasks | Status |
 |------|------|-------|--------|
 | 12-01 | Audio Splice Service & Domain Models | 2 | Complete |
-| 12-02 | Staging Queue Service | - | Pending |
+| 12-02 | Staging Queue & Undo Services | 2 | Complete |
 | 12-03 | Polish API Endpoints | - | Pending |
 | 12-04 | Waveform Region Editing | 2 | Complete |
 | 12-05 | Polish Page Layout | - | Pending |
@@ -94,6 +94,8 @@ v2.0 Blazor Workstation[██████████████████�
 | Crossfade clamping | 30% of shorter segment | Prevents boundary overflow per research Pitfall 2 |
 | Region callback naming | OnRegionBoundsUpdated JSInvokable | Distinct from OnRegionUpdated EventCallback to avoid C# ambiguity |
 | Region update event | update-end (not update) | Avoids continuous drag event overhead on Blazor circuit |
+| Polish services persistence | Workspace-local .polish/ dirs | StagingQueue and UndoService persist to workspace, not AppData |
+| Undo versioning | Versioned segment files + manifest.json | sent{id}.v{N}.original.wav with per-chapter JSON manifest |
 
 ## Phase 8/8.1 Conclusions (Archived)
 
@@ -129,7 +131,7 @@ poc/VelloSharpPoc/     - Avalonia + VelloSharp (child window fails)
 
 ## Next Action
 
-Plan 12-04 complete. Ready to execute plan 12-05 (Polish Page Layout).
+Plan 12-02 complete. Staging queue and undo services delivered. Ready for next pending plan.
 
 ## Deferred UI Refinements (for Plan 10-04)
 
@@ -146,7 +148,7 @@ None currently.
 
 ## Session Continuity
 
-Last session: 2026-02-23 09:49 PST
+Last session: 2026-02-23 09:50 PST
 Branch: `blazor-workstation`
-Stopped at: Completed 12-04-PLAN.md
-Note: Phase 12 plan 04 executed -- waveform editable regions, multi-instance sync, and segment playback. Ready for plan 12-05.
+Stopped at: Completed 12-02-PLAN.md
+Note: Phase 12 plan 02 executed -- StagingQueueService and UndoService with JSON persistence and DI registration.
