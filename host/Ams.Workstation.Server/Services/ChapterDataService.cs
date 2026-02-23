@@ -25,7 +25,7 @@ public class ChapterDataService
     /// </summary>
     /// <param name="chapterName">The name of the chapter to load.</param>
     /// <returns>A list of sentences with timing information.</returns>
-    public Task<List<SentenceViewModel>> GetSentencesAsync(string chapterName)
+    public Task<List<SentenceViewModel>> GetSentencesAsync(string chapterName, IReadOnlySet<string>? ignoredKeys = null)
     {
         if (_workspace.CurrentChapterHandle is null)
         {
@@ -38,35 +38,119 @@ public class ChapterDataService
             return Task.FromResult(new List<SentenceViewModel>());
         }
 
-        var sentences = hydrate.Sentences.Select(s => new SentenceViewModel
+        var sentences = hydrate.Sentences.Select(s =>
         {
-            Id = s.Id,
-            Text = s.BookText,
-            StartTime = s.Timing?.StartSec ?? 0,
-            EndTime = s.Timing?.EndSec ?? 0,
-            Status = s.Status ?? "ok",
-            HasDiff = s.Diff?.Ops?.Any(op => op.Operation != "equal") == true,
-            DiffHtml = BuildDiffHtml(s.Diff)
+            var diffHtml = BuildDiffHtml(s.Diff, ignoredKeys);
+            return new SentenceViewModel
+            {
+                Id = s.Id,
+                Text = s.BookText,
+                StartTime = s.Timing?.StartSec ?? 0,
+                EndTime = s.Timing?.EndSec ?? 0,
+                Status = s.Status ?? "ok",
+                HasDiff = HasVisibleDiff(s.Diff, ignoredKeys),
+                DiffHtml = diffHtml
+            };
         }).ToList();
 
         return Task.FromResult(sentences);
     }
 
-    private static string? BuildDiffHtml(HydratedDiff? diff)
+    private static bool HasVisibleDiff(HydratedDiff? diff, IReadOnlySet<string>? ignoredKeys)
+    {
+        if (diff?.Ops is null) return false;
+        if (ignoredKeys is null || ignoredKeys.Count == 0)
+            return diff.Ops.Any(op => op.Operation != "equal");
+
+        var ops = diff.Ops.ToList();
+        for (int i = 0; i < ops.Count; i++)
+        {
+            var op = ops[i];
+            if (op.Operation == "equal") continue;
+
+            if (op.Operation == "delete")
+            {
+                var bookText = string.Join(" ", op.Tokens);
+                if (i + 1 < ops.Count && ops[i + 1].Operation == "insert")
+                {
+                    var scriptText = string.Join(" ", ops[i + 1].Tokens);
+                    if (!ignoredKeys.Contains(ErrorPatternService.BuildKey("sub", bookText, scriptText)))
+                        return true;
+                    i++;
+                }
+                else
+                {
+                    if (!ignoredKeys.Contains(ErrorPatternService.BuildKey("del", bookText, "")))
+                        return true;
+                }
+            }
+            else if (op.Operation == "insert")
+            {
+                var scriptText = string.Join(" ", op.Tokens);
+                if (!ignoredKeys.Contains(ErrorPatternService.BuildKey("ins", "", scriptText)))
+                    return true;
+            }
+        }
+        return false;
+    }
+
+    private static string? BuildDiffHtml(HydratedDiff? diff, IReadOnlySet<string>? ignoredKeys)
     {
         if (diff?.Ops is null) return null;
 
-        // Build HTML from diff ops: equal=plain, delete=strikethrough, insert=underline
         var sb = new StringBuilder();
-        foreach (var op in diff.Ops)
+        var ops = diff.Ops.ToList();
+        var hasIgnored = ignoredKeys is not null && ignoredKeys.Count > 0;
+
+        for (int i = 0; i < ops.Count; i++)
         {
+            var op = ops[i];
             var tokens = string.Join(" ", op.Tokens);
-            sb.Append(op.Operation switch
+
+            if (op.Operation == "equal")
             {
-                "delete" => $"<span class=\"diff-delete\">{tokens}</span>",
-                "insert" => $"<span class=\"diff-insert\">{tokens}</span>",
-                _ => tokens
-            });
+                sb.Append(tokens);
+            }
+            else if (op.Operation == "delete")
+            {
+                var bookText = tokens;
+                if (i + 1 < ops.Count && ops[i + 1].Operation == "insert")
+                {
+                    var next = ops[i + 1];
+                    var scriptText = string.Join(" ", next.Tokens);
+                    if (hasIgnored && ignoredKeys!.Contains(ErrorPatternService.BuildKey("sub", bookText, scriptText)))
+                    {
+                        sb.Append(scriptText);
+                        i++;
+                    }
+                    else
+                    {
+                        sb.Append($"<span class=\"diff-delete\">{bookText}</span>");
+                    }
+                }
+                else
+                {
+                    if (hasIgnored && ignoredKeys!.Contains(ErrorPatternService.BuildKey("del", bookText, "")))
+                    {
+                        // Suppress ignored standalone deletion
+                    }
+                    else
+                    {
+                        sb.Append($"<span class=\"diff-delete\">{bookText}</span>");
+                    }
+                }
+            }
+            else if (op.Operation == "insert")
+            {
+                if (hasIgnored && ignoredKeys!.Contains(ErrorPatternService.BuildKey("ins", "", tokens)))
+                {
+                    sb.Append(tokens);
+                }
+                else
+                {
+                    sb.Append($"<span class=\"diff-insert\">{tokens}</span>");
+                }
+            }
             sb.Append(' ');
         }
         return sb.ToString().Trim();

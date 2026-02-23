@@ -1,5 +1,4 @@
 @page "/proof/patterns"
-@inject NavigationManager Navigation
 @inject BlazorWorkspace Workspace
 @inject ErrorPatternService ErrorPatternService
 @inject IgnoredPatternsService IgnoredPatternsService
@@ -39,8 +38,7 @@
             {
                 <BitGridItem>
                     <PatternCard Pattern="pattern"
-                                 OnToggleIgnore="() => ToggleIgnore(pattern)"
-                                 OnExampleClick="NavigateToExample" />
+                                 OnToggleIgnore="() => ToggleIgnore(pattern)" />
                 </BitGridItem>
             }
         </BitGrid>
@@ -126,9 +124,5 @@
         return Task.CompletedTask;
     }
 
-    private void NavigateToExample(PatternExample example)
-    {
-        Navigation.NavigateTo($"/proof/{Uri.EscapeDataString(example.Chapter)}?sentenceId={example.SentenceId}");
-    }
 }
 

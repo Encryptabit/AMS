@@ -1,7 +1,8 @@
 @using Ams.Workstation.Server.Models
+@using Ams.Workstation.Server.Services
 
 <div class="diff-view">
-    @foreach (var op in Diff.Ops)
+    @foreach (var op in GetFilteredOps())
     {
         @if (op.Op == "equal")
         {
@@ -29,6 +30,67 @@
 
 @code {
     [Parameter] public DiffReport Diff { get; set; } = default!;
+    [Parameter] public IReadOnlySet<string>? IgnoredKeys { get; set; }
+
+    private IReadOnlyList<DiffOpReport> GetFilteredOps()
+    {
+        if (Diff?.Ops is null) return Array.Empty<DiffOpReport>();
+        if (IgnoredKeys is null || IgnoredKeys.Count == 0) return Diff.Ops;
+
+        var ops = Diff.Ops.ToList();
+        var result = new List<DiffOpReport>(ops.Count);
+
+        for (int i = 0; i < ops.Count; i++)
+        {
+            var op = ops[i];
+
+            if (op.Op == "delete")
+            {
+                var bookText = string.Join(" ", op.Tokens);
+
+                // Check for substitution (delete followed by insert)
+                if (i + 1 < ops.Count && ops[i + 1].Op == "insert")
+                {
+                    var next = ops[i + 1];
+                    var scriptText = string.Join(" ", next.Tokens);
+                    var key = ErrorPatternService.BuildKey("sub", bookText, scriptText);
+
+                    if (IgnoredKeys.Contains(key))
+                    {
+                        // Render both as plain text (use the script/insert text as the "correct" version)
+                        result.Add(new DiffOpReport("equal", next.Tokens));
+                        i++; // Skip next op
+                        continue;
+                    }
+                }
+                else
+                {
+                    // Standalone deletion
+                    var key = ErrorPatternService.BuildKey("del", bookText, "");
+                    if (IgnoredKeys.Contains(key))
+                    {
+                        // Suppress deleted text entirely (it's an ignored difference)
+                        continue;
+                    }
+                }
+            }
+            else if (op.Op == "insert")
+            {
+                var scriptText = string.Join(" ", op.Tokens);
+                var key = ErrorPatternService.BuildKey("ins", "", scriptText);
+                if (IgnoredKeys.Contains(key))
+                {
+                    // Render as plain text instead of highlighted insert
+                    result.Add(new DiffOpReport("equal", op.Tokens));
+                    continue;
+                }
+            }
+
+            result.Add(op);
+        }
+
+        return result;
+    }
 }
 
 <style>

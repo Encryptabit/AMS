@@ -26,19 +26,18 @@
         </BitGrid>
 
         @* Chapter Error Patterns *@
-        @if (ChapterPatterns != null && ChapterPatterns.Count > 0)
+        @if (VisiblePatterns.Any())
         {
             <BitStack Horizontal="false" Gap="0.5rem">
                 <BitText Typography="BitTypography.Subtitle2">
-                    Error Patterns (@ChapterPatterns.Count)
+                    Error Patterns (@VisiblePatterns.Count())
                 </BitText>
                 <BitGrid Columns="4" ColumnsSm="2" ColumnsMd="3" Spacing="0.75rem">
-                    @foreach (var pattern in ChapterPatterns.Take(12))
+                    @foreach (var pattern in VisiblePatterns.Take(12))
                     {
                         <BitGridItem>
                             <PatternCard Pattern="pattern"
-                                         OnToggleIgnore="() => ToggleIgnore(pattern)"
-                                         OnExampleClick="HandleExampleClick" />
+                                         OnToggleIgnore="() => ToggleIgnore(pattern)" />
                         </BitGridItem>
                     }
                 </BitGrid>
@@ -55,7 +54,8 @@
                 <SentenceErrorCard Sentence="sentence"
                                    OnPlayAudio="() => OnPlaySentence.InvokeAsync(sentence)"
                                    OnExport="() => HandleExport(sentence)"
-                                   OnCrx="() => HandleCrx(sentence)" />
+                                   OnCrx="() => HandleCrx(sentence)"
+                                   IgnoredKeys="IgnoredKeys" />
             }
         </BitStack>
     }
@@ -67,6 +67,10 @@
     [Parameter] public EventCallback<SentenceReport> OnPlaySentence { get; set; }
     [Parameter] public EventCallback<SentenceReport> OnExportSentence { get; set; }
     [Parameter] public EventCallback<SentenceReport> OnCrxSentence { get; set; }
+    [Parameter] public IReadOnlySet<string>? IgnoredKeys { get; set; }
+
+    private IEnumerable<ErrorPattern> VisiblePatterns =>
+        ChapterPatterns?.Where(p => !p.Ignored) ?? Enumerable.Empty<ErrorPattern>();
 
     private IEnumerable<SentenceReport> ErrorSentences =>
         Report?.Sentences
@@ -91,15 +95,6 @@
         StateHasChanged();
     }
 
-    private void HandleExampleClick(PatternExample example)
-    {
-        // Find matching sentence and trigger play
-        var sentence = Report?.Sentences.FirstOrDefault(s => s.Id == example.SentenceId);
-        if (sentence != null)
-        {
-            OnPlaySentence.InvokeAsync(sentence);
-        }
-    }
 
     private async Task HandleExport(SentenceReport sentence)
     {

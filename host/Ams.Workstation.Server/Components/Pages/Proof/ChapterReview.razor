@@ -5,6 +5,7 @@
 @inject Ams.Workstation.Server.Services.ErrorPatternService ErrorPatternService
 @inject Ams.Workstation.Server.Services.ReviewedStatusService ReviewedStatusService
 @inject Ams.Workstation.Server.Services.AudioExportService AudioExportService
+@inject Ams.Workstation.Server.Services.IgnoredPatternsService IgnoredPatternsService
 @inject NavigationManager Navigation
 @using Ams.Workstation.Server.Models
 
@@ -50,6 +51,7 @@
 else
 {
     <ErrorsView Report="_report" ChapterPatterns="_chapterPatterns"
+                IgnoredKeys="IgnoredPatternsService.GetIgnoredKeys()"
                 OnPlaySentence="HandlePlayFromErrors"
                 OnExportSentence="HandleExportFromErrors"
                 OnCrxSentence="HandleCrxFromErrors" />
@@ -113,7 +115,7 @@ else
         if (hydrate != null)
         {
             _report = ProofReportService.BuildReport(chapterName, hydrate);
-            _chapterPatterns = ErrorPatternService.AggregatePatternsForChapter(chapterName, hydrate).Patterns;
+            _chapterPatterns = ErrorPatternService.AggregatePatternsForChapter(chapterName, hydrate, IgnoredPatternsService.GetIgnoredKeys()).Patterns;
         }
     }
 
@@ -125,7 +127,7 @@ else
 
     private async Task LoadSentencesAsync(string chapterName)
     {
-        _sentences = await ChapterDataService.GetSentencesAsync(chapterName);
+        _sentences = await ChapterDataService.GetSentencesAsync(chapterName, IgnoredPatternsService.GetIgnoredKeys());
     }
 
     private string GetAudioUrl()

@@ -32,7 +32,7 @@
             <BitCard Background="BitColorKind.Primary" NoShadow="true" FullWidth="true">
                 <BitStack Horizontal="false" Gap="0.4rem" Style="padding: 0.75rem;">
                     <BitText Typography="BitTypography.Overline">TRANSCRIPT</BitText>
-                    <DiffView Diff="Sentence.Diff" />
+                    <DiffView Diff="Sentence.Diff" IgnoredKeys="IgnoredKeys" />
                 </BitStack>
             </BitCard>
         }
@@ -65,6 +65,7 @@
     [Parameter] public EventCallback OnPlayAudio { get; set; }
     [Parameter] public EventCallback OnExport { get; set; }
     [Parameter] public EventCallback OnCrx { get; set; }
+    [Parameter] public IReadOnlySet<string>? IgnoredKeys { get; set; }
 
     private string GetBorderStyle() => Sentence.Status switch
     {

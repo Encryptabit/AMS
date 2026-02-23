@@ -26,15 +26,6 @@
             }
         </div>
 
-        <div style="display: flex; gap: 0.5rem; flex-wrap: wrap;">
-            @foreach (var ex in Pattern.Examples.Take(3))
-            {
-                <BitLink OnClick="() => OnExampleClick.InvokeAsync(ex)" Style="font-size: 0.75rem;">
-                    @ex.Chapter #@ex.SentenceId
-                </BitLink>
-            }
-        </div>
-
         <BitStack HorizontalAlign="BitAlignment.Center" Style="margin-top: auto; justify-content: flex-end;">
             <BitButton Variant="BitVariant.Fill"
                        Color="@(Pattern.Ignored ? BitColor.Secondary : BitColor.Primary)"
@@ -49,7 +40,6 @@
 @code {
     [Parameter] public ErrorPattern Pattern { get; set; } = default!;
     [Parameter] public EventCallback OnToggleIgnore { get; set; }
-    [Parameter] public EventCallback<PatternExample> OnExampleClick { get; set; }
 
     private string GetCardStyle() => Pattern.Ignored
         ? "opacity: 0.4;"
