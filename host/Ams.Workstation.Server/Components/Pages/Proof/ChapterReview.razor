@@ -7,7 +7,9 @@
 @inject Ams.Workstation.Server.Services.AudioExportService AudioExportService
 @inject Ams.Workstation.Server.Services.IgnoredPatternsService IgnoredPatternsService
 @inject NavigationManager Navigation
+@inject IJSRuntime JS
 @using Ams.Workstation.Server.Models
+@implements IAsyncDisposable
 
 <PageTitle>@ChapterName - Proof - AMS Workstation</PageTitle>
 
@@ -54,7 +56,8 @@ else
                 IgnoredKeys="IgnoredPatternsService.GetIgnoredKeys()"
                 OnPlaySentence="HandlePlayFromErrors"
                 OnExportSentence="HandleExportFromErrors"
-                OnCrxSentence="HandleCrxFromErrors" />
+                OnCrxSentence="HandleCrxFromErrors"
+                OnIgnoreSentence="HandleIgnoreFromErrors" />
 }
 
 @if (!string.IsNullOrEmpty(_exportMessage))
@@ -79,6 +82,7 @@ else
     private bool _isReviewed;
     private CrxModal? _crxModal;
     private string? _exportMessage;
+    private IJSObjectReference? _snippetPlayer;
 
     [Parameter] public string? ChapterName { get; set; }
 
@@ -179,12 +183,9 @@ else
 
     private async Task HandlePlayFromErrors(SentenceReport sentence)
     {
-        _currentView = "playback";
-        StateHasChanged();
-        if (_waveformPlayer != null)
-        {
-            await _waveformPlayer.SeekTo(sentence.StartTime);
-        }
+        _snippetPlayer ??= await JS.InvokeAsync<IJSObjectReference>("import", "./js/snippet-player.js");
+        var url = GetAudioUrl();
+        await _snippetPlayer.InvokeVoidAsync("playSegment", url, sentence.StartTime, sentence.EndTime);
     }
 
     private void ToggleReviewed()
@@ -231,6 +232,49 @@ else
         StateHasChanged();
     }
 
+    private void HandleIgnoreFromErrors(SentenceReport sentence)
+    {
+        if (sentence.Diff?.Ops is null) return;
+
+        var ops = sentence.Diff.Ops.ToList();
+        var count = 0;
+        for (int i = 0; i < ops.Count; i++)
+        {
+            var op = ops[i];
+            if (op.Op == "delete")
+            {
+                var bookText = string.Join(" ", op.Tokens);
+                if (i + 1 < ops.Count && ops[i + 1].Op == "insert")
+                {
+                    var scriptText = string.Join(" ", ops[i + 1].Tokens);
+                    IgnoredPatternsService.SetIgnored(Services.ErrorPatternService.BuildKey("sub", bookText, scriptText), true);
+                    count++;
+                    i++;
+                }
+                else
+                {
+                    IgnoredPatternsService.SetIgnored(Services.ErrorPatternService.BuildKey("del", bookText, ""), true);
+                    count++;
+                }
+            }
+            else if (op.Op == "insert")
+            {
+                var scriptText = string.Join(" ", op.Tokens);
+                IgnoredPatternsService.SetIgnored(Services.ErrorPatternService.BuildKey("ins", "", scriptText), true);
+                count++;
+            }
+        }
+
+        if (count > 0)
+        {
+            // Refresh patterns and report to reflect the newly ignored keys
+            if (!string.IsNullOrEmpty(ChapterName))
+                LoadReport(Uri.UnescapeDataString(ChapterName));
+            _exportMessage = $"Ignored {count} error pattern{(count == 1 ? "" : "s")} for entire book.";
+        }
+        StateHasChanged();
+    }
+
     private static string FormatTime(double seconds)
     {
         if (double.IsNaN(seconds) || double.IsInfinity(seconds)) return "0:00.000";
@@ -238,6 +282,19 @@ else
         var secs = (int)(seconds % 60);
         var ms = (int)((seconds % 1) * 1000);
         return $"{mins}:{secs:D2}.{ms:D3}";
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        if (_snippetPlayer is not null)
+        {
+            try
+            {
+                await _snippetPlayer.InvokeVoidAsync("dispose");
+                await _snippetPlayer.DisposeAsync();
+            }
+            catch (JSDisconnectedException) { }
+        }
     }
 
 }

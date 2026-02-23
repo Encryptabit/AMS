@@ -55,6 +55,7 @@
                                    OnPlayAudio="() => OnPlaySentence.InvokeAsync(sentence)"
                                    OnExport="() => HandleExport(sentence)"
                                    OnCrx="() => HandleCrx(sentence)"
+                                   OnIgnore="() => OnIgnoreSentence.InvokeAsync(sentence)"
                                    IgnoredKeys="IgnoredKeys" />
             }
         </BitStack>
@@ -67,6 +68,7 @@
     [Parameter] public EventCallback<SentenceReport> OnPlaySentence { get; set; }
     [Parameter] public EventCallback<SentenceReport> OnExportSentence { get; set; }
     [Parameter] public EventCallback<SentenceReport> OnCrxSentence { get; set; }
+    [Parameter] public EventCallback<SentenceReport> OnIgnoreSentence { get; set; }
     [Parameter] public IReadOnlySet<string>? IgnoredKeys { get; set; }
 
     private IEnumerable<ErrorPattern> VisiblePatterns =>

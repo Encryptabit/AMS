@@ -53,7 +53,7 @@
                 Add to CRX
             </BitButton>
             <BitButton Variant="BitVariant.Text" Size="BitSize.Medium"
-                       OnClick="() => {}">
+                       OnClick="() => OnIgnore.InvokeAsync()">
                 Ignore Error...
             </BitButton>
         </BitStack>
@@ -65,6 +65,7 @@
     [Parameter] public EventCallback OnPlayAudio { get; set; }
     [Parameter] public EventCallback OnExport { get; set; }
     [Parameter] public EventCallback OnCrx { get; set; }
+    [Parameter] public EventCallback OnIgnore { get; set; }
     [Parameter] public IReadOnlySet<string>? IgnoredKeys { get; set; }
 
     private string GetBorderStyle() => Sentence.Status switch
