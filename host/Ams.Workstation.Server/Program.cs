@@ -38,6 +38,10 @@ builder.Services.AddTransient<CrxService>();
 builder.Services.AddSingleton<StagingQueueService>();
 builder.Services.AddSingleton<UndoService>();
 
+// Polish area services - transient (stateless matching and orchestration)
+builder.Services.AddTransient<PickupMatchingService>();
+builder.Services.AddTransient<PolishService>();
+
 // Ams.Core services - stateless services for alignment/ASR operations
 // Note: PipelineService and ValidationService require command dependencies
 // that are CLI-specific. Add them when needed with proper command registration.
