@@ -7,9 +7,9 @@ Audio Management System - CLI and core library for audio processing, ASR, forced
 ## Current Position
 
 **Milestone**: v2.0 Blazor Workstation
-**Phase**: 10 - Proof Feature Parity
-**Plan**: 6/6 (complete)
-**Status**: Phase 10 complete; all plans delivered
+**Phase**: 10.2 - CRX Excel & API Cleanup
+**Plan**: 1/1 (complete)
+**Status**: Phase 10.2 complete; CRX Excel integration and API cleanup delivered
 
 ## Progress
 
@@ -29,6 +29,12 @@ v2.0 Blazor Workstation[██████████████████�
 | 10-04 | Errors View Enhancement | 3 | Complete |
 | 10-05 | Review Status & Ignored Patterns | 6 | Complete |
 | 10-06 | Audio Export & CRX Foundation | 3 | Complete |
+
+## Phase 10.2 Plans (CRX Excel & API Cleanup - Complete)
+
+| Plan | Name | Tasks | Status |
+|------|------|-------|--------|
+| 10.2-01 | CRX Excel Integration & API Cleanup | 2 | Complete |
 
 ## Phase 10.1 Plans (INSERTED - Complete)
 
@@ -70,7 +76,7 @@ v2.0 Blazor Workstation[██████████████████�
 | Persistence services | Singleton + LocalAppData JSON | ReviewedStatusService and IgnoredPatternsService persist per-book state |
 | AggregatePatterns param type | IReadOnlySet<string> | Compatible with IgnoredPatternsService.GetIgnoredKeys() return type |
 | Audio segment export | AudioProcessor.Trim + ToWavStream | FFmpeg atrim for segment extraction, sequential WAV numbering in CRX folder |
-| CRX tracking format | JSON (not Excel) | Excel integration deferred; JSON provides core functionality |
+| CRX tracking format | Excel (.xlsx) via ClosedXML | Matches Python validation-viewer column layout for publisher submission |
 
 ## Phase 8/8.1 Conclusions (Archived)
 
@@ -100,9 +106,8 @@ poc/VelloSharpPoc/     - Avalonia + VelloSharp (child window fails)
 
 ## Next Action
 
-Phase 10 complete. All 6 plans delivered validation-viewer feature parity.
-Human verification checkpoint pending for Plan 10-06 (audio export + CRX workflow).
-Excel CRX integration deferred to future phase.
+Phase 10.2 complete. CRX now writes to Excel (.xlsx) matching publisher workflow.
+ProofApiController removed (14 dead endpoints). All Blazor components work via DI.
 
 ## Deferred UI Refinements (for Plan 10-04)
 
@@ -119,7 +124,7 @@ None currently.
 
 ## Session Continuity
 
-Last session: 2026-02-22 16:49 PST
+Last session: 2026-02-22 19:36 PST
 Branch: `blazor-workstation`
-Status: Phase 10 complete (all 6 plans)
-Note: Plan 10-06 added AudioExportService (WAV segment extraction via AudioProcessor.Trim), CrxService (JSON tracking), CrxModal (Blazor UI), and wired export/CRX buttons through ErrorsView to ChapterReview.
+Status: Phase 10.2 complete (1/1 plans)
+Note: Plan 10.2-01 replaced CrxService JSON persistence with Excel (.xlsx) via ClosedXML, removed ProofApiController (14 unused endpoints).
