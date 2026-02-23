@@ -132,6 +132,12 @@
             StateHasChanged(); // Update UI before loading new audio
             await LoadAudioAsync(AudioUrl);
         }
+        else if (string.IsNullOrEmpty(AudioUrl))
+        {
+            // Clear cached URL so next non-empty URL always triggers a reload
+            // (e.g. when a parent modal closes then reopens with the same audio)
+            _loadedAudioUrl = null;
+        }
     }
 
     private async Task InitializeWaveSurfer()

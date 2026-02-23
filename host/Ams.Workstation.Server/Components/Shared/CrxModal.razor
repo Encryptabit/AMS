@@ -70,10 +70,8 @@
 
             @* ── Full-width: Comments ── *@
             <div class="crx-comments">
-                <BitTextField @bind-Value="_comments"
-                              Label="Comments"
-                              IsMultiline="true"
-                              Rows="3" />
+                <BitText Typography="BitTypography.Body2">Comments</BitText>
+                <textarea rows="3" @bind="_comments" class="crx-comments-textarea" />
             </div>
         </div>
 
@@ -141,6 +139,7 @@
     public void Close()
     {
         _isVisible = false;
+        _audioUrl = "";
         StateHasChanged();
     }
 
@@ -245,7 +244,9 @@
         if (!hasDifferences)
             return _sentenceReport.BookText;
 
-        return $"Should be: {string.Join(" ", shouldBeLine)}\nRead as: {string.Join(" ", readAsLine)}";
+        var shouldBe = string.Join(" ", shouldBeLine);
+        var readAs = string.Join(" ", readAsLine);
+        return $"Should be: {shouldBe}{Environment.NewLine}Read as: {readAs}";
     }
 
     private void OnPaddingInput(ChangeEventArgs e)
@@ -323,9 +324,9 @@
     .crx-modal {
         background: var(--bit-clr-bg-pri);
         border-radius: 8px;
-        min-width: 500px;
-        max-width: 800px;
-        width: 90vw;
+        width: fit-content;
+        min-width: 600px;
+        max-width: 95vw;
     }
     .crx-modal-header {
         display: flex;
@@ -342,13 +343,20 @@
     }
     .crx-grid {
         display: grid;
-        grid-template-columns: 1fr 1fr;
+        grid-template-columns: auto 1fr;
         gap: 1rem;
     }
-    .crx-col-left, .crx-col-right {
+    .crx-col-left {
         display: flex;
         flex-direction: column;
         gap: 0.75rem;
+        min-width: 140px;
+    }
+    .crx-col-right {
+        display: flex;
+        flex-direction: column;
+        gap: 0.75rem;
+        min-width: 400px;
     }
     .crx-modal-footer {
         display: flex;
@@ -401,5 +409,17 @@
     }
     .crx-comments {
         width: 100%;
+    }
+    .crx-comments-textarea {
+        width: 100%;
+        background: var(--bit-clr-bg-sec);
+        color: var(--bit-clr-fg-pri);
+        border: 1px solid var(--bit-clr-brd-pri);
+        border-radius: 4px;
+        padding: 0.5rem;
+        font-family: inherit;
+        font-size: 0.875rem;
+        resize: vertical;
+        box-sizing: border-box;
     }
 </style>

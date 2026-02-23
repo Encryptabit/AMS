@@ -64,9 +64,10 @@ public class AudioController : ControllerBase
     /// <summary>
     /// Gets the audio for a chapter from the workspace's AudioBufferContext.
     /// Streams WAV data from the loaded AudioBuffer.
+    /// When start/end query params are provided, trims to that segment.
     /// </summary>
     [HttpGet("chapter/{chapterName}")]
-    public IActionResult GetChapterAudio(string chapterName)
+    public IActionResult GetChapterAudio(string chapterName, [FromQuery] double? start = null, [FromQuery] double? end = null)
     {
         if (_workspace.CurrentChapterHandle is null)
         {
@@ -83,6 +84,19 @@ public class AudioController : ControllerBase
             {
                 _logger.LogWarning("Audio buffer not available for chapter '{ChapterName}'", chapterName);
                 return NotFound("Audio buffer not available");
+            }
+
+            // If start/end provided, trim to segment
+            if (start.HasValue && end.HasValue)
+            {
+                var maxDuration = (double)buffer.Length / buffer.SampleRate;
+                var trimmed = Ams.Core.Processors.AudioProcessor.Trim(
+                    buffer,
+                    TimeSpan.FromSeconds(Math.Max(0, start.Value)),
+                    TimeSpan.FromSeconds(Math.Min(end.Value, maxDuration)));
+
+                var trimStream = trimmed.ToWavStream();
+                return File(trimStream, "audio/wav", enableRangeProcessing: true);
             }
 
             _logger.LogDebug(
