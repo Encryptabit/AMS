@@ -33,8 +33,8 @@
 .waveform-container {
     position: relative;
     width: 100%;
-    height: 128px;
-    min-height: 128px;
+    height: var(--wfp-height, 128px);
+    min-height: var(--wfp-height, 128px);
     background-color: var(--bit-clr-bg-sec);
     border-radius: 4px;
     overflow: hidden;

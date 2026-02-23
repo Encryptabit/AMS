@@ -10,35 +10,71 @@
         </div>
 
         <div class="crx-modal-body">
-            <BitStack Horizontal="false" Gap="1rem" AutoHeight="true">
-                <BitDropdown TItem="BitDropdownItem<string>" TValue="string"
-                             @bind-Value="_errorType"
-                             Label="Error Type"
-                             Items="_errorTypeItems" />
+            <div class="crx-grid">
+                @* ── Left column: Error Type, Error Checkboxes, Padding ── *@
+                <div class="crx-col-left">
+                    <BitDropdown TItem="BitDropdownItem<string>" TValue="string"
+                                 @bind-Value="_errorType"
+                                 Label="Error Type"
+                                 Items="_errorTypeItems" />
 
-                <div class="padding-control">
-                    <BitText Typography="BitTypography.Body2">Tail Padding: @_paddingMs ms</BitText>
-                    <input type="range" min="0" max="200" step="10"
-                           @bind="_paddingMs" @bind:event="oninput" />
+                    @if (_errorOps.Count > 0)
+                    {
+                        <div class="crx-errors-section">
+                            <div class="crx-errors-header">
+                                <BitText Typography="BitTypography.Body2">Errors to Highlight</BitText>
+                                <label class="crx-select-all">
+                                    <input type="checkbox" checked="@_allSelected"
+                                           @onchange="ToggleSelectAll" />
+                                    <BitText Typography="BitTypography.Caption1">Select All</BitText>
+                                </label>
+                            </div>
+                            <div class="crx-errors-list">
+                                @for (var i = 0; i < _errorOps.Count; i++)
+                                {
+                                    var idx = i;
+                                    var err = _errorOps[idx];
+                                    <label class="crx-error-item">
+                                        <input type="checkbox" checked="@err.Selected"
+                                               @onchange="@(() => ToggleError(idx))" />
+                                        <span class="@(err.Op == "delete" ? "crx-del" : "crx-ins")">
+                                            @(err.Op == "delete" ? "DEL" : "INS"): @err.Text
+                                        </span>
+                                    </label>
+                                }
+                            </div>
+                        </div>
+                    }
+
+                    <div class="padding-control">
+                        <BitText Typography="BitTypography.Body2">Tail Padding: @_paddingMs ms</BitText>
+                        <input type="range" min="0" max="200" step="10"
+                               value="@_paddingMs"
+                               @oninput="OnPaddingInput"
+                               @onchange="OnPaddingCommit" />
+                    </div>
                 </div>
 
+                @* ── Right column: Audio Preview ── *@
+                <div class="crx-col-right">
+                    <WaveformPlayer @ref="_waveformPlayer"
+                                    AudioUrl="@_audioUrl"
+                                    Title="Audio Preview"
+                                    Height="80" />
+                    <BitText Typography="BitTypography.Caption2" Color="BitColor.SecondaryForeground"
+                             Style="text-align: center;">
+                        @FormatTime(_startTime) → @FormatTime(_endTime + _paddingMs / 1000.0)
+                    </BitText>
+                </div>
+            </div>
+
+            @* ── Full-width: Comments ── *@
+            <div class="crx-comments">
                 <BitTextField @bind-Value="_comments"
                               Label="Comments"
                               IsMultiline="true"
                               Rows="3" />
-
-                <div class="crx-preview">
-                    <BitText Typography="BitTypography.Caption1" Color="BitColor.SecondaryForeground">
-                        Audio Preview
-                    </BitText>
-                    <audio controls style="width: 100%;">
-                        <source src="@GetPreviewUrl()" type="audio/wav" />
-                    </audio>
-                    <BitText Typography="BitTypography.Caption2" Color="BitColor.SecondaryForeground">
-                        @FormatTime(_startTime) -> @FormatTime(_endTime + _paddingMs / 1000.0)
-                    </BitText>
-                </div>
-            </BitStack>
+            </div>
         </div>
 
         <div class="crx-modal-footer">
@@ -62,25 +98,43 @@
     private string _comments = "";
     private int _paddingMs = 50;
     private bool _submitting;
+    private string _audioUrl = "";
+    private SentenceReport? _sentenceReport;
+    private WaveformPlayer? _waveformPlayer;
 
-    // Pre-built dropdown items (follows HeaderControls.razor pattern)
+    // Error checkboxes built from diff ops
+    private List<ErrorOpItem> _errorOps = new();
+    private bool _allSelected = true;
+
+    // Pre-built dropdown items
     private readonly List<BitDropdownItem<string>> _errorTypeItems = ErrorTypes.All
         .Select(t => new BitDropdownItem<string> { Value = t, Text = t })
         .ToList();
 
     [Parameter] public EventCallback<CrxSubmitResult> OnSubmitted { get; set; }
 
-    public void Open(string chapterName, double start, double end, int sentenceId, string excerpt)
+    public void Open(string chapterName, double start, double end, int sentenceId, string excerpt, SentenceReport? sentenceReport = null)
     {
         _chapterName = chapterName;
         _startTime = start;
         _endTime = end;
         _sentenceId = sentenceId;
         _excerpt = excerpt;
-        _comments = excerpt;
+        _sentenceReport = sentenceReport;
         _errorType = "MR";
         _paddingMs = 50;
         _isVisible = true;
+
+        // Build error checkboxes from diff ops
+        BuildErrorOps();
+        _allSelected = _errorOps.All(e => e.Selected);
+
+        // Generate initial comment
+        _comments = GenerateComment();
+
+        // Set audio URL
+        _audioUrl = BuildAudioUrl();
+
         StateHasChanged();
     }
 
@@ -90,9 +144,129 @@
         StateHasChanged();
     }
 
-    private string GetPreviewUrl()
+    private void BuildErrorOps()
     {
-        // Audio URL for browser <audio> element - this IS an HTTP path (fetched by browser, not Blazor C#)
+        _errorOps.Clear();
+        if (_sentenceReport?.Diff?.Ops == null) return;
+
+        foreach (var op in _sentenceReport.Diff.Ops)
+        {
+            if (op.Op == "equal") continue;
+            var text = string.Join(" ", op.Tokens);
+            _errorOps.Add(new ErrorOpItem(op.Op, text, Selected: true));
+        }
+    }
+
+    private void ToggleError(int index)
+    {
+        var item = _errorOps[index];
+        _errorOps[index] = item with { Selected = !item.Selected };
+        _allSelected = _errorOps.All(e => e.Selected);
+        _comments = GenerateComment();
+        StateHasChanged();
+    }
+
+    private void ToggleSelectAll(ChangeEventArgs e)
+    {
+        var selectAll = (bool)(e.Value ?? false);
+        _allSelected = selectAll;
+        for (var i = 0; i < _errorOps.Count; i++)
+            _errorOps[i] = _errorOps[i] with { Selected = selectAll };
+        _comments = GenerateComment();
+        StateHasChanged();
+    }
+
+    /// <summary>
+    /// Port of generateCrxCommentWithSelection from validation-viewer app.js
+    /// </summary>
+    private string GenerateComment()
+    {
+        if (_sentenceReport?.Diff?.Ops == null || _errorOps.Count == 0)
+            return _excerpt;
+
+        // Build a set of selected op indices (non-equal ops only)
+        var selectedSet = new HashSet<int>();
+        var errorIdx = 0;
+        for (var i = 0; i < _sentenceReport.Diff.Ops.Count; i++)
+        {
+            var op = _sentenceReport.Diff.Ops[i];
+            if (op.Op == "equal") continue;
+            if (_errorOps[errorIdx].Selected)
+                selectedSet.Add(i);
+            errorIdx++;
+        }
+
+        var shouldBeLine = new List<string>();
+        var readAsLine = new List<string>();
+        var hasDifferences = false;
+
+        for (var i = 0; i < _sentenceReport.Diff.Ops.Count; i++)
+        {
+            var op = _sentenceReport.Diff.Ops[i];
+            var tokens = op.Tokens;
+            if (tokens.Count == 0) continue;
+
+            var text = string.Join(" ", tokens);
+            var isSelected = selectedSet.Contains(i);
+
+            if (op.Op == "equal")
+            {
+                shouldBeLine.Add(text);
+                readAsLine.Add(text);
+            }
+            else if (op.Op == "delete")
+            {
+                if (isSelected)
+                {
+                    shouldBeLine.Add($"[{text}]");
+                    hasDifferences = true;
+                }
+                else
+                {
+                    shouldBeLine.Add(text);
+                    readAsLine.Add(text);
+                }
+            }
+            else if (op.Op == "insert")
+            {
+                if (isSelected)
+                {
+                    readAsLine.Add($"[{text}]");
+                    hasDifferences = true;
+                }
+                else
+                {
+                    shouldBeLine.Add(text);
+                    readAsLine.Add(text);
+                }
+            }
+        }
+
+        if (!hasDifferences)
+            return _sentenceReport.BookText;
+
+        return $"Should be: {string.Join(" ", shouldBeLine)}\nRead as: {string.Join(" ", readAsLine)}";
+    }
+
+    private void OnPaddingInput(ChangeEventArgs e)
+    {
+        if (int.TryParse(e.Value?.ToString(), out var val))
+            _paddingMs = val;
+    }
+
+    private void OnPaddingCommit(ChangeEventArgs e)
+    {
+        // Rebuild audio URL only on slider release to avoid excessive reloads
+        if (int.TryParse(e.Value?.ToString(), out var val))
+        {
+            _paddingMs = val;
+            _audioUrl = BuildAudioUrl();
+            StateHasChanged();
+        }
+    }
+
+    private string BuildAudioUrl()
+    {
         var end = _endTime + (_paddingMs / 1000.0);
         return $"/api/audio/chapter/{Uri.EscapeDataString(_chapterName)}?start={_startTime}&end={end}";
     }
@@ -103,8 +277,7 @@
         StateHasChanged();
         try
         {
-            // Direct service call (NOT HttpClient)
-            await Task.Yield(); // Allow UI to update before blocking call
+            await Task.Yield();
             var request = new CrxSubmitRequest(
                 Start: _startTime,
                 End: _endTime,
@@ -130,6 +303,8 @@
         var ts = TimeSpan.FromSeconds(seconds);
         return $"{(int)ts.TotalMinutes}:{ts.Seconds:D2}.{ts.Milliseconds:D3}";
     }
+
+    private record ErrorOpItem(string Op, string Text, bool Selected);
 }
 
 <style>
@@ -149,7 +324,8 @@
         background: var(--bit-clr-bg-pri);
         border-radius: 8px;
         min-width: 500px;
-        max-width: 600px;
+        max-width: 800px;
+        width: 90vw;
     }
     .crx-modal-header {
         display: flex;
@@ -160,6 +336,19 @@
     }
     .crx-modal-body {
         padding: 1rem;
+        display: flex;
+        flex-direction: column;
+        gap: 1rem;
+    }
+    .crx-grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 1rem;
+    }
+    .crx-col-left, .crx-col-right {
+        display: flex;
+        flex-direction: column;
+        gap: 0.75rem;
     }
     .crx-modal-footer {
         display: flex;
@@ -169,6 +358,48 @@
         border-top: 1px solid var(--bit-clr-brd-sec);
     }
     .padding-control input {
+        width: 100%;
+    }
+    .crx-errors-section {
+        display: flex;
+        flex-direction: column;
+        gap: 0.25rem;
+    }
+    .crx-errors-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+    }
+    .crx-select-all {
+        display: flex;
+        align-items: center;
+        gap: 0.25rem;
+        cursor: pointer;
+    }
+    .crx-errors-list {
+        display: flex;
+        flex-direction: column;
+        gap: 0.25rem;
+        max-height: 150px;
+        overflow-y: auto;
+        padding: 0.25rem;
+        background: var(--bit-clr-bg-sec);
+        border-radius: 4px;
+    }
+    .crx-error-item {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        cursor: pointer;
+        font-size: 0.85rem;
+    }
+    .crx-del {
+        color: #ff6b6b;
+    }
+    .crx-ins {
+        color: #69db7c;
+    }
+    .crx-comments {
         width: 100%;
     }
 </style>

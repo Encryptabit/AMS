@@ -213,7 +213,7 @@ else
     {
         if (string.IsNullOrEmpty(ChapterName)) return;
         var decoded = Uri.UnescapeDataString(ChapterName);
-        _crxModal?.Open(decoded, sentence.StartTime, sentence.EndTime, sentence.Id, sentence.Excerpt);
+        _crxModal?.Open(decoded, sentence.StartTime, sentence.EndTime, sentence.Id, sentence.Excerpt, sentence);
     }
 
     private void HandleCrxSubmitted(CrxSubmitResult result)

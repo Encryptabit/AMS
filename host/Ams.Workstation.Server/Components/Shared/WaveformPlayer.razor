@@ -6,7 +6,7 @@
         <span class="waveform-title">@Title</span>
         <span class="waveform-time">@FormatTime(CurrentTime) / @FormatTime(Duration)</span>
     </div>
-    <div id="@_elementId" class="waveform-container">
+    <div id="@_elementId" class="waveform-container" style="--wfp-height: @(Height)px;">
         @if (!_isReady)
         {
             <div class="waveform-loading">
@@ -60,6 +60,12 @@
     /// </summary>
     [Parameter]
     public string Title { get; set; } = "Audio";
+
+    /// <summary>
+    /// Height of the waveform in pixels.
+    /// </summary>
+    [Parameter]
+    public int Height { get; set; } = 128;
 
     /// <summary>
     /// Callback fired when the current playback time changes.
@@ -137,7 +143,7 @@
 
             var options = new
             {
-                height = 128,
+                height = Height,
                 waveColor = "#4a9eff",
                 progressColor = "#1177bb",
                 cursorColor = "#ffffff"
