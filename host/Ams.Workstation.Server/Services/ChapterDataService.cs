@@ -121,12 +121,12 @@ public class ChapterDataService
                     if (hasIgnored && ignoredKeys!.Contains(ErrorPatternService.BuildKey("sub", bookText, scriptText)))
                     {
                         sb.Append(scriptText);
-                        i++;
                     }
                     else
                     {
-                        sb.Append($"<span class=\"diff-delete\">{bookText}</span>");
+                        sb.Append($"<span class=\"diff-delete\">{bookText}</span> <span class=\"diff-insert\">{scriptText}</span>");
                     }
+                    i++; // Always skip the insert (already handled as part of substitution)
                 }
                 else
                 {
@@ -142,6 +142,7 @@ public class ChapterDataService
             }
             else if (op.Operation == "insert")
             {
+                // Standalone insert (not part of substitution - those are caught above)
                 if (hasIgnored && ignoredKeys!.Contains(ErrorPatternService.BuildKey("ins", "", tokens)))
                 {
                     sb.Append(tokens);

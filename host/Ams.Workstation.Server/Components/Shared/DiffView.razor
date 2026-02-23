@@ -59,9 +59,15 @@
                     {
                         // Render both as plain text (use the script/insert text as the "correct" version)
                         result.Add(new DiffOpReport("equal", next.Tokens));
-                        i++; // Skip next op
-                        continue;
                     }
+                    else
+                    {
+                        // Keep both as-is (delete + insert)
+                        result.Add(op);
+                        result.Add(next);
+                    }
+                    i++; // Always skip the insert (already handled as part of substitution)
+                    continue;
                 }
                 else
                 {
@@ -76,6 +82,7 @@
             }
             else if (op.Op == "insert")
             {
+                // Standalone insert (not part of substitution - those are caught above)
                 var scriptText = string.Join(" ", op.Tokens);
                 var key = ErrorPatternService.BuildKey("ins", "", scriptText);
                 if (IgnoredKeys.Contains(key))
