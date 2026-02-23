@@ -187,6 +187,8 @@ public class ProofApiController : ControllerBase
     [HttpGet("reviewed")]
     public ActionResult<Dictionary<string, ReviewedEntry>> GetReviewedStatus()
     {
+        if (!_workspace.IsInitialized)
+            return BadRequest("Workspace not initialized");
         return Ok(_reviewedStatusService.GetAll());
     }
 
@@ -196,6 +198,8 @@ public class ProofApiController : ControllerBase
     [HttpPost("reviewed/{chapterName}")]
     public ActionResult MarkReviewed(string chapterName, [FromBody] ReviewedRequest request)
     {
+        if (!_workspace.IsInitialized)
+            return BadRequest("Workspace not initialized");
         _reviewedStatusService.SetReviewed(Uri.UnescapeDataString(chapterName), request.Reviewed);
         return Ok(new { success = true });
     }
@@ -206,6 +210,8 @@ public class ProofApiController : ControllerBase
     [HttpPost("reset-reviews")]
     public ActionResult ResetReviews()
     {
+        if (!_workspace.IsInitialized)
+            return BadRequest("Workspace not initialized");
         _reviewedStatusService.ResetAll();
         return Ok(new { success = true });
     }
@@ -216,6 +222,8 @@ public class ProofApiController : ControllerBase
     [HttpGet("errors/ignored")]
     public ActionResult<IEnumerable<string>> GetIgnoredPatterns()
     {
+        if (!_workspace.IsInitialized)
+            return BadRequest("Workspace not initialized");
         return Ok(_ignoredPatternsService.GetIgnoredKeys());
     }
 
@@ -225,6 +233,8 @@ public class ProofApiController : ControllerBase
     [HttpPost("errors/ignore")]
     public ActionResult ToggleIgnorePattern([FromBody] IgnorePatternRequest request)
     {
+        if (!_workspace.IsInitialized)
+            return BadRequest("Workspace not initialized");
         _ignoredPatternsService.SetIgnored(
             ErrorPatternService.BuildKey(request.Type, request.Book, request.Script),
             request.Ignore);
