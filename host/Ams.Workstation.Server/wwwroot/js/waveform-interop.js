@@ -416,3 +416,145 @@ export function formatTime(seconds) {
     const secs = Math.floor(seconds % 60);
     return `${mins}:${secs.toString().padStart(2, '0')}`;
 }
+
+/**
+ * Adds a draggable, resizable region for editing pickup boundaries.
+ * Fires a .NET callback on update-end (not continuous drag events).
+ * @param {string} elementId - The element ID of the WaveSurfer instance
+ * @param {string} id - Unique identifier for the region
+ * @param {number} start - Start time in seconds
+ * @param {number} end - End time in seconds
+ * @param {string} color - CSS color string for the region (with alpha)
+ * @param {Object} dotNetRef - DotNetObjectReference for invoking .NET callbacks
+ * @returns {Object|null} The region object, or null on failure
+ */
+export function addEditableRegion(elementId, id, start, end, color, dotNetRef) {
+    const instance = window.wavesurferInstances[elementId];
+    if (!instance) {
+        console.error(`[waveform-interop] No WaveSurfer instance for '${elementId}'`);
+        return null;
+    }
+
+    // Auto-initialize regions plugin if not yet initialized
+    if (!instance.regionsPlugin) {
+        if (typeof WaveSurfer.Regions !== 'undefined') {
+            instance.regionsPlugin = instance.wavesurfer.registerPlugin(WaveSurfer.Regions.create());
+        } else {
+            console.error('[waveform-interop] WaveSurfer.Regions plugin not loaded');
+            return null;
+        }
+    }
+
+    const region = instance.regionsPlugin.addRegion({
+        id: id,
+        start: start,
+        end: end,
+        color: color || 'rgba(59, 200, 120, 0.3)',
+        drag: true,
+        resize: true,
+        minLength: 0.1
+    });
+
+    // Listen to update-end (NOT update) to avoid continuous drag events (Pitfall 6)
+    region.on('update-end', () => {
+        if (dotNetRef) {
+            dotNetRef.invokeMethodAsync('OnRegionBoundsUpdated', id, region.start, region.end)
+                .catch(err => console.warn('[waveform-interop] Error invoking OnRegionBoundsUpdated:', err));
+        }
+    });
+
+    return region;
+}
+
+/**
+ * Updates a region's boundaries programmatically from .NET side.
+ * @param {string} elementId - The element ID of the WaveSurfer instance
+ * @param {string} regionId - The ID of the region to update
+ * @param {number} start - New start time in seconds
+ * @param {number} end - New end time in seconds
+ */
+export function updateRegionBounds(elementId, regionId, start, end) {
+    const instance = window.wavesurferInstances[elementId];
+    if (!instance || !instance.regionsPlugin) return;
+
+    const regions = instance.regionsPlugin.getRegions();
+    const region = regions.find(r => r.id === regionId);
+    if (region) {
+        region.setOptions({ start: start, end: end });
+    }
+}
+
+/**
+ * Gets the current boundaries of a region.
+ * @param {string} elementId - The element ID of the WaveSurfer instance
+ * @param {string} regionId - The ID of the region to query
+ * @returns {{ start: number, end: number } | null} The region bounds, or null if not found
+ */
+export function getRegionBounds(elementId, regionId) {
+    const instance = window.wavesurferInstances[elementId];
+    if (!instance || !instance.regionsPlugin) return null;
+
+    const regions = instance.regionsPlugin.getRegions();
+    const region = regions.find(r => r.id === regionId);
+    if (region) {
+        return { start: region.start, end: region.end };
+    }
+    return null;
+}
+
+/**
+ * Synchronizes playheads across multiple WaveSurfer instances to the same time position.
+ * @param {string[]} elementIds - Array of element IDs to synchronize
+ * @param {number} timeSeconds - The target time in seconds
+ */
+export function syncPlayheads(elementIds, timeSeconds) {
+    for (const elementId of elementIds) {
+        const instance = window.wavesurferInstances[elementId];
+        if (!instance) continue;
+
+        const duration = instance.wavesurfer.getDuration();
+        if (duration > 0) {
+            instance.wavesurfer.seekTo(timeSeconds / duration);
+        }
+    }
+}
+
+/**
+ * Plays a segment of audio from startSec to endSec, then pauses.
+ * @param {string} elementId - The element ID of the WaveSurfer instance
+ * @param {number} startSec - Start time in seconds
+ * @param {number} endSec - End time in seconds
+ */
+export function playSegment(elementId, startSec, endSec) {
+    const instance = window.wavesurferInstances[elementId];
+    if (!instance) return;
+
+    const ws = instance.wavesurfer;
+    const duration = ws.getDuration();
+    if (duration <= 0) return;
+
+    // Seek to start position
+    ws.seekTo(startSec / duration);
+    ws.play();
+
+    // Set up a listener that pauses when currentTime >= endSec
+    const onAudioProcess = (currentTime) => {
+        if (currentTime >= endSec) {
+            ws.pause();
+            ws.un('audioprocess', onAudioProcess);
+        }
+    };
+    ws.on('audioprocess', onAudioProcess);
+}
+
+/**
+ * Sets the zoom level of a WaveSurfer instance.
+ * @param {string} elementId - The element ID of the WaveSurfer instance
+ * @param {number} pxPerSec - Pixels per second of audio
+ */
+export function setZoom(elementId, pxPerSec) {
+    const instance = window.wavesurferInstances[elementId];
+    if (!instance) return;
+
+    instance.wavesurfer.zoom(pxPerSec);
+}
