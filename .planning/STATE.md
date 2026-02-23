@@ -8,8 +8,8 @@ Audio Management System - CLI and core library for audio processing, ASR, forced
 
 **Milestone**: v2.0 Blazor Workstation
 **Phase**: 12 - Polish Area Foundation
-**Plan**: 5/8 (complete)
-**Status**: Plan 12-02 complete; staging queue and undo services delivered
+**Plan**: 6/8 (complete)
+**Status**: Plan 12-03 complete; pickup matching service and polish orchestrator delivered
 
 ## Progress
 
@@ -25,7 +25,7 @@ v2.0 Blazor Workstation[██████████████████�
 |------|------|-------|--------|
 | 12-01 | Audio Splice Service & Domain Models | 2 | Complete |
 | 12-02 | Staging Queue & Undo Services | 2 | Complete |
-| 12-03 | Polish API Endpoints | - | Pending |
+| 12-03 | Pickup Matching & Polish Orchestration | 2 | Complete |
 | 12-04 | Waveform Region Editing | 2 | Complete |
 | 12-05 | Polish Page Layout | - | Pending |
 | 12-06 | Pickup Matching UI | - | Pending |
@@ -96,6 +96,8 @@ v2.0 Blazor Workstation[██████████████████�
 | Region update event | update-end (not update) | Avoids continuous drag event overhead on Blazor circuit |
 | Polish services persistence | Workspace-local .polish/ dirs | StagingQueue and UndoService persist to workspace, not AppData |
 | Undo versioning | Versioned segment files + manifest.json | sent{id}.v{N}.original.wav with per-chapter JSON manifest |
+| ASR model path for Polish | AsrEngineConfig.ResolveModelPath | Uses AMS_WHISPER_MODEL_PATH env var, consistent with CLI pattern |
+| Pickup text normalization | Inline simple normalization | Avoids contraction expansion that would reduce ASR match fidelity |
 
 ## Phase 8/8.1 Conclusions (Archived)
 
@@ -131,7 +133,7 @@ poc/VelloSharpPoc/     - Avalonia + VelloSharp (child window fails)
 
 ## Next Action
 
-Plan 12-02 complete. Staging queue and undo services delivered. Ready for next pending plan.
+Plan 12-03 complete. Pickup matching and Polish orchestration services delivered. Ready for next pending plan.
 
 ## Deferred UI Refinements (for Plan 10-04)
 
@@ -148,7 +150,7 @@ None currently.
 
 ## Session Continuity
 
-Last session: 2026-02-23 09:50 PST
+Last session: 2026-02-23 10:00 PST
 Branch: `blazor-workstation`
-Stopped at: Completed 12-02-PLAN.md
-Note: Phase 12 plan 02 executed -- StagingQueueService and UndoService with JSON persistence and DI registration.
+Stopped at: Completed 12-03-PLAN.md
+Note: Phase 12 plan 03 executed -- PickupMatchingService and PolishService with DI registration.
