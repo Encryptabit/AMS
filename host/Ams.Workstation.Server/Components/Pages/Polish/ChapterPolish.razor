@@ -1,11 +1,13 @@
 @page "/polish/{ChapterName}"
 @inject Ams.Workstation.Server.Services.PolishService PolishService
+@inject Ams.Workstation.Server.Services.PolishVerificationService VerificationService
 @inject Ams.Workstation.Server.Services.StagingQueueService StagingQueueService
 @inject Ams.Workstation.Server.Services.BlazorWorkspace Workspace
 @inject Ams.Workstation.Server.Services.CrxService CrxService
 @inject NavigationManager Navigation
 @inject IJSRuntime JS
 @using Ams.Workstation.Server.Models
+@using Ams.Workstation.Server.Services
 @using Ams.Core.Artifacts.Hydrate
 @implements IAsyncDisposable
 
@@ -66,6 +68,21 @@
         </BitMessage>
     }
 
+    @* Verification section: shown after apply with revalidation results *@
+    @if (_verificationResult is not null && _verificationSegmentStart.HasValue && _verificationSegmentEnd.HasValue)
+    {
+        <BitCard Style="padding: 0.75rem;">
+            <BitText Typography="BitTypography.Subtitle2" Style="margin-bottom: 0.5rem;">Post-Replacement Verification</BitText>
+            <ContextPlayer
+                WaveformRef="_waveformPlayer"
+                SegmentStartSec="@_verificationSegmentStart.Value"
+                SegmentEndSec="@_verificationSegmentEnd.Value"
+                ValidationResult="@_verificationResult"
+                OnAccept="HandleVerificationAccept"
+                OnReject="HandleVerificationReject" />
+        </BitCard>
+    }
+
     @* Two-column layout *@
     <BitGrid Columns="12">
         <BitGridItem ColumnSpan="7" Style="min-width: 0;">
@@ -98,6 +115,12 @@
 
     private IReadOnlyList<StagedReplacement>? _stagedItems;
     private IReadOnlyList<HydratedSentence>? _flaggedSentences;
+
+    // Verification state
+    private RevalidationResult? _verificationResult;
+    private double? _verificationSegmentStart;
+    private double? _verificationSegmentEnd;
+    private int? _verificationSentenceId;
 
     [Parameter] public string? ChapterName { get; set; }
 
@@ -213,13 +236,24 @@
     private async Task HandleApply(string replacementId)
     {
         _isProcessing = true;
+        _verificationResult = null;
         StateHasChanged();
 
         try
         {
+            // Find the staged item to get segment info for re-validation
+            var item = _stagedItems?.FirstOrDefault(s => s.Id == replacementId);
+
             var (resultBuffer, timingDelta) = await PolishService.ApplyReplacementAsync(replacementId, CancellationToken.None);
-            _statusMessage = $"Applied replacement. Timing delta: {timingDelta:+0.000;-0.000}s";
+            _statusMessage = $"Applied replacement. Timing delta: {timingDelta:+0.000;-0.000}s. Re-validating...";
             _statusColor = BitColor.Success;
+            StateHasChanged();
+
+            // Auto-trigger re-validation on the affected segment
+            if (item is not null)
+            {
+                await RunRevalidationAsync(resultBuffer, item.OriginalStartSec, item.OriginalEndSec, item.SentenceId);
+            }
         }
         catch (Exception ex)
         {
@@ -314,6 +348,102 @@
         {
             _stagedItems = StagingQueueService.GetQueue(stem);
         }
+    }
+
+    /// <summary>
+    /// Runs ASR re-validation on the replaced segment and shows the ContextPlayer.
+    /// </summary>
+    private async Task RunRevalidationAsync(
+        Ams.Core.Artifacts.AudioBuffer resultBuffer,
+        double segmentStartSec,
+        double segmentEndSec,
+        int sentenceId)
+    {
+        try
+        {
+            // Look up the expected book text for this sentence
+            var expectedText = GetExpectedTextForSentence(sentenceId);
+            if (string.IsNullOrWhiteSpace(expectedText))
+            {
+                _statusMessage = "Applied successfully but could not find expected text for re-validation.";
+                _statusColor = BitColor.Warning;
+                return;
+            }
+
+            var result = await VerificationService.RevalidateSegmentAsync(
+                resultBuffer, segmentStartSec, segmentEndSec, expectedText, CancellationToken.None);
+
+            // Record in history
+            var stem = GetChapterStem();
+            if (!string.IsNullOrEmpty(stem))
+            {
+                VerificationService.RecordResult(stem, result);
+            }
+
+            // Show ContextPlayer with results
+            _verificationResult = result;
+            _verificationSegmentStart = segmentStartSec;
+            _verificationSegmentEnd = segmentEndSec;
+            _verificationSentenceId = sentenceId;
+
+            _statusMessage = result.Passed
+                ? $"Re-validation PASSED ({result.Similarity:P1} similarity). Review and accept or reject."
+                : $"Re-validation needs work ({result.Similarity:P1} similarity). Listen and decide.";
+            _statusColor = result.Passed ? BitColor.Success : BitColor.Warning;
+        }
+        catch (Exception ex)
+        {
+            _statusMessage = $"Applied successfully, but re-validation failed: {ex.Message}";
+            _statusColor = BitColor.Warning;
+        }
+    }
+
+    /// <summary>
+    /// Gets the expected book text for a sentence by ID from the flagged sentences list.
+    /// </summary>
+    private string? GetExpectedTextForSentence(int sentenceId)
+    {
+        return _flaggedSentences?.FirstOrDefault(s => s.Id == sentenceId)?.BookText;
+    }
+
+    /// <summary>
+    /// Handles the user accepting a verified fix -- syncs to Proof area.
+    /// </summary>
+    private async Task HandleVerificationAccept()
+    {
+        if (_verificationSentenceId is null) return;
+
+        var stem = GetChapterStem();
+        if (!string.IsNullOrEmpty(stem))
+        {
+            await VerificationService.SyncToProofAsync(stem, _verificationSentenceId.Value, passed: true);
+        }
+
+        _statusMessage = $"Fix accepted and synced to Proof area for sentence {_verificationSentenceId.Value}.";
+        _statusColor = BitColor.Success;
+
+        // Clear verification UI
+        _verificationResult = null;
+        _verificationSegmentStart = null;
+        _verificationSegmentEnd = null;
+        _verificationSentenceId = null;
+        StateHasChanged();
+    }
+
+    /// <summary>
+    /// Handles the user rejecting a fix -- suggests revert or boundary adjustment.
+    /// </summary>
+    private void HandleVerificationReject()
+    {
+        _statusMessage = "Fix rejected. Consider reverting the replacement or adjusting boundaries and re-applying.";
+        _statusColor = BitColor.Warning;
+
+        // Clear verification UI
+        _verificationResult = null;
+        _verificationSegmentStart = null;
+        _verificationSegmentEnd = null;
+        _verificationSentenceId = null;
+        StateHasChanged();
     }
 
     public ValueTask DisposeAsync()

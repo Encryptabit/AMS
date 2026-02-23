@@ -1,0 +1,131 @@
+@using Ams.Workstation.Server.Services
+@using Ams.Core.Asr
+
+<div class="context-player">
+    @* Play Controls *@
+    <BitStack Horizontal="true" Gap="0.5rem" VerticalAlign="BitAlignment.Center" AutoHeight="true">
+        <BitButton Variant="BitVariant.Outline"
+                   IconName="@BitIconName.Play"
+                   OnClick="PlayWithContext"
+                   IsEnabled="@(WaveformRef is not null)"
+                   Title="Play with surrounding audio context">
+            Play with Context
+        </BitButton>
+        <BitButton Variant="BitVariant.Outline"
+                   IconName="@BitIconName.PlayResume"
+                   OnClick="PlaySegmentOnly"
+                   IsEnabled="@(WaveformRef is not null)"
+                   Title="Play just the replaced segment">
+            Play Segment
+        </BitButton>
+        <div style="display: flex; align-items: center; gap: 0.25rem; margin-left: 0.5rem;">
+            <BitText Typography="BitTypography.Caption1">Context:</BitText>
+            <input type="range"
+                   min="1"
+                   max="10"
+                   step="0.5"
+                   value="@ContextSeconds"
+                   @oninput="OnContextSliderInput"
+                   title="Seconds of surrounding context"
+                   style="width: 100px;" />
+            <BitText Typography="BitTypography.Caption1">@ContextSeconds.ToString("0.0")s</BitText>
+        </div>
+    </BitStack>
+
+    @* Validation Results *@
+    @if (ValidationResult is not null)
+    {
+        <BitStack Horizontal="false" Gap="0.5rem" AutoHeight="true" Style="margin-top: 0.75rem;">
+            <BitStack Horizontal="true" Gap="0.5rem" VerticalAlign="BitAlignment.Center" AutoHeight="true">
+                <BitTag Color="@(ValidationResult.Passed ? BitColor.Success : BitColor.Error)">
+                    @(ValidationResult.Similarity.ToString("P1")) similarity
+                </BitTag>
+                <BitText Typography="BitTypography.Caption1" Color="BitColor.SecondaryForeground">
+                    @(ValidationResult.Passed ? "PASSED" : "NEEDS WORK") - WER: @((1.0 - ValidationResult.Similarity).ToString("P1"))
+                </BitText>
+            </BitStack>
+
+            <BitStack Horizontal="false" Gap="0.25rem" AutoHeight="true" Style="padding: 0.5rem; background: var(--bit-clr-bg-sec); border-radius: 4px;">
+                <BitText Typography="BitTypography.Caption1" Color="BitColor.SecondaryForeground">Expected:</BitText>
+                <BitText Typography="BitTypography.Body2">@ValidationResult.ExpectedText</BitText>
+                <BitText Typography="BitTypography.Caption1" Color="BitColor.SecondaryForeground" Style="margin-top: 0.25rem;">Recognized:</BitText>
+                <BitText Typography="BitTypography.Body2">@ValidationResult.RecognizedText</BitText>
+            </BitStack>
+
+            @* Decision Buttons *@
+            <BitStack Horizontal="true" Gap="0.5rem" AutoHeight="true">
+                <BitButton Variant="BitVariant.Fill"
+                           Color="BitColor.Success"
+                           IconName="@BitIconName.Accept"
+                           OnClick="HandleAccept"
+                           Title="Accept the fix and sync to Proof area">
+                    Accept Fix
+                </BitButton>
+                <BitButton Variant="BitVariant.Outline"
+                           Color="BitColor.Warning"
+                           IconName="@BitIconName.Refresh"
+                           OnClick="HandleReject"
+                           Title="Reject - adjust boundaries or try again">
+                    Needs Work
+                </BitButton>
+            </BitStack>
+        </BitStack>
+    }
+</div>
+
+@code {
+    /// <summary>Reference to the chapter waveform player for playback control.</summary>
+    [Parameter] public WaveformPlayer? WaveformRef { get; set; }
+
+    /// <summary>Start time of the replaced segment in seconds.</summary>
+    [Parameter] public double SegmentStartSec { get; set; }
+
+    /// <summary>End time of the replaced segment in seconds.</summary>
+    [Parameter] public double SegmentEndSec { get; set; }
+
+    /// <summary>Seconds of context before and after the segment for listen-with-context.</summary>
+    [Parameter] public double ContextSeconds { get; set; } = 3.0;
+
+    /// <summary>Revalidation result to display (pass/fail, similarity, recognized text).</summary>
+    [Parameter] public RevalidationResult? ValidationResult { get; set; }
+
+    /// <summary>Fires when user accepts the fix (syncs to Proof area).</summary>
+    [Parameter] public EventCallback OnAccept { get; set; }
+
+    /// <summary>Fires when user rejects the fix (wants to try again).</summary>
+    [Parameter] public EventCallback OnReject { get; set; }
+
+    private async Task PlayWithContext()
+    {
+        if (WaveformRef is null) return;
+
+        var contextStart = Math.Max(0, SegmentStartSec - ContextSeconds);
+        var contextEnd = SegmentEndSec + ContextSeconds;
+        await WaveformRef.PlaySegment(contextStart, contextEnd);
+    }
+
+    private async Task PlaySegmentOnly()
+    {
+        if (WaveformRef is null) return;
+
+        await WaveformRef.PlaySegment(SegmentStartSec, SegmentEndSec);
+    }
+
+    private async Task HandleAccept()
+    {
+        await OnAccept.InvokeAsync();
+    }
+
+    private async Task HandleReject()
+    {
+        await OnReject.InvokeAsync();
+    }
+
+    private void OnContextSliderInput(ChangeEventArgs e)
+    {
+        if (double.TryParse(e.Value?.ToString(), out var value))
+        {
+            ContextSeconds = value;
+        }
+    }
+}
