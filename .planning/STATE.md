@@ -8,8 +8,8 @@ Audio Management System - CLI and core library for audio processing, ASR, forced
 
 **Milestone**: v2.0 Blazor Workstation
 **Phase**: 12 - Polish Area Foundation
-**Plan**: 1/8 (complete)
-**Status**: Plan 12-01 complete; AudioSpliceService and Polish domain models delivered
+**Plan**: 4/8 (complete)
+**Status**: Plan 12-04 complete; waveform editable regions, sync, and segment playback delivered
 
 ## Progress
 
@@ -26,7 +26,7 @@ v2.0 Blazor Workstation[██████████████████�
 | 12-01 | Audio Splice Service & Domain Models | 2 | Complete |
 | 12-02 | Staging Queue Service | - | Pending |
 | 12-03 | Polish API Endpoints | - | Pending |
-| 12-04 | Waveform Region Editing | - | Pending |
+| 12-04 | Waveform Region Editing | 2 | Complete |
 | 12-05 | Polish Page Layout | - | Pending |
 | 12-06 | Pickup Matching UI | - | Pending |
 | 12-07 | Batch Operations | - | Pending |
@@ -92,6 +92,8 @@ v2.0 Blazor Workstation[██████████████████�
 | CRX tracking format | Excel (.xlsx) via ClosedXML | Matches Python validation-viewer column layout for publisher submission |
 | AudioSpliceService pattern | Static/stateless like AudioProcessor | FFmpeg acrossfade for crossfaded splicing, no DI needed |
 | Crossfade clamping | 30% of shorter segment | Prevents boundary overflow per research Pitfall 2 |
+| Region callback naming | OnRegionBoundsUpdated JSInvokable | Distinct from OnRegionUpdated EventCallback to avoid C# ambiguity |
+| Region update event | update-end (not update) | Avoids continuous drag event overhead on Blazor circuit |
 
 ## Phase 8/8.1 Conclusions (Archived)
 
@@ -127,7 +129,7 @@ poc/VelloSharpPoc/     - Avalonia + VelloSharp (child window fails)
 
 ## Next Action
 
-Plan 12-01 complete. Ready to execute plan 12-02 (Staging Queue Service).
+Plan 12-04 complete. Ready to execute plan 12-05 (Polish Page Layout).
 
 ## Deferred UI Refinements (for Plan 10-04)
 
@@ -144,7 +146,7 @@ None currently.
 
 ## Session Continuity
 
-Last session: 2026-02-23 09:50 PST
+Last session: 2026-02-23 09:49 PST
 Branch: `blazor-workstation`
-Stopped at: Completed 12-01-PLAN.md
-Note: Phase 12 plan 01 executed -- AudioSpliceService and Polish domain models delivered. Ready for plan 12-02.
+Stopped at: Completed 12-04-PLAN.md
+Note: Phase 12 plan 04 executed -- waveform editable regions, multi-instance sync, and segment playback. Ready for plan 12-05.
