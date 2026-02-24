@@ -8,8 +8,8 @@ Audio Management System - CLI and core library for audio processing, ASR, forced
 
 **Milestone**: v2.0 Blazor Workstation
 **Phase**: 13 - Pickup Substitution
-**Plan**: 6/8
-**Status**: Plan 13-06 complete; roomtone insert/replace/delete operations with per-replacement crossfade slider
+**Plan**: 7/8
+**Status**: Plan 13-07 complete; old Polish pages decommissioned, /polish route migrated to PickupSubstitution, memory-safe flipper navigation
 
 ## Progress
 
@@ -29,7 +29,7 @@ v2.0 Blazor Workstation[██████████████████�
 | 13-04 | Upfront Processing & Stage/Unstage Actions | 2 | Complete |
 | 13-05 | Region Editing & Commit/Revert Flow | 2 | Complete |
 | 13-06 | Roomtone Operations | 2 | Complete |
-| 13-07 | Roomtone Operations | - | Pending |
+| 13-07 | Integration & Cleanup | 2 | Complete |
 | 13-08 | Integration & Verification | - | Pending |
 
 ## Phase 12.1 Plans (MFA Refinement for Pickup Timings)
@@ -136,12 +136,14 @@ v2.0 Blazor Workstation[██████████████████�
 | 24-bit WAV encoding | PCM_S24LE codec + S32 input format | FFmpeg standard pattern; codec truncates 32-bit to 24-bit in WAV container |
 | Bit depth detection | bits_per_raw_sample > bits_per_coded_sample > format inference | Multi-level fallback covers PCM, compressed, and edge cases |
 | Roomtone fill implementation | Sample-level Array.Copy loop | More efficient than FFmpeg filter graph for simple memory looping |
-| Pickup substitution route | /polish/pickup (not /polish) | Avoids duplicate route conflict with existing Index.razor; plan 13-07 finalizes |
+| Pickup substitution route | /polish (finalized in 13-07) | Index.razor deleted; PickupSubstitution.razor now owns /polish directly |
 | Roomtone undo sentenceId | -1 sentinel | Roomtone ops are not sentence-specific; undo tracks by replacement ID |
 | Roomtone region color | Blue rgba(59,130,246,0.3) | Distinct from green (staged) and gray (committed) regions |
 | PickupBox mini waveform lifecycle | Import + draw + dispose per render | Avoids long-lived JS module refs for many PickupBox instances |
 | Region sync strategy | Clear-all + re-add on state change | Guaranteed consistency vs incremental add/remove; minor perf tradeoff |
 | Completion auto-advance | Wrap-around search with 500ms delay | Searches forward then wraps; delay provides visual feedback before flip |
+| Old Polish page decommission | Delete entirely (Index.razor, ChapterPolish.razor) | PickupSubstitution replaces them per locked decision; shared components also deleted |
+| Audio deallocation on chapter flip | Deallocate corrected buffer via CurrentChapterHandle | Prevents memory pressure during multi-chapter navigation |
 
 ## Phase 8/8.1 Conclusions (Archived)
 
@@ -178,7 +180,7 @@ poc/VelloSharpPoc/     - Avalonia + VelloSharp (child window fails)
 
 ## Next Action
 
-Phase 13 plan 13-06 complete. Roomtone insert/replace/delete operations via PolishService.ApplyRoomtoneOperationAsync, Roomtone Operations UI card with crossfade slider (5-200ms), blue waveform region for target selection. Continue with plan 13-07.
+Phase 13 plan 13-07 complete. Old Polish pages decommissioned (Index.razor, ChapterPolish.razor, PickupImporter.razor, StagingQueue.razor deleted). PickupSubstitution.razor now owns /polish route directly. Memory-safe chapter flipper with audio deallocation. Continue with plan 13-08.
 
 ## Deferred UI Refinements (for Plan 10-04)
 
@@ -195,7 +197,7 @@ None currently.
 
 ## Session Continuity
 
-Last session: 2026-02-24 19:33 UTC
+Last session: 2026-02-24 19:43 UTC
 Branch: `blazor-workstation`
-Stopped at: Completed 13-06-PLAN.md
-Note: Phase 13 plan 06 complete. ApplyRoomtoneOperationAsync in PolishService for Insert/Replace/Delete. Roomtone Operations UI card with crossfade slider. Blue editable waveform region for roomtone selection.
+Stopped at: Completed 13-07-PLAN.md
+Note: Phase 13 plan 07 complete. Old Polish pages deleted, /polish route owned by PickupSubstitution, memory-safe flipper navigation, CancellationTokenSource lifecycle, file path validation. Continue with 13-08.
