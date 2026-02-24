@@ -11,9 +11,9 @@ A comprehensive Audio Management System for audio processing, ASR, forced alignm
 
 ## Milestones
 
-- ✅ [v1.0 AMS Codebase Audit](milestones/v1.0-ROADMAP.md) (Phases 1-4) - SHIPPED 2025-12-30
-- ✅ **v1.1 Execute Refactoring** - Phases 5-7 - SHIPPED 2025-12-31
-- 🚧 **v2.0 Desktop UI** - Phases 8-12 (in progress)
+- v1.0 [v1.0 AMS Codebase Audit](milestones/v1.0-ROADMAP.md) (Phases 1-4) - SHIPPED 2025-12-30
+- **v1.1 Execute Refactoring** - Phases 5-7 - SHIPPED 2025-12-31
+- **v2.0 Desktop UI** - Phases 8-12 (in progress)
 
 ## Completed Milestones
 
@@ -45,7 +45,7 @@ A comprehensive Audio Management System for audio processing, ASR, forced alignm
 </details>
 
 <details>
-<summary>✅ v1.1 Execute Refactoring (Phases 5-7) - SHIPPED 2025-12-31</summary>
+<summary>v1.1 Execute Refactoring (Phases 5-7) - SHIPPED 2025-12-31</summary>
 
 **Milestone Goal:** Execute prioritized refactoring from ACTION-LIST.md to improve codebase health from 6.8 to 8.0
 
@@ -93,7 +93,7 @@ Issues addressed: AUD-003, AUD-016, AUD-017, AUD-018, AUD-026, AUD-031
 
 </details>
 
-### 🚧 v2.0 Blazor Workstation (In Progress)
+### v2.0 Blazor Workstation (In Progress)
 
 **Milestone Goal:** Build a Blazor Server workstation for audiobook production with Prep/Proof/Polish workflow areas, replacing the Python validation-viewer.
 
@@ -215,6 +215,23 @@ Plans:
 Plans:
 - [ ] 12.1-01-PLAN.md -- PickupMfaRefinementService + PickupMatchingService integration
 
+#### Phase 13: Pickup Substitution
+**Goal**: Single-page pickup substitution workflow with Match/Stage/Commit pipeline, cross-chapter flipper navigation, waveform region editing, roomtone operations, and format-preserving audio output
+**Depends on**: Phase 12, Phase 12.1
+**Research**: Complete (13-RESEARCH.md)
+**Plans**: 8 plans
+**Requirements:** PS-LAYOUT, PS-IMPORT, PS-MATCH, PS-PIPELINE, PS-REGIONS, PS-COMMIT, PS-ROOMTONE, PS-FORMAT, PS-NAV, PS-COMPLETE
+
+Plans:
+- [ ] 13-01-PLAN.md -- 24-bit WAV encoding support + roomtone operation helpers (AudioSpliceService)
+- [ ] 13-02-PLAN.md -- Cross-chapter pickup models + waveform amplitude data endpoint + mini waveform JS
+- [ ] 13-03-PLAN.md -- PickupSubstitution page layout + PickupBox component (header, breadcrumbs, flippers, three columns)
+- [ ] 13-04-PLAN.md -- Upfront cross-chapter pickup processing + stage/unstage/drag-and-drop actions
+- [ ] 13-05-PLAN.md -- Waveform region editing for staged pickups + commit/revert flow + completion tracking
+- [ ] 13-06-PLAN.md -- Roomtone insert/replace/delete UI + crossfade duration slider
+- [ ] 13-07-PLAN.md -- Route cleanup, old page removal, progress indicators, memory management
+- [ ] 13-08-PLAN.md -- End-to-end verification checkpoint
+
 ### Quick Plans (Ad-hoc)
 
 - [x] quick-001: Simplify alignment/diff pipeline errors (deterministic UI diff rendering, glue-heuristic removal, stricter sentence ownership) - completed 2026-02-17
@@ -222,7 +239,7 @@ Plans:
 ## Progress
 
 **Execution Order:**
-Phases execute in numeric order: 1 → 2 → ... → 12
+Phases execute in numeric order: 1 -> 2 -> ... -> 13
 
 | Phase | Milestone | Plans Complete | Status | Completed |
 |-------|-----------|----------------|--------|-----------|
@@ -243,12 +260,4 @@ Phases execute in numeric order: 1 → 2 → ... → 12
 | 11. Prep Area Implementation | v2.0 | 0/? | Not started | - |
 | 12. Polish Area Foundation | v2.0 | Complete    | 2026-02-24 | - |
 | 12.1. MFA Pickup Refinement | v2.0 | Complete    | 2026-02-24 | - |
-
-### Phase 13: Pickup Substitution
-
-**Goal:** [To be planned]
-**Depends on:** Phase 12
-**Plans:** 8/8 plans complete
-
-Plans:
-- [ ] TBD (run /gsd:plan-phase 13 to break down)
+| 13. Pickup Substitution | v2.0 | 0/8 | Planning complete | - |
