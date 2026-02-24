@@ -253,6 +253,112 @@ public class AudioController : ControllerBase
         }
     }
 
+    /// <summary>
+    /// Returns normalized RMS amplitude data for a segment of an audio file.
+    /// Used by mini waveform thumbnails to render lightweight canvas-based visualizations
+    /// without requiring a full wavesurfer.js instance.
+    /// </summary>
+    /// <param name="path">Absolute path to the audio file.</param>
+    /// <param name="start">Optional start time in seconds.</param>
+    /// <param name="end">Optional end time in seconds.</param>
+    /// <param name="points">Number of amplitude data points to return (clamped to 20-500).</param>
+    /// <returns>JSON array of normalized floats (0.0 to 1.0).</returns>
+    [HttpGet("waveform-data")]
+    public IActionResult GetWaveformData(
+        [FromQuery] string path,
+        [FromQuery] double? start = null,
+        [FromQuery] double? end = null,
+        [FromQuery] int points = 100)
+    {
+        if (string.IsNullOrEmpty(path))
+        {
+            return BadRequest("Path is required");
+        }
+
+        var decodedPath = Uri.UnescapeDataString(path);
+
+        if (!System.IO.File.Exists(decodedPath))
+        {
+            return NotFound($"Audio file not found: {decodedPath}");
+        }
+
+        // Clamp points to safe range
+        points = Math.Clamp(points, 20, 500);
+
+        try
+        {
+            // Decode the audio segment
+            AudioDecodeOptions? decodeOptions = null;
+
+            if (start.HasValue && end.HasValue && end.Value > start.Value)
+            {
+                decodeOptions = new AudioDecodeOptions(
+                    Start: TimeSpan.FromSeconds(start.Value),
+                    Duration: TimeSpan.FromSeconds(end.Value - start.Value));
+            }
+            else if (start.HasValue)
+            {
+                decodeOptions = new AudioDecodeOptions(
+                    Start: TimeSpan.FromSeconds(start.Value));
+            }
+
+            var buffer = AudioProcessor.Decode(decodedPath, decodeOptions);
+
+            if (buffer.Length == 0)
+            {
+                return Ok(Array.Empty<float>());
+            }
+
+            // Compute RMS amplitude per block across all channels
+            var samplesPerBlock = Math.Max(1, buffer.Length / points);
+            var actualPoints = Math.Min(points, buffer.Length);
+            var amplitudes = new float[actualPoints];
+            var maxAmplitude = 0f;
+
+            for (var i = 0; i < actualPoints; i++)
+            {
+                var blockStart = i * samplesPerBlock;
+                var blockEnd = Math.Min(blockStart + samplesPerBlock, buffer.Length);
+                var sumSquares = 0.0;
+                var count = 0;
+
+                for (var ch = 0; ch < buffer.Channels; ch++)
+                {
+                    for (var s = blockStart; s < blockEnd; s++)
+                    {
+                        var sample = buffer.Planar[ch][s];
+                        sumSquares += sample * sample;
+                        count++;
+                    }
+                }
+
+                var rms = count > 0 ? (float)Math.Sqrt(sumSquares / count) : 0f;
+                amplitudes[i] = rms;
+
+                if (rms > maxAmplitude)
+                {
+                    maxAmplitude = rms;
+                }
+            }
+
+            // Normalize to 0.0 - 1.0
+            if (maxAmplitude > 0f)
+            {
+                for (var i = 0; i < amplitudes.Length; i++)
+                {
+                    amplitudes[i] /= maxAmplitude;
+                }
+            }
+
+            return Ok(amplitudes);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to compute waveform data for '{Path}'", decodedPath);
+            return StatusCode(500, $"Failed to compute waveform data: {ex.Message}");
+        }
+    }
+
     private IActionResult ServeAudioFile(string filePath)
     {
         var extension = Path.GetExtension(filePath).ToLowerInvariant();

@@ -558,3 +558,47 @@ export function setZoom(elementId, pxPerSec) {
 
     instance.wavesurfer.zoom(pxPerSec);
 }
+
+// --- Mini Waveform Renderer (no wavesurfer dependency) ---
+
+/**
+ * Draws a mini waveform visualization on a canvas element using amplitude data.
+ * Renders centered horizontal bars - lightweight alternative to full wavesurfer instances.
+ * @param {string} canvasId - The DOM element ID of the canvas
+ * @param {number[]} amplitudeData - Array of normalized amplitude values (0.0 to 1.0)
+ * @param {string} [color] - CSS fill color for the bars (defaults to '#4a9eff')
+ */
+export function drawMiniWaveform(canvasId, amplitudeData, color) {
+    const canvas = document.getElementById(canvasId);
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    const w = canvas.width;
+    const h = canvas.height;
+    ctx.clearRect(0, 0, w, h);
+    ctx.fillStyle = color || '#4a9eff';
+    const barW = w / amplitudeData.length;
+    for (let i = 0; i < amplitudeData.length; i++) {
+        const barH = amplitudeData[i] * h;
+        ctx.fillRect(i * barW, (h - barH) / 2, Math.max(1, barW - 1), barH);
+    }
+}
+
+/**
+ * Fetches waveform amplitude data from the server and renders it on a canvas.
+ * Combines the fetch from /api/audio/waveform-data with drawMiniWaveform in one call.
+ * @param {string} canvasId - The DOM element ID of the canvas
+ * @param {string} audioPath - Absolute path to the audio file on the server
+ * @param {number|null} startSec - Optional start time in seconds
+ * @param {number|null} endSec - Optional end time in seconds
+ * @param {string} [color] - CSS fill color for the bars
+ * @param {number} [points] - Number of amplitude data points (defaults to 100)
+ */
+export async function loadAndDrawMiniWaveform(canvasId, audioPath, startSec, endSec, color, points) {
+    const params = new URLSearchParams({ path: audioPath, points: points || 100 });
+    if (startSec != null) params.set('start', startSec);
+    if (endSec != null) params.set('end', endSec);
+    const response = await fetch(`/api/audio/waveform-data?${params}`);
+    if (!response.ok) return;
+    const data = await response.json();
+    drawMiniWaveform(canvasId, data, color);
+}
