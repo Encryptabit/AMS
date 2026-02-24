@@ -105,6 +105,59 @@ public sealed record BatchTarget(
     string ChapterStem,
     bool Selected);
 
+/// <summary>
+/// Wraps a <see cref="PickupMatch"/> with a chapter stem to form a composite key,
+/// preventing sentence ID collisions when matching pickups across multiple chapters.
+/// </summary>
+public sealed record CrossChapterPickupMatch(
+    string ChapterStem,
+    PickupMatch Match)
+{
+    /// <summary>Composite key: chapterStem:sentenceId to avoid cross-chapter ID collisions.</summary>
+    public string CompositeKey => $"{ChapterStem}:{Match.SentenceId}";
+}
+
+/// <summary>
+/// The type of roomtone editing operation to perform on an audio region.
+/// </summary>
+public enum RoomtoneOperation
+{
+    /// <summary>Insert roomtone at a point, pushing content apart.</summary>
+    Insert,
+
+    /// <summary>Replace selected region with looped roomtone.</summary>
+    Replace,
+
+    /// <summary>Delete selected region, pulling content together with crossfade.</summary>
+    Delete
+}
+
+/// <summary>
+/// Parameters for a roomtone editing operation specifying the target region,
+/// crossfade duration, and crossfade curve shape.
+/// </summary>
+public sealed record RoomtoneRequest(
+    RoomtoneOperation Operation,
+    double StartSec,
+    double EndSec,
+    double CrossfadeDurationSec = 0.030,
+    string CrossfadeCurve = "tri");
+
+/// <summary>
+/// State of a pickup match box in the three-column pipeline (Match -> Stage -> Commit).
+/// </summary>
+public enum PickupBoxState
+{
+    /// <summary>Pickup has been matched but not yet staged for replacement.</summary>
+    Matched,
+
+    /// <summary>Pickup replacement is staged and ready for review.</summary>
+    Staged,
+
+    /// <summary>Pickup replacement has been committed to the chapter audio.</summary>
+    Committed
+}
+
 public static class StagedReplacementExtensions
 {
     public static double PickupDuration(this StagedReplacement r) =>
