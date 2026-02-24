@@ -2,11 +2,13 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
 using Ams.Core.Artifacts;
 using Ams.Core.Artifacts.Hydrate;
 using Ams.Core.Audio;
+using Ams.Core.Common;
 using Ams.Core.Processors;
 using Ams.Workstation.Server.Models;
 
@@ -21,6 +23,9 @@ namespace Ams.Workstation.Server.Services;
 public class PolishService
 {
     private const double PickupSlicePaddingSec = 0.080;
+
+    private static readonly Regex PunctuationRegex = new(@"[^\w\s]", RegexOptions.Compiled);
+    private static readonly Regex WhitespaceRegex = new(@"\s+", RegexOptions.Compiled);
 
     private readonly BlazorWorkspace _workspace;
     private readonly StagingQueueService _stagingQueue;
@@ -55,6 +60,136 @@ public class PolishService
         CancellationToken ct)
     {
         return _pickupMatching.MatchPickupAsync(pickupFilePath, flaggedSentences, ct);
+    }
+
+    /// <summary>
+    /// Imports a pickup recording by running ASR+MFA matching against ALL chapters' flagged sentences
+    /// in a single pass. Returns matches distributed by chapter stem.
+    /// Handles cross-chapter sentence ID collisions via text similarity disambiguation.
+    /// </summary>
+    /// <param name="pickupFilePath">Path to the pickup WAV file.</param>
+    /// <param name="chapterTargets">Per-chapter flagged sentences to match against.</param>
+    /// <param name="progress">Optional progress reporter.</param>
+    /// <param name="ct">Cancellation token.</param>
+    /// <returns>Dictionary of chapter stem to list of cross-chapter pickup matches.</returns>
+    public async Task<Dictionary<string, List<CrossChapterPickupMatch>>> ImportPickupsCrossChapterAsync(
+        string pickupFilePath,
+        IReadOnlyList<(string ChapterStem, string ChapterName, IReadOnlyList<HydratedSentence> FlaggedSentences)> chapterTargets,
+        IProgress<(string Status, double Progress)>? progress = null,
+        CancellationToken ct = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(pickupFilePath);
+        ArgumentNullException.ThrowIfNull(chapterTargets);
+
+        // 1. Gather ALL flagged sentences from all chapters into a single list.
+        //    Track sentenceId -> list of (chapterStem, sentence) for disambiguation.
+        var sentenceOwnership = new Dictionary<int, List<(string ChapterStem, HydratedSentence Sentence)>>();
+        var allFlaggedSentences = new List<HydratedSentence>();
+
+        foreach (var (chapterStem, _, flagged) in chapterTargets)
+        {
+            foreach (var sentence in flagged)
+            {
+                if (!sentenceOwnership.TryGetValue(sentence.Id, out var owners))
+                {
+                    owners = new List<(string, HydratedSentence)>();
+                    sentenceOwnership[sentence.Id] = owners;
+                }
+                owners.Add((chapterStem, sentence));
+
+                // Only add the sentence once to the matching pool if this is the first occurrence
+                if (owners.Count == 1)
+                    allFlaggedSentences.Add(sentence);
+            }
+        }
+
+        if (allFlaggedSentences.Count == 0)
+            return new Dictionary<string, List<CrossChapterPickupMatch>>();
+
+        // 2. Report progress: splitting/ASR/MFA
+        progress?.Report(("Splitting by silence...", 0.1));
+
+        // 3. Run matching on all flagged sentences in one pass
+        var matches = await _pickupMatching.MatchPickupAsync(pickupFilePath, allFlaggedSentences, ct)
+            .ConfigureAwait(false);
+
+        // 4. Distribute results into per-chapter dictionary
+        progress?.Report(("Distributing matches...", 0.8));
+
+        var result = new Dictionary<string, List<CrossChapterPickupMatch>>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var match in matches)
+        {
+            ct.ThrowIfCancellationRequested();
+
+            if (!sentenceOwnership.TryGetValue(match.SentenceId, out var owners))
+                continue;
+
+            string ownerStem;
+            if (owners.Count == 1)
+            {
+                // No collision -- single owner
+                ownerStem = owners[0].ChapterStem;
+            }
+            else
+            {
+                // Cross-chapter ID collision: disambiguate by text similarity
+                ownerStem = DisambiguateOwner(match, owners);
+            }
+
+            if (!result.TryGetValue(ownerStem, out var chapterMatches))
+            {
+                chapterMatches = new List<CrossChapterPickupMatch>();
+                result[ownerStem] = chapterMatches;
+            }
+
+            chapterMatches.Add(new CrossChapterPickupMatch(ownerStem, match));
+        }
+
+        // 5. Complete
+        progress?.Report(("Complete", 1.0));
+
+        return result;
+    }
+
+    /// <summary>
+    /// Disambiguates which chapter owns a match when the same sentence ID appears in multiple chapters.
+    /// Uses Levenshtein text similarity between recognized text and each chapter's sentence text.
+    /// </summary>
+    private static string DisambiguateOwner(
+        PickupMatch match,
+        List<(string ChapterStem, HydratedSentence Sentence)> owners)
+    {
+        var normalizedRecognized = NormalizeForCompare(match.RecognizedText);
+        double bestScore = -1;
+        string bestStem = owners[0].ChapterStem;
+
+        foreach (var (stem, sentence) in owners)
+        {
+            var normalizedBook = NormalizeForCompare(sentence.BookText);
+            var score = LevenshteinMetrics.Similarity(normalizedRecognized, normalizedBook);
+            if (score > bestScore)
+            {
+                bestScore = score;
+                bestStem = stem;
+            }
+        }
+
+        return bestStem;
+    }
+
+    /// <summary>
+    /// Normalizes text for comparison: lowercase, collapse whitespace, remove punctuation.
+    /// </summary>
+    private static string NormalizeForCompare(string? text)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+            return string.Empty;
+
+        var normalized = text.ToLowerInvariant().Trim();
+        normalized = PunctuationRegex.Replace(normalized, " ");
+        normalized = WhitespaceRegex.Replace(normalized, " ").Trim();
+        return normalized;
     }
 
     /// <summary>
