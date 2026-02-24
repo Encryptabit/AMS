@@ -723,6 +723,39 @@
         }
     }
 
+    // ── Roomtone Operation Handlers ────────────────────────────────
+    private async Task HandleRoomtoneOp(RoomtoneOperation operation)
+    {
+        if (!_roomtoneRegionValid || string.IsNullOrWhiteSpace(_roomtoneFilePath)) return;
+
+        _isProcessing = true;
+        StateHasChanged();
+        try
+        {
+            var request = new RoomtoneRequest(
+                operation, _roomtoneRegionStart, _roomtoneRegionEnd,
+                _crossfadeDurationMs / 1000.0); // Convert ms to seconds
+
+            await PolishService.ApplyRoomtoneOperationAsync(
+                request, _roomtoneFilePath.Trim(), CancellationToken.None);
+
+            _correctedVersion++;
+            _processingStatus = $"Roomtone {operation} applied successfully.";
+            RefreshCurrentChapterState();
+            await SyncWaveformRegions();
+        }
+        catch (Exception ex) { _processingStatus = $"Roomtone operation failed: {ex.Message}"; }
+        finally { _isProcessing = false; StateHasChanged(); }
+    }
+
+    private void OnCrossfadeInput(ChangeEventArgs e)
+    {
+        if (int.TryParse(e.Value?.ToString(), out var ms))
+        {
+            _crossfadeDurationMs = Math.Clamp(ms, 5, 200);
+        }
+    }
+
     // ── Waveform Region Management ─────────────────────────────────
     private async Task HandleWaveformReady()
     {
@@ -1009,22 +1042,6 @@
                 return i;
         }
         return -1; // All complete
-    }
-
-    // ── Roomtone Operations (stubs for plan 13-07) ─────────────
-    private async Task HandleRoomtoneOp(RoomtoneOperation op)
-    {
-        // Roomtone operations will be implemented in plan 13-07
-        _processingStatus = $"Roomtone {op} operation: not yet implemented.";
-        StateHasChanged();
-    }
-
-    private void OnCrossfadeInput(ChangeEventArgs e)
-    {
-        if (int.TryParse(e.Value?.ToString(), out var ms))
-        {
-            _crossfadeDurationMs = ms;
-        }
     }
 
     // ── Disposal ──────────────────────────────────────────────────
