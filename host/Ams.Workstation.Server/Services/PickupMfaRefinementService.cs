@@ -51,6 +51,7 @@ public class PickupMfaRefinementService
         if (asrMatches.Count == 0)
             return asrMatches;
 
+        string? corpusDir = null;
         try
         {
             var workDir = _workspace.WorkingDirectory
@@ -76,7 +77,7 @@ public class PickupMfaRefinementService
             }
 
             // 2. Build temp corpus directory
-            var corpusDir = Path.Combine(workDir, ".polish", "pickups", "mfa", cacheHash);
+            corpusDir = Path.Combine(workDir, ".polish", "pickups", "mfa", cacheHash);
             Directory.CreateDirectory(corpusDir);
 
             var stagedWavPath = Path.Combine(corpusDir, "pickup.wav");
@@ -156,7 +157,6 @@ public class PickupMfaRefinementService
             if (alignResult.ExitCode != 0)
             {
                 Log.Warn("MFA align failed for pickup (exit {Code}), using ASR timings", alignResult.ExitCode);
-                CleanupCorpusDir(corpusDir);
                 return asrMatches;
             }
 
@@ -165,7 +165,6 @@ public class PickupMfaRefinementService
             if (textGridPath == null)
             {
                 Log.Warn("MFA TextGrid not found after alignment, using ASR timings");
-                CleanupCorpusDir(corpusDir);
                 return asrMatches;
             }
 
@@ -180,18 +179,24 @@ public class PickupMfaRefinementService
             // 9. Cache results
             WriteMfaCache(cachePath, cacheDir, result);
 
-            // 10. Cleanup temp corpus
-            CleanupCorpusDir(corpusDir);
-
             Log.Debug("MFA pickup refinement complete: {Refined}/{Total} matches refined",
                 refined.Count, orderedMatches.Count);
 
             return result;
         }
+        catch (OperationCanceledException)
+        {
+            throw; // Preserve caller cancellation semantics
+        }
         catch (Exception ex)
         {
             Log.Warn("MFA pickup refinement failed ({Message}), returning original ASR timings", ex.Message);
             return asrMatches;
+        }
+        finally
+        {
+            if (corpusDir != null)
+                CleanupCorpusDir(corpusDir);
         }
     }
 
