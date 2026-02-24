@@ -8,8 +8,8 @@ Audio Management System - CLI and core library for audio processing, ASR, forced
 
 **Milestone**: v2.0 Blazor Workstation
 **Phase**: 13 - Pickup Substitution
-**Plan**: 2/8
-**Status**: Plan 13-02 complete; cross-chapter models, waveform API, mini waveform renderer
+**Plan**: 3/8
+**Status**: Plan 13-03 complete; PickupSubstitution page and PickupBox component
 
 ## Progress
 
@@ -25,7 +25,7 @@ v2.0 Blazor Workstation[██████████████████�
 |------|------|-------|--------|
 | 13-01 | Audio Infrastructure (24-bit, Roomtone Helpers) | 2 | Complete |
 | 13-02 | Cross-Chapter Models & Mini Waveform | 2 | Complete |
-| 13-03 | Pickup Substitution Service | - | Pending |
+| 13-03 | Pickup Substitution Page & PickupBox | 2 | Complete |
 | 13-04 | Pickup Page Layout | - | Pending |
 | 13-05 | Pickup Matching UI | - | Pending |
 | 13-06 | Staging & Commit UI | - | Pending |
@@ -136,6 +136,8 @@ v2.0 Blazor Workstation[██████████████████�
 | 24-bit WAV encoding | PCM_S24LE codec + S32 input format | FFmpeg standard pattern; codec truncates 32-bit to 24-bit in WAV container |
 | Bit depth detection | bits_per_raw_sample > bits_per_coded_sample > format inference | Multi-level fallback covers PCM, compressed, and edge cases |
 | Roomtone fill implementation | Sample-level Array.Copy loop | More efficient than FFmpeg filter graph for simple memory looping |
+| Pickup substitution route | /polish/pickup (not /polish) | Avoids duplicate route conflict with existing Index.razor; plan 13-07 finalizes |
+| PickupBox mini waveform lifecycle | Import + draw + dispose per render | Avoids long-lived JS module refs for many PickupBox instances |
 
 ## Phase 8/8.1 Conclusions (Archived)
 
@@ -172,7 +174,7 @@ poc/VelloSharpPoc/     - Avalonia + VelloSharp (child window fails)
 
 ## Next Action
 
-Phase 13 plan 13-02 complete. Cross-chapter models, waveform data API, and mini waveform renderer ready. Continue with plan 13-03 (Pickup Substitution Service).
+Phase 13 plan 13-03 complete. PickupSubstitution page at /polish/pickup with header, breadcrumbs, flippers, waveform, and three-column layout. PickupBox component with mini waveform, confidence badge, and state-dependent actions. Continue with plan 13-04.
 
 ## Deferred UI Refinements (for Plan 10-04)
 
@@ -189,7 +191,7 @@ None currently.
 
 ## Session Continuity
 
-Last session: 2026-02-24 19:11 UTC
+Last session: 2026-02-24 19:19 UTC
 Branch: `blazor-workstation`
-Stopped at: Completed 13-01-PLAN.md
-Note: Phase 13 plan 01 complete. 24-bit WAV encoding (PCM_S24LE), AudioInfo.BitsPerSample, format-preserving PolishService output, and AudioSpliceService roomtone helpers (GenerateRoomtoneFill, DeleteRegion, InsertAtPoint).
+Stopped at: Completed 13-03-PLAN.md
+Note: Phase 13 plan 03 complete. PickupSubstitution.razor (single-page workflow) and PickupBox.razor (reusable card component) for the three-column pickup pipeline.
