@@ -287,6 +287,7 @@
     private bool _isProcessing;
     private string? _processingStatus;
     private double _processingProgress; // 0.0-1.0
+    private CancellationTokenSource _cts = new();
 
     // ── Roomtone state ──────────────────────────────────────────
     private double _roomtoneRegionStart;
@@ -310,7 +311,7 @@
 
     private record ChapterCrxInfo(string ChapterName, string Stem, int CrxCount, bool AllCommitted);
 
-    // ── Regex helpers (same as ChapterPolish) ─────────────────────
+    // ── Regex helpers ─────────────────────────────────────────────
     private static readonly Regex ChapterNumberRegex = new(@"\d+", RegexOptions.Compiled);
 
     // ── Computed properties ───────────────────────────────────────
@@ -375,6 +376,17 @@
         if (index < 0 || index >= _chaptersWithCrx.Count)
             return;
 
+        // Deallocate previous chapter's corrected audio buffer to prevent memory pressure
+        if (_currentChapterIndex >= 0 && _currentChapterIndex < _chaptersWithCrx.Count)
+        {
+            try
+            {
+                var prevHandle = Workspace.CurrentChapterHandle;
+                prevHandle?.Chapter.Audio.Deallocate("corrected");
+            }
+            catch { /* Ignore deallocation errors during navigation */ }
+        }
+
         _currentChapterIndex = index;
         _isWaveformReady = false; // Reset; will be set true again in HandleWaveformReady
         var info = _chaptersWithCrx[index];
@@ -435,6 +447,14 @@
 
     private async Task HandleSetRoomtone()
     {
+        // Validate roomtone file path
+        if (!string.IsNullOrWhiteSpace(_roomtoneFilePath) && !System.IO.File.Exists(_roomtoneFilePath.Trim()))
+        {
+            _processingStatus = "Roomtone file not found. Check the file path.";
+            StateHasChanged();
+            return;
+        }
+
         // Add a blue roomtone selection region to the waveform at a default position
         if (_waveformPlayer != null && _isWaveformReady && !string.IsNullOrWhiteSpace(_roomtoneFilePath))
         {
@@ -464,6 +484,21 @@
     private async Task HandlePickupFileSet()
     {
         if (string.IsNullOrWhiteSpace(_pickupSessionPath)) return;
+
+        // Validate pickup file path exists before starting processing
+        if (!System.IO.File.Exists(_pickupSessionPath.Trim()))
+        {
+            _processingStatus = "Pickup file not found. Check the file path.";
+            StateHasChanged();
+            return;
+        }
+
+        // Cancel any in-progress processing
+        await _cts.CancelAsync();
+        _cts.Dispose();
+        _cts = new CancellationTokenSource();
+        var token = _cts.Token;
+
         _isProcessing = true;
         _processingStatus = "Preparing chapters...";
         _processingProgress = 0;
@@ -475,6 +510,7 @@
             var chapterTargets = new List<(string Stem, string Name, IReadOnlyList<HydratedSentence> Flagged)>();
             foreach (var ch in _chaptersWithCrx)
             {
+                token.ThrowIfCancellationRequested();
                 Workspace.SelectChapter(ch.ChapterName);
                 if (Workspace.TryGetHydratedTranscript(ch.ChapterName, out var hydrated) && hydrated != null)
                 {
@@ -497,10 +533,12 @@
             });
 
             _matchesByChapter = await PolishService.ImportPickupsCrossChapterAsync(
-                _pickupSessionPath.Trim(), chapterTargets, progress, CancellationToken.None);
+                _pickupSessionPath.Trim(), chapterTargets, progress, token);
 
             _processingStatus = $"Found {_matchesByChapter.Values.Sum(m => m.Count)} matches across {_matchesByChapter.Count} chapters.";
         }
+        catch (OperationCanceledException) { _processingStatus = "Processing cancelled."; }
+        catch (System.IO.FileNotFoundException) { _processingStatus = "Pickup file not found. Check the file path."; }
         catch (Exception ex) { _processingStatus = $"Processing failed: {ex.Message}"; }
         finally
         {
@@ -622,7 +660,7 @@
         try
         {
             var (resultBuffer, timingDelta) = await PolishService.ApplyReplacementAsync(
-                replacementId, CancellationToken.None);
+                replacementId, _cts.Token);
 
             _correctedVersion++; // Force waveform URL cache-bust
             RefreshCurrentChapterState();
@@ -653,7 +691,7 @@
         {
             try
             {
-                await PolishService.ApplyReplacementAsync(item.Id, CancellationToken.None);
+                await PolishService.ApplyReplacementAsync(item.Id, _cts.Token);
                 committed++;
             }
             catch { /* continue with next */ }
@@ -675,7 +713,7 @@
 
         try
         {
-            await PolishService.RevertReplacementAsync(replacementId, CancellationToken.None);
+            await PolishService.RevertReplacementAsync(replacementId, _cts.Token);
             _correctedVersion++;
             RefreshCurrentChapterState();
             await SyncWaveformRegions();
@@ -737,7 +775,7 @@
                 _crossfadeDurationMs / 1000.0); // Convert ms to seconds
 
             await PolishService.ApplyRoomtoneOperationAsync(
-                request, _roomtoneFilePath.Trim(), CancellationToken.None);
+                request, _roomtoneFilePath.Trim(), _cts.Token);
 
             _correctedVersion++;
             _processingStatus = $"Roomtone {operation} applied successfully.";
@@ -885,7 +923,7 @@
         return _flaggedSentences?.FirstOrDefault(s => s.Id == sentenceId);
     }
 
-    // ── CRX Chapter Matching (same logic as ChapterPolish) ────────
+    // ── CRX Chapter Matching ─────────────────────────────────────
     private static bool ChapterMatches(string? crxChapter, string? currentChapter)
     {
         if (string.IsNullOrWhiteSpace(crxChapter) || string.IsNullOrWhiteSpace(currentChapter))
@@ -921,7 +959,7 @@
             @"\s+", " ").Trim();
     }
 
-    // ── CRX Target Resolution (same logic as ChapterPolish) ──────
+    // ── CRX Target Resolution ─────────────────────────────────────
     private static List<HydratedSentence> ResolveCrxTargets(
         IReadOnlyList<CrxEntry> chapterEntries,
         IReadOnlyList<HydratedSentence> sentences)
@@ -1047,6 +1085,18 @@
     // ── Disposal ──────────────────────────────────────────────────
     public ValueTask DisposeAsync()
     {
+        // Cancel any in-progress processing
+        try { _cts.Cancel(); } catch { /* already cancelled */ }
+        _cts.Dispose();
+
+        // Clear collections to release references
+        _matchesByChapter.Clear();
+        _chaptersWithCrx.Clear();
+        _flaggedSentences = null;
+        _stagedItems = null;
+        _waveformPlayer = null;
+        _draggedMatch = null;
+
         return ValueTask.CompletedTask;
     }
 }
