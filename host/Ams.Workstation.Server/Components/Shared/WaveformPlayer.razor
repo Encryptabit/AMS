@@ -298,6 +298,34 @@
     }
 
     /// <summary>
+    /// Removes all regions from the waveform.
+    /// </summary>
+    public async Task ClearRegions()
+    {
+        if (_module == null || !_isReady) return;
+        await _module.InvokeVoidAsync("clearRegions", _elementId);
+    }
+
+    /// <summary>
+    /// Removes a specific region by ID.
+    /// </summary>
+    public async Task RemoveRegion(string regionId)
+    {
+        if (_module == null || !_isReady) return;
+        await _module.InvokeVoidAsync("removeRegion", _elementId, regionId);
+    }
+
+    /// <summary>
+    /// Adds a non-editable (non-draggable, non-resizable) region to the waveform.
+    /// Used for committed/applied items that should be visible but not adjustable.
+    /// </summary>
+    public async Task AddRegion(string id, double start, double end, string? color = null)
+    {
+        if (_module == null || !_isReady) return;
+        await _module.InvokeVoidAsync("addRegion", _elementId, id, start, end, color);
+    }
+
+    /// <summary>
     /// Plays a segment of audio from startSec to endSec, then pauses.
     /// </summary>
     public async Task PlaySegment(double startSec, double endSec)

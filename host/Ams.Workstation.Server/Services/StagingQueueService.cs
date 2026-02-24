@@ -132,6 +132,41 @@ public class StagingQueueService
     }
 
     /// <summary>
+    /// Updates the original (chapter-side) splice boundaries for a staged replacement.
+    /// Called when the user drags region handles on the waveform.
+    /// Only updates items with <see cref="ReplacementStatus.Staged"/> status.
+    /// </summary>
+    /// <param name="replacementId">The replacement to update.</param>
+    /// <param name="newStartSec">New start time in seconds.</param>
+    /// <param name="newEndSec">New end time in seconds.</param>
+    /// <returns>True if the item was found and updated.</returns>
+    public bool UpdateBoundaries(string replacementId, double newStartSec, double newEndSec)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(replacementId);
+
+        lock (_lock)
+        {
+            EnsureLoaded();
+            foreach (var list in _queue!.Values)
+            {
+                var index = list.FindIndex(r => r.Id == replacementId && r.Status == ReplacementStatus.Staged);
+                if (index >= 0)
+                {
+                    list[index] = list[index] with
+                    {
+                        OriginalStartSec = newStartSec,
+                        OriginalEndSec = newEndSec
+                    };
+                    Save();
+                    return true;
+                }
+            }
+
+            return false;
+        }
+    }
+
+    /// <summary>
     /// Shifts OriginalStartSec and OriginalEndSec for all downstream items in the chapter
     /// whose SentenceId is greater than <paramref name="pivotSentenceId"/>.
     /// Applies to both Staged and Applied items so that revert/preview targets the

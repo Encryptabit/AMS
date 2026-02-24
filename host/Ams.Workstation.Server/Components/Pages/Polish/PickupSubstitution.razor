@@ -101,7 +101,9 @@
                 <WaveformPlayer
                     @ref="_waveformPlayer"
                     AudioUrl="@GetAudioUrl()"
-                    Title="@GetCurrentChapterName()" />
+                    Title="@GetCurrentChapterName()"
+                    OnReady="HandleWaveformReady"
+                    OnRegionUpdated="HandleRegionUpdated" />
             </div>
             <BitButton Variant="BitVariant.Outline"
                        IconName="@BitIconName.ChevronRight"
@@ -234,6 +236,7 @@
 
     // ── Current chapter state ─────────────────────────────────────
     private WaveformPlayer? _waveformPlayer;
+    private bool _isWaveformReady;
     private long _correctedVersion;
     private IReadOnlyList<HydratedSentence>? _flaggedSentences;
     private IReadOnlyList<StagedReplacement>? _stagedItems;
@@ -248,13 +251,13 @@
     private bool CanGoPrev => _currentChapterIndex > 0;
 
     // ── Lifecycle ─────────────────────────────────────────────────
-    protected override void OnInitialized()
+    protected override async Task OnInitializedAsync()
     {
         LoadChaptersWithCrx();
 
         if (_chaptersWithCrx.Count > 0)
         {
-            NavigateToChapter(0);
+            await NavigateToChapter(0);
         }
     }
 
@@ -300,12 +303,13 @@
         }
     }
 
-    private void NavigateToChapter(int index)
+    private async Task NavigateToChapter(int index)
     {
         if (index < 0 || index >= _chaptersWithCrx.Count)
             return;
 
         _currentChapterIndex = index;
+        _isWaveformReady = false; // Reset; will be set true again in HandleWaveformReady
         var info = _chaptersWithCrx[index];
 
         Workspace.SelectChapter(info.ChapterName);
@@ -350,8 +354,8 @@
         _correctedVersion++;
     }
 
-    private void HandlePrev() => NavigateToChapter(_currentChapterIndex - 1);
-    private void HandleNext() => NavigateToChapter(_currentChapterIndex + 1);
+    private async Task HandlePrev() => await NavigateToChapter(_currentChapterIndex - 1);
+    private async Task HandleNext() => await NavigateToChapter(_currentChapterIndex + 1);
 
     // ── Drag-and-drop state ──────────────────────────────────────
     private CrossChapterPickupMatch? _draggedMatch;
@@ -410,7 +414,12 @@
             _processingStatus = $"Found {_matchesByChapter.Values.Sum(m => m.Count)} matches across {_matchesByChapter.Count} chapters.";
         }
         catch (Exception ex) { _processingStatus = $"Processing failed: {ex.Message}"; }
-        finally { _isProcessing = false; StateHasChanged(); }
+        finally
+        {
+            _isProcessing = false;
+            await SyncWaveformRegions();
+            StateHasChanged();
+        }
     }
 
     private IReadOnlyList<HydratedSentence> LoadFlaggedSentencesForChapter(
@@ -475,7 +484,7 @@
     }
 
     // ── Action Handlers ───────────────────────────────────────────
-    private void HandleStageMatch(PickupMatch match)
+    private async Task HandleStageMatch(PickupMatch match)
     {
         if (_currentChapterIndex < 0 || _currentChapterIndex >= _chaptersWithCrx.Count)
             return;
@@ -495,6 +504,7 @@
                 sentence.Timing.EndSec);
 
             RefreshCurrentChapterState();
+            await SyncWaveformRegions();
         }
         catch (Exception ex)
         {
@@ -502,17 +512,18 @@
         }
     }
 
-    private void HandleUnstage(string replacementId)
+    private async Task HandleUnstage(string replacementId)
     {
         StagingQueueService.Unstage(replacementId);
         RefreshCurrentChapterState();
+        await SyncWaveformRegions();
     }
 
-    private void HandleStageAll()
+    private async Task HandleStageAll()
     {
         var matched = GetMatchedItems();
         foreach (var m in matched)
-            HandleStageMatch(m.Match);
+            await HandleStageMatch(m.Match);
     }
 
     private async Task HandleRevert(string replacementId)
@@ -524,22 +535,99 @@
         {
             await PolishService.RevertReplacementAsync(replacementId, CancellationToken.None);
             _correctedVersion++;
+            RefreshCurrentChapterState();
+            await SyncWaveformRegions();
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"Revert failed: {ex.Message}");
+            _processingStatus = $"Revert failed: {ex.Message}";
         }
         finally
         {
-            RefreshCurrentChapterState();
             _isProcessing = false;
             StateHasChanged();
         }
     }
 
-    private void HandleAudition(string id)
+    private async Task HandleAudition(string id)
     {
-        // Audition playback will be wired in a future plan
+        if (_waveformPlayer == null || !_isWaveformReady) return;
+
+        // Try to find a staged item to audition its pickup segment via preview
+        var stagedItem = (_stagedItems ?? Array.Empty<StagedReplacement>())
+            .FirstOrDefault(s => s.Id == id);
+        if (stagedItem != null)
+        {
+            try
+            {
+                PolishService.GeneratePreview(stagedItem.Id);
+                // Play the replacement region on the chapter waveform
+                await _waveformPlayer.PlaySegment(
+                    stagedItem.OriginalStartSec,
+                    stagedItem.OriginalStartSec + stagedItem.PickupDuration());
+            }
+            catch { /* Non-critical audition failure */ }
+            return;
+        }
+
+        // For matched items, find by extracting sentenceId from "match-{id}" format
+        if (id.StartsWith("match-") && int.TryParse(id["match-".Length..], out var sentenceId))
+        {
+            var sentence = _flaggedSentences?.FirstOrDefault(s => s.Id == sentenceId);
+            if (sentence?.Timing != null)
+            {
+                await _waveformPlayer.PlaySegment(sentence.Timing.StartSec, sentence.Timing.EndSec);
+            }
+        }
+    }
+
+    // ── Waveform Region Management ─────────────────────────────────
+    private async Task HandleWaveformReady()
+    {
+        _isWaveformReady = true;
+        await SyncWaveformRegions();
+        StateHasChanged();
+    }
+
+    private async Task HandleRegionUpdated((string Id, double Start, double End) region)
+    {
+        // Extract replacement ID from region ID (format: "staged-{replacementId}")
+        if (!region.Id.StartsWith("staged-")) return;
+        var replacementId = region.Id["staged-".Length..];
+
+        // Update boundaries in staging queue
+        StagingQueueService.UpdateBoundaries(replacementId, region.Start, region.End);
+        RefreshCurrentChapterState();
+    }
+
+    private async Task SyncWaveformRegions()
+    {
+        if (_waveformPlayer == null || !_isWaveformReady) return;
+
+        // Clear all existing regions
+        await _waveformPlayer.ClearRegions();
+
+        // Add editable regions for staged items (green)
+        var staged = GetStagedItems();
+        foreach (var item in staged)
+        {
+            await _waveformPlayer.AddEditableRegion(
+                $"staged-{item.Id}",
+                item.OriginalStartSec,
+                item.OriginalEndSec,
+                "rgba(59, 200, 120, 0.3)"); // Green for staged
+        }
+
+        // Add non-editable regions for committed items (gray, dimmed)
+        var committed = GetCommittedItems();
+        foreach (var item in committed)
+        {
+            await _waveformPlayer.AddRegion(
+                $"committed-{item.Id}",
+                item.OriginalStartSec,
+                item.OriginalStartSec + item.PickupDuration(),
+                "rgba(150, 150, 150, 0.25)"); // Gray for committed
+        }
     }
 
     // ── Drag-and-Drop Handlers ────────────────────────────────────
@@ -558,11 +646,11 @@
         // preventDefault is set in markup to allow drop
     }
 
-    private void HandleDrop()
+    private async Task HandleDrop()
     {
         if (_draggedMatch != null)
         {
-            HandleStageMatch(_draggedMatch.Match);
+            await HandleStageMatch(_draggedMatch.Match);
             _draggedMatch = null;
         }
     }
