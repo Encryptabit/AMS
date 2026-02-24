@@ -23,7 +23,7 @@ v2.0 Blazor Workstation[██████████████████�
 
 | Plan | Name | Tasks | Status |
 |------|------|-------|--------|
-| 13-01 | Phase Planning & Research | - | Complete |
+| 13-01 | Audio Infrastructure (24-bit, Roomtone Helpers) | 2 | Complete |
 | 13-02 | Cross-Chapter Models & Mini Waveform | 2 | Complete |
 | 13-03 | Pickup Substitution Service | - | Pending |
 | 13-04 | Pickup Page Layout | - | Pending |
@@ -133,6 +133,9 @@ v2.0 Blazor Workstation[██████████████████�
 | Cross-chapter composite key | chapterStem:sentenceId | Prevents sentence ID collisions when processing pickups across all chapters |
 | Mini waveform rendering | Canvas-based drawMiniWaveform | Lightweight alternative to wavesurfer instances for match box thumbnails |
 | Waveform amplitude API | RMS per block, normalized 0-1 | Server-side computation, clamped 20-500 points for safety |
+| 24-bit WAV encoding | PCM_S24LE codec + S32 input format | FFmpeg standard pattern; codec truncates 32-bit to 24-bit in WAV container |
+| Bit depth detection | bits_per_raw_sample > bits_per_coded_sample > format inference | Multi-level fallback covers PCM, compressed, and edge cases |
+| Roomtone fill implementation | Sample-level Array.Copy loop | More efficient than FFmpeg filter graph for simple memory looping |
 
 ## Phase 8/8.1 Conclusions (Archived)
 
@@ -188,5 +191,5 @@ None currently.
 
 Last session: 2026-02-24 19:11 UTC
 Branch: `blazor-workstation`
-Stopped at: Completed 13-02-PLAN.md
-Note: Phase 13 plan 02 complete. CrossChapterPickupMatch, RoomtoneOperation, PickupBoxState models added. Waveform amplitude data endpoint and mini waveform canvas renderer implemented.
+Stopped at: Completed 13-01-PLAN.md
+Note: Phase 13 plan 01 complete. 24-bit WAV encoding (PCM_S24LE), AudioInfo.BitsPerSample, format-preserving PolishService output, and AudioSpliceService roomtone helpers (GenerateRoomtoneFill, DeleteRegion, InsertAtPoint).
