@@ -88,6 +88,7 @@ public static class BuildIndexCommand
             throw new InvalidOperationException($"Unsupported file format. Supported formats: {supportedExts}");
         }
 
+        var pronunciationProvider = new MfaPronunciationProvider();
         BookIndex bookIndex;
 
         if (!forceRefresh && cache != null)
@@ -97,12 +98,17 @@ public static class BuildIndexCommand
             if (cachedIndex != null)
             {
                 Log.Debug("Cache hit for {BookFile}", bookFile.FullName);
-                bookIndex = cachedIndex;
+                bookIndex = await EnsurePhonemesAsync(cachedIndex, pronunciationProvider);
+                if (!ReferenceEquals(bookIndex, cachedIndex))
+                {
+                    await cache.SetAsync(bookIndex);
+                    Log.Debug("Cache backfilled with phonemes for {BookFile}", bookFile.FullName);
+                }
             }
             else
             {
                 Log.Debug("Cache miss for {BookFile}; rebuilding", bookFile.FullName);
-                bookIndex = await ProcessBookFromScratch(cache, bookFile.FullName, options);
+                bookIndex = await ProcessBookFromScratch(cache, pronunciationProvider, bookFile.FullName, options);
             }
         }
         else
@@ -116,7 +122,7 @@ public static class BuildIndexCommand
                 Log.Debug("Cache disabled for {BookFile}", bookFile.FullName);
             }
 
-            bookIndex = await ProcessBookFromScratch(cache, bookFile.FullName, options);
+            bookIndex = await ProcessBookFromScratch(cache, pronunciationProvider, bookFile.FullName, options);
         }
 
         var jsonOptions = new JsonSerializerOptions
@@ -142,6 +148,7 @@ public static class BuildIndexCommand
 
     private static async Task<BookIndex> ProcessBookFromScratch(
         IBookCache? cache,
+        IPronunciationProvider pronunciationProvider,
         string bookFilePath,
         BookIndexOptions options,
         CancellationToken cancellationToken = default)
@@ -152,6 +159,7 @@ public static class BuildIndexCommand
 
         Log.Debug("Building index for {BookFile}", bookFilePath);
         var bookIndex = await DocumentProcessor.BuildBookIndexAsync(parseResult, bookFilePath, options,
+            pronunciationProvider: pronunciationProvider,
             cancellationToken: cancellationToken);
         Log.Debug("Index build complete for {BookFile}", bookFilePath);
 
@@ -163,6 +171,39 @@ public static class BuildIndexCommand
         }
 
         return bookIndex;
+    }
+
+    private static async Task<BookIndex> EnsurePhonemesAsync(
+        BookIndex index,
+        IPronunciationProvider pronunciationProvider,
+        CancellationToken cancellationToken = default)
+    {
+        var missingBefore = CountMissingPhonemes(index);
+        if (missingBefore == 0)
+        {
+            return index;
+        }
+
+        var enriched = await DocumentProcessor
+            .PopulateMissingPhonemesAsync(index, pronunciationProvider, cancellationToken)
+            .ConfigureAwait(false);
+
+        var missingAfter = CountMissingPhonemes(enriched);
+        if (missingAfter < missingBefore)
+        {
+            Log.Debug("Backfilled phonemes for {Added} words (remaining missing: {Remaining})",
+                missingBefore - missingAfter, missingAfter);
+            return enriched;
+        }
+
+        return index;
+    }
+
+    private static int CountMissingPhonemes(BookIndex index)
+    {
+        return index.Words.Count(word =>
+            word.Phonemes is not { Length: > 0 } &&
+            !string.IsNullOrEmpty(PronunciationHelper.NormalizeForLookup(word.Text)));
     }
 
     private static string FormatDuration(double totalSeconds)

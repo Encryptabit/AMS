@@ -12,6 +12,7 @@
 
 using System.Globalization;
 using System.Text;
+using Ams.Core.Runtime.Book;
 
 namespace Ams.Core.Processors.Alignment.Mfa
 {
@@ -333,18 +334,10 @@ namespace Ams.Core.Processors.Alignment.Mfa
                 .Replace('‘', '\'').Replace('’', '\'')
                 .Replace('—', '-').Replace('–', '-');
 
-            // Lowercase
-            s = s.ToLowerInvariant();
-
-            // Treat hyphens as separators to keep TG/book tokenization symmetric
-            s = s.Replace('-', ' ');
-
-            // Split by whitespace
-            var parts = s.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries);
-
-            foreach (var raw in parts)
+            // Use the same lexical splitting used for MFA lab generation so merge/tokenization stays symmetric.
+            foreach (var raw in PronunciationHelper.ExtractPronunciationParts(s))
             {
-                var tok = TrimPunct(raw);
+                var tok = raw?.ToLowerInvariant();
 
                 if (string.IsNullOrEmpty(tok)) continue;
 
@@ -358,14 +351,6 @@ namespace Ams.Core.Processors.Alignment.Mfa
                     yield return tok;
                 }
             }
-        }
-
-        private static string TrimPunct(string t)
-        {
-            int i = 0, j = t.Length - 1;
-            while (i <= j && IsPunctToTrim(t[i])) i++;
-            while (j >= i && IsPunctToTrim(t[j])) j--;
-            return (i <= j) ? t.Substring(i, j - i + 1) : "";
         }
 
         private static string SafeNormalize(string input)
@@ -423,12 +408,6 @@ namespace Ams.Core.Processors.Alignment.Mfa
             }
         }
 
-        private static bool IsPunctToTrim(char c)
-        {
-            // Keep inner apostrophes (don't), strip most leading/trailing punctuation.
-            if (c == '\'' || c == '"') return false;
-            return char.IsPunctuation(c);
-        }
     }
 
     // -------- Adapter types (tiny glue you wire to your models) -------------

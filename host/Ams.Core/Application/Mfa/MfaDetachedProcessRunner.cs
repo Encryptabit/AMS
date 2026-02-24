@@ -45,10 +45,23 @@ internal static class MfaDetachedProcessRunner
             psi.ArgumentList.Add("-File");
             psi.ArgumentList.Add(scriptPath);
 
-            if (!string.IsNullOrWhiteSpace(workspaceRoot))
+            var resolvedWorkspaceRoot = workspaceRoot;
+            if (string.IsNullOrWhiteSpace(resolvedWorkspaceRoot))
             {
-                Directory.CreateDirectory(workspaceRoot);
-                psi.Environment["MFA_ROOT_DIR"] = workspaceRoot;
+                try
+                {
+                    resolvedWorkspaceRoot = MfaWorkspaceResolver.ResolvePreferredRoot();
+                }
+                catch (Exception ex)
+                {
+                    Log.Debug("Unable to resolve detached MFA workspace root: {Message}", ex.Message);
+                }
+            }
+
+            if (!string.IsNullOrWhiteSpace(resolvedWorkspaceRoot))
+            {
+                Directory.CreateDirectory(resolvedWorkspaceRoot);
+                psi.Environment["MFA_ROOT_DIR"] = resolvedWorkspaceRoot;
             }
 
             using var process = new Process { StartInfo = psi, EnableRaisingEvents = false };

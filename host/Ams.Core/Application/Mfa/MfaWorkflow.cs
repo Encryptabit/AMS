@@ -457,22 +457,7 @@ public static class MfaWorkflow
 
     private static string ResolveMfaRoot(string? overrideRoot = null)
     {
-        if (!string.IsNullOrWhiteSpace(overrideRoot))
-        {
-            Directory.CreateDirectory(overrideRoot);
-            return overrideRoot;
-        }
-
-        var documents = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
-
-        if (string.IsNullOrWhiteSpace(documents))
-        {
-            throw new InvalidOperationException("Unable to resolve My Documents folder for MFA root.");
-        }
-
-        var mfaRoot = Path.Combine(documents, "MFA");
-        Directory.CreateDirectory(mfaRoot);
-        return mfaRoot;
+        return MfaWorkspaceResolver.ResolvePreferredRoot(overrideRoot);
     }
 
     private static void CopyIfExists(string sourcePath, string destinationPath)

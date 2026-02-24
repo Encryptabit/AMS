@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.IO;
 using System.Linq;
+using Ams.Core.Application.Mfa;
 
 namespace Ams.Core.Application.Pipeline;
 
@@ -92,37 +93,6 @@ public sealed class PipelineConcurrencyControl : IDisposable
 
     private static IEnumerable<string> ResolveWorkspaceRoots(int requestedCount)
     {
-        var configured = Environment.GetEnvironmentVariable("AMS_MFA_WORKSPACES");
-        if (!string.IsNullOrWhiteSpace(configured))
-        {
-            foreach (var path in configured.Split(Path.PathSeparator,
-                         StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
-            {
-                yield return EnsureWorkspace(path);
-            }
-
-            yield break;
-        }
-
-        var documents = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
-        if (string.IsNullOrWhiteSpace(documents))
-        {
-            yield break;
-        }
-
-        var desired = requestedCount <= 1
-            ? 1
-            : Math.Max(8, requestedCount);
-        for (var i = 1; i <= desired; i++)
-        {
-            var path = Path.Combine(documents, $"MFA_{i}");
-            yield return EnsureWorkspace(path);
-        }
-    }
-
-    private static string EnsureWorkspace(string path)
-    {
-        Directory.CreateDirectory(path);
-        return Path.GetFullPath(path);
+        return MfaWorkspaceResolver.ResolveWorkspaceRoots(requestedCount);
     }
 }

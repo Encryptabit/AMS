@@ -69,6 +69,7 @@
     [Parameter] public EventCallback<SentenceReport> OnExportSentence { get; set; }
     [Parameter] public EventCallback<SentenceReport> OnCrxSentence { get; set; }
     [Parameter] public EventCallback<SentenceReport> OnIgnoreSentence { get; set; }
+    [Parameter] public EventCallback<ErrorPattern> OnTogglePatternIgnore { get; set; }
     [Parameter] public IReadOnlySet<string>? IgnoredKeys { get; set; }
 
     private IEnumerable<ErrorPattern> VisiblePatterns =>
@@ -90,11 +91,9 @@
         return 0;
     }
 
-    private void ToggleIgnore(ErrorPattern pattern)
+    private async Task ToggleIgnore(ErrorPattern pattern)
     {
-        // In-memory toggle — persistence deferred to Plan 05
-        pattern.Ignored = !pattern.Ignored;
-        StateHasChanged();
+        await OnTogglePatternIgnore.InvokeAsync(pattern);
     }
 
 

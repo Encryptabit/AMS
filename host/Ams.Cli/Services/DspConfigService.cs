@@ -5,7 +5,6 @@ namespace Ams.Cli.Services;
 internal static class DspConfigService
 {
     private const string ConfigDirectoryEnv = "AMS_DSP_CONFIG_DIR";
-    private const string DefaultFolderName = "AMS";
     private const string ConfigFileName = "dsp-config.json";
 
     private static readonly JsonSerializerOptions SerializerOptions = new()
@@ -27,13 +26,7 @@ internal static class DspConfigService
         }
         else
         {
-            var appData = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
-            if (string.IsNullOrWhiteSpace(appData))
-            {
-                appData = Environment.CurrentDirectory;
-            }
-
-            baseDirectory = Path.Combine(appData, DefaultFolderName);
+            baseDirectory = AmsAppDataPaths.Resolve();
         }
 
         return Path.Combine(baseDirectory, ConfigFileName);

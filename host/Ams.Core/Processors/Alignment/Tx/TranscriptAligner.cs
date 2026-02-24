@@ -46,7 +46,7 @@ public static class TranscriptAligner
         IReadOnlyDictionary<string, string> equiv,
         string[]? bookPhonemes = null,
         string[]? asrPhonemes = null,
-        double phonemeSoftThreshold = 0.8)
+        double phonemeSoftThreshold = 1.01)
     {
         if (Equivalent(bookTok, asrTok, equiv)) return 0.0;
 
@@ -55,7 +55,9 @@ public static class TranscriptAligner
             return 0.0;
         }
 
-        if (LevLe1(bookTok, asrTok) || HasSoftPhonemeMatch(bookPhonemes, asrPhonemes, phonemeSoftThreshold))
+        if (LevLe1(bookTok, asrTok) ||
+            (phonemeSoftThreshold <= 1.0 &&
+             HasSoftPhonemeMatch(bookPhonemes, asrPhonemes, phonemeSoftThreshold)))
         {
             return 0.3;
         }
@@ -77,7 +79,7 @@ public static class TranscriptAligner
         IReadOnlyList<string[]>? asrPhonemes = null,
         int maxRun = 8,
         double maxAvg = 0.6,
-        double phonemeSoftThreshold = 0.8)
+        double phonemeSoftThreshold = 1.01)
     {
         var all = new List<(int?, int?, AlignOp, string, double)>(bookNorm.Count + asrNorm.Count);
 

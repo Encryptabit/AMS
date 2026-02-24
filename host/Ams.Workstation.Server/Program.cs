@@ -1,4 +1,6 @@
 using Ams.Core.Services;
+using Ams.Core.Application.Mfa;
+using Ams.Core.Runtime.Book;
 using Ams.Core.Services.Alignment;
 using Ams.Core.Services.Interfaces;
 using Ams.Workstation.Server.Components;
@@ -29,6 +31,8 @@ builder.Services.AddTransient<ErrorPatternService>();
 // Persistence services - singleton (shared state across circuits)
 builder.Services.AddSingleton<ReviewedStatusService>();
 builder.Services.AddSingleton<IgnoredPatternsService>();
+builder.Services.AddSingleton<WorkspaceHistoryService>();
+builder.Services.AddSingleton<BookMetadataResetService>();
 
 // Audio export and CRX services - transient (stateless, uses workspace for audio access)
 builder.Services.AddTransient<AudioExportService>();
@@ -48,6 +52,7 @@ builder.Services.AddTransient<BatchOperationService>();
 // Ams.Core services - stateless services for alignment/ASR operations
 // Note: PipelineService and ValidationService require command dependencies
 // that are CLI-specific. Add them when needed with proper command registration.
+builder.Services.AddSingleton<IPronunciationProvider>(_ => new MfaPronunciationProvider());
 builder.Services.AddSingleton<IAsrService, AsrService>();
 builder.Services.AddSingleton<IAnchorComputeService, AnchorComputeService>();
 builder.Services.AddSingleton<ITranscriptIndexService, TranscriptIndexService>();

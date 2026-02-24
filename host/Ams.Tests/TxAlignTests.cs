@@ -232,4 +232,26 @@ public class TxAlignTests
         Assert.Equal(AlignOp.Match, op.op);
         Assert.Equal(0.0, op.score);
     }
+
+    [Fact]
+    public void SubCost_DefaultDisablesSoftPhonemeMatching()
+    {
+        var exactOnlyCost = TranscriptAligner.SubCost(
+            "alpha",
+            "omega",
+            new Dictionary<string, string>(),
+            new[] { "AA BB CC DD EE" },
+            new[] { "AA BB CC DD FF" });
+
+        var softEnabledCost = TranscriptAligner.SubCost(
+            "alpha",
+            "omega",
+            new Dictionary<string, string>(),
+            new[] { "AA BB CC DD EE" },
+            new[] { "AA BB CC DD FF" },
+            phonemeSoftThreshold: 0.8);
+
+        Assert.Equal(1.0, exactOnlyCost);
+        Assert.Equal(0.3, softEnabledCost);
+    }
 }

@@ -3,7 +3,9 @@ using System.Text;
 using System.Threading;
 using Ams.Cli.Repl;
 using Ams.Cli.Commands;
+using Ams.Core.Application.Mfa;
 using Ams.Core.Application.Validation;
+using Ams.Core.Runtime.Book;
 using Ams.Core.Services;
 using Ams.Core.Services.Alignment;
 using Microsoft.Extensions.DependencyInjection;
@@ -18,6 +20,7 @@ internal static class Program
     {
         HostApplicationBuilder builder = Host.CreateApplicationBuilder(args);
 
+        builder.Services.AddSingleton<IPronunciationProvider>(_ => new MfaPronunciationProvider());
         builder.Services.AddSingleton<IAsrService, AsrService>();
         builder.Services.AddSingleton<IAnchorComputeService, AnchorComputeService>();
         builder.Services.AddSingleton<ITranscriptIndexService, TranscriptIndexService>();

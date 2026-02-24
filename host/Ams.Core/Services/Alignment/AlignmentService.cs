@@ -26,7 +26,7 @@ public sealed class AlignmentService : IAlignmentService
         var provider = pronunciationProvider ?? NullPronunciationProvider.Instance;
         _anchorService = anchorService ?? new AnchorComputeService();
         _transcriptService = transcriptService ?? new TranscriptIndexService(provider);
-        _hydrationService = hydrationService ?? new TranscriptHydrationService();
+        _hydrationService = hydrationService ?? new TranscriptHydrationService(provider);
     }
 
     public Task<AnchorDocument> ComputeAnchorsAsync(

@@ -4,6 +4,7 @@ using System.IO;
 using System.Linq;
 using System.Text.Json;
 using Ams.Core.Artifacts.Hydrate;
+using Ams.Core.Common;
 using Ams.Core.Runtime.Artifacts;
 using Ams.Core.Runtime.Book;
 using Ams.Core.Runtime.Chapter;
@@ -21,10 +22,7 @@ namespace Ams.Workstation.Server.Services;
 /// </summary>
 public sealed class BlazorWorkspace : IWorkspace, IDisposable
 {
-    private static readonly string StateFilePath = Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-        "AMS",
-        "workstation-state.json");
+    private static readonly string StateFilePath = AmsAppDataPaths.Resolve("workstation-state.json");
 
     private BookManager? _manager;
     private ChapterContextHandle? _currentChapterHandle;

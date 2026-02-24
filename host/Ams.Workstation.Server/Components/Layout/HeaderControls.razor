@@ -2,6 +2,8 @@
 @implements IDisposable
 @inject NavigationManager NavigationManager
 @inject Ams.Workstation.Server.Services.BlazorWorkspace Workspace
+@inject Ams.Workstation.Server.Services.WorkspaceHistoryService WorkspaceHistory
+@inject Ams.Workstation.Server.Services.BookMetadataResetService MetadataReset
 
 <div class="header-controls">
     <div class="header-nav">
@@ -36,10 +38,17 @@
     </div>
 
     <div class="header-directory">
+        <BitDropdown TItem="BitDropdownItem<string>"
+                     TValue="string"
+                     Items="@savedWorkspaceItems"
+                     @bind-Value="selectedSavedWorkspace"
+                     Placeholder="Saved workspaces"
+                     Style="width: 220px; flex-shrink: 1; min-width: 120px;"
+                     OnChange="OnSavedWorkspaceChange" />
         <BitTextField @bind-Value="workingDirectory"
                       Immediate="true"
                       Placeholder="Working directory..."
-                      Style="width: 300px;"
+                      Style="width: 220px; flex-shrink: 1; min-width: 120px;"
                       OnKeyDown="OnDirectoryKeyDown" />
         <BitButton Variant="BitVariant.Fill"
                    Color="BitColor.Primary"
@@ -48,24 +57,45 @@
                    IsEnabled="@(!string.IsNullOrWhiteSpace(workingDirectory))">
             Set
         </BitButton>
+        <BitButton Variant="BitVariant.Outline"
+                   Color="BitColor.Warning"
+                   Size="BitSize.Small"
+                   OnClick="ResetMetadataAsync"
+                   IsEnabled="@Workspace.IsInitialized">
+            Reset Metadata
+        </BitButton>
     </div>
 </div>
 
-@if (!string.IsNullOrEmpty(errorMessage))
+@if (!string.IsNullOrEmpty(message))
 {
     <div class="error-toast">
-        <BitMessage Color="BitColor.Error" OnDismiss="DismissError">
-            @errorMessage
+        <BitMessage Color="@messageColor" OnDismiss="DismissMessage">
+            @message
         </BitMessage>
     </div>
 }
 
+<BitDialog @bind-IsOpen="isResetDialogOpen"
+           Title="Reset Metadata"
+           Message="@resetDialogMessage"
+           OkText="Reset"
+           CancelText="Cancel"
+           IsBlocking="true"
+           OnOk="ConfirmReset"
+           OnCancel="() => isResetDialogOpen = false" />
+
 @code {
     private string workingDirectory = string.Empty;
     private string? selectedChapter;
-    private string? errorMessage;
+    private string? selectedSavedWorkspace;
+    private string? message;
+    private BitColor messageColor = BitColor.Error;
     private string? currentPath;
     private List<BitDropdownItem<string>> chapterItems = new();
+    private List<BitDropdownItem<string>> savedWorkspaceItems = new();
+    private bool isResetDialogOpen;
+    private string resetDialogMessage = string.Empty;
 
     protected override void OnInitialized()
     {
@@ -76,6 +106,8 @@
         if (!string.IsNullOrEmpty(Workspace.WorkingDirectory))
         {
             workingDirectory = Workspace.WorkingDirectory;
+            selectedSavedWorkspace = workingDirectory;
+            WorkspaceHistory.RememberWorkspace(workingDirectory);
             RefreshChapterList();
         }
 
@@ -83,6 +115,8 @@
         {
             selectedChapter = Workspace.CurrentChapterName;
         }
+
+        RefreshSavedWorkspaceList();
     }
 
     private void OnLocationChanged(object? sender, LocationChangedEventArgs e)
@@ -114,7 +148,7 @@
 
     private void SetDirectory()
     {
-        errorMessage = null;
+        message = null;
 
         if (string.IsNullOrWhiteSpace(workingDirectory))
         {
@@ -125,18 +159,30 @@
 
         if (!Directory.Exists(trimmedPath))
         {
-            errorMessage = $"Directory does not exist: {trimmedPath}";
+            SetMessage($"Directory does not exist: {trimmedPath}", BitColor.Error);
             return;
         }
 
         if (!Workspace.SetWorkingDirectory(trimmedPath))
         {
-            errorMessage = $"Failed to initialize workspace: {trimmedPath}";
+            SetMessage($"Failed to initialize workspace: {trimmedPath}", BitColor.Error);
             return;
         }
 
+        workingDirectory = Path.GetFullPath(trimmedPath);
+        selectedSavedWorkspace = workingDirectory;
+        WorkspaceHistory.RememberWorkspace(workingDirectory);
+        RefreshSavedWorkspaceList();
         RefreshChapterList();
         StateHasChanged();
+    }
+
+    private void RefreshSavedWorkspaceList()
+    {
+        savedWorkspaceItems = WorkspaceHistory
+            .GetSavedWorkspaces(existingOnly: true)
+            .Select(path => new BitDropdownItem<string> { Text = path, Value = path })
+            .ToList();
     }
 
     private void RefreshChapterList()
@@ -151,6 +197,17 @@
         }
     }
 
+    private void OnSavedWorkspaceChange(string? path)
+    {
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            return;
+        }
+
+        workingDirectory = path;
+        SetDirectory();
+    }
+
     private void OnChapterChange(string? chapter)
     {
         if (!string.IsNullOrEmpty(chapter) && Workspace.SelectChapter(chapter))
@@ -159,9 +216,38 @@
         }
     }
 
-    private void DismissError()
+    private void ResetMetadataAsync()
     {
-        errorMessage = null;
+        message = null;
+
+        if (!Workspace.IsInitialized || string.IsNullOrWhiteSpace(Workspace.WorkingDirectory))
+        {
+            SetMessage("Set a workspace before resetting metadata.", BitColor.Warning);
+            return;
+        }
+
+        var workspacePath = Workspace.WorkingDirectory;
+        var bookId = Path.GetFileName(workspacePath.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
+        resetDialogMessage = $"Reset metadata for '{bookId}'? This clears ignored patterns, review progress, and polish staging data.";
+        isResetDialogOpen = true;
+    }
+
+    private void ConfirmReset()
+    {
+        isResetDialogOpen = false;
+        var result = MetadataReset.ResetCurrentBook();
+        SetMessage(result.Message, result.Success ? BitColor.Success : BitColor.Error);
+    }
+
+    private void SetMessage(string text, BitColor color)
+    {
+        message = text;
+        messageColor = color;
+    }
+
+    private void DismissMessage()
+    {
+        message = null;
     }
 
     public void Dispose()

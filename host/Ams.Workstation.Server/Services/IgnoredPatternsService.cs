@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Text.Json;
+using Ams.Core.Common;
 
 namespace Ams.Workstation.Server.Services;
 
@@ -13,9 +14,7 @@ namespace Ams.Workstation.Server.Services;
 /// </summary>
 public class IgnoredPatternsService
 {
-    private static readonly string BasePath = Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-        "AMS", "workstation");
+    private static readonly string BasePath = AmsAppDataPaths.Resolve("workstation");
 
     private readonly BlazorWorkspace _workspace;
     private HashSet<string> _ignoredKeys = new();
@@ -63,6 +62,13 @@ public class IgnoredPatternsService
             Save();
             return true;
         }
+    }
+
+    public void ResetCurrentBook()
+    {
+        EnsureLoaded();
+        _ignoredKeys.Clear();
+        Save();
     }
 
     private void EnsureLoaded()
@@ -123,7 +129,14 @@ public class IgnoredPatternsService
 
             if (!string.IsNullOrEmpty(_currentBookId))
             {
-                allBooks[_currentBookId] = _ignoredKeys.ToList();
+                if (_ignoredKeys.Count == 0)
+                {
+                    allBooks.Remove(_currentBookId);
+                }
+                else
+                {
+                    allBooks[_currentBookId] = _ignoredKeys.ToList();
+                }
             }
 
             var json = JsonSerializer.Serialize(allBooks, new JsonSerializerOptions { WriteIndented = true });

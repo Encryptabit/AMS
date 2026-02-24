@@ -8,11 +8,24 @@ namespace Ams.Core.Processors.Diffing;
 public static class TextDiffAnalyzer
 {
     public static TextDiffResult Analyze(string? referenceText, string? hypothesisText)
+        => Analyze(referenceText, hypothesisText, null);
+
+    public static TextDiffResult Analyze(
+        string? referenceText,
+        string? hypothesisText,
+        TextDiffScoringOptions? scoringOptions)
     {
         var scoringReference = NormalizeForScoring(referenceText);
         var scoringHypothesis = NormalizeForScoring(hypothesisText);
-        var scoringReferenceTokens = Tokenize(scoringReference);
-        var scoringHypothesisTokens = Tokenize(scoringHypothesis);
+        var scoringReferenceTokens = ResolveScoringTokens(scoringReference, scoringOptions?.ReferenceTokens);
+        var scoringHypothesisTokens = ResolveScoringTokens(scoringHypothesis, scoringOptions?.HypothesisTokens);
+
+        var scoringReferencePhonemes = AlignPhonemePayload(
+            scoringOptions?.ReferencePhonemeVariants,
+            scoringReferenceTokens.Count);
+        var scoringHypothesisPhonemes = AlignPhonemePayload(
+            scoringOptions?.HypothesisPhonemeVariants,
+            scoringHypothesisTokens.Count);
 
         var displayReference = NormalizeForDisplay(referenceText);
         var displayHypothesis = NormalizeForDisplay(hypothesisText);
@@ -39,6 +52,14 @@ public static class TextDiffAnalyzer
         // Keep scoring normalization independent from reviewer-facing diff tokens.
         var scoringTokenDiff = BuildTokenDiff(scoringReferenceTokens, scoringHypothesisTokens);
         var scoringStats = BuildStats(scoringReferenceTokens.Count, scoringHypothesisTokens.Count, scoringTokenDiff.Diffs);
+        if (scoringOptions?.UseExactPhonemeEquivalence == true)
+        {
+            scoringStats = ApplyExactPhonemeEquivalence(
+                scoringStats,
+                scoringTokenDiff.Diffs,
+                scoringReferencePhonemes,
+                scoringHypothesisPhonemes);
+        }
 
         var metrics = BuildMetrics(scoringReference, scoringHypothesis, scoringStats);
         var coverage = scoringStats.ReferenceTokens == 0
@@ -150,6 +171,54 @@ public static class TextDiffAnalyzer
         return TextNormalizer.TokenizeWords(text).ToList();
     }
 
+    private static List<string> ResolveScoringTokens(string normalizedFallback, IReadOnlyList<string>? providedTokens)
+    {
+        if (providedTokens is null)
+        {
+            return Tokenize(normalizedFallback);
+        }
+
+        var tokens = new List<string>(providedTokens.Count);
+        foreach (var token in providedTokens)
+        {
+            if (string.IsNullOrWhiteSpace(token))
+            {
+                continue;
+            }
+
+            tokens.Add(token.Trim());
+        }
+
+        return tokens;
+    }
+
+    private static IReadOnlyList<string[]?>? AlignPhonemePayload(IReadOnlyList<string[]?>? variants, int tokenCount)
+    {
+        if (variants is null)
+        {
+            return null;
+        }
+
+        if (tokenCount <= 0)
+        {
+            return Array.Empty<string[]?>();
+        }
+
+        if (variants.Count == tokenCount)
+        {
+            return variants;
+        }
+
+        var aligned = new string[]?[tokenCount];
+        var copyCount = Math.Min(tokenCount, variants.Count);
+        for (int i = 0; i < copyCount; i++)
+        {
+            aligned[i] = variants[i];
+        }
+
+        return aligned;
+    }
+
     private static TokenDiffResult BuildTokenDiff(IReadOnlyList<string> referenceTokens,
         IReadOnlyList<string> hypothesisTokens)
     {
@@ -219,6 +288,165 @@ public static class TextDiffAnalyzer
         return tokens;
     }
 
+    private static HydratedDiffStats ApplyExactPhonemeEquivalence(
+        HydratedDiffStats stats,
+        IReadOnlyList<Diff> diffs,
+        IReadOnlyList<string[]?>? referencePhonemes,
+        IReadOnlyList<string[]?>? hypothesisPhonemes)
+    {
+        if (referencePhonemes is null || hypothesisPhonemes is null || diffs.Count == 0)
+        {
+            return stats;
+        }
+
+        int equivalentPairs = 0;
+        int referenceCursor = 0;
+        int hypothesisCursor = 0;
+
+        for (int i = 0; i < diffs.Count; i++)
+        {
+            var diff = diffs[i];
+            var tokenCount = diff.text.Length;
+            if (tokenCount == 0)
+            {
+                continue;
+            }
+
+            if (i + 1 < diffs.Count &&
+                TryGetDeleteInsertPair(diff, diffs[i + 1], out var deleteCount, out var insertCount))
+            {
+                var pairCount = Math.Min(deleteCount, insertCount);
+                for (int p = 0; p < pairCount; p++)
+                {
+                    var refIdx = referenceCursor + p;
+                    var hypIdx = hypothesisCursor + p;
+                    if (HasExactPhonemeMatch(GetPhonemes(referencePhonemes, refIdx),
+                            GetPhonemes(hypothesisPhonemes, hypIdx)))
+                    {
+                        equivalentPairs++;
+                    }
+                }
+
+                referenceCursor += deleteCount;
+                hypothesisCursor += insertCount;
+                i++;
+                continue;
+            }
+
+            switch (diff.operation)
+            {
+                case Operation.EQUAL:
+                    referenceCursor += tokenCount;
+                    hypothesisCursor += tokenCount;
+                    break;
+                case Operation.DELETE:
+                    referenceCursor += tokenCount;
+                    break;
+                case Operation.INSERT:
+                    hypothesisCursor += tokenCount;
+                    break;
+            }
+        }
+
+        if (equivalentPairs <= 0)
+        {
+            return stats;
+        }
+
+        return new HydratedDiffStats(
+            stats.ReferenceTokens,
+            stats.HypothesisTokens,
+            Matches: stats.Matches + equivalentPairs,
+            Insertions: Math.Max(0, stats.Insertions - equivalentPairs),
+            Deletions: Math.Max(0, stats.Deletions - equivalentPairs));
+    }
+
+    private static bool TryGetDeleteInsertPair(Diff current, Diff next, out int deleteCount, out int insertCount)
+    {
+        deleteCount = 0;
+        insertCount = 0;
+
+        if (current.operation == Operation.DELETE && next.operation == Operation.INSERT)
+        {
+            deleteCount = current.text.Length;
+            insertCount = next.text.Length;
+            return true;
+        }
+
+        if (current.operation == Operation.INSERT && next.operation == Operation.DELETE)
+        {
+            deleteCount = next.text.Length;
+            insertCount = current.text.Length;
+            return true;
+        }
+
+        return false;
+    }
+
+    private static string[]? GetPhonemes(IReadOnlyList<string[]?> list, int index)
+    {
+        if (index < 0 || index >= list.Count)
+        {
+            return null;
+        }
+
+        var entry = list[index];
+        return entry is { Length: > 0 } ? entry : null;
+    }
+
+    private static bool HasExactPhonemeMatch(string[]? referenceVariants, string[]? hypothesisVariants)
+    {
+        if (referenceVariants is not { Length: > 0 } refList || hypothesisVariants is not { Length: > 0 } hypList)
+        {
+            return false;
+        }
+
+        foreach (var reference in refList)
+        {
+            if (string.IsNullOrWhiteSpace(reference))
+            {
+                continue;
+            }
+
+            var normalizedReference = NormalizePhonemeVariant(reference);
+            if (normalizedReference.Length == 0)
+            {
+                continue;
+            }
+
+            foreach (var hypothesis in hypList)
+            {
+                if (string.IsNullOrWhiteSpace(hypothesis))
+                {
+                    continue;
+                }
+
+                var normalizedHypothesis = NormalizePhonemeVariant(hypothesis);
+                if (normalizedHypothesis.Length == 0)
+                {
+                    continue;
+                }
+
+                if (string.Equals(normalizedReference, normalizedHypothesis, StringComparison.OrdinalIgnoreCase))
+                {
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
+
+    private static string NormalizePhonemeVariant(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return string.Empty;
+        }
+
+        return string.Join(' ', value.Split(' ', StringSplitOptions.RemoveEmptyEntries));
+    }
+
     private static string MapOperation(Operation op) => op switch
     {
         Operation.DELETE => "delete",
@@ -230,3 +458,10 @@ public static class TextDiffAnalyzer
 }
 
 public sealed record TextDiffResult(SentenceMetrics Metrics, HydratedDiff Diff, double Coverage);
+
+public sealed record TextDiffScoringOptions(
+    IReadOnlyList<string>? ReferenceTokens = null,
+    IReadOnlyList<string>? HypothesisTokens = null,
+    IReadOnlyList<string[]?>? ReferencePhonemeVariants = null,
+    IReadOnlyList<string[]?>? HypothesisPhonemeVariants = null,
+    bool UseExactPhonemeEquivalence = false);

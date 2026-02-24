@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Text.Json;
+using Ams.Core.Common;
 
 namespace Ams.Workstation.Server.Services;
 
@@ -12,9 +13,7 @@ namespace Ams.Workstation.Server.Services;
 /// </summary>
 public class ReviewedStatusService
 {
-    private static readonly string BasePath = Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-        "AMS", "workstation");
+    private static readonly string BasePath = AmsAppDataPaths.Resolve("workstation");
 
     private readonly BlazorWorkspace _workspace;
     private Dictionary<string, ReviewedEntry> _status = new();
@@ -46,6 +45,12 @@ public class ReviewedStatusService
 
     public void ResetAll()
     {
+        ResetCurrentBook();
+    }
+
+    public void ResetCurrentBook()
+    {
+        EnsureLoaded();
         _status.Clear();
         Save();
     }
@@ -111,7 +116,14 @@ public class ReviewedStatusService
 
             if (!string.IsNullOrEmpty(_currentBookId))
             {
-                allBooks[_currentBookId] = new Dictionary<string, ReviewedEntry>(_status);
+                if (_status.Count == 0)
+                {
+                    allBooks.Remove(_currentBookId);
+                }
+                else
+                {
+                    allBooks[_currentBookId] = new Dictionary<string, ReviewedEntry>(_status);
+                }
             }
 
             var json = JsonSerializer.Serialize(allBooks, new JsonSerializerOptions { WriteIndented = true });

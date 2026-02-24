@@ -3,6 +3,7 @@ using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.Json;
 using System.Threading.Channels;
+using Ams.Core.Application.Mfa;
 using Ams.Core.Application.Mfa.Models;
 
 namespace Ams.Core.Application.Processes;
@@ -161,6 +162,13 @@ public static class MfaProcessSupervisor
             psi.ArgumentList.Add("-NoProfile");
             psi.ArgumentList.Add("-File");
             psi.ArgumentList.Add(_scriptPath!);
+
+            var workspaceRoot = ResolveWorkspaceRootForSupervisor();
+            if (!string.IsNullOrWhiteSpace(workspaceRoot))
+            {
+                psi.Environment["MFA_ROOT_DIR"] = workspaceRoot;
+                Log.Debug("MFA supervisor root: {WorkspaceRoot}", workspaceRoot);
+            }
 
             _process = new Process { StartInfo = psi, EnableRaisingEvents = true };
             _process.Start();
@@ -459,6 +467,19 @@ public static class MfaProcessSupervisor
         catch
         {
             return workingDirectory;
+        }
+    }
+
+    private static string? ResolveWorkspaceRootForSupervisor()
+    {
+        try
+        {
+            return MfaWorkspaceResolver.ResolvePreferredRoot();
+        }
+        catch (Exception ex)
+        {
+            Log.Debug("Unable to resolve MFA workspace root for supervisor: {Message}", ex.Message);
+            return null;
         }
     }
 

@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Ams.Core.Application.Commands;
+using Ams.Core.Application.Mfa;
 using Ams.Core.Application.Pipeline;
 using Ams.Core.Application.Processes;
 using Ams.Core.Processors.DocumentProcessor;
@@ -18,6 +19,7 @@ public sealed class PipelineService
     private readonly HydrateTranscriptCommand _hydrateTranscript;
     private readonly RunMfaCommand _runMfa;
     private readonly MergeTimingsCommand _mergeTimings;
+    private readonly IPronunciationProvider _pronunciationProvider;
 
     public PipelineService(
         GenerateTranscriptCommand generateTranscript,
@@ -25,7 +27,8 @@ public sealed class PipelineService
         BuildTranscriptIndexCommand buildTranscriptIndex,
         HydrateTranscriptCommand hydrateTranscript,
         RunMfaCommand runMfa,
-        MergeTimingsCommand mergeTimings)
+        MergeTimingsCommand mergeTimings,
+        IPronunciationProvider? pronunciationProvider = null)
     {
         _generateTranscript = generateTranscript ?? throw new ArgumentNullException(nameof(generateTranscript));
         _computeAnchors = computeAnchors ?? throw new ArgumentNullException(nameof(computeAnchors));
@@ -33,6 +36,7 @@ public sealed class PipelineService
         _hydrateTranscript = hydrateTranscript ?? throw new ArgumentNullException(nameof(hydrateTranscript));
         _runMfa = runMfa ?? throw new ArgumentNullException(nameof(runMfa));
         _mergeTimings = mergeTimings ?? throw new ArgumentNullException(nameof(mergeTimings));
+        _pronunciationProvider = pronunciationProvider ?? NullPronunciationProvider.Instance;
     }
 
     public async Task<PipelineChapterResult> RunChapterAsync(
@@ -43,6 +47,7 @@ public sealed class PipelineService
         ArgumentNullException.ThrowIfNull(workspace);
         ArgumentNullException.ThrowIfNull(options);
         ValidateOptions(options);
+        using var mfaInvocationScope = MfaInvocationContext.BeginScope($"ch={options.ChapterId}");
 
         Directory.CreateDirectory(options.BookIndexFile.Directory?.FullName ??
                                   options.BookIndexFile.DirectoryName ?? ".");
@@ -308,7 +313,7 @@ public sealed class PipelineService
         }
     }
 
-    private static async Task BuildBookIndexAsync(PipelineRunOptions options, CancellationToken cancellationToken)
+    private async Task BuildBookIndexAsync(PipelineRunOptions options, CancellationToken cancellationToken)
     {
         var bookFile = options.BookFile;
         if (bookFile is null)
@@ -332,7 +337,12 @@ public sealed class PipelineService
             if (cachedIndex is not null)
             {
                 Log.Debug("Book index cache hit for {Book}", bookFile.FullName);
-                bookIndex = cachedIndex;
+                bookIndex = await EnsurePhonemesAsync(cachedIndex, cancellationToken).ConfigureAwait(false);
+                if (!ReferenceEquals(bookIndex, cachedIndex))
+                {
+                    await cache.SetAsync(bookIndex, cancellationToken).ConfigureAwait(false);
+                    Log.Debug("Book index cache backfilled with phonemes for {Book}", bookFile.FullName);
+                }
             }
             else
             {
@@ -367,17 +377,48 @@ public sealed class PipelineService
         await File.WriteAllTextAsync(options.BookIndexFile.FullName, json, cancellationToken).ConfigureAwait(false);
     }
 
-    private static async Task<BookIndex> BuildBookIndexInternal(FileInfo bookFile, double averageWpm,
+    private async Task<BookIndex> BuildBookIndexInternal(FileInfo bookFile, double averageWpm,
         CancellationToken cancellationToken)
     {
         var parseResult = await DocumentProcessor.ParseBookAsync(bookFile.FullName, cancellationToken)
             .ConfigureAwait(false);
-        return await DocumentProcessor.BuildBookIndexAsync(
+        var built = await DocumentProcessor.BuildBookIndexAsync(
             parseResult,
             bookFile.FullName,
             new BookIndexOptions { AverageWpm = averageWpm },
-            pronunciationProvider: null,
+            pronunciationProvider: _pronunciationProvider,
             cancellationToken).ConfigureAwait(false);
+        return await EnsurePhonemesAsync(built, cancellationToken).ConfigureAwait(false);
+    }
+
+    private async Task<BookIndex> EnsurePhonemesAsync(BookIndex index, CancellationToken cancellationToken)
+    {
+        var missingBefore = CountMissingPhonemes(index);
+        if (missingBefore == 0)
+        {
+            return index;
+        }
+
+        var enriched = await DocumentProcessor
+            .PopulateMissingPhonemesAsync(index, _pronunciationProvider, cancellationToken)
+            .ConfigureAwait(false);
+
+        var missingAfter = CountMissingPhonemes(enriched);
+        if (missingAfter < missingBefore)
+        {
+            Log.Debug("Book index phonemes backfilled: +{Added} words (remaining missing: {Remaining})",
+                missingBefore - missingAfter, missingAfter);
+            return enriched;
+        }
+
+        return index;
+    }
+
+    private static int CountMissingPhonemes(BookIndex index)
+    {
+        return index.Words.Count(word =>
+            word.Phonemes is not { Length: > 0 } &&
+            !string.IsNullOrEmpty(PronunciationHelper.NormalizeForLookup(word.Text)));
     }
 
     private static FileInfo ResolveTextGridFile(string chapterRoot, string chapterId)

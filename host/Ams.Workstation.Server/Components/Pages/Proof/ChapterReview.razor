@@ -57,7 +57,8 @@ else
                 OnPlaySentence="HandlePlayFromErrors"
                 OnExportSentence="HandleExportFromErrors"
                 OnCrxSentence="HandleCrxFromErrors"
-                OnIgnoreSentence="HandleIgnoreFromErrors" />
+                OnIgnoreSentence="HandleIgnoreFromErrors"
+                OnTogglePatternIgnore="HandleTogglePatternIgnore" />
 }
 
 @if (!string.IsNullOrEmpty(_exportMessage))
@@ -232,7 +233,7 @@ else
         StateHasChanged();
     }
 
-    private void HandleIgnoreFromErrors(SentenceReport sentence)
+    private async Task HandleIgnoreFromErrors(SentenceReport sentence)
     {
         if (sentence.Diff?.Ops is null) return;
 
@@ -267,11 +268,22 @@ else
 
         if (count > 0)
         {
-            // Refresh patterns and report to reflect the newly ignored keys
-            if (!string.IsNullOrEmpty(ChapterName))
-                LoadReport(Uri.UnescapeDataString(ChapterName));
+            var decoded = Uri.UnescapeDataString(ChapterName!);
+            LoadReport(decoded);
+            await LoadSentencesAsync(decoded);
             _exportMessage = $"Ignored {count} error pattern{(count == 1 ? "" : "s")} for entire book.";
         }
+        StateHasChanged();
+    }
+
+    private void HandleTogglePatternIgnore(ErrorPattern pattern)
+    {
+        IgnoredPatternsService.ToggleIgnored(pattern.Key);
+
+        // Refresh report + patterns so the UI immediately reflects the change
+        if (!string.IsNullOrEmpty(ChapterName))
+            LoadReport(Uri.UnescapeDataString(ChapterName));
+
         StateHasChanged();
     }
 

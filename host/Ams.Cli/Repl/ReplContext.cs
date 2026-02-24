@@ -460,19 +460,7 @@ internal sealed class ReplState
 
     private static string ResolveStateFilePath()
     {
-        var basePath = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
-        if (string.IsNullOrEmpty(basePath))
-        {
-            basePath = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
-        }
-
-        if (string.IsNullOrEmpty(basePath))
-        {
-            basePath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".ams");
-        }
-
-        var directory = Path.Combine(basePath, "AMS");
-        return Path.Combine(directory, "repl-state.json");
+        return AmsAppDataPaths.Resolve("repl-state.json");
     }
 
     private sealed record PersistedReplState(string WorkingDirectory, string? SelectedChapterName, bool RunAllChapters);

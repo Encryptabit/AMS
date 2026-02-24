@@ -14,6 +14,7 @@ public static class Log
 {
     private const string DefaultCategory = "AMS";
     private const string LevelEnvVar = "AMS_LOG_LEVEL";
+    private const LogEventLevel DefaultMinimumLevel = LogEventLevel.Debug;
 
     private static readonly object SyncRoot = new();
     private static ILoggerFactory loggerFactory = CreateDefaultFactory();
@@ -142,7 +143,7 @@ public static class Log
         var raw = Environment.GetEnvironmentVariable(LevelEnvVar);
         if (string.IsNullOrWhiteSpace(raw))
         {
-            return LogEventLevel.Information;
+            return DefaultMinimumLevel;
         }
 
         return raw.Trim().ToUpperInvariant() switch
@@ -153,7 +154,7 @@ public static class Log
             "WARN" or "WARNING" => LogEventLevel.Warning,
             "ERROR" => LogEventLevel.Error,
             "FATAL" or "CRITICAL" => LogEventLevel.Fatal,
-            _ => LogEventLevel.Information
+            _ => DefaultMinimumLevel
         };
     }
 }
