@@ -8,8 +8,8 @@ Audio Management System - CLI and core library for audio processing, ASR, forced
 
 **Milestone**: v2.0 Blazor Workstation
 **Phase**: 13 - Pickup Substitution
-**Plan**: 3/8
-**Status**: Plan 13-03 complete; PickupSubstitution page and PickupBox component
+**Plan**: 4/8
+**Status**: Plan 13-04 complete; cross-chapter pickup processing pipeline, stage/unstage/drag-and-drop
 
 ## Progress
 
@@ -26,7 +26,7 @@ v2.0 Blazor Workstation[██████████████████�
 | 13-01 | Audio Infrastructure (24-bit, Roomtone Helpers) | 2 | Complete |
 | 13-02 | Cross-Chapter Models & Mini Waveform | 2 | Complete |
 | 13-03 | Pickup Substitution Page & PickupBox | 2 | Complete |
-| 13-04 | Pickup Page Layout | - | Pending |
+| 13-04 | Upfront Processing & Stage/Unstage Actions | 2 | Complete |
 | 13-05 | Pickup Matching UI | - | Pending |
 | 13-06 | Staging & Commit UI | - | Pending |
 | 13-07 | Roomtone Operations | - | Pending |
@@ -174,7 +174,7 @@ poc/VelloSharpPoc/     - Avalonia + VelloSharp (child window fails)
 
 ## Next Action
 
-Phase 13 plan 13-03 complete. PickupSubstitution page at /polish/pickup with header, breadcrumbs, flippers, waveform, and three-column layout. PickupBox component with mini waveform, confidence badge, and state-dependent actions. Continue with plan 13-04.
+Phase 13 plan 13-04 complete. Cross-chapter pickup processing pipeline (ImportPickupsCrossChapterAsync), stage/unstage/stage all actions, and HTML5 drag-and-drop between Matches and Staged columns. Continue with plan 13-05 (Pickup Matching UI).
 
 ## Deferred UI Refinements (for Plan 10-04)
 
@@ -191,7 +191,7 @@ None currently.
 
 ## Session Continuity
 
-Last session: 2026-02-24 19:19 UTC
+Last session: 2026-02-24 19:21 UTC
 Branch: `blazor-workstation`
-Stopped at: Completed 13-03-PLAN.md
-Note: Phase 13 plan 03 complete. PickupSubstitution.razor (single-page workflow) and PickupBox.razor (reusable card component) for the three-column pickup pipeline.
+Stopped at: Completed 13-04-PLAN.md
+Note: Phase 13 plan 04 complete. ImportPickupsCrossChapterAsync in PolishService for book-wide single-pass processing. Stage/Unstage/Stage All actions and HTML5 drag-and-drop in PickupSubstitution.razor.
