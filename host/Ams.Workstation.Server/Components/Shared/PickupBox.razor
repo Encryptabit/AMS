@@ -1,0 +1,200 @@
+@using Ams.Workstation.Server.Models
+@using Ams.Core.Artifacts.Hydrate
+@inject IJSRuntime JS
+
+<div class="pickup-box @(_isDragging ? "pickup-box--dragging" : "")"
+     draggable="@(State == PickupBoxState.Matched ? "true" : "false")"
+     @ondragstart="HandleDragStart"
+     @ondragend="HandleDragEnd">
+    <BitCard Style="padding: 0.5rem;">
+        <BitStack Horizontal="false" Gap="0.25rem" AutoHeight="true">
+            @* Mini waveform canvas *@
+            <canvas id="@_canvasId" width="200" height="40"
+                    style="width: 100%; height: 40px; border-radius: 4px; background: #1a1a2e;"></canvas>
+
+            @* Matched sentence text *@
+            @if (Sentence != null)
+            {
+                <BitText Typography="BitTypography.Body2" Style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
+                    @TruncateText(Sentence.BookText, 80)
+                </BitText>
+            }
+
+            @* Confidence badge + time range *@
+            <BitStack Horizontal="true" Gap="0.5rem" VerticalAlign="BitAlignment.Center" AutoHeight="true">
+                @if (Match != null)
+                {
+                    <BitTag Color="@GetConfidenceColor(Match.Confidence)">
+                        @($"{Match.Confidence:P0}")
+                    </BitTag>
+                }
+                <BitText Typography="BitTypography.Caption1" Color="BitColor.SecondaryForeground">
+                    @GetTimeRange()
+                </BitText>
+            </BitStack>
+
+            @* Action buttons based on State *@
+            <BitStack Horizontal="true" Gap="0.25rem" AutoHeight="true">
+                @switch (State)
+                {
+                    case PickupBoxState.Matched:
+                        <BitButton Variant="BitVariant.Outline"
+                                   Color="BitColor.Success"
+                                   Size="BitSize.Small"
+                                   OnClick="HandleStage">
+                            Stage
+                        </BitButton>
+                        break;
+
+                    case PickupBoxState.Staged:
+                        <BitButton Variant="BitVariant.Outline"
+                                   Color="BitColor.Warning"
+                                   Size="BitSize.Small"
+                                   OnClick="HandleUnstage">
+                            Unstage
+                        </BitButton>
+                        <BitButton Variant="BitVariant.Text"
+                                   Size="BitSize.Small"
+                                   OnClick="HandleAudition">
+                            Audition
+                        </BitButton>
+                        break;
+
+                    case PickupBoxState.Committed:
+                        <BitButton Variant="BitVariant.Outline"
+                                   Color="BitColor.Error"
+                                   Size="BitSize.Small"
+                                   OnClick="HandleRevert">
+                            Revert
+                        </BitButton>
+                        break;
+                }
+            </BitStack>
+        </BitStack>
+    </BitCard>
+</div>
+
+@code {
+    private string _canvasId = $"mini-wf-{Guid.NewGuid():N}";
+    private bool _isDragging;
+
+    [Parameter] public PickupMatch? Match { get; set; }
+    [Parameter] public StagedReplacement? Replacement { get; set; }
+    [Parameter] public PickupBoxState State { get; set; }
+    [Parameter] public string? PickupFilePath { get; set; }
+    [Parameter] public HydratedSentence? Sentence { get; set; }
+    [Parameter] public EventCallback<PickupMatch> OnStage { get; set; }
+    [Parameter] public EventCallback<string> OnUnstage { get; set; }
+    [Parameter] public EventCallback<string> OnCommit { get; set; }
+    [Parameter] public EventCallback<string> OnRevert { get; set; }
+    [Parameter] public EventCallback<string> OnAudition { get; set; }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            await RenderMiniWaveform();
+        }
+    }
+
+    private async Task RenderMiniWaveform()
+    {
+        var (startSec, endSec) = GetTimeRangeValues();
+        if (string.IsNullOrWhiteSpace(PickupFilePath) || endSec <= startSec)
+            return;
+
+        var color = State switch
+        {
+            PickupBoxState.Matched => "#4a9eff",
+            PickupBoxState.Staged => "#3bc878",
+            PickupBoxState.Committed => "#999999",
+            _ => "#4a9eff"
+        };
+
+        try
+        {
+            var module = await JS.InvokeAsync<IJSObjectReference>("import", "./js/waveform-interop.js");
+            await module.InvokeVoidAsync("loadAndDrawMiniWaveform", _canvasId, PickupFilePath, startSec, endSec, color, 100);
+            await module.DisposeAsync();
+        }
+        catch
+        {
+            // Mini waveform rendering is non-critical; fail silently
+        }
+    }
+
+    private string GetTimeRange()
+    {
+        var (startSec, endSec) = GetTimeRangeValues();
+        return $"{startSec:F1}s - {endSec:F1}s";
+    }
+
+    private (double Start, double End) GetTimeRangeValues()
+    {
+        if (Match != null)
+            return (Match.PickupStartSec, Match.PickupEndSec);
+
+        if (Replacement != null)
+            return (Replacement.PickupStartSec, Replacement.PickupEndSec);
+
+        return (0, 0);
+    }
+
+    private static BitColor GetConfidenceColor(double confidence)
+    {
+        if (confidence >= 0.8) return BitColor.Success;
+        if (confidence >= 0.5) return BitColor.Warning;
+        return BitColor.Error;
+    }
+
+    private static string TruncateText(string? text, int maxLength)
+    {
+        if (string.IsNullOrEmpty(text)) return "";
+        return text.Length <= maxLength ? text : text[..maxLength] + "...";
+    }
+
+    // ── Action handlers ───────────────────────────────────────────
+    private async Task HandleStage()
+    {
+        if (Match != null)
+            await OnStage.InvokeAsync(Match);
+    }
+
+    private async Task HandleUnstage()
+    {
+        var id = Replacement?.Id;
+        if (!string.IsNullOrEmpty(id))
+            await OnUnstage.InvokeAsync(id);
+    }
+
+    private async Task HandleRevert()
+    {
+        var id = Replacement?.Id;
+        if (!string.IsNullOrEmpty(id))
+            await OnRevert.InvokeAsync(id);
+    }
+
+    private async Task HandleAudition()
+    {
+        var id = Match != null ? $"match-{Match.SentenceId}" : Replacement?.Id;
+        if (!string.IsNullOrEmpty(id))
+            await OnAudition.InvokeAsync(id);
+    }
+
+    // ── Drag support ──────────────────────────────────────────────
+    private void HandleDragStart()
+    {
+        _isDragging = true;
+    }
+
+    private void HandleDragEnd()
+    {
+        _isDragging = false;
+    }
+}
+
+<style>
+    .pickup-box--dragging {
+        opacity: 0.5;
+    }
+</style>
