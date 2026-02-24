@@ -104,3 +104,19 @@ public sealed record BatchOperation(
 public sealed record BatchTarget(
     string ChapterStem,
     bool Selected);
+
+public static class StagedReplacementExtensions
+{
+    public static double PickupDuration(this StagedReplacement r) =>
+        r.PickupEndSec - r.PickupStartSec;
+
+    public static double OriginalDuration(this StagedReplacement r) =>
+        r.OriginalEndSec - r.OriginalStartSec;
+
+    /// <summary>
+    /// Where the replacement actually ends in the post-splice audio:
+    /// original start + pickup duration (not the original end).
+    /// </summary>
+    public static double ActualReplacedEndSec(this StagedReplacement r) =>
+        r.OriginalStartSec + r.PickupDuration();
+}

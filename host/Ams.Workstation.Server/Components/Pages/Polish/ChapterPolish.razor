@@ -262,10 +262,10 @@
             _statusColor = BitColor.Success;
             StateHasChanged();
 
-            // Auto-trigger re-validation on the affected segment
+            // Auto-trigger re-validation on the affected segment (use actual replaced end, not original)
             if (item is not null)
             {
-                await RunRevalidationAsync(resultBuffer, item.OriginalStartSec, item.OriginalEndSec, item.SentenceId);
+                await RunRevalidationAsync(resultBuffer, item.OriginalStartSec, item.ActualReplacedEndSec(), item.SentenceId);
             }
         }
         catch (Exception ex)
@@ -365,7 +365,7 @@
                 StateHasChanged();
                 await _waveformPlayer.WaitForReadyAsync();
             }
-            await _waveformPlayer.PlaySegment(item.OriginalStartSec, item.OriginalEndSec);
+            await _waveformPlayer.PlaySegment(item.OriginalStartSec, item.ActualReplacedEndSec());
             return;
         }
 
@@ -381,7 +381,7 @@
             StateHasChanged();
 
             await _waveformPlayer.WaitForReadyAsync();
-            await _waveformPlayer.PlaySegment(item.OriginalStartSec, item.OriginalEndSec);
+            await _waveformPlayer.PlaySegment(item.OriginalStartSec, item.ActualReplacedEndSec());
         }
         catch (Exception ex)
         {

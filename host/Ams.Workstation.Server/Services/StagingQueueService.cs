@@ -132,6 +132,47 @@ public class StagingQueueService
     }
 
     /// <summary>
+    /// Shifts OriginalStartSec and OriginalEndSec for all downstream items in the chapter
+    /// whose SentenceId is greater than <paramref name="pivotSentenceId"/>.
+    /// Applies to both Staged and Applied items so that revert/preview targets the
+    /// correct region even when upstream replacements change duration.
+    /// Call after apply/revert to cascade timing changes to downstream items.
+    /// </summary>
+    public void ShiftDownstream(string chapterStem, int pivotSentenceId, double deltaSec)
+    {
+        if (Math.Abs(deltaSec) < 0.001) return;
+        ArgumentException.ThrowIfNullOrWhiteSpace(chapterStem);
+
+        lock (_lock)
+        {
+            EnsureLoaded();
+            if (!_queue!.TryGetValue(chapterStem, out var list))
+                return;
+
+            bool changed = false;
+            for (int i = 0; i < list.Count; i++)
+            {
+                var item = list[i];
+                if (item.SentenceId > pivotSentenceId
+                    && (item.Status == ReplacementStatus.Staged || item.Status == ReplacementStatus.Applied))
+                {
+                    list[i] = item with
+                    {
+                        OriginalStartSec = item.OriginalStartSec + deltaSec,
+                        OriginalEndSec = item.OriginalEndSec + deltaSec
+                    };
+                    changed = true;
+                    Console.WriteLine(
+                        $"[CascadeOffset] Shifted sentence {item.SentenceId} ({item.Status}): " +
+                        $"{item.OriginalStartSec:F3}s → {list[i].OriginalStartSec:F3}s (delta {deltaSec:+0.000;-0.000}s)");
+                }
+            }
+
+            if (changed) Save();
+        }
+    }
+
+    /// <summary>
     /// Clears all staged items for a specific chapter.
     /// </summary>
     public void Clear(string chapterStem)

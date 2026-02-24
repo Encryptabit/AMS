@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Ams.Core.Artifacts;
@@ -78,12 +79,54 @@ public class PolishService
         ArgumentNullException.ThrowIfNull(match);
         ArgumentException.ThrowIfNullOrWhiteSpace(pickupFilePath);
 
+        // Refine splice boundaries using silence detection
+        var refinedStart = originalStartSec;
+        var refinedEnd = originalEndSec;
+        try
+        {
+            var chapterBuffer = GetCurrentChapterBuffer();
+            var hydrate = GetCurrentHydratedTranscript();
+            double? prevEnd = null;
+            double? nextStart = null;
+
+            if (hydrate is not null)
+            {
+                var sentences = hydrate.Sentences;
+                int idx = -1;
+                for (int i = 0; i < sentences.Count; i++)
+                {
+                    if (sentences[i].Id == match.SentenceId) { idx = i; break; }
+                }
+
+                if (idx > 0)
+                    prevEnd = sentences[idx - 1].Timing?.EndSec;
+                if (idx >= 0 && idx < sentences.Count - 1)
+                    nextStart = sentences[idx + 1].Timing?.StartSec;
+            }
+
+            var result = SpliceBoundaryService.RefineBoundaries(
+                chapterBuffer, originalStartSec, originalEndSec,
+                prevEnd, nextStart);
+
+            refinedStart = result.RefinedStartSec;
+            refinedEnd = result.RefinedEndSec;
+
+            Console.WriteLine(
+                $"[BoundaryRefinement] Sentence {match.SentenceId}: " +
+                $"start {originalStartSec:F3}s → {refinedStart:F3}s ({result.StartMethod}), " +
+                $"end {originalEndSec:F3}s → {refinedEnd:F3}s ({result.EndMethod})");
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[BoundaryRefinement] Failed, using original boundaries: {ex.Message}");
+        }
+
         var replacement = new StagedReplacement(
             Id: Guid.NewGuid().ToString("N"),
             ChapterStem: chapterStem,
             SentenceId: match.SentenceId,
-            OriginalStartSec: originalStartSec,
-            OriginalEndSec: originalEndSec,
+            OriginalStartSec: refinedStart,
+            OriginalEndSec: refinedEnd,
             PickupSourcePath: pickupFilePath,
             PickupStartSec: match.PickupStartSec,
             PickupEndSec: match.PickupEndSec,
@@ -186,6 +229,9 @@ public class PolishService
         // 8. Update status to Applied
         _stagingQueue.UpdateStatus(replacementId, ReplacementStatus.Applied);
 
+        // 9. Cascade timing delta to downstream staged items
+        _stagingQueue.ShiftDownstream(item.ChapterStem, item.SentenceId, timingDelta);
+
         return (resultBuffer, timingDelta);
     }
 
@@ -213,16 +259,18 @@ public class PolishService
         // 3. Get current chapter audio (which has the replacement applied)
         var currentBuffer = GetCurrentChapterBuffer();
 
-        // 4. Calculate where the replacement currently sits (accounting for previous shifts)
-        // The replacement was applied at the original boundaries, and its duration may differ.
-        // For revert, we replace the current replacement region with the backed-up original.
+        // 4. Calculate where the replacement currently sits.
+        // Use the queue item's current (shifted) coordinates rather than the stale undo record,
+        // because upstream apply/revert may have cascaded timing deltas since this item was applied.
+        var queueItem = FindStagedItem(replacementId);
+        var currentStartSec = queueItem.OriginalStartSec;
         var replacementDuration = undoRecord.ReplacementDurationSec;
-        var replacementEndSec = undoRecord.OriginalStartSec + replacementDuration;
+        var replacementEndSec = currentStartSec + replacementDuration;
 
         // 5. Re-splice: put the original back
         var resultBuffer = AudioSpliceService.ReplaceSegment(
             currentBuffer,
-            undoRecord.OriginalStartSec,
+            currentStartSec,
             replacementEndSec,
             originalSegment,
             0.030,
@@ -236,6 +284,9 @@ public class PolishService
 
         // 8. Update status to Reverted
         _stagingQueue.UpdateStatus(replacementId, ReplacementStatus.Reverted);
+
+        // 9. Cascade the negative delta to downstream staged items
+        _stagingQueue.ShiftDownstream(undoRecord.ChapterStem, undoRecord.SentenceId, timingDelta);
 
         return (resultBuffer, timingDelta);
     }
@@ -277,6 +328,20 @@ public class PolishService
         }
 
         throw new InvalidOperationException($"Replacement '{replacementId}' not found.");
+    }
+
+    /// <summary>
+    /// Loads the hydrated transcript for the current chapter, if available.
+    /// </summary>
+    private HydratedTranscript? GetCurrentHydratedTranscript()
+    {
+        var chapterName = _workspace.CurrentChapterName;
+        if (string.IsNullOrEmpty(chapterName))
+            return null;
+
+        return _workspace.TryGetHydratedTranscript(chapterName, out var hydrate)
+            ? hydrate
+            : null;
     }
 
     /// <summary>
