@@ -4,21 +4,17 @@ using System.Text.Json;
 using Ams.Core.Application.Mfa;
 using Ams.Core.Application.Mfa.Models;
 using Ams.Core.Application.Processes;
-using Ams.Core.Artifacts.Hydrate;
+using Ams.Core.Asr;
 using Ams.Core.Common;
 using Ams.Core.Processors.Alignment.Mfa;
 using Ams.Core.Runtime.Book;
-using Ams.Workstation.Server.Models;
 
 namespace Ams.Workstation.Server.Services;
 
 /// <summary>
-/// Runs MFA forced alignment on pickup audio to replace rough ASR token
-/// boundaries with phoneme-accurate sentence timings.  Takes ASR-matched
-/// <see cref="PickupMatch"/> records and refines their PickupStartSec /
-/// PickupEndSec using TextGrid word intervals mapped back via
-/// Needleman-Wunsch alignment (same strategy as <see cref="MfaTimingMerger"/>).
-/// Falls back to original ASR timings on any MFA failure.
+/// Runs MFA forced alignment on the full pickup WAV and full ASR transcript,
+/// then rewrites ASR token timings with MFA-accurate boundaries.
+/// The refined ASR response is cached as a first-class artifact and reused.
 /// </summary>
 public class PickupMfaRefinementService
 {
@@ -35,337 +31,348 @@ public class PickupMfaRefinementService
     }
 
     /// <summary>
-    /// Refines ASR-based pickup match timings using MFA forced alignment.
+    /// Refines ASR token timings using full-file MFA forced alignment.
+    /// Falls back to the original ASR response on any MFA failure.
     /// </summary>
-    /// <param name="pickupFilePath">Path to the pickup WAV file.</param>
-    /// <param name="asrMatches">ASR-matched pickup records (with approximate timings).</param>
-    /// <param name="flaggedSentences">The flagged sentences that were matched against.</param>
-    /// <param name="ct">Cancellation token.</param>
-    /// <returns>Refined pickup matches with MFA-accurate timings, or originals on failure.</returns>
-    public async Task<IReadOnlyList<PickupMatch>> RefineWithMfaAsync(
+    public async Task<AsrResponse> RefineAsrTimingsAsync(
         string pickupFilePath,
-        IReadOnlyList<PickupMatch> asrMatches,
-        IReadOnlyList<HydratedSentence> flaggedSentences,
+        AsrResponse asrResponse,
         CancellationToken ct)
     {
-        if (asrMatches.Count == 0)
-            return asrMatches;
+        ArgumentException.ThrowIfNullOrWhiteSpace(pickupFilePath);
+        ArgumentNullException.ThrowIfNull(asrResponse);
 
-        string? corpusDir = null;
+        if (asrResponse.Tokens is not { Length: > 0 })
+            return asrResponse;
+
         try
         {
             var workDir = _workspace.WorkingDirectory
                 ?? throw new InvalidOperationException("No working directory set.");
 
-            // Order matches by pickup position for consistent processing
-            var orderedMatches = asrMatches.OrderBy(m => m.PickupStartSec).ToList();
-
-            // Build a lookup from sentence id to HydratedSentence
-            var sentenceLookup = flaggedSentences.ToDictionary(s => s.Id);
-
-            // Compute cache key incorporating both audio identity and matched sentence context
-            var cacheHash = ComputeMfaCacheKey(pickupFilePath, orderedMatches, sentenceLookup);
-            var cacheDir = Path.Combine(workDir, ".polish", "pickups");
-            var cachePath = Path.Combine(cacheDir, $"{cacheHash}.mfa.json");
-
-            // 1. Check MFA cache
-            var cached = TryReadMfaCache(cachePath);
-            if (cached != null)
+            var (alignmentWords, wordToTokenIndex) = BuildAlignmentWords(asrResponse.Tokens);
+            if (alignmentWords.Count == 0)
             {
-                Log.Debug("MFA pickup cache hit ({Hash})", cacheHash);
-                return cached;
+                Log.Debug("MFA pickup refinement skipped: no usable ASR words for lab content");
+                return asrResponse;
             }
 
-            // 2. Build temp corpus directory
-            corpusDir = Path.Combine(workDir, ".polish", "pickups", "mfa", cacheHash);
+            var cacheHash = ComputeMfaCacheKey(pickupFilePath, alignmentWords);
+            var pickupCacheDir = Path.Combine(workDir, ".polish", "pickups");
+            Directory.CreateDirectory(pickupCacheDir);
+
+            var refinedAsrCachePath = Path.Combine(pickupCacheDir, $"{cacheHash}.asr.mfa.json");
+            var cachedRefined = TryReadAsrResponseCache(refinedAsrCachePath);
+            if (cachedRefined?.Tokens is { Length: > 0 })
+            {
+                Log.Debug("MFA pickup ASR cache hit ({Hash})", cacheHash);
+                return cachedRefined;
+            }
+
+            // Persistent first-class artifact directory reused across runs.
+            var corpusDir = Path.Combine(pickupCacheDir, "mfa", cacheHash);
             Directory.CreateDirectory(corpusDir);
 
+            // Always stage the full pickup WAV (never clip).
             var stagedWavPath = Path.Combine(corpusDir, "pickup.wav");
-            File.Copy(pickupFilePath, stagedWavPath, overwrite: true);
+            EnsureStagedPickupWav(pickupFilePath, stagedWavPath);
 
-            // Build .lab file from concatenated BookText of all matched sentences
             var labPath = Path.Combine(corpusDir, "pickup.lab");
-            var labContent = BuildLabContent(orderedMatches, sentenceLookup);
+            var labContent = string.Join(' ', alignmentWords);
             if (string.IsNullOrWhiteSpace(labContent))
             {
-                Log.Debug("MFA pickup refinement: no usable lab content, returning ASR timings");
-                return asrMatches;
+                Log.Debug("MFA pickup refinement skipped: lab content was empty");
+                return asrResponse;
             }
-            await File.WriteAllTextAsync(labPath, labContent, Encoding.UTF8, ct).ConfigureAwait(false);
 
-            // 3. Ensure MFA supervisor is warm
-            await MfaProcessSupervisor.EnsureReadyAsync(ct).ConfigureAwait(false);
+            await EnsureLabContentAsync(labPath, labContent, ct).ConfigureAwait(false);
 
-            // 4. Build MfaChapterContext
             var outputDir = Path.Combine(corpusDir, "output");
             Directory.CreateDirectory(outputDir);
 
-            var context = new MfaChapterContext
-            {
-                CorpusDirectory = corpusDir,
-                OutputDirectory = outputDir,
-                WorkingDirectory = corpusDir,
-                DictionaryModel = MfaService.DefaultDictionaryModel,
-                AcousticModel = MfaService.DefaultAcousticModel,
-                G2pModel = MfaService.DefaultG2pModel,
-                Beam = 80,
-                RetryBeam = 200,
-                SingleSpeaker = true,
-                CleanOutput = true
-            };
-
-            // 5. Run MFA validate + G2P + align
-            var service = new MfaService(useDedicatedProcess: false);
-
-            // Validate to discover OOVs
-            var validateResult = await service.ValidateAsync(context, ct).ConfigureAwait(false);
-            LogMfaResult("mfa validate (pickup)", validateResult);
-
-            // Check for OOVs and handle with G2P if found
-            var mfaRoot = corpusDir;
-            var oovPath = FindOovListFile(mfaRoot);
-            if (oovPath != null)
-            {
-                var g2pOutputPath = Path.Combine(mfaRoot, "pickup.g2p.txt");
-                var customDictPath = Path.Combine(mfaRoot, "pickup.dictionary.zip");
-
-                var g2pContext = context with
-                {
-                    OovListPath = oovPath,
-                    G2pOutputPath = g2pOutputPath,
-                    CustomDictionaryPath = customDictPath
-                };
-
-                var g2pResult = await service.GeneratePronunciationsAsync(g2pContext, ct)
-                    .ConfigureAwait(false);
-                LogMfaResult("mfa g2p (pickup)", g2pResult);
-
-                if (g2pResult.ExitCode == 0 && File.Exists(g2pOutputPath) && new FileInfo(g2pOutputPath).Length > 0)
-                {
-                    var addWordsResult = await service.AddWordsAsync(g2pContext, ct).ConfigureAwait(false);
-                    LogMfaResult("mfa add_words (pickup)", addWordsResult);
-
-                    if (addWordsResult.ExitCode == 0 && File.Exists(customDictPath))
-                    {
-                        context = context with { CustomDictionaryPath = customDictPath };
-                    }
-                }
-            }
-
-            // Run alignment
-            var alignResult = await service.AlignAsync(context, ct).ConfigureAwait(false);
-            if (alignResult.ExitCode != 0)
-            {
-                Log.Warn("MFA align failed for pickup (exit {Code}), using ASR timings", alignResult.ExitCode);
-                return asrMatches;
-            }
-
-            // 6. Parse TextGrid
             var textGridPath = FindTextGridFile(outputDir);
             if (textGridPath == null)
             {
+                await MfaProcessSupervisor.EnsureReadyAsync(ct).ConfigureAwait(false);
+
+                var context = new MfaChapterContext
+                {
+                    CorpusDirectory = corpusDir,
+                    OutputDirectory = outputDir,
+                    WorkingDirectory = corpusDir,
+                    DictionaryModel = MfaService.DefaultDictionaryModel,
+                    AcousticModel = MfaService.DefaultAcousticModel,
+                    G2pModel = MfaService.DefaultG2pModel,
+                    Beam = 80,
+                    RetryBeam = 200,
+                    SingleSpeaker = true,
+                    CleanOutput = true
+                };
+
+                var service = new MfaService(useDedicatedProcess: false);
+
+                var validateResult = await service.ValidateAsync(context, ct).ConfigureAwait(false);
+                LogMfaResult("mfa validate (pickup)", validateResult);
+
+                var oovPath = FindOovListFile(corpusDir);
+                if (oovPath != null)
+                {
+                    var g2pOutputPath = Path.Combine(corpusDir, "pickup.g2p.txt");
+                    var customDictPath = Path.Combine(corpusDir, "pickup.dictionary.zip");
+
+                    var g2pContext = context with
+                    {
+                        OovListPath = oovPath,
+                        G2pOutputPath = g2pOutputPath,
+                        CustomDictionaryPath = customDictPath
+                    };
+
+                    var g2pResult = await service.GeneratePronunciationsAsync(g2pContext, ct)
+                        .ConfigureAwait(false);
+                    LogMfaResult("mfa g2p (pickup)", g2pResult);
+
+                    if (g2pResult.ExitCode == 0 &&
+                        File.Exists(g2pOutputPath) &&
+                        new FileInfo(g2pOutputPath).Length > 0)
+                    {
+                        var addWordsResult = await service.AddWordsAsync(g2pContext, ct)
+                            .ConfigureAwait(false);
+                        LogMfaResult("mfa add_words (pickup)", addWordsResult);
+
+                        if (addWordsResult.ExitCode == 0 && File.Exists(customDictPath))
+                            context = context with { CustomDictionaryPath = customDictPath };
+                    }
+                }
+
+                var alignResult = await service.AlignAsync(context, ct).ConfigureAwait(false);
+                if (alignResult.ExitCode != 0)
+                {
+                    Log.Warn("MFA align failed for pickup (exit {Code}), using ASR timings", alignResult.ExitCode);
+                    return asrResponse;
+                }
+
+                textGridPath = FindTextGridFile(outputDir);
+            }
+            else
+            {
+                Log.Debug("MFA pickup artifact reuse hit ({Hash})", cacheHash);
+            }
+
+            if (textGridPath == null)
+            {
                 Log.Warn("MFA TextGrid not found after alignment, using ASR timings");
-                return asrMatches;
+                return asrResponse;
             }
 
             var intervals = TextGridParser.ParseWordIntervals(textGridPath);
+            var tokenTimings = AlignMfaWordsToAsrTokens(intervals, alignmentWords, wordToTokenIndex);
 
-            // 7. Map word intervals to sentences using Needleman-Wunsch alignment
-            var refined = MapIntervalsToSentences(intervals, orderedMatches, sentenceLookup);
+            if (tokenTimings.Count == 0)
+            {
+                Log.Debug("MFA pickup refinement produced no token timing updates");
+                return asrResponse;
+            }
 
-            // 8. Build refined PickupMatch list (preserve unrefined as fallback)
-            var result = BuildRefinedMatches(orderedMatches, refined);
+            var refinedTokens = ApplyRefinedTimings(asrResponse.Tokens, tokenTimings);
+            var refinedResponse = asrResponse with { Tokens = refinedTokens };
 
-            // 9. Cache results
-            WriteMfaCache(cachePath, cacheDir, result);
+            WriteAsrResponseCache(refinedAsrCachePath, refinedResponse);
 
-            Log.Debug("MFA pickup refinement complete: {Refined}/{Total} matches refined",
-                refined.Count, orderedMatches.Count);
+            Log.Debug(
+                "MFA pickup ASR refinement complete: {Updated}/{Total} token timings updated",
+                tokenTimings.Count,
+                asrResponse.Tokens.Length);
 
-            return result;
+            return refinedResponse;
         }
         catch (OperationCanceledException)
         {
-            throw; // Preserve caller cancellation semantics
+            throw;
         }
         catch (Exception ex)
         {
-            Log.Warn("MFA pickup refinement failed ({Message}), returning original ASR timings", ex.Message);
-            return asrMatches;
-        }
-        finally
-        {
-            if (corpusDir != null)
-                CleanupCorpusDir(corpusDir);
+            Log.Warn("MFA pickup ASR refinement failed ({Message}), using ASR timings", ex.Message);
+            return asrResponse;
         }
     }
 
-    #region Lab file construction
+    #region Alignment
 
-    /// <summary>
-    /// Builds MFA .lab file content from the BookText of all matched sentences,
-    /// joined into a single continuous line of pronunciation-normalized words.
-    /// </summary>
-    private static string BuildLabContent(
-        List<PickupMatch> orderedMatches,
-        Dictionary<int, HydratedSentence> sentenceLookup)
+    private static (List<string> Words, List<int> WordToTokenIndex) BuildAlignmentWords(
+        IReadOnlyList<AsrToken> tokens)
     {
-        var allParts = new List<string>();
+        var words = new List<string>();
+        var wordToTokenIndex = new List<int>();
 
-        foreach (var match in orderedMatches)
+        for (var tokenIndex = 0; tokenIndex < tokens.Count; tokenIndex++)
         {
-            if (!sentenceLookup.TryGetValue(match.SentenceId, out var sentence))
+            var token = tokens[tokenIndex];
+            var parts = PronunciationHelper.ExtractPronunciationParts(token.Word);
+
+            if (parts.Count == 0)
+            {
+                var fallback = NormalizeAlignmentWord(token.Word);
+                if (fallback.Length > 0)
+                {
+                    words.Add(fallback);
+                    wordToTokenIndex.Add(tokenIndex);
+                }
+
                 continue;
+            }
 
-            var parts = PronunciationHelper.ExtractPronunciationParts(sentence.BookText);
-            allParts.AddRange(parts);
-        }
-
-        return allParts.Count > 0 ? string.Join(' ', allParts) : string.Empty;
-    }
-
-    #endregion
-
-    #region Needleman-Wunsch sentence mapping
-
-    /// <summary>
-    /// Uses MfaTimingMerger.MergeAndApply with synthetic book indices to map
-    /// TextGrid word intervals back to matched sentences.
-    /// </summary>
-    private static Dictionary<int, (double Start, double End)> MapIntervalsToSentences(
-        IReadOnlyList<TextGridInterval> intervals,
-        List<PickupMatch> orderedMatches,
-        Dictionary<int, HydratedSentence> sentenceLookup)
-    {
-        // Build flat list of expected words across all matched sentences,
-        // tracking which sentence each word belongs to via synthetic bookIdx
-        var flatWords = new List<string>();
-        var sentenceRanges = new List<(int SentenceId, int StartIdx, int EndIdx)>();
-        int currentIdx = 0;
-
-        foreach (var match in orderedMatches)
-        {
-            if (!sentenceLookup.TryGetValue(match.SentenceId, out var sentence))
-                continue;
-
-            var parts = PronunciationHelper.ExtractPronunciationParts(sentence.BookText);
-            if (parts.Count == 0) continue;
-
-            int startIdx = currentIdx;
             foreach (var part in parts)
             {
-                flatWords.Add(part);
-                currentIdx++;
+                var normalized = NormalizeAlignmentWord(part);
+                if (normalized.Length == 0)
+                    continue;
+
+                words.Add(normalized);
+                wordToTokenIndex.Add(tokenIndex);
             }
-            sentenceRanges.Add((match.SentenceId, startIdx, currentIdx - 1));
         }
 
-        if (flatWords.Count == 0 || intervals.Count == 0)
-            return new Dictionary<int, (double, double)>();
+        return (words, wordToTokenIndex);
+    }
 
-        // Create TextGridWord[] from parsed intervals (filter silence/empty entries)
+    private static string NormalizeAlignmentWord(string input)
+    {
+        if (string.IsNullOrWhiteSpace(input))
+            return string.Empty;
+
+        var sb = new StringBuilder(input.Length);
+        foreach (var ch in input)
+        {
+            if (char.IsLetterOrDigit(ch) || ch == '\'')
+                sb.Append(char.ToLowerInvariant(ch));
+        }
+
+        return sb.ToString();
+    }
+
+    private static Dictionary<int, (double Start, double End)> AlignMfaWordsToAsrTokens(
+        IReadOnlyList<TextGridInterval> intervals,
+        IReadOnlyList<string> alignmentWords,
+        IReadOnlyList<int> wordToTokenIndex)
+    {
+        if (alignmentWords.Count == 0 || intervals.Count == 0)
+            return new Dictionary<int, (double Start, double End)>();
+
         var textGridWords = intervals
             .Where(iv => !string.IsNullOrWhiteSpace(iv.Text)
                          && !string.Equals(iv.Text, "sp", StringComparison.OrdinalIgnoreCase)
-                         && !string.Equals(iv.Text, "sil", StringComparison.OrdinalIgnoreCase)
-                         && !string.Equals(iv.Text, "", StringComparison.Ordinal))
+                         && !string.Equals(iv.Text, "sil", StringComparison.OrdinalIgnoreCase))
             .Select(iv => new TextGridWord(iv.Text, iv.Start, iv.End))
             .ToArray();
 
         if (textGridWords.Length == 0)
-            return new Dictionary<int, (double, double)>();
+            return new Dictionary<int, (double Start, double End)>();
 
-        // Build getBookToken function from flat word list
-        string GetBookToken(int idx) => idx >= 0 && idx < flatWords.Count ? flatWords[idx] : "";
+        var tokenTimings = new Dictionary<int, (double Start, double End)>();
+        var wordTargets = new List<WordTarget>(alignmentWords.Count);
 
-        // Create empty WordTarget array (we don't need per-word timings, only per-sentence)
-        var wordTargets = Array.Empty<WordTarget>();
+        for (var alignmentIndex = 0; alignmentIndex < alignmentWords.Count; alignmentIndex++)
+        {
+            var localAlignmentIndex = alignmentIndex;
+            var tokenIndex = wordToTokenIndex[alignmentIndex];
 
-        // Create SentenceTarget[] from sentenceRanges that capture timings
-        var sentenceTimings = new Dictionary<int, (double Start, double End)>();
-        var sentenceTargets = sentenceRanges.Select(r =>
-            new SentenceTarget(
-                r.StartIdx,
-                r.EndIdx,
-                (start, end, _) => sentenceTimings[r.SentenceId] = (start, end)))
-            .ToArray();
+            wordTargets.Add(new WordTarget(localAlignmentIndex, (start, end, _) =>
+            {
+                if (end <= start)
+                    return;
 
-        // Run Needleman-Wunsch alignment via MfaTimingMerger
+                if (tokenTimings.TryGetValue(tokenIndex, out var existing))
+                {
+                    tokenTimings[tokenIndex] = (Math.Min(existing.Start, start), Math.Max(existing.End, end));
+                }
+                else
+                {
+                    tokenTimings[tokenIndex] = (start, end);
+                }
+            }));
+        }
+
+        string GetBookToken(int index)
+            => index >= 0 && index < alignmentWords.Count ? alignmentWords[index] : string.Empty;
+
         MfaTimingMerger.MergeAndApply(
             textGridWords,
             GetBookToken,
             0,
-            flatWords.Count - 1,
+            alignmentWords.Count - 1,
             wordTargets,
-            sentenceTargets,
+            Array.Empty<SentenceTarget>(),
             debugLog: msg => Log.Debug("MFA pickup merge: {Message}", msg));
 
-        return sentenceTimings;
+        return tokenTimings;
     }
 
-    #endregion
-
-    #region Result building
-
-    private static List<PickupMatch> BuildRefinedMatches(
-        List<PickupMatch> orderedMatches,
-        Dictionary<int, (double Start, double End)> mfaTimings)
+    private static AsrToken[] ApplyRefinedTimings(
+        IReadOnlyList<AsrToken> originalTokens,
+        IReadOnlyDictionary<int, (double Start, double End)> refinedTimings)
     {
-        var result = new List<PickupMatch>(orderedMatches.Count);
+        var refined = new AsrToken[originalTokens.Count];
 
-        foreach (var match in orderedMatches)
+        for (var i = 0; i < originalTokens.Count; i++)
         {
-            if (mfaTimings.TryGetValue(match.SentenceId, out var timing))
+            var original = originalTokens[i];
+            if (refinedTimings.TryGetValue(i, out var timing) && IsPlausibleTokenTiming(original, timing))
             {
-                result.Add(match with
-                {
-                    PickupStartSec = timing.Start,
-                    PickupEndSec = timing.End
-                });
+                refined[i] = new AsrToken(
+                    StartTime: timing.Start,
+                    Duration: Math.Max(0.01, timing.End - timing.Start),
+                    Word: original.Word);
             }
             else
             {
-                // Keep original ASR timing as fallback
-                result.Add(match);
+                refined[i] = original;
             }
         }
 
-        return result;
+        return refined;
+    }
+
+    private static bool IsPlausibleTokenTiming(AsrToken original, (double Start, double End) candidate)
+    {
+        if (double.IsNaN(candidate.Start) || double.IsNaN(candidate.End))
+            return false;
+        if (candidate.End <= candidate.Start)
+            return false;
+
+        var refinedDuration = candidate.End - candidate.Start;
+        if (refinedDuration < 0.01 || refinedDuration > 3.0)
+            return false;
+
+        if (original.Duration > 0.001)
+        {
+            var durationRatio = refinedDuration / original.Duration;
+            if (durationRatio < 0.15 || durationRatio > 8.0)
+                return false;
+        }
+
+        return true;
     }
 
     #endregion
 
-    #region MFA Cache
+    #region Cache / Artifacts
 
-    private static string ComputeMfaCacheKey(
-        string pickupFilePath,
-        List<PickupMatch> orderedMatches,
-        Dictionary<int, HydratedSentence> sentenceLookup)
+    private static string ComputeMfaCacheKey(string pickupFilePath, IReadOnlyList<string> alignmentWords)
     {
         var fi = new FileInfo(pickupFilePath);
         var sb = new StringBuilder();
         sb.Append(fi.FullName).Append('|').Append(fi.Length).Append('|').Append(fi.LastWriteTimeUtc.ToString("O"));
-
-        // Include sentence IDs
-        sb.Append('|');
-        sb.Append(string.Join(":", orderedMatches.Select(m => m.SentenceId)));
-
-        // Include normalized book text for each matched sentence
-        foreach (var match in orderedMatches)
+        sb.Append('|').Append(alignmentWords.Count);
+        foreach (var word in alignmentWords)
         {
-            if (sentenceLookup.TryGetValue(match.SentenceId, out var sentence))
-            {
-                sb.Append('|');
-                var parts = PronunciationHelper.ExtractPronunciationParts(sentence.BookText);
-                sb.Append(string.Join(' ', parts));
-            }
+            sb.Append('|').Append(word);
         }
 
         var hashBytes = SHA256.HashData(Encoding.UTF8.GetBytes(sb.ToString()));
         return Convert.ToHexString(hashBytes)[..16].ToLowerInvariant();
     }
 
-    private static List<PickupMatch>? TryReadMfaCache(string cachePath)
+    private static AsrResponse? TryReadAsrResponseCache(string cachePath)
     {
         if (!File.Exists(cachePath))
             return null;
@@ -373,7 +380,7 @@ public class PickupMfaRefinementService
         try
         {
             var json = File.ReadAllText(cachePath);
-            return JsonSerializer.Deserialize<List<PickupMatch>>(json);
+            return JsonSerializer.Deserialize<AsrResponse>(json);
         }
         catch
         {
@@ -381,23 +388,26 @@ public class PickupMfaRefinementService
         }
     }
 
-    private static void WriteMfaCache(string cachePath, string cacheDir, List<PickupMatch> result)
+    private static void WriteAsrResponseCache(string cachePath, AsrResponse response)
     {
         try
         {
-            Directory.CreateDirectory(cacheDir);
-            var json = JsonSerializer.Serialize(result, CacheJsonOptions);
+            var dir = Path.GetDirectoryName(cachePath);
+            if (!string.IsNullOrWhiteSpace(dir))
+                Directory.CreateDirectory(dir);
+
+            var json = JsonSerializer.Serialize(response, CacheJsonOptions);
             File.WriteAllText(cachePath, json);
         }
         catch (Exception ex)
         {
-            Log.Debug("Failed to write MFA pickup cache: {Message}", ex.Message);
+            Log.Debug("Failed to write MFA pickup ASR cache: {Message}", ex.Message);
         }
     }
 
     #endregion
 
-    #region MFA helpers
+    #region MFA Helpers
 
     private static string? FindTextGridFile(string outputDir)
     {
@@ -433,17 +443,28 @@ public class PickupMfaRefinementService
         Log.Debug("{Stage} exit code: {ExitCode}", stage, result.ExitCode);
     }
 
-    private static void CleanupCorpusDir(string corpusDir)
+    private static void EnsureStagedPickupWav(string sourcePath, string destinationPath)
     {
-        try
+        var srcInfo = new FileInfo(sourcePath);
+        var dstInfo = new FileInfo(destinationPath);
+
+        if (!dstInfo.Exists || dstInfo.Length != srcInfo.Length || dstInfo.LastWriteTimeUtc != srcInfo.LastWriteTimeUtc)
         {
-            if (Directory.Exists(corpusDir))
-                Directory.Delete(corpusDir, recursive: true);
+            File.Copy(sourcePath, destinationPath, overwrite: true);
+            File.SetLastWriteTimeUtc(destinationPath, srcInfo.LastWriteTimeUtc);
         }
-        catch (Exception ex)
+    }
+
+    private static async Task EnsureLabContentAsync(string labPath, string content, CancellationToken ct)
+    {
+        if (File.Exists(labPath))
         {
-            Log.Debug("Failed to clean up MFA pickup corpus dir: {Message}", ex.Message);
+            var existing = await File.ReadAllTextAsync(labPath, ct).ConfigureAwait(false);
+            if (string.Equals(existing, content, StringComparison.Ordinal))
+                return;
         }
+
+        await File.WriteAllTextAsync(labPath, content, Encoding.UTF8, ct).ConfigureAwait(false);
     }
 
     #endregion

@@ -20,6 +20,8 @@ namespace Ams.Workstation.Server.Services;
 /// </summary>
 public class PolishService
 {
+    private const double PickupSlicePaddingSec = 0.080;
+
     private readonly BlazorWorkspace _workspace;
     private readonly StagingQueueService _stagingQueue;
     private readonly UndoService _undoService;
@@ -154,10 +156,7 @@ public class PolishService
         var chapterBuffer = GetCurrentChapterBuffer();
 
         var pickupBuffer = AudioProcessor.Decode(item.PickupSourcePath);
-        var pickupTrimmed = AudioProcessor.Trim(
-            pickupBuffer,
-            TimeSpan.FromSeconds(item.PickupStartSec),
-            TimeSpan.FromSeconds(item.PickupEndSec));
+        var pickupTrimmed = TrimPickupForReplacement(item, pickupBuffer);
 
         var resultBuffer = AudioSpliceService.ReplaceSegment(
             chapterBuffer,
@@ -193,10 +192,7 @@ public class PolishService
 
         // 3. Decode and trim pickup audio
         var pickupBuffer = AudioProcessor.Decode(item.PickupSourcePath);
-        var pickupTrimmed = AudioProcessor.Trim(
-            pickupBuffer,
-            TimeSpan.FromSeconds(item.PickupStartSec),
-            TimeSpan.FromSeconds(item.PickupEndSec));
+        var pickupTrimmed = TrimPickupForReplacement(item, pickupBuffer);
 
         var pickupDuration = (double)pickupTrimmed.Length / pickupTrimmed.SampleRate;
         var originalDuration = item.OriginalEndSec - item.OriginalStartSec;
@@ -367,6 +363,26 @@ public class PolishService
         // Fall back to raw buffer via AudioBufferManager
         return chapter.Audio.Current.Buffer
             ?? throw new InvalidOperationException("No audio buffer available for the current chapter.");
+    }
+
+    private static AudioBuffer TrimPickupForReplacement(StagedReplacement item, AudioBuffer pickupBuffer)
+    {
+        var pickupDurationSec = (double)pickupBuffer.Length / pickupBuffer.SampleRate;
+        var paddedStartSec = Math.Max(0, item.PickupStartSec - PickupSlicePaddingSec);
+        var paddedEndSec = Math.Min(pickupDurationSec, item.PickupEndSec + PickupSlicePaddingSec);
+
+        if (paddedEndSec <= paddedStartSec)
+        {
+            paddedStartSec = Math.Max(0, item.PickupStartSec);
+            paddedEndSec = Math.Min(pickupDurationSec, item.PickupEndSec);
+            if (paddedEndSec <= paddedStartSec)
+                paddedEndSec = Math.Min(pickupDurationSec, paddedStartSec + 0.010);
+        }
+
+        return AudioProcessor.Trim(
+            pickupBuffer,
+            TimeSpan.FromSeconds(paddedStartSec),
+            TimeSpan.FromSeconds(paddedEndSec));
     }
 
     /// <summary>

@@ -9,7 +9,9 @@
 @inject IJSRuntime JS
 @using Ams.Workstation.Server.Models
 @using Ams.Workstation.Server.Services
+@using Ams.Core.Common
 @using Ams.Core.Artifacts.Hydrate
+@using System.Text.RegularExpressions
 @implements IAsyncDisposable
 
 <PageTitle>@ChapterName - Polish - AMS Workstation</PageTitle>
@@ -128,6 +130,18 @@
     private double? _verificationSegmentEnd;
     private int? _verificationSentenceId;
 
+    private static readonly Regex ShouldBeRegex = new(
+        @"should\s*be\s*:\s*(?<text>.*?)(?=\r?\n\s*read\s*as\s*:|$)",
+        RegexOptions.IgnoreCase | RegexOptions.Singleline | RegexOptions.Compiled);
+
+    private static readonly Regex ReadAsRegex = new(
+        @"read\s*as\s*:\s*(?<text>.*)$",
+        RegexOptions.IgnoreCase | RegexOptions.Singleline | RegexOptions.Compiled);
+
+    private static readonly Regex ComparePunctuationRegex = new(@"[^\w\s]", RegexOptions.Compiled);
+    private static readonly Regex CompareWhitespaceRegex = new(@"\s+", RegexOptions.Compiled);
+    private static readonly Regex ChapterNumberRegex = new(@"\d+", RegexOptions.Compiled);
+
     [Parameter] public string? ChapterName { get; set; }
 
     protected override void OnParametersSet()
@@ -157,11 +171,242 @@
     {
         if (Workspace.TryGetHydratedTranscript(chapterName, out var hydrated) && hydrated != null)
         {
-            // Flag sentences that have diffs (errors) as candidates for pickup replacement
-            _flaggedSentences = hydrated.Sentences
-                .Where(s => s.Status == "error" || (s.Diff?.Ops?.Count ?? 0) > 0)
-                .ToList();
+            // Prefer CRX-constrained targets (chapter + timecode + comments) so pickup
+            // matching stays narrow and deterministic.
+            var chapterEntries = TryGetCrxChapterEntries(chapterName);
+            if (chapterEntries.Count > 0)
+            {
+                _flaggedSentences = ResolveCrxTargets(chapterEntries, hydrated.Sentences);
+                return;
+            }
+
+            // Fallback: actionable correction targets from hydrate diff/status.
+            _flaggedSentences = hydrated.Sentences.Where(IsPickupCandidate).ToList();
         }
+    }
+
+    private static bool IsPickupCandidate(HydratedSentence sentence)
+    {
+        if (!string.Equals(sentence.Status, "ok", StringComparison.OrdinalIgnoreCase))
+            return true;
+
+        var stats = sentence.Diff?.Stats;
+        return stats is not null && (stats.Insertions > 0 || stats.Deletions > 0);
+    }
+
+    private List<CrxEntry> TryGetCrxChapterEntries(string currentChapterName)
+    {
+        IReadOnlyList<CrxEntry> entries;
+        try
+        {
+            entries = CrxService.GetEntries();
+        }
+        catch
+        {
+            return new List<CrxEntry>();
+        }
+
+        if (entries.Count == 0)
+            return new List<CrxEntry>();
+
+        return entries
+            .Where(e => ChapterMatches(e.Chapter, currentChapterName))
+            .OrderBy(e => e.ErrorNumber)
+            .ToList();
+    }
+
+    private static List<HydratedSentence> ResolveCrxTargets(
+        IReadOnlyList<CrxEntry> chapterEntries,
+        IReadOnlyList<HydratedSentence> sentences)
+    {
+        var resolved = new List<HydratedSentence>();
+        var seenIds = new HashSet<int>();
+
+        foreach (var entry in chapterEntries)
+        {
+            var sentence = ResolveSentenceFromCrxEntry(entry, sentences);
+            if (sentence == null)
+                continue;
+
+            if (seenIds.Add(sentence.Id))
+                resolved.Add(sentence);
+        }
+
+        return resolved;
+    }
+
+    private static HydratedSentence? ResolveSentenceFromCrxEntry(CrxEntry entry, IReadOnlyList<HydratedSentence> sentences)
+    {
+        if (sentences.Count == 0)
+            return null;
+
+        if (entry.SentenceId > 0)
+        {
+            var direct = sentences.FirstOrDefault(s => s.Id == entry.SentenceId);
+            if (direct != null)
+                return direct;
+        }
+
+        var (shouldBe, readAs) = ParseCrxComments(entry.Comments);
+        var hasShouldBe = !string.IsNullOrWhiteSpace(shouldBe);
+        var hasReadAs = !string.IsNullOrWhiteSpace(readAs);
+
+        var timedSentences = sentences.Where(s => s.Timing is not null).ToList();
+        var candidatePool = timedSentences.Count > 0 ? timedSentences : sentences.ToList();
+
+        double? timeSec = entry.StartTime > 0 ? entry.StartTime : TryParseTimecode(entry.Timecode);
+        if (timeSec.HasValue && candidatePool.Count > 0)
+        {
+            // Keep a nearest-neighbor pool so coarse CRX timecodes (HH:MM:SS)
+            // that land near sentence boundaries still consider adjacent lines.
+            var nearest = candidatePool
+                .Where(s => s.Timing is not null)
+                .OrderBy(s => DistanceToSentenceCenterSeconds(s, timeSec.Value))
+                .Take(8)
+                .ToList();
+
+            var containing = candidatePool
+                .Where(s => s.Timing != null
+                            && timeSec.Value >= s.Timing.StartSec - 1.5
+                            && timeSec.Value <= s.Timing.EndSec + 1.5)
+                .ToList();
+
+            if (containing.Count >= 2)
+            {
+                var merged = containing
+                    .Concat(nearest)
+                    .GroupBy(s => s.Id)
+                    .Select(g => g.First())
+                    .OrderBy(s => DistanceToSentenceCenterSeconds(s, timeSec.Value))
+                    .Take(8)
+                    .ToList();
+                candidatePool = merged;
+            }
+            else
+            {
+                candidatePool = nearest;
+            }
+        }
+
+        if (candidatePool.Count == 1)
+            return candidatePool[0];
+
+        double bestScore = double.MinValue;
+        HydratedSentence? best = null;
+
+        foreach (var sentence in candidatePool)
+        {
+            double bookScore = hasShouldBe
+                ? LevenshteinMetrics.Similarity(
+                    NormalizeForCompare(sentence.BookText),
+                    NormalizeForCompare(shouldBe))
+                : 0;
+
+            double scriptScore = hasReadAs
+                ? LevenshteinMetrics.Similarity(
+                    NormalizeForCompare(sentence.ScriptText),
+                    NormalizeForCompare(readAs))
+                : 0;
+
+            double textScore = (hasShouldBe, hasReadAs) switch
+            {
+                (true, true) => (bookScore + scriptScore) / 2.0,
+                (true, false) => bookScore,
+                (false, true) => scriptScore,
+                _ => 0
+            };
+
+            double timeScore = timeSec.HasValue
+                ? Math.Max(0, 1.0 - (DistanceToSentenceCenterSeconds(sentence, timeSec.Value) / 20.0))
+                : 0;
+
+            double combinedScore = (hasShouldBe || hasReadAs)
+                ? (textScore * 0.8) + (timeScore * 0.2)
+                : timeScore;
+
+            if (combinedScore > bestScore)
+            {
+                bestScore = combinedScore;
+                best = sentence;
+            }
+        }
+
+        return best;
+    }
+
+    private static (string ShouldBe, string ReadAs) ParseCrxComments(string? comments)
+    {
+        if (string.IsNullOrWhiteSpace(comments))
+            return (string.Empty, string.Empty);
+
+        var shouldBe = "";
+        var readAs = "";
+
+        var shouldMatch = ShouldBeRegex.Match(comments);
+        if (shouldMatch.Success)
+            shouldBe = shouldMatch.Groups["text"].Value.Trim();
+
+        var readMatch = ReadAsRegex.Match(comments);
+        if (readMatch.Success)
+            readAs = readMatch.Groups["text"].Value.Trim();
+
+        return (shouldBe, readAs);
+    }
+
+    private static double? TryParseTimecode(string? timecode)
+    {
+        if (string.IsNullOrWhiteSpace(timecode))
+            return null;
+
+        if (TimeSpan.TryParse(timecode, out var ts))
+            return ts.TotalSeconds;
+
+        return null;
+    }
+
+    private static bool ChapterMatches(string? crxChapter, string? currentChapter)
+    {
+        if (string.IsNullOrWhiteSpace(crxChapter) || string.IsNullOrWhiteSpace(currentChapter))
+            return false;
+
+        var crxNumber = TryExtractChapterNumber(crxChapter);
+        var currentNumber = TryExtractChapterNumber(currentChapter);
+        if (crxNumber.HasValue && currentNumber.HasValue)
+            return crxNumber.Value == currentNumber.Value;
+
+        return string.Equals(
+            NormalizeForCompare(crxChapter),
+            NormalizeForCompare(currentChapter),
+            StringComparison.Ordinal);
+    }
+
+    private static int? TryExtractChapterNumber(string chapterLabel)
+    {
+        var match = ChapterNumberRegex.Match(chapterLabel);
+        if (!match.Success)
+            return null;
+
+        return int.TryParse(match.Value, out var value) ? value : null;
+    }
+
+    private static double DistanceToSentenceCenterSeconds(HydratedSentence sentence, double timeSec)
+    {
+        if (sentence.Timing is null)
+            return double.MaxValue;
+
+        var center = (sentence.Timing.StartSec + sentence.Timing.EndSec) / 2.0;
+        return Math.Abs(center - timeSec);
+    }
+
+    private static string NormalizeForCompare(string? text)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+            return string.Empty;
+
+        var normalized = text.ToLowerInvariant().Trim();
+        normalized = ComparePunctuationRegex.Replace(normalized, " ");
+        normalized = CompareWhitespaceRegex.Replace(normalized, " ").Trim();
+        return normalized;
     }
 
     private string GetAudioUrl()

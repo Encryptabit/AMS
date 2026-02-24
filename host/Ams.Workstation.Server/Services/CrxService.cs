@@ -1,9 +1,13 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.IO.Compression;
 using System.Linq;
+using System.Text.RegularExpressions;
+using System.Text.Json;
 using Ams.Workstation.Server.Models;
 using ClosedXML.Excel;
+using System.Xml.Linq;
 
 namespace Ams.Workstation.Server.Services;
 
@@ -85,8 +89,22 @@ public class CrxService
     /// </summary>
     public IReadOnlyList<CrxEntry> GetEntries()
     {
+        var excelEntries = TryReadExcelEntries();
+        if (excelEntries.Count > 0)
+            return excelEntries;
+
+        var jsonEntries = TryReadJsonEntries();
+        if (jsonEntries.Count > 0)
+            return jsonEntries;
+
+        return Array.Empty<CrxEntry>();
+    }
+
+    private IReadOnlyList<CrxEntry> TryReadExcelEntries()
+    {
         var path = GetCrxExcelPath(createDir: false);
-        if (!File.Exists(path)) return Array.Empty<CrxEntry>();
+        if (!File.Exists(path))
+            return Array.Empty<CrxEntry>();
 
         try
         {
@@ -121,6 +139,150 @@ public class CrxService
             }
 
             return entries;
+        }
+        catch
+        {
+            return TryReadExcelEntriesOpenXml(path);
+        }
+    }
+
+    private static IReadOnlyList<CrxEntry> TryReadExcelEntriesOpenXml(string path)
+    {
+        try
+        {
+            using var stream = new FileStream(
+                path,
+                FileMode.Open,
+                FileAccess.Read,
+                FileShare.ReadWrite | FileShare.Delete);
+            using var archive = new ZipArchive(stream, ZipArchiveMode.Read, leaveOpen: false);
+
+            var shared = ReadSharedStrings(archive);
+            var sheetEntry = archive.GetEntry("xl/worksheets/sheet1.xml");
+            if (sheetEntry == null)
+                return Array.Empty<CrxEntry>();
+
+            using var wsStream = sheetEntry.Open();
+            var doc = XDocument.Load(wsStream);
+            XNamespace ns = "http://schemas.openxmlformats.org/spreadsheetml/2006/main";
+
+            var entries = new List<CrxEntry>();
+            var rows = doc.Descendants(ns + "row");
+            foreach (var row in rows)
+            {
+                var rowNum = (int?)row.Attribute("r") ?? 0;
+                if (rowNum < CrxDataRowStart)
+                    continue;
+
+                var valuesByCol = new Dictionary<int, string>();
+                foreach (var cell in row.Elements(ns + "c"))
+                {
+                    var reference = (string?)cell.Attribute("r");
+                    if (string.IsNullOrWhiteSpace(reference))
+                        continue;
+
+                    var col = ExtractColumnIndex(reference);
+                    if (col <= 0)
+                        continue;
+
+                    valuesByCol[col] = GetCellText(cell, shared, ns);
+                }
+
+                var errorNumCell = valuesByCol.GetValueOrDefault(2, "").Trim();
+                if (string.IsNullOrWhiteSpace(errorNumCell))
+                    continue;
+
+                var errorNumber = int.TryParse(errorNumCell, out var num) ? num : 0;
+                var chapter = valuesByCol.GetValueOrDefault(4, "").Trim();
+                var timecode = valuesByCol.GetValueOrDefault(6, "").Trim();
+                var errorType = valuesByCol.GetValueOrDefault(7, "").Trim();
+                var comments = valuesByCol.GetValueOrDefault(8, "").Trim();
+
+                entries.Add(new CrxEntry(
+                    ErrorNumber: errorNumber,
+                    Chapter: chapter,
+                    Timecode: timecode,
+                    ErrorType: errorType,
+                    Comments: comments,
+                    SentenceId: 0,
+                    StartTime: 0.0,
+                    EndTime: 0.0,
+                    AudioFile: "",
+                    CreatedAt: DateTime.MinValue));
+            }
+
+            return entries;
+        }
+        catch
+        {
+            return Array.Empty<CrxEntry>();
+        }
+    }
+
+    private static List<string> ReadSharedStrings(ZipArchive archive)
+    {
+        var entry = archive.GetEntry("xl/sharedStrings.xml");
+        if (entry == null)
+            return new List<string>();
+
+        using var stream = entry.Open();
+        var doc = XDocument.Load(stream);
+        XNamespace ns = "http://schemas.openxmlformats.org/spreadsheetml/2006/main";
+
+        return doc.Descendants(ns + "si")
+            .Select(si => string.Concat(si.Descendants(ns + "t").Select(t => (string?)t ?? "")))
+            .ToList();
+    }
+
+    private static int ExtractColumnIndex(string cellReference)
+    {
+        var match = Regex.Match(cellReference, "^[A-Z]+", RegexOptions.IgnoreCase);
+        if (!match.Success)
+            return 0;
+
+        var letters = match.Value.ToUpperInvariant();
+        var result = 0;
+        foreach (var ch in letters)
+        {
+            result = (result * 26) + (ch - 'A' + 1);
+        }
+
+        return result;
+    }
+
+    private static string GetCellText(XElement cell, IReadOnlyList<string> shared, XNamespace ns)
+    {
+        var type = ((string?)cell.Attribute("t")) ?? "";
+        if (type == "inlineStr")
+        {
+            return string.Concat(cell.Descendants(ns + "t").Select(t => (string?)t ?? ""));
+        }
+
+        var value = (string?)cell.Element(ns + "v") ?? "";
+        if (type == "s")
+        {
+            if (int.TryParse(value, out var index) && index >= 0 && index < shared.Count)
+                return shared[index];
+            return "";
+        }
+
+        return value;
+    }
+
+    private IReadOnlyList<CrxEntry> TryReadJsonEntries()
+    {
+        var path = GetCrxJsonPath(createDir: false);
+        if (!File.Exists(path))
+            return Array.Empty<CrxEntry>();
+
+        try
+        {
+            var json = File.ReadAllText(path);
+            var entries = JsonSerializer.Deserialize<List<CrxEntry>>(json);
+            if (entries is { Count: > 0 })
+                return entries;
+
+            return Array.Empty<CrxEntry>();
         }
         catch
         {
@@ -196,6 +358,15 @@ public class CrxService
             Directory.CreateDirectory(crxFolder);
         var bookName = Path.GetFileName(_workspace.RootPath.TrimEnd(Path.DirectorySeparatorChar));
         return Path.Combine(crxFolder, $"{bookName}_CRX.xlsx");
+    }
+
+    private string GetCrxJsonPath(bool createDir = true)
+    {
+        var crxFolder = Path.Combine(_workspace.RootPath, "CRX");
+        if (createDir)
+            Directory.CreateDirectory(crxFolder);
+        var bookName = Path.GetFileName(_workspace.RootPath.TrimEnd(Path.DirectorySeparatorChar));
+        return Path.Combine(crxFolder, $"{bookName}_CRX.json");
     }
 
     private static string FormatTimecode(double seconds)
