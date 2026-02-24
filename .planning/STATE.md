@@ -7,9 +7,9 @@ Audio Management System - CLI and core library for audio processing, ASR, forced
 ## Current Position
 
 **Milestone**: v2.0 Blazor Workstation
-**Phase**: 12.1 - MFA Refinement for Pickup Timings
-**Plan**: 1/1
-**Status**: Phase 12.1 complete; MFA forced alignment post-processing for pickup matches
+**Phase**: 13 - Pickup Substitution
+**Plan**: 2/8
+**Status**: Plan 13-02 complete; cross-chapter models, waveform API, mini waveform renderer
 
 ## Progress
 
@@ -18,6 +18,19 @@ v1.0 Codebase Audit    [██████████████████�
 v1.1 Execute Refactor  [████████████████████] 100% - SHIPPED
 v2.0 Blazor Workstation[████████████████████] 100% - Phase 10 complete
 ```
+
+## Phase 13 Plans (Pickup Substitution)
+
+| Plan | Name | Tasks | Status |
+|------|------|-------|--------|
+| 13-01 | Phase Planning & Research | - | Complete |
+| 13-02 | Cross-Chapter Models & Mini Waveform | 2 | Complete |
+| 13-03 | Pickup Substitution Service | - | Pending |
+| 13-04 | Pickup Page Layout | - | Pending |
+| 13-05 | Pickup Matching UI | - | Pending |
+| 13-06 | Staging & Commit UI | - | Pending |
+| 13-07 | Roomtone Operations | - | Pending |
+| 13-08 | Integration & Verification | - | Pending |
 
 ## Phase 12.1 Plans (MFA Refinement for Pickup Timings)
 
@@ -117,6 +130,9 @@ v2.0 Blazor Workstation[██████████████████�
 | InternalsVisibleTo for Workstation | Assembly attribute on Ams.Core | MfaService/MfaProcessSupervisor are internal; workstation is first-party host |
 | MFA warmup at workstation startup | TriggerBackgroundWarmup in Program.cs | Pre-warm conda environment to avoid first-use latency on pickup import |
 | MFA cache key scope | Audio identity + sentence IDs + normalized BookText | Prevents stale MFA timings when same audio is re-matched with different sentences |
+| Cross-chapter composite key | chapterStem:sentenceId | Prevents sentence ID collisions when processing pickups across all chapters |
+| Mini waveform rendering | Canvas-based drawMiniWaveform | Lightweight alternative to wavesurfer instances for match box thumbnails |
+| Waveform amplitude API | RMS per block, normalized 0-1 | Server-side computation, clamped 20-500 points for safety |
 
 ## Phase 8/8.1 Conclusions (Archived)
 
@@ -153,7 +169,7 @@ poc/VelloSharpPoc/     - Avalonia + VelloSharp (child window fails)
 
 ## Next Action
 
-Phase 12.1 complete. MFA-refined pickup timings integrated into PickupMatchingService. Ready for Phase 12 plan 12-08 or Phase 13 (Pickup Substitution).
+Phase 13 plan 13-02 complete. Cross-chapter models, waveform data API, and mini waveform renderer ready. Continue with plan 13-03 (Pickup Substitution Service).
 
 ## Deferred UI Refinements (for Plan 10-04)
 
@@ -170,7 +186,7 @@ None currently.
 
 ## Session Continuity
 
-Last session: 2026-02-24 18:34 UTC
+Last session: 2026-02-24 19:11 UTC
 Branch: `blazor-workstation`
-Stopped at: Phase 13 context gathered
-Note: Phase 13 (Pickup Substitution) context captured via discuss-phase. Redesigned single-page layout with Match→Stage→Commit pipeline, waveform region editing, roomtone operations, audio format matching. Ready for /gsd:plan-phase 13.
+Stopped at: Completed 13-02-PLAN.md
+Note: Phase 13 plan 02 complete. CrossChapterPickupMatch, RoomtoneOperation, PickupBoxState models added. Waveform amplitude data endpoint and mini waveform canvas renderer implemented.
