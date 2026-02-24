@@ -8,8 +8,8 @@ Audio Management System - CLI and core library for audio processing, ASR, forced
 
 **Milestone**: v2.0 Blazor Workstation
 **Phase**: 13 - Pickup Substitution
-**Plan**: 5/8
-**Status**: Plan 13-05 complete; waveform region editing, commit/revert flow, completion tracking, auto-advance
+**Plan**: 6/8
+**Status**: Plan 13-06 complete; roomtone insert/replace/delete operations with per-replacement crossfade slider
 
 ## Progress
 
@@ -28,7 +28,7 @@ v2.0 Blazor Workstation[██████████████████�
 | 13-03 | Pickup Substitution Page & PickupBox | 2 | Complete |
 | 13-04 | Upfront Processing & Stage/Unstage Actions | 2 | Complete |
 | 13-05 | Region Editing & Commit/Revert Flow | 2 | Complete |
-| 13-06 | Staging & Commit UI | - | Pending |
+| 13-06 | Roomtone Operations | 2 | Complete |
 | 13-07 | Roomtone Operations | - | Pending |
 | 13-08 | Integration & Verification | - | Pending |
 
@@ -137,6 +137,8 @@ v2.0 Blazor Workstation[██████████████████�
 | Bit depth detection | bits_per_raw_sample > bits_per_coded_sample > format inference | Multi-level fallback covers PCM, compressed, and edge cases |
 | Roomtone fill implementation | Sample-level Array.Copy loop | More efficient than FFmpeg filter graph for simple memory looping |
 | Pickup substitution route | /polish/pickup (not /polish) | Avoids duplicate route conflict with existing Index.razor; plan 13-07 finalizes |
+| Roomtone undo sentenceId | -1 sentinel | Roomtone ops are not sentence-specific; undo tracks by replacement ID |
+| Roomtone region color | Blue rgba(59,130,246,0.3) | Distinct from green (staged) and gray (committed) regions |
 | PickupBox mini waveform lifecycle | Import + draw + dispose per render | Avoids long-lived JS module refs for many PickupBox instances |
 | Region sync strategy | Clear-all + re-add on state change | Guaranteed consistency vs incremental add/remove; minor perf tradeoff |
 | Completion auto-advance | Wrap-around search with 500ms delay | Searches forward then wraps; delay provides visual feedback before flip |
@@ -176,7 +178,7 @@ poc/VelloSharpPoc/     - Avalonia + VelloSharp (child window fails)
 
 ## Next Action
 
-Phase 13 plan 13-05 complete. Waveform region editing with draggable green regions for staged pickups, commit/revert flow writing corrected.wav, completion badges, and auto-advance to next incomplete chapter. Continue with plan 13-06 (Staging and Commit UI).
+Phase 13 plan 13-06 complete. Roomtone insert/replace/delete operations via PolishService.ApplyRoomtoneOperationAsync, Roomtone Operations UI card with crossfade slider (5-200ms), blue waveform region for target selection. Continue with plan 13-07.
 
 ## Deferred UI Refinements (for Plan 10-04)
 
@@ -193,7 +195,7 @@ None currently.
 
 ## Session Continuity
 
-Last session: 2026-02-24 19:31 UTC
+Last session: 2026-02-24 19:33 UTC
 Branch: `blazor-workstation`
-Stopped at: Completed 13-05-PLAN.md
-Note: Phase 13 plan 05 complete. Waveform region editing, commit/revert, completion tracking, auto-advance in PickupSubstitution.razor. ClearRegions/RemoveRegion/AddRegion on WaveformPlayer. UpdateBoundaries on StagingQueueService.
+Stopped at: Completed 13-06-PLAN.md
+Note: Phase 13 plan 06 complete. ApplyRoomtoneOperationAsync in PolishService for Insert/Replace/Delete. Roomtone Operations UI card with crossfade slider. Blue editable waveform region for roomtone selection.
