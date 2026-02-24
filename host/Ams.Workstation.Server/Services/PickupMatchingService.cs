@@ -1,6 +1,10 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
+using System.Security.Cryptography;
+using System.Text;
+using System.Text.Json;
 using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
@@ -17,27 +21,37 @@ namespace Ams.Workstation.Server.Services;
 /// <summary>
 /// Runs ASR on pickup recording files and matches recognized text to
 /// flagged CRX target sentences using fuzzy Levenshtein similarity.
-/// Supports both multi-pickup session files (segmented by silence) and
-/// individual pickup files (one per sentence).
+/// Supports both multi-pickup session files (single-pass ASR with
+/// token-gap segmentation) and individual pickup files (one per sentence).
 /// Uses Whisper.NET in-process via <see cref="AsrProcessor"/> exclusively.
 /// </summary>
 public class PickupMatchingService
 {
     private const double MinSegmentDurationSec = 0.3;
     private const double MatchConfidenceThreshold = 0.5;
+    private const double TokenGapThresholdSec = 1.0;
 
     private static readonly Regex PunctuationRegex = new(@"[^\w\s]", RegexOptions.Compiled);
     private static readonly Regex WhitespaceRegex = new(@"\s+", RegexOptions.Compiled);
 
+    private static readonly JsonSerializerOptions CacheJsonOptions = new()
+    {
+        WriteIndented = false
+    };
+
+    private readonly BlazorWorkspace _workspace;
+
+    public PickupMatchingService(BlazorWorkspace workspace)
+    {
+        _workspace = workspace;
+    }
+
     /// <summary>
-    /// Processes a pickup recording (session or individual), runs ASR on detected
-    /// speech segments, and fuzzy-matches each to the best candidate in
-    /// <paramref name="flaggedSentences"/>.
+    /// Processes a pickup recording (session or individual), runs ASR once
+    /// on the entire file, derives segments from token gaps, and fuzzy-matches
+    /// each to the best candidate in <paramref name="flaggedSentences"/>.
+    /// Results are cached on disk for instant re-import.
     /// </summary>
-    /// <param name="pickupFilePath">Path to the pickup WAV file.</param>
-    /// <param name="flaggedSentences">CRX target sentences to match against.</param>
-    /// <param name="ct">Cancellation token.</param>
-    /// <returns>Matches sorted by pickup start time.</returns>
     public async Task<List<PickupMatch>> MatchPickupAsync(
         string pickupFilePath,
         IReadOnlyList<HydratedSentence> flaggedSentences,
@@ -46,47 +60,36 @@ public class PickupMatchingService
         ArgumentException.ThrowIfNullOrWhiteSpace(pickupFilePath);
         ArgumentNullException.ThrowIfNull(flaggedSentences);
 
-        // 1. Decode pickup file
-        var pickupBuffer = AudioProcessor.Decode(pickupFilePath);
+        // 1. Check ASR cache
+        var asrResponse = TryReadAsrCache(pickupFilePath);
 
-        // 2. Detect silence to segment session recordings
-        var silences = AudioProcessor.DetectSilence(pickupBuffer, new SilenceDetectOptions
+        if (asrResponse == null)
         {
-            NoiseDb = -45.0,
-            MinimumDuration = TimeSpan.FromSeconds(1.5)
-        });
+            // 2. Decode, prepare, run ASR once on the entire file
+            var pickupBuffer = AudioProcessor.Decode(pickupFilePath);
+            var asrReady = AsrAudioPreparer.PrepareForAsr(pickupBuffer);
+            var asrOptions = await BuildAsrOptionsAsync(ct).ConfigureAwait(false);
+            asrResponse = await AsrProcessor.TranscribeBufferAsync(asrReady, asrOptions, ct)
+                .ConfigureAwait(false);
 
-        // 3. Derive speech segments from silence intervals
-        var segments = DeriveSegments(pickupBuffer, silences);
+            // 3. Cache for instant re-import
+            WriteAsrCache(pickupFilePath, asrResponse);
+        }
 
-        // 4. Process each segment through ASR and match
-        var asrOptions = await BuildAsrOptionsAsync(ct).ConfigureAwait(false);
+        // 4. Derive speech segments from token gaps
+        var segments = DeriveSegmentsFromTokens(asrResponse.Tokens);
+
+        // 5. Fuzzy match each segment against flagged sentences
         var matches = new List<PickupMatch>();
 
         foreach (var segment in segments)
         {
             ct.ThrowIfCancellationRequested();
 
-            // a. Trim segment from pickup buffer
-            var segBuffer = AudioProcessor.Trim(
-                pickupBuffer,
-                TimeSpan.FromSeconds(segment.StartSec),
-                TimeSpan.FromSeconds(segment.EndSec));
-
-            // b. Prepare for ASR (mono 16kHz)
-            var asrReady = AsrAudioPreparer.PrepareForAsr(segBuffer);
-
-            // c. Run ASR
-            var asrResponse = await AsrProcessor.TranscribeBufferAsync(asrReady, asrOptions, ct)
-                .ConfigureAwait(false);
-
-            // d. Extract full text from ASR tokens
-            var recognizedText = ExtractFullText(asrResponse);
-            if (string.IsNullOrWhiteSpace(recognizedText))
+            if (string.IsNullOrWhiteSpace(segment.Text))
                 continue;
 
-            // e. Fuzzy match against flagged sentences
-            var normalizedRecognized = NormalizeForMatch(recognizedText);
+            var normalizedRecognized = NormalizeForMatch(segment.Text);
 
             double bestScore = 0;
             HydratedSentence? bestSentence = null;
@@ -103,7 +106,6 @@ public class PickupMatchingService
                 }
             }
 
-            // f. Accept match if confidence exceeds threshold
             if (bestScore > MatchConfidenceThreshold && bestSentence != null)
             {
                 matches.Add(new PickupMatch(
@@ -111,11 +113,10 @@ public class PickupMatchingService
                     PickupStartSec: segment.StartSec,
                     PickupEndSec: segment.EndSec,
                     Confidence: bestScore,
-                    RecognizedText: recognizedText));
+                    RecognizedText: segment.Text));
             }
         }
 
-        // 5. Return sorted by pickup start time
         return matches.OrderBy(m => m.PickupStartSec).ToList();
     }
 
@@ -165,51 +166,50 @@ public class PickupMatchingService
     }
 
     /// <summary>
-    /// Derives speech segments from silence intervals. Segments are the gaps
-    /// between detected silences (i.e., the non-silent portions of audio).
-    /// Filters out segments shorter than <see cref="MinSegmentDurationSec"/>.
+    /// Derives speech segments from ASR token timestamps by splitting on gaps
+    /// that exceed <see cref="TokenGapThresholdSec"/>. Each segment carries
+    /// concatenated text from its tokens. Replaces silence detection + per-segment ASR.
     /// </summary>
-    private static List<(double StartSec, double EndSec)> DeriveSegments(
-        AudioBuffer buffer,
-        IReadOnlyList<SilenceInterval> silences)
+    private static List<(double StartSec, double EndSec, string Text)> DeriveSegmentsFromTokens(
+        AsrToken[] tokens)
     {
-        var totalDuration = (double)buffer.Length / buffer.SampleRate;
-        var segments = new List<(double StartSec, double EndSec)>();
+        var segments = new List<(double StartSec, double EndSec, string Text)>();
 
-        if (silences.Count == 0)
-        {
-            // No silence detected -- entire buffer is one segment
-            if (totalDuration >= MinSegmentDurationSec)
-                segments.Add((0, totalDuration));
+        if (tokens is not { Length: > 0 })
             return segments;
-        }
 
-        // Before first silence
-        var firstSilenceStart = silences[0].Start.TotalSeconds;
-        if (firstSilenceStart >= MinSegmentDurationSec)
+        var segStartSec = tokens[0].StartTime;
+        var segEndSec = tokens[0].StartTime + tokens[0].Duration;
+        var words = new List<string> { tokens[0].Word };
+
+        for (int i = 1; i < tokens.Length; i++)
         {
-            segments.Add((0, firstSilenceStart));
-        }
+            var token = tokens[i];
+            var gap = token.StartTime - segEndSec;
 
-        // Between silences
-        for (int i = 0; i < silences.Count - 1; i++)
-        {
-            var gapStart = silences[i].End.TotalSeconds;
-            var gapEnd = silences[i + 1].Start.TotalSeconds;
-            var gapDuration = gapEnd - gapStart;
-
-            if (gapDuration >= MinSegmentDurationSec)
+            if (gap >= TokenGapThresholdSec)
             {
-                segments.Add((gapStart, gapEnd));
+                // Flush current segment
+                var duration = segEndSec - segStartSec;
+                if (duration >= MinSegmentDurationSec)
+                {
+                    segments.Add((segStartSec, segEndSec, string.Join(" ", words).Trim()));
+                }
+
+                // Start new segment
+                segStartSec = token.StartTime;
+                words.Clear();
             }
+
+            segEndSec = token.StartTime + token.Duration;
+            words.Add(token.Word);
         }
 
-        // After last silence
-        var lastSilenceEnd = silences[^1].End.TotalSeconds;
-        var trailingDuration = totalDuration - lastSilenceEnd;
-        if (trailingDuration >= MinSegmentDurationSec)
+        // Flush final segment
+        var finalDuration = segEndSec - segStartSec;
+        if (finalDuration >= MinSegmentDurationSec)
         {
-            segments.Add((lastSilenceEnd, totalDuration));
+            segments.Add((segStartSec, segEndSec, string.Join(" ", words).Trim()));
         }
 
         return segments;
@@ -259,4 +259,51 @@ public class PickupMatchingService
             Language: "en",
             EnableWordTimestamps: true);
     }
+
+    #region ASR Cache
+
+    private string GetCachePath(string pickupFilePath)
+    {
+        var hash = ComputeCacheKey(pickupFilePath);
+        var workDir = _workspace.WorkingDirectory
+            ?? throw new InvalidOperationException("No working directory set.");
+        return Path.Combine(workDir, ".polish", "pickups", $"{hash}.asr.json");
+    }
+
+    private static string ComputeCacheKey(string filePath)
+    {
+        var fi = new FileInfo(filePath);
+        var input = $"{fi.FullName}|{fi.Length}|{fi.LastWriteTimeUtc:O}";
+        var hashBytes = SHA256.HashData(Encoding.UTF8.GetBytes(input));
+        return Convert.ToHexString(hashBytes)[..16].ToLowerInvariant();
+    }
+
+    private AsrResponse? TryReadAsrCache(string pickupFilePath)
+    {
+        var cachePath = GetCachePath(pickupFilePath);
+        if (!File.Exists(cachePath))
+            return null;
+
+        try
+        {
+            var json = File.ReadAllText(cachePath);
+            return JsonSerializer.Deserialize<AsrResponse>(json);
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private void WriteAsrCache(string pickupFilePath, AsrResponse response)
+    {
+        var cachePath = GetCachePath(pickupFilePath);
+        var dir = Path.GetDirectoryName(cachePath)!;
+        Directory.CreateDirectory(dir);
+
+        var json = JsonSerializer.Serialize(response, CacheJsonOptions);
+        File.WriteAllText(cachePath, json);
+    }
+
+    #endregion
 }
