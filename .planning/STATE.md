@@ -7,9 +7,9 @@ Audio Management System - CLI and core library for audio processing, ASR, forced
 ## Current Position
 
 **Milestone**: v2.0 Blazor Workstation
-**Phase**: 12 - Polish Area Foundation
-**Plan**: 8/8
-**Status**: Plan 12-07 complete; Post-replacement verification service, context player, and Proof sync
+**Phase**: 12.1 - MFA Refinement for Pickup Timings
+**Plan**: 1/1
+**Status**: Phase 12.1 complete; MFA forced alignment post-processing for pickup matches
 
 ## Progress
 
@@ -18,6 +18,12 @@ v1.0 Codebase Audit    [██████████████████�
 v1.1 Execute Refactor  [████████████████████] 100% - SHIPPED
 v2.0 Blazor Workstation[████████████████████] 100% - Phase 10 complete
 ```
+
+## Phase 12.1 Plans (MFA Refinement for Pickup Timings)
+
+| Plan | Name | Tasks | Status |
+|------|------|-------|--------|
+| 12.1-01 | MFA Refinement for Pickup Timings | 2 | Complete |
 
 ## Phase 12 Plans (Polish Area Foundation)
 
@@ -108,6 +114,9 @@ v2.0 Blazor Workstation[██████████████████�
 | Revalidation pass threshold | 0.9 Levenshtein similarity | High enough for quality, allows minor ASR variance |
 | Revalidation history | In-memory per chapter | Ephemeral verification state, cleared on chapter switch |
 | SyncToProof granularity | Per-chapter via ReviewedStatusService | Aligns with existing Proof area chapter-level tracking |
+| InternalsVisibleTo for Workstation | Assembly attribute on Ams.Core | MfaService/MfaProcessSupervisor are internal; workstation is first-party host |
+| MFA warmup at workstation startup | TriggerBackgroundWarmup in Program.cs | Pre-warm conda environment to avoid first-use latency on pickup import |
+| MFA cache key scope | Audio identity + sentence IDs + normalized BookText | Prevents stale MFA timings when same audio is re-matched with different sentences |
 
 ## Phase 8/8.1 Conclusions (Archived)
 
@@ -140,10 +149,11 @@ poc/VelloSharpPoc/     - Avalonia + VelloSharp (child window fails)
 ### Roadmap Evolution
 
 - Phase 13 added: Pickup Substitution
+- Phase 12.1 inserted after Phase 12: MFA refinement for pickup timings — phoneme-accurate pickup boundaries via forced alignment (URGENT)
 
 ## Next Action
 
-Plan 12-07 complete. Post-replacement verification loop delivered (ASR re-validation, listen-with-context, Proof sync). Ready for plan 12-08.
+Phase 12.1 complete. MFA-refined pickup timings integrated into PickupMatchingService. Ready for Phase 12 plan 12-08 or Phase 13 (Pickup Substitution).
 
 ## Deferred UI Refinements (for Plan 10-04)
 
@@ -160,7 +170,7 @@ None currently.
 
 ## Session Continuity
 
-Last session: 2026-02-23 10:34 PST
+Last session: 2026-02-24 07:48 UTC
 Branch: `blazor-workstation`
-Stopped at: Completed 12-07-PLAN.md
-Note: Phase 12 plan 07 executed -- PolishVerificationService, ContextPlayer, ChapterPolish verification integration, Proof area sync.
+Stopped at: Completed 12.1-01-PLAN.md
+Note: Phase 12.1 plan 01 executed -- PickupMfaRefinementService for MFA forced alignment of pickup timings, integrated into PickupMatchingService pipeline.
