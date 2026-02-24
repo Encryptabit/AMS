@@ -22,14 +22,12 @@ namespace Ams.Workstation.Server.Services;
 /// Runs ASR on pickup recording files and matches recognized text to
 /// flagged CRX target sentences using fuzzy Levenshtein similarity.
 /// Supports both multi-pickup session files (single-pass ASR with
-/// token-gap segmentation) and individual pickup files (one per sentence).
+/// CRX-guided segmentation) and individual pickup files (one per sentence).
 /// Uses Whisper.NET in-process via <see cref="AsrProcessor"/> exclusively.
 /// </summary>
 public class PickupMatchingService
 {
-    private const double MinSegmentDurationSec = 0.3;
     private const double MatchConfidenceThreshold = 0.5;
-    private const double TokenGapThresholdSec = 1.0;
 
     private static readonly Regex PunctuationRegex = new(@"[^\w\s]", RegexOptions.Compiled);
     private static readonly Regex WhitespaceRegex = new(@"\s+", RegexOptions.Compiled);
@@ -40,17 +38,19 @@ public class PickupMatchingService
     };
 
     private readonly BlazorWorkspace _workspace;
+    private readonly PickupMfaRefinementService _mfaRefinement;
 
-    public PickupMatchingService(BlazorWorkspace workspace)
+    public PickupMatchingService(BlazorWorkspace workspace, PickupMfaRefinementService mfaRefinement)
     {
         _workspace = workspace;
+        _mfaRefinement = mfaRefinement;
     }
 
     /// <summary>
-    /// Processes a pickup recording (session or individual), runs ASR once
-    /// on the entire file, derives segments from token gaps, and fuzzy-matches
-    /// each to the best candidate in <paramref name="flaggedSentences"/>.
-    /// Results are cached on disk for instant re-import.
+    /// Processes a pickup session recording by running ASR once on the entire
+    /// file, then using the flagged CRX sentences to locate each sentence's
+    /// token span in the ASR output. Sentences are matched sequentially
+    /// (narrator records them in CRX order). Results are cached on disk.
     /// </summary>
     public async Task<List<PickupMatch>> MatchPickupAsync(
         string pickupFilePath,
@@ -76,48 +76,101 @@ public class PickupMatchingService
             WriteAsrCache(pickupFilePath, asrResponse);
         }
 
-        // 4. Derive speech segments from token gaps
-        var segments = DeriveSegmentsFromTokens(asrResponse.Tokens);
-
-        // 5. Fuzzy match each segment against flagged sentences
+        // 4. Use CRX sentences to find each sentence's token span
+        var tokens = asrResponse.Tokens;
         var matches = new List<PickupMatch>();
 
-        foreach (var segment in segments)
+        if (tokens is not { Length: > 0 } || flaggedSentences.Count == 0)
+            return matches;
+
+        // Process sentences in order — narrator records them sequentially
+        int searchFrom = 0;
+
+        foreach (var sentence in flaggedSentences)
         {
             ct.ThrowIfCancellationRequested();
 
-            if (string.IsNullOrWhiteSpace(segment.Text))
-                continue;
+            var normalizedTarget = NormalizeForMatch(sentence.BookText);
+            var targetWords = normalizedTarget.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+            if (targetWords.Length == 0) continue;
 
-            var normalizedRecognized = NormalizeForMatch(segment.Text);
+            // Search for the best contiguous token window starting from searchFrom
+            var (bestStart, bestEnd, bestScore) = FindBestTokenSpan(
+                tokens, searchFrom, targetWords.Length, normalizedTarget);
 
-            double bestScore = 0;
-            HydratedSentence? bestSentence = null;
-
-            foreach (var sentence in flaggedSentences)
+            if (bestScore > MatchConfidenceThreshold && bestStart >= 0)
             {
-                var normalizedTarget = NormalizeForMatch(sentence.BookText);
-                var similarity = LevenshteinMetrics.Similarity(normalizedRecognized, normalizedTarget);
+                var startSec = tokens[bestStart].StartTime;
+                var lastToken = tokens[bestEnd - 1];
+                var endSec = lastToken.StartTime + lastToken.Duration;
+                var recognizedText = string.Join(" ", tokens[bestStart..bestEnd].Select(t => t.Word));
 
-                if (similarity > bestScore)
-                {
-                    bestScore = similarity;
-                    bestSentence = sentence;
-                }
-            }
-
-            if (bestScore > MatchConfidenceThreshold && bestSentence != null)
-            {
                 matches.Add(new PickupMatch(
-                    SentenceId: bestSentence.Id,
-                    PickupStartSec: segment.StartSec,
-                    PickupEndSec: segment.EndSec,
+                    SentenceId: sentence.Id,
+                    PickupStartSec: startSec,
+                    PickupEndSec: endSec,
                     Confidence: bestScore,
-                    RecognizedText: segment.Text));
+                    RecognizedText: recognizedText.Trim()));
+
+                searchFrom = bestEnd;
             }
         }
 
+        // Refine ASR timings with MFA forced alignment
+        if (matches.Count > 0)
+        {
+            matches = (await _mfaRefinement.RefineWithMfaAsync(
+                pickupFilePath, matches, flaggedSentences, ct)
+                .ConfigureAwait(false)).ToList();
+        }
+
         return matches.OrderBy(m => m.PickupStartSec).ToList();
+    }
+
+    /// <summary>
+    /// Finds the contiguous token span starting at or after <paramref name="fromIndex"/>
+    /// that best matches <paramref name="normalizedTarget"/>. Tries window sizes
+    /// around the expected word count to handle ASR word-splitting variance.
+    /// </summary>
+    private static (int Start, int End, double Score) FindBestTokenSpan(
+        AsrToken[] tokens, int fromIndex, int expectedWords, string normalizedTarget)
+    {
+        int bestStart = -1, bestEnd = -1;
+        double bestScore = 0;
+
+        // Allow window sizes from 60% to 150% of expected word count
+        int minWindow = Math.Max(1, (int)(expectedWords * 0.6));
+        int maxWindow = Math.Min(tokens.Length - fromIndex, (int)(expectedWords * 1.5) + 2);
+
+        // Limit how far ahead we search (don't scan the entire remaining stream)
+        int maxStartOffset = Math.Min(tokens.Length - fromIndex, expectedWords * 2 + 10);
+
+        for (int offset = 0; offset < maxStartOffset; offset++)
+        {
+            int start = fromIndex + offset;
+
+            for (int windowSize = minWindow; windowSize <= maxWindow; windowSize++)
+            {
+                int end = start + windowSize;
+                if (end > tokens.Length) break;
+
+                var windowText = string.Join(" ", tokens[start..end].Select(t => t.Word));
+                var normalizedWindow = NormalizeForMatch(windowText);
+                var score = LevenshteinMetrics.Similarity(normalizedWindow, normalizedTarget);
+
+                if (score > bestScore)
+                {
+                    bestScore = score;
+                    bestStart = start;
+                    bestEnd = end;
+                }
+
+                // Early exit: very high confidence match found
+                if (score > 0.92) return (bestStart, bestEnd, bestScore);
+            }
+        }
+
+        return (bestStart, bestEnd, bestScore);
     }
 
     /// <summary>
@@ -163,56 +216,6 @@ public class PickupMatchingService
             PickupEndSec: pickupDuration,
             Confidence: confidence,
             RecognizedText: recognizedText ?? string.Empty);
-    }
-
-    /// <summary>
-    /// Derives speech segments from ASR token timestamps by splitting on gaps
-    /// that exceed <see cref="TokenGapThresholdSec"/>. Each segment carries
-    /// concatenated text from its tokens. Replaces silence detection + per-segment ASR.
-    /// </summary>
-    private static List<(double StartSec, double EndSec, string Text)> DeriveSegmentsFromTokens(
-        AsrToken[] tokens)
-    {
-        var segments = new List<(double StartSec, double EndSec, string Text)>();
-
-        if (tokens is not { Length: > 0 })
-            return segments;
-
-        var segStartSec = tokens[0].StartTime;
-        var segEndSec = tokens[0].StartTime + tokens[0].Duration;
-        var words = new List<string> { tokens[0].Word };
-
-        for (int i = 1; i < tokens.Length; i++)
-        {
-            var token = tokens[i];
-            var gap = token.StartTime - segEndSec;
-
-            if (gap >= TokenGapThresholdSec)
-            {
-                // Flush current segment
-                var duration = segEndSec - segStartSec;
-                if (duration >= MinSegmentDurationSec)
-                {
-                    segments.Add((segStartSec, segEndSec, string.Join(" ", words).Trim()));
-                }
-
-                // Start new segment
-                segStartSec = token.StartTime;
-                words.Clear();
-            }
-
-            segEndSec = token.StartTime + token.Duration;
-            words.Add(token.Word);
-        }
-
-        // Flush final segment
-        var finalDuration = segEndSec - segStartSec;
-        if (finalDuration >= MinSegmentDurationSec)
-        {
-            segments.Add((segStartSec, segEndSec, string.Join(" ", words).Trim()));
-        }
-
-        return segments;
     }
 
     /// <summary>

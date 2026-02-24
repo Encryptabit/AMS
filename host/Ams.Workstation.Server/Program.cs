@@ -1,5 +1,6 @@
 using Ams.Core.Services;
 using Ams.Core.Application.Mfa;
+using Ams.Core.Application.Processes;
 using Ams.Core.Runtime.Book;
 using Ams.Core.Services.Alignment;
 using Ams.Core.Services.Interfaces;
@@ -44,6 +45,7 @@ builder.Services.AddSingleton<UndoService>();
 builder.Services.AddSingleton<PreviewBufferService>();
 
 // Polish area services - transient (stateless matching and orchestration)
+builder.Services.AddTransient<PickupMfaRefinementService>();
 builder.Services.AddTransient<PickupMatchingService>();
 builder.Services.AddTransient<PolishService>();
 builder.Services.AddTransient<PolishVerificationService>();
@@ -60,6 +62,10 @@ builder.Services.AddSingleton<ITranscriptHydrationService, TranscriptHydrationSe
 builder.Services.AddSingleton<IAlignmentService, AlignmentService>();
 
 var app = builder.Build();
+
+// Warm MFA conda environment in the background so forced alignment is ready
+// by the time pickup imports run (avoids first-use latency).
+MfaProcessSupervisor.TriggerBackgroundWarmup();
 
 // Configure the HTTP request pipeline.
 if (!app.Environment.IsDevelopment())
