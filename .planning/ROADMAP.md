@@ -242,13 +242,13 @@ Phases execute in numeric order: 1 → 2 → ... → 12
 | 10.2. CRX Excel & Cleanup | v2.0 | Complete    | 2026-02-23 | - |
 | 11. Prep Area Implementation | v2.0 | 0/? | Not started | - |
 | 12. Polish Area Foundation | v2.0 | 0/8 | Planned | - |
-| 12.1. MFA Pickup Refinement | v2.0 | 0/1 | Not started | - |
+| 12.1. MFA Pickup Refinement | v2.0 | Complete    | 2026-02-24 | - |
 
 ### Phase 13: Pickup Substitution
 
 **Goal:** [To be planned]
 **Depends on:** Phase 12
-**Plans:** 0 plans
+**Plans:** 1/1 plans complete
 
 Plans:
 - [ ] TBD (run /gsd:plan-phase 13 to break down)
