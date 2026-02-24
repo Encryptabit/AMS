@@ -206,6 +206,15 @@ Plans:
 - [ ] 12-07-PLAN.md -- PolishVerificationService (auto re-validate, listen-with-context, Proof sync)
 - [ ] 12-08-PLAN.md -- End-to-end verification checkpoint
 
+#### Phase 12.1: MFA Refinement for Pickup Timings (INSERTED)
+**Goal**: Run pickup audio through MFA forced alignment to get phoneme-accurate sentence boundaries, replacing rough ASR-based timing estimates. Reuses existing MfaWorkflow/MfaProcessSupervisor infrastructure.
+**Depends on**: Phase 12 (PickupMatchingService, single-pass ASR)
+**Research**: None (existing MFA infra fully understood)
+**Plans**: 1 plan
+
+Plans:
+- [ ] 12.1-01-PLAN.md -- PickupMfaRefinementService + PickupMatchingService integration
+
 ### Quick Plans (Ad-hoc)
 
 - [x] quick-001: Simplify alignment/diff pipeline errors (deterministic UI diff rendering, glue-heuristic removal, stricter sentence ownership) - completed 2026-02-17
@@ -233,6 +242,7 @@ Phases execute in numeric order: 1 → 2 → ... → 12
 | 10.2. CRX Excel & Cleanup | v2.0 | Complete    | 2026-02-23 | - |
 | 11. Prep Area Implementation | v2.0 | 0/? | Not started | - |
 | 12. Polish Area Foundation | v2.0 | 0/8 | Planned | - |
+| 12.1. MFA Pickup Refinement | v2.0 | 0/1 | Not started | - |
 
 ### Phase 13: Pickup Substitution
 
