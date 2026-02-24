@@ -164,6 +164,16 @@
                             Staged
                         </BitText>
                         <BitTag Color="BitColor.Warning">@GetStagedItems().Count</BitTag>
+                        @if (GetStagedItems().Count > 0)
+                        {
+                            <BitButton Variant="BitVariant.Text"
+                                       Color="BitColor.Success"
+                                       OnClick="HandleCommitAll"
+                                       Style="margin-left: auto;"
+                                       IsEnabled="@(!_isProcessing)">
+                                Commit All
+                            </BitButton>
+                        }
                     </BitStack>
                     @foreach (var item in GetStagedItems())
                     {
@@ -172,6 +182,7 @@
                                    PickupFilePath="@item.PickupSourcePath"
                                    Sentence="@FindSentence(item.SentenceId)"
                                    OnUnstage="HandleUnstage"
+                                   OnCommit="HandleCommit"
                                    OnAudition="HandleAudition" />
                     }
                 </BitStack>
@@ -199,6 +210,56 @@
                 </BitStack>
             </BitGridItem>
         </BitGrid>
+
+        @* Row 4 - Roomtone Operations (visible when roomtone file is set) *@
+        @if (!string.IsNullOrWhiteSpace(_roomtoneFilePath))
+        {
+            <BitCard Style="padding: 0.75rem;">
+                <BitText Typography="BitTypography.Subtitle2" Style="margin-bottom: 0.5rem;">
+                    Roomtone Operations
+                </BitText>
+                <BitText Typography="BitTypography.Caption1" Color="BitColor.SecondaryForeground"
+                         Style="margin-bottom: 0.5rem;">
+                    Select a region on the waveform (blue), then choose an operation.
+                </BitText>
+                <BitStack Horizontal="true" Gap="0.5rem" VerticalAlign="BitAlignment.Center" AutoHeight="true">
+                    <BitButton Variant="BitVariant.Outline"
+                               IconName="@BitIconName.Add"
+                               IsEnabled="@(_roomtoneRegionValid && !_isProcessing)"
+                               OnClick="@(() => HandleRoomtoneOp(RoomtoneOperation.Insert))">
+                        Insert
+                    </BitButton>
+                    <BitButton Variant="BitVariant.Outline"
+                               IconName="@BitIconName.Switch"
+                               IsEnabled="@(_roomtoneRegionValid && !_isProcessing)"
+                               OnClick="@(() => HandleRoomtoneOp(RoomtoneOperation.Replace))">
+                        Replace
+                    </BitButton>
+                    <BitButton Variant="BitVariant.Outline"
+                               Color="BitColor.Error"
+                               IconName="@BitIconName.Delete"
+                               IsEnabled="@(_roomtoneRegionValid && !_isProcessing)"
+                               OnClick="@(() => HandleRoomtoneOp(RoomtoneOperation.Delete))">
+                        Delete
+                    </BitButton>
+                    <div style="margin-left: 1rem; display: flex; align-items: center; gap: 0.5rem;">
+                        <BitText Typography="BitTypography.Caption1">Crossfade:</BitText>
+                        <input type="range" min="5" max="200" step="5"
+                               value="@_crossfadeDurationMs"
+                               @oninput="OnCrossfadeInput"
+                               style="width: 120px;" />
+                        <BitText Typography="BitTypography.Caption1">@(_crossfadeDurationMs)ms</BitText>
+                    </div>
+                </BitStack>
+                @if (!string.IsNullOrEmpty(_processingStatus) && _processingStatus.Contains("Roomtone"))
+                {
+                    <BitText Typography="BitTypography.Caption1" Color="BitColor.SecondaryForeground"
+                             Style="margin-top: 0.25rem;">
+                        @_processingStatus
+                    </BitText>
+                }
+            </BitCard>
+        }
     }
 </BitStack>
 
@@ -226,6 +287,12 @@
     private bool _isProcessing;
     private string? _processingStatus;
     private double _processingProgress; // 0.0-1.0
+
+    // ── Roomtone state ──────────────────────────────────────────
+    private double _roomtoneRegionStart;
+    private double _roomtoneRegionEnd;
+    private bool _roomtoneRegionValid;
+    private int _crossfadeDurationMs = 30; // Default 30ms, range 5-200ms
 
     // ── Cross-chapter pickup data ─────────────────────────────────
     private Dictionary<string, List<CrossChapterPickupMatch>> _matchesByChapter = new();
@@ -366,9 +433,30 @@
         await HandlePickupFileSet();
     }
 
-    private void HandleSetRoomtone()
+    private async Task HandleSetRoomtone()
     {
-        // Roomtone file path is already bound. Used by roomtone operations in future plans.
+        // Add a blue roomtone selection region to the waveform at a default position
+        if (_waveformPlayer != null && _isWaveformReady && !string.IsNullOrWhiteSpace(_roomtoneFilePath))
+        {
+            // Default region: 1-second selection near the start
+            var defaultStart = 1.0;
+            var defaultEnd = 2.0;
+            if (_waveformPlayer.Duration > 0)
+            {
+                defaultEnd = Math.Min(defaultEnd, _waveformPlayer.Duration * 0.1);
+                if (defaultEnd <= defaultStart)
+                    defaultEnd = Math.Min(defaultStart + 0.5, _waveformPlayer.Duration);
+            }
+
+            _roomtoneRegionStart = defaultStart;
+            _roomtoneRegionEnd = defaultEnd;
+            _roomtoneRegionValid = defaultEnd > defaultStart;
+
+            await _waveformPlayer.AddEditableRegion(
+                "roomtone-selection", defaultStart, defaultEnd,
+                "rgba(59, 130, 246, 0.3)"); // Blue for roomtone
+        }
+
         StateHasChanged();
     }
 
@@ -526,6 +614,60 @@
             await HandleStageMatch(m.Match);
     }
 
+    private async Task HandleCommit(string replacementId)
+    {
+        _isProcessing = true;
+        StateHasChanged();
+
+        try
+        {
+            var (resultBuffer, timingDelta) = await PolishService.ApplyReplacementAsync(
+                replacementId, CancellationToken.None);
+
+            _correctedVersion++; // Force waveform URL cache-bust
+            RefreshCurrentChapterState();
+            await SyncWaveformRegions();
+
+            // Check for chapter completion
+            await CheckCompletionAndAdvance();
+        }
+        catch (Exception ex)
+        {
+            _processingStatus = $"Commit failed: {ex.Message}";
+        }
+        finally
+        {
+            _isProcessing = false;
+            StateHasChanged();
+        }
+    }
+
+    private async Task HandleCommitAll()
+    {
+        var staged = GetStagedItems().ToList();
+        _isProcessing = true;
+        StateHasChanged();
+
+        var committed = 0;
+        foreach (var item in staged)
+        {
+            try
+            {
+                await PolishService.ApplyReplacementAsync(item.Id, CancellationToken.None);
+                committed++;
+            }
+            catch { /* continue with next */ }
+        }
+
+        _correctedVersion++;
+        RefreshCurrentChapterState();
+        await SyncWaveformRegions();
+        _isProcessing = false;
+        _processingStatus = $"Committed {committed}/{staged.Count} replacements.";
+        await CheckCompletionAndAdvance();
+        StateHasChanged();
+    }
+
     private async Task HandleRevert(string replacementId)
     {
         _isProcessing = true;
@@ -591,6 +733,16 @@
 
     private async Task HandleRegionUpdated((string Id, double Start, double End) region)
     {
+        // Handle roomtone selection region updates
+        if (region.Id == "roomtone-selection")
+        {
+            _roomtoneRegionStart = region.Start;
+            _roomtoneRegionEnd = region.End;
+            _roomtoneRegionValid = region.End > region.Start + 0.001;
+            StateHasChanged();
+            return;
+        }
+
         // Extract replacement ID from region ID (format: "staged-{replacementId}")
         if (!region.Id.StartsWith("staged-")) return;
         var replacementId = region.Id["staged-".Length..];
@@ -627,6 +779,16 @@
                 item.OriginalStartSec,
                 item.OriginalStartSec + item.PickupDuration(),
                 "rgba(150, 150, 150, 0.25)"); // Gray for committed
+        }
+
+        // Add roomtone selection region (blue) if roomtone file is set
+        if (!string.IsNullOrWhiteSpace(_roomtoneFilePath) && _roomtoneRegionValid)
+        {
+            await _waveformPlayer.AddEditableRegion(
+                "roomtone-selection",
+                _roomtoneRegionStart,
+                _roomtoneRegionEnd,
+                "rgba(59, 130, 246, 0.3)"); // Blue for roomtone selection
         }
     }
 
@@ -804,6 +966,65 @@
 
         var stats = sentence.Diff?.Stats;
         return stats is not null && (stats.Insertions > 0 || stats.Deletions > 0);
+    }
+
+    // ── Completion Tracking & Auto-Advance ────────────────────────
+    private async Task CheckCompletionAndAdvance()
+    {
+        if (_currentChapterIndex < 0 || _currentChapterIndex >= _chaptersWithCrx.Count)
+            return;
+
+        var info = _chaptersWithCrx[_currentChapterIndex];
+        var committedCount = GetCommittedCount(info.Stem);
+
+        if (info.CrxCount > 0 && committedCount >= info.CrxCount)
+        {
+            // Mark current chapter as complete
+            _chaptersWithCrx[_currentChapterIndex] = info with { AllCommitted = true };
+
+            // Auto-advance to next incomplete chapter
+            var nextIncomplete = FindNextIncompleteChapter();
+            if (nextIncomplete >= 0)
+            {
+                await Task.Delay(500); // Brief pause for visual feedback
+                await NavigateToChapter(nextIncomplete);
+            }
+        }
+    }
+
+    private int FindNextIncompleteChapter()
+    {
+        // Search forward from current position
+        for (int i = _currentChapterIndex + 1; i < _chaptersWithCrx.Count; i++)
+        {
+            if (!_chaptersWithCrx[i].AllCommitted &&
+                GetCommittedCount(_chaptersWithCrx[i].Stem) < _chaptersWithCrx[i].CrxCount)
+                return i;
+        }
+        // Wrap around
+        for (int i = 0; i < _currentChapterIndex; i++)
+        {
+            if (!_chaptersWithCrx[i].AllCommitted &&
+                GetCommittedCount(_chaptersWithCrx[i].Stem) < _chaptersWithCrx[i].CrxCount)
+                return i;
+        }
+        return -1; // All complete
+    }
+
+    // ── Roomtone Operations (stubs for plan 13-07) ─────────────
+    private async Task HandleRoomtoneOp(RoomtoneOperation op)
+    {
+        // Roomtone operations will be implemented in plan 13-07
+        _processingStatus = $"Roomtone {op} operation: not yet implemented.";
+        StateHasChanged();
+    }
+
+    private void OnCrossfadeInput(ChangeEventArgs e)
+    {
+        if (int.TryParse(e.Value?.ToString(), out var ms))
+        {
+            _crossfadeDurationMs = ms;
+        }
     }
 
     // ── Disposal ──────────────────────────────────────────────────

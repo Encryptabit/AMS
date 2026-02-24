@@ -47,6 +47,12 @@
                         break;
 
                     case PickupBoxState.Staged:
+                        <BitButton Variant="BitVariant.Fill"
+                                   Color="BitColor.Success"
+                                   Size="BitSize.Small"
+                                   OnClick="HandleCommit">
+                            Commit
+                        </BitButton>
                         <BitButton Variant="BitVariant.Outline"
                                    Color="BitColor.Warning"
                                    Size="BitSize.Small"
@@ -158,6 +164,13 @@
     {
         if (Match != null)
             await OnStage.InvokeAsync(Match);
+    }
+
+    private async Task HandleCommit()
+    {
+        var id = Replacement?.Id;
+        if (!string.IsNullOrEmpty(id))
+            await OnCommit.InvokeAsync(id);
     }
 
     private async Task HandleUnstage()
