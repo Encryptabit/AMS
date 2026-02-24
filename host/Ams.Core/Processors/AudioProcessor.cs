@@ -209,7 +209,8 @@ public readonly record struct AudioInfo(
     string Format,
     int SampleRate,
     int Channels,
-    TimeSpan Duration);
+    TimeSpan Duration,
+    int BitsPerSample = 0);
 
 public sealed record AudioDecodeOptions(
     TimeSpan? Start = null,

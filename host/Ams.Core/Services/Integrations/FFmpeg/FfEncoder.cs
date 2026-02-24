@@ -372,6 +372,7 @@ internal static unsafe class FfEncoder
         return bitDepth switch
         {
             16 => (AVCodecID.AV_CODEC_ID_PCM_S16LE, AVSampleFormat.AV_SAMPLE_FMT_S16),
+            24 => (AVCodecID.AV_CODEC_ID_PCM_S24LE, AVSampleFormat.AV_SAMPLE_FMT_S32),
             32 => (AVCodecID.AV_CODEC_ID_PCM_F32LE, AVSampleFormat.AV_SAMPLE_FMT_FLT),
             _ => throw new NotSupportedException($"Unsupported PCM bit depth {bitDepth}."),
         };

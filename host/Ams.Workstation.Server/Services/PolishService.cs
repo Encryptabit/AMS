@@ -389,6 +389,7 @@ public class PolishService
     /// Writes the result buffer to {stem}.corrected.wav and flushes the cached
     /// "corrected" AudioBufferContext so it reloads from disk on next access.
     /// Also clears any preview buffer.
+    /// Probes the source chapter WAV to preserve its bit depth (e.g. 24-bit audiobook masters).
     /// </summary>
     private void PersistCorrectedBuffer(AudioBuffer buffer)
     {
@@ -398,7 +399,20 @@ public class PolishService
         var descriptor = handle.Chapter.Descriptor;
         var correctedPath = Path.Combine(descriptor.RootPath, $"{descriptor.ChapterId}.corrected.wav");
 
-        AudioProcessor.EncodeWav(correctedPath, buffer);
+        // Determine source bit depth for format-preserving encode
+        var treatedPath = Path.Combine(descriptor.RootPath, $"{descriptor.ChapterId}.treated.wav");
+        var sourcePath = File.Exists(correctedPath) ? correctedPath : treatedPath;
+        int? sourceBitDepth = null;
+        if (File.Exists(sourcePath))
+        {
+            var info = AudioProcessor.Probe(sourcePath);
+            sourceBitDepth = info.BitsPerSample > 0 ? info.BitsPerSample : null;
+        }
+
+        var options = new AudioEncodeOptions(
+            TargetSampleRate: buffer.SampleRate,
+            TargetBitDepth: sourceBitDepth);
+        AudioProcessor.EncodeWav(correctedPath, buffer, options);
 
         // Flush the cached buffer so next load picks up the new file
         handle.Chapter.Audio.Deallocate("corrected");
