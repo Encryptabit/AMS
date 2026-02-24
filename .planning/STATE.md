@@ -8,8 +8,8 @@ Audio Management System - CLI and core library for audio processing, ASR, forced
 
 **Milestone**: v2.0 Blazor Workstation
 **Phase**: 13 - Pickup Substitution
-**Plan**: 4/8
-**Status**: Plan 13-04 complete; cross-chapter pickup processing pipeline, stage/unstage/drag-and-drop
+**Plan**: 5/8
+**Status**: Plan 13-05 complete; waveform region editing, commit/revert flow, completion tracking, auto-advance
 
 ## Progress
 
@@ -27,7 +27,7 @@ v2.0 Blazor Workstation[██████████████████�
 | 13-02 | Cross-Chapter Models & Mini Waveform | 2 | Complete |
 | 13-03 | Pickup Substitution Page & PickupBox | 2 | Complete |
 | 13-04 | Upfront Processing & Stage/Unstage Actions | 2 | Complete |
-| 13-05 | Pickup Matching UI | - | Pending |
+| 13-05 | Region Editing & Commit/Revert Flow | 2 | Complete |
 | 13-06 | Staging & Commit UI | - | Pending |
 | 13-07 | Roomtone Operations | - | Pending |
 | 13-08 | Integration & Verification | - | Pending |
@@ -138,6 +138,8 @@ v2.0 Blazor Workstation[██████████████████�
 | Roomtone fill implementation | Sample-level Array.Copy loop | More efficient than FFmpeg filter graph for simple memory looping |
 | Pickup substitution route | /polish/pickup (not /polish) | Avoids duplicate route conflict with existing Index.razor; plan 13-07 finalizes |
 | PickupBox mini waveform lifecycle | Import + draw + dispose per render | Avoids long-lived JS module refs for many PickupBox instances |
+| Region sync strategy | Clear-all + re-add on state change | Guaranteed consistency vs incremental add/remove; minor perf tradeoff |
+| Completion auto-advance | Wrap-around search with 500ms delay | Searches forward then wraps; delay provides visual feedback before flip |
 
 ## Phase 8/8.1 Conclusions (Archived)
 
@@ -174,7 +176,7 @@ poc/VelloSharpPoc/     - Avalonia + VelloSharp (child window fails)
 
 ## Next Action
 
-Phase 13 plan 13-04 complete. Cross-chapter pickup processing pipeline (ImportPickupsCrossChapterAsync), stage/unstage/stage all actions, and HTML5 drag-and-drop between Matches and Staged columns. Continue with plan 13-05 (Pickup Matching UI).
+Phase 13 plan 13-05 complete. Waveform region editing with draggable green regions for staged pickups, commit/revert flow writing corrected.wav, completion badges, and auto-advance to next incomplete chapter. Continue with plan 13-06 (Staging and Commit UI).
 
 ## Deferred UI Refinements (for Plan 10-04)
 
@@ -191,7 +193,7 @@ None currently.
 
 ## Session Continuity
 
-Last session: 2026-02-24 19:21 UTC
+Last session: 2026-02-24 19:31 UTC
 Branch: `blazor-workstation`
-Stopped at: Completed 13-04-PLAN.md
-Note: Phase 13 plan 04 complete. ImportPickupsCrossChapterAsync in PolishService for book-wide single-pass processing. Stage/Unstage/Stage All actions and HTML5 drag-and-drop in PickupSubstitution.razor.
+Stopped at: Completed 13-05-PLAN.md
+Note: Phase 13 plan 05 complete. Waveform region editing, commit/revert, completion tracking, auto-advance in PickupSubstitution.razor. ClearRegions/RemoveRegion/AddRegion on WaveformPlayer. UpdateBoundaries on StagingQueueService.
