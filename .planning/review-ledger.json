@@ -60,8 +60,18 @@
       "artifact_hash": "0504f35978aca265e564ba1c228b4b66ef340feaf2a0c41d75b0cb61b6dc014c",
       "note": null,
       "recorded_at": "2026-02-24T07:58:43.139Z"
+    },
+    {
+      "entry_id": "1771927705946-gnatf2",
+      "gate": "execute",
+      "phase": "12",
+      "review_id": null,
+      "status": "skipped",
+      "artifact_hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "note": "checkpoint_plan_docs_only",
+      "recorded_at": "2026-02-24T10:08:25.946Z"
     }
   ],
   "overrides": [],
-  "updated_at": "2026-02-24T07:58:43.140Z"
+  "updated_at": "2026-02-24T10:08:25.947Z"
 }
