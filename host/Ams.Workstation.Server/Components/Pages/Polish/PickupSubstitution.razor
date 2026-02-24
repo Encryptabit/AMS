@@ -1,0 +1,590 @@
+@page "/polish/pickup"
+@inject Ams.Workstation.Server.Services.BlazorWorkspace Workspace
+@inject Ams.Workstation.Server.Services.CrxService CrxService
+@inject Ams.Workstation.Server.Services.StagingQueueService StagingQueueService
+@inject Ams.Workstation.Server.Services.PolishService PolishService
+@inject Ams.Workstation.Server.Services.PickupMatchingService PickupMatchingService
+@inject Ams.Workstation.Server.Services.PolishVerificationService VerificationService
+@inject Ams.Workstation.Server.Services.PreviewBufferService PreviewBufferService
+@inject Ams.Workstation.Server.Services.UndoService UndoService
+@inject NavigationManager Navigation
+@inject IJSRuntime JS
+@using Ams.Workstation.Server.Models
+@using Ams.Workstation.Server.Services
+@using Ams.Core.Common
+@using Ams.Core.Artifacts.Hydrate
+@using System.Text.RegularExpressions
+@implements IAsyncDisposable
+
+<PageTitle>Pickup Substitution - AMS Workstation</PageTitle>
+
+<BitStack Horizontal="false" Gap="1rem" AutoHeight="true">
+
+    @* Row 0 - Header Bar: pickup session + roomtone file selectors *@
+    <BitCard Style="padding: 0.75rem;">
+        <BitStack Horizontal="false" Gap="0.5rem" AutoHeight="true">
+            <BitStack Horizontal="true" Gap="0.5rem" VerticalAlign="BitAlignment.Center" AutoHeight="true">
+                <BitTextField @bind-Value="_pickupSessionPath"
+                              Placeholder="Pickup session WAV file path..."
+                              Style="flex: 1;"
+                              IsEnabled="@(!_isProcessing)" />
+                <BitButton Variant="BitVariant.Fill"
+                           OnClick="HandleSetPickupSession"
+                           IsEnabled="@(!string.IsNullOrWhiteSpace(_pickupSessionPath) && !_isProcessing)">
+                    Set
+                </BitButton>
+                <BitTextField @bind-Value="_roomtoneFilePath"
+                              Placeholder="Roomtone WAV file path..."
+                              Style="flex: 1;"
+                              IsEnabled="@(!_isProcessing)" />
+                <BitButton Variant="BitVariant.Fill"
+                           OnClick="HandleSetRoomtone"
+                           IsEnabled="@(!string.IsNullOrWhiteSpace(_roomtoneFilePath) && !_isProcessing)">
+                    Set
+                </BitButton>
+            </BitStack>
+            @if (_isProcessing)
+            {
+                <BitStack Horizontal="true" Gap="0.5rem" VerticalAlign="BitAlignment.Center" AutoHeight="true">
+                    <BitProgress Percent="@(_processingProgress * 100)"
+                                 Label="@(_processingStatus ?? "Processing...")"
+                                 ShowPercentNumber="true" />
+                </BitStack>
+            }
+        </BitStack>
+    </BitCard>
+
+    @if (!Workspace.IsInitialized || !Workspace.HasBookIndex)
+    {
+        <BitMessage Color="BitColor.Info">
+            No working directory set or book-index.json not found. Go to Home to set a working directory.
+        </BitMessage>
+    }
+    else if (_chaptersWithCrx.Count == 0)
+    {
+        <BitMessage Color="BitColor.Info">
+            No chapters with CRX entries found. Import a CRX file or submit errors from the Proof area first.
+        </BitMessage>
+    }
+    else
+    {
+        @* Row 1 - Breadcrumb *@
+        <BitStack Horizontal="true" Gap="0.5rem" VerticalAlign="BitAlignment.Center" AutoHeight="true">
+            @if (_currentChapterIndex >= 0 && _currentChapterIndex < _chaptersWithCrx.Count)
+            {
+                var current = _chaptersWithCrx[_currentChapterIndex];
+                var committedCount = GetCommittedCount(current.Stem);
+                <BitText Typography="BitTypography.Subtitle1">
+                    @current.ChapterName
+                </BitText>
+                <BitText Typography="BitTypography.Body2" Color="BitColor.SecondaryForeground">
+                    (@(_currentChapterIndex + 1)/@_chaptersWithCrx.Count)
+                </BitText>
+                <BitText Typography="BitTypography.Body2" Color="BitColor.SecondaryForeground">
+                    &mdash; @committedCount/@current.CrxCount committed
+                </BitText>
+                @if (current.AllCommitted || committedCount >= current.CrxCount)
+                {
+                    <BitTag Color="BitColor.Success">Complete</BitTag>
+                }
+            }
+        </BitStack>
+
+        @* Row 2 - Waveform with Flippers *@
+        <BitStack Horizontal="true" Gap="0.5rem" VerticalAlign="BitAlignment.Center" AutoHeight="true">
+            <BitButton Variant="BitVariant.Outline"
+                       IconName="@BitIconName.ChevronLeft"
+                       IsEnabled="@CanGoPrev"
+                       OnClick="HandlePrev"
+                       Title="Previous chapter" />
+            <div style="flex: 1;">
+                <WaveformPlayer
+                    @ref="_waveformPlayer"
+                    AudioUrl="@GetAudioUrl()"
+                    Title="@GetCurrentChapterName()" />
+            </div>
+            <BitButton Variant="BitVariant.Outline"
+                       IconName="@BitIconName.ChevronRight"
+                       IsEnabled="@CanGoNext"
+                       OnClick="HandleNext"
+                       Title="Next chapter" />
+        </BitStack>
+
+        @* Row 3 - Three-Column Pipeline *@
+        <BitGrid Columns="12">
+            @* Column 1: Matches *@
+            <BitGridItem ColumnSpan="4" Style="min-width: 0;">
+                <BitStack Horizontal="false" Gap="0.5rem" AutoHeight="true">
+                    <BitStack Horizontal="true" Gap="0.5rem" VerticalAlign="BitAlignment.Center" AutoHeight="true">
+                        <BitText Typography="BitTypography.Subtitle2"
+                                 Style="text-transform: uppercase; letter-spacing: 0.05em;">
+                            Matches
+                        </BitText>
+                        <BitTag Color="BitColor.Info">@GetMatchedItems().Count</BitTag>
+                    </BitStack>
+                    @foreach (var item in GetMatchedItems())
+                    {
+                        <PickupBox Match="@item.Match"
+                                   State="PickupBoxState.Matched"
+                                   PickupFilePath="@_pickupSessionPath"
+                                   Sentence="@FindSentence(item.Match.SentenceId)"
+                                   OnStage="HandleStageMatch"
+                                   OnAudition="HandleAudition" />
+                    }
+                </BitStack>
+            </BitGridItem>
+
+            @* Column 2: Staged *@
+            <BitGridItem ColumnSpan="4" Style="min-width: 0;">
+                <BitStack Horizontal="false" Gap="0.5rem" AutoHeight="true">
+                    <BitStack Horizontal="true" Gap="0.5rem" VerticalAlign="BitAlignment.Center" AutoHeight="true">
+                        <BitText Typography="BitTypography.Subtitle2"
+                                 Style="text-transform: uppercase; letter-spacing: 0.05em;">
+                            Staged
+                        </BitText>
+                        <BitTag Color="BitColor.Warning">@GetStagedItems().Count</BitTag>
+                    </BitStack>
+                    @foreach (var item in GetStagedItems())
+                    {
+                        <PickupBox Replacement="@item"
+                                   State="PickupBoxState.Staged"
+                                   PickupFilePath="@item.PickupSourcePath"
+                                   Sentence="@FindSentence(item.SentenceId)"
+                                   OnUnstage="HandleUnstage"
+                                   OnAudition="HandleAudition" />
+                    }
+                </BitStack>
+            </BitGridItem>
+
+            @* Column 3: Committed *@
+            <BitGridItem ColumnSpan="4" Style="min-width: 0;">
+                <BitStack Horizontal="false" Gap="0.5rem" AutoHeight="true">
+                    <BitStack Horizontal="true" Gap="0.5rem" VerticalAlign="BitAlignment.Center" AutoHeight="true">
+                        <BitText Typography="BitTypography.Subtitle2"
+                                 Style="text-transform: uppercase; letter-spacing: 0.05em;">
+                            Committed
+                        </BitText>
+                        <BitTag Color="BitColor.Success">@GetCommittedItems().Count</BitTag>
+                    </BitStack>
+                    @foreach (var item in GetCommittedItems())
+                    {
+                        <PickupBox Replacement="@item"
+                                   State="PickupBoxState.Committed"
+                                   PickupFilePath="@item.PickupSourcePath"
+                                   Sentence="@FindSentence(item.SentenceId)"
+                                   OnRevert="HandleRevert" />
+                    }
+                </BitStack>
+            </BitGridItem>
+        </BitGrid>
+    }
+</BitStack>
+
+@code {
+    // ── Book-wide state ───────────────────────────────────────────
+    private string? _pickupSessionPath;
+    private string? _roomtoneFilePath;
+    private bool _isProcessing;
+    private string? _processingStatus;
+    private double _processingProgress; // 0.0-1.0
+
+    // ── Cross-chapter pickup data ─────────────────────────────────
+    private Dictionary<string, List<CrossChapterPickupMatch>> _matchesByChapter = new();
+
+    // ── Flipper navigation ────────────────────────────────────────
+    private List<ChapterCrxInfo> _chaptersWithCrx = new();
+    private int _currentChapterIndex = -1;
+
+    // ── Current chapter state ─────────────────────────────────────
+    private WaveformPlayer? _waveformPlayer;
+    private long _correctedVersion;
+    private IReadOnlyList<HydratedSentence>? _flaggedSentences;
+    private IReadOnlyList<StagedReplacement>? _stagedItems;
+
+    private record ChapterCrxInfo(string ChapterName, string Stem, int CrxCount, bool AllCommitted);
+
+    // ── Regex helpers (same as ChapterPolish) ─────────────────────
+    private static readonly Regex ChapterNumberRegex = new(@"\d+", RegexOptions.Compiled);
+
+    // ── Computed properties ───────────────────────────────────────
+    private bool CanGoNext => _currentChapterIndex >= 0 && _currentChapterIndex < _chaptersWithCrx.Count - 1;
+    private bool CanGoPrev => _currentChapterIndex > 0;
+
+    // ── Lifecycle ─────────────────────────────────────────────────
+    protected override void OnInitialized()
+    {
+        LoadChaptersWithCrx();
+
+        if (_chaptersWithCrx.Count > 0)
+        {
+            NavigateToChapter(0);
+        }
+    }
+
+    // ── Flipper Navigation ────────────────────────────────────────
+    private void LoadChaptersWithCrx()
+    {
+        _chaptersWithCrx.Clear();
+
+        if (!Workspace.IsInitialized || !Workspace.HasBookIndex)
+            return;
+
+        IReadOnlyList<CrxEntry> entries;
+        try
+        {
+            entries = CrxService.GetEntries();
+        }
+        catch
+        {
+            return;
+        }
+
+        if (entries.Count == 0)
+            return;
+
+        foreach (var chapterName in Workspace.AvailableChapters)
+        {
+            var chapterEntries = entries
+                .Where(e => ChapterMatches(e.Chapter, chapterName))
+                .ToList();
+
+            if (chapterEntries.Count == 0)
+                continue;
+
+            var stem = Workspace.GetStemForChapter(chapterName) ?? chapterName;
+            var stagedQueue = StagingQueueService.GetQueue(stem);
+            var committedCount = stagedQueue.Count(s => s.Status == ReplacementStatus.Applied);
+
+            _chaptersWithCrx.Add(new ChapterCrxInfo(
+                chapterName,
+                stem,
+                chapterEntries.Count,
+                committedCount >= chapterEntries.Count));
+        }
+    }
+
+    private void NavigateToChapter(int index)
+    {
+        if (index < 0 || index >= _chaptersWithCrx.Count)
+            return;
+
+        _currentChapterIndex = index;
+        var info = _chaptersWithCrx[index];
+
+        Workspace.SelectChapter(info.ChapterName);
+        LoadChapterState(info);
+        StateHasChanged();
+    }
+
+    private void LoadChapterState(ChapterCrxInfo info)
+    {
+        // Load flagged sentences
+        if (Workspace.TryGetHydratedTranscript(info.ChapterName, out var hydrated) && hydrated != null)
+        {
+            IReadOnlyList<CrxEntry> entries;
+            try { entries = CrxService.GetEntries(); }
+            catch { entries = Array.Empty<CrxEntry>(); }
+
+            var chapterEntries = entries
+                .Where(e => ChapterMatches(e.Chapter, info.ChapterName))
+                .OrderBy(e => e.ErrorNumber)
+                .ToList();
+
+            if (chapterEntries.Count > 0)
+            {
+                _flaggedSentences = ResolveCrxTargets(chapterEntries, hydrated.Sentences);
+            }
+            else
+            {
+                _flaggedSentences = hydrated.Sentences
+                    .Where(IsPickupCandidate)
+                    .ToList();
+            }
+        }
+        else
+        {
+            _flaggedSentences = null;
+        }
+
+        // Load staging queue
+        _stagedItems = StagingQueueService.GetQueue(info.Stem);
+
+        // Reset corrected version to force waveform reload
+        _correctedVersion++;
+    }
+
+    private void HandlePrev() => NavigateToChapter(_currentChapterIndex - 1);
+    private void HandleNext() => NavigateToChapter(_currentChapterIndex + 1);
+
+    // ── Header Actions ────────────────────────────────────────────
+    private void HandleSetPickupSession()
+    {
+        // Pickup session path is already bound. Could trigger matching here in future.
+        StateHasChanged();
+    }
+
+    private void HandleSetRoomtone()
+    {
+        // Roomtone file path is already bound. Used by roomtone operations in future plans.
+        StateHasChanged();
+    }
+
+    // ── Column State Derivation ───────────────────────────────────
+    private IReadOnlyList<CrossChapterPickupMatch> GetMatchedItems()
+    {
+        if (_currentChapterIndex < 0 || _currentChapterIndex >= _chaptersWithCrx.Count)
+            return Array.Empty<CrossChapterPickupMatch>();
+
+        var stem = _chaptersWithCrx[_currentChapterIndex].Stem;
+        if (!_matchesByChapter.TryGetValue(stem, out var matches))
+            return Array.Empty<CrossChapterPickupMatch>();
+
+        // Exclude items that have a StagedReplacement (Staged or Applied status)
+        var stagedSentenceIds = (_stagedItems ?? Array.Empty<StagedReplacement>())
+            .Where(s => s.Status == ReplacementStatus.Staged || s.Status == ReplacementStatus.Applied)
+            .Select(s => s.SentenceId)
+            .ToHashSet();
+
+        return matches
+            .Where(m => !stagedSentenceIds.Contains(m.Match.SentenceId))
+            .ToList();
+    }
+
+    private IReadOnlyList<StagedReplacement> GetStagedItems()
+    {
+        return (_stagedItems ?? Array.Empty<StagedReplacement>())
+            .Where(s => s.Status == ReplacementStatus.Staged)
+            .ToList();
+    }
+
+    private IReadOnlyList<StagedReplacement> GetCommittedItems()
+    {
+        return (_stagedItems ?? Array.Empty<StagedReplacement>())
+            .Where(s => s.Status == ReplacementStatus.Applied)
+            .ToList();
+    }
+
+    private int GetCommittedCount(string stem)
+    {
+        var queue = StagingQueueService.GetQueue(stem);
+        return queue.Count(s => s.Status == ReplacementStatus.Applied);
+    }
+
+    // ── Action Handlers ───────────────────────────────────────────
+    private void HandleStageMatch(PickupMatch match)
+    {
+        if (_currentChapterIndex < 0 || _currentChapterIndex >= _chaptersWithCrx.Count)
+            return;
+
+        var info = _chaptersWithCrx[_currentChapterIndex];
+        var sentence = FindSentence(match.SentenceId);
+        if (sentence?.Timing == null || string.IsNullOrWhiteSpace(_pickupSessionPath))
+            return;
+
+        try
+        {
+            PolishService.StageReplacement(
+                info.Stem,
+                match,
+                _pickupSessionPath.Trim(),
+                sentence.Timing.StartSec,
+                sentence.Timing.EndSec);
+
+            RefreshQueue();
+            StateHasChanged();
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Stage failed: {ex.Message}");
+        }
+    }
+
+    private void HandleUnstage(string replacementId)
+    {
+        StagingQueueService.Unstage(replacementId);
+        RefreshQueue();
+        StateHasChanged();
+    }
+
+    private async Task HandleRevert(string replacementId)
+    {
+        _isProcessing = true;
+        StateHasChanged();
+
+        try
+        {
+            await PolishService.RevertReplacementAsync(replacementId, CancellationToken.None);
+            _correctedVersion++;
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Revert failed: {ex.Message}");
+        }
+        finally
+        {
+            RefreshQueue();
+            _isProcessing = false;
+            StateHasChanged();
+        }
+    }
+
+    private void HandleAudition(string id)
+    {
+        // Audition playback will be wired in plan 13-04
+    }
+
+    private void RefreshQueue()
+    {
+        if (_currentChapterIndex < 0 || _currentChapterIndex >= _chaptersWithCrx.Count)
+            return;
+
+        var stem = _chaptersWithCrx[_currentChapterIndex].Stem;
+        _stagedItems = StagingQueueService.GetQueue(stem);
+    }
+
+    // ── Audio URL ─────────────────────────────────────────────────
+    private string GetAudioUrl()
+    {
+        if (_currentChapterIndex < 0 || _currentChapterIndex >= _chaptersWithCrx.Count)
+            return "/api/audio";
+
+        var chapterName = _chaptersWithCrx[_currentChapterIndex].ChapterName;
+        return $"/api/audio/chapter/{Uri.EscapeDataString(chapterName)}/corrected?v={_correctedVersion}";
+    }
+
+    private string GetCurrentChapterName()
+    {
+        if (_currentChapterIndex < 0 || _currentChapterIndex >= _chaptersWithCrx.Count)
+            return "Audio";
+
+        return _chaptersWithCrx[_currentChapterIndex].ChapterName;
+    }
+
+    // ── Sentence Lookup ───────────────────────────────────────────
+    private HydratedSentence? FindSentence(int sentenceId)
+    {
+        return _flaggedSentences?.FirstOrDefault(s => s.Id == sentenceId);
+    }
+
+    // ── CRX Chapter Matching (same logic as ChapterPolish) ────────
+    private static bool ChapterMatches(string? crxChapter, string? currentChapter)
+    {
+        if (string.IsNullOrWhiteSpace(crxChapter) || string.IsNullOrWhiteSpace(currentChapter))
+            return false;
+
+        var crxNumber = TryExtractChapterNumber(crxChapter);
+        var currentNumber = TryExtractChapterNumber(currentChapter);
+        if (crxNumber.HasValue && currentNumber.HasValue)
+            return crxNumber.Value == currentNumber.Value;
+
+        return string.Equals(
+            NormalizeForCompare(crxChapter),
+            NormalizeForCompare(currentChapter),
+            StringComparison.Ordinal);
+    }
+
+    private static int? TryExtractChapterNumber(string chapterLabel)
+    {
+        var match = ChapterNumberRegex.Match(chapterLabel);
+        if (!match.Success)
+            return null;
+
+        return int.TryParse(match.Value, out var value) ? value : null;
+    }
+
+    private static string NormalizeForCompare(string? text)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+            return string.Empty;
+
+        return Regex.Replace(
+            Regex.Replace(text.ToLowerInvariant().Trim(), @"[^\w\s]", " "),
+            @"\s+", " ").Trim();
+    }
+
+    // ── CRX Target Resolution (same logic as ChapterPolish) ──────
+    private static List<HydratedSentence> ResolveCrxTargets(
+        IReadOnlyList<CrxEntry> chapterEntries,
+        IReadOnlyList<HydratedSentence> sentences)
+    {
+        var resolved = new List<HydratedSentence>();
+        var seenIds = new HashSet<int>();
+
+        foreach (var entry in chapterEntries)
+        {
+            var sentence = ResolveSentenceFromCrxEntry(entry, sentences);
+            if (sentence == null)
+                continue;
+
+            if (seenIds.Add(sentence.Id))
+                resolved.Add(sentence);
+        }
+
+        return resolved;
+    }
+
+    private static HydratedSentence? ResolveSentenceFromCrxEntry(
+        CrxEntry entry,
+        IReadOnlyList<HydratedSentence> sentences)
+    {
+        if (sentences.Count == 0)
+            return null;
+
+        if (entry.SentenceId > 0)
+        {
+            var direct = sentences.FirstOrDefault(s => s.Id == entry.SentenceId);
+            if (direct != null)
+                return direct;
+        }
+
+        double? timeSec = entry.StartTime > 0 ? entry.StartTime : TryParseTimecode(entry.Timecode);
+
+        if (timeSec.HasValue)
+        {
+            var nearest = sentences
+                .Where(s => s.Timing is not null)
+                .OrderBy(s => DistanceToSentenceCenter(s, timeSec.Value))
+                .FirstOrDefault();
+
+            if (nearest != null)
+                return nearest;
+        }
+
+        return sentences.FirstOrDefault();
+    }
+
+    private static double? TryParseTimecode(string? timecode)
+    {
+        if (string.IsNullOrWhiteSpace(timecode))
+            return null;
+
+        if (TimeSpan.TryParse(timecode, out var ts))
+            return ts.TotalSeconds;
+
+        return null;
+    }
+
+    private static double DistanceToSentenceCenter(HydratedSentence sentence, double timeSec)
+    {
+        if (sentence.Timing is null)
+            return double.MaxValue;
+
+        var center = (sentence.Timing.StartSec + sentence.Timing.EndSec) / 2.0;
+        return Math.Abs(center - timeSec);
+    }
+
+    private static bool IsPickupCandidate(HydratedSentence sentence)
+    {
+        if (!string.Equals(sentence.Status, "ok", StringComparison.OrdinalIgnoreCase))
+            return true;
+
+        var stats = sentence.Diff?.Stats;
+        return stats is not null && (stats.Insertions > 0 || stats.Deletions > 0);
+    }
+
+    // ── Disposal ──────────────────────────────────────────────────
+    public ValueTask DisposeAsync()
+    {
+        return ValueTask.CompletedTask;
+    }
+}
