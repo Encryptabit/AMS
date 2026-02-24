@@ -363,7 +363,7 @@
             {
                 _isPreviewMode = false;
                 StateHasChanged();
-                await Task.Delay(200);
+                await _waveformPlayer.WaitForReadyAsync();
             }
             await _waveformPlayer.PlaySegment(item.OriginalStartSec, item.OriginalEndSec);
             return;
@@ -380,8 +380,7 @@
             _isPreviewMode = true;
             StateHasChanged();
 
-            // Brief delay for waveform to start loading the new URL
-            await Task.Delay(200);
+            await _waveformPlayer.WaitForReadyAsync();
             await _waveformPlayer.PlaySegment(item.OriginalStartSec, item.OriginalEndSec);
         }
         catch (Exception ex)

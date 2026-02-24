@@ -48,6 +48,7 @@
     private bool _isReady;
     private string? _errorMessage;
     private string? _loadedAudioUrl;
+    private TaskCompletionSource? _readyTcs;
 
     /// <summary>
     /// The DOM element ID used by this waveform instance (for JS interop sync).
@@ -123,6 +124,16 @@
     /// </summary>
     public double PlaybackRate { get; private set; } = 1.0;
 
+    /// <summary>
+    /// Returns a task that completes when the waveform is ready. If already ready, returns immediately.
+    /// </summary>
+    public Task WaitForReadyAsync()
+    {
+        if (_isReady) return Task.CompletedTask;
+        _readyTcs ??= new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        return _readyTcs.Task;
+    }
+
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
         if (firstRender)
@@ -137,6 +148,8 @@
         if (_module != null && AudioUrl != _loadedAudioUrl && !string.IsNullOrEmpty(AudioUrl))
         {
             _isReady = false;
+            _readyTcs?.TrySetCanceled();
+            _readyTcs = null;
             _errorMessage = null;
             CurrentTime = 0;
             Duration = 0;
@@ -310,6 +323,8 @@
         Duration = duration;
         _isReady = true;
         _errorMessage = null;
+        _readyTcs?.TrySetResult();
+        _readyTcs = null;
         StateHasChanged();
         await OnReady.InvokeAsync();
     }
