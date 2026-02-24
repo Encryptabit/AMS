@@ -121,21 +121,40 @@
                             Matches
                         </BitText>
                         <BitTag Color="BitColor.Info">@GetMatchedItems().Count</BitTag>
+                        @if (GetMatchedItems().Count > 0)
+                        {
+                            <BitButton Variant="BitVariant.Text"
+                                       Color="BitColor.Info"
+                                       OnClick="HandleStageAll"
+                                       Style="margin-left: auto;"
+                                       IsEnabled="@(!_isProcessing)">
+                                Stage All
+                            </BitButton>
+                        }
                     </BitStack>
                     @foreach (var item in GetMatchedItems())
                     {
-                        <PickupBox Match="@item.Match"
-                                   State="PickupBoxState.Matched"
-                                   PickupFilePath="@_pickupSessionPath"
-                                   Sentence="@FindSentence(item.Match.SentenceId)"
-                                   OnStage="HandleStageMatch"
-                                   OnAudition="HandleAudition" />
+                        <div draggable="true"
+                             @ondragstart="() => HandleDragStart(item)"
+                             @ondragend="HandleDragEnd"
+                             class="@(_draggedMatch == item ? "pickup-dragging" : "")">
+                            <PickupBox Match="@item.Match"
+                                       State="PickupBoxState.Matched"
+                                       PickupFilePath="@_pickupSessionPath"
+                                       Sentence="@FindSentence(item.Match.SentenceId)"
+                                       OnStage="HandleStageMatch"
+                                       OnAudition="HandleAudition" />
+                        </div>
                     }
                 </BitStack>
             </BitGridItem>
 
-            @* Column 2: Staged *@
+            @* Column 2: Staged (drop target for drag-and-drop) *@
             <BitGridItem ColumnSpan="4" Style="min-width: 0;">
+                <div @ondragover="HandleDragOver"
+                     @ondragover:preventDefault="true"
+                     @ondrop="HandleDrop"
+                     class="staged-drop-zone">
                 <BitStack Horizontal="false" Gap="0.5rem" AutoHeight="true">
                     <BitStack Horizontal="true" Gap="0.5rem" VerticalAlign="BitAlignment.Center" AutoHeight="true">
                         <BitText Typography="BitTypography.Subtitle2"
@@ -154,6 +173,7 @@
                                    OnAudition="HandleAudition" />
                     }
                 </BitStack>
+                </div>
             </BitGridItem>
 
             @* Column 3: Committed *@
@@ -179,6 +199,23 @@
         </BitGrid>
     }
 </BitStack>
+
+<style>
+    .pickup-dragging {
+        opacity: 0.5;
+    }
+
+    .staged-drop-zone {
+        min-height: 100px;
+        transition: background-color 0.2s;
+    }
+
+    .staged-drop-zone:has(.pickup-dragging) {
+        background-color: rgba(255, 193, 7, 0.08);
+        border: 2px dashed rgba(255, 193, 7, 0.4);
+        border-radius: 4px;
+    }
+</style>
 
 @code {
     // ── Book-wide state ───────────────────────────────────────────
@@ -316,17 +353,84 @@
     private void HandlePrev() => NavigateToChapter(_currentChapterIndex - 1);
     private void HandleNext() => NavigateToChapter(_currentChapterIndex + 1);
 
+    // ── Drag-and-drop state ──────────────────────────────────────
+    private CrossChapterPickupMatch? _draggedMatch;
+
     // ── Header Actions ────────────────────────────────────────────
-    private void HandleSetPickupSession()
+    private async Task HandleSetPickupSession()
     {
-        // Pickup session path is already bound. Could trigger matching here in future.
-        StateHasChanged();
+        await HandlePickupFileSet();
     }
 
     private void HandleSetRoomtone()
     {
         // Roomtone file path is already bound. Used by roomtone operations in future plans.
         StateHasChanged();
+    }
+
+    // ── Upfront Cross-Chapter Processing ──────────────────────────
+    private async Task HandlePickupFileSet()
+    {
+        if (string.IsNullOrWhiteSpace(_pickupSessionPath)) return;
+        _isProcessing = true;
+        _processingStatus = "Preparing chapters...";
+        _processingProgress = 0;
+        StateHasChanged();
+
+        try
+        {
+            // 1. Gather flagged sentences from all CRX chapters
+            var chapterTargets = new List<(string Stem, string Name, IReadOnlyList<HydratedSentence> Flagged)>();
+            foreach (var ch in _chaptersWithCrx)
+            {
+                Workspace.SelectChapter(ch.ChapterName);
+                if (Workspace.TryGetHydratedTranscript(ch.ChapterName, out var hydrated) && hydrated != null)
+                {
+                    var flagged = LoadFlaggedSentencesForChapter(ch.ChapterName, hydrated);
+                    if (flagged.Count > 0)
+                        chapterTargets.Add((ch.Stem, ch.ChapterName, flagged));
+                }
+            }
+
+            // Restore to current chapter
+            if (_currentChapterIndex >= 0 && _currentChapterIndex < _chaptersWithCrx.Count)
+                Workspace.SelectChapter(_chaptersWithCrx[_currentChapterIndex].ChapterName);
+
+            // 2. Run cross-chapter import with progress
+            var progress = new Progress<(string Status, double Progress)>(p =>
+            {
+                _processingStatus = p.Status;
+                _processingProgress = p.Progress;
+                InvokeAsync(StateHasChanged);
+            });
+
+            _matchesByChapter = await PolishService.ImportPickupsCrossChapterAsync(
+                _pickupSessionPath.Trim(), chapterTargets, progress, CancellationToken.None);
+
+            _processingStatus = $"Found {_matchesByChapter.Values.Sum(m => m.Count)} matches across {_matchesByChapter.Count} chapters.";
+        }
+        catch (Exception ex) { _processingStatus = $"Processing failed: {ex.Message}"; }
+        finally { _isProcessing = false; StateHasChanged(); }
+    }
+
+    private IReadOnlyList<HydratedSentence> LoadFlaggedSentencesForChapter(
+        string chapterName, HydratedTranscript hydrated)
+    {
+        IReadOnlyList<CrxEntry> entries;
+        try { entries = CrxService.GetEntries(); }
+        catch { entries = Array.Empty<CrxEntry>(); }
+
+        var chapterEntries = entries
+            .Where(e => ChapterMatches(e.Chapter, chapterName))
+            .OrderBy(e => e.ErrorNumber)
+            .ToList();
+
+        if (chapterEntries.Count > 0)
+            return ResolveCrxTargets(chapterEntries, hydrated.Sentences);
+
+        return hydrated.Sentences
+            .Where(IsPickupCandidate)
+            .ToList();
     }
 
     // ── Column State Derivation ───────────────────────────────────
@@ -390,8 +494,7 @@
                 sentence.Timing.StartSec,
                 sentence.Timing.EndSec);
 
-            RefreshQueue();
-            StateHasChanged();
+            RefreshCurrentChapterState();
         }
         catch (Exception ex)
         {
@@ -402,8 +505,14 @@
     private void HandleUnstage(string replacementId)
     {
         StagingQueueService.Unstage(replacementId);
-        RefreshQueue();
-        StateHasChanged();
+        RefreshCurrentChapterState();
+    }
+
+    private void HandleStageAll()
+    {
+        var matched = GetMatchedItems();
+        foreach (var m in matched)
+            HandleStageMatch(m.Match);
     }
 
     private async Task HandleRevert(string replacementId)
@@ -422,7 +531,7 @@
         }
         finally
         {
-            RefreshQueue();
+            RefreshCurrentChapterState();
             _isProcessing = false;
             StateHasChanged();
         }
@@ -430,16 +539,43 @@
 
     private void HandleAudition(string id)
     {
-        // Audition playback will be wired in plan 13-04
+        // Audition playback will be wired in a future plan
     }
 
-    private void RefreshQueue()
+    // ── Drag-and-Drop Handlers ────────────────────────────────────
+    private void HandleDragStart(CrossChapterPickupMatch item)
+    {
+        _draggedMatch = item;
+    }
+
+    private void HandleDragEnd()
+    {
+        _draggedMatch = null;
+    }
+
+    private void HandleDragOver()
+    {
+        // preventDefault is set in markup to allow drop
+    }
+
+    private void HandleDrop()
+    {
+        if (_draggedMatch != null)
+        {
+            HandleStageMatch(_draggedMatch.Match);
+            _draggedMatch = null;
+        }
+    }
+
+    // ── State Refresh ─────────────────────────────────────────────
+    private void RefreshCurrentChapterState()
     {
         if (_currentChapterIndex < 0 || _currentChapterIndex >= _chaptersWithCrx.Count)
             return;
 
         var stem = _chaptersWithCrx[_currentChapterIndex].Stem;
         _stagedItems = StagingQueueService.GetQueue(stem);
+        StateHasChanged();
     }
 
     // ── Audio URL ─────────────────────────────────────────────────
