@@ -432,6 +432,88 @@ public class PolishService
         return _stagingQueue.GetQueue(chapterStem);
     }
 
+    /// <summary>
+    /// Applies a roomtone editing operation (insert, replace, or delete) to the current
+    /// chapter audio at the specified region. Backs up the original segment via UndoService,
+    /// then persists the result as corrected.wav.
+    /// </summary>
+    /// <param name="request">The roomtone operation parameters.</param>
+    /// <param name="roomtoneFilePath">Path to the roomtone WAV file (used for Insert/Replace).</param>
+    /// <param name="ct">Cancellation token.</param>
+    /// <returns>The resulting audio buffer after the operation.</returns>
+    public async Task<AudioBuffer> ApplyRoomtoneOperationAsync(
+        RoomtoneRequest request,
+        string roomtoneFilePath,
+        CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        ArgumentException.ThrowIfNullOrWhiteSpace(roomtoneFilePath);
+
+        // 1. Load current chapter audio
+        var chapterBuffer = GetCurrentChapterBuffer();
+
+        // 2. Load and decode roomtone file
+        var roomtoneBuffer = AudioProcessor.Decode(roomtoneFilePath);
+
+        // 3. Apply operation
+        AudioBuffer resultBuffer;
+        double replacementDurationSec;
+
+        switch (request.Operation)
+        {
+            case RoomtoneOperation.Insert:
+                // Insert roomtone at a point (use the start position as insertion point)
+                // Duration of insertion = EndSec - StartSec (user drags a region to define insertion length)
+                var insertDuration = request.EndSec - request.StartSec;
+                var insertRoomtone = insertDuration > 0.001
+                    ? AudioSpliceService.GenerateRoomtoneFill(roomtoneBuffer, insertDuration)
+                    : roomtoneBuffer; // If near-zero width, use roomtone as-is for a brief insert
+                resultBuffer = AudioSpliceService.InsertAtPoint(
+                    chapterBuffer, request.StartSec, insertRoomtone,
+                    request.CrossfadeDurationSec, request.CrossfadeCurve);
+                replacementDurationSec = (double)insertRoomtone.Length / insertRoomtone.SampleRate;
+                break;
+
+            case RoomtoneOperation.Replace:
+                // Replace selection with looped roomtone of matching duration (Research Pitfall 6)
+                var regionDuration = request.EndSec - request.StartSec;
+                var fillRoomtone = AudioSpliceService.GenerateRoomtoneFill(roomtoneBuffer, regionDuration);
+                resultBuffer = AudioSpliceService.ReplaceSegment(
+                    chapterBuffer, request.StartSec, request.EndSec,
+                    fillRoomtone, request.CrossfadeDurationSec, request.CrossfadeCurve);
+                replacementDurationSec = regionDuration;
+                break;
+
+            case RoomtoneOperation.Delete:
+                // Delete selection (crossfade join, no replacement)
+                resultBuffer = AudioSpliceService.DeleteRegion(
+                    chapterBuffer, request.StartSec, request.EndSec,
+                    request.CrossfadeDurationSec, request.CrossfadeCurve);
+                replacementDurationSec = 0;
+                break;
+
+            default:
+                throw new ArgumentOutOfRangeException(nameof(request.Operation));
+        }
+
+        // 4. Back up original segment via UndoService before persisting
+        // Use a synthetic replacement ID for undo tracking (sentenceId = -1 for non-sentence ops)
+        var undoId = $"roomtone-{Guid.NewGuid():N}";
+        var handle = _workspace.CurrentChapterHandle
+            ?? throw new InvalidOperationException("No chapter selected.");
+        var stem = handle.Chapter.Descriptor.ChapterId;
+
+        _undoService.SaveOriginalSegment(
+            stem, sentenceId: -1, undoId, chapterBuffer,
+            request.StartSec, request.EndSec,
+            replacementDurationSec);
+
+        // 5. Persist corrected.wav
+        PersistCorrectedBuffer(resultBuffer);
+
+        return resultBuffer;
+    }
+
     #region Private Helpers
 
     private StagedReplacement FindStagedItem(string replacementId)
