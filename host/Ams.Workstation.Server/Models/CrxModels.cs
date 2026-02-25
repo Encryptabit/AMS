@@ -1,5 +1,6 @@
 using System;
 using System.Linq;
+using System.Text.RegularExpressions;
 
 namespace Ams.Workstation.Server.Models;
 
@@ -49,4 +50,27 @@ public static class ErrorTypes
         "TYPO",  // Typo in script
         "CHAR"   // Character voice
     };
+}
+
+public static class CrxCommentParser
+{
+    private static readonly Regex ShouldBeRegex = new(@"^Should be:\s*(.+?)$", RegexOptions.Multiline | RegexOptions.Compiled);
+    private static readonly Regex ReadAsRegex = new(@"^Read as:\s*(.+?)$", RegexOptions.Multiline | RegexOptions.Compiled);
+
+    public static string? TryParseShouldBe(string? comments)
+    {
+        if (string.IsNullOrWhiteSpace(comments)) return null;
+        var match = ShouldBeRegex.Match(comments);
+        return match.Success ? StripBrackets(match.Groups[1].Value.Trim()) : null;
+    }
+
+    public static string? TryParseReadAs(string? comments)
+    {
+        if (string.IsNullOrWhiteSpace(comments)) return null;
+        var match = ReadAsRegex.Match(comments);
+        return match.Success ? StripBrackets(match.Groups[1].Value.Trim()) : null;
+    }
+
+    public static string StripBrackets(string text)
+        => text.Replace("[", "").Replace("]", "").Trim();
 }

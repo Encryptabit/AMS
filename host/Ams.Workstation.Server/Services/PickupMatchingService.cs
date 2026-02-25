@@ -2,13 +2,10 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
-using System.Security.Cryptography;
-using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
-using Ams.Core.Artifacts;
 using Ams.Core.Artifacts.Hydrate;
 using Ams.Core.Asr;
 using Ams.Core.Audio;
@@ -19,23 +16,22 @@ using Ams.Workstation.Server.Models;
 namespace Ams.Workstation.Server.Services;
 
 /// <summary>
-/// Runs ASR on pickup recording files and matches recognized text to
-/// flagged CRX target sentences using fuzzy Levenshtein similarity.
-/// Supports both multi-pickup session files (single-pass ASR with
-/// CRX-guided segmentation) and individual pickup files (one per sentence).
-/// Uses Whisper.NET in-process via <see cref="AsrProcessor"/> exclusively.
+/// Runs ASR on pickup recording files and matches recognized utterances to
+/// CRX target sentences using positional pairing (CRX order drives the match).
+/// Levenshtein similarity is used as a confidence metric, not a filter.
 /// </summary>
 public class PickupMatchingService
 {
-    // Tightened threshold to avoid false positives from single-token overlap.
-    private const double MatchConfidenceThreshold = 0.62;
+    private const double LowConfidenceThreshold = 0.4;
+    private const double MinSegmentDurationSec = 0.3;
+    private const double UtteranceGapSec = 0.8;
 
     private static readonly Regex PunctuationRegex = new(@"[^\w\s]", RegexOptions.Compiled);
     private static readonly Regex WhitespaceRegex = new(@"\s+", RegexOptions.Compiled);
 
     private static readonly JsonSerializerOptions CacheJsonOptions = new()
     {
-        WriteIndented = false
+        WriteIndented = true
     };
 
     private readonly BlazorWorkspace _workspace;
@@ -48,194 +44,200 @@ public class PickupMatchingService
     }
 
     /// <summary>
-    /// Processes a pickup session recording by running ASR once on the entire
-    /// file, then using the flagged CRX sentences to locate each sentence's
-    /// token span in the ASR output. Sentences are matched sequentially
-    /// (narrator records them in CRX order). Results are cached on disk.
+    /// Processes a pickup session recording using CRX-driven positional pairing.
+    /// ASR + MFA run on the full WAV, then utterances are segmented by silence gaps
+    /// and paired with CRX targets in ErrorNumber order.
     /// </summary>
-    public async Task<List<PickupMatch>> MatchPickupAsync(
+    public async Task<List<PickupMatch>> MatchPickupCrxAsync(
         string pickupFilePath,
-        IReadOnlyList<HydratedSentence> flaggedSentences,
+        IReadOnlyList<CrxPickupTarget> crxTargets,
         CancellationToken ct)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(pickupFilePath);
-        ArgumentNullException.ThrowIfNull(flaggedSentences);
+        ArgumentNullException.ThrowIfNull(crxTargets);
 
-        // 1. Check ASR cache
-        var asrResponse = TryReadAsrCache(pickupFilePath);
+        if (crxTargets.Count == 0)
+            return new List<PickupMatch>();
+
+        // 1. ASR on full WAV (with named artifact cache)
+        var asrResponse = TryReadNamedAsrCache(pickupFilePath);
 
         if (asrResponse == null)
         {
-            // 2. Decode, prepare, run ASR once on the entire file
             var pickupBuffer = AudioProcessor.Decode(pickupFilePath);
             var asrReady = AsrAudioPreparer.PrepareForAsr(pickupBuffer);
             var asrOptions = await BuildAsrOptionsAsync(ct).ConfigureAwait(false);
             asrResponse = await AsrProcessor.TranscribeBufferAsync(asrReady, asrOptions, ct)
                 .ConfigureAwait(false);
+            WriteNamedAsrCache(pickupFilePath, asrResponse);
         }
 
-        // 3. Refine ASR token timings with full-file MFA and persist refined ASR cache
+        // 2. MFA refinement
         asrResponse = await _mfaRefinement.RefineAsrTimingsAsync(
             pickupFilePath,
             asrResponse,
             ct).ConfigureAwait(false);
-        WriteAsrCache(pickupFilePath, asrResponse);
+        WriteNamedMfaCache(asrResponse);
 
-        // 4. Check final match results cache (keyed to refined ASR content + sentence context)
-        var cachedMatches = TryReadMatchCache(pickupFilePath, asrResponse, flaggedSentences);
-        if (cachedMatches != null)
-            return cachedMatches;
-
-        // 5. Use CRX sentences to find each sentence's token span
+        // 3. Utterance segmentation: detect gaps >= 0.8s between MFA-refined tokens
         var tokens = asrResponse.Tokens;
-        var matches = new List<PickupMatch>();
+        if (tokens is not { Length: > 0 })
+            return new List<PickupMatch>();
 
-        if (tokens is not { Length: > 0 } || flaggedSentences.Count == 0)
-            return matches;
+        var segments = SegmentUtterances(tokens);
 
-        // Process sentences in order — narrator records them sequentially
-        int searchFrom = 0;
+        // 4. CRX positional pairing
+        var sortedTargets = crxTargets.OrderBy(t => t.ErrorNumber).ToList();
+        var matches = PairSegmentsToTargets(segments, sortedTargets);
 
-        foreach (var sentence in flaggedSentences)
-        {
-            ct.ThrowIfCancellationRequested();
-
-            var normalizedTarget = NormalizeForMatch(sentence.BookText);
-            var targetWords = normalizedTarget.Split(' ', StringSplitOptions.RemoveEmptyEntries);
-            if (targetWords.Length == 0) continue;
-
-            // Search for the best contiguous token window starting from searchFrom
-            var (bestStart, bestEnd, bestScore, bestSharedWords) = FindBestTokenSpan(
-                tokens, searchFrom, targetWords, normalizedTarget);
-
-            if (bestStart >= 0 && IsAcceptableMatch(bestScore, targetWords.Length, bestSharedWords))
-            {
-                var startSec = tokens[bestStart].StartTime;
-                var lastToken = tokens[bestEnd - 1];
-                var endSec = lastToken.StartTime + lastToken.Duration;
-                var recognizedText = string.Join(" ", tokens[bestStart..bestEnd].Select(t => t.Word));
-
-                matches.Add(new PickupMatch(
-                    SentenceId: sentence.Id,
-                    PickupStartSec: startSec,
-                    PickupEndSec: endSec,
-                    Confidence: bestScore,
-                    RecognizedText: recognizedText.Trim()));
-
-                searchFrom = bestEnd;
-            }
-            else if (bestStart >= 0)
-            {
-                Log.Debug(
-                    "Rejected weak pickup match for sentence {SentenceId}: score={Score:F3}, shared={Shared}/{TargetWords}",
-                    sentence.Id,
-                    bestScore,
-                    bestSharedWords,
-                    targetWords.Length);
-            }
-        }
-
-        var result = matches.OrderBy(m => m.PickupStartSec).ToList();
-
-        // 6. Cache final results for instant re-import
-        if (result.Count > 0)
-            WriteMatchCache(pickupFilePath, asrResponse, flaggedSentences, result);
-
-        return result;
+        return matches;
     }
 
     /// <summary>
-    /// Finds the contiguous token span starting at or after <paramref name="fromIndex"/>
-    /// that best matches <paramref name="normalizedTarget"/>. Tries window sizes
-    /// around the expected word count to handle ASR word-splitting variance.
+    /// Segments ASR tokens into utterances based on silence gaps.
     /// </summary>
-    private static (int Start, int End, double Score, int SharedWords) FindBestTokenSpan(
-        AsrToken[] tokens, int fromIndex, string[] targetWords, string normalizedTarget)
+    private static List<PickupSegment> SegmentUtterances(AsrToken[] tokens)
     {
-        var expectedWords = targetWords.Length;
-        var targetWordSet = targetWords.ToHashSet(StringComparer.Ordinal);
+        var segments = new List<PickupSegment>();
+        if (tokens.Length == 0) return segments;
 
-        int bestStart = -1, bestEnd = -1, bestSharedWords = 0;
-        double bestScore = 0;
+        var segmentStart = tokens[0].StartTime;
+        var segmentTokens = new List<AsrToken> { tokens[0] };
 
-        // Allow window sizes from 60% to 150% of expected word count
-        int minWindow = Math.Max(1, (int)(expectedWords * 0.6));
-        int maxWindow = Math.Min(tokens.Length - fromIndex, (int)(expectedWords * 1.5) + 2);
-
-        // Scan the entire remaining token stream so late-session pickups are discoverable.
-        int maxStartOffset = tokens.Length - fromIndex;
-
-        for (int offset = 0; offset < maxStartOffset; offset++)
+        for (int i = 1; i < tokens.Length; i++)
         {
-            int start = fromIndex + offset;
+            var prevEnd = tokens[i - 1].StartTime + tokens[i - 1].Duration;
+            var gap = tokens[i].StartTime - prevEnd;
 
-            for (int windowSize = minWindow; windowSize <= maxWindow; windowSize++)
+            if (gap >= UtteranceGapSec)
             {
-                int end = start + windowSize;
-                if (end > tokens.Length) break;
+                // End current segment
+                var lastToken = segmentTokens[^1];
+                var segmentEnd = lastToken.StartTime + lastToken.Duration;
+                var text = string.Join(" ", segmentTokens.Select(t => t.Word)).Trim();
+                var duration = segmentEnd - segmentStart;
 
-                var windowText = string.Join(" ", tokens[start..end].Select(t => t.Word));
-                var normalizedWindow = NormalizeForMatch(windowText);
-                var score = LevenshteinMetrics.Similarity(normalizedWindow, normalizedTarget);
-                var sharedWords = CountSharedWords(normalizedWindow, targetWordSet);
-
-                if (score > bestScore || (Math.Abs(score - bestScore) < 1e-9 && sharedWords > bestSharedWords))
+                if (duration >= MinSegmentDurationSec && !string.IsNullOrWhiteSpace(text))
                 {
-                    bestScore = score;
-                    bestStart = start;
-                    bestEnd = end;
-                    bestSharedWords = sharedWords;
+                    segments.Add(new PickupSegment(segmentStart, segmentEnd, text));
+                }
+                else if (duration < MinSegmentDurationSec)
+                {
+                    Log.Debug(
+                        "Skipping short segment ({Duration:F2}s < {Min:F1}s): \"{Text}\"",
+                        duration, MinSegmentDurationSec, text);
                 }
 
-                // Early exit: very high confidence + lexical overlap.
-                if (score > 0.95 && sharedWords >= GetMinimumSharedWords(expectedWords))
-                    return (bestStart, bestEnd, bestScore, bestSharedWords);
+                // Start new segment
+                segmentStart = tokens[i].StartTime;
+                segmentTokens.Clear();
+            }
+
+            segmentTokens.Add(tokens[i]);
+        }
+
+        // Final segment
+        if (segmentTokens.Count > 0)
+        {
+            var lastToken = segmentTokens[^1];
+            var segmentEnd = lastToken.StartTime + lastToken.Duration;
+            var text = string.Join(" ", segmentTokens.Select(t => t.Word)).Trim();
+            var duration = segmentEnd - segmentStart;
+
+            if (duration >= MinSegmentDurationSec && !string.IsNullOrWhiteSpace(text))
+            {
+                segments.Add(new PickupSegment(segmentStart, segmentEnd, text));
             }
         }
 
-        return (bestStart, bestEnd, bestScore, bestSharedWords);
+        return segments;
     }
 
-    private static bool IsAcceptableMatch(double score, int targetWordCount, int sharedWords)
+    /// <summary>
+    /// Pairs utterance segments to CRX targets using positional alignment.
+    /// When there are more segments than targets, finds the best starting offset
+    /// by maximizing total confidence.
+    /// </summary>
+    private static List<PickupMatch> PairSegmentsToTargets(
+        List<PickupSegment> segments,
+        List<CrxPickupTarget> targets)
     {
-        if (score <= MatchConfidenceThreshold)
-            return false;
+        if (segments.Count == 0 || targets.Count == 0)
+            return new List<PickupMatch>();
 
-        var minSharedWords = GetMinimumSharedWords(targetWordCount);
-        return sharedWords >= minSharedWords;
-    }
+        // Find best starting offset when segment count differs from target count
+        int bestOffset = 0;
+        double bestTotalConfidence = -1;
 
-    private static int GetMinimumSharedWords(int targetWordCount)
-    {
-        if (targetWordCount <= 1) return 1;
-        if (targetWordCount <= 4) return 2;
-        return Math.Max(2, (int)Math.Ceiling(targetWordCount * 0.5));
-    }
-
-    private static int CountSharedWords(string normalizedWindow, HashSet<string> targetWordSet)
-    {
-        var uniqueWindowWords = normalizedWindow
-            .Split(' ', StringSplitOptions.RemoveEmptyEntries)
-            .ToHashSet(StringComparer.Ordinal);
-
-        int shared = 0;
-        foreach (var word in uniqueWindowWords)
+        int maxOffset = Math.Max(0, segments.Count - targets.Count);
+        for (int offset = 0; offset <= maxOffset; offset++)
         {
-            if (targetWordSet.Contains(word))
-                shared++;
+            double totalConfidence = 0;
+            int pairCount = Math.Min(targets.Count, segments.Count - offset);
+
+            for (int i = 0; i < pairCount; i++)
+            {
+                var segment = segments[offset + i];
+                var target = targets[i];
+                var normalizedSegment = NormalizeForMatch(segment.TranscribedText);
+                var normalizedTarget = NormalizeForMatch(target.ShouldBeText);
+                totalConfidence += LevenshteinMetrics.Similarity(normalizedSegment, normalizedTarget);
+            }
+
+            if (totalConfidence > bestTotalConfidence)
+            {
+                bestTotalConfidence = totalConfidence;
+                bestOffset = offset;
+            }
         }
 
-        return shared;
+        // Pair using best offset
+        var matches = new List<PickupMatch>();
+        int pairsToMake = Math.Min(targets.Count, segments.Count - bestOffset);
+
+        if (pairsToMake < targets.Count)
+        {
+            Log.Warn(
+                "Fewer segments ({Segments}) than targets ({Targets}); {Unpaired} targets will be unmatched",
+                segments.Count, targets.Count, targets.Count - pairsToMake);
+        }
+
+        for (int i = 0; i < pairsToMake; i++)
+        {
+            var segment = segments[bestOffset + i];
+            var target = targets[i];
+
+            var normalizedSegment = NormalizeForMatch(segment.TranscribedText);
+            var normalizedTarget = NormalizeForMatch(target.ShouldBeText);
+            var confidence = LevenshteinMetrics.Similarity(normalizedSegment, normalizedTarget);
+            var isLowConfidence = confidence < LowConfidenceThreshold;
+
+            if (isLowConfidence)
+            {
+                Log.Warn(
+                    "Low confidence match for error #{ErrorNumber} (sentence {SentenceId}): " +
+                    "confidence={Confidence:F3}, expected=\"{Expected}\", got=\"{Got}\"",
+                    target.ErrorNumber, target.SentenceId, confidence,
+                    target.ShouldBeText, segment.TranscribedText);
+            }
+
+            matches.Add(new PickupMatch(
+                SentenceId: target.SentenceId,
+                PickupStartSec: segment.StartSec,
+                PickupEndSec: segment.EndSec,
+                Confidence: confidence,
+                RecognizedText: segment.TranscribedText,
+                ErrorNumber: target.ErrorNumber,
+                IsLowConfidence: isLowConfidence));
+        }
+
+        return matches;
     }
 
     /// <summary>
     /// Simplified matching for individual pickup files (one per sentence).
     /// Runs ASR on the entire file and creates a match with the specified target sentence.
     /// </summary>
-    /// <param name="pickupFilePath">Path to the pickup WAV file.</param>
-    /// <param name="targetSentence">The sentence this pickup is intended to replace.</param>
-    /// <param name="ct">Cancellation token.</param>
-    /// <returns>A single pickup match with confidence score.</returns>
     public async Task<PickupMatch> MatchSinglePickupAsync(
         string pickupFilePath,
         HydratedSentence targetSentence,
@@ -244,11 +246,9 @@ public class PickupMatchingService
         ArgumentException.ThrowIfNullOrWhiteSpace(pickupFilePath);
         ArgumentNullException.ThrowIfNull(targetSentence);
 
-        // Decode and prepare for ASR
         var pickupBuffer = AudioProcessor.Decode(pickupFilePath);
         var asrReady = AsrAudioPreparer.PrepareForAsr(pickupBuffer);
 
-        // Run ASR on entire file
         var asrOptions = await BuildAsrOptionsAsync(ct).ConfigureAwait(false);
         var asrResponse = await AsrProcessor.TranscribeBufferAsync(asrReady, asrOptions, ct)
             .ConfigureAwait(false);
@@ -256,7 +256,6 @@ public class PickupMatchingService
         var recognizedText = ExtractFullText(asrResponse);
         var pickupDuration = (double)pickupBuffer.Length / pickupBuffer.SampleRate;
 
-        // Compute confidence via Levenshtein for reference
         double confidence = 0;
         if (!string.IsNullOrWhiteSpace(recognizedText))
         {
@@ -276,7 +275,7 @@ public class PickupMatchingService
     /// <summary>
     /// Extracts the full recognized text from an ASR response by joining token words.
     /// </summary>
-    private static string ExtractFullText(AsrResponse response)
+    internal static string ExtractFullText(AsrResponse response)
     {
         if (response.Tokens is { Length: > 0 })
         {
@@ -294,7 +293,7 @@ public class PickupMatchingService
     /// <summary>
     /// Normalizes text for fuzzy matching: lowercase, collapse whitespace, remove punctuation.
     /// </summary>
-    private static string NormalizeForMatch(string text)
+    internal static string NormalizeForMatch(string text)
     {
         if (string.IsNullOrWhiteSpace(text))
             return string.Empty;
@@ -305,9 +304,6 @@ public class PickupMatchingService
         return normalized;
     }
 
-    /// <summary>
-    /// Builds default ASR options, resolving the Whisper model path with auto-download fallback.
-    /// </summary>
     private static async Task<AsrOptions> BuildAsrOptionsAsync(CancellationToken ct)
     {
         ct.ThrowIfCancellationRequested();
@@ -318,67 +314,38 @@ public class PickupMatchingService
             EnableWordTimestamps: true);
     }
 
-    #region Match Results Cache (ASR + MFA combined)
+    #region Named Artifact Cache
 
-    /// <summary>
-    /// Computes a cache key for final match results using pickup file identity,
-    /// refined ASR token stream, and flagged sentence context.
-    /// </summary>
-    private static string ComputeMatchCacheKey(
-        string pickupFilePath,
-        AsrResponse asrResponse,
-        IReadOnlyList<HydratedSentence> sentences)
+    private string GetPickupsDir()
     {
-        var fi = new FileInfo(pickupFilePath);
-        var sb = new StringBuilder();
-        sb.Append(fi.FullName).Append('|').Append(fi.Length).Append('|').Append(fi.LastWriteTimeUtc.ToString("O"));
-        sb.Append('|').Append(asrResponse.ModelVersion);
-        foreach (var token in asrResponse.Tokens)
-        {
-            sb.Append('|')
-                .Append(NormalizeForMatch(token.Word))
-                .Append('@')
-                .Append(token.StartTime.ToString("F3", System.Globalization.CultureInfo.InvariantCulture))
-                .Append(',')
-                .Append(token.Duration.ToString("F3", System.Globalization.CultureInfo.InvariantCulture));
-        }
-        sb.Append('|');
-        sb.Append(string.Join(":", sentences.Select(s => s.Id)));
-        foreach (var sentence in sentences)
-        {
-            sb.Append('|').Append(NormalizeForMatch(sentence.BookText));
-        }
-        var hashBytes = SHA256.HashData(Encoding.UTF8.GetBytes(sb.ToString()));
-        return Convert.ToHexString(hashBytes)[..16].ToLowerInvariant();
+        var workDir = _workspace.WorkingDirectory
+            ?? throw new InvalidOperationException("No working directory set.");
+        var dir = Path.Combine(workDir, ".polish", "pickups");
+        Directory.CreateDirectory(dir);
+        return dir;
     }
 
-    private List<PickupMatch>? TryReadMatchCache(
-        string pickupFilePath,
-        AsrResponse asrResponse,
-        IReadOnlyList<HydratedSentence> sentences)
+    private AsrResponse? TryReadNamedAsrCache(string pickupFilePath)
     {
-        var workDir = _workspace.WorkingDirectory;
-        if (workDir == null) return null;
-
-        var hash = ComputeMatchCacheKey(pickupFilePath, asrResponse, sentences);
-        var cachePath = Path.Combine(workDir, ".polish", "pickups", $"{hash}.matches.json");
-        if (!File.Exists(cachePath)) return null;
-
         try
         {
-            var json = File.ReadAllText(cachePath);
-            var matches = JsonSerializer.Deserialize<List<PickupMatch>>(json);
-            if (matches is not { Count: > 0 })
-                return null;
+            var cachePath = Path.Combine(GetPickupsDir(), "pickups.asr.json");
+            if (!File.Exists(cachePath)) return null;
 
-            var sentenceLookup = sentences.ToDictionary(s => s.Id);
-            if (!AreCachedMatchesPlausible(matches, sentenceLookup))
+            var json = File.ReadAllText(cachePath);
+            var wrapper = JsonSerializer.Deserialize<AsrCacheWrapper>(json);
+            if (wrapper == null) return null;
+
+            // Staleness check: pickup file identity
+            var fi = new FileInfo(pickupFilePath);
+            if (wrapper.PickupFilePath != fi.FullName ||
+                wrapper.PickupFileSizeBytes != fi.Length ||
+                wrapper.PickupFileModifiedUtc != fi.LastWriteTimeUtc)
             {
-                Log.Debug("Ignoring implausible pickup match cache at {Path}", cachePath);
                 return null;
             }
 
-            return matches;
+            return wrapper.AsrResponse;
         }
         catch
         {
@@ -386,107 +353,43 @@ public class PickupMatchingService
         }
     }
 
-    private void WriteMatchCache(
-        string pickupFilePath,
-        AsrResponse asrResponse,
-        IReadOnlyList<HydratedSentence> sentences,
-        List<PickupMatch> matches)
+    private void WriteNamedAsrCache(string pickupFilePath, AsrResponse response)
     {
-        var workDir = _workspace.WorkingDirectory;
-        if (workDir == null) return;
-
         try
         {
-            var hash = ComputeMatchCacheKey(pickupFilePath, asrResponse, sentences);
-            var dir = Path.Combine(workDir, ".polish", "pickups");
-            Directory.CreateDirectory(dir);
-            var cachePath = Path.Combine(dir, $"{hash}.matches.json");
-            var json = JsonSerializer.Serialize(matches, CacheJsonOptions);
+            var fi = new FileInfo(pickupFilePath);
+            var wrapper = new AsrCacheWrapper(
+                fi.FullName, fi.Length, fi.LastWriteTimeUtc, response);
+
+            var cachePath = Path.Combine(GetPickupsDir(), "pickups.asr.json");
+            var json = JsonSerializer.Serialize(wrapper, CacheJsonOptions);
             File.WriteAllText(cachePath, json);
         }
         catch (Exception ex)
         {
-            Log.Debug("Failed to write match cache: {Message}", ex.Message);
+            Log.Debug("Failed to write named ASR cache: {Message}", ex.Message);
         }
     }
 
-    #endregion
-
-    #region ASR Cache
-
-    private static bool AreCachedMatchesPlausible(
-        IReadOnlyList<PickupMatch> matches,
-        Dictionary<int, HydratedSentence> sentenceLookup)
+    private void WriteNamedMfaCache(AsrResponse response)
     {
-        foreach (var match in matches)
-        {
-            if (!sentenceLookup.TryGetValue(match.SentenceId, out var sentence))
-                return false;
-
-            if (!IsPlausibleMatchDuration(match, sentence))
-                return false;
-        }
-
-        return true;
-    }
-
-    private static bool IsPlausibleMatchDuration(PickupMatch match, HydratedSentence sentence)
-    {
-        var duration = match.PickupEndSec - match.PickupStartSec;
-        if (duration <= 0.1)
-            return false;
-
-        var targetWords = NormalizeForMatch(sentence.BookText)
-            .Split(' ', StringSplitOptions.RemoveEmptyEntries).Length;
-
-        // Heuristic guardrail: spoken sentence duration should roughly track word count.
-        // Allows generous headroom for pauses but rejects obviously wrong whole-file spans.
-        var maxDuration = Math.Max(12.0, targetWords * 1.5);
-        return duration <= maxDuration;
-    }
-
-    private string GetAsrCachePath(string pickupFilePath)
-    {
-        var hash = ComputeAsrCacheKey(pickupFilePath);
-        var workDir = _workspace.WorkingDirectory
-            ?? throw new InvalidOperationException("No working directory set.");
-        return Path.Combine(workDir, ".polish", "pickups", $"{hash}.asr.json");
-    }
-
-    private static string ComputeAsrCacheKey(string filePath)
-    {
-        var fi = new FileInfo(filePath);
-        var input = $"{fi.FullName}|{fi.Length}|{fi.LastWriteTimeUtc:O}";
-        var hashBytes = SHA256.HashData(Encoding.UTF8.GetBytes(input));
-        return Convert.ToHexString(hashBytes)[..16].ToLowerInvariant();
-    }
-
-    private AsrResponse? TryReadAsrCache(string pickupFilePath)
-    {
-        var cachePath = GetAsrCachePath(pickupFilePath);
-        if (!File.Exists(cachePath))
-            return null;
-
         try
         {
-            var json = File.ReadAllText(cachePath);
-            return JsonSerializer.Deserialize<AsrResponse>(json);
+            var cachePath = Path.Combine(GetPickupsDir(), "pickups.asr.mfa.json");
+            var json = JsonSerializer.Serialize(response, CacheJsonOptions);
+            File.WriteAllText(cachePath, json);
         }
-        catch
+        catch (Exception ex)
         {
-            return null;
+            Log.Debug("Failed to write named MFA cache: {Message}", ex.Message);
         }
     }
 
-    private void WriteAsrCache(string pickupFilePath, AsrResponse response)
-    {
-        var cachePath = GetAsrCachePath(pickupFilePath);
-        var dir = Path.GetDirectoryName(cachePath)!;
-        Directory.CreateDirectory(dir);
-
-        var json = JsonSerializer.Serialize(response, CacheJsonOptions);
-        File.WriteAllText(cachePath, json);
-    }
+    private sealed record AsrCacheWrapper(
+        string PickupFilePath,
+        long PickupFileSizeBytes,
+        DateTime PickupFileModifiedUtc,
+        AsrResponse AsrResponse);
 
     #endregion
 }

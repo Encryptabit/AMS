@@ -1,0 +1,1464 @@
+warning: in the working copy of 'host/Ams.Core/Services/Integrations/FFmpeg/FfDecoder.cs', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'host/Ams.Workstation.Server/Components/Layout/HeaderControls.razor', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'host/Ams.Workstation.Server/Components/Pages/Polish/PickupSubstitution.razor', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'host/Ams.Workstation.Server/Components/Shared/WaveformPlayer.razor.css', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'host/Ams.Workstation.Server/Components/_Imports.razor', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'host/Ams.Workstation.Server/Models/CrxModels.cs', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'host/Ams.Workstation.Server/Models/PolishModels.cs', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'host/Ams.Workstation.Server/Services/PickupMatchingService.cs', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'host/Ams.Workstation.Server/Services/PolishService.cs', LF will be replaced by CRLF the next time Git touches it
+diff --git a/host/Ams.Core/Services/Integrations/FFmpeg/FfDecoder.cs b/host/Ams.Core/Services/Integrations/FFmpeg/FfDecoder.cs
+index b08b6f7..26b8f36 100644
+--- a/host/Ams.Core/Services/Integrations/FFmpeg/FfDecoder.cs
++++ b/host/Ams.Core/Services/Integrations/FFmpeg/FfDecoder.cs
+@@ -117,11 +117,6 @@ internal static unsafe class FfDecoder
+ 
+         FfSession.EnsureInitialized();
+ 
+-        if (options.Start.HasValue || options.Duration.HasValue)
+-        {
+-            throw new NotSupportedException("Time range decoding is not implemented yet.");
+-        }
+-
+         AVFormatContext* formatContext = null;
+         try
+         {
+@@ -239,6 +234,28 @@ internal static unsafe class FfDecoder
+                         channelSamples.Add(new List<float>(65536));
+                     }
+ 
++                    // Time-range optimization: seek forward and limit decode window
++                    // to avoid decoding/buffering the entire file for partial loads.
++                    bool hasTimeRange = options.Start.HasValue || options.Duration.HasValue;
++                    double firstDecodedTimeSec = 0;
++                    bool firstFrameSeen = false;
++                    long maxDecodeSamples = long.MaxValue;
++
++                    if (hasTimeRange && options.Start.HasValue)
++                    {
++                        long seekTs = (long)(options.Start.Value.TotalSeconds * AV_TIME_BASE);
++                        av_seek_frame(formatContext, -1, seekTs, AVSEEK_FLAG_BACKWARD);
++                        avcodec_flush_buffers(codecContext);
++                    }
++
++                    if (hasTimeRange && options.Duration.HasValue)
++                    {
++                        // Generous margin (10s) for keyframe distance after seek
++                        maxDecodeSamples = (long)((options.Duration.Value.TotalSeconds + 10.0) * targetSampleRate);
++                    }
++
++                    bool decodeLimitReached = false;
++
+                     while (true)
+                     {
+                         var readResult = av_read_frame(formatContext, packet.Pointer);
+@@ -267,24 +284,62 @@ internal static unsafe class FfDecoder
+                             }
+ 
+                             ThrowIfError(receive, nameof(avcodec_receive_frame));
++
++                            // Track first decoded frame PTS for precise trimming after seek
++                            if (hasTimeRange && !firstFrameSeen && frame.Pointer->pts != AV_NOPTS_VALUE)
++                            {
++                                firstDecodedTimeSec = frame.Pointer->pts * av_q2d(stream->time_base);
++                                firstFrameSeen = true;
++                            }
++
+                             AppendSamples(frame.Pointer, resampler, needsResample, sourceSampleRate, targetChannels,
+                                 targetSampleRate, targetFormat, channelSamples, resampleScratch);
++
++                            // Early exit once we have enough samples for the requested range
++                            if (channelSamples[0].Count >= maxDecodeSamples)
++                            {
++                                decodeLimitReached = true;
++                                break;
++                            }
+                         }
++
++                        if (decodeLimitReached) break;
+                     }
+ 
+-                    // Flush decoder
+-                    ThrowIfError(avcodec_send_packet(codecContext, null), nameof(avcodec_send_packet));
+-                    while (true)
++                    // Flush decoder (skip if we already have enough samples)
++                    if (!decodeLimitReached)
+                     {
+-                        var receive = avcodec_receive_frame(codecContext, frame.Pointer);
+-                        if (receive == AVERROR(EAGAIN) || receive == AVERROR_EOF)
++                        ThrowIfError(avcodec_send_packet(codecContext, null), nameof(avcodec_send_packet));
++                        while (true)
+                         {
+-                            break;
++                            var receive = avcodec_receive_frame(codecContext, frame.Pointer);
++                            if (receive == AVERROR(EAGAIN) || receive == AVERROR_EOF)
++                            {
++                                break;
++                            }
++
++                            ThrowIfError(receive, nameof(avcodec_receive_frame));
++                            AppendSamples(frame.Pointer, resampler, needsResample, sourceSampleRate, targetChannels,
++                                targetSampleRate, targetFormat, channelSamples, resampleScratch);
+                         }
++                    }
+ 
+-                        ThrowIfError(receive, nameof(avcodec_receive_frame));
+-                        AppendSamples(frame.Pointer, resampler, needsResample, sourceSampleRate, targetChannels,
+-                            targetSampleRate, targetFormat, channelSamples, resampleScratch);
++                    // Precise trim: after seeking we may have decoded a small window
++                    // before the requested start; trim to exact boundaries.
++                    if (hasTimeRange && channelSamples.Count > 0 && channelSamples[0].Count > 0)
++                    {
++                        var totalDecoded = channelSamples[0].Count;
++                        var requestedStartSec = options.Start?.TotalSeconds ?? 0;
++                        var offsetFromFirst = Math.Max(0, requestedStartSec - firstDecodedTimeSec);
++                        var sliceStart = Math.Clamp((int)(offsetFromFirst * targetSampleRate), 0, totalDecoded);
++                        var sliceCount = options.Duration.HasValue
++                            ? Math.Clamp((int)(options.Duration.Value.TotalSeconds * targetSampleRate), 0, totalDecoded - sliceStart)
++                            : totalDecoded - sliceStart;
++
++                        for (int ch = 0; ch < targetChannels; ch++)
++                        {
++                            channelSamples[ch] = channelSamples[ch].GetRange(sliceStart, sliceCount);
++                        }
+                     }
+ 
+                     var length = channelSamples.Count > 0 ? channelSamples[0].Count : 0;
+diff --git a/host/Ams.Workstation.Server/Components/Layout/HeaderControls.razor b/host/Ams.Workstation.Server/Components/Layout/HeaderControls.razor
+index 8f1e4cc..22b19d2 100644
+--- a/host/Ams.Workstation.Server/Components/Layout/HeaderControls.razor
++++ b/host/Ams.Workstation.Server/Components/Layout/HeaderControls.razor
+@@ -37,6 +37,8 @@
+         }
+     </div>
+ 
++    <SectionOutlet SectionName="header-extra" />
++
+     <div class="header-directory">
+         <BitDropdown TItem="BitDropdownItem<string>"
+                      TValue="string"
+diff --git a/host/Ams.Workstation.Server/Components/Pages/Polish/PickupSubstitution.razor b/host/Ams.Workstation.Server/Components/Pages/Polish/PickupSubstitution.razor
+index 52e966d..c1d6c81 100644
+--- a/host/Ams.Workstation.Server/Components/Pages/Polish/PickupSubstitution.razor
++++ b/host/Ams.Workstation.Server/Components/Pages/Polish/PickupSubstitution.razor
+@@ -18,41 +18,39 @@
+ 
+ <PageTitle>Pickup Substitution - AMS Workstation</PageTitle>
+ 
++<SectionContent SectionName="header-extra">
++    <div style="display: flex; align-items: center; gap: 0.5rem; flex-shrink: 1; min-width: 0;">
++        <BitTextField @bind-Value="_pickupSessionPath"
++                      Placeholder="Pickup WAV path..."
++                      Style="width: 220px; flex-shrink: 1; min-width: 120px;"
++                      IsEnabled="@(!_isProcessing)" />
++        <BitButton Variant="BitVariant.Fill"
++                   Size="BitSize.Small"
++                   OnClick="HandleSetPickupSession"
++                   IsEnabled="@(!string.IsNullOrWhiteSpace(_pickupSessionPath) && !_isProcessing)">
++            Set
++        </BitButton>
++        <BitTextField @bind-Value="_roomtoneFilePath"
++                      Placeholder="Roomtone WAV path..."
++                      Style="width: 220px; flex-shrink: 1; min-width: 120px;"
++                      IsEnabled="@(!_isProcessing)" />
++        <BitButton Variant="BitVariant.Fill"
++                   Size="BitSize.Small"
++                   OnClick="HandleSetRoomtone"
++                   IsEnabled="@(!string.IsNullOrWhiteSpace(_roomtoneFilePath) && !_isProcessing)">
++            Set
++        </BitButton>
++    </div>
++</SectionContent>
++
+ <BitStack Horizontal="false" Gap="1rem" AutoHeight="true">
+ 
+-    @* Row 0 - Header Bar: pickup session + roomtone file selectors *@
+-    <BitCard Style="padding: 0.75rem;">
+-        <BitStack Horizontal="false" Gap="0.5rem" AutoHeight="true">
+-            <BitStack Horizontal="true" Gap="0.5rem" VerticalAlign="BitAlignment.Center" AutoHeight="true">
+-                <BitTextField @bind-Value="_pickupSessionPath"
+-                              Placeholder="Pickup session WAV file path..."
+-                              Style="flex: 1;"
+-                              IsEnabled="@(!_isProcessing)" />
+-                <BitButton Variant="BitVariant.Fill"
+-                           OnClick="HandleSetPickupSession"
+-                           IsEnabled="@(!string.IsNullOrWhiteSpace(_pickupSessionPath) && !_isProcessing)">
+-                    Set
+-                </BitButton>
+-                <BitTextField @bind-Value="_roomtoneFilePath"
+-                              Placeholder="Roomtone WAV file path..."
+-                              Style="flex: 1;"
+-                              IsEnabled="@(!_isProcessing)" />
+-                <BitButton Variant="BitVariant.Fill"
+-                           OnClick="HandleSetRoomtone"
+-                           IsEnabled="@(!string.IsNullOrWhiteSpace(_roomtoneFilePath) && !_isProcessing)">
+-                    Set
+-                </BitButton>
+-            </BitStack>
+-            @if (_isProcessing)
+-            {
+-                <BitStack Horizontal="true" Gap="0.5rem" VerticalAlign="BitAlignment.Center" AutoHeight="true">
+-                    <BitProgress Percent="@(_processingProgress * 100)"
+-                                 Label="@(_processingStatus ?? "Processing...")"
+-                                 ShowPercentNumber="true" />
+-                </BitStack>
+-            }
+-        </BitStack>
+-    </BitCard>
++    @if (_isProcessing)
++    {
++        <BitProgress Percent="@(_processingProgress * 100)"
++                     Label="@(_processingStatus ?? "Processing...")"
++                     ShowPercentNumber="true" />
++    }
+ 
+     @if (!Workspace.IsInitialized || !Workspace.HasBookIndex)
+     {
+@@ -91,13 +89,14 @@
+         </BitStack>
+ 
+         @* Row 2 - Waveform with Flippers *@
+-        <BitStack Horizontal="true" Gap="0.5rem" VerticalAlign="BitAlignment.Center" AutoHeight="true">
++        <BitStack Horizontal="true" Gap="0.5rem" VerticalAlign="BitAlignment.Center" AutoHeight="true"
++                  Style="min-width: 0; overflow: hidden;">
+             <BitButton Variant="BitVariant.Outline"
+                        IconName="@BitIconName.ChevronLeft"
+                        IsEnabled="@CanGoPrev"
+                        OnClick="HandlePrev"
+                        Title="Previous chapter" />
+-            <div style="flex: 1;">
++            <div style="flex: 1; min-width: 0; overflow: hidden;">
+                 <WaveformPlayer
+                     @ref="_waveformPlayer"
+                     AudioUrl="@GetAudioUrl()"
+@@ -129,23 +128,48 @@
+                                        Color="BitColor.Info"
+                                        OnClick="HandleStageAll"
+                                        Style="margin-left: auto;"
+-                                       IsEnabled="@(!_isProcessing)">
++                                       IsEnabled="@(!_isProcessing && !GetMatchedItems().Any(m => m.Match.IsLowConfidence && !IsLowConfidenceConfirmed(m.Match)))">
+                                 Stage All
+                             </BitButton>
+                         }
+                     </BitStack>
+                     @foreach (var item in GetMatchedItems())
+                     {
+-                        <div draggable="true"
++                        <div draggable="@(!item.Match.IsLowConfidence || IsLowConfidenceConfirmed(item.Match))"
+                              @ondragstart="() => HandleDragStart(item)"
+                              @ondragend="HandleDragEnd"
+                              class="@(_draggedMatch == item ? "pickup-dragging" : "")">
+-                            <PickupBox Match="@item.Match"
+-                                       State="PickupBoxState.Matched"
+-                                       PickupFilePath="@_pickupSessionPath"
+-                                       Sentence="@FindSentence(item.Match.SentenceId)"
+-                                       OnStage="HandleStageMatch"
+-                                       OnAudition="HandleAudition" />
++                            @if (item.Match.IsLowConfidence && !IsLowConfidenceConfirmed(item.Match))
++                            {
++                                <BitCard Style="border: 1px solid var(--bit-clr-wrn-dark); padding: 0.5rem;">
++                                    <BitStack Horizontal="false" Gap="0.25rem" AutoHeight="true">
++                                        <BitStack Horizontal="true" Gap="0.25rem" VerticalAlign="BitAlignment.Center" AutoHeight="true">
++                                            <BitTag Color="BitColor.Warning">Low Confidence</BitTag>
++                                            <BitText Typography="BitTypography.Caption1">
++                                                @($"{item.Match.Confidence:P0}") match for sentence @item.Match.SentenceId
++                                            </BitText>
++                                        </BitStack>
++                                        <BitText Typography="BitTypography.Caption2" Color="BitColor.SecondaryForeground">
++                                            ASR: "@item.Match.RecognizedText"
++                                        </BitText>
++                                        <BitButton Variant="BitVariant.Outline"
++                                                   Color="BitColor.Warning"
++                                                   Size="BitSize.Small"
++                                                   OnClick="@(() => ConfirmLowConfidenceMatch(item.Match.ErrorNumber))">
++                                            Confirm Match
++                                        </BitButton>
++                                    </BitStack>
++                                </BitCard>
++                            }
++                            else
++                            {
++                                <PickupBox Match="@item.Match"
++                                           State="PickupBoxState.Matched"
++                                           PickupFilePath="@_pickupSessionPath"
++                                           Sentence="@FindSentence(item.Match.SentenceId)"
++                                           OnStage="HandleStageMatch"
++                                           OnAudition="HandleAudition" />
++                            }
+                         </div>
+                     }
+                 </BitStack>
+@@ -297,6 +321,7 @@
+ 
+     // ── Cross-chapter pickup data ─────────────────────────────────
+     private Dictionary<string, List<CrossChapterPickupMatch>> _matchesByChapter = new();
++    private HashSet<int> _confirmedLowConfidence = new();
+ 
+     // ── Flipper navigation ────────────────────────────────────────
+     private List<ChapterCrxInfo> _chaptersWithCrx = new();
+@@ -500,31 +525,56 @@
+         var token = _cts.Token;
+ 
+         _isProcessing = true;
+-        _processingStatus = "Preparing chapters...";
++        _processingStatus = "Building CRX targets...";
+         _processingProgress = 0;
++        _confirmedLowConfidence.Clear();
+         StateHasChanged();
+ 
+         try
+         {
+-            // 1. Gather flagged sentences from all CRX chapters
+-            var chapterTargets = new List<(string Stem, string Name, IReadOnlyList<HydratedSentence> Flagged)>();
++            // 1. Load all CRX entries
++            IReadOnlyList<CrxEntry> allEntries;
++            try { allEntries = CrxService.GetEntries(); }
++            catch { allEntries = Array.Empty<CrxEntry>(); }
++
++            // 2. Build CrxPickupTarget list from CRX entries
++            var crxTargets = new List<CrxPickupTarget>();
+             foreach (var ch in _chaptersWithCrx)
+             {
+                 token.ThrowIfCancellationRequested();
+-                Workspace.SelectChapter(ch.ChapterName);
+-                if (Workspace.TryGetHydratedTranscript(ch.ChapterName, out var hydrated) && hydrated != null)
++
++                var chapterEntries = allEntries
++                    .Where(e => ChapterMatches(e.Chapter, ch.ChapterName))
++                    .OrderBy(e => e.ErrorNumber)
++                    .ToList();
++
++                if (chapterEntries.Count == 0) continue;
++
++                // Need hydrated transcript for sentence resolution
++                if (!Workspace.TryGetHydratedTranscript(ch.ChapterName, out var hydrated) || hydrated == null)
++                    continue;
++
++                foreach (var entry in chapterEntries)
+                 {
+-                    var flagged = LoadFlaggedSentencesForChapter(ch.ChapterName, hydrated);
+-                    if (flagged.Count > 0)
+-                        chapterTargets.Add((ch.Stem, ch.ChapterName, flagged));
++                    var sentence = ResolveSentenceFromCrxEntry(entry, hydrated.Sentences);
++                    if (sentence == null) continue;
++
++                    var shouldBeText = CrxCommentParser.TryParseShouldBe(entry.Comments);
++                    var bookText = sentence.BookText ?? string.Empty;
++
++                    crxTargets.Add(new CrxPickupTarget(
++                        ErrorNumber: entry.ErrorNumber,
++                        ChapterStem: ch.Stem,
++                        ChapterName: ch.ChapterName,
++                        SentenceId: sentence.Id,
++                        ShouldBeText: shouldBeText ?? bookText,
++                        BookText: bookText,
++                        OriginalStartSec: sentence.Timing?.StartSec ?? 0,
++                        OriginalEndSec: sentence.Timing?.EndSec ?? 0));
+                 }
+             }
+ 
+-            // Restore to current chapter
+-            if (_currentChapterIndex >= 0 && _currentChapterIndex < _chaptersWithCrx.Count)
+-                Workspace.SelectChapter(_chaptersWithCrx[_currentChapterIndex].ChapterName);
+-
+-            // 2. Run cross-chapter import with progress
++            // 3. Run CRX-driven import with progress
+             var progress = new Progress<(string Status, double Progress)>(p =>
+             {
+                 _processingStatus = p.Status;
+@@ -532,8 +582,8 @@
+                 InvokeAsync(StateHasChanged);
+             });
+ 
+-            _matchesByChapter = await PolishService.ImportPickupsCrossChapterAsync(
+-                _pickupSessionPath.Trim(), chapterTargets, progress, token);
++            _matchesByChapter = await PolishService.ImportPickupsCrxAsync(
++                _pickupSessionPath.Trim(), crxTargets, progress, token);
+ 
+             _processingStatus = $"Found {_matchesByChapter.Values.Sum(m => m.Count)} matches across {_matchesByChapter.Count} chapters.";
+         }
+@@ -548,26 +598,6 @@
+         }
+     }
+ 
+-    private IReadOnlyList<HydratedSentence> LoadFlaggedSentencesForChapter(
+-        string chapterName, HydratedTranscript hydrated)
+-    {
+-        IReadOnlyList<CrxEntry> entries;
+-        try { entries = CrxService.GetEntries(); }
+-        catch { entries = Array.Empty<CrxEntry>(); }
+-
+-        var chapterEntries = entries
+-            .Where(e => ChapterMatches(e.Chapter, chapterName))
+-            .OrderBy(e => e.ErrorNumber)
+-            .ToList();
+-
+-        if (chapterEntries.Count > 0)
+-            return ResolveCrxTargets(chapterEntries, hydrated.Sentences);
+-
+-        return hydrated.Sentences
+-            .Where(IsPickupCandidate)
+-            .ToList();
+-    }
+-
+     // ── Column State Derivation ───────────────────────────────────
+     private IReadOnlyList<CrossChapterPickupMatch> GetMatchedItems()
+     {
+@@ -609,12 +639,27 @@
+         return queue.Count(s => s.Status == ReplacementStatus.Applied);
+     }
+ 
++    // ── Low-confidence match confirmation ─────────────────────────
++    private bool IsLowConfidenceConfirmed(PickupMatch match)
++        => match.ErrorNumber.HasValue && _confirmedLowConfidence.Contains(match.ErrorNumber.Value);
++
++    private void ConfirmLowConfidenceMatch(int? errorNumber)
++    {
++        if (errorNumber.HasValue)
++            _confirmedLowConfidence.Add(errorNumber.Value);
++        StateHasChanged();
++    }
++
+     // ── Action Handlers ───────────────────────────────────────────
+     private async Task HandleStageMatch(PickupMatch match)
+     {
+         if (_currentChapterIndex < 0 || _currentChapterIndex >= _chaptersWithCrx.Count)
+             return;
+ 
++        // Block staging of unconfirmed low-confidence matches
++        if (match.IsLowConfidence && !IsLowConfidenceConfirmed(match))
++            return;
++
+         var info = _chaptersWithCrx[_currentChapterIndex];
+         var sentence = FindSentence(match.SentenceId);
+         if (sentence?.Timing == null || string.IsNullOrWhiteSpace(_pickupSessionPath))
+@@ -1092,6 +1137,7 @@
+         // Clear collections to release references
+         _matchesByChapter.Clear();
+         _chaptersWithCrx.Clear();
++        _confirmedLowConfidence.Clear();
+         _flaggedSentences = null;
+         _stagedItems = null;
+         _waveformPlayer = null;
+diff --git a/host/Ams.Workstation.Server/Components/Shared/WaveformPlayer.razor.css b/host/Ams.Workstation.Server/Components/Shared/WaveformPlayer.razor.css
+index 5fd08a4..03bee23 100644
+--- a/host/Ams.Workstation.Server/Components/Shared/WaveformPlayer.razor.css
++++ b/host/Ams.Workstation.Server/Components/Shared/WaveformPlayer.razor.css
+@@ -10,6 +10,8 @@
+     border: 1px solid var(--bit-clr-brd-pri);
+     border-radius: 6px;
+     padding: 1rem;
++    overflow: hidden;
++    min-width: 0;
+ }
+ 
+ .waveform-header {
+diff --git a/host/Ams.Workstation.Server/Components/_Imports.razor b/host/Ams.Workstation.Server/Components/_Imports.razor
+index 83ec8f5..770e7a4 100644
+--- a/host/Ams.Workstation.Server/Components/_Imports.razor
++++ b/host/Ams.Workstation.Server/Components/_Imports.razor
+@@ -10,4 +10,5 @@
+ @using Ams.Workstation.Server
+ @using Ams.Workstation.Server.Components
+ @using Ams.Workstation.Server.Components.Layout
++@using Microsoft.AspNetCore.Components.Sections
+ @using Ams.Workstation.Server.Components.Shared
+diff --git a/host/Ams.Workstation.Server/Models/CrxModels.cs b/host/Ams.Workstation.Server/Models/CrxModels.cs
+index c0ddec9..facb516 100644
+--- a/host/Ams.Workstation.Server/Models/CrxModels.cs
++++ b/host/Ams.Workstation.Server/Models/CrxModels.cs
+@@ -1,5 +1,6 @@
+ using System;
+ using System.Linq;
++using System.Text.RegularExpressions;
+ 
+ namespace Ams.Workstation.Server.Models;
+ 
+@@ -50,3 +51,26 @@ public static class ErrorTypes
+         "CHAR"   // Character voice
+     };
+ }
++
++public static class CrxCommentParser
++{
++    private static readonly Regex ShouldBeRegex = new(@"^Should be:\s*(.+?)$", RegexOptions.Multiline | RegexOptions.Compiled);
++    private static readonly Regex ReadAsRegex = new(@"^Read as:\s*(.+?)$", RegexOptions.Multiline | RegexOptions.Compiled);
++
++    public static string? TryParseShouldBe(string? comments)
++    {
++        if (string.IsNullOrWhiteSpace(comments)) return null;
++        var match = ShouldBeRegex.Match(comments);
++        return match.Success ? StripBrackets(match.Groups[1].Value.Trim()) : null;
++    }
++
++    public static string? TryParseReadAs(string? comments)
++    {
++        if (string.IsNullOrWhiteSpace(comments)) return null;
++        var match = ReadAsRegex.Match(comments);
++        return match.Success ? StripBrackets(match.Groups[1].Value.Trim()) : null;
++    }
++
++    public static string StripBrackets(string text)
++        => text.Replace("[", "").Replace("]", "").Trim();
++}
+diff --git a/host/Ams.Workstation.Server/Models/PolishModels.cs b/host/Ams.Workstation.Server/Models/PolishModels.cs
+index ca6814c..b48a592 100644
+--- a/host/Ams.Workstation.Server/Models/PolishModels.cs
++++ b/host/Ams.Workstation.Server/Models/PolishModels.cs
+@@ -49,7 +49,9 @@ public sealed record PickupMatch(
+     double PickupStartSec,
+     double PickupEndSec,
+     double Confidence,
+-    string RecognizedText);
++    string RecognizedText,
++    int? ErrorNumber = null,
++    bool IsLowConfidence = false);
+ 
+ /// <summary>
+ /// A discrete segment within a pickup recording, identified by its time boundaries
+@@ -158,6 +160,24 @@ public enum PickupBoxState
+     Committed
+ }
+ 
++public sealed record CrxPickupTarget(
++    int ErrorNumber,
++    string ChapterStem,
++    string ChapterName,
++    int SentenceId,
++    string ShouldBeText,
++    string BookText,
++    double OriginalStartSec,
++    double OriginalEndSec);
++
++public sealed record PickupArtifacts(
++    string PickupFilePath,
++    DateTime ProcessedAtUtc,
++    long PickupFileSizeBytes,
++    DateTime PickupFileModifiedUtc,
++    string CrxTargetsFingerprint,
++    Dictionary<string, List<CrossChapterPickupMatch>> MatchesByChapter);
++
+ public static class StagedReplacementExtensions
+ {
+     public static double PickupDuration(this StagedReplacement r) =>
+diff --git a/host/Ams.Workstation.Server/Services/PickupMatchingService.cs b/host/Ams.Workstation.Server/Services/PickupMatchingService.cs
+index b1d7e4a..b06b58c 100644
+--- a/host/Ams.Workstation.Server/Services/PickupMatchingService.cs
++++ b/host/Ams.Workstation.Server/Services/PickupMatchingService.cs
+@@ -2,13 +2,10 @@ using System;
+ using System.Collections.Generic;
+ using System.IO;
+ using System.Linq;
+-using System.Security.Cryptography;
+-using System.Text;
+ using System.Text.Json;
+ using System.Text.RegularExpressions;
+ using System.Threading;
+ using System.Threading.Tasks;
+-using Ams.Core.Artifacts;
+ using Ams.Core.Artifacts.Hydrate;
+ using Ams.Core.Asr;
+ using Ams.Core.Audio;
+@@ -19,23 +16,22 @@ using Ams.Workstation.Server.Models;
+ namespace Ams.Workstation.Server.Services;
+ 
+ /// <summary>
+-/// Runs ASR on pickup recording files and matches recognized text to
+-/// flagged CRX target sentences using fuzzy Levenshtein similarity.
+-/// Supports both multi-pickup session files (single-pass ASR with
+-/// CRX-guided segmentation) and individual pickup files (one per sentence).
+-/// Uses Whisper.NET in-process via <see cref="AsrProcessor"/> exclusively.
++/// Runs ASR on pickup recording files and matches recognized utterances to
++/// CRX target sentences using positional pairing (CRX order drives the match).
++/// Levenshtein similarity is used as a confidence metric, not a filter.
+ /// </summary>
+ public class PickupMatchingService
+ {
+-    // Tightened threshold to avoid false positives from single-token overlap.
+-    private const double MatchConfidenceThreshold = 0.62;
++    private const double LowConfidenceThreshold = 0.4;
++    private const double MinSegmentDurationSec = 0.3;
++    private const double UtteranceGapSec = 0.8;
+ 
+     private static readonly Regex PunctuationRegex = new(@"[^\w\s]", RegexOptions.Compiled);
+     private static readonly Regex WhitespaceRegex = new(@"\s+", RegexOptions.Compiled);
+ 
+     private static readonly JsonSerializerOptions CacheJsonOptions = new()
+     {
+-        WriteIndented = false
++        WriteIndented = true
+     };
+ 
+     private readonly BlazorWorkspace _workspace;
+@@ -48,194 +44,200 @@ public class PickupMatchingService
+     }
+ 
+     /// <summary>
+-    /// Processes a pickup session recording by running ASR once on the entire
+-    /// file, then using the flagged CRX sentences to locate each sentence's
+-    /// token span in the ASR output. Sentences are matched sequentially
+-    /// (narrator records them in CRX order). Results are cached on disk.
++    /// Processes a pickup session recording using CRX-driven positional pairing.
++    /// ASR + MFA run on the full WAV, then utterances are segmented by silence gaps
++    /// and paired with CRX targets in ErrorNumber order.
+     /// </summary>
+-    public async Task<List<PickupMatch>> MatchPickupAsync(
++    public async Task<List<PickupMatch>> MatchPickupCrxAsync(
+         string pickupFilePath,
+-        IReadOnlyList<HydratedSentence> flaggedSentences,
++        IReadOnlyList<CrxPickupTarget> crxTargets,
+         CancellationToken ct)
+     {
+         ArgumentException.ThrowIfNullOrWhiteSpace(pickupFilePath);
+-        ArgumentNullException.ThrowIfNull(flaggedSentences);
++        ArgumentNullException.ThrowIfNull(crxTargets);
+ 
+-        // 1. Check ASR cache
+-        var asrResponse = TryReadAsrCache(pickupFilePath);
++        if (crxTargets.Count == 0)
++            return new List<PickupMatch>();
++
++        // 1. ASR on full WAV (with named artifact cache)
++        var asrResponse = TryReadNamedAsrCache(pickupFilePath);
+ 
+         if (asrResponse == null)
+         {
+-            // 2. Decode, prepare, run ASR once on the entire file
+             var pickupBuffer = AudioProcessor.Decode(pickupFilePath);
+             var asrReady = AsrAudioPreparer.PrepareForAsr(pickupBuffer);
+             var asrOptions = await BuildAsrOptionsAsync(ct).ConfigureAwait(false);
+             asrResponse = await AsrProcessor.TranscribeBufferAsync(asrReady, asrOptions, ct)
+                 .ConfigureAwait(false);
++            WriteNamedAsrCache(pickupFilePath, asrResponse);
+         }
+ 
+-        // 3. Refine ASR token timings with full-file MFA and persist refined ASR cache
++        // 2. MFA refinement
+         asrResponse = await _mfaRefinement.RefineAsrTimingsAsync(
+             pickupFilePath,
+             asrResponse,
+             ct).ConfigureAwait(false);
+-        WriteAsrCache(pickupFilePath, asrResponse);
+-
+-        // 4. Check final match results cache (keyed to refined ASR content + sentence context)
+-        var cachedMatches = TryReadMatchCache(pickupFilePath, asrResponse, flaggedSentences);
+-        if (cachedMatches != null)
+-            return cachedMatches;
++        WriteNamedMfaCache(asrResponse);
+ 
+-        // 5. Use CRX sentences to find each sentence's token span
++        // 3. Utterance segmentation: detect gaps >= 0.8s between MFA-refined tokens
+         var tokens = asrResponse.Tokens;
+-        var matches = new List<PickupMatch>();
++        if (tokens is not { Length: > 0 })
++            return new List<PickupMatch>();
+ 
+-        if (tokens is not { Length: > 0 } || flaggedSentences.Count == 0)
+-            return matches;
++        var segments = SegmentUtterances(tokens);
+ 
+-        // Process sentences in order — narrator records them sequentially
+-        int searchFrom = 0;
++        // 4. CRX positional pairing
++        var sortedTargets = crxTargets.OrderBy(t => t.ErrorNumber).ToList();
++        var matches = PairSegmentsToTargets(segments, sortedTargets);
+ 
+-        foreach (var sentence in flaggedSentences)
+-        {
+-            ct.ThrowIfCancellationRequested();
++        return matches;
++    }
+ 
+-            var normalizedTarget = NormalizeForMatch(sentence.BookText);
+-            var targetWords = normalizedTarget.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+-            if (targetWords.Length == 0) continue;
++    /// <summary>
++    /// Segments ASR tokens into utterances based on silence gaps.
++    /// </summary>
++    private static List<PickupSegment> SegmentUtterances(AsrToken[] tokens)
++    {
++        var segments = new List<PickupSegment>();
++        if (tokens.Length == 0) return segments;
+ 
+-            // Search for the best contiguous token window starting from searchFrom
+-            var (bestStart, bestEnd, bestScore, bestSharedWords) = FindBestTokenSpan(
+-                tokens, searchFrom, targetWords, normalizedTarget);
++        var segmentStart = tokens[0].StartTime;
++        var segmentTokens = new List<AsrToken> { tokens[0] };
+ 
+-            if (bestStart >= 0 && IsAcceptableMatch(bestScore, targetWords.Length, bestSharedWords))
+-            {
+-                var startSec = tokens[bestStart].StartTime;
+-                var lastToken = tokens[bestEnd - 1];
+-                var endSec = lastToken.StartTime + lastToken.Duration;
+-                var recognizedText = string.Join(" ", tokens[bestStart..bestEnd].Select(t => t.Word));
+-
+-                matches.Add(new PickupMatch(
+-                    SentenceId: sentence.Id,
+-                    PickupStartSec: startSec,
+-                    PickupEndSec: endSec,
+-                    Confidence: bestScore,
+-                    RecognizedText: recognizedText.Trim()));
+-
+-                searchFrom = bestEnd;
+-            }
+-            else if (bestStart >= 0)
++        for (int i = 1; i < tokens.Length; i++)
++        {
++            var prevEnd = tokens[i - 1].StartTime + tokens[i - 1].Duration;
++            var gap = tokens[i].StartTime - prevEnd;
++
++            if (gap >= UtteranceGapSec)
+             {
+-                Log.Debug(
+-                    "Rejected weak pickup match for sentence {SentenceId}: score={Score:F3}, shared={Shared}/{TargetWords}",
+-                    sentence.Id,
+-                    bestScore,
+-                    bestSharedWords,
+-                    targetWords.Length);
++                // End current segment
++                var lastToken = segmentTokens[^1];
++                var segmentEnd = lastToken.StartTime + lastToken.Duration;
++                var text = string.Join(" ", segmentTokens.Select(t => t.Word)).Trim();
++                var duration = segmentEnd - segmentStart;
++
++                if (duration >= MinSegmentDurationSec && !string.IsNullOrWhiteSpace(text))
++                {
++                    segments.Add(new PickupSegment(segmentStart, segmentEnd, text));
++                }
++                else if (duration < MinSegmentDurationSec)
++                {
++                    Log.Debug(
++                        "Skipping short segment ({Duration:F2}s < {Min:F1}s): \"{Text}\"",
++                        duration, MinSegmentDurationSec, text);
++                }
++
++                // Start new segment
++                segmentStart = tokens[i].StartTime;
++                segmentTokens.Clear();
+             }
++
++            segmentTokens.Add(tokens[i]);
+         }
+ 
+-        var result = matches.OrderBy(m => m.PickupStartSec).ToList();
++        // Final segment
++        if (segmentTokens.Count > 0)
++        {
++            var lastToken = segmentTokens[^1];
++            var segmentEnd = lastToken.StartTime + lastToken.Duration;
++            var text = string.Join(" ", segmentTokens.Select(t => t.Word)).Trim();
++            var duration = segmentEnd - segmentStart;
+ 
+-        // 6. Cache final results for instant re-import
+-        if (result.Count > 0)
+-            WriteMatchCache(pickupFilePath, asrResponse, flaggedSentences, result);
++            if (duration >= MinSegmentDurationSec && !string.IsNullOrWhiteSpace(text))
++            {
++                segments.Add(new PickupSegment(segmentStart, segmentEnd, text));
++            }
++        }
+ 
+-        return result;
++        return segments;
+     }
+ 
+     /// <summary>
+-    /// Finds the contiguous token span starting at or after <paramref name="fromIndex"/>
+-    /// that best matches <paramref name="normalizedTarget"/>. Tries window sizes
+-    /// around the expected word count to handle ASR word-splitting variance.
++    /// Pairs utterance segments to CRX targets using positional alignment.
++    /// When there are more segments than targets, finds the best starting offset
++    /// by maximizing total confidence.
+     /// </summary>
+-    private static (int Start, int End, double Score, int SharedWords) FindBestTokenSpan(
+-        AsrToken[] tokens, int fromIndex, string[] targetWords, string normalizedTarget)
++    private static List<PickupMatch> PairSegmentsToTargets(
++        List<PickupSegment> segments,
++        List<CrxPickupTarget> targets)
+     {
+-        var expectedWords = targetWords.Length;
+-        var targetWordSet = targetWords.ToHashSet(StringComparer.Ordinal);
+-
+-        int bestStart = -1, bestEnd = -1, bestSharedWords = 0;
+-        double bestScore = 0;
+-
+-        // Allow window sizes from 60% to 150% of expected word count
+-        int minWindow = Math.Max(1, (int)(expectedWords * 0.6));
+-        int maxWindow = Math.Min(tokens.Length - fromIndex, (int)(expectedWords * 1.5) + 2);
++        if (segments.Count == 0 || targets.Count == 0)
++            return new List<PickupMatch>();
+ 
+-        // Scan the entire remaining token stream so late-session pickups are discoverable.
+-        int maxStartOffset = tokens.Length - fromIndex;
++        // Find best starting offset when segment count differs from target count
++        int bestOffset = 0;
++        double bestTotalConfidence = -1;
+ 
+-        for (int offset = 0; offset < maxStartOffset; offset++)
++        int maxOffset = Math.Max(0, segments.Count - targets.Count);
++        for (int offset = 0; offset <= maxOffset; offset++)
+         {
+-            int start = fromIndex + offset;
++            double totalConfidence = 0;
++            int pairCount = Math.Min(targets.Count, segments.Count - offset);
+ 
+-            for (int windowSize = minWindow; windowSize <= maxWindow; windowSize++)
++            for (int i = 0; i < pairCount; i++)
+             {
+-                int end = start + windowSize;
+-                if (end > tokens.Length) break;
+-
+-                var windowText = string.Join(" ", tokens[start..end].Select(t => t.Word));
+-                var normalizedWindow = NormalizeForMatch(windowText);
+-                var score = LevenshteinMetrics.Similarity(normalizedWindow, normalizedTarget);
+-                var sharedWords = CountSharedWords(normalizedWindow, targetWordSet);
+-
+-                if (score > bestScore || (Math.Abs(score - bestScore) < 1e-9 && sharedWords > bestSharedWords))
+-                {
+-                    bestScore = score;
+-                    bestStart = start;
+-                    bestEnd = end;
+-                    bestSharedWords = sharedWords;
+-                }
++                var segment = segments[offset + i];
++                var target = targets[i];
++                var normalizedSegment = NormalizeForMatch(segment.TranscribedText);
++                var normalizedTarget = NormalizeForMatch(target.ShouldBeText);
++                totalConfidence += LevenshteinMetrics.Similarity(normalizedSegment, normalizedTarget);
++            }
+ 
+-                // Early exit: very high confidence + lexical overlap.
+-                if (score > 0.95 && sharedWords >= GetMinimumSharedWords(expectedWords))
+-                    return (bestStart, bestEnd, bestScore, bestSharedWords);
++            if (totalConfidence > bestTotalConfidence)
++            {
++                bestTotalConfidence = totalConfidence;
++                bestOffset = offset;
+             }
+         }
+ 
+-        return (bestStart, bestEnd, bestScore, bestSharedWords);
+-    }
++        // Pair using best offset
++        var matches = new List<PickupMatch>();
++        int pairsToMake = Math.Min(targets.Count, segments.Count - bestOffset);
+ 
+-    private static bool IsAcceptableMatch(double score, int targetWordCount, int sharedWords)
+-    {
+-        if (score <= MatchConfidenceThreshold)
+-            return false;
++        if (pairsToMake < targets.Count)
++        {
++            Log.Warn(
++                "Fewer segments ({Segments}) than targets ({Targets}); {Unpaired} targets will be unmatched",
++                segments.Count, targets.Count, targets.Count - pairsToMake);
++        }
+ 
+-        var minSharedWords = GetMinimumSharedWords(targetWordCount);
+-        return sharedWords >= minSharedWords;
+-    }
++        for (int i = 0; i < pairsToMake; i++)
++        {
++            var segment = segments[bestOffset + i];
++            var target = targets[i];
+ 
+-    private static int GetMinimumSharedWords(int targetWordCount)
+-    {
+-        if (targetWordCount <= 1) return 1;
+-        if (targetWordCount <= 4) return 2;
+-        return Math.Max(2, (int)Math.Ceiling(targetWordCount * 0.5));
+-    }
++            var normalizedSegment = NormalizeForMatch(segment.TranscribedText);
++            var normalizedTarget = NormalizeForMatch(target.ShouldBeText);
++            var confidence = LevenshteinMetrics.Similarity(normalizedSegment, normalizedTarget);
++            var isLowConfidence = confidence < LowConfidenceThreshold;
+ 
+-    private static int CountSharedWords(string normalizedWindow, HashSet<string> targetWordSet)
+-    {
+-        var uniqueWindowWords = normalizedWindow
+-            .Split(' ', StringSplitOptions.RemoveEmptyEntries)
+-            .ToHashSet(StringComparer.Ordinal);
++            if (isLowConfidence)
++            {
++                Log.Warn(
++                    "Low confidence match for error #{ErrorNumber} (sentence {SentenceId}): " +
++                    "confidence={Confidence:F3}, expected=\"{Expected}\", got=\"{Got}\"",
++                    target.ErrorNumber, target.SentenceId, confidence,
++                    target.ShouldBeText, segment.TranscribedText);
++            }
+ 
+-        int shared = 0;
+-        foreach (var word in uniqueWindowWords)
+-        {
+-            if (targetWordSet.Contains(word))
+-                shared++;
++            matches.Add(new PickupMatch(
++                SentenceId: target.SentenceId,
++                PickupStartSec: segment.StartSec,
++                PickupEndSec: segment.EndSec,
++                Confidence: confidence,
++                RecognizedText: segment.TranscribedText,
++                ErrorNumber: target.ErrorNumber,
++                IsLowConfidence: isLowConfidence));
+         }
+ 
+-        return shared;
++        return matches;
+     }
+ 
+     /// <summary>
+     /// Simplified matching for individual pickup files (one per sentence).
+     /// Runs ASR on the entire file and creates a match with the specified target sentence.
+     /// </summary>
+-    /// <param name="pickupFilePath">Path to the pickup WAV file.</param>
+-    /// <param name="targetSentence">The sentence this pickup is intended to replace.</param>
+-    /// <param name="ct">Cancellation token.</param>
+-    /// <returns>A single pickup match with confidence score.</returns>
+     public async Task<PickupMatch> MatchSinglePickupAsync(
+         string pickupFilePath,
+         HydratedSentence targetSentence,
+@@ -244,11 +246,9 @@ public class PickupMatchingService
+         ArgumentException.ThrowIfNullOrWhiteSpace(pickupFilePath);
+         ArgumentNullException.ThrowIfNull(targetSentence);
+ 
+-        // Decode and prepare for ASR
+         var pickupBuffer = AudioProcessor.Decode(pickupFilePath);
+         var asrReady = AsrAudioPreparer.PrepareForAsr(pickupBuffer);
+ 
+-        // Run ASR on entire file
+         var asrOptions = await BuildAsrOptionsAsync(ct).ConfigureAwait(false);
+         var asrResponse = await AsrProcessor.TranscribeBufferAsync(asrReady, asrOptions, ct)
+             .ConfigureAwait(false);
+@@ -256,7 +256,6 @@ public class PickupMatchingService
+         var recognizedText = ExtractFullText(asrResponse);
+         var pickupDuration = (double)pickupBuffer.Length / pickupBuffer.SampleRate;
+ 
+-        // Compute confidence via Levenshtein for reference
+         double confidence = 0;
+         if (!string.IsNullOrWhiteSpace(recognizedText))
+         {
+@@ -276,7 +275,7 @@ public class PickupMatchingService
+     /// <summary>
+     /// Extracts the full recognized text from an ASR response by joining token words.
+     /// </summary>
+-    private static string ExtractFullText(AsrResponse response)
++    internal static string ExtractFullText(AsrResponse response)
+     {
+         if (response.Tokens is { Length: > 0 })
+         {
+@@ -294,7 +293,7 @@ public class PickupMatchingService
+     /// <summary>
+     /// Normalizes text for fuzzy matching: lowercase, collapse whitespace, remove punctuation.
+     /// </summary>
+-    private static string NormalizeForMatch(string text)
++    internal static string NormalizeForMatch(string text)
+     {
+         if (string.IsNullOrWhiteSpace(text))
+             return string.Empty;
+@@ -305,9 +304,6 @@ public class PickupMatchingService
+         return normalized;
+     }
+ 
+-    /// <summary>
+-    /// Builds default ASR options, resolving the Whisper model path with auto-download fallback.
+-    /// </summary>
+     private static async Task<AsrOptions> BuildAsrOptionsAsync(CancellationToken ct)
+     {
+         ct.ThrowIfCancellationRequested();
+@@ -318,67 +314,38 @@ public class PickupMatchingService
+             EnableWordTimestamps: true);
+     }
+ 
+-    #region Match Results Cache (ASR + MFA combined)
++    #region Named Artifact Cache
+ 
+-    /// <summary>
+-    /// Computes a cache key for final match results using pickup file identity,
+-    /// refined ASR token stream, and flagged sentence context.
+-    /// </summary>
+-    private static string ComputeMatchCacheKey(
+-        string pickupFilePath,
+-        AsrResponse asrResponse,
+-        IReadOnlyList<HydratedSentence> sentences)
++    private string GetPickupsDir()
+     {
+-        var fi = new FileInfo(pickupFilePath);
+-        var sb = new StringBuilder();
+-        sb.Append(fi.FullName).Append('|').Append(fi.Length).Append('|').Append(fi.LastWriteTimeUtc.ToString("O"));
+-        sb.Append('|').Append(asrResponse.ModelVersion);
+-        foreach (var token in asrResponse.Tokens)
+-        {
+-            sb.Append('|')
+-                .Append(NormalizeForMatch(token.Word))
+-                .Append('@')
+-                .Append(token.StartTime.ToString("F3", System.Globalization.CultureInfo.InvariantCulture))
+-                .Append(',')
+-                .Append(token.Duration.ToString("F3", System.Globalization.CultureInfo.InvariantCulture));
+-        }
+-        sb.Append('|');
+-        sb.Append(string.Join(":", sentences.Select(s => s.Id)));
+-        foreach (var sentence in sentences)
+-        {
+-            sb.Append('|').Append(NormalizeForMatch(sentence.BookText));
+-        }
+-        var hashBytes = SHA256.HashData(Encoding.UTF8.GetBytes(sb.ToString()));
+-        return Convert.ToHexString(hashBytes)[..16].ToLowerInvariant();
++        var workDir = _workspace.WorkingDirectory
++            ?? throw new InvalidOperationException("No working directory set.");
++        var dir = Path.Combine(workDir, ".polish", "pickups");
++        Directory.CreateDirectory(dir);
++        return dir;
+     }
+ 
+-    private List<PickupMatch>? TryReadMatchCache(
+-        string pickupFilePath,
+-        AsrResponse asrResponse,
+-        IReadOnlyList<HydratedSentence> sentences)
++    private AsrResponse? TryReadNamedAsrCache(string pickupFilePath)
+     {
+-        var workDir = _workspace.WorkingDirectory;
+-        if (workDir == null) return null;
+-
+-        var hash = ComputeMatchCacheKey(pickupFilePath, asrResponse, sentences);
+-        var cachePath = Path.Combine(workDir, ".polish", "pickups", $"{hash}.matches.json");
+-        if (!File.Exists(cachePath)) return null;
+-
+         try
+         {
+-            var json = File.ReadAllText(cachePath);
+-            var matches = JsonSerializer.Deserialize<List<PickupMatch>>(json);
+-            if (matches is not { Count: > 0 })
+-                return null;
++            var cachePath = Path.Combine(GetPickupsDir(), "pickups.asr.json");
++            if (!File.Exists(cachePath)) return null;
+ 
+-            var sentenceLookup = sentences.ToDictionary(s => s.Id);
+-            if (!AreCachedMatchesPlausible(matches, sentenceLookup))
++            var json = File.ReadAllText(cachePath);
++            var wrapper = JsonSerializer.Deserialize<AsrCacheWrapper>(json);
++            if (wrapper == null) return null;
++
++            // Staleness check: pickup file identity
++            var fi = new FileInfo(pickupFilePath);
++            if (wrapper.PickupFilePath != fi.FullName ||
++                wrapper.PickupFileSizeBytes != fi.Length ||
++                wrapper.PickupFileModifiedUtc != fi.LastWriteTimeUtc)
+             {
+-                Log.Debug("Ignoring implausible pickup match cache at {Path}", cachePath);
+                 return null;
+             }
+ 
+-            return matches;
++            return wrapper.AsrResponse;
+         }
+         catch
+         {
+@@ -386,107 +353,43 @@ public class PickupMatchingService
+         }
+     }
+ 
+-    private void WriteMatchCache(
+-        string pickupFilePath,
+-        AsrResponse asrResponse,
+-        IReadOnlyList<HydratedSentence> sentences,
+-        List<PickupMatch> matches)
++    private void WriteNamedAsrCache(string pickupFilePath, AsrResponse response)
+     {
+-        var workDir = _workspace.WorkingDirectory;
+-        if (workDir == null) return;
+-
+         try
+         {
+-            var hash = ComputeMatchCacheKey(pickupFilePath, asrResponse, sentences);
+-            var dir = Path.Combine(workDir, ".polish", "pickups");
+-            Directory.CreateDirectory(dir);
+-            var cachePath = Path.Combine(dir, $"{hash}.matches.json");
+-            var json = JsonSerializer.Serialize(matches, CacheJsonOptions);
++            var fi = new FileInfo(pickupFilePath);
++            var wrapper = new AsrCacheWrapper(
++                fi.FullName, fi.Length, fi.LastWriteTimeUtc, response);
++
++            var cachePath = Path.Combine(GetPickupsDir(), "pickups.asr.json");
++            var json = JsonSerializer.Serialize(wrapper, CacheJsonOptions);
+             File.WriteAllText(cachePath, json);
+         }
+         catch (Exception ex)
+         {
+-            Log.Debug("Failed to write match cache: {Message}", ex.Message);
+-        }
+-    }
+-
+-    #endregion
+-
+-    #region ASR Cache
+-
+-    private static bool AreCachedMatchesPlausible(
+-        IReadOnlyList<PickupMatch> matches,
+-        Dictionary<int, HydratedSentence> sentenceLookup)
+-    {
+-        foreach (var match in matches)
+-        {
+-            if (!sentenceLookup.TryGetValue(match.SentenceId, out var sentence))
+-                return false;
+-
+-            if (!IsPlausibleMatchDuration(match, sentence))
+-                return false;
++            Log.Debug("Failed to write named ASR cache: {Message}", ex.Message);
+         }
+-
+-        return true;
+     }
+ 
+-    private static bool IsPlausibleMatchDuration(PickupMatch match, HydratedSentence sentence)
++    private void WriteNamedMfaCache(AsrResponse response)
+     {
+-        var duration = match.PickupEndSec - match.PickupStartSec;
+-        if (duration <= 0.1)
+-            return false;
+-
+-        var targetWords = NormalizeForMatch(sentence.BookText)
+-            .Split(' ', StringSplitOptions.RemoveEmptyEntries).Length;
+-
+-        // Heuristic guardrail: spoken sentence duration should roughly track word count.
+-        // Allows generous headroom for pauses but rejects obviously wrong whole-file spans.
+-        var maxDuration = Math.Max(12.0, targetWords * 1.5);
+-        return duration <= maxDuration;
+-    }
+-
+-    private string GetAsrCachePath(string pickupFilePath)
+-    {
+-        var hash = ComputeAsrCacheKey(pickupFilePath);
+-        var workDir = _workspace.WorkingDirectory
+-            ?? throw new InvalidOperationException("No working directory set.");
+-        return Path.Combine(workDir, ".polish", "pickups", $"{hash}.asr.json");
+-    }
+-
+-    private static string ComputeAsrCacheKey(string filePath)
+-    {
+-        var fi = new FileInfo(filePath);
+-        var input = $"{fi.FullName}|{fi.Length}|{fi.LastWriteTimeUtc:O}";
+-        var hashBytes = SHA256.HashData(Encoding.UTF8.GetBytes(input));
+-        return Convert.ToHexString(hashBytes)[..16].ToLowerInvariant();
+-    }
+-
+-    private AsrResponse? TryReadAsrCache(string pickupFilePath)
+-    {
+-        var cachePath = GetAsrCachePath(pickupFilePath);
+-        if (!File.Exists(cachePath))
+-            return null;
+-
+         try
+         {
+-            var json = File.ReadAllText(cachePath);
+-            return JsonSerializer.Deserialize<AsrResponse>(json);
++            var cachePath = Path.Combine(GetPickupsDir(), "pickups.asr.mfa.json");
++            var json = JsonSerializer.Serialize(response, CacheJsonOptions);
++            File.WriteAllText(cachePath, json);
+         }
+-        catch
++        catch (Exception ex)
+         {
+-            return null;
++            Log.Debug("Failed to write named MFA cache: {Message}", ex.Message);
+         }
+     }
+ 
+-    private void WriteAsrCache(string pickupFilePath, AsrResponse response)
+-    {
+-        var cachePath = GetAsrCachePath(pickupFilePath);
+-        var dir = Path.GetDirectoryName(cachePath)!;
+-        Directory.CreateDirectory(dir);
+-
+-        var json = JsonSerializer.Serialize(response, CacheJsonOptions);
+-        File.WriteAllText(cachePath, json);
+-    }
++    private sealed record AsrCacheWrapper(
++        string PickupFilePath,
++        long PickupFileSizeBytes,
++        DateTime PickupFileModifiedUtc,
++        AsrResponse AsrResponse);
+ 
+     #endregion
+ }
+diff --git a/host/Ams.Workstation.Server/Services/PolishService.cs b/host/Ams.Workstation.Server/Services/PolishService.cs
+index 4745b9a..cf40ed7 100644
+--- a/host/Ams.Workstation.Server/Services/PolishService.cs
++++ b/host/Ams.Workstation.Server/Services/PolishService.cs
+@@ -2,7 +2,9 @@ using System;
+ using System.Collections.Generic;
+ using System.IO;
+ using System.Linq;
+-using System.Text.RegularExpressions;
++using System.Security.Cryptography;
++using System.Text;
++using System.Text.Json;
+ using System.Threading;
+ using System.Threading.Tasks;
+ using Ams.Core.Artifacts;
+@@ -24,8 +26,10 @@ public class PolishService
+ {
+     private const double PickupSlicePaddingSec = 0.080;
+ 
+-    private static readonly Regex PunctuationRegex = new(@"[^\w\s]", RegexOptions.Compiled);
+-    private static readonly Regex WhitespaceRegex = new(@"\s+", RegexOptions.Compiled);
++    private static readonly JsonSerializerOptions ArtifactJsonOptions = new()
++    {
++        WriteIndented = true
++    };
+ 
+     private readonly BlazorWorkspace _workspace;
+     private readonly StagingQueueService _stagingQueue;
+@@ -48,150 +52,78 @@ public class PolishService
+     }
+ 
+     /// <summary>
+-    /// Imports a pickup recording by running ASR-based matching against flagged sentences.
+-    /// </summary>
+-    /// <param name="pickupFilePath">Path to the pickup WAV file.</param>
+-    /// <param name="flaggedSentences">CRX target sentences to match against.</param>
+-    /// <param name="ct">Cancellation token.</param>
+-    /// <returns>List of pickup matches for UI display.</returns>
+-    public Task<List<PickupMatch>> ImportPickupAsync(
+-        string pickupFilePath,
+-        IReadOnlyList<HydratedSentence> flaggedSentences,
+-        CancellationToken ct)
+-    {
+-        return _pickupMatching.MatchPickupAsync(pickupFilePath, flaggedSentences, ct);
+-    }
+-
+-    /// <summary>
+-    /// Imports a pickup recording by running ASR+MFA matching against ALL chapters' flagged sentences
+-    /// in a single pass. Returns matches distributed by chapter stem.
+-    /// Handles cross-chapter sentence ID collisions via text similarity disambiguation.
++    /// Imports a pickup recording using CRX-driven positional pairing.
++    /// Checks cached artifacts for staleness before re-processing.
+     /// </summary>
+-    /// <param name="pickupFilePath">Path to the pickup WAV file.</param>
+-    /// <param name="chapterTargets">Per-chapter flagged sentences to match against.</param>
+-    /// <param name="progress">Optional progress reporter.</param>
+-    /// <param name="ct">Cancellation token.</param>
+-    /// <returns>Dictionary of chapter stem to list of cross-chapter pickup matches.</returns>
+-    public async Task<Dictionary<string, List<CrossChapterPickupMatch>>> ImportPickupsCrossChapterAsync(
++    public async Task<Dictionary<string, List<CrossChapterPickupMatch>>> ImportPickupsCrxAsync(
+         string pickupFilePath,
+-        IReadOnlyList<(string ChapterStem, string ChapterName, IReadOnlyList<HydratedSentence> FlaggedSentences)> chapterTargets,
++        IReadOnlyList<CrxPickupTarget> crxTargets,
+         IProgress<(string Status, double Progress)>? progress = null,
+         CancellationToken ct = default)
+     {
+         ArgumentException.ThrowIfNullOrWhiteSpace(pickupFilePath);
+-        ArgumentNullException.ThrowIfNull(chapterTargets);
++        ArgumentNullException.ThrowIfNull(crxTargets);
+ 
+-        // 1. Gather ALL flagged sentences from all chapters into a single list.
+-        //    Track sentenceId -> list of (chapterStem, sentence) for disambiguation.
+-        var sentenceOwnership = new Dictionary<int, List<(string ChapterStem, HydratedSentence Sentence)>>();
+-        var allFlaggedSentences = new List<HydratedSentence>();
++        if (crxTargets.Count == 0)
++            return new Dictionary<string, List<CrossChapterPickupMatch>>();
+ 
+-        foreach (var (chapterStem, _, flagged) in chapterTargets)
+-        {
+-            foreach (var sentence in flagged)
+-            {
+-                if (!sentenceOwnership.TryGetValue(sentence.Id, out var owners))
+-                {
+-                    owners = new List<(string, HydratedSentence)>();
+-                    sentenceOwnership[sentence.Id] = owners;
+-                }
+-                owners.Add((chapterStem, sentence));
++        var fi = new FileInfo(pickupFilePath);
++        var crxFingerprint = ComputeCrxFingerprint(crxTargets);
+ 
+-                // Only add the sentence once to the matching pool if this is the first occurrence
+-                if (owners.Count == 1)
+-                    allFlaggedSentences.Add(sentence);
+-            }
++        // Check cached artifacts for freshness
++        var cached = TryReadMatchedArtifacts();
++        if (cached != null &&
++            cached.PickupFilePath == fi.FullName &&
++            cached.PickupFileSizeBytes == fi.Length &&
++            cached.PickupFileModifiedUtc == fi.LastWriteTimeUtc &&
++            cached.CrxTargetsFingerprint == crxFingerprint)
++        {
++            progress?.Report(("Loaded from cache", 1.0));
++            return cached.MatchesByChapter;
+         }
+ 
+-        if (allFlaggedSentences.Count == 0)
+-            return new Dictionary<string, List<CrossChapterPickupMatch>>();
+-
+-        // 2. Report progress: splitting/ASR/MFA
+-        progress?.Report(("Splitting by silence...", 0.1));
++        // Run ASR + MFA matching
++        progress?.Report(("Running ASR + MFA...", 0.1));
+ 
+-        // 3. Run matching on all flagged sentences in one pass
+-        var matches = await _pickupMatching.MatchPickupAsync(pickupFilePath, allFlaggedSentences, ct)
++        var matches = await _pickupMatching.MatchPickupCrxAsync(pickupFilePath, crxTargets, ct)
+             .ConfigureAwait(false);
+ 
+-        // 4. Distribute results into per-chapter dictionary
++        // Group by chapter stem
+         progress?.Report(("Distributing matches...", 0.8));
+ 
+         var result = new Dictionary<string, List<CrossChapterPickupMatch>>(StringComparer.OrdinalIgnoreCase);
++        var targetLookup = crxTargets.ToDictionary(t => t.ErrorNumber);
+ 
+         foreach (var match in matches)
+         {
+             ct.ThrowIfCancellationRequested();
+ 
+-            if (!sentenceOwnership.TryGetValue(match.SentenceId, out var owners))
++            if (match.ErrorNumber == null || !targetLookup.TryGetValue(match.ErrorNumber.Value, out var target))
+                 continue;
+ 
+-            string ownerStem;
+-            if (owners.Count == 1)
+-            {
+-                // No collision -- single owner
+-                ownerStem = owners[0].ChapterStem;
+-            }
+-            else
+-            {
+-                // Cross-chapter ID collision: disambiguate by text similarity
+-                ownerStem = DisambiguateOwner(match, owners);
+-            }
+-
+-            if (!result.TryGetValue(ownerStem, out var chapterMatches))
++            if (!result.TryGetValue(target.ChapterStem, out var chapterMatches))
+             {
+                 chapterMatches = new List<CrossChapterPickupMatch>();
+-                result[ownerStem] = chapterMatches;
++                result[target.ChapterStem] = chapterMatches;
+             }
+ 
+-            chapterMatches.Add(new CrossChapterPickupMatch(ownerStem, match));
++            chapterMatches.Add(new CrossChapterPickupMatch(target.ChapterStem, match));
+         }
+ 
+-        // 5. Complete
+-        progress?.Report(("Complete", 1.0));
++        // Persist matched artifacts
++        var artifacts = new PickupArtifacts(
++            fi.FullName,
++            DateTime.UtcNow,
++            fi.Length,
++            fi.LastWriteTimeUtc,
++            crxFingerprint,
++            new Dictionary<string, List<CrossChapterPickupMatch>>(result));
++        WriteMatchedArtifacts(artifacts);
+ 
++        progress?.Report(("Complete", 1.0));
+         return result;
+     }
+ 
+-    /// <summary>
+-    /// Disambiguates which chapter owns a match when the same sentence ID appears in multiple chapters.
+-    /// Uses Levenshtein text similarity between recognized text and each chapter's sentence text.
+-    /// </summary>
+-    private static string DisambiguateOwner(
+-        PickupMatch match,
+-        List<(string ChapterStem, HydratedSentence Sentence)> owners)
+-    {
+-        var normalizedRecognized = NormalizeForCompare(match.RecognizedText);
+-        double bestScore = -1;
+-        string bestStem = owners[0].ChapterStem;
+-
+-        foreach (var (stem, sentence) in owners)
+-        {
+-            var normalizedBook = NormalizeForCompare(sentence.BookText);
+-            var score = LevenshteinMetrics.Similarity(normalizedRecognized, normalizedBook);
+-            if (score > bestScore)
+-            {
+-                bestScore = score;
+-                bestStem = stem;
+-            }
+-        }
+-
+-        return bestStem;
+-    }
+-
+-    /// <summary>
+-    /// Normalizes text for comparison: lowercase, collapse whitespace, remove punctuation.
+-    /// </summary>
+-    private static string NormalizeForCompare(string? text)
+-    {
+-        if (string.IsNullOrWhiteSpace(text))
+-            return string.Empty;
+-
+-        var normalized = text.ToLowerInvariant().Trim();
+-        normalized = PunctuationRegex.Replace(normalized, " ");
+-        normalized = WhitespaceRegex.Replace(normalized, " ").Trim();
+-        return normalized;
+-    }
+-
+     /// <summary>
+     /// Creates a <see cref="StagedReplacement"/> from a match and adds it to the staging queue.
+     /// </summary>
+@@ -514,6 +446,63 @@ public class PolishService
+         return resultBuffer;
+     }
+ 
++    #region CRX Artifact Cache
++
++    private static string ComputeCrxFingerprint(IReadOnlyList<CrxPickupTarget> targets)
++    {
++        var sb = new StringBuilder();
++        foreach (var t in targets.OrderBy(t => t.ErrorNumber))
++        {
++            sb.Append(t.ErrorNumber).Append('|')
++              .Append(t.ChapterStem).Append('|')
++              .Append(t.SentenceId).Append('|')
++              .Append(t.ShouldBeText).Append('\n');
++        }
++
++        var hashBytes = SHA256.HashData(Encoding.UTF8.GetBytes(sb.ToString()));
++        return Convert.ToHexString(hashBytes)[..16].ToLowerInvariant();
++    }
++
++    private PickupArtifacts? TryReadMatchedArtifacts()
++    {
++        var workDir = _workspace.WorkingDirectory;
++        if (workDir == null) return null;
++
++        var path = Path.Combine(workDir, ".polish", "pickups", "pickups.matched.json");
++        if (!File.Exists(path)) return null;
++
++        try
++        {
++            var json = File.ReadAllText(path);
++            return JsonSerializer.Deserialize<PickupArtifacts>(json);
++        }
++        catch
++        {
++            return null;
++        }
++    }
++
++    private void WriteMatchedArtifacts(PickupArtifacts artifacts)
++    {
++        var workDir = _workspace.WorkingDirectory;
++        if (workDir == null) return;
++
++        try
++        {
++            var dir = Path.Combine(workDir, ".polish", "pickups");
++            Directory.CreateDirectory(dir);
++            var path = Path.Combine(dir, "pickups.matched.json");
++            var json = JsonSerializer.Serialize(artifacts, ArtifactJsonOptions);
++            File.WriteAllText(path, json);
++        }
++        catch (Exception ex)
++        {
++            Log.Debug("Failed to write matched artifacts: {Message}", ex.Message);
++        }
++    }
++
++    #endregion
++
+     #region Private Helpers
+ 
+     private StagedReplacement FindStagedItem(string replacementId)

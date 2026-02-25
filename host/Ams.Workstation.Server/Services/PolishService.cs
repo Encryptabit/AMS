@@ -2,7 +2,9 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
-using System.Text.RegularExpressions;
+using System.Security.Cryptography;
+using System.Text;
+using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Ams.Core.Artifacts;
@@ -24,8 +26,10 @@ public class PolishService
 {
     private const double PickupSlicePaddingSec = 0.080;
 
-    private static readonly Regex PunctuationRegex = new(@"[^\w\s]", RegexOptions.Compiled);
-    private static readonly Regex WhitespaceRegex = new(@"\s+", RegexOptions.Compiled);
+    private static readonly JsonSerializerOptions ArtifactJsonOptions = new()
+    {
+        WriteIndented = true
+    };
 
     private readonly BlazorWorkspace _workspace;
     private readonly StagingQueueService _stagingQueue;
@@ -48,148 +52,76 @@ public class PolishService
     }
 
     /// <summary>
-    /// Imports a pickup recording by running ASR-based matching against flagged sentences.
+    /// Imports a pickup recording using CRX-driven positional pairing.
+    /// Checks cached artifacts for staleness before re-processing.
     /// </summary>
-    /// <param name="pickupFilePath">Path to the pickup WAV file.</param>
-    /// <param name="flaggedSentences">CRX target sentences to match against.</param>
-    /// <param name="ct">Cancellation token.</param>
-    /// <returns>List of pickup matches for UI display.</returns>
-    public Task<List<PickupMatch>> ImportPickupAsync(
+    public async Task<Dictionary<string, List<CrossChapterPickupMatch>>> ImportPickupsCrxAsync(
         string pickupFilePath,
-        IReadOnlyList<HydratedSentence> flaggedSentences,
-        CancellationToken ct)
-    {
-        return _pickupMatching.MatchPickupAsync(pickupFilePath, flaggedSentences, ct);
-    }
-
-    /// <summary>
-    /// Imports a pickup recording by running ASR+MFA matching against ALL chapters' flagged sentences
-    /// in a single pass. Returns matches distributed by chapter stem.
-    /// Handles cross-chapter sentence ID collisions via text similarity disambiguation.
-    /// </summary>
-    /// <param name="pickupFilePath">Path to the pickup WAV file.</param>
-    /// <param name="chapterTargets">Per-chapter flagged sentences to match against.</param>
-    /// <param name="progress">Optional progress reporter.</param>
-    /// <param name="ct">Cancellation token.</param>
-    /// <returns>Dictionary of chapter stem to list of cross-chapter pickup matches.</returns>
-    public async Task<Dictionary<string, List<CrossChapterPickupMatch>>> ImportPickupsCrossChapterAsync(
-        string pickupFilePath,
-        IReadOnlyList<(string ChapterStem, string ChapterName, IReadOnlyList<HydratedSentence> FlaggedSentences)> chapterTargets,
+        IReadOnlyList<CrxPickupTarget> crxTargets,
         IProgress<(string Status, double Progress)>? progress = null,
         CancellationToken ct = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(pickupFilePath);
-        ArgumentNullException.ThrowIfNull(chapterTargets);
+        ArgumentNullException.ThrowIfNull(crxTargets);
 
-        // 1. Gather ALL flagged sentences from all chapters into a single list.
-        //    Track sentenceId -> list of (chapterStem, sentence) for disambiguation.
-        var sentenceOwnership = new Dictionary<int, List<(string ChapterStem, HydratedSentence Sentence)>>();
-        var allFlaggedSentences = new List<HydratedSentence>();
-
-        foreach (var (chapterStem, _, flagged) in chapterTargets)
-        {
-            foreach (var sentence in flagged)
-            {
-                if (!sentenceOwnership.TryGetValue(sentence.Id, out var owners))
-                {
-                    owners = new List<(string, HydratedSentence)>();
-                    sentenceOwnership[sentence.Id] = owners;
-                }
-                owners.Add((chapterStem, sentence));
-
-                // Only add the sentence once to the matching pool if this is the first occurrence
-                if (owners.Count == 1)
-                    allFlaggedSentences.Add(sentence);
-            }
-        }
-
-        if (allFlaggedSentences.Count == 0)
+        if (crxTargets.Count == 0)
             return new Dictionary<string, List<CrossChapterPickupMatch>>();
 
-        // 2. Report progress: splitting/ASR/MFA
-        progress?.Report(("Splitting by silence...", 0.1));
+        var fi = new FileInfo(pickupFilePath);
+        var crxFingerprint = ComputeCrxFingerprint(crxTargets);
 
-        // 3. Run matching on all flagged sentences in one pass
-        var matches = await _pickupMatching.MatchPickupAsync(pickupFilePath, allFlaggedSentences, ct)
+        // Check cached artifacts for freshness
+        var cached = TryReadMatchedArtifacts();
+        if (cached != null &&
+            cached.PickupFilePath == fi.FullName &&
+            cached.PickupFileSizeBytes == fi.Length &&
+            cached.PickupFileModifiedUtc == fi.LastWriteTimeUtc &&
+            cached.CrxTargetsFingerprint == crxFingerprint)
+        {
+            progress?.Report(("Loaded from cache", 1.0));
+            return cached.MatchesByChapter;
+        }
+
+        // Run ASR + MFA matching
+        progress?.Report(("Running ASR + MFA...", 0.1));
+
+        var matches = await _pickupMatching.MatchPickupCrxAsync(pickupFilePath, crxTargets, ct)
             .ConfigureAwait(false);
 
-        // 4. Distribute results into per-chapter dictionary
+        // Group by chapter stem
         progress?.Report(("Distributing matches...", 0.8));
 
         var result = new Dictionary<string, List<CrossChapterPickupMatch>>(StringComparer.OrdinalIgnoreCase);
+        var targetLookup = crxTargets.ToDictionary(t => t.ErrorNumber);
 
         foreach (var match in matches)
         {
             ct.ThrowIfCancellationRequested();
 
-            if (!sentenceOwnership.TryGetValue(match.SentenceId, out var owners))
+            if (match.ErrorNumber == null || !targetLookup.TryGetValue(match.ErrorNumber.Value, out var target))
                 continue;
 
-            string ownerStem;
-            if (owners.Count == 1)
-            {
-                // No collision -- single owner
-                ownerStem = owners[0].ChapterStem;
-            }
-            else
-            {
-                // Cross-chapter ID collision: disambiguate by text similarity
-                ownerStem = DisambiguateOwner(match, owners);
-            }
-
-            if (!result.TryGetValue(ownerStem, out var chapterMatches))
+            if (!result.TryGetValue(target.ChapterStem, out var chapterMatches))
             {
                 chapterMatches = new List<CrossChapterPickupMatch>();
-                result[ownerStem] = chapterMatches;
+                result[target.ChapterStem] = chapterMatches;
             }
 
-            chapterMatches.Add(new CrossChapterPickupMatch(ownerStem, match));
+            chapterMatches.Add(new CrossChapterPickupMatch(target.ChapterStem, match));
         }
 
-        // 5. Complete
+        // Persist matched artifacts
+        var artifacts = new PickupArtifacts(
+            fi.FullName,
+            DateTime.UtcNow,
+            fi.Length,
+            fi.LastWriteTimeUtc,
+            crxFingerprint,
+            new Dictionary<string, List<CrossChapterPickupMatch>>(result));
+        WriteMatchedArtifacts(artifacts);
+
         progress?.Report(("Complete", 1.0));
-
         return result;
-    }
-
-    /// <summary>
-    /// Disambiguates which chapter owns a match when the same sentence ID appears in multiple chapters.
-    /// Uses Levenshtein text similarity between recognized text and each chapter's sentence text.
-    /// </summary>
-    private static string DisambiguateOwner(
-        PickupMatch match,
-        List<(string ChapterStem, HydratedSentence Sentence)> owners)
-    {
-        var normalizedRecognized = NormalizeForCompare(match.RecognizedText);
-        double bestScore = -1;
-        string bestStem = owners[0].ChapterStem;
-
-        foreach (var (stem, sentence) in owners)
-        {
-            var normalizedBook = NormalizeForCompare(sentence.BookText);
-            var score = LevenshteinMetrics.Similarity(normalizedRecognized, normalizedBook);
-            if (score > bestScore)
-            {
-                bestScore = score;
-                bestStem = stem;
-            }
-        }
-
-        return bestStem;
-    }
-
-    /// <summary>
-    /// Normalizes text for comparison: lowercase, collapse whitespace, remove punctuation.
-    /// </summary>
-    private static string NormalizeForCompare(string? text)
-    {
-        if (string.IsNullOrWhiteSpace(text))
-            return string.Empty;
-
-        var normalized = text.ToLowerInvariant().Trim();
-        normalized = PunctuationRegex.Replace(normalized, " ");
-        normalized = WhitespaceRegex.Replace(normalized, " ").Trim();
-        return normalized;
     }
 
     /// <summary>
@@ -513,6 +445,63 @@ public class PolishService
 
         return resultBuffer;
     }
+
+    #region CRX Artifact Cache
+
+    private static string ComputeCrxFingerprint(IReadOnlyList<CrxPickupTarget> targets)
+    {
+        var sb = new StringBuilder();
+        foreach (var t in targets.OrderBy(t => t.ErrorNumber))
+        {
+            sb.Append(t.ErrorNumber).Append('|')
+              .Append(t.ChapterStem).Append('|')
+              .Append(t.SentenceId).Append('|')
+              .Append(t.ShouldBeText).Append('\n');
+        }
+
+        var hashBytes = SHA256.HashData(Encoding.UTF8.GetBytes(sb.ToString()));
+        return Convert.ToHexString(hashBytes)[..16].ToLowerInvariant();
+    }
+
+    private PickupArtifacts? TryReadMatchedArtifacts()
+    {
+        var workDir = _workspace.WorkingDirectory;
+        if (workDir == null) return null;
+
+        var path = Path.Combine(workDir, ".polish", "pickups", "pickups.matched.json");
+        if (!File.Exists(path)) return null;
+
+        try
+        {
+            var json = File.ReadAllText(path);
+            return JsonSerializer.Deserialize<PickupArtifacts>(json);
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private void WriteMatchedArtifacts(PickupArtifacts artifacts)
+    {
+        var workDir = _workspace.WorkingDirectory;
+        if (workDir == null) return;
+
+        try
+        {
+            var dir = Path.Combine(workDir, ".polish", "pickups");
+            Directory.CreateDirectory(dir);
+            var path = Path.Combine(dir, "pickups.matched.json");
+            var json = JsonSerializer.Serialize(artifacts, ArtifactJsonOptions);
+            File.WriteAllText(path, json);
+        }
+        catch (Exception ex)
+        {
+            Log.Debug("Failed to write matched artifacts: {Message}", ex.Message);
+        }
+    }
+
+    #endregion
 
     #region Private Helpers
 

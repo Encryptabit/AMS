@@ -49,7 +49,9 @@ public sealed record PickupMatch(
     double PickupStartSec,
     double PickupEndSec,
     double Confidence,
-    string RecognizedText);
+    string RecognizedText,
+    int? ErrorNumber = null,
+    bool IsLowConfidence = false);
 
 /// <summary>
 /// A discrete segment within a pickup recording, identified by its time boundaries
@@ -157,6 +159,24 @@ public enum PickupBoxState
     /// <summary>Pickup replacement has been committed to the chapter audio.</summary>
     Committed
 }
+
+public sealed record CrxPickupTarget(
+    int ErrorNumber,
+    string ChapterStem,
+    string ChapterName,
+    int SentenceId,
+    string ShouldBeText,
+    string BookText,
+    double OriginalStartSec,
+    double OriginalEndSec);
+
+public sealed record PickupArtifacts(
+    string PickupFilePath,
+    DateTime ProcessedAtUtc,
+    long PickupFileSizeBytes,
+    DateTime PickupFileModifiedUtc,
+    string CrxTargetsFingerprint,
+    Dictionary<string, List<CrossChapterPickupMatch>> MatchesByChapter);
 
 public static class StagedReplacementExtensions
 {

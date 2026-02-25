@@ -10,6 +10,8 @@
     border: 1px solid var(--bit-clr-brd-pri);
     border-radius: 6px;
     padding: 1rem;
+    overflow: hidden;
+    min-width: 0;
 }
 
 .waveform-header {

@@ -70,8 +70,28 @@
       "artifact_hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
       "note": "checkpoint_plan_docs_only",
       "recorded_at": "2026-02-24T10:08:25.946Z"
+    },
+    {
+      "entry_id": "1771958087483-l2rmdw",
+      "gate": "discuss",
+      "phase": "13",
+      "review_id": "f5330682-6f7a-457b-a5c4-3af55d628fae",
+      "status": "approved",
+      "artifact_hash": "6ee81537e368ba114b4b038269223ef8ac00ccb66dbbe804e0432f5d2c1fd103",
+      "note": null,
+      "recorded_at": "2026-02-24T18:34:47.483Z"
+    },
+    {
+      "entry_id": "1771959903958-4wfide",
+      "gate": "plan",
+      "phase": "13",
+      "review_id": "2525c723-0352-460c-818a-ff8b4194ba94",
+      "status": "approved",
+      "artifact_hash": "06ac9d8fdb0b71e5a614fa97d042d8c7e11c85853996c476dec1710c5160af55",
+      "note": null,
+      "recorded_at": "2026-02-24T19:05:03.958Z"
     }
   ],
   "overrides": [],
-  "updated_at": "2026-02-24T10:08:25.947Z"
+  "updated_at": "2026-02-24T19:05:03.959Z"
 }

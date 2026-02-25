@@ -18,41 +18,39 @@
 
 <PageTitle>Pickup Substitution - AMS Workstation</PageTitle>
 
+<SectionContent SectionName="header-extra">
+    <div style="display: flex; align-items: center; gap: 0.5rem; flex-shrink: 1; min-width: 0;">
+        <BitTextField @bind-Value="_pickupSessionPath"
+                      Placeholder="Pickup WAV path..."
+                      Style="width: 220px; flex-shrink: 1; min-width: 120px;"
+                      IsEnabled="@(!_isProcessing)" />
+        <BitButton Variant="BitVariant.Fill"
+                   Size="BitSize.Small"
+                   OnClick="HandleSetPickupSession"
+                   IsEnabled="@(!string.IsNullOrWhiteSpace(_pickupSessionPath) && !_isProcessing)">
+            Set
+        </BitButton>
+        <BitTextField @bind-Value="_roomtoneFilePath"
+                      Placeholder="Roomtone WAV path..."
+                      Style="width: 220px; flex-shrink: 1; min-width: 120px;"
+                      IsEnabled="@(!_isProcessing)" />
+        <BitButton Variant="BitVariant.Fill"
+                   Size="BitSize.Small"
+                   OnClick="HandleSetRoomtone"
+                   IsEnabled="@(!string.IsNullOrWhiteSpace(_roomtoneFilePath) && !_isProcessing)">
+            Set
+        </BitButton>
+    </div>
+</SectionContent>
+
 <BitStack Horizontal="false" Gap="1rem" AutoHeight="true">
 
-    @* Row 0 - Header Bar: pickup session + roomtone file selectors *@
-    <BitCard Style="padding: 0.75rem;">
-        <BitStack Horizontal="false" Gap="0.5rem" AutoHeight="true">
-            <BitStack Horizontal="true" Gap="0.5rem" VerticalAlign="BitAlignment.Center" AutoHeight="true">
-                <BitTextField @bind-Value="_pickupSessionPath"
-                              Placeholder="Pickup session WAV file path..."
-                              Style="flex: 1;"
-                              IsEnabled="@(!_isProcessing)" />
-                <BitButton Variant="BitVariant.Fill"
-                           OnClick="HandleSetPickupSession"
-                           IsEnabled="@(!string.IsNullOrWhiteSpace(_pickupSessionPath) && !_isProcessing)">
-                    Set
-                </BitButton>
-                <BitTextField @bind-Value="_roomtoneFilePath"
-                              Placeholder="Roomtone WAV file path..."
-                              Style="flex: 1;"
-                              IsEnabled="@(!_isProcessing)" />
-                <BitButton Variant="BitVariant.Fill"
-                           OnClick="HandleSetRoomtone"
-                           IsEnabled="@(!string.IsNullOrWhiteSpace(_roomtoneFilePath) && !_isProcessing)">
-                    Set
-                </BitButton>
-            </BitStack>
-            @if (_isProcessing)
-            {
-                <BitStack Horizontal="true" Gap="0.5rem" VerticalAlign="BitAlignment.Center" AutoHeight="true">
-                    <BitProgress Percent="@(_processingProgress * 100)"
-                                 Label="@(_processingStatus ?? "Processing...")"
-                                 ShowPercentNumber="true" />
-                </BitStack>
-            }
-        </BitStack>
-    </BitCard>
+    @if (_isProcessing)
+    {
+        <BitProgress Percent="@(_processingProgress * 100)"
+                     Label="@(_processingStatus ?? "Processing...")"
+                     ShowPercentNumber="true" />
+    }
 
     @if (!Workspace.IsInitialized || !Workspace.HasBookIndex)
     {
@@ -91,13 +89,14 @@
         </BitStack>
 
         @* Row 2 - Waveform with Flippers *@
-        <BitStack Horizontal="true" Gap="0.5rem" VerticalAlign="BitAlignment.Center" AutoHeight="true">
+        <BitStack Horizontal="true" Gap="0.5rem" VerticalAlign="BitAlignment.Center" AutoHeight="true"
+                  Style="min-width: 0; overflow: hidden;">
             <BitButton Variant="BitVariant.Outline"
                        IconName="@BitIconName.ChevronLeft"
                        IsEnabled="@CanGoPrev"
                        OnClick="HandlePrev"
                        Title="Previous chapter" />
-            <div style="flex: 1;">
+            <div style="flex: 1; min-width: 0; overflow: hidden;">
                 <WaveformPlayer
                     @ref="_waveformPlayer"
                     AudioUrl="@GetAudioUrl()"
@@ -129,23 +128,48 @@
                                        Color="BitColor.Info"
                                        OnClick="HandleStageAll"
                                        Style="margin-left: auto;"
-                                       IsEnabled="@(!_isProcessing)">
+                                       IsEnabled="@(!_isProcessing && !GetMatchedItems().Any(m => m.Match.IsLowConfidence && !IsLowConfidenceConfirmed(m.Match)))">
                                 Stage All
                             </BitButton>
                         }
                     </BitStack>
                     @foreach (var item in GetMatchedItems())
                     {
-                        <div draggable="true"
+                        <div draggable="@(!item.Match.IsLowConfidence || IsLowConfidenceConfirmed(item.Match))"
                              @ondragstart="() => HandleDragStart(item)"
                              @ondragend="HandleDragEnd"
                              class="@(_draggedMatch == item ? "pickup-dragging" : "")">
-                            <PickupBox Match="@item.Match"
-                                       State="PickupBoxState.Matched"
-                                       PickupFilePath="@_pickupSessionPath"
-                                       Sentence="@FindSentence(item.Match.SentenceId)"
-                                       OnStage="HandleStageMatch"
-                                       OnAudition="HandleAudition" />
+                            @if (item.Match.IsLowConfidence && !IsLowConfidenceConfirmed(item.Match))
+                            {
+                                <BitCard Style="border: 1px solid var(--bit-clr-wrn-dark); padding: 0.5rem;">
+                                    <BitStack Horizontal="false" Gap="0.25rem" AutoHeight="true">
+                                        <BitStack Horizontal="true" Gap="0.25rem" VerticalAlign="BitAlignment.Center" AutoHeight="true">
+                                            <BitTag Color="BitColor.Warning">Low Confidence</BitTag>
+                                            <BitText Typography="BitTypography.Caption1">
+                                                @($"{item.Match.Confidence:P0}") match for sentence @item.Match.SentenceId
+                                            </BitText>
+                                        </BitStack>
+                                        <BitText Typography="BitTypography.Caption2" Color="BitColor.SecondaryForeground">
+                                            ASR: "@item.Match.RecognizedText"
+                                        </BitText>
+                                        <BitButton Variant="BitVariant.Outline"
+                                                   Color="BitColor.Warning"
+                                                   Size="BitSize.Small"
+                                                   OnClick="@(() => ConfirmLowConfidenceMatch(item.Match.ErrorNumber))">
+                                            Confirm Match
+                                        </BitButton>
+                                    </BitStack>
+                                </BitCard>
+                            }
+                            else
+                            {
+                                <PickupBox Match="@item.Match"
+                                           State="PickupBoxState.Matched"
+                                           PickupFilePath="@_pickupSessionPath"
+                                           Sentence="@FindSentence(item.Match.SentenceId)"
+                                           OnStage="HandleStageMatch"
+                                           OnAudition="HandleAudition" />
+                            }
                         </div>
                     }
                 </BitStack>
@@ -297,6 +321,7 @@
 
     // ── Cross-chapter pickup data ─────────────────────────────────
     private Dictionary<string, List<CrossChapterPickupMatch>> _matchesByChapter = new();
+    private HashSet<int> _confirmedLowConfidence = new();
 
     // ── Flipper navigation ────────────────────────────────────────
     private List<ChapterCrxInfo> _chaptersWithCrx = new();
@@ -500,31 +525,56 @@
         var token = _cts.Token;
 
         _isProcessing = true;
-        _processingStatus = "Preparing chapters...";
+        _processingStatus = "Building CRX targets...";
         _processingProgress = 0;
+        _confirmedLowConfidence.Clear();
         StateHasChanged();
 
         try
         {
-            // 1. Gather flagged sentences from all CRX chapters
-            var chapterTargets = new List<(string Stem, string Name, IReadOnlyList<HydratedSentence> Flagged)>();
+            // 1. Load all CRX entries
+            IReadOnlyList<CrxEntry> allEntries;
+            try { allEntries = CrxService.GetEntries(); }
+            catch { allEntries = Array.Empty<CrxEntry>(); }
+
+            // 2. Build CrxPickupTarget list from CRX entries
+            var crxTargets = new List<CrxPickupTarget>();
             foreach (var ch in _chaptersWithCrx)
             {
                 token.ThrowIfCancellationRequested();
-                Workspace.SelectChapter(ch.ChapterName);
-                if (Workspace.TryGetHydratedTranscript(ch.ChapterName, out var hydrated) && hydrated != null)
+
+                var chapterEntries = allEntries
+                    .Where(e => ChapterMatches(e.Chapter, ch.ChapterName))
+                    .OrderBy(e => e.ErrorNumber)
+                    .ToList();
+
+                if (chapterEntries.Count == 0) continue;
+
+                // Need hydrated transcript for sentence resolution
+                if (!Workspace.TryGetHydratedTranscript(ch.ChapterName, out var hydrated) || hydrated == null)
+                    continue;
+
+                foreach (var entry in chapterEntries)
                 {
-                    var flagged = LoadFlaggedSentencesForChapter(ch.ChapterName, hydrated);
-                    if (flagged.Count > 0)
-                        chapterTargets.Add((ch.Stem, ch.ChapterName, flagged));
+                    var sentence = ResolveSentenceFromCrxEntry(entry, hydrated.Sentences);
+                    if (sentence == null) continue;
+
+                    var shouldBeText = CrxCommentParser.TryParseShouldBe(entry.Comments);
+                    var bookText = sentence.BookText ?? string.Empty;
+
+                    crxTargets.Add(new CrxPickupTarget(
+                        ErrorNumber: entry.ErrorNumber,
+                        ChapterStem: ch.Stem,
+                        ChapterName: ch.ChapterName,
+                        SentenceId: sentence.Id,
+                        ShouldBeText: shouldBeText ?? bookText,
+                        BookText: bookText,
+                        OriginalStartSec: sentence.Timing?.StartSec ?? 0,
+                        OriginalEndSec: sentence.Timing?.EndSec ?? 0));
                 }
             }
 
-            // Restore to current chapter
-            if (_currentChapterIndex >= 0 && _currentChapterIndex < _chaptersWithCrx.Count)
-                Workspace.SelectChapter(_chaptersWithCrx[_currentChapterIndex].ChapterName);
-
-            // 2. Run cross-chapter import with progress
+            // 3. Run CRX-driven import with progress
             var progress = new Progress<(string Status, double Progress)>(p =>
             {
                 _processingStatus = p.Status;
@@ -532,8 +582,8 @@
                 InvokeAsync(StateHasChanged);
             });
 
-            _matchesByChapter = await PolishService.ImportPickupsCrossChapterAsync(
-                _pickupSessionPath.Trim(), chapterTargets, progress, token);
+            _matchesByChapter = await PolishService.ImportPickupsCrxAsync(
+                _pickupSessionPath.Trim(), crxTargets, progress, token);
 
             _processingStatus = $"Found {_matchesByChapter.Values.Sum(m => m.Count)} matches across {_matchesByChapter.Count} chapters.";
         }
@@ -546,26 +596,6 @@
             await SyncWaveformRegions();
             StateHasChanged();
         }
-    }
-
-    private IReadOnlyList<HydratedSentence> LoadFlaggedSentencesForChapter(
-        string chapterName, HydratedTranscript hydrated)
-    {
-        IReadOnlyList<CrxEntry> entries;
-        try { entries = CrxService.GetEntries(); }
-        catch { entries = Array.Empty<CrxEntry>(); }
-
-        var chapterEntries = entries
-            .Where(e => ChapterMatches(e.Chapter, chapterName))
-            .OrderBy(e => e.ErrorNumber)
-            .ToList();
-
-        if (chapterEntries.Count > 0)
-            return ResolveCrxTargets(chapterEntries, hydrated.Sentences);
-
-        return hydrated.Sentences
-            .Where(IsPickupCandidate)
-            .ToList();
     }
 
     // ── Column State Derivation ───────────────────────────────────
@@ -609,10 +639,25 @@
         return queue.Count(s => s.Status == ReplacementStatus.Applied);
     }
 
+    // ── Low-confidence match confirmation ─────────────────────────
+    private bool IsLowConfidenceConfirmed(PickupMatch match)
+        => match.ErrorNumber.HasValue && _confirmedLowConfidence.Contains(match.ErrorNumber.Value);
+
+    private void ConfirmLowConfidenceMatch(int? errorNumber)
+    {
+        if (errorNumber.HasValue)
+            _confirmedLowConfidence.Add(errorNumber.Value);
+        StateHasChanged();
+    }
+
     // ── Action Handlers ───────────────────────────────────────────
     private async Task HandleStageMatch(PickupMatch match)
     {
         if (_currentChapterIndex < 0 || _currentChapterIndex >= _chaptersWithCrx.Count)
+            return;
+
+        // Block staging of unconfirmed low-confidence matches
+        if (match.IsLowConfidence && !IsLowConfidenceConfirmed(match))
             return;
 
         var info = _chaptersWithCrx[_currentChapterIndex];
@@ -1092,6 +1137,7 @@
         // Clear collections to release references
         _matchesByChapter.Clear();
         _chaptersWithCrx.Clear();
+        _confirmedLowConfidence.Clear();
         _flaggedSentences = null;
         _stagedItems = null;
         _waveformPlayer = null;

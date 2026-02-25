@@ -117,11 +117,6 @@ internal static unsafe class FfDecoder
 
         FfSession.EnsureInitialized();
 
-        if (options.Start.HasValue || options.Duration.HasValue)
-        {
-            throw new NotSupportedException("Time range decoding is not implemented yet.");
-        }
-
         AVFormatContext* formatContext = null;
         try
         {
@@ -239,6 +234,28 @@ internal static unsafe class FfDecoder
                         channelSamples.Add(new List<float>(65536));
                     }
 
+                    // Time-range optimization: seek forward and limit decode window
+                    // to avoid decoding/buffering the entire file for partial loads.
+                    bool hasTimeRange = options.Start.HasValue || options.Duration.HasValue;
+                    double firstDecodedTimeSec = 0;
+                    bool firstFrameSeen = false;
+                    long maxDecodeSamples = long.MaxValue;
+
+                    if (hasTimeRange && options.Start.HasValue)
+                    {
+                        long seekTs = (long)(options.Start.Value.TotalSeconds * AV_TIME_BASE);
+                        av_seek_frame(formatContext, -1, seekTs, AVSEEK_FLAG_BACKWARD);
+                        avcodec_flush_buffers(codecContext);
+                    }
+
+                    if (hasTimeRange && options.Duration.HasValue)
+                    {
+                        // Generous margin (10s) for keyframe distance after seek
+                        maxDecodeSamples = (long)((options.Duration.Value.TotalSeconds + 10.0) * targetSampleRate);
+                    }
+
+                    bool decodeLimitReached = false;
+
                     while (true)
                     {
                         var readResult = av_read_frame(formatContext, packet.Pointer);
@@ -267,24 +284,62 @@ internal static unsafe class FfDecoder
                             }
 
                             ThrowIfError(receive, nameof(avcodec_receive_frame));
+
+                            // Track first decoded frame PTS for precise trimming after seek
+                            if (hasTimeRange && !firstFrameSeen && frame.Pointer->pts != AV_NOPTS_VALUE)
+                            {
+                                firstDecodedTimeSec = frame.Pointer->pts * av_q2d(stream->time_base);
+                                firstFrameSeen = true;
+                            }
+
+                            AppendSamples(frame.Pointer, resampler, needsResample, sourceSampleRate, targetChannels,
+                                targetSampleRate, targetFormat, channelSamples, resampleScratch);
+
+                            // Early exit once we have enough samples for the requested range
+                            if (channelSamples[0].Count >= maxDecodeSamples)
+                            {
+                                decodeLimitReached = true;
+                                break;
+                            }
+                        }
+
+                        if (decodeLimitReached) break;
+                    }
+
+                    // Flush decoder (skip if we already have enough samples)
+                    if (!decodeLimitReached)
+                    {
+                        ThrowIfError(avcodec_send_packet(codecContext, null), nameof(avcodec_send_packet));
+                        while (true)
+                        {
+                            var receive = avcodec_receive_frame(codecContext, frame.Pointer);
+                            if (receive == AVERROR(EAGAIN) || receive == AVERROR_EOF)
+                            {
+                                break;
+                            }
+
+                            ThrowIfError(receive, nameof(avcodec_receive_frame));
                             AppendSamples(frame.Pointer, resampler, needsResample, sourceSampleRate, targetChannels,
                                 targetSampleRate, targetFormat, channelSamples, resampleScratch);
                         }
                     }
 
-                    // Flush decoder
-                    ThrowIfError(avcodec_send_packet(codecContext, null), nameof(avcodec_send_packet));
-                    while (true)
+                    // Precise trim: after seeking we may have decoded a small window
+                    // before the requested start; trim to exact boundaries.
+                    if (hasTimeRange && channelSamples.Count > 0 && channelSamples[0].Count > 0)
                     {
-                        var receive = avcodec_receive_frame(codecContext, frame.Pointer);
-                        if (receive == AVERROR(EAGAIN) || receive == AVERROR_EOF)
-                        {
-                            break;
-                        }
+                        var totalDecoded = channelSamples[0].Count;
+                        var requestedStartSec = options.Start?.TotalSeconds ?? 0;
+                        var offsetFromFirst = Math.Max(0, requestedStartSec - firstDecodedTimeSec);
+                        var sliceStart = Math.Clamp((int)(offsetFromFirst * targetSampleRate), 0, totalDecoded);
+                        var sliceCount = options.Duration.HasValue
+                            ? Math.Clamp((int)(options.Duration.Value.TotalSeconds * targetSampleRate), 0, totalDecoded - sliceStart)
+                            : totalDecoded - sliceStart;
 
-                        ThrowIfError(receive, nameof(avcodec_receive_frame));
-                        AppendSamples(frame.Pointer, resampler, needsResample, sourceSampleRate, targetChannels,
-                            targetSampleRate, targetFormat, channelSamples, resampleScratch);
+                        for (int ch = 0; ch < targetChannels; ch++)
+                        {
+                            channelSamples[ch] = channelSamples[ch].GetRange(sliceStart, sliceCount);
+                        }
                     }
 
                     var length = channelSamples.Count > 0 ? channelSamples[0].Count : 0;
