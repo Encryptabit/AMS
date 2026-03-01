@@ -8,6 +8,7 @@ namespace Ams.Core.Services.Integrations.FFmpeg;
 public sealed class FfSession : IDisposable
 {
     private static readonly object InitLock = new();
+    private const int MaxAncestorProbeDepth = 8;
     private static bool _initialized;
     private static bool _filtersChecked;
     private static bool _filtersAvailable;
@@ -76,13 +77,42 @@ public sealed class FfSession : IDisposable
 
     private static void TrySetRootPath()
     {
-        var baseDir = AppContext.BaseDirectory;
-        foreach (var suffix in RootSearchSuffixes)
+        foreach (var candidate in EnumerateRootPathCandidates())
         {
-            if (TrySet(Path.Combine(baseDir, suffix)))
+            if (TrySet(candidate))
             {
                 return;
             }
+        }
+    }
+
+    private static IEnumerable<string> EnumerateRootPathCandidates()
+    {
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var current = new DirectoryInfo(AppContext.BaseDirectory);
+        for (var depth = 0; depth < MaxAncestorProbeDepth && current != null; depth++)
+        {
+            foreach (var candidate in ExpandRootCandidates(current.FullName))
+            {
+                var full = Path.GetFullPath(candidate);
+                if (seen.Add(full))
+                {
+                    yield return full;
+                }
+            }
+
+            current = current.Parent;
+        }
+    }
+
+    private static IEnumerable<string> ExpandRootCandidates(string anchor)
+    {
+        // Some distributions place FFmpeg DLLs directly next to the app binaries.
+        yield return anchor;
+
+        foreach (var suffix in RootSearchSuffixes)
+        {
+            yield return Path.Combine(anchor, suffix);
         }
     }
 
@@ -209,8 +239,8 @@ public sealed class FfSession : IDisposable
             : $"Attempted root path: '{ffmpeg.RootPath}'.";
 
         return
-            $"{rootHint} Place FFmpeg shared libraries under 'ExtTools/ffmpeg/bin' (relative to the solution root) so they ship with the project. " +
-            "(Older layouts that use 'ExtTools/ffmpeg/binaries' are also supported.) Download builds from https://ffmpeg.org or https://www.gyan.dev/ffmpeg/builds/ (Windows) and copy the DLLs into that folder.";
+            $"{rootHint} Place FFmpeg shared libraries under 'host/ExtTools/ffmpeg/bin' (preferred) or 'host/Ams.Core/ExtTools/ffmpeg/bin'. " +
+            "(Older layouts that use '.../ffmpeg/binaries' are also supported.) Download builds from https://ffmpeg.org or https://www.gyan.dev/ffmpeg/builds/ (Windows) and copy the DLLs into that folder.";
     }
 
     public void Dispose()

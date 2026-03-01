@@ -1,4 +1,5 @@
 using Ams.Core.Artifacts;
+using Ams.Core.Artifacts.Hydrate;
 using Ams.Core.Processors;
 using Ams.Core.Runtime.Chapter;
 
@@ -9,6 +10,8 @@ namespace Ams.Core.Audio;
 /// </summary>
 public sealed class AudioTreatmentService
 {
+    private const double MaxTitleBoundarySearchSeconds = 30.0;
+
     /// <summary>
     /// Result of audio treatment processing.
     /// </summary>
@@ -108,7 +111,8 @@ public sealed class AudioTreatmentService
         var (titleStart, titleEnd, contentStart, contentEnd) = FindSpeechBoundaries(
             chapterBuffer,
             silenceIntervals,
-            opts.TitleContentGapThreshold);
+            opts.TitleContentGapThreshold,
+            chapter.Documents.HydratedTranscript?.Sentences);
 
         Log.Debug(
             "Speech boundaries: title={TitleStart:F3}s-{TitleEnd:F3}s, content={ContentStart:F3}s-{ContentEnd:F3}s",
@@ -192,38 +196,50 @@ public sealed class AudioTreatmentService
     /// Title ends when there's a significant silence gap (>threshold).
     /// Content starts after that gap and ends at the final speech offset.
     /// </summary>
-    private static (double TitleStart, double TitleEnd, double ContentStart, double ContentEnd) FindSpeechBoundaries(
+    internal static (double TitleStart, double TitleEnd, double ContentStart, double ContentEnd) FindSpeechBoundaries(
         AudioBuffer buffer,
         IReadOnlyList<SilenceInterval> silenceIntervals,
-        double gapThreshold)
+        double gapThreshold,
+        IReadOnlyList<HydratedSentence>? hydratedSentences = null)
     {
         double audioDuration = buffer.Length / (double)buffer.SampleRate;
+        double contentEnd = FindContentEnd(audioDuration, silenceIntervals);
+        double speechStart = FindSpeechStart(silenceIntervals, audioDuration);
+
+        if (TryFindBoundariesFromHydrate(
+                hydratedSentences,
+                speechStart,
+                contentEnd,
+                audioDuration,
+                out var hydrateBoundaries))
+        {
+            return hydrateBoundaries;
+        }
 
         if (silenceIntervals.Count == 0)
         {
             // No silence detected - treat entire audio as content, no separate title
             // Use negative titleEnd to signal "no title segment"
-            return (-1.0, -1.0, 0.0, audioDuration);
-        }
-
-        // Find first speech onset (end of first silence if it starts at 0, else 0)
-        double titleStart = 0.0;
-        if (silenceIntervals[0].Start.TotalSeconds < 0.1)
-        {
-            titleStart = silenceIntervals[0].End.TotalSeconds;
+            return (-1.0, -1.0, speechStart, contentEnd);
         }
 
         // Find the first significant gap after title starts (>gapThreshold seconds)
-        double titleEnd = audioDuration;
-        double contentStart = audioDuration;
+        double titleEnd = -1.0;
+        double contentStart = speechStart;
         bool foundTitleContentGap = false;
+        var searchWindowEnd = Math.Min(audioDuration, speechStart + MaxTitleBoundarySearchSeconds);
 
         foreach (var interval in silenceIntervals)
         {
             // Skip silences before title starts
-            if (interval.End.TotalSeconds <= titleStart)
+            if (interval.End.TotalSeconds <= speechStart)
             {
                 continue;
+            }
+
+            if (interval.Start.TotalSeconds > searchWindowEnd)
+            {
+                break;
             }
 
             // Look for significant gap indicating title/content boundary
@@ -243,18 +259,157 @@ public sealed class AudioTreatmentService
             // Find first gap after at least some speech
             foreach (var interval in silenceIntervals)
             {
-                if (interval.Start.TotalSeconds > titleStart + 1.0 &&
+                if (interval.End.TotalSeconds <= speechStart + 1.0)
+                {
+                    continue;
+                }
+
+                if (interval.Start.TotalSeconds > searchWindowEnd)
+                {
+                    break;
+                }
+
+                if (interval.Start.TotalSeconds > speechStart + 1.0 &&
                     interval.Duration.TotalSeconds >= 0.3)
                 {
                     titleEnd = interval.Start.TotalSeconds;
                     contentStart = interval.End.TotalSeconds;
+                    foundTitleContentGap = true;
                     break;
                 }
             }
         }
 
-        // Find content end (last speech offset)
-        double contentEnd = audioDuration;
+        if (!foundTitleContentGap)
+        {
+            return (-1.0, -1.0, speechStart, contentEnd);
+        }
+
+        // Ensure valid boundaries
+        double titleStart = speechStart;
+        titleEnd = Math.Max(titleStart, titleEnd);
+        contentStart = Math.Max(titleEnd, contentStart);
+        contentEnd = Math.Max(contentStart, contentEnd);
+
+        if (titleEnd <= titleStart || contentEnd <= contentStart)
+        {
+            return (-1.0, -1.0, speechStart, contentEnd);
+        }
+
+        return (titleStart, titleEnd, contentStart, contentEnd);
+    }
+
+    private static bool TryFindBoundariesFromHydrate(
+        IReadOnlyList<HydratedSentence>? hydratedSentences,
+        double speechStart,
+        double contentEnd,
+        double audioDuration,
+        out (double TitleStart, double TitleEnd, double ContentStart, double ContentEnd) boundaries)
+    {
+        boundaries = default;
+        if (hydratedSentences is null || hydratedSentences.Count < 2)
+        {
+            return false;
+        }
+
+        var timedSentences = GetTimedSentences(hydratedSentences, audioDuration);
+        if (timedSentences.Count < 2)
+        {
+            return false;
+        }
+
+        var titleSentence = timedSentences
+            .Where(static s => s.ScriptStart is not null)
+            .OrderBy(static s => s.ScriptStart)
+            .ThenBy(static s => s.StartSec)
+            .FirstOrDefault();
+
+        if (titleSentence.Equals(default(TimedSentence)))
+        {
+            titleSentence = timedSentences[0];
+        }
+
+        TimedSentence? nextSentence = null;
+        if (titleSentence.ScriptStart is int titleScriptStart)
+        {
+            nextSentence = timedSentences
+                .Where(s => s.ScriptStart is int scriptStart &&
+                            scriptStart > titleScriptStart &&
+                            s.StartSec > titleSentence.EndSec)
+                .OrderBy(static s => s.ScriptStart)
+                .ThenBy(static s => s.StartSec)
+                .Cast<TimedSentence?>()
+                .FirstOrDefault();
+        }
+
+        nextSentence ??= timedSentences
+            .Where(s => s.StartSec > titleSentence.EndSec)
+            .OrderBy(static s => s.StartSec)
+            .Cast<TimedSentence?>()
+            .FirstOrDefault();
+
+        if (nextSentence is null)
+        {
+            return false;
+        }
+
+        var titleStart = Math.Max(speechStart, titleSentence.StartSec);
+        var titleEnd = Math.Max(titleStart, titleSentence.EndSec);
+        var contentStart = Math.Max(titleEnd, nextSentence.Value.StartSec);
+
+        if (contentEnd <= contentStart)
+        {
+            return false;
+        }
+
+        boundaries = (titleStart, titleEnd, contentStart, contentEnd);
+        return true;
+    }
+
+    private static List<TimedSentence> GetTimedSentences(
+        IReadOnlyList<HydratedSentence> hydratedSentences,
+        double audioDuration)
+    {
+        var timed = new List<TimedSentence>(hydratedSentences.Count);
+        foreach (var sentence in hydratedSentences)
+        {
+            if (sentence.Timing is not { } timing || timing.Duration <= 0)
+            {
+                continue;
+            }
+
+            var start = Math.Clamp(timing.StartSec, 0.0, audioDuration);
+            var end = Math.Clamp(timing.EndSec, 0.0, audioDuration);
+            if (end <= start)
+            {
+                continue;
+            }
+
+            timed.Add(new TimedSentence(sentence, start, end, sentence.ScriptRange?.Start));
+        }
+
+        timed.Sort(static (left, right) =>
+        {
+            var startComparison = left.StartSec.CompareTo(right.StartSec);
+            return startComparison != 0 ? startComparison : left.EndSec.CompareTo(right.EndSec);
+        });
+
+        return timed;
+    }
+
+    private static double FindSpeechStart(IReadOnlyList<SilenceInterval> silenceIntervals, double audioDuration)
+    {
+        if (silenceIntervals.Count > 0 && silenceIntervals[0].Start.TotalSeconds < 0.1)
+        {
+            return Math.Clamp(silenceIntervals[0].End.TotalSeconds, 0.0, audioDuration);
+        }
+
+        return 0.0;
+    }
+
+    private static double FindContentEnd(double audioDuration, IReadOnlyList<SilenceInterval> silenceIntervals)
+    {
+        var contentEnd = audioDuration;
         var lastSilence = silenceIntervals.LastOrDefault();
         if (lastSilence != default &&
             Math.Abs(lastSilence.End.TotalSeconds - audioDuration) < 0.1)
@@ -262,13 +417,10 @@ public sealed class AudioTreatmentService
             contentEnd = lastSilence.Start.TotalSeconds;
         }
 
-        // Ensure valid boundaries
-        titleEnd = Math.Max(titleStart, titleEnd);
-        contentStart = Math.Max(titleEnd, contentStart);
-        contentEnd = Math.Max(contentStart, contentEnd);
-
-        return (titleStart, titleEnd, contentStart, contentEnd);
+        return Math.Clamp(contentEnd, 0.0, audioDuration);
     }
+
+    private readonly record struct TimedSentence(HydratedSentence Sentence, double StartSec, double EndSec, int? ScriptStart);
 
     /// <summary>
     /// Prepares a roomtone segment of the specified duration.
