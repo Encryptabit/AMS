@@ -21,6 +21,7 @@ public class CrxService
 {
     private const string CrxTemplatePath = @"C:\Aethon\BASE_CRX.xlsx";
     private const int CrxDataRowStart = 11;
+    private static readonly JsonSerializerOptions JsonOptions = new() { WriteIndented = true };
 
     private readonly BlazorWorkspace _workspace;
     private readonly AudioExportService _audioExportService;
@@ -32,7 +33,7 @@ public class CrxService
     }
 
     /// <summary>
-    /// Submit a CRX entry: export audio and record metadata to Excel.
+    /// Submit a CRX entry: export audio and record metadata to JSON and Excel.
     /// </summary>
     public CrxSubmitResult Submit(string chapterName, CrxSubmitRequest request)
     {
@@ -60,13 +61,20 @@ public class CrxService
                 CreatedAt: DateTime.UtcNow
             );
 
+            var jsonWritten = false;
             try
             {
+                // JSON is the runtime source of truth for CRX pickup resolution.
+                AppendOrUpdateJsonEntry(entry);
+                jsonWritten = true;
                 AppendCrxEntry(entry);
             }
             catch
             {
-                // Clean up orphan WAV file if Excel write fails
+                if (jsonWritten)
+                    TryRemoveJsonEntry(entry.ErrorNumber);
+
+                // Keep artifacts in sync on submit failure.
                 TryDeleteExportedFile(exportResult.Path);
                 throw;
             }
@@ -85,19 +93,13 @@ public class CrxService
     }
 
     /// <summary>
-    /// Read all CRX entries from the Excel file.
+    /// Read all CRX entries from the CRX JSON artifact.
+    /// If JSON is missing but legacy Excel entries exist, seed JSON once from Excel.
     /// </summary>
     public IReadOnlyList<CrxEntry> GetEntries()
     {
-        var excelEntries = TryReadExcelEntries();
-        if (excelEntries.Count > 0)
-            return excelEntries;
-
-        var jsonEntries = TryReadJsonEntries();
-        if (jsonEntries.Count > 0)
-            return jsonEntries;
-
-        return Array.Empty<CrxEntry>();
+        EnsureJsonSeededFromExcel();
+        return TryReadJsonEntries();
     }
 
     private IReadOnlyList<CrxEntry> TryReadExcelEntries()
@@ -280,7 +282,7 @@ public class CrxService
             var json = File.ReadAllText(path);
             var entries = JsonSerializer.Deserialize<List<CrxEntry>>(json);
             if (entries is { Count: > 0 })
-                return entries;
+                return entries.OrderBy(e => e.ErrorNumber).ToList();
 
             return Array.Empty<CrxEntry>();
         }
@@ -288,6 +290,206 @@ public class CrxService
         {
             return Array.Empty<CrxEntry>();
         }
+    }
+
+    private void EnsureJsonSeededFromExcel()
+    {
+        var jsonEntries = TryReadJsonEntries();
+        if (jsonEntries.Count > 0)
+            return;
+
+        var excelEntries = TryReadExcelEntries();
+        if (excelEntries.Count == 0)
+            return;
+
+        var seededAt = DateTime.UtcNow;
+        var seeded = excelEntries
+            .OrderBy(e => e.ErrorNumber)
+            .Select(e => BuildSeededLegacyEntry(e, seededAt))
+            .ToList();
+
+        WriteJsonEntries(seeded);
+    }
+
+    private CrxEntry BuildSeededLegacyEntry(CrxEntry excelEntry, DateTime seededAt)
+    {
+        var seeded = excelEntry with
+        {
+            AudioFile = ResolveAudioFileForError(excelEntry.ErrorNumber),
+            CreatedAt = seededAt
+        };
+
+        if (!_workspace.IsInitialized || !_workspace.HasBookIndex)
+            return seeded;
+
+        var chapterName = ResolveWorkspaceChapterName(seeded.Chapter);
+        if (string.IsNullOrWhiteSpace(chapterName))
+            return seeded;
+
+        if (!_workspace.TryGetHydratedTranscript(chapterName, out var hydrated) || hydrated == null)
+            return seeded with { Chapter = chapterName };
+
+        var sentences = hydrated.Sentences;
+        if (sentences.Count == 0)
+            return seeded with { Chapter = chapterName };
+
+        if (seeded.SentenceId > 0)
+        {
+            var direct = sentences.FirstOrDefault(s => s.Id == seeded.SentenceId);
+            if (direct?.Timing != null && direct.Timing.EndSec > direct.Timing.StartSec)
+            {
+                return seeded with
+                {
+                    Chapter = chapterName,
+                    StartTime = direct.Timing.StartSec,
+                    EndTime = direct.Timing.EndSec
+                };
+            }
+        }
+
+        var timeSec = TryParseTimecode(seeded.Timecode);
+        if (!timeSec.HasValue)
+            return seeded with { Chapter = chapterName };
+
+        var nearest = sentences
+            .Where(s => s.Timing != null)
+            .OrderBy(s => DistanceToSentenceCenter(s, timeSec.Value))
+            .FirstOrDefault();
+
+        if (nearest?.Timing == null || nearest.Timing.EndSec <= nearest.Timing.StartSec)
+            return seeded with { Chapter = chapterName };
+
+        return seeded with
+        {
+            Chapter = chapterName,
+            SentenceId = nearest.Id,
+            StartTime = nearest.Timing.StartSec,
+            EndTime = nearest.Timing.EndSec
+        };
+    }
+
+    private string ResolveAudioFileForError(int errorNumber)
+    {
+        var fileName = $"{errorNumber:D3}.wav";
+        var crxFolder = Path.Combine(_workspace.RootPath, "CRX");
+        return File.Exists(Path.Combine(crxFolder, fileName)) ? fileName : string.Empty;
+    }
+
+    private string? ResolveWorkspaceChapterName(string? chapterLabel)
+    {
+        if (string.IsNullOrWhiteSpace(chapterLabel))
+            return null;
+
+        foreach (var chapterName in _workspace.AvailableChapters)
+        {
+            if (ChapterMatches(chapterLabel, chapterName))
+                return chapterName;
+        }
+
+        return null;
+    }
+
+    private static bool ChapterMatches(string? left, string? right)
+    {
+        if (string.IsNullOrWhiteSpace(left) || string.IsNullOrWhiteSpace(right))
+            return false;
+
+        var leftNumber = TryExtractChapterNumber(left);
+        var rightNumber = TryExtractChapterNumber(right);
+        if (leftNumber.HasValue && rightNumber.HasValue)
+            return leftNumber.Value == rightNumber.Value;
+
+        return string.Equals(NormalizeForCompare(left), NormalizeForCompare(right), StringComparison.Ordinal);
+    }
+
+    private static int? TryExtractChapterNumber(string chapterLabel)
+    {
+        var match = Regex.Match(chapterLabel, @"\d+");
+        if (!match.Success)
+            return null;
+
+        return int.TryParse(match.Value, out var value) ? value : null;
+    }
+
+    private static string NormalizeForCompare(string? text)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+            return string.Empty;
+
+        return Regex.Replace(
+            Regex.Replace(text.ToLowerInvariant().Trim(), @"[^\w\s]", " "),
+            @"\s+", " ").Trim();
+    }
+
+    private static double? TryParseTimecode(string? timecode)
+    {
+        if (string.IsNullOrWhiteSpace(timecode))
+            return null;
+
+        if (TimeSpan.TryParse(timecode, out var ts))
+            return ts.TotalSeconds;
+
+        return null;
+    }
+
+    private static double DistanceToSentenceCenter(dynamic sentence, double timeSec)
+    {
+        if (sentence.Timing == null)
+            return double.MaxValue;
+
+        var center = (sentence.Timing.StartSec + sentence.Timing.EndSec) / 2.0;
+        return Math.Abs(center - timeSec);
+    }
+
+    private void AppendOrUpdateJsonEntry(CrxEntry entry)
+    {
+        var entries = TryReadJsonEntries().ToList();
+        var existingIndex = entries.FindIndex(e => e.ErrorNumber == entry.ErrorNumber);
+        if (existingIndex >= 0)
+            entries[existingIndex] = entry;
+        else
+            entries.Add(entry);
+
+        entries = entries
+            .OrderBy(e => e.ErrorNumber)
+            .ToList();
+
+        WriteJsonEntries(entries);
+    }
+
+    private void TryRemoveJsonEntry(int errorNumber)
+    {
+        try
+        {
+            var path = GetCrxJsonPath(createDir: false);
+            if (!File.Exists(path))
+                return;
+
+            var entries = TryReadJsonEntries()
+                .Where(e => e.ErrorNumber != errorNumber)
+                .OrderBy(e => e.ErrorNumber)
+                .ToList();
+
+            WriteJsonEntries(entries);
+        }
+        catch
+        {
+            // best effort rollback
+        }
+    }
+
+    private void WriteJsonEntries(IReadOnlyList<CrxEntry> entries)
+    {
+        var path = GetCrxJsonPath();
+        var tempPath = $"{path}.{Guid.NewGuid():N}.tmp";
+        var payload = JsonSerializer.Serialize(entries, JsonOptions);
+
+        File.WriteAllText(tempPath, payload);
+
+        if (File.Exists(path))
+            File.Replace(tempPath, path, destinationBackupFileName: null);
+        else
+            File.Move(tempPath, path);
     }
 
     /// <summary>

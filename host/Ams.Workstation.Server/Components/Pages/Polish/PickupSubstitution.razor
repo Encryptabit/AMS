@@ -93,7 +93,7 @@
                   Style="min-width: 0; overflow: hidden;">
             <BitButton Variant="BitVariant.Outline"
                        IconName="@BitIconName.ChevronLeft"
-                       IsEnabled="@CanGoPrev"
+                       IsEnabled="@(!_isProcessing && CanGoPrev)"
                        OnClick="HandlePrev"
                        Title="Previous chapter" />
             <div style="flex: 1; min-width: 0; overflow: hidden;">
@@ -106,7 +106,7 @@
             </div>
             <BitButton Variant="BitVariant.Outline"
                        IconName="@BitIconName.ChevronRight"
-                       IsEnabled="@CanGoNext"
+                       IsEnabled="@(!_isProcessing && CanGoNext)"
                        OnClick="HandleNext"
                        Title="Next chapter" />
         </BitStack>
@@ -165,7 +165,6 @@
                             {
                                 <PickupBox Match="@item.Match"
                                            State="PickupBoxState.Matched"
-                                           PickupFilePath="@_pickupSessionPath"
                                            Sentence="@FindSentence(item.Match.SentenceId)"
                                            OnStage="HandleStageMatch"
                                            OnAudition="HandleAudition" />
@@ -203,7 +202,6 @@
                     {
                         <PickupBox Replacement="@item"
                                    State="PickupBoxState.Staged"
-                                   PickupFilePath="@item.PickupSourcePath"
                                    Sentence="@FindSentence(item.SentenceId)"
                                    OnUnstage="HandleUnstage"
                                    OnCommit="HandleCommit"
@@ -227,9 +225,9 @@
                     {
                         <PickupBox Replacement="@item"
                                    State="PickupBoxState.Committed"
-                                   PickupFilePath="@item.PickupSourcePath"
                                    Sentence="@FindSentence(item.SentenceId)"
-                                   OnRevert="HandleRevert" />
+                                   OnRevert="HandleRevert"
+                                   OnAudition="HandleAudition" />
                     }
                 </BitStack>
             </BitGridItem>
@@ -441,9 +439,7 @@
             }
             else
             {
-                _flaggedSentences = hydrated.Sentences
-                    .Where(IsPickupCandidate)
-                    .ToList();
+                _flaggedSentences = Array.Empty<HydratedSentence>();
             }
         }
         else
@@ -554,10 +550,17 @@
                 if (!Workspace.TryGetHydratedTranscript(ch.ChapterName, out var hydrated) || hydrated == null)
                     continue;
 
+                var sentenceById = hydrated.Sentences.ToDictionary(s => s.Id);
                 foreach (var entry in chapterEntries)
                 {
-                    var sentence = ResolveSentenceFromCrxEntry(entry, hydrated.Sentences);
-                    if (sentence == null) continue;
+                    if (entry.SentenceId <= 0)
+                        continue;
+
+                    if (!sentenceById.TryGetValue(entry.SentenceId, out var sentence))
+                        continue;
+
+                    if (entry.StartTime < 0 || entry.EndTime <= entry.StartTime)
+                        continue;
 
                     var shouldBeText = CrxCommentParser.TryParseShouldBe(entry.Comments);
                     var bookText = sentence.BookText ?? string.Empty;
@@ -566,11 +569,11 @@
                         ErrorNumber: entry.ErrorNumber,
                         ChapterStem: ch.Stem,
                         ChapterName: ch.ChapterName,
-                        SentenceId: sentence.Id,
+                        SentenceId: entry.SentenceId,
                         ShouldBeText: shouldBeText ?? bookText,
                         BookText: bookText,
-                        OriginalStartSec: sentence.Timing?.StartSec ?? 0,
-                        OriginalEndSec: sentence.Timing?.EndSec ?? 0));
+                        OriginalStartSec: entry.StartTime,
+                        OriginalEndSec: entry.EndTime));
                 }
             }
 
@@ -710,9 +713,6 @@
             _correctedVersion++; // Force waveform URL cache-bust
             RefreshCurrentChapterState();
             await SyncWaveformRegions();
-
-            // Check for chapter completion
-            await CheckCompletionAndAdvance();
         }
         catch (Exception ex)
         {
@@ -747,7 +747,6 @@
         await SyncWaveformRegions();
         _isProcessing = false;
         _processingStatus = $"Committed {committed}/{staged.Count} replacements.";
-        await CheckCompletionAndAdvance();
         StateHasChanged();
     }
 
@@ -778,18 +777,24 @@
     {
         if (_waveformPlayer == null || !_isWaveformReady) return;
 
-        // Try to find a staged item to audition its pickup segment via preview
-        var stagedItem = (_stagedItems ?? Array.Empty<StagedReplacement>())
+        // Try to find a replacement to audition in the active chapter
+        var replacementItem = (_stagedItems ?? Array.Empty<StagedReplacement>())
             .FirstOrDefault(s => s.Id == id);
-        if (stagedItem != null)
+        if (replacementItem != null)
         {
             try
             {
-                PolishService.GeneratePreview(stagedItem.Id);
+                // For staged (not yet applied), generate preview splice first.
+                // For committed/applied, play directly from corrected chapter audio.
+                if (replacementItem.Status == ReplacementStatus.Staged)
+                {
+                    PolishService.GeneratePreview(replacementItem.Id);
+                }
+
                 // Play the replacement region on the chapter waveform
                 await _waveformPlayer.PlaySegment(
-                    stagedItem.OriginalStartSec,
-                    stagedItem.OriginalStartSec + stagedItem.PickupDuration());
+                    replacementItem.OriginalStartSec,
+                    replacementItem.OriginalStartSec + replacementItem.PickupDuration());
             }
             catch { /* Non-critical audition failure */ }
             return;
@@ -1009,13 +1014,19 @@
         IReadOnlyList<CrxEntry> chapterEntries,
         IReadOnlyList<HydratedSentence> sentences)
     {
+        if (chapterEntries.Count == 0 || sentences.Count == 0)
+            return new List<HydratedSentence>();
+
+        var sentenceById = sentences.ToDictionary(s => s.Id);
         var resolved = new List<HydratedSentence>();
         var seenIds = new HashSet<int>();
 
         foreach (var entry in chapterEntries)
         {
-            var sentence = ResolveSentenceFromCrxEntry(entry, sentences);
-            if (sentence == null)
+            if (entry.SentenceId <= 0)
+                continue;
+
+            if (!sentenceById.TryGetValue(entry.SentenceId, out var sentence))
                 continue;
 
             if (seenIds.Add(sentence.Id))
@@ -1023,108 +1034,6 @@
         }
 
         return resolved;
-    }
-
-    private static HydratedSentence? ResolveSentenceFromCrxEntry(
-        CrxEntry entry,
-        IReadOnlyList<HydratedSentence> sentences)
-    {
-        if (sentences.Count == 0)
-            return null;
-
-        if (entry.SentenceId > 0)
-        {
-            var direct = sentences.FirstOrDefault(s => s.Id == entry.SentenceId);
-            if (direct != null)
-                return direct;
-        }
-
-        double? timeSec = entry.StartTime > 0 ? entry.StartTime : TryParseTimecode(entry.Timecode);
-
-        if (timeSec.HasValue)
-        {
-            var nearest = sentences
-                .Where(s => s.Timing is not null)
-                .OrderBy(s => DistanceToSentenceCenter(s, timeSec.Value))
-                .FirstOrDefault();
-
-            if (nearest != null)
-                return nearest;
-        }
-
-        return sentences.FirstOrDefault();
-    }
-
-    private static double? TryParseTimecode(string? timecode)
-    {
-        if (string.IsNullOrWhiteSpace(timecode))
-            return null;
-
-        if (TimeSpan.TryParse(timecode, out var ts))
-            return ts.TotalSeconds;
-
-        return null;
-    }
-
-    private static double DistanceToSentenceCenter(HydratedSentence sentence, double timeSec)
-    {
-        if (sentence.Timing is null)
-            return double.MaxValue;
-
-        var center = (sentence.Timing.StartSec + sentence.Timing.EndSec) / 2.0;
-        return Math.Abs(center - timeSec);
-    }
-
-    private static bool IsPickupCandidate(HydratedSentence sentence)
-    {
-        if (!string.Equals(sentence.Status, "ok", StringComparison.OrdinalIgnoreCase))
-            return true;
-
-        var stats = sentence.Diff?.Stats;
-        return stats is not null && (stats.Insertions > 0 || stats.Deletions > 0);
-    }
-
-    // ── Completion Tracking & Auto-Advance ────────────────────────
-    private async Task CheckCompletionAndAdvance()
-    {
-        if (_currentChapterIndex < 0 || _currentChapterIndex >= _chaptersWithCrx.Count)
-            return;
-
-        var info = _chaptersWithCrx[_currentChapterIndex];
-        var committedCount = GetCommittedCount(info.Stem);
-
-        if (info.CrxCount > 0 && committedCount >= info.CrxCount)
-        {
-            // Mark current chapter as complete
-            _chaptersWithCrx[_currentChapterIndex] = info with { AllCommitted = true };
-
-            // Auto-advance to next incomplete chapter
-            var nextIncomplete = FindNextIncompleteChapter();
-            if (nextIncomplete >= 0)
-            {
-                await Task.Delay(500); // Brief pause for visual feedback
-                await NavigateToChapter(nextIncomplete);
-            }
-        }
-    }
-
-    private int FindNextIncompleteChapter()
-    {
-        // Search forward from current position
-        for (int i = _currentChapterIndex + 1; i < _chaptersWithCrx.Count; i++)
-        {
-            if (!_chaptersWithCrx[i].AllCommitted &&
-                GetCommittedCount(_chaptersWithCrx[i].Stem) < _chaptersWithCrx[i].CrxCount)
-                return i;
-        }
-        // Wrap around
-        for (int i = 0; i < _currentChapterIndex; i++)
-        {
-            if (!_chaptersWithCrx[i].AllCommitted &&
-                GetCommittedCount(_chaptersWithCrx[i].Stem) < _chaptersWithCrx[i].CrxCount)
-                return i;
-        }
-        return -1; // All complete
     }
 
     // ── Disposal ──────────────────────────────────────────────────

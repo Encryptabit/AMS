@@ -12,6 +12,7 @@ using Ams.Core.Artifacts.Hydrate;
 using Ams.Core.Audio;
 using Ams.Core.Common;
 using Ams.Core.Processors;
+using Ams.Core.Runtime.Chapter;
 using Ams.Workstation.Server.Models;
 
 namespace Ams.Workstation.Server.Services;
@@ -153,7 +154,15 @@ public class PolishService
         var refinedEnd = originalEndSec;
         try
         {
-            var chapterBuffer = GetCurrentChapterBuffer();
+            var operationHandle = GetActiveChapterHandleOrThrow();
+            var operationStem = operationHandle.Chapter.Descriptor.ChapterId;
+            if (!string.Equals(operationStem, chapterStem, StringComparison.OrdinalIgnoreCase))
+            {
+                throw new InvalidOperationException(
+                    $"Cannot stage replacement for chapter '{chapterStem}' while active chapter is '{operationStem}'.");
+            }
+
+            var chapterBuffer = GetChapterBuffer(operationHandle);
             var hydrate = GetCurrentHydratedTranscript();
             double? prevEnd = null;
             double? nextStart = null;
@@ -219,8 +228,10 @@ public class PolishService
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(replacementId);
 
-        var item = FindStagedItem(replacementId);
-        var chapterBuffer = GetCurrentChapterBuffer();
+        var operationHandle = GetActiveChapterHandleOrThrow();
+        var operationStem = operationHandle.Chapter.Descriptor.ChapterId;
+        var item = FindStagedItem(replacementId, operationStem);
+        var chapterBuffer = GetChapterBuffer(operationHandle);
 
         var pickupBuffer = AudioProcessor.Decode(item.PickupSourcePath);
         var pickupTrimmed = TrimPickupForReplacement(item, pickupBuffer);
@@ -251,11 +262,14 @@ public class PolishService
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(replacementId);
 
+        var operationHandle = GetActiveChapterHandleOrThrow();
+        var operationStem = operationHandle.Chapter.Descriptor.ChapterId;
+
         // 1. Get staged item
-        var item = FindStagedItem(replacementId);
+        var item = FindStagedItem(replacementId, operationStem);
 
         // 2. Load chapter audio from workspace (corrected > treated > raw)
-        var chapterBuffer = GetCurrentChapterBuffer();
+        var chapterBuffer = GetChapterBuffer(operationHandle);
 
         // 3. Decode and trim pickup audio
         var pickupBuffer = AudioProcessor.Decode(item.PickupSourcePath);
@@ -287,7 +301,7 @@ public class PolishService
         var timingDelta = pickupDuration - originalDuration;
 
         // 7. Persist corrected.wav to disk
-        PersistCorrectedBuffer(resultBuffer);
+        PersistCorrectedBuffer(operationHandle, resultBuffer);
 
         // 8. Update status to Applied
         _stagingQueue.UpdateStatus(replacementId, ReplacementStatus.Applied);
@@ -311,21 +325,30 @@ public class PolishService
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(replacementId);
 
+        var operationHandle = GetActiveChapterHandleOrThrow();
+        var operationStem = operationHandle.Chapter.Descriptor.ChapterId;
+
         // 1. Get undo record
         var undoRecord = _undoService.GetUndoRecord(replacementId)
             ?? throw new InvalidOperationException($"No undo record found for replacement '{replacementId}'.");
+        if (!string.Equals(undoRecord.ChapterStem, operationStem, StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException(
+                $"Replacement '{replacementId}' belongs to chapter '{undoRecord.ChapterStem}', " +
+                $"but active chapter is '{operationStem}'.");
+        }
 
         // 2. Load original segment from backup
         var originalSegment = _undoService.LoadOriginalSegment(replacementId)
             ?? throw new InvalidOperationException($"Undo backup file missing for replacement '{replacementId}'.");
 
         // 3. Get current chapter audio (which has the replacement applied)
-        var currentBuffer = GetCurrentChapterBuffer();
+        var currentBuffer = GetChapterBuffer(operationHandle);
 
         // 4. Calculate where the replacement currently sits.
         // Use the queue item's current (shifted) coordinates rather than the stale undo record,
         // because upstream apply/revert may have cascaded timing deltas since this item was applied.
-        var queueItem = FindStagedItem(replacementId);
+        var queueItem = FindStagedItem(replacementId, operationStem);
         var currentStartSec = queueItem.OriginalStartSec;
         var replacementDuration = undoRecord.ReplacementDurationSec;
         var replacementEndSec = currentStartSec + replacementDuration;
@@ -343,7 +366,7 @@ public class PolishService
         var timingDelta = undoRecord.OriginalDurationSec - replacementDuration;
 
         // 7. Persist corrected.wav to disk
-        PersistCorrectedBuffer(resultBuffer);
+        PersistCorrectedBuffer(operationHandle, resultBuffer);
 
         // 8. Update status to Reverted
         _stagingQueue.UpdateStatus(replacementId, ReplacementStatus.Reverted);
@@ -381,8 +404,10 @@ public class PolishService
         ArgumentNullException.ThrowIfNull(request);
         ArgumentException.ThrowIfNullOrWhiteSpace(roomtoneFilePath);
 
+        var operationHandle = GetActiveChapterHandleOrThrow();
+
         // 1. Load current chapter audio
-        var chapterBuffer = GetCurrentChapterBuffer();
+        var chapterBuffer = GetChapterBuffer(operationHandle);
 
         // 2. Load and decode roomtone file
         var roomtoneBuffer = AudioProcessor.Decode(roomtoneFilePath);
@@ -431,9 +456,7 @@ public class PolishService
         // 4. Back up original segment via UndoService before persisting
         // Use a synthetic replacement ID for undo tracking (sentenceId = -1 for non-sentence ops)
         var undoId = $"roomtone-{Guid.NewGuid():N}";
-        var handle = _workspace.CurrentChapterHandle
-            ?? throw new InvalidOperationException("No chapter selected.");
-        var stem = handle.Chapter.Descriptor.ChapterId;
+        var stem = operationHandle.Chapter.Descriptor.ChapterId;
 
         _undoService.SaveOriginalSegment(
             stem, sentenceId: -1, undoId, chapterBuffer,
@@ -441,7 +464,7 @@ public class PolishService
             replacementDurationSec);
 
         // 5. Persist corrected.wav
-        PersistCorrectedBuffer(resultBuffer);
+        PersistCorrectedBuffer(operationHandle, resultBuffer);
 
         return resultBuffer;
     }
@@ -505,31 +528,26 @@ public class PolishService
 
     #region Private Helpers
 
-    private StagedReplacement FindStagedItem(string replacementId)
+    private ChapterContextHandle GetActiveChapterHandleOrThrow()
     {
-        // Resolve the current chapter stem so we can search its full queue
-        // (GetAllQueued only returns Staged items; we need Applied items too for preview/revert)
-        var handle = _workspace.CurrentChapterHandle;
-        if (handle is not null)
-        {
-            var stem = handle.Chapter.Descriptor.ChapterId;
-            var chapterQueue = _stagingQueue.GetQueue(stem);
-            foreach (var item in chapterQueue)
-            {
-                if (item.Id == replacementId)
-                    return item;
-            }
-        }
+        return _workspace.CurrentChapterHandle
+            ?? throw new InvalidOperationException("No chapter is currently selected.");
+    }
 
-        // Fall back to Staged-only cross-chapter search
-        var allQueued = _stagingQueue.GetAllQueued();
-        foreach (var item in allQueued)
+    private StagedReplacement FindStagedItem(string replacementId, string chapterStem)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(replacementId);
+        ArgumentException.ThrowIfNullOrWhiteSpace(chapterStem);
+
+        var chapterQueue = _stagingQueue.GetQueue(chapterStem);
+        foreach (var item in chapterQueue)
         {
             if (item.Id == replacementId)
                 return item;
         }
 
-        throw new InvalidOperationException($"Replacement '{replacementId}' not found.");
+        throw new InvalidOperationException(
+            $"Replacement '{replacementId}' was not found in active chapter '{chapterStem}'.");
     }
 
     /// <summary>
@@ -550,11 +568,8 @@ public class PolishService
     /// Resolves the best available chapter audio buffer: corrected.wav > treated.wav > raw.
     /// Uses direct AudioProcessor.Decode to avoid moving AudioBufferManager cursor.
     /// </summary>
-    private AudioBuffer GetCurrentChapterBuffer()
+    private static AudioBuffer GetChapterBuffer(ChapterContextHandle handle)
     {
-        var handle = _workspace.CurrentChapterHandle
-            ?? throw new InvalidOperationException("No chapter is currently selected.");
-
         var chapter = handle.Chapter;
         var descriptor = chapter.Descriptor;
         var correctedPath = Path.Combine(descriptor.RootPath, $"{descriptor.ChapterId}.corrected.wav");
@@ -597,23 +612,17 @@ public class PolishService
     /// Also clears any preview buffer.
     /// Probes the source chapter WAV to preserve its bit depth (e.g. 24-bit audiobook masters).
     /// </summary>
-    private void PersistCorrectedBuffer(AudioBuffer buffer)
+    private void PersistCorrectedBuffer(ChapterContextHandle handle, AudioBuffer buffer)
     {
-        var handle = _workspace.CurrentChapterHandle
-            ?? throw new InvalidOperationException("No chapter is currently selected.");
-
         var descriptor = handle.Chapter.Descriptor;
         var correctedPath = Path.Combine(descriptor.RootPath, $"{descriptor.ChapterId}.corrected.wav");
 
-        // Determine source bit depth for format-preserving encode
-        var treatedPath = Path.Combine(descriptor.RootPath, $"{descriptor.ChapterId}.treated.wav");
-        var sourcePath = File.Exists(correctedPath) ? correctedPath : treatedPath;
-        int? sourceBitDepth = null;
-        if (File.Exists(sourcePath))
-        {
-            var info = AudioProcessor.Probe(sourcePath);
-            sourceBitDepth = info.BitsPerSample > 0 ? info.BitsPerSample : null;
-        }
+        // Resolve bit depth directly from treated-buffer metadata.
+        // If treated metadata is unavailable/ambiguous, fail hard.
+        var treatedBuffer = handle.Chapter.Audio.Load("treated").Buffer
+            ?? throw new InvalidOperationException(
+                $"Treated audio buffer is unavailable for chapter '{descriptor.ChapterId}'.");
+        var sourceBitDepth = ResolveSourceBitDepthOrThrow(treatedBuffer);
 
         var options = new AudioEncodeOptions(
             TargetSampleRate: buffer.SampleRate,
@@ -625,6 +634,49 @@ public class PolishService
 
         // Clear any in-memory preview
         _previewBuffer.Clear();
+    }
+
+    private static int ResolveSourceBitDepthOrThrow(AudioBuffer buffer)
+    {
+        var metadata = buffer.Metadata
+            ?? throw new InvalidOperationException("Audio buffer metadata is missing.");
+        var codec = metadata.CodecName?.Trim().ToLowerInvariant();
+        if (!string.IsNullOrWhiteSpace(codec))
+        {
+            if (codec.Contains("pcm_s24", StringComparison.Ordinal))
+                return 24;
+            if (codec.Contains("pcm_s16", StringComparison.Ordinal))
+                return 16;
+            if (codec.Contains("pcm_s32", StringComparison.Ordinal))
+                return 32;
+            if (codec.Contains("pcm_f32", StringComparison.Ordinal))
+                return 32;
+            if (codec.Contains("pcm_f64", StringComparison.Ordinal))
+                return 64;
+            if (codec.Contains("pcm_s8", StringComparison.Ordinal) ||
+                codec.Contains("pcm_u8", StringComparison.Ordinal))
+                return 8;
+        }
+
+        var sampleFormat = metadata.SourceSampleFormat?.Trim().ToLowerInvariant();
+        if (!string.IsNullOrWhiteSpace(sampleFormat))
+        {
+            return sampleFormat switch
+            {
+                "u8" or "u8p" or "s8" => 8,
+                "s16" or "s16p" => 16,
+                "s32" or "s32p" => 32,
+                "flt" or "fltp" => 32,
+                "dbl" or "dblp" => 64,
+                "s64" or "s64p" => 64,
+                _ => throw new InvalidOperationException(
+                    $"Unsupported source sample format '{metadata.SourceSampleFormat}'.")
+            };
+        }
+
+        throw new InvalidOperationException(
+            "Unable to resolve source bit depth from audio metadata. " +
+            $"Codec='{metadata.CodecName ?? "<null>"}', SampleFormat='{metadata.SourceSampleFormat ?? "<null>"}'.");
     }
 
     #endregion

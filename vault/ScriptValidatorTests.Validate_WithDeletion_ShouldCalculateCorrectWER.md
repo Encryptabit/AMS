@@ -1,0 +1,29 @@
+---
+namespace: "Ams.Tests"
+project: "Ams.Tests"
+source_file: "home/cari/repos/AMS/host/Ams.Tests/TokenizerTests.cs"
+access_modifier: "public"
+complexity: 1
+fan_in: 0
+fan_out: 1
+tags:
+  - method
+---
+# ScriptValidatorTests::Validate_WithDeletion_ShouldCalculateCorrectWER
+**Path**: `home/cari/repos/AMS/host/Ams.Tests/TokenizerTests.cs`
+
+
+#### [[ScriptValidatorTests.Validate_WithDeletion_ShouldCalculateCorrectWER]]
+##### What it does:
+- _TODO: Plain-English walkthrough._
+
+##### Improvements:
+- _TODO: Suggested optimizations._
+
+```csharp
+public void Validate_WithDeletion_ShouldCalculateCorrectWER()
+```
+
+**Calls ->**
+- [[ScriptValidator.Validate]]
+
