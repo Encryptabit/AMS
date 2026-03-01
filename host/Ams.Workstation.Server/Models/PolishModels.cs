@@ -176,7 +176,8 @@ public sealed record PickupArtifacts(
     long PickupFileSizeBytes,
     DateTime PickupFileModifiedUtc,
     string CrxTargetsFingerprint,
-    Dictionary<string, List<CrossChapterPickupMatch>> MatchesByChapter);
+    Dictionary<string, List<CrossChapterPickupMatch>> MatchesByChapter,
+    int MatchingVersion = 1);
 
 public static class StagedReplacementExtensions
 {

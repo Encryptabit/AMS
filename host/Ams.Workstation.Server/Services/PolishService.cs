@@ -26,6 +26,7 @@ namespace Ams.Workstation.Server.Services;
 public class PolishService
 {
     private const double PickupSlicePaddingSec = 0.080;
+    private const int PickupMatchingVersion = 2;
 
     private static readonly JsonSerializerOptions ArtifactJsonOptions = new()
     {
@@ -77,7 +78,8 @@ public class PolishService
             cached.PickupFilePath == fi.FullName &&
             cached.PickupFileSizeBytes == fi.Length &&
             cached.PickupFileModifiedUtc == fi.LastWriteTimeUtc &&
-            cached.CrxTargetsFingerprint == crxFingerprint)
+            cached.CrxTargetsFingerprint == crxFingerprint &&
+            cached.MatchingVersion == PickupMatchingVersion)
         {
             progress?.Report(("Loaded from cache", 1.0));
             return cached.MatchesByChapter;
@@ -118,7 +120,8 @@ public class PolishService
             fi.Length,
             fi.LastWriteTimeUtc,
             crxFingerprint,
-            new Dictionary<string, List<CrossChapterPickupMatch>>(result));
+            new Dictionary<string, List<CrossChapterPickupMatch>>(result),
+            PickupMatchingVersion);
         WriteMatchedArtifacts(artifacts);
 
         progress?.Report(("Complete", 1.0));

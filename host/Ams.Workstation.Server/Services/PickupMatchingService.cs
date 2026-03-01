@@ -95,62 +95,145 @@ public class PickupMatchingService
 
     /// <summary>
     /// Segments ASR tokens into utterances based on silence gaps.
+    /// Short fragments are merged into neighboring segments rather than dropped.
     /// </summary>
     private static List<PickupSegment> SegmentUtterances(AsrToken[] tokens)
     {
         var segments = new List<PickupSegment>();
-        if (tokens.Length == 0) return segments;
+        if (tokens.Length == 0)
+            return segments;
 
-        var segmentStart = tokens[0].StartTime;
-        var segmentTokens = new List<AsrToken> { tokens[0] };
+        // MFA-refined tokens can occasionally be non-monotonic; normalize order first.
+        var orderedTokens = tokens
+            .Select((token, index) => (Token: token, Index: index))
+            .OrderBy(x => x.Token.StartTime)
+            .ThenBy(x => x.Index)
+            .Select(x => x.Token)
+            .ToArray();
 
-        for (int i = 1; i < tokens.Length; i++)
+        var tokenGroups = new List<List<AsrToken>>();
+        var currentGroup = new List<AsrToken> { orderedTokens[0] };
+
+        for (int i = 1; i < orderedTokens.Length; i++)
         {
-            var prevEnd = tokens[i - 1].StartTime + tokens[i - 1].Duration;
-            var gap = tokens[i].StartTime - prevEnd;
+            var previous = currentGroup[^1];
+            var prevEnd = previous.StartTime + Math.Max(0.01, previous.Duration);
+            var gap = orderedTokens[i].StartTime - prevEnd;
 
             if (gap >= UtteranceGapSec)
             {
-                // End current segment
-                var lastToken = segmentTokens[^1];
-                var segmentEnd = lastToken.StartTime + lastToken.Duration;
-                var text = string.Join(" ", segmentTokens.Select(t => t.Word)).Trim();
-                var duration = segmentEnd - segmentStart;
-
-                if (duration >= MinSegmentDurationSec && !string.IsNullOrWhiteSpace(text))
-                {
-                    segments.Add(new PickupSegment(segmentStart, segmentEnd, text));
-                }
-                else if (duration < MinSegmentDurationSec)
-                {
-                    Log.Debug(
-                        "Skipping short segment ({Duration:F2}s < {Min:F1}s): \"{Text}\"",
-                        duration, MinSegmentDurationSec, text);
-                }
-
-                // Start new segment
-                segmentStart = tokens[i].StartTime;
-                segmentTokens.Clear();
+                tokenGroups.Add(currentGroup);
+                currentGroup = new List<AsrToken>();
             }
 
-            segmentTokens.Add(tokens[i]);
+            currentGroup.Add(orderedTokens[i]);
         }
 
-        // Final segment
-        if (segmentTokens.Count > 0)
-        {
-            var lastToken = segmentTokens[^1];
-            var segmentEnd = lastToken.StartTime + lastToken.Duration;
-            var text = string.Join(" ", segmentTokens.Select(t => t.Word)).Trim();
-            var duration = segmentEnd - segmentStart;
+        if (currentGroup.Count > 0)
+            tokenGroups.Add(currentGroup);
 
-            if (duration >= MinSegmentDurationSec && !string.IsNullOrWhiteSpace(text))
+        MergeShortTokenGroups(tokenGroups);
+
+        foreach (var group in tokenGroups)
+        {
+            var (startSec, endSec, text, durationSec) = DescribeTokenGroup(group);
+            if (string.IsNullOrWhiteSpace(text))
+                continue;
+
+            if (durationSec < MinSegmentDurationSec)
             {
-                segments.Add(new PickupSegment(segmentStart, segmentEnd, text));
+                Log.Debug(
+                    "Keeping isolated short segment ({Duration:F2}s < {Min:F1}s): \"{Text}\"",
+                    durationSec, MinSegmentDurationSec, text);
             }
+
+            segments.Add(new PickupSegment(startSec, endSec, text));
         }
 
         return segments;
+    }
+
+    private static void MergeShortTokenGroups(List<List<AsrToken>> tokenGroups)
+    {
+        if (tokenGroups.Count <= 1)
+            return;
+
+        int i = 0;
+        while (i < tokenGroups.Count)
+        {
+            var (_, _, text, durationSec) = DescribeTokenGroup(tokenGroups[i]);
+            if (durationSec >= MinSegmentDurationSec || string.IsNullOrWhiteSpace(text))
+            {
+                i++;
+                continue;
+            }
+
+            var mergeTargetIndex = ChooseMergeTarget(tokenGroups, i);
+            if (mergeTargetIndex < 0)
+            {
+                i++;
+                continue;
+            }
+
+            Log.Debug(
+                "Merging short segment ({Duration:F2}s < {Min:F1}s): \"{Text}\"",
+                durationSec, MinSegmentDurationSec, text);
+
+            if (mergeTargetIndex < i)
+            {
+                tokenGroups[mergeTargetIndex].AddRange(tokenGroups[i]);
+            }
+            else
+            {
+                tokenGroups[mergeTargetIndex].InsertRange(0, tokenGroups[i]);
+            }
+
+            tokenGroups.RemoveAt(i);
+            i = Math.Max(0, i - 1);
+        }
+    }
+
+    private static int ChooseMergeTarget(IReadOnlyList<List<AsrToken>> tokenGroups, int index)
+    {
+        if (tokenGroups.Count <= 1)
+            return -1;
+
+        if (index == 0)
+            return 1;
+
+        if (index == tokenGroups.Count - 1)
+            return index - 1;
+
+        var (_, prevEndSec, _, _) = DescribeTokenGroup(tokenGroups[index - 1]);
+        var (currentStartSec, currentEndSec, _, _) = DescribeTokenGroup(tokenGroups[index]);
+        var (nextStartSec, _, _, _) = DescribeTokenGroup(tokenGroups[index + 1]);
+
+        var gapToPrevious = Math.Abs(currentStartSec - prevEndSec);
+        var gapToNext = Math.Abs(nextStartSec - currentEndSec);
+        return gapToNext <= gapToPrevious ? index + 1 : index - 1;
+    }
+
+    private static (double StartSec, double EndSec, string Text, double DurationSec) DescribeTokenGroup(
+        IReadOnlyList<AsrToken> tokenGroup)
+    {
+        if (tokenGroup.Count == 0)
+            return (0, 0, string.Empty, 0);
+
+        var startSec = tokenGroup[0].StartTime;
+        var endSec = tokenGroup[0].StartTime + Math.Max(0.01, tokenGroup[0].Duration);
+
+        for (int i = 1; i < tokenGroup.Count; i++)
+        {
+            var token = tokenGroup[i];
+            var tokenStart = token.StartTime;
+            var tokenEnd = token.StartTime + Math.Max(0.01, token.Duration);
+            if (tokenStart < startSec) startSec = tokenStart;
+            if (tokenEnd > endSec) endSec = tokenEnd;
+        }
+
+        var text = string.Join(" ", tokenGroup.Select(t => t.Word)).Trim();
+        var durationSec = Math.Max(0, endSec - startSec);
+        return (startSec, endSec, text, durationSec);
     }
 
     /// <summary>
