@@ -550,16 +550,21 @@
                 if (!Workspace.TryGetHydratedTranscript(ch.ChapterName, out var hydrated) || hydrated == null)
                     continue;
 
-                var sentenceById = hydrated.Sentences.ToDictionary(s => s.Id);
                 foreach (var entry in chapterEntries)
                 {
-                    if (entry.SentenceId <= 0)
+                    var sentence = ResolveSentenceFromCrxEntry(entry, hydrated.Sentences);
+                    if (sentence == null)
                         continue;
 
-                    if (!sentenceById.TryGetValue(entry.SentenceId, out var sentence))
-                        continue;
+                    var originalStartSec = entry.StartTime;
+                    var originalEndSec = entry.EndTime;
+                    if (originalStartSec < 0 || originalEndSec <= originalStartSec)
+                    {
+                        originalStartSec = sentence.Timing?.StartSec ?? 0;
+                        originalEndSec = sentence.Timing?.EndSec ?? 0;
+                    }
 
-                    if (entry.StartTime < 0 || entry.EndTime <= entry.StartTime)
+                    if (originalEndSec <= originalStartSec)
                         continue;
 
                     var shouldBeText = CrxCommentParser.TryParseShouldBe(entry.Comments);
@@ -569,11 +574,11 @@
                         ErrorNumber: entry.ErrorNumber,
                         ChapterStem: ch.Stem,
                         ChapterName: ch.ChapterName,
-                        SentenceId: entry.SentenceId,
+                        SentenceId: sentence.Id,
                         ShouldBeText: shouldBeText ?? bookText,
                         BookText: bookText,
-                        OriginalStartSec: entry.StartTime,
-                        OriginalEndSec: entry.EndTime));
+                        OriginalStartSec: originalStartSec,
+                        OriginalEndSec: originalEndSec));
                 }
             }
 
@@ -1017,16 +1022,13 @@
         if (chapterEntries.Count == 0 || sentences.Count == 0)
             return new List<HydratedSentence>();
 
-        var sentenceById = sentences.ToDictionary(s => s.Id);
         var resolved = new List<HydratedSentence>();
         var seenIds = new HashSet<int>();
 
         foreach (var entry in chapterEntries)
         {
-            if (entry.SentenceId <= 0)
-                continue;
-
-            if (!sentenceById.TryGetValue(entry.SentenceId, out var sentence))
+            var sentence = ResolveSentenceFromCrxEntry(entry, sentences);
+            if (sentence == null)
                 continue;
 
             if (seenIds.Add(sentence.Id))
@@ -1034,6 +1036,55 @@
         }
 
         return resolved;
+    }
+
+    private static HydratedSentence? ResolveSentenceFromCrxEntry(
+        CrxEntry entry,
+        IReadOnlyList<HydratedSentence> sentences)
+    {
+        if (sentences.Count == 0)
+            return null;
+
+        if (entry.SentenceId > 0)
+        {
+            var direct = sentences.FirstOrDefault(s => s.Id == entry.SentenceId);
+            if (direct != null)
+                return direct;
+        }
+
+        double? timeSec = entry.StartTime > 0 ? entry.StartTime : TryParseTimecode(entry.Timecode);
+        if (timeSec.HasValue)
+        {
+            var nearest = sentences
+                .Where(s => s.Timing is not null)
+                .OrderBy(s => DistanceToSentenceCenter(s, timeSec.Value))
+                .FirstOrDefault();
+
+            if (nearest != null)
+                return nearest;
+        }
+
+        return sentences.FirstOrDefault();
+    }
+
+    private static double? TryParseTimecode(string? timecode)
+    {
+        if (string.IsNullOrWhiteSpace(timecode))
+            return null;
+
+        if (TimeSpan.TryParse(timecode, out var ts))
+            return ts.TotalSeconds;
+
+        return null;
+    }
+
+    private static double DistanceToSentenceCenter(HydratedSentence sentence, double timeSec)
+    {
+        if (sentence.Timing is null)
+            return double.MaxValue;
+
+        var center = (sentence.Timing.StartSec + sentence.Timing.EndSec) / 2.0;
+        return Math.Abs(center - timeSec);
     }
 
     // ── Disposal ──────────────────────────────────────────────────
