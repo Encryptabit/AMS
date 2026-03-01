@@ -28,7 +28,7 @@ public sealed record TreatmentOptions
     /// <summary>
     /// Minimum duration of silence to consider as a gap (seconds).
     /// </summary>
-    public double MinimumSilenceDuration { get; init; } = 0.5;
+    public double MinimumSilenceDuration { get; init; } = 0.05;
 
     /// <summary>
     /// Minimum gap duration to consider as title/content boundary (seconds).

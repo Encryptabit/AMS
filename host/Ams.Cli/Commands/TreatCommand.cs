@@ -32,6 +32,16 @@ public static class TreatCommand
             "--postroll",
             "Postroll duration in seconds (default: 3.0)");
 
+        var silenceThresholdOption = new Option<double?>(
+            "--silence-threshold-db",
+            "Silence detection threshold in dB (default: -55; quieter speech may need around -63)");
+        silenceThresholdOption.AddAlias("--silence-db");
+
+        var minSilenceDurationOption = new Option<double?>(
+            "--min-silence-duration",
+            "Minimum silence duration in seconds (default: 0.05)");
+        minSilenceDurationOption.AddAlias("--min-silence");
+
         var forceOption = new Option<bool>(
             "--force",
             () => false,
@@ -42,6 +52,8 @@ public static class TreatCommand
         cmd.AddOption(prerollOption);
         cmd.AddOption(gapOption);
         cmd.AddOption(postrollOption);
+        cmd.AddOption(silenceThresholdOption);
+        cmd.AddOption(minSilenceDurationOption);
         cmd.AddOption(forceOption);
 
         cmd.SetHandler(async context =>
@@ -54,6 +66,8 @@ public static class TreatCommand
                 var prerollValue = context.ParseResult.GetValueForOption(prerollOption);
                 var gapValue = context.ParseResult.GetValueForOption(gapOption);
                 var postrollValue = context.ParseResult.GetValueForOption(postrollOption);
+                var silenceThresholdValue = context.ParseResult.GetValueForOption(silenceThresholdOption);
+                var minSilenceDurationValue = context.ParseResult.GetValueForOption(minSilenceDurationOption);
                 var force = context.ParseResult.GetValueForOption(forceOption);
 
                 // Get active chapter from REPL context
@@ -85,6 +99,28 @@ public static class TreatCommand
                 if (postrollValue.HasValue)
                 {
                     options = options with { PostrollSeconds = postrollValue.Value };
+                }
+                if (silenceThresholdValue.HasValue)
+                {
+                    if (silenceThresholdValue.Value > 0 || silenceThresholdValue.Value < -120)
+                    {
+                        Log.Error("Invalid --silence-threshold-db value {Value}. Expected a range between -120 and 0 dB.", silenceThresholdValue.Value);
+                        context.ExitCode = 1;
+                        return;
+                    }
+
+                    options = options with { SilenceThresholdDb = silenceThresholdValue.Value };
+                }
+                if (minSilenceDurationValue.HasValue)
+                {
+                    if (minSilenceDurationValue.Value <= 0 || minSilenceDurationValue.Value > 10)
+                    {
+                        Log.Error("Invalid --min-silence-duration value {Value}. Expected a range greater than 0 and up to 10 seconds.", minSilenceDurationValue.Value);
+                        context.ExitCode = 1;
+                        return;
+                    }
+
+                    options = options with { MinimumSilenceDuration = minSilenceDurationValue.Value };
                 }
 
                 // Open chapter context
