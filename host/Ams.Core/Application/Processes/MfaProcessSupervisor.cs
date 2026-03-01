@@ -507,11 +507,16 @@ public static class MfaProcessSupervisor
             return fromEnv.Replace("\r\n", "\n");
         }
 
-        // Default sequence discovered during manual setup.
+        // Default sequence — resolve conda paths from user home so it works on both Windows and Linux.
+        var condaRoot = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
+            "miniconda3");
+        var condaHook = Path.Combine(condaRoot, "shell", "condabin", "conda-hook.ps1");
+
         return string.Join(
             Environment.NewLine,
-            "& 'C:/Users/Jacar/miniconda3/shell/condabin/conda-hook.ps1'",
-            "conda activate 'C:/Users/Jacar/miniconda3'",
+            $"& '{condaHook}'",
+            $"conda activate '{condaRoot}'",
             "conda activate aligner");
     }
 
