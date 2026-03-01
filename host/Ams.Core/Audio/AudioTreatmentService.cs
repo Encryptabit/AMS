@@ -128,7 +128,6 @@ public sealed class AudioTreatmentService
         var prerollBuffer = PrepareRoomtoneSegment(roomtoneBuffer, opts.PrerollSeconds);
         segments.Add(prerollBuffer);
 
-        double titleDuration = 0;
         if (hasTitle)
         {
             // Extract title segment
@@ -138,7 +137,6 @@ public sealed class AudioTreatmentService
                 TimeSpan.FromSeconds(titleStart),
                 TimeSpan.FromSeconds(titleEnd));
             segments.Add(titleBuffer);
-            titleDuration = titleEnd - titleStart;
 
             // Gap between title and content
             var gapBuffer = PrepareRoomtoneSegment(roomtoneBuffer, opts.ChapterToContentGapSeconds);
@@ -164,8 +162,17 @@ public sealed class AudioTreatmentService
         var postrollBuffer = PrepareRoomtoneSegment(roomtoneBuffer, opts.PostrollSeconds);
         segments.Add(postrollBuffer);
 
-        // Concatenate all segments in-memory
-        var concatenatedBuffer = AudioBuffer.Concat(segments);
+        Log.Debug(
+            "Assembling {SegmentCount} segment(s) via audio splice (crossfade={Crossfade:F3}s, curve={Curve})",
+            segments.Count,
+            opts.SpliceCrossfadeDurationSec,
+            opts.SpliceCrossfadeCurve);
+
+        // Assemble with FFmpeg-backed splicing so joins are robust and consistent.
+        var treatedBuffer = AssembleSegmentsWithSplice(
+            segments,
+            opts.SpliceCrossfadeDurationSec,
+            opts.SpliceCrossfadeCurve);
 
         // Single encode to disk
         var outputDir = Path.GetDirectoryName(outputPath);
@@ -173,14 +180,10 @@ public sealed class AudioTreatmentService
         {
             Directory.CreateDirectory(outputDir);
         }
-        AudioProcessor.EncodeWav(outputPath, concatenatedBuffer);
+        AudioProcessor.EncodeWav(outputPath, treatedBuffer);
 
-        // Calculate total duration
-        var totalDuration = opts.PrerollSeconds
-            + titleDuration
-            + (hasTitle ? opts.ChapterToContentGapSeconds : 0)
-            + (contentEnd - contentStart)
-            + opts.PostrollSeconds;
+        // Calculate total duration from the rendered buffer so logs stay accurate with crossfades.
+        var totalDuration = treatedBuffer.Length / (double)treatedBuffer.SampleRate;
 
         return Task.FromResult(new TreatmentResult(
             outputPath,
@@ -189,6 +192,41 @@ public sealed class AudioTreatmentService
             contentStart,
             contentEnd,
             totalDuration));
+    }
+
+    private static AudioBuffer AssembleSegmentsWithSplice(
+        IReadOnlyList<AudioBuffer> segments,
+        double crossfadeDurationSec,
+        string crossfadeCurve)
+    {
+        if (segments.Count == 0)
+        {
+            throw new InvalidOperationException("No audio segments were generated for treatment.");
+        }
+
+        if (crossfadeDurationSec < 0)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(crossfadeDurationSec),
+                crossfadeDurationSec,
+                "Crossfade duration must be non-negative.");
+        }
+
+        var curve = string.IsNullOrWhiteSpace(crossfadeCurve) ? "tri" : crossfadeCurve;
+        var assembled = segments[0];
+
+        for (int i = 1; i < segments.Count; i++)
+        {
+            var appendAtSec = assembled.Length / (double)assembled.SampleRate;
+            assembled = AudioSpliceService.InsertAtPoint(
+                assembled,
+                appendAtSec,
+                segments[i],
+                crossfadeDurationSec,
+                curve);
+        }
+
+        return assembled;
     }
 
     /// <summary>
@@ -446,29 +484,7 @@ public sealed class AudioTreatmentService
             roomtone.Length,
             durationSeconds);
 
-        // Always loop to target duration - simpler and avoids FFmpeg trim edge cases
-        int targetSamples = (int)(durationSeconds * roomtone.SampleRate);
-        if (targetSamples <= 0)
-        {
-            throw new InvalidOperationException(
-                $"Target samples is {targetSamples} (duration={durationSeconds}s, sampleRate={roomtone.SampleRate})");
-        }
-
-        var buffer = new AudioBuffer(roomtone.Channels, roomtone.SampleRate, targetSamples);
-
-        for (int ch = 0; ch < roomtone.Channels; ch++)
-        {
-            var source = roomtone.Planar[ch];
-            var target = buffer.Planar[ch];
-            int sourceLen = source.Length;
-
-            for (int i = 0; i < targetSamples; i++)
-            {
-                target[i] = source[i % sourceLen];
-            }
-        }
-
-        return buffer;
+        return AudioSpliceService.GenerateRoomtoneFill(roomtone, durationSeconds);
     }
 
 }

@@ -34,4 +34,14 @@ public sealed record TreatmentOptions
     /// Minimum gap duration to consider as title/content boundary (seconds).
     /// </summary>
     public double TitleContentGapThreshold { get; init; } = 1.0;
+
+    /// <summary>
+    /// Crossfade duration in seconds used when splicing treatment segments.
+    /// </summary>
+    public double SpliceCrossfadeDurationSec { get; init; } = 0.030;
+
+    /// <summary>
+    /// FFmpeg acrossfade curve used at treatment splice joins.
+    /// </summary>
+    public string SpliceCrossfadeCurve { get; init; } = "tri";
 }
