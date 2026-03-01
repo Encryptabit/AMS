@@ -556,19 +556,10 @@
                     if (sentence == null)
                         continue;
 
-                    var originalStartSec = entry.StartTime;
-                    var originalEndSec = entry.EndTime;
-                    if (originalStartSec < 0 || originalEndSec <= originalStartSec)
-                    {
-                        originalStartSec = sentence.Timing?.StartSec ?? 0;
-                        originalEndSec = sentence.Timing?.EndSec ?? 0;
-                    }
-
-                    if (originalEndSec <= originalStartSec)
-                        continue;
-
                     var shouldBeText = CrxCommentParser.TryParseShouldBe(entry.Comments);
                     var bookText = sentence.BookText ?? string.Empty;
+                    var originalStartSec = sentence.Timing?.StartSec ?? 0;
+                    var originalEndSec = sentence.Timing?.EndSec ?? 0;
 
                     crxTargets.Add(new CrxPickupTarget(
                         ErrorNumber: entry.ErrorNumber,
@@ -580,6 +571,12 @@
                         OriginalStartSec: originalStartSec,
                         OriginalEndSec: originalEndSec));
                 }
+            }
+
+            if (crxTargets.Count == 0)
+            {
+                _processingStatus = "No valid CRX targets were resolved. Check CRX entries/sentence mapping.";
+                return;
             }
 
             // 3. Run CRX-driven import with progress
