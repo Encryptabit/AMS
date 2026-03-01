@@ -142,8 +142,8 @@ public sealed record RoomtoneRequest(
     RoomtoneOperation Operation,
     double StartSec,
     double EndSec,
-    double CrossfadeDurationSec = 0.030,
-    string CrossfadeCurve = "tri");
+    double CrossfadeDurationSec = 0.070,
+    string CrossfadeCurve = "hsin");
 
 /// <summary>
 /// State of a pickup match box in the three-column pipeline (Match -> Stage -> Commit).

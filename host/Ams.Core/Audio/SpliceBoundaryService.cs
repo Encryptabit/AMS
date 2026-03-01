@@ -8,14 +8,26 @@ namespace Ams.Core.Audio;
 /// </summary>
 public sealed record SpliceBoundaryOptions
 {
-    /// <summary>Silence detection threshold in dB (default -50 dB, below breaths).</summary>
-    public double SilenceThresholdDb { get; init; } = -50.0;
+    /// <summary>Silence detection threshold in dB (default -55 dB).</summary>
+    public double SilenceThresholdDb { get; init; } = -55.0;
 
-    /// <summary>Minimum silence duration to consider as a valid gap (default 80ms).</summary>
-    public TimeSpan MinSilenceDuration { get; init; } = TimeSpan.FromMilliseconds(80);
+    /// <summary>Minimum silence duration to consider as a valid gap (default 50ms).</summary>
+    public TimeSpan MinSilenceDuration { get; init; } = TimeSpan.FromMilliseconds(50);
 
     /// <summary>How far before/after the rough boundary to search for silence (default 0.5s).</summary>
     public double SearchMarginSec { get; init; } = 0.5;
+
+    /// <summary>
+    /// Maximum non-silent burst duration to ignore when stitching neighboring silences
+    /// (click immunity). Bursts at or below this duration are treated as transient clicks.
+    /// </summary>
+    public double ClickImmunityBurstSec { get; init; } = 0.030;
+
+    /// <summary>Padding added before the refined start boundary (default 15ms).</summary>
+    public double StartPaddingSec { get; init; } = 0.015;
+
+    /// <summary>Padding added after the refined end boundary (default 25ms).</summary>
+    public double EndPaddingSec { get; init; } = 0.025;
 
     /// <summary>Margin to back off from a snap-to-energy edge (default 30ms).</summary>
     public double EnergyBackoffSec { get; init; } = 0.030;
@@ -95,6 +107,16 @@ public static class SpliceBoundaryService
             isStartBoundary: false,
             opts);
 
+        // Apply small safety padding around boundaries to avoid clipped consonants/fricatives.
+        var minStartSec = Math.Max(0.0, prevSentenceEndSec ?? 0.0);
+        var maxEndSec = Math.Min(bufferDurationSec, nextSentenceStartSec ?? bufferDurationSec);
+        (refinedStart, refinedEnd) = ApplyBoundaryPadding(
+            refinedStart,
+            refinedEnd,
+            minStartSec,
+            maxEndSec,
+            opts);
+
         // Sanity: ensure start < end
         if (refinedStart >= refinedEnd)
         {
@@ -142,7 +164,9 @@ public static class SpliceBoundaryService
             MinimumDuration = opts.MinSilenceDuration
         };
 
-        var silences = AudioProcessor.DetectSilence(regionBuffer, silenceOptions);
+        var silences = MergeSilencesAcrossTransientBursts(
+            AudioProcessor.DetectSilence(regionBuffer, silenceOptions),
+            opts.ClickImmunityBurstSec);
 
         if (silences.Count > 0)
         {
@@ -196,5 +220,57 @@ public static class SpliceBoundaryService
 
         // 6. Final fallback: use original
         return (roughSec, BoundaryMethod.Original);
+    }
+
+    internal static (double StartSec, double EndSec) ApplyBoundaryPadding(
+        double startSec,
+        double endSec,
+        double minStartSec,
+        double maxEndSec,
+        SpliceBoundaryOptions opts)
+    {
+        var paddedStart = Math.Max(minStartSec, startSec - Math.Max(0.0, opts.StartPaddingSec));
+        var paddedEnd = Math.Min(maxEndSec, endSec + Math.Max(0.0, opts.EndPaddingSec));
+        return (paddedStart, paddedEnd);
+    }
+
+    internal static IReadOnlyList<SilenceInterval> MergeSilencesAcrossTransientBursts(
+        IReadOnlyList<SilenceInterval> silences,
+        double maxBurstSec)
+    {
+        if (silences.Count < 2 || maxBurstSec <= 0)
+        {
+            return silences;
+        }
+
+        var merged = new List<SilenceInterval>(silences.Count);
+        var currentStart = silences[0].Start;
+        var currentEnd = silences[0].End;
+
+        for (int i = 1; i < silences.Count; i++)
+        {
+            var next = silences[i];
+            var burstDurationSec = (next.Start - currentEnd).TotalSeconds;
+
+            if (burstDurationSec <= maxBurstSec)
+            {
+                currentEnd = next.End;
+                continue;
+            }
+
+            merged.Add(new SilenceInterval(
+                currentStart,
+                currentEnd,
+                currentEnd - currentStart));
+            currentStart = next.Start;
+            currentEnd = next.End;
+        }
+
+        merged.Add(new SilenceInterval(
+            currentStart,
+            currentEnd,
+            currentEnd - currentStart));
+
+        return merged;
     }
 }

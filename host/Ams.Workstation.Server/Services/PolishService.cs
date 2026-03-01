@@ -26,6 +26,7 @@ namespace Ams.Workstation.Server.Services;
 public class PolishService
 {
     private const double PickupSlicePaddingSec = 0.080;
+    private static readonly TreatmentOptions SharedTuningDefaults = new();
 
     private static readonly JsonSerializerOptions ArtifactJsonOptions = new()
     {
@@ -133,8 +134,9 @@ public class PolishService
     /// <param name="pickupFilePath">Path to the pickup source file.</param>
     /// <param name="originalStartSec">Start time of the original sentence in the chapter audio.</param>
     /// <param name="originalEndSec">End time of the original sentence in the chapter audio.</param>
-    /// <param name="crossfadeSec">Crossfade duration in seconds (default 30ms).</param>
-    /// <param name="curve">Crossfade curve type (default "tri").</param>
+    /// <param name="crossfadeSec">Crossfade duration in seconds (defaults to treatment splice crossfade).</param>
+    /// <param name="curve">Crossfade curve type (defaults to treatment splice curve).</param>
+    /// <param name="boundaryOptions">Optional boundary refinement options (defaults to treatment-aligned values).</param>
     /// <returns>The created StagedReplacement record.</returns>
     public StagedReplacement StageReplacement(
         string chapterStem,
@@ -142,12 +144,19 @@ public class PolishService
         string pickupFilePath,
         double originalStartSec,
         double originalEndSec,
-        double crossfadeSec = 0.030,
-        string curve = "tri")
+        double? crossfadeSec = null,
+        string? curve = null,
+        SpliceBoundaryOptions? boundaryOptions = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(chapterStem);
         ArgumentNullException.ThrowIfNull(match);
         ArgumentException.ThrowIfNullOrWhiteSpace(pickupFilePath);
+
+        var effectiveCrossfadeSec = crossfadeSec ?? SharedTuningDefaults.SpliceCrossfadeDurationSec;
+        var effectiveCurve = string.IsNullOrWhiteSpace(curve)
+            ? SharedTuningDefaults.SpliceCrossfadeCurve
+            : curve;
+        var effectiveBoundaryOptions = boundaryOptions ?? CreateBoundaryOptionsFromTreatmentDefaults();
 
         // Refine splice boundaries using silence detection
         var refinedStart = originalStartSec;
@@ -184,7 +193,7 @@ public class PolishService
 
             var result = SpliceBoundaryService.RefineBoundaries(
                 chapterBuffer, originalStartSec, originalEndSec,
-                prevEnd, nextStart);
+                prevEnd, nextStart, effectiveBoundaryOptions);
 
             refinedStart = result.RefinedStartSec;
             refinedEnd = result.RefinedEndSec;
@@ -208,13 +217,22 @@ public class PolishService
             PickupSourcePath: pickupFilePath,
             PickupStartSec: match.PickupStartSec,
             PickupEndSec: match.PickupEndSec,
-            CrossfadeDurationSec: crossfadeSec,
-            CrossfadeCurve: curve,
+            CrossfadeDurationSec: effectiveCrossfadeSec,
+            CrossfadeCurve: effectiveCurve,
             StagedAtUtc: DateTime.UtcNow,
             Status: ReplacementStatus.Staged);
 
         _stagingQueue.Stage(replacement);
         return replacement;
+    }
+
+    private static SpliceBoundaryOptions CreateBoundaryOptionsFromTreatmentDefaults()
+    {
+        return new SpliceBoundaryOptions
+        {
+            SilenceThresholdDb = SharedTuningDefaults.SilenceThresholdDb,
+            MinSilenceDuration = TimeSpan.FromSeconds(SharedTuningDefaults.MinimumSilenceDuration),
+        };
     }
 
     /// <summary>
