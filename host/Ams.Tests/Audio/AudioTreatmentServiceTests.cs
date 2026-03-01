@@ -59,6 +59,34 @@ public sealed class AudioTreatmentServiceTests
         Assert.Equal(458.617, result.ContentEnd, precision: 3);
     }
 
+    [Fact]
+    public void ResolvePreferredBitDepth_Returns24_ForPcmS24Codec()
+    {
+        var metadata = AudioBufferMetadata.CreateDefault(sampleRate: 44_100, channels: 1) with
+        {
+            CodecName = "pcm_s24le"
+        };
+        var buffer = new AudioBuffer(channels: 1, sampleRate: 44_100, length: 1000, metadata);
+
+        var bitDepth = AudioTreatmentService.ResolvePreferredBitDepth(buffer);
+
+        Assert.Equal(24, bitDepth);
+    }
+
+    [Fact]
+    public void ResolvePreferredBitDepth_DefaultsTo16_ForUnknownCodec()
+    {
+        var metadata = AudioBufferMetadata.CreateDefault(sampleRate: 44_100, channels: 1) with
+        {
+            CodecName = "mp3float"
+        };
+        var buffer = new AudioBuffer(channels: 1, sampleRate: 44_100, length: 1000, metadata);
+
+        var bitDepth = AudioTreatmentService.ResolvePreferredBitDepth(buffer);
+
+        Assert.Equal(16, bitDepth);
+    }
+
     private static HydratedSentence BuildSentence(
         int id,
         double startSec,

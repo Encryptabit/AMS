@@ -38,10 +38,10 @@ public sealed record TreatmentOptions
     /// <summary>
     /// Crossfade duration in seconds used when splicing treatment segments.
     /// </summary>
-    public double SpliceCrossfadeDurationSec { get; init; } = 0.030;
+    public double SpliceCrossfadeDurationSec { get; init; } = 0.070;
 
     /// <summary>
     /// FFmpeg acrossfade curve used at treatment splice joins.
     /// </summary>
-    public string SpliceCrossfadeCurve { get; init; } = "tri";
+    public string SpliceCrossfadeCurve { get; init; } = "hsin";
 }
