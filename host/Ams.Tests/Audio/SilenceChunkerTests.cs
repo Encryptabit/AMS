@@ -43,10 +43,11 @@ public class SilenceChunkerTests
     [Fact]
     public void SingleSilenceRegion_SplitsAtMidpoint()
     {
-        // 60s audio, 300ms silence at 30s mark, then more audio
+        // 90s audio, 300ms silence at 45s mark, then more audio
+        // Both resulting chunks (~45s each) are well above the 30s minChunkDuration
         var silenceDurationSamples = (int)(0.3 * SampleRate); // 300ms = 4800 samples
-        var silenceStart = SampleRate * 30;
-        var totalLength = SampleRate * 60;
+        var silenceStart = SampleRate * 45;
+        var totalLength = SampleRate * 90;
 
         var buffer = CreateBuffer(totalLength);
         FillAudio(buffer, 0, silenceStart);
