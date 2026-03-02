@@ -22,6 +22,11 @@
             <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
             <Link>ExtTools\ffmpeg\%(RecursiveDir)%(Filename)%(Extension)</Link>
         </None>
+        <!-- Avoid cross-platform stale copy issues when pre-build auto-install swaps FFmpeg layouts. -->
+        <None Remove="$(ResolvedExtToolsDir)\ffmpeg\**\*.so;$(ResolvedExtToolsDir)\ffmpeg\**\*.so.*;$(ResolvedExtToolsDir)\ffmpeg\**\*.dylib"
+              Condition="'$(OS)' == 'Windows_NT'" />
+        <None Remove="$(ResolvedExtToolsDir)\ffmpeg\**\*.dll;$(ResolvedExtToolsDir)\ffmpeg\**\*.exe"
+              Condition="'$(OS)' != 'Windows_NT'" />
     </ItemGroup>
 
     <ItemGroup>
