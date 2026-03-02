@@ -37,12 +37,11 @@ public static class EnglishFrequencyDictionary
     }
 
     /// <summary>
-    /// True if the word is absent from the dictionary or has rank greater than rarityThreshold.
+    /// True if the word is absent from the dictionary.
     /// </summary>
-    public static bool IsRareOrUnknown(string word, int rarityThreshold = 50_000)
+    public static bool IsRareOrUnknown(string word)
     {
-        var rank = GetRank(word);
-        return rank < 0 || rank > rarityThreshold;
+        return GetRank(word) < 0;
     }
 
     private static FrozenDictionary<string, int> LoadDictionary()
