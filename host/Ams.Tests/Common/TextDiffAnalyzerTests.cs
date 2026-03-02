@@ -80,4 +80,50 @@ public sealed class TextDiffAnalyzerTests
         Assert.Equal(0, result.Metrics.MissingRuns);
         Assert.Equal(0, result.Metrics.ExtraRuns);
     }
+
+    [Fact]
+    public void Analyze_HyphenCompoundVsMergedWord_KeepsSentenceEqual()
+    {
+        var result = TextDiffAnalyzer.Analyze(
+            "The soul-bound blade carved cleanly through the air.",
+            "the soulbound blade carved cleanly through the air");
+
+        Assert.Equal(0.0, result.Metrics.Wer);
+        Assert.Equal(0, result.Metrics.MissingRuns);
+        Assert.Equal(0, result.Metrics.ExtraRuns);
+        Assert.Equal(0, result.Diff.Stats.Insertions);
+        Assert.Equal(0, result.Diff.Stats.Deletions);
+        Assert.All(result.Diff.Ops, op => Assert.Equal("equal", op.Operation));
+    }
+
+    [Fact]
+    public void Analyze_HyphenCompound_WithProvidedScoringTokens_KeepsSentenceEqual()
+    {
+        var options = new TextDiffScoringOptions(
+            ReferenceTokens: new[] { "the", "soul", "bound", "blade" },
+            HypothesisTokens: new[] { "the", "soulbound", "blade" },
+            ReferencePhonemeVariants:
+            [
+                null,
+                new[] { "S OW1 L" },
+                new[] { "B AW1 N D" },
+                null
+            ],
+            HypothesisPhonemeVariants:
+            [
+                null,
+                new[] { "S OW1 L B AW1 N D" },
+                null
+            ],
+            UseExactPhonemeEquivalence: false);
+
+        var result = TextDiffAnalyzer.Analyze(
+            "the soul-bound blade",
+            "the soulbound blade",
+            options);
+
+        Assert.Equal(0.0, result.Metrics.Wer);
+        Assert.Equal(0, result.Metrics.MissingRuns);
+        Assert.Equal(0, result.Metrics.ExtraRuns);
+    }
 }

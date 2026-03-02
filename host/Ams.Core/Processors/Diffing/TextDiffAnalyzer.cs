@@ -38,18 +38,23 @@ public static class TextDiffAnalyzer
             scoringOptions?.HypothesisPhonemeVariants);
         var scoringReferenceTokens = scoringReferencePayload.Tokens;
         var scoringHypothesisTokens = scoringHypothesisPayload.Tokens;
-
-        var scoringReferencePhonemes = AlignPhonemePayload(
+        var scoringReferencePhonemes = CreateMutablePhonemeList(
             scoringReferencePayload.Phonemes,
             scoringReferenceTokens.Count);
-        var scoringHypothesisPhonemes = AlignPhonemePayload(
+        var scoringHypothesisPhonemes = CreateMutablePhonemeList(
             scoringHypothesisPayload.Phonemes,
             scoringHypothesisTokens.Count);
+        HarmonizeCompoundBoundaryTokens(
+            scoringReferenceTokens,
+            scoringHypothesisTokens,
+            scoringReferencePhonemes,
+            scoringHypothesisPhonemes);
 
         var displayReference = NormalizeForDisplay(referenceText);
         var displayHypothesis = NormalizeForDisplay(hypothesisText);
         var displayReferenceTokens = Tokenize(displayReference);
         var displayHypothesisTokens = Tokenize(displayHypothesis);
+        HarmonizeCompoundBoundaryTokens(displayReferenceTokens, displayHypothesisTokens);
 
         var displayTokenDiff = BuildTokenDiff(displayReferenceTokens, displayHypothesisTokens);
 
@@ -225,6 +230,121 @@ public static class TextDiffAnalyzer
         return new ScoringTokenPayload(tokens, phonemes);
     }
 
+    private static void HarmonizeCompoundBoundaryTokens(
+        List<string> referenceTokens,
+        List<string> hypothesisTokens,
+        List<string[]?>? referencePhonemes = null,
+        List<string[]?>? hypothesisPhonemes = null)
+    {
+        if (referenceTokens.Count == 0 || hypothesisTokens.Count == 0)
+        {
+            return;
+        }
+
+        bool changed;
+        do
+        {
+            changed = MergeCompoundBoundariesToMatch(referenceTokens, referencePhonemes, hypothesisTokens);
+            changed |= MergeCompoundBoundariesToMatch(hypothesisTokens, hypothesisPhonemes, referenceTokens);
+        } while (changed);
+    }
+
+    private static bool MergeCompoundBoundariesToMatch(
+        List<string> primaryTokens,
+        List<string[]?>? primaryPhonemes,
+        IReadOnlyList<string> targetTokens)
+    {
+        if (primaryTokens.Count < 2 || targetTokens.Count == 0)
+        {
+            return false;
+        }
+
+        var targetSet = new HashSet<string>(targetTokens, StringComparer.Ordinal);
+        var changed = false;
+        var write = 0;
+
+        for (var read = 0; read < primaryTokens.Count; read++)
+        {
+            if (read + 1 < primaryTokens.Count &&
+                TryMergeCompoundPair(primaryTokens[read], primaryTokens[read + 1], targetSet, out var merged))
+            {
+                primaryTokens[write] = merged;
+                if (primaryPhonemes is not null)
+                {
+                    primaryPhonemes[write] =
+                        MergePhonemeVariants(primaryPhonemes[read], primaryPhonemes[read + 1]);
+                }
+
+                read++;
+                write++;
+                changed = true;
+                continue;
+            }
+
+            if (write != read)
+            {
+                primaryTokens[write] = primaryTokens[read];
+                if (primaryPhonemes is not null)
+                {
+                    primaryPhonemes[write] = primaryPhonemes[read];
+                }
+            }
+
+            write++;
+        }
+
+        if (write < primaryTokens.Count)
+        {
+            primaryTokens.RemoveRange(write, primaryTokens.Count - write);
+        }
+
+        if (primaryPhonemes is not null && write < primaryPhonemes.Count)
+        {
+            primaryPhonemes.RemoveRange(write, primaryPhonemes.Count - write);
+        }
+
+        return changed;
+    }
+
+    private static bool TryMergeCompoundPair(
+        string first,
+        string second,
+        HashSet<string> targetSet,
+        out string merged)
+    {
+        merged = string.Empty;
+        if (!IsCompoundToken(first) || !IsCompoundToken(second))
+        {
+            return false;
+        }
+
+        if ((first.Length < 4 && second.Length < 4) || first.Length + second.Length < 6)
+        {
+            return false;
+        }
+
+        merged = string.Concat(first, second);
+        return targetSet.Contains(merged);
+    }
+
+    private static bool IsCompoundToken(string token)
+    {
+        if (string.IsNullOrWhiteSpace(token))
+        {
+            return false;
+        }
+
+        foreach (var ch in token)
+        {
+            if (!char.IsLetter(ch))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
     private static void CollapseApostropheSuffixTokens(List<string> tokens, List<string[]?>? phonemes = null)
     {
         if (tokens.Count < 2)
@@ -374,7 +494,7 @@ public static class TextDiffAnalyzer
         return merged.Count == 0 ? null : merged.ToArray();
     }
 
-    private static IReadOnlyList<string[]?>? AlignPhonemePayload(IReadOnlyList<string[]?>? variants, int tokenCount)
+    private static List<string[]?>? CreateMutablePhonemeList(IReadOnlyList<string[]?>? variants, int tokenCount)
     {
         if (variants is null)
         {
@@ -383,19 +503,19 @@ public static class TextDiffAnalyzer
 
         if (tokenCount <= 0)
         {
-            return Array.Empty<string[]?>();
+            return new List<string[]?>();
         }
 
-        if (variants.Count == tokenCount)
-        {
-            return variants;
-        }
-
-        var aligned = new string[]?[tokenCount];
+        var aligned = new List<string[]?>(tokenCount);
         var copyCount = Math.Min(tokenCount, variants.Count);
         for (int i = 0; i < copyCount; i++)
         {
-            aligned[i] = variants[i];
+            aligned.Add(variants[i]);
+        }
+
+        for (int i = copyCount; i < tokenCount; i++)
+        {
+            aligned.Add(null);
         }
 
         return aligned;
