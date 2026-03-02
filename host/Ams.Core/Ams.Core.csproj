@@ -153,7 +153,7 @@
                Text="FFmpeg auto-install completed but validation still failed. Check ExtTools/ffmpeg/bin contents."/>
     </Target>
     <PropertyGroup>
-        <TargetFramework>net9.0</TargetFramework>
+        <TargetFramework>net10.0</TargetFramework>
         <ImplicitUsings>enable</ImplicitUsings>
         <Nullable>enable</Nullable>
         <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
