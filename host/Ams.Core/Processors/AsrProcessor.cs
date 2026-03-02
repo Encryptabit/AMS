@@ -1,6 +1,7 @@
 using System.Buffers;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.Text;
 using System.Threading;
@@ -446,8 +447,14 @@ public static class AsrProcessor
         var factoryOptions = CreateFactoryOptions(options);
 
         using var factoryHandle = WhisperFactoryPool.Acquire(options.ModelPath, factoryOptions, out var factory);
+        var modelName = Path.GetFileName(options.ModelPath) ?? options.ModelPath;
         var active = Interlocked.Increment(ref _whisperInflight);
-        Log.Debug("Whisper.NET inflight={Active} model={Model}", active, options.ModelPath);
+        var timer = Stopwatch.StartNew();
+        if (active > 1)
+        {
+            Log.Debug("Whisper.NET contention inflight={Active} model={Model}", active, modelName);
+        }
+
         try
         {
             var builder = ConfigureBuilder(factory, options, enableTokenTimestamps: options.EnableWordTimestamps);
@@ -477,8 +484,23 @@ public static class AsrProcessor
         }
         finally
         {
+            timer.Stop();
             var remaining = Interlocked.Decrement(ref _whisperInflight);
-            Log.Debug("Whisper.NET completed inflight={Active} model={Model}", remaining, options.ModelPath);
+            if (remaining > 0)
+            {
+                Log.Debug(
+                    "Whisper.NET pass completed elapsed_ms={ElapsedMs} inflight={Active} model={Model}",
+                    timer.ElapsedMilliseconds,
+                    remaining,
+                    modelName);
+            }
+            else
+            {
+                Log.Trace(
+                    "Whisper.NET pass completed elapsed_ms={ElapsedMs} model={Model}",
+                    timer.ElapsedMilliseconds,
+                    modelName);
+            }
         }
     }
 

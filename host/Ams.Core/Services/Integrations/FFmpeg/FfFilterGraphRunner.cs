@@ -306,12 +306,45 @@ namespace Ams.Core.Services.Integrations.FFmpeg
 
             private void ConfigureSinkFormat()
             {
-                ConfigureIntOption("sample_fmts", (int)AVSampleFormat.AV_SAMPLE_FMT_FLT);
+                ConfigureSampleFormats();
                 ConfigureChannelLayouts();
+            }
+
+            private void ConfigureSampleFormats()
+            {
+                const string modernOption = "sample_formats";
+                const string legacyOption = "sample_fmts";
+                var optionName = ResolvePreferredSinkOption(modernOption, legacyOption);
+
+                if (string.Equals(optionName, modernOption, StringComparison.Ordinal))
+                {
+                    AVSampleFormat sampleFormat = AVSampleFormat.AV_SAMPLE_FMT_FLT;
+                    var result = ffmpeg.av_opt_set_array(
+                        _sink,
+                        optionName,
+                        ffmpeg.AV_OPT_SEARCH_CHILDREN,
+                        0,
+                        1,
+                        AVOptionType.AV_OPT_TYPE_SAMPLE_FMT,
+                        &sampleFormat);
+
+                    if (result < 0)
+                    {
+                        var msg = FfUtils.FormatError(result);
+                        throw new InvalidOperationException($"Failed to configure sink option '{optionName}': {msg}");
+                    }
+
+                    return;
+                }
+
+                ConfigureIntOption(optionName, (int)AVSampleFormat.AV_SAMPLE_FMT_FLT);
             }
 
             private void ConfigureChannelLayouts()
             {
+                const string modernOption = "channel_layouts";
+                const string legacyOption = "ch_layouts";
+
                 var layoutName = _primaryMetadata?.CurrentChannelLayout
                                  ?? AudioBufferMetadata.DescribeDefaultLayout(_channels);
                 if (string.IsNullOrWhiteSpace(layoutName))
@@ -319,18 +352,86 @@ namespace Ams.Core.Services.Integrations.FFmpeg
                     layoutName = "mono";
                 }
 
-                var layoutResult = ffmpeg.av_opt_set(
-                    _sink,
-                    "ch_layouts",
-                    layoutName,
-                    ffmpeg.AV_OPT_SEARCH_CHILDREN);
+                var optionName = ResolvePreferredSinkOption(modernOption, legacyOption);
+                if (string.Equals(optionName, modernOption, StringComparison.Ordinal))
+                {
+                    ConfigureChannelLayoutArrayOption(optionName, layoutName);
+                    return;
+                }
+
+                var layoutResult = ffmpeg.av_opt_set(_sink, optionName, layoutName, ffmpeg.AV_OPT_SEARCH_CHILDREN);
 
                 if (layoutResult < 0)
                 {
                     var msg = FfUtils.FormatError(layoutResult);
-                    throw new InvalidOperationException($"Failed to configure sink channel layout: {msg}");
+                    throw new InvalidOperationException($"Failed to configure sink option '{optionName}': {msg}");
                 }
             }
+
+            private void ConfigureChannelLayoutArrayOption(string optionName, string layoutName)
+            {
+                AVChannelLayout layout = default;
+                var parseResult = ffmpeg.av_channel_layout_from_string(&layout, layoutName);
+                if (parseResult < 0)
+                {
+                    var msg = FfUtils.FormatError(parseResult);
+                    throw new InvalidOperationException($"Failed to parse channel layout '{layoutName}': {msg}");
+                }
+
+                try
+                {
+                    var result = ffmpeg.av_opt_set_array(
+                        _sink,
+                        optionName,
+                        ffmpeg.AV_OPT_SEARCH_CHILDREN,
+                        0,
+                        1,
+                        AVOptionType.AV_OPT_TYPE_CHLAYOUT,
+                        &layout);
+
+                    if (result < 0)
+                    {
+                        var msg = FfUtils.FormatError(result);
+                        throw new InvalidOperationException($"Failed to configure sink option '{optionName}': {msg}");
+                    }
+                }
+                finally
+                {
+                    ffmpeg.av_channel_layout_uninit(&layout);
+                }
+            }
+
+            private string ResolvePreferredSinkOption(string modernOption, string legacyOption)
+            {
+                var modern = ffmpeg.av_opt_find(_sink, modernOption, null, 0, ffmpeg.AV_OPT_SEARCH_CHILDREN);
+                var legacy = ffmpeg.av_opt_find(_sink, legacyOption, null, 0, ffmpeg.AV_OPT_SEARCH_CHILDREN);
+
+                if (modern != null && !IsDeprecatedOption(modern))
+                {
+                    return modernOption;
+                }
+
+                if (legacy != null && !IsDeprecatedOption(legacy))
+                {
+                    return legacyOption;
+                }
+
+                if (modern != null)
+                {
+                    return modernOption;
+                }
+
+                if (legacy != null)
+                {
+                    return legacyOption;
+                }
+
+                throw new InvalidOperationException(
+                    $"FFmpeg sink option '{modernOption}'/'{legacyOption}' is not available in current runtime.");
+            }
+
+            private static bool IsDeprecatedOption(AVOption* option) =>
+                (option->flags & ffmpeg.AV_OPT_FLAG_DEPRECATED) != 0;
 
             private void ConfigureIntOption(string optionName, int value)
             {
