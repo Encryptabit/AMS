@@ -640,7 +640,7 @@ public sealed record AsrOptions(
     bool UseGpu = true,
     bool EnableWordTimestamps = true,
     bool SplitOnWord = true,
-    int BeamSize = 5,
+    int BeamSize = 3,
     int BestOf = 1,
     float Temperature = 0.0f,
     bool NoSpeechBoost = true,

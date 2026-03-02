@@ -165,7 +165,7 @@ public sealed record GenerateTranscriptOptions
     public int Threads { get; init; }
     public bool UseGpu { get; init; } = true;
     public int GpuDevice { get; init; }
-    public int BeamSize { get; init; } = 8;
+    public int BeamSize { get; init; } = 3;
     public int BestOf { get; init; } = 1;
     public double Temperature { get; init; }
     public bool EnableWordTimestamps { get; init; } = true;

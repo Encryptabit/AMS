@@ -43,7 +43,7 @@ public static class AsrCommand
         var threadsOption = new Option<int>("--threads", () => 0, "Whisper thread count (0 = auto)");
         var useGpuOption = new Option<bool>("--use-gpu", () => true, "Enable GPU acceleration when supported");
         var gpuDeviceOption = new Option<int>("--gpu-device", () => 0, "GPU device index for Whisper");
-        var beamSizeOption = new Option<int>("--beam-size", () => 8, "Beam size for Whisper beam search");
+        var beamSizeOption = new Option<int>("--beam-size", () => 3, "Beam size for Whisper beam search");
         var bestOfOption = new Option<int>("--best-of", () => 1, "Best-of sampling count for Whisper greedy search");
         var temperatureOption =
             new Option<double>("--temperature", () => 0.0, "Sampling temperature (0-1) for Whisper");
