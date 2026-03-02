@@ -186,10 +186,11 @@ poc/VelloSharpPoc/     - Avalonia + VelloSharp (child window fails)
 | 4 | wire .WithPrompt in AsrProcessor | 2026-03-02 | d5372fe | [4-wire-withprompt-in-asrprocessor](./quick/4-wire-withprompt-in-asrprocessor/) |
 | 5 | AudioBuffer contiguous backing + Memory<float> slicing | 2026-03-02 | 7ddc99c | [5-audiobuffer-contiguous-backing-memory-slice](./quick/5-audiobuffer-contiguous-backing-memory-slice/) |
 | 6 | silence-based pre-chunking in AsrProcessor | 2026-03-02 | f76a5c3 | [6-silence-based-pre-chunking-in-asrprocess](./quick/6-silence-based-pre-chunking-in-asrprocess/) |
+| 8 | audiobook QC CLI command (ffmpeg silencedetect) | 2026-03-02 | a11fd4b | [8-add-audiobook-qc-cli-command-ffmpeg-base](./quick/8-add-audiobook-qc-cli-command-ffmpeg-base/) |
 
 ## Next Action
 
-Phase 13 plan 13-07 complete. Old Polish pages decommissioned (Index.razor, ChapterPolish.razor, PickupImporter.razor, StagingQueue.razor deleted). PickupSubstitution.razor now owns /polish route directly. Memory-safe chapter flipper with audio deallocation. Continue with plan 13-08.
+Quick task 8 complete. `qc analyze --dir` CLI command added for audiobook structural QC (head/tail silence, title-body gap analysis). Continue with plan 13-08 or next quick task.
 
 ## Deferred UI Refinements (for Plan 10-04)
 
@@ -206,4 +207,4 @@ None currently.
 
 ## Session Continuity
 
-Last activity: 2026-03-02 - Completed quick task 6: silence-based pre-chunking in AsrProcessor
+Last activity: 2026-03-02 - Completed quick task 8: audiobook QC CLI command (ffmpeg silencedetect)
