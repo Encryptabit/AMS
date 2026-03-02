@@ -178,6 +178,15 @@ poc/VelloSharpPoc/     - Avalonia + VelloSharp (child window fails)
 - Phase 13 added: Pickup Substitution
 - Phase 12.1 inserted after Phase 12: MFA refinement for pickup timings — phoneme-accurate pickup boundaries via forced alignment (URGENT)
 
+### Quick Tasks Completed
+
+| # | Description | Date | Commit | Directory |
+|---|-------------|------|--------|-----------|
+| 3 | frequency dict + proper noun extraction | 2026-03-02 | ed4091f | [3-english-frequency-dictionary-infrastruct](./quick/3-english-frequency-dictionary-infrastruct/) |
+| 4 | wire .WithPrompt in AsrProcessor | 2026-03-02 | d5372fe | [4-wire-withprompt-in-asrprocessor](./quick/4-wire-withprompt-in-asrprocessor/) |
+| 5 | AudioBuffer contiguous backing + Memory<float> slicing | 2026-03-02 | 7ddc99c | [5-audiobuffer-contiguous-backing-memory-slice](./quick/5-audiobuffer-contiguous-backing-memory-slice/) |
+| 6 | silence-based pre-chunking in AsrProcessor | 2026-03-02 | f76a5c3 | [6-silence-based-pre-chunking-in-asrprocess](./quick/6-silence-based-pre-chunking-in-asrprocess/) |
+
 ## Next Action
 
 Phase 13 plan 13-07 complete. Old Polish pages decommissioned (Index.razor, ChapterPolish.razor, PickupImporter.razor, StagingQueue.razor deleted). PickupSubstitution.razor now owns /polish route directly. Memory-safe chapter flipper with audio deallocation. Continue with plan 13-08.
@@ -197,7 +206,4 @@ None currently.
 
 ## Session Continuity
 
-Last session: 2026-03-02 03:25 UTC
-Branch: `HEAD` (detached, quick task work)
-Stopped at: Completed quick-6-PLAN.md (silence-based pre-chunking)
-Note: SilenceChunker with O(n) sliding RMS detection, AsrService multi-chunk transcription with timestamp merging. 10 tests pass, 3 task commits. Continue with quick-6 merge or next task.
+Last activity: 2026-03-02 - Completed quick task 6: silence-based pre-chunking in AsrProcessor
