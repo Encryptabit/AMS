@@ -77,6 +77,9 @@
         <Folder Include="Application\Services\"/>
         <Folder Include="Services\Integrations\FFmpeg\models\"/>
     </ItemGroup>
+    <ItemGroup>
+        <EmbeddedResource Include="Resources\english-frequency-50k.txt" />
+    </ItemGroup>
     <Target Name="VerifyPlugalyzerCopy" AfterTargets="CopyFilesOutputgroupOutput"
             Condition="'$(ResolvedExtToolsDir)' != '' and Exists('$(ResolvedExtToolsDir)\Plugalyzer.exe')">
         <Message Text="Checking for Plugalyzer.exe in output..." Importance="high"/>
