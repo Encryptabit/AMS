@@ -1,4 +1,5 @@
 using System.Buffers;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
 using System.Text;
@@ -16,81 +17,317 @@ internal static class WhisperFactoryPool
         bool UseGpu,
         int GpuDevice,
         bool UseFlashAttention,
-        bool UseDtw);
+        bool UseDtw,
+        WhisperAlignmentHeadsPreset DtwPreset);
 
     private sealed class FactoryEntry
     {
-        public FactoryEntry(WhisperFactory factory)
+        public FactoryEntry(FactoryKey key)
         {
-            Factory = factory;
+            Factory = WhisperFactory.FromPath(key.ModelPath, new WhisperFactoryOptions
+            {
+                UseGpu = key.UseGpu,
+                GpuDevice = key.GpuDevice,
+                UseFlashAttention = key.UseFlashAttention,
+                UseDtwTimeStamps = key.UseDtw,
+                HeadsPreset = key.DtwPreset
+            });
+            LastUsedUtcTicks = DateTime.UtcNow.Ticks;
         }
 
         public WhisperFactory Factory { get; }
+        public object SyncRoot { get; } = new();
         public int RefCount;
+        public long LastUsedUtcTicks;
+        public bool IsDisposed;
     }
 
     private sealed class FactoryHandle : IDisposable
     {
-        private readonly FactoryKey _key;
         private FactoryEntry? _entry;
+        private int _disposed;
 
-        public FactoryHandle(FactoryKey key, FactoryEntry entry)
+        public FactoryHandle(FactoryEntry entry)
         {
-            _key = key;
             _entry = entry;
         }
 
-        public WhisperFactory Factory => _entry!.Factory;
-
         public void Dispose()
         {
-            if (_entry is null)
+            if (Interlocked.Exchange(ref _disposed, 1) != 0)
             {
                 return;
             }
 
-            lock (SyncRoot)
+            var entry = Interlocked.Exchange(ref _entry, null);
+            if (entry is null)
             {
-                if (--_entry.RefCount == 0)
-                {
-                    if (Entries.Remove(_key, out var removed))
-                    {
-                        removed.Factory.Dispose();
-                    }
-                }
+                return;
             }
 
-            _entry = null;
+            Release(entry);
         }
     }
 
-    private static readonly object SyncRoot = new();
-    private static readonly Dictionary<FactoryKey, FactoryEntry> Entries = new();
+    private static readonly TimeSpan IdleTtl =
+        TimeSpan.FromSeconds(ReadPositiveIntEnv("AMS_ASR_FACTORY_IDLE_SECONDS", 300));
+    private static readonly TimeSpan EvictionSweepInterval =
+        TimeSpan.FromSeconds(ReadPositiveIntEnv("AMS_ASR_FACTORY_SWEEP_SECONDS", 15));
+    private static readonly int MaxCachedFactories = ReadPositiveIntEnv("AMS_ASR_FACTORY_CACHE_SIZE", 3);
+
+    private static readonly ConcurrentDictionary<FactoryKey, Lazy<FactoryEntry>> Entries = new();
+    private static readonly object EvictionSync = new();
+    private static long _lastEvictionUtcTicks;
+
+    static WhisperFactoryPool()
+    {
+        Log.Debug(
+            "Whisper factory pool configured: cache_size={CacheSize} idle_ttl_s={IdleTtlSeconds} sweep_interval_s={SweepSeconds}",
+            MaxCachedFactories,
+            (int)IdleTtl.TotalSeconds,
+            (int)EvictionSweepInterval.TotalSeconds);
+    }
 
     public static IDisposable Acquire(string modelPath, WhisperFactoryOptions options, out WhisperFactory factory)
     {
+        ArgumentException.ThrowIfNullOrWhiteSpace(modelPath);
+
         var key = new FactoryKey(
-            ModelPath: Path.GetFullPath(modelPath),
+            ModelPath: NormalizeModelPath(modelPath),
             UseGpu: options.UseGpu,
             GpuDevice: options.GpuDevice,
             UseFlashAttention: options.UseFlashAttention,
-            UseDtw: options.UseDtwTimeStamps);
+            UseDtw: options.UseDtwTimeStamps,
+            DtwPreset: options.HeadsPreset);
 
-        FactoryEntry entry;
-        lock (SyncRoot)
+        while (true)
         {
-            if (!Entries.TryGetValue(key, out var cached))
+            var lazyEntry = Entries.GetOrAdd(
+                key,
+                static factoryKey => new Lazy<FactoryEntry>(
+                    () => CreateEntry(factoryKey),
+                    LazyThreadSafetyMode.ExecutionAndPublication));
+
+            FactoryEntry entry;
+            try
             {
-                cached = new FactoryEntry(WhisperFactory.FromPath(key.ModelPath, options));
-                Entries[key] = cached;
+                entry = lazyEntry.Value;
+            }
+            catch
+            {
+                Entries.TryRemove(new KeyValuePair<FactoryKey, Lazy<FactoryEntry>>(key, lazyEntry));
+                throw;
             }
 
-            cached.RefCount++;
-            entry = cached;
+            var nowTicks = DateTime.UtcNow.Ticks;
+            lock (entry.SyncRoot)
+            {
+                if (entry.IsDisposed)
+                {
+                    Entries.TryRemove(new KeyValuePair<FactoryKey, Lazy<FactoryEntry>>(key, lazyEntry));
+                    continue;
+                }
+
+                entry.RefCount++;
+                entry.LastUsedUtcTicks = nowTicks;
+            }
+
+            factory = entry.Factory;
+            TrySweep(nowTicks);
+            return new FactoryHandle(entry);
+        }
+    }
+
+    private static FactoryEntry CreateEntry(FactoryKey key)
+    {
+        Log.Debug(
+            "Whisper factory cache miss; loading model={Model} gpu={UseGpu} device={GpuDevice} flash={Flash} dtw={UseDtw}",
+            key.ModelPath,
+            key.UseGpu,
+            key.GpuDevice,
+            key.UseFlashAttention,
+            key.UseDtw);
+
+        return new FactoryEntry(key);
+    }
+
+    private static void Release(FactoryEntry entry)
+    {
+        var nowTicks = DateTime.UtcNow.Ticks;
+
+        lock (entry.SyncRoot)
+        {
+            if (entry.IsDisposed)
+            {
+                return;
+            }
+
+            if (entry.RefCount > 0)
+            {
+                entry.RefCount--;
+            }
+
+            if (entry.RefCount == 0)
+            {
+                entry.LastUsedUtcTicks = nowTicks;
+            }
         }
 
-        factory = entry.Factory;
-        return new FactoryHandle(key, entry);
+        TrySweep(nowTicks);
+    }
+
+    private static void TrySweep(long nowTicks)
+    {
+        if (nowTicks <= Interlocked.Read(ref _lastEvictionUtcTicks) + EvictionSweepInterval.Ticks)
+        {
+            return;
+        }
+
+        lock (EvictionSync)
+        {
+            if (nowTicks <= _lastEvictionUtcTicks + EvictionSweepInterval.Ticks)
+            {
+                return;
+            }
+
+            _lastEvictionUtcTicks = nowTicks;
+            SweepIdleEntries(nowTicks);
+            SweepLruEntries();
+        }
+    }
+
+    private static void SweepIdleEntries(long nowTicks)
+    {
+        foreach (var pair in Entries)
+        {
+            if (!pair.Value.IsValueCreated)
+            {
+                continue;
+            }
+
+            if (!TryGetEntry(pair.Key, pair.Value, out var entry))
+            {
+                continue;
+            }
+
+            bool idleTooLong;
+            lock (entry.SyncRoot)
+            {
+                if (entry.IsDisposed || entry.RefCount > 0)
+                {
+                    continue;
+                }
+
+                idleTooLong = nowTicks - entry.LastUsedUtcTicks >= IdleTtl.Ticks;
+            }
+
+            if (idleTooLong)
+            {
+                TryRemoveAndDispose(pair.Key, pair.Value, entry, "idle");
+            }
+        }
+    }
+
+    private static void SweepLruEntries()
+    {
+        if (Entries.Count <= MaxCachedFactories)
+        {
+            return;
+        }
+
+        var idleEntries = new List<(FactoryKey Key, Lazy<FactoryEntry> Lazy, FactoryEntry Entry, long LastUsedUtcTicks)>();
+
+        foreach (var pair in Entries)
+        {
+            if (!pair.Value.IsValueCreated)
+            {
+                continue;
+            }
+
+            if (!TryGetEntry(pair.Key, pair.Value, out var entry))
+            {
+                continue;
+            }
+
+            lock (entry.SyncRoot)
+            {
+                if (entry.IsDisposed || entry.RefCount > 0)
+                {
+                    continue;
+                }
+
+                idleEntries.Add((pair.Key, pair.Value, entry, entry.LastUsedUtcTicks));
+            }
+        }
+
+        if (idleEntries.Count == 0)
+        {
+            return;
+        }
+
+        idleEntries.Sort(static (a, b) => a.LastUsedUtcTicks.CompareTo(b.LastUsedUtcTicks));
+        var excess = Entries.Count - MaxCachedFactories;
+
+        for (var i = 0; i < idleEntries.Count && excess > 0; i++)
+        {
+            if (TryRemoveAndDispose(idleEntries[i].Key, idleEntries[i].Lazy, idleEntries[i].Entry, "lru"))
+            {
+                excess--;
+            }
+        }
+    }
+
+    private static bool TryGetEntry(FactoryKey key, Lazy<FactoryEntry> lazy, out FactoryEntry entry)
+    {
+        try
+        {
+            entry = lazy.Value;
+            return true;
+        }
+        catch
+        {
+            Entries.TryRemove(new KeyValuePair<FactoryKey, Lazy<FactoryEntry>>(key, lazy));
+            entry = null!;
+            return false;
+        }
+    }
+
+    private static bool TryRemoveAndDispose(
+        FactoryKey key,
+        Lazy<FactoryEntry> lazy,
+        FactoryEntry entry,
+        string reason)
+    {
+        lock (entry.SyncRoot)
+        {
+            if (entry.IsDisposed || entry.RefCount > 0)
+            {
+                return false;
+            }
+
+            if (!Entries.TryRemove(new KeyValuePair<FactoryKey, Lazy<FactoryEntry>>(key, lazy)))
+            {
+                return false;
+            }
+
+            entry.IsDisposed = true;
+        }
+
+        entry.Factory.Dispose();
+        Log.Debug("Whisper factory cache evicted reason={Reason} model={Model}", reason, key.ModelPath);
+        return true;
+    }
+
+    private static string NormalizeModelPath(string modelPath)
+    {
+        var fullPath = Path.GetFullPath(modelPath);
+        return OperatingSystem.IsWindows() ? fullPath.ToUpperInvariant() : fullPath;
+    }
+
+    private static int ReadPositiveIntEnv(string name, int fallback)
+    {
+        var raw = Environment.GetEnvironmentVariable(name);
+        return int.TryParse(raw, out var value) && value > 0 ? value : fallback;
     }
 }
 
