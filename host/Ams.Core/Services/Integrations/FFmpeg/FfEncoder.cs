@@ -333,19 +333,19 @@ internal static unsafe class FfEncoder
 
     private static (GCHandle[] Handles, IntPtr[] Pointers) PinChannels(AudioBuffer buffer)
     {
-        var handles = new GCHandle[buffer.Channels];
-        var pointers = new IntPtr[buffer.Channels];
+        // Pin the single contiguous backing array once, then compute per-channel pointers from offsets.
+        var backing = buffer.GetBackingArray();
+        var handle = GCHandle.Alloc(backing, GCHandleType.Pinned);
+        var basePtr = handle.AddrOfPinnedObject();
 
+        var handles = new GCHandle[1];
+        handles[0] = handle;
+
+        var pointers = new IntPtr[buffer.Channels];
         for (int ch = 0; ch < buffer.Channels; ch++)
         {
-            var channel = buffer.Planar[ch];
-            if (channel == null)
-            {
-                throw new InvalidOperationException($"Audio channel {ch} is null.");
-            }
-
-            handles[ch] = GCHandle.Alloc(channel, GCHandleType.Pinned);
-            pointers[ch] = handles[ch].AddrOfPinnedObject();
+            int offsetBytes = buffer.GetChannelOffset(ch) * sizeof(float);
+            pointers[ch] = basePtr + offsetBytes;
         }
 
         return (handles, pointers);

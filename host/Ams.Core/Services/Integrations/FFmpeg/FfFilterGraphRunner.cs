@@ -182,13 +182,12 @@ namespace Ams.Core.Services.Integrations.FFmpeg
                 frame->pts = pts;
 
                 float* dst = (float*)frame->data[0];
-                var planar = state.Buffer.Planar;
 
                 for (int i = 0; i < sampleCount; i++)
                 {
                     int baseIndex = i * state.Channels;
                     for (int ch = 0; ch < state.Channels; ch++)
-                        dst[baseIndex + ch] = planar[ch][offset + i];
+                        dst[baseIndex + ch] = state.Buffer.GetChannel(ch).Span[offset + i];
                 }
 
                 int ret = ffmpeg.av_buffersrc_add_frame_flags(state.Source, frame, BufferSrcFlagKeepRef);
@@ -514,7 +513,9 @@ namespace Ams.Core.Services.Integrations.FFmpeg
                 var buffer = new AudioBuffer(channelCount, _sampleRate, length, metadata);
 
                 for (int ch = 0; ch < channelCount; ch++)
-                    _channels[ch].CopyTo(buffer.Planar[ch], 0);
+                    System.Runtime.InteropServices.CollectionsMarshal
+                        .AsSpan(_channels[ch])
+                        .CopyTo(buffer.GetChannelSpan(ch));
 
                 return buffer;
             }

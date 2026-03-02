@@ -42,9 +42,9 @@ public class WavIoTests
             Assert.Equal(44100, buffer.SampleRate);
             Assert.Equal(samples.Length, buffer.Length);
 
-            Assert.InRange(buffer.Planar[0][0], -1.0f, -0.9999f);
-            Assert.Equal(0f, buffer.Planar[0][1], 6);
-            Assert.InRange(buffer.Planar[0][2], 0.9999f, 1.0f);
+            Assert.InRange(buffer.GetChannel(0).Span[0], -1.0f, -0.9999f);
+            Assert.Equal(0f, buffer.GetChannel(0).Span[1], 6);
+            Assert.InRange(buffer.GetChannel(0).Span[2], 0.9999f, 1.0f);
         }
         finally
         {
@@ -68,9 +68,9 @@ public class WavIoTests
             Assert.Equal(48000, buffer.SampleRate);
             Assert.Equal(samples.Length, buffer.Length);
 
-            Assert.InRange(buffer.Planar[0][0], -1.0f, -0.99999f);
-            Assert.Equal(0f, buffer.Planar[0][1], 6);
-            Assert.InRange(buffer.Planar[0][2], 0.99999f, 1.0f);
+            Assert.InRange(buffer.GetChannel(0).Span[0], -1.0f, -0.99999f);
+            Assert.Equal(0f, buffer.GetChannel(0).Span[1], 6);
+            Assert.InRange(buffer.GetChannel(0).Span[2], 0.99999f, 1.0f);
         }
         finally
         {
@@ -93,9 +93,9 @@ public class WavIoTests
             Assert.Equal(1, buffer.Channels);
             Assert.Equal(32000, buffer.SampleRate);
             Assert.Equal(samples.Length, buffer.Length);
-            Assert.Equal(samples[0], buffer.Planar[0][0], 6);
-            Assert.Equal(samples[1], buffer.Planar[0][1], 6);
-            Assert.Equal(samples[2], buffer.Planar[0][2], 6);
+            Assert.Equal(samples[0], buffer.GetChannel(0).Span[0], 6);
+            Assert.Equal(samples[1], buffer.GetChannel(0).Span[1], 6);
+            Assert.Equal(samples[2], buffer.GetChannel(0).Span[2], 6);
         }
         finally
         {
@@ -120,9 +120,9 @@ public class WavIoTests
             Assert.Equal(44100, buffer.SampleRate);
             Assert.Equal(samples.Length, buffer.Length);
 
-            Assert.InRange(buffer.Planar[0][0], -1.0f, -0.9999f);
-            Assert.Equal(0f, buffer.Planar[0][1], 6);
-            Assert.InRange(buffer.Planar[0][2], 0.9999f, 1.0f);
+            Assert.InRange(buffer.GetChannel(0).Span[0], -1.0f, -0.9999f);
+            Assert.Equal(0f, buffer.GetChannel(0).Span[1], 6);
+            Assert.InRange(buffer.GetChannel(0).Span[2], 0.9999f, 1.0f);
         }
         finally
         {

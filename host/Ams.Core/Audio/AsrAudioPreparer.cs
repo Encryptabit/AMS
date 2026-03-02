@@ -126,15 +126,16 @@ public static class AsrAudioPreparer
         }
 
         var mono = new AudioBuffer(1, buffer.SampleRate, buffer.Length);
+        var dst = mono.GetChannelSpan(0);
         for (var i = 0; i < buffer.Length; i++)
         {
             double sum = 0;
             for (var ch = 0; ch < buffer.Channels; ch++)
             {
-                sum += buffer.Planar[ch][i];
+                sum += buffer.GetChannel(ch).Span[i];
             }
 
-            mono.Planar[0][i] = (float)(sum / buffer.Channels);
+            dst[i] = (float)(sum / buffer.Channels);
         }
 
         return mono;

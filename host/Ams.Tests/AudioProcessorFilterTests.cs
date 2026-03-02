@@ -46,7 +46,7 @@ public class AudioProcessorFilterTests
                 double value = frequency == 0
                     ? 0.0
                     : scale * Math.Sin(2 * Math.PI * frequency * i / sampleRate);
-                buffer.Planar[0][cursor + i] = (float)value;
+                buffer.GetChannelSpan(0)[cursor + i] = (float)value;
             }
 
             cursor += segSamples;
@@ -76,12 +76,13 @@ public class AudioProcessorFilterTests
 
         // First 1% of fade duration should be near silence (amplitude ramping from 0)
         int earlySamples = fadeSamples / 100;
-        var earlyMax = faded.Planar[0].Take(earlySamples).Max(Math.Abs);
+        var fadedChannel = faded.GetChannel(0).ToArray();
+        var earlyMax = fadedChannel.Take(earlySamples).Max(Math.Abs);
         Assert.True(earlyMax < 0.05f, $"Early samples should be near zero, but max was {earlyMax}");
 
         // Samples after fade should be at full amplitude (matching original)
         int postFadeStart = fadeSamples + 100;
-        var postFadeMax = faded.Planar[0].Skip(postFadeStart).Take(100).Max(Math.Abs);
+        var postFadeMax = fadedChannel.Skip(postFadeStart).Take(100).Max(Math.Abs);
         Assert.True(postFadeMax > 0.4f, $"Post-fade samples should be at full amplitude, but max was {postFadeMax}");
     }
 
