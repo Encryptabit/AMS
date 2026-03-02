@@ -1,4 +1,5 @@
 using FFmpeg.AutoGen;
+using System.Text.RegularExpressions;
 
 namespace Ams.Core.Services.Integrations.FFmpeg;
 
@@ -131,7 +132,122 @@ public sealed class FfSession : IDisposable
         }
 
         ffmpeg.RootPath = normalized;
+        ConfigureAutoGenLibraryMap(normalized);
         return true;
+    }
+
+    /// <summary>
+    /// Align FFmpeg.AutoGen dynamic-library metadata with what exists on disk.
+    ///
+    /// FFmpeg.AutoGen 8.0.0 ships a dependency map where avfilter depends on
+    /// "postproc", but LibraryVersionMap omits a postproc entry. This can throw
+    /// KeyNotFoundException during first avfilter call. We normalize that mapping
+    /// based on the discovered native files.
+    /// </summary>
+    private static void ConfigureAutoGenLibraryMap(string rootPath)
+    {
+        if (!FunctionResolverBase.LibraryDependenciesMap.TryGetValue("avfilter", out var avfilterDeps))
+        {
+            return;
+        }
+
+        var hasPostproc = HasNativeLibraryPrefix(rootPath, "postproc");
+        if (!hasPostproc)
+        {
+            if (avfilterDeps.Any(dep => dep.Equals("postproc", StringComparison.OrdinalIgnoreCase)))
+            {
+                FunctionResolverBase.LibraryDependenciesMap["avfilter"] = avfilterDeps
+                    .Where(dep => !dep.Equals("postproc", StringComparison.OrdinalIgnoreCase))
+                    .ToArray();
+            }
+
+            FunctionResolverBase.LibraryDependenciesMap.Remove("postproc");
+            ffmpeg.LibraryVersionMap.Remove("postproc");
+            return;
+        }
+
+        if (ffmpeg.LibraryVersionMap.ContainsKey("postproc"))
+        {
+            return;
+        }
+
+        var postprocMajor = DetectLibraryMajorVersion(rootPath, "postproc");
+        if (postprocMajor > 0)
+        {
+            ffmpeg.LibraryVersionMap["postproc"] = postprocMajor;
+            return;
+        }
+
+        // Conservative fallback for modern Windows/Linux shared FFmpeg builds.
+        ffmpeg.LibraryVersionMap["postproc"] = 59;
+    }
+
+    private static bool HasNativeLibraryPrefix(string rootPath, string prefix)
+    {
+        foreach (var file in EnumerateLibraryFiles(rootPath))
+        {
+            var name = Path.GetFileName(file);
+            if (name.StartsWith(prefix, StringComparison.OrdinalIgnoreCase) ||
+                name.StartsWith($"lib{prefix}", StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static int DetectLibraryMajorVersion(string rootPath, string prefix)
+    {
+        var windowsPattern = new Regex(
+            $"^{Regex.Escape(prefix)}-(\\d+)\\.dll$",
+            RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+        var unixPattern = new Regex(
+            $"^lib{Regex.Escape(prefix)}\\.so\\.(\\d+)$",
+            RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+
+        foreach (var file in EnumerateLibraryFiles(rootPath))
+        {
+            var name = Path.GetFileName(file);
+
+            var windowsMatch = windowsPattern.Match(name);
+            if (windowsMatch.Success && int.TryParse(windowsMatch.Groups[1].Value, out var winMajor))
+            {
+                return winMajor;
+            }
+
+            var unixMatch = unixPattern.Match(name);
+            if (unixMatch.Success && int.TryParse(unixMatch.Groups[1].Value, out var unixMajor))
+            {
+                return unixMajor;
+            }
+        }
+
+        return 0;
+    }
+
+    private static IEnumerable<string> EnumerateLibraryFiles(string rootPath)
+    {
+        if (!Directory.Exists(rootPath))
+        {
+            yield break;
+        }
+
+        foreach (var file in Directory.EnumerateFiles(rootPath, "*.*", SearchOption.TopDirectoryOnly))
+        {
+            yield return file;
+        }
+
+        var nestedBin = Path.Combine(rootPath, "bin");
+        if (!Directory.Exists(nestedBin))
+        {
+            yield break;
+        }
+
+        foreach (var file in Directory.EnumerateFiles(nestedBin, "*.*", SearchOption.TopDirectoryOnly))
+        {
+            yield return file;
+        }
     }
 
     private static bool HasNativeLibraries(string directory)
