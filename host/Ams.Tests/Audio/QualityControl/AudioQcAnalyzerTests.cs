@@ -120,6 +120,30 @@ public class AudioQcAnalyzerTests
         Assert.Equal(2.0, tail);
     }
 
+    [Fact]
+    public void AnalyzeStructure_MicroPausesBeforeGap_SelectsLongestAsGap()
+    {
+        // Head silence, then several micro-pauses (inter-word), then the real title-body gap
+        var silences = new SilenceRegion[]
+        {
+            new(0.0, 0.75, 0.75),       // head
+            new(0.88, 0.95, 0.07),       // micro-pause within title
+            new(1.10, 1.17, 0.07),       // micro-pause within title
+            new(3.20, 4.80, 1.60),       // actual title-body gap (longest)
+            new(8.50, 8.58, 0.08),       // micro-pause in body
+            new(297.5, 300.1, 2.60)      // tail
+        };
+
+        var (head, title, gap, tail) = AudioQcAnalyzer.AnalyzeStructure(silences, 300.1);
+
+        Assert.Equal(0.75, head);
+        Assert.NotNull(gap);
+        Assert.Equal(1.6, gap.Value, 3);
+        Assert.NotNull(title);
+        Assert.Equal(3.20 - 0.75, title.Value, 3); // title = speech between head end and gap start
+        Assert.Equal(2.6, tail);
+    }
+
     #endregion
 
     #region FlagAnomalies

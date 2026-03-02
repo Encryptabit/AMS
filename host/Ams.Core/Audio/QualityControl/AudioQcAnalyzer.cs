@@ -56,18 +56,28 @@ public static class AudioQcAnalyzer
                 : totalDurationSec - lastRegion.Start;
         }
 
-        // Title-body gap: after head silence, the next silence region that is NOT the tail
-        // We need at least: head + gap + tail (3 regions) or head + gap (2+ regions where gap != tail)
+        // Title-body gap: the longest non-head, non-tail silence in the first portion
+        // of the file (first 60s or 10% of duration, whichever is larger). The structural
+        // gap between title narration and body text is typically the most prominent silence
+        // near the start — much longer than inter-word pauses.
         double? titleDurationSec = null;
         double? titleBodyGapSec = null;
 
-        // Find the gap region: first non-head, non-tail silence region
+        var searchLimit = Math.Max(60.0, totalDurationSec * 0.10);
         int gapIndex = -1;
+        double longestGapDuration = 0.0;
         for (int i = 0; i < silences.Count; i++)
         {
             if (i == headIndex || i == tailIndex) continue;
-            gapIndex = i;
-            break;
+            if (silences[i].Start > searchLimit) break;
+            var dur = silences[i].Duration >= 0
+                ? silences[i].Duration
+                : totalDurationSec - silences[i].Start;
+            if (dur > longestGapDuration)
+            {
+                longestGapDuration = dur;
+                gapIndex = i;
+            }
         }
 
         if (gapIndex >= 0 && headIndex >= 0)
