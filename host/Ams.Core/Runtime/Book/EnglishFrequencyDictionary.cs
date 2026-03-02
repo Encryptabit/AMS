@@ -5,12 +5,13 @@ namespace Ams.Core.Runtime.Book;
 
 /// <summary>
 /// Static singleton frequency dictionary for common English words.
-/// Loads ~50k words from an embedded resource, ordered by descending frequency (rank 1 = most common).
-/// Used to identify proper nouns and rare/fantasy words during book indexing.
+/// Loads ~82k words from SymSpell's frequency_dictionary_en_82_765.txt (MIT license).
+/// Format: "word frequency_count" per line, sorted by descending frequency.
+/// Rank 1 = most common. Used to identify proper nouns and rare/fantasy words during book indexing.
 /// </summary>
 public static class EnglishFrequencyDictionary
 {
-    private const string ResourceName = "Ams.Core.Resources.english-frequency-50k.txt";
+    private const string ResourceName = "Ams.Core.Resources.english-frequency-82k.txt";
 
     private static readonly Lazy<FrozenDictionary<string, int>> LazyDictionary = new(LoadDictionary);
 
@@ -38,7 +39,7 @@ public static class EnglishFrequencyDictionary
     /// <summary>
     /// True if the word is absent from the dictionary or has rank greater than rarityThreshold.
     /// </summary>
-    public static bool IsRareOrUnknown(string word, int rarityThreshold = 50_000)
+    public static bool IsRareOrUnknown(string word, int rarityThreshold = 80_000)
     {
         var rank = GetRank(word);
         return rank < 0 || rank > rarityThreshold;
@@ -52,7 +53,7 @@ public static class EnglishFrequencyDictionary
                                $"Embedded resource '{ResourceName}' not found in assembly.");
 
         using var reader = new StreamReader(stream);
-        var dict = new Dictionary<string, int>(60_000, StringComparer.Ordinal);
+        var dict = new Dictionary<string, int>(90_000, StringComparer.Ordinal);
         int rank = 1;
         string? line;
         while ((line = reader.ReadLine()) != null)
@@ -61,7 +62,10 @@ public static class EnglishFrequencyDictionary
             if (trimmed.Length == 0)
                 continue;
 
-            var key = trimmed.ToLowerInvariant();
+            // Format: "word frequency_count" (space-separated, two columns)
+            var spaceIdx = trimmed.IndexOf(' ');
+            var key = (spaceIdx > 0 ? trimmed[..spaceIdx] : trimmed).ToLowerInvariant();
+
             dict.TryAdd(key, rank);
             rank++;
         }
