@@ -175,8 +175,13 @@ public class ProofReportService
     /// </summary>
     private static bool IsSentenceFlagged(HydratedSentence sentence)
     {
-        return !string.Equals(sentence.Status, "ok", StringComparison.OrdinalIgnoreCase)
-               || sentence.Diff != null;
+        var stats = sentence.Diff?.Stats;
+        if (stats is null)
+        {
+            return !string.Equals(sentence.Status, "ok", StringComparison.OrdinalIgnoreCase);
+        }
+
+        return stats.Insertions > 0 || stats.Deletions > 0;
     }
 
     /// <summary>

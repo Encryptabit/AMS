@@ -7,6 +7,7 @@ using System.Text;
 using System.Threading;
 using Ams.Core.Artifacts;
 using Ams.Core.Audio;
+using Ams.Core.Common;
 using Whisper.net;
 
 namespace Ams.Core.Processors;
@@ -747,10 +748,59 @@ public static class AsrProcessor
 
         if (!string.IsNullOrWhiteSpace(options.Prompt))
         {
-            builder.WithPrompt(options.Prompt);
+            var normalizedPrompt = NormalizePrompt(options.Prompt);
+            if (!string.IsNullOrWhiteSpace(normalizedPrompt))
+            {
+                builder.WithPrompt(normalizedPrompt);
+            }
         }
 
         return builder;
+    }
+
+    private static string NormalizePrompt(string prompt)
+    {
+        if (string.IsNullOrWhiteSpace(prompt))
+        {
+            return string.Empty;
+        }
+
+        var normalized = TextNormalizer.NormalizeTypography(prompt);
+
+        // Guard against replacement-char artifacts leaking into decoder context.
+        normalized = normalized.Replace('\uFFFD', '\'');
+
+        return CollapseWhitespace(normalized);
+    }
+
+    private static string CollapseWhitespace(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return string.Empty;
+        }
+
+        var builder = new StringBuilder(value.Length);
+        var pendingSpace = false;
+
+        foreach (var ch in value)
+        {
+            if (char.IsWhiteSpace(ch))
+            {
+                pendingSpace = builder.Length > 0;
+                continue;
+            }
+
+            if (pendingSpace)
+            {
+                builder.Append(' ');
+                pendingSpace = false;
+            }
+
+            builder.Append(ch);
+        }
+
+        return builder.ToString().Trim();
     }
 
     private static void AppendTokens(List<AsrToken> tokens, SegmentData segment)

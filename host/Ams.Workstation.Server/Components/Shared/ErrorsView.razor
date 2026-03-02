@@ -77,13 +77,81 @@
 
     private IEnumerable<SentenceReport> ErrorSentences =>
         Report?.Sentences
-            .Where(s => s.Status != "ok" || HasNonEqualDiffOps(s.Diff))
+            .Where(HasVisibleError)
             .OrderByDescending(s => ParseWer(s.Wer))
             .ThenBy(s => s.Id)
         ?? Enumerable.Empty<SentenceReport>();
 
-    private static bool HasNonEqualDiffOps(DiffReport? diff) =>
-        diff?.Ops.Any(op => op.Op != "equal") == true;
+    private bool HasVisibleError(SentenceReport sentence)
+    {
+        if (HasVisibleDiffOps(sentence.Diff, IgnoredKeys))
+        {
+            return true;
+        }
+
+        // Keep non-ok, no-diff statuses visible (fallback path when diff payload is absent).
+        if (sentence.Diff?.Ops is null || sentence.Diff.Ops.Count == 0)
+        {
+            return !string.Equals(sentence.Status, "ok", StringComparison.OrdinalIgnoreCase);
+        }
+
+        return false;
+    }
+
+    private static bool HasVisibleDiffOps(DiffReport? diff, IReadOnlySet<string>? ignoredKeys)
+    {
+        if (diff?.Ops is null || diff.Ops.Count == 0)
+        {
+            return false;
+        }
+
+        if (ignoredKeys is null || ignoredKeys.Count == 0)
+        {
+            return diff.Ops.Any(op => op.Op != "equal");
+        }
+
+        var ops = diff.Ops.ToList();
+        for (var i = 0; i < ops.Count; i++)
+        {
+            var op = ops[i];
+            if (string.Equals(op.Op, "equal", StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            if (string.Equals(op.Op, "delete", StringComparison.Ordinal))
+            {
+                var bookText = string.Join(" ", op.Tokens);
+                if (i + 1 < ops.Count && string.Equals(ops[i + 1].Op, "insert", StringComparison.Ordinal))
+                {
+                    var scriptText = string.Join(" ", ops[i + 1].Tokens);
+                    if (!ignoredKeys.Contains(Services.ErrorPatternService.BuildKey("sub", bookText, scriptText)))
+                    {
+                        return true;
+                    }
+
+                    i++;
+                }
+                else
+                {
+                    if (!ignoredKeys.Contains(Services.ErrorPatternService.BuildKey("del", bookText, string.Empty)))
+                    {
+                        return true;
+                    }
+                }
+            }
+            else if (string.Equals(op.Op, "insert", StringComparison.Ordinal))
+            {
+                var scriptText = string.Join(" ", op.Tokens);
+                if (!ignoredKeys.Contains(Services.ErrorPatternService.BuildKey("ins", string.Empty, scriptText)))
+                {
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
 
     private double ParseWer(string wer)
     {

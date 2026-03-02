@@ -7,6 +7,17 @@ namespace Ams.Core.Processors.Diffing;
 
 public static class TextDiffAnalyzer
 {
+    private static readonly HashSet<string> ApostropheSuffixTokens = new(StringComparer.Ordinal)
+    {
+        "s",
+        "d",
+        "m",
+        "re",
+        "ve",
+        "ll",
+        "t"
+    };
+
     public static TextDiffResult Analyze(string? referenceText, string? hypothesisText)
         => Analyze(referenceText, hypothesisText, null);
 
@@ -17,14 +28,22 @@ public static class TextDiffAnalyzer
     {
         var scoringReference = NormalizeForScoring(referenceText);
         var scoringHypothesis = NormalizeForScoring(hypothesisText);
-        var scoringReferenceTokens = ResolveScoringTokens(scoringReference, scoringOptions?.ReferenceTokens);
-        var scoringHypothesisTokens = ResolveScoringTokens(scoringHypothesis, scoringOptions?.HypothesisTokens);
+        var scoringReferencePayload = ResolveScoringPayload(
+            scoringReference,
+            scoringOptions?.ReferenceTokens,
+            scoringOptions?.ReferencePhonemeVariants);
+        var scoringHypothesisPayload = ResolveScoringPayload(
+            scoringHypothesis,
+            scoringOptions?.HypothesisTokens,
+            scoringOptions?.HypothesisPhonemeVariants);
+        var scoringReferenceTokens = scoringReferencePayload.Tokens;
+        var scoringHypothesisTokens = scoringHypothesisPayload.Tokens;
 
         var scoringReferencePhonemes = AlignPhonemePayload(
-            scoringOptions?.ReferencePhonemeVariants,
+            scoringReferencePayload.Phonemes,
             scoringReferenceTokens.Count);
         var scoringHypothesisPhonemes = AlignPhonemePayload(
-            scoringOptions?.HypothesisPhonemeVariants,
+            scoringHypothesisPayload.Phonemes,
             scoringHypothesisTokens.Count);
 
         var displayReference = NormalizeForDisplay(referenceText);
@@ -154,7 +173,7 @@ public static class TextDiffAnalyzer
     private static string NormalizeForScoring(string? value)
         => string.IsNullOrWhiteSpace(value)
             ? string.Empty
-            : TextNormalizer.Normalize(value, expandContractions: true, removeNumbers: false);
+            : TextNormalizer.Normalize(value, expandContractions: false, removeNumbers: false);
 
     private static string NormalizeForDisplay(string? value)
         => string.IsNullOrWhiteSpace(value)
@@ -170,28 +189,189 @@ public static class TextDiffAnalyzer
 
         var tokens = new List<string>();
         TextNormalizer.TokenizeWords(text, tokens);
+        CollapseApostropheSuffixTokens(tokens);
         return tokens;
     }
 
-    private static List<string> ResolveScoringTokens(string normalizedFallback, IReadOnlyList<string>? providedTokens)
+    private static ScoringTokenPayload ResolveScoringPayload(
+        string normalizedFallback,
+        IReadOnlyList<string>? providedTokens,
+        IReadOnlyList<string[]?>? providedPhonemes)
     {
         if (providedTokens is null)
         {
-            return Tokenize(normalizedFallback);
+            return new ScoringTokenPayload(Tokenize(normalizedFallback), providedPhonemes);
         }
 
         var tokens = new List<string>(providedTokens.Count);
-        foreach (var token in providedTokens)
+        List<string[]?>? phonemes = providedPhonemes is null ? null : new List<string[]?>(providedTokens.Count);
+        for (var i = 0; i < providedTokens.Count; i++)
         {
+            var token = providedTokens[i];
             if (string.IsNullOrWhiteSpace(token))
             {
                 continue;
             }
 
             tokens.Add(token.Trim());
+
+            if (phonemes is not null)
+            {
+                phonemes.Add(i < providedPhonemes!.Count ? providedPhonemes[i] : null);
+            }
         }
 
-        return tokens;
+        CollapseApostropheSuffixTokens(tokens, phonemes);
+        return new ScoringTokenPayload(tokens, phonemes);
+    }
+
+    private static void CollapseApostropheSuffixTokens(List<string> tokens, List<string[]?>? phonemes = null)
+    {
+        if (tokens.Count < 2)
+        {
+            return;
+        }
+
+        var write = 1;
+        for (var read = 1; read < tokens.Count; read++)
+        {
+            var current = tokens[read];
+            var previous = tokens[write - 1];
+
+            if (TryGetApostropheSuffix(current, out var suffix) && CanAttachApostropheSuffix(previous, suffix))
+            {
+                tokens[write - 1] = $"{previous}'{suffix}";
+                if (phonemes is not null)
+                {
+                    phonemes[write - 1] = MergePhonemeVariants(phonemes[write - 1], phonemes[read]);
+                }
+
+                continue;
+            }
+
+            if (write != read)
+            {
+                tokens[write] = current;
+                if (phonemes is not null)
+                {
+                    phonemes[write] = phonemes[read];
+                }
+            }
+
+            write++;
+        }
+
+        if (write < tokens.Count)
+        {
+            tokens.RemoveRange(write, tokens.Count - write);
+        }
+
+        if (phonemes is not null && write < phonemes.Count)
+        {
+            phonemes.RemoveRange(write, phonemes.Count - write);
+        }
+    }
+
+    private static bool TryGetApostropheSuffix(string token, out string suffix)
+    {
+        suffix = string.Empty;
+        if (string.IsNullOrWhiteSpace(token))
+        {
+            return false;
+        }
+
+        var span = token.AsSpan().Trim();
+        var start = 0;
+        while (start < span.Length && span[start] == '\'')
+        {
+            start++;
+        }
+
+        if (start >= span.Length)
+        {
+            return false;
+        }
+
+        for (var i = start; i < span.Length; i++)
+        {
+            if (!char.IsLetter(span[i]))
+            {
+                return false;
+            }
+        }
+
+        suffix = span[start..].ToString().ToLowerInvariant();
+        return ApostropheSuffixTokens.Contains(suffix);
+    }
+
+    private static bool CanAttachApostropheSuffix(string baseToken, string suffix)
+    {
+        if (string.IsNullOrWhiteSpace(baseToken))
+        {
+            return false;
+        }
+
+        var hasWordChars = false;
+        for (var i = 0; i < baseToken.Length; i++)
+        {
+            if (char.IsLetterOrDigit(baseToken[i]))
+            {
+                hasWordChars = true;
+                break;
+            }
+        }
+
+        if (!hasWordChars)
+        {
+            return false;
+        }
+
+        if (string.Equals(suffix, "t", StringComparison.Ordinal))
+        {
+            return baseToken.EndsWith("n", StringComparison.OrdinalIgnoreCase);
+        }
+
+        return true;
+    }
+
+    private static string[]? MergePhonemeVariants(string[]? primary, string[]? secondary)
+    {
+        var primaryHasValues = primary is { Length: > 0 };
+        var secondaryHasValues = secondary is { Length: > 0 };
+
+        if (!primaryHasValues)
+        {
+            return secondaryHasValues ? secondary : null;
+        }
+
+        if (!secondaryHasValues)
+        {
+            return primary;
+        }
+
+        var merged = new List<string>(primary!.Length + secondary!.Length);
+        foreach (var variant in primary)
+        {
+            if (!string.IsNullOrWhiteSpace(variant))
+            {
+                merged.Add(variant);
+            }
+        }
+
+        foreach (var variant in secondary)
+        {
+            if (string.IsNullOrWhiteSpace(variant))
+            {
+                continue;
+            }
+
+            if (!merged.Any(existing => string.Equals(existing, variant, StringComparison.OrdinalIgnoreCase)))
+            {
+                merged.Add(variant);
+            }
+        }
+
+        return merged.Count == 0 ? null : merged.ToArray();
     }
 
     private static IReadOnlyList<string[]?>? AlignPhonemePayload(IReadOnlyList<string[]?>? variants, int tokenCount)
@@ -455,6 +635,8 @@ public static class TextDiffAnalyzer
         Operation.INSERT => "insert",
         _ => "equal"
     };
+
+    private sealed record ScoringTokenPayload(List<string> Tokens, IReadOnlyList<string[]?>? Phonemes);
 
     private sealed record TokenDiffResult(List<Diff> Diffs, List<string> Dictionary);
 }
