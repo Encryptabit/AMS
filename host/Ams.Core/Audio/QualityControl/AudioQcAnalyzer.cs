@@ -1,76 +1,20 @@
-using System.Diagnostics;
 using System.Globalization;
-using System.Text.Json;
-using System.Text.RegularExpressions;
-using Ams.Core.Common;
+using Ams.Core.Processors;
 
 namespace Ams.Core.Audio.QualityControl;
 
 /// <summary>
-/// Analyzes audiobook chapter audio files for QC using ffmpeg silencedetect.
-/// Pure analysis functions (ParseSilenceRegions, AnalyzeStructure, FlagAnomalies)
-/// are static and testable without ffmpeg. AnalyzeFileAsync requires ffmpeg/ffprobe.
+/// Analyzes audiobook chapter audio files for QC using in-process FFmpeg (via AudioProcessor).
+/// Pure analysis functions (AnalyzeStructure, FlagAnomalies)
+/// are static and testable without FFmpeg. AnalyzeFile requires FFmpeg native libraries.
 /// </summary>
 public static class AudioQcAnalyzer
 {
-    private static readonly Regex SilenceStartRegex = new(@"silence_start:\s*([\d.]+)", RegexOptions.Compiled);
-    private static readonly Regex SilenceEndRegex = new(@"silence_end:\s*([\d.]+)", RegexOptions.Compiled);
-    private static readonly Regex SilenceDurationRegex = new(@"silence_duration:\s*([\d.]+)", RegexOptions.Compiled);
-
     /// <summary>
     /// Tolerance in seconds for considering a silence region as starting "near" 0.0
     /// or ending "near" the total file duration.
     /// </summary>
     private const double NearBoundaryTolerance = 0.05;
-
-    /// <summary>
-    /// Parses silence regions from ffmpeg silencedetect stderr output.
-    /// Handles trailing silence_start with no matching silence_end by returning
-    /// a sentinel region with End = -1 and Duration = -1.
-    /// Uses InvariantCulture for all double parsing.
-    /// </summary>
-    public static SilenceRegion[] ParseSilenceRegions(string ffmpegStderr)
-    {
-        if (string.IsNullOrEmpty(ffmpegStderr))
-            return [];
-
-        var regions = new List<SilenceRegion>();
-        double? currentStart = null;
-
-        foreach (var line in ffmpegStderr.Split('\n'))
-        {
-            if (line.Contains("silence_start:"))
-            {
-                var m = SilenceStartRegex.Match(line);
-                if (m.Success)
-                {
-                    currentStart = double.Parse(m.Groups[1].Value, CultureInfo.InvariantCulture);
-                }
-            }
-            else if (line.Contains("silence_end:") && currentStart.HasValue)
-            {
-                var endMatch = SilenceEndRegex.Match(line);
-                var durMatch = SilenceDurationRegex.Match(line);
-                if (endMatch.Success)
-                {
-                    var end = double.Parse(endMatch.Groups[1].Value, CultureInfo.InvariantCulture);
-                    var duration = durMatch.Success
-                        ? double.Parse(durMatch.Groups[1].Value, CultureInfo.InvariantCulture)
-                        : end - currentStart.Value;
-                    regions.Add(new SilenceRegion(currentStart.Value, end, duration));
-                    currentStart = null;
-                }
-            }
-        }
-
-        // Handle trailing silence_start with no matching silence_end
-        if (currentStart.HasValue)
-        {
-            regions.Add(new SilenceRegion(currentStart.Value, -1.0, -1.0));
-        }
-
-        return regions.ToArray();
-    }
 
     /// <summary>
     /// Analyzes the structure of detected silence regions to identify head silence,
@@ -200,23 +144,30 @@ public static class AudioQcAnalyzer
     }
 
     /// <summary>
-    /// Analyzes a single audio file for QC by running ffmpeg silencedetect and ffprobe.
+    /// Analyzes a single audio file for QC using in-process FFmpeg (AudioProcessor).
     /// </summary>
-    public static async Task<ChapterQcResult> AnalyzeFileAsync(
+    public static ChapterQcResult AnalyzeFile(
         string filePath,
         double noiseDb,
         double minSilenceDurationSec,
-        QcThresholds thresholds,
-        CancellationToken ct)
+        QcThresholds thresholds)
     {
         var fileName = Path.GetFileName(filePath);
 
-        // Get file metadata via ffprobe
-        var (durationSec, channels, sampleRate) = await ProbeFileAsync(filePath, ct);
+        // Probe file metadata via in-process FFmpeg
+        var info = AudioProcessor.Probe(filePath);
+        var durationSec = info.Duration.TotalSeconds;
 
-        // Run silence detection
-        var silenceStderr = await RunSilenceDetectAsync(filePath, noiseDb, minSilenceDurationSec, ct);
-        var silences = ParseSilenceRegions(silenceStderr);
+        // Decode and run silence detection via in-process libavfilter
+        var buffer = AudioProcessor.Decode(filePath);
+        var intervals = AudioProcessor.DetectSilence(buffer, new SilenceDetectOptions
+        {
+            NoiseDb = noiseDb,
+            MinimumDuration = TimeSpan.FromSeconds(minSilenceDurationSec)
+        });
+
+        // Map SilenceInterval → SilenceRegion for structure analysis
+        var silences = MapToRegions(intervals, durationSec);
 
         // Analyze structure
         var (headSilence, titleDuration, titleBodyGap, tailSilence) =
@@ -226,8 +177,8 @@ public static class AudioQcAnalyzer
         {
             FileName = fileName,
             DurationSec = durationSec,
-            Channels = channels,
-            SampleRate = sampleRate,
+            Channels = info.Channels,
+            SampleRate = info.SampleRate,
             HeadSilenceSec = headSilence,
             TitleDurationSec = titleDuration,
             TitleBodyGapSec = titleBodyGap,
@@ -242,95 +193,23 @@ public static class AudioQcAnalyzer
         return result;
     }
 
-    private static async Task<(double DurationSec, int Channels, int SampleRate)> ProbeFileAsync(
-        string filePath, CancellationToken ct)
+    /// <summary>
+    /// Maps <see cref="SilenceInterval"/> (from AudioProcessor.DetectSilence) to
+    /// <see cref="SilenceRegion"/> (used by QC structure analysis).
+    /// A trailing interval whose End matches the file duration is mapped with
+    /// sentinel End/Duration = -1 to signal open-ended tail silence.
+    /// </summary>
+    private static SilenceRegion[] MapToRegions(IReadOnlyList<SilenceInterval> intervals, double totalDurationSec)
     {
-        var ffprobeExe = Environment.GetEnvironmentVariable("FFPROBE_EXE");
-        if (string.IsNullOrWhiteSpace(ffprobeExe))
+        var regions = new SilenceRegion[intervals.Count];
+        for (int i = 0; i < intervals.Count; i++)
         {
-            // Try ffprobe next to ffmpeg
-            var ffmpegExe = Environment.GetEnvironmentVariable("FFMPEG_EXE");
-            if (!string.IsNullOrWhiteSpace(ffmpegExe))
-            {
-                var dir = Path.GetDirectoryName(ffmpegExe);
-                if (dir is not null)
-                {
-                    var candidate = Path.Combine(dir, "ffprobe");
-                    if (File.Exists(candidate)) ffprobeExe = candidate;
-                    candidate = Path.Combine(dir, "ffprobe.exe");
-                    if (File.Exists(candidate)) ffprobeExe = candidate;
-                }
-            }
-            ffprobeExe ??= "ffprobe";
+            var iv = intervals[i];
+            regions[i] = new SilenceRegion(
+                iv.Start.TotalSeconds,
+                iv.End.TotalSeconds,
+                iv.Duration.TotalSeconds);
         }
-
-        var psi = new ProcessStartInfo
-        {
-            FileName = ffprobeExe,
-            Arguments = $"-v quiet -print_format json -show_format -show_streams \"{filePath}\"",
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false,
-            CreateNoWindow = true
-        };
-
-        using var p = Process.Start(psi) ?? throw new InvalidOperationException("Failed to start ffprobe");
-        var stdout = await p.StandardOutput.ReadToEndAsync(ct);
-        await p.WaitForExitAsync(ct);
-
-        using var doc = JsonDocument.Parse(stdout);
-        var root = doc.RootElement;
-
-        double duration = 0;
-        int channels = 0;
-        int sampleRate = 0;
-
-        // Try format.duration first
-        if (root.TryGetProperty("format", out var format) &&
-            format.TryGetProperty("duration", out var fmtDuration))
-        {
-            duration = double.Parse(fmtDuration.GetString()!, CultureInfo.InvariantCulture);
-        }
-
-        // Get stream info
-        if (root.TryGetProperty("streams", out var streams) && streams.GetArrayLength() > 0)
-        {
-            var audioStream = streams[0];
-            if (audioStream.TryGetProperty("channels", out var ch))
-                channels = ch.GetInt32();
-            if (audioStream.TryGetProperty("sample_rate", out var sr))
-                sampleRate = int.Parse(sr.GetString()!, CultureInfo.InvariantCulture);
-            // Fallback: get duration from stream if not in format
-            if (duration == 0 && audioStream.TryGetProperty("duration", out var streamDuration))
-                duration = double.Parse(streamDuration.GetString()!, CultureInfo.InvariantCulture);
-        }
-
-        return (duration, channels, sampleRate);
-    }
-
-    private static async Task<string> RunSilenceDetectAsync(
-        string filePath, double noiseDb, double minSilenceDurationSec, CancellationToken ct)
-    {
-        var ffmpegExe = Environment.GetEnvironmentVariable("FFMPEG_EXE");
-        if (string.IsNullOrWhiteSpace(ffmpegExe)) ffmpegExe = "ffmpeg";
-
-        var noiseStr = noiseDb.ToString(CultureInfo.InvariantCulture);
-        var durationStr = minSilenceDurationSec.ToString(CultureInfo.InvariantCulture);
-
-        var psi = new ProcessStartInfo
-        {
-            FileName = ffmpegExe,
-            Arguments = $"-i \"{filePath}\" -af silencedetect=noise={noiseStr}dB:duration={durationStr} -f null -",
-            RedirectStandardError = true,
-            RedirectStandardOutput = true,
-            UseShellExecute = false,
-            CreateNoWindow = true
-        };
-
-        using var p = Process.Start(psi) ?? throw new InvalidOperationException("Failed to start ffmpeg");
-        var stderr = await p.StandardError.ReadToEndAsync(ct);
-        await p.WaitForExitAsync(ct);
-
-        return stderr;
+        return regions;
     }
 }

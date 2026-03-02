@@ -2,15 +2,19 @@ using System.CommandLine;
 using System.Globalization;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using Ams.Cli.Repl;
+using Ams.Cli.Utilities;
 using Ams.Core.Audio.QualityControl;
 using Ams.Core.Common;
+using Ams.Core.Runtime.Book;
+using Ams.Core.Runtime.Workspace;
 using Spectre.Console;
 
 namespace Ams.Cli.Commands;
 
 /// <summary>
 /// CLI command for audiobook quality control analysis.
-/// Standalone -- no workspace, book index, or REPL context required.
+/// Workspace-aware by default (analyzes treated WAV files); use --dir to override.
 /// </summary>
 public static class QcCommand
 {
@@ -30,10 +34,9 @@ public static class QcCommand
     {
         var cmd = new Command("analyze", "Analyze chapter audio files for structural QC (head/tail silence, title-body gap)");
 
-        var dirOption = new Option<DirectoryInfo>(
+        var dirOption = new Option<DirectoryInfo?>(
             "--dir",
-            "Directory containing audio files to analyze")
-        { IsRequired = true };
+            "Directory containing audio files to analyze (overrides workspace discovery)");
         dirOption.AddAlias("-d");
 
         var noiseOption = new Option<double>(
@@ -93,7 +96,7 @@ public static class QcCommand
 
             try
             {
-                var dir = context.ParseResult.GetValueForOption(dirOption)!;
+                var dir = context.ParseResult.GetValueForOption(dirOption);
                 var noiseDb = context.ParseResult.GetValueForOption(noiseOption);
                 var minSilenceSec = context.ParseResult.GetValueForOption(minSilenceOption);
                 var jsonOutput = context.ParseResult.GetValueForOption(jsonOption);
@@ -108,28 +111,95 @@ public static class QcCommand
                     MaxTitleBodyGap = context.ParseResult.GetValueForOption(maxGapOption)
                 };
 
-                if (!dir.Exists)
+                List<FileInfo> files;
+
+                if (dir is not null)
                 {
-                    Log.Error("Directory not found: {Path}", dir.FullName);
-                    context.ExitCode = 1;
-                    return;
+                    // --dir override: scan directory for audio files
+                    if (!dir.Exists)
+                    {
+                        Log.Error("Directory not found: {Path}", dir.FullName);
+                        context.ExitCode = 1;
+                        return;
+                    }
+
+                    files = AudioExtensions
+                        .SelectMany(ext => dir.GetFiles(ext))
+                        .OrderBy(f => f.Name, StringComparer.OrdinalIgnoreCase)
+                        .ToList();
+
+                    if (files.Count == 0)
+                    {
+                        Log.Error("No audio files found in {Path} (supported: {Extensions})",
+                            dir.FullName, string.Join(", ", AudioExtensions));
+                        context.ExitCode = 1;
+                        return;
+                    }
+
+                    Log.Info("Found {Count} audio files in {Path}", files.Count, dir.FullName);
                 }
-
-                // Enumerate audio files
-                var files = AudioExtensions
-                    .SelectMany(ext => dir.GetFiles(ext))
-                    .OrderBy(f => f.Name, StringComparer.OrdinalIgnoreCase)
-                    .ToList();
-
-                if (files.Count == 0)
+                else
                 {
-                    Log.Error("No audio files found in {Path} (supported: {Extensions})",
-                        dir.FullName, string.Join(", ", AudioExtensions));
-                    context.ExitCode = 1;
-                    return;
-                }
+                    // Workspace-aware mode: discover treated WAV files
+                    var root = CommandInputResolver.ResolveDirectory(null);
+                    var chapters = WorkspaceChapterDiscovery.Discover(root.FullName);
 
-                Log.Info("Found {Count} audio files in {Path}", files.Count, dir.FullName);
+                    if (chapters.Count == 0)
+                    {
+                        Log.Error("No chapters found in workspace {Path}", root.FullName);
+                        context.ExitCode = 1;
+                        return;
+                    }
+
+                    var repl = ReplContext.Current;
+                    IEnumerable<ChapterDescriptor> targetChapters;
+
+                    if (repl is null || repl.RunAllChapters)
+                    {
+                        // Standalone CLI or REPL in "mode all"
+                        targetChapters = chapters;
+                    }
+                    else if (repl.ActiveChapterStem is { } stem)
+                    {
+                        // Single chapter selected
+                        targetChapters = chapters.Where(c =>
+                            c.ChapterId.Equals(stem, StringComparison.OrdinalIgnoreCase));
+                    }
+                    else
+                    {
+                        Log.Error("No chapter selected. Use 'use' to select a chapter or 'mode all' for batch analysis.");
+                        context.ExitCode = 1;
+                        return;
+                    }
+
+                    files = [];
+                    foreach (var chapter in targetChapters)
+                    {
+                        var treated = chapter.AudioBuffers.FirstOrDefault(b => b.BufferId == "treated");
+                        if (treated is null)
+                            continue;
+
+                        if (File.Exists(treated.Path))
+                        {
+                            files.Add(new FileInfo(treated.Path));
+                        }
+                        else
+                        {
+                            Log.Debug("Skipping {ChapterId}: treated audio not found at {Path}",
+                                chapter.ChapterId, treated.Path);
+                        }
+                    }
+
+                    if (files.Count == 0)
+                    {
+                        Log.Error("No treated audio files found in workspace {Path}. Run the treatment pipeline first.",
+                            root.FullName);
+                        context.ExitCode = 1;
+                        return;
+                    }
+
+                    Log.Info("Found {Count} treated audio files in workspace", files.Count);
+                }
 
                 // Analyze each file
                 var results = new List<ChapterQcResult>();
@@ -141,8 +211,8 @@ public static class QcCommand
 
                     try
                     {
-                        var result = await AudioQcAnalyzer.AnalyzeFileAsync(
-                            file.FullName, noiseDb, minSilenceSec, thresholds, ct);
+                        var result = AudioQcAnalyzer.AnalyzeFile(
+                            file.FullName, noiseDb, minSilenceSec, thresholds);
                         results.Add(result);
                     }
                     catch (Exception ex)
