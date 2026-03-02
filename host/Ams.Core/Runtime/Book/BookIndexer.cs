@@ -4,6 +4,39 @@ using Ams.Core.Runtime.Book;
 
 namespace Ams.Core.Runtime.Documents;
 
+// Bracket phrase state machine for proper noun extraction
+file record struct BracketState
+{
+    public bool InBracket;
+    public List<string>? Accumulator;
+    public int TokenCount;
+    public char ExpectedClose;
+
+    public BracketState()
+    {
+        InBracket = false;
+        Accumulator = null;
+        TokenCount = 0;
+        ExpectedClose = '\0';
+    }
+
+    public void Open(char closeChar)
+    {
+        InBracket = true;
+        Accumulator = new List<string>(8);
+        TokenCount = 0;
+        ExpectedClose = closeChar;
+    }
+
+    public void Reset()
+    {
+        InBracket = false;
+        Accumulator = null;
+        TokenCount = 0;
+        ExpectedClose = '\0';
+    }
+}
+
 /// <summary>
 /// Canonical indexer: preserves exact token text, builds sentence/paragraph ranges only.
 /// No normalization, no timing.
@@ -82,6 +115,7 @@ public partial class BookIndexer : IBookIndexer
         int sentenceIndex = 0;
         int sectionId = 0;
         SectionOpen? currentSection = null;
+        var sectionProperNouns = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
         for (int pIndex = 0; pIndex < paragraphTexts.Count; pIndex++)
         {
@@ -137,8 +171,10 @@ public partial class BookIndexer : IBookIndexer
                         StartWord: currentSection.StartWord,
                         EndWord: endWord,
                         StartParagraph: currentSection.StartParagraph,
-                        EndParagraph: endParagraph
+                        EndParagraph: endParagraph,
+                        ProperNouns: sectionProperNouns.Count > 0 ? sectionProperNouns.Order().ToArray() : null
                     ));
+                    sectionProperNouns = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
                 }
 
                 currentSection = new SectionOpen(
@@ -153,6 +189,7 @@ public partial class BookIndexer : IBookIndexer
 
             int paragraphStartWord = globalWord;
             int sentenceStartWord = globalWord;
+            var bracketState = new BracketState();
 
             foreach (var rawToken in TokenizeByWhitespace(pText))
             {
@@ -164,6 +201,72 @@ public partial class BookIndexer : IBookIndexer
 
                 paragraphHasLexical = true;
 
+                // --- Bracket phrase state machine ---
+                bool insideBracket = false;
+                if (!bracketState.InBracket)
+                {
+                    // Check if this token starts a bracket phrase
+                    char firstChar = rawToken.Length > 0 ? rawToken[0] : '\0';
+                    if (firstChar is '[' or '<')
+                    {
+                        char expectedClose = firstChar == '[' ? ']' : '>';
+                        bracketState.Open(expectedClose);
+                        var stripped = StripBracketChar(rawToken, firstChar, expectedClose);
+                        if (stripped.Length > 0)
+                            bracketState.Accumulator!.Add(stripped);
+                        bracketState.TokenCount++;
+
+                        // Check if this same token also closes the bracket
+                        if (rawToken.Length > 1 && rawToken[^1] == expectedClose)
+                        {
+                            // Single-token bracket like [Word]
+                            var phrase = string.Join(" ", bracketState.Accumulator!);
+                            if (phrase.Length > 0)
+                                sectionProperNouns.Add(phrase);
+                            bracketState.Reset();
+                        }
+                        insideBracket = true;
+                    }
+                }
+                else
+                {
+                    // Inside bracket accumulation
+                    bracketState.TokenCount++;
+                    bool closes = rawToken.Length > 0 && rawToken[^1] == bracketState.ExpectedClose;
+                    bool safetyValve = bracketState.TokenCount > 8;
+
+                    if (closes || safetyValve)
+                    {
+                        if (closes)
+                        {
+                            var stripped = StripBracketChar(rawToken, '\0', bracketState.ExpectedClose);
+                            if (stripped.Length > 0)
+                                bracketState.Accumulator!.Add(stripped);
+                            var phrase = string.Join(" ", bracketState.Accumulator!);
+                            if (phrase.Length > 0)
+                                sectionProperNouns.Add(phrase);
+                        }
+                        // Safety valve: abandon bracket accumulation, don't add phrase
+                        // Individual tokens from the abandoned bracket will NOT be re-checked
+                        // for frequency because they were already processed as insideBracket
+                        bracketState.Reset();
+                    }
+                    else
+                    {
+                        var stripped = StripBracketChar(rawToken, '\0', '\0');
+                        if (stripped.Length > 0)
+                            bracketState.Accumulator!.Add(stripped);
+                    }
+                    insideBracket = true;
+                }
+
+                // --- Frequency-based proper noun detection (skip if inside bracket) ---
+                if (!insideBracket && currentSection != null)
+                {
+                    CheckFrequencyForProperNoun(rawToken, sectionProperNouns);
+                }
+
+                // --- Standard word processing (always runs, even inside brackets) ---
                 string? lexeme = PronunciationHelper.NormalizeForLookup(normalizedToken);
                 string[]? phonemes = null;
                 if (!string.IsNullOrEmpty(lexeme) && pronunciations.TryGetValue(lexeme, out var mapped) &&
@@ -230,7 +333,8 @@ public partial class BookIndexer : IBookIndexer
                 StartWord: currentSection.StartWord,
                 EndWord: endWord,
                 StartParagraph: currentSection.StartParagraph,
-                EndParagraph: endParagraph
+                EndParagraph: endParagraph,
+                ProperNouns: sectionProperNouns.Count > 0 ? sectionProperNouns.Order().ToArray() : null
             ));
         }
 
@@ -529,9 +633,20 @@ public partial class BookIndexer : IBookIndexer
             return string.Empty;
         }
 
-        var normalized = TextNormalizer.NormalizeTypography(token).Trim();
-        normalized = TrimOuterQuotes(normalized);
-        return normalized;
+        // Single-pass: normalize typography, then trim whitespace + outer quotes from both ends
+        var normalized = TextNormalizer.NormalizeTypography(token);
+
+        // Combined trim of whitespace and outer quotes in one scan from both ends
+        int start = 0;
+        int end = normalized.Length - 1;
+
+        while (start <= end && (char.IsWhiteSpace(normalized[start]) || IsQuoteChar(normalized[start])))
+            start++;
+
+        while (end >= start && (char.IsWhiteSpace(normalized[end]) || IsQuoteChar(normalized[end])))
+            end--;
+
+        return start > end ? string.Empty : normalized.Substring(start, end - start + 1);
     }
 
     private static string NormalizeHeadingArtifacts(string text)
@@ -705,7 +820,7 @@ public partial class BookIndexer : IBookIndexer
         return $"{a} — {b}";
     }
 
-    private static IEnumerable<string> CollectLexicalTokens(List<(string Text, string Style, string Kind)> paragraphs)
+    private static IReadOnlySet<string> CollectLexicalTokens(List<(string Text, string Style, string Kind)> paragraphs)
     {
         var set = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (var (text, _, _) in paragraphs)
@@ -776,6 +891,114 @@ public partial class BookIndexer : IBookIndexer
         {
             throw new BookIndexException($"Failed to compute hash for file '{filePath}': {ex.Message}", ex);
         }
+    }
+
+    /// <summary>
+    /// Strip leading/trailing bracket characters from a token for accumulation.
+    /// </summary>
+    private static string StripBracketChar(string token, char openChar, char closeChar)
+    {
+        int start = 0;
+        int end = token.Length - 1;
+
+        if (start <= end && openChar != '\0' && token[start] == openChar)
+            start++;
+        if (end >= start && closeChar != '\0' && token[end] == closeChar)
+            end--;
+
+        // Also strip punctuation from the edges for clean phrase accumulation
+        while (start <= end && char.IsPunctuation(token[start]) && token[start] != '-' && token[start] != '\'')
+            start++;
+        while (end >= start && char.IsPunctuation(token[end]) && token[end] != '-' && token[end] != '\'')
+            end--;
+
+        return start > end ? string.Empty : token[start..(end + 1)];
+    }
+
+    /// <summary>
+    /// Check if a non-bracketed token should be flagged as a proper noun based on frequency.
+    /// </summary>
+    private static void CheckFrequencyForProperNoun(string rawToken, HashSet<string> properNouns)
+    {
+        var lookupForm = ExtractLookupForm(rawToken);
+        if (string.IsNullOrEmpty(lookupForm) || lookupForm.Length <= 1)
+            return;
+
+        // Skip purely numeric tokens
+        if (lookupForm.All(char.IsDigit))
+            return;
+
+        // Hyphenated: check each component; add full token only if ALL components are rare
+        if (lookupForm.Contains('-'))
+        {
+            var parts = lookupForm.Split('-', StringSplitOptions.RemoveEmptyEntries);
+            if (parts.Length > 1 && parts.All(p => p.Length > 1 && EnglishFrequencyDictionary.IsRareOrUnknown(p)))
+            {
+                var surface = TrimPunctuation(rawToken);
+                if (surface.Length > 0)
+                    properNouns.Add(surface);
+            }
+            return;
+        }
+
+        if (EnglishFrequencyDictionary.IsRareOrUnknown(lookupForm))
+        {
+            var surface = TrimPunctuation(rawToken);
+            if (surface.Length > 0)
+                properNouns.Add(surface);
+        }
+    }
+
+    /// <summary>
+    /// Extract a lowercase lookup form from a raw token: strip punctuation, possessives, lowercase.
+    /// </summary>
+    private static string ExtractLookupForm(string rawToken)
+    {
+        if (string.IsNullOrEmpty(rawToken))
+            return string.Empty;
+
+        var span = rawToken.AsSpan();
+
+        // Strip leading punctuation (except hyphen)
+        int start = 0;
+        while (start < span.Length && char.IsPunctuation(span[start]) && span[start] != '-')
+            start++;
+
+        // Strip trailing punctuation (except hyphen)
+        int end = span.Length - 1;
+        while (end >= start && char.IsPunctuation(span[end]) && span[end] != '-')
+            end--;
+
+        if (start > end)
+            return string.Empty;
+
+        var trimmed = span[start..(end + 1)];
+
+        // Strip possessive 's or 's from end
+        if (trimmed.Length >= 2)
+        {
+            if (trimmed.EndsWith("'s", StringComparison.OrdinalIgnoreCase) ||
+                trimmed.EndsWith("\u2019s", StringComparison.OrdinalIgnoreCase))
+            {
+                trimmed = trimmed[..^2];
+            }
+        }
+
+        return trimmed.Length == 0 ? string.Empty : trimmed.ToString().ToLowerInvariant();
+    }
+
+    /// <summary>
+    /// Trim leading/trailing punctuation from a raw token for clean proper noun surface.
+    /// </summary>
+    private static string TrimPunctuation(string token)
+    {
+        int start = 0;
+        int end = token.Length - 1;
+        while (start <= end && char.IsPunctuation(token[start]) && token[start] != '-')
+            start++;
+        while (end >= start && char.IsPunctuation(token[end]) && token[end] != '-')
+            end--;
+        return start > end ? string.Empty : token[start..(end + 1)];
     }
 
     [GeneratedRegex(@"^\s*(chapter\b|prologue\b|epilogue\b|prelude\b|foreword\b|introduction\b|afterword\b|appendix\b)",
