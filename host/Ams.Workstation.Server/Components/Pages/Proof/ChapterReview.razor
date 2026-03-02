@@ -185,8 +185,16 @@ else
     private async Task HandlePlayFromErrors(SentenceReport sentence)
     {
         _snippetPlayer ??= await JS.InvokeAsync<IJSObjectReference>("import", "./js/snippet-player.js");
-        var url = GetAudioUrl();
-        await _snippetPlayer.InvokeVoidAsync("playSegment", url, sentence.StartTime, sentence.EndTime);
+        if (string.IsNullOrEmpty(ChapterName))
+        {
+            return;
+        }
+
+        var chapter = Uri.EscapeDataString(ChapterName);
+        var start = sentence.StartTime.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        var end = sentence.EndTime.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        var url = $"/api/audio/chapter/{chapter}?start={start}&end={end}";
+        await _snippetPlayer.InvokeVoidAsync("playSegment", url);
     }
 
     private void ToggleReviewed()

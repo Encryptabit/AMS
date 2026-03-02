@@ -3,13 +3,12 @@
 
 let audio = null;
 let currentUrl = null;
-let stopTimer = null;
 
 /**
- * Plays an audio segment from startTime to endTime.
+ * Plays an audio clip URL.
  * Caches the Audio object so repeated plays for the same URL are instant.
  */
-export function playSegment(url, startTime, endTime) {
+export async function playSegment(url) {
     stopCurrent();
 
     if (currentUrl !== url || !audio) {
@@ -21,23 +20,22 @@ export function playSegment(url, startTime, endTime) {
         currentUrl = url;
     }
 
-    audio.currentTime = startTime;
-    audio.play();
+    if (!audio) return;
 
-    const duration = (endTime - startTime) * 1000;
-    stopTimer = setTimeout(() => {
-        if (audio) audio.pause();
-    }, duration);
+    await waitForMetadata(audio);
+    audio.currentTime = 0;
+
+    try {
+        await audio.play();
+    } catch {
+        // Ignore browser playback interruptions; caller can retry with another click.
+    }
 }
 
 /**
  * Stops any currently playing snippet.
  */
 export function stopCurrent() {
-    if (stopTimer) {
-        clearTimeout(stopTimer);
-        stopTimer = null;
-    }
     if (audio) audio.pause();
 }
 
@@ -51,4 +49,18 @@ export function dispose() {
         audio = null;
     }
     currentUrl = null;
+}
+
+function waitForMetadata(player) {
+    if (player.readyState >= 1) {
+        return Promise.resolve();
+    }
+
+    return new Promise(resolve => {
+        const onLoadedMetadata = () => {
+            player.removeEventListener('loadedmetadata', onLoadedMetadata);
+            resolve();
+        };
+        player.addEventListener('loadedmetadata', onLoadedMetadata, { once: true });
+    });
 }
