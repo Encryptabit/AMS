@@ -45,3 +45,4 @@ analysis/
 **/zig-out/
 /host/.vs/Ams/FileContentIndex
 /vault
+/host/vault/

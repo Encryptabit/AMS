@@ -5,6 +5,10 @@
         <ExtToolsHostDir>$(MSBuildProjectDirectory)\..\ExtTools</ExtToolsHostDir>
         <ResolvedExtToolsDir Condition="Exists('$(ExtToolsProjectDir)')">$(ExtToolsProjectDir)</ResolvedExtToolsDir>
         <ResolvedExtToolsDir Condition="'$(ResolvedExtToolsDir)' == '' and Exists('$(ExtToolsHostDir)')">$(ExtToolsHostDir)</ResolvedExtToolsDir>
+        <AmsRepoRootDir>$(MSBuildProjectDirectory)/../..</AmsRepoRootDir>
+        <AmsFfmpegSetupScript>$(AmsRepoRootDir)/scripts/setup_ffmpeg.py</AmsFfmpegSetupScript>
+        <AmsFfmpegPrecheck Condition="'$(AmsFfmpegPrecheck)' == ''">true</AmsFfmpegPrecheck>
+        <AmsFfmpegPrecheckFailBuild Condition="'$(AmsFfmpegPrecheckFailBuild)' == ''">false</AmsFfmpegPrecheckFailBuild>
     </PropertyGroup>
 
     <ItemGroup>
@@ -89,6 +93,27 @@
     <Target Name="WarnMissingCudaToolkitDlls" BeforeTargets="Build;Publish"
             Condition="'$(CopyCudaToolkitDlls)' == 'true' and '$(OS)' == 'Windows_NT' and (!Exists('$(CudaToolkitBinDir)\cudart64_13.dll') or !Exists('$(CudaToolkitBinDir)\cublas64_13.dll') or !Exists('$(CudaToolkitBinDir)\cublasLt64_13.dll'))">
         <Warning Text="CUDA 13 runtime DLLs were not found under '$(CudaToolkitBinDir)'. Whisper.NET CUDA may fail unless these DLLs are in PATH or copied next to runtimes/cuda/win-x64."/>
+    </Target>
+    <Target Name="PrecheckFfmpegBinaries" BeforeTargets="Build;Publish"
+            Condition="'$(AmsFfmpegPrecheck)' == 'true' and '$(DesignTimeBuild)' != 'true' and !Exists('$(AmsFfmpegSetupScript)')">
+        <Warning Text="FFmpeg precheck skipped because setup script is missing: $(AmsFfmpegSetupScript)"/>
+    </Target>
+    <Target Name="PrecheckFfmpegBinariesScript" BeforeTargets="Build;Publish"
+            Condition="'$(AmsFfmpegPrecheck)' == 'true' and '$(DesignTimeBuild)' != 'true' and Exists('$(AmsFfmpegSetupScript)')">
+        <Exec Command="py &quot;$(AmsFfmpegSetupScript)&quot; --repo-root &quot;$(AmsRepoRootDir)&quot; --check-only"
+              IgnoreExitCode="true"
+              Condition="'$(OS)' == 'Windows_NT'">
+            <Output TaskParameter="ExitCode" PropertyName="AmsFfmpegPrecheckExitCode"/>
+        </Exec>
+        <Exec Command="python3 &quot;$(AmsFfmpegSetupScript)&quot; --repo-root &quot;$(AmsRepoRootDir)&quot; --check-only"
+              IgnoreExitCode="true"
+              Condition="'$(OS)' != 'Windows_NT'">
+            <Output TaskParameter="ExitCode" PropertyName="AmsFfmpegPrecheckExitCode"/>
+        </Exec>
+        <Warning Condition="'$(AmsFfmpegPrecheckExitCode)' != '' and '$(AmsFfmpegPrecheckExitCode)' != '0' and '$(AmsFfmpegPrecheckFailBuild)' != 'true'"
+                 Text="FFmpeg precheck failed. Run scripts/setup_ffmpeg.py to install pinned FFmpeg binaries. Set AmsFfmpegPrecheck=false to disable this check."/>
+        <Error Condition="'$(AmsFfmpegPrecheckExitCode)' != '' and '$(AmsFfmpegPrecheckExitCode)' != '0' and '$(AmsFfmpegPrecheckFailBuild)' == 'true'"
+               Text="FFmpeg precheck failed. Run scripts/setup_ffmpeg.py to install pinned FFmpeg binaries."/>
     </Target>
     <PropertyGroup>
         <TargetFramework>net9.0</TargetFramework>
