@@ -84,6 +84,9 @@ public static class AudioSpliceService
         if (targetDurationSec <= 0)
             return new AudioBuffer(roomtone.Channels, roomtone.SampleRate, 0, roomtone.Metadata);
 
+        if (roomtone.Length == 0)
+            throw new ArgumentException("Roomtone source buffer is empty.", nameof(roomtone));
+
         int targetSamples = (int)(targetDurationSec * roomtone.SampleRate);
 
         // If roomtone is already long enough, just trim to exact length
@@ -94,13 +97,13 @@ public static class AudioSpliceService
         var result = new AudioBuffer(roomtone.Channels, roomtone.SampleRate, targetSamples, roomtone.Metadata);
         for (int ch = 0; ch < roomtone.Channels; ch++)
         {
-            var src = roomtone.Planar[ch];
-            var dst = result.Planar[ch];
+            var src = roomtone.GetChannel(ch).Span;
+            var dst = result.GetChannelSpan(ch);
             int cursor = 0;
             while (cursor < targetSamples)
             {
                 int toCopy = Math.Min(roomtone.Length, targetSamples - cursor);
-                Array.Copy(src, 0, dst, cursor, toCopy);
+                src.Slice(0, toCopy).CopyTo(dst.Slice(cursor, toCopy));
                 cursor += toCopy;
             }
         }

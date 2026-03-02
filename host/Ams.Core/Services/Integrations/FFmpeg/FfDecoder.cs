@@ -351,7 +351,9 @@ internal static unsafe class FfDecoder
                             throw new InvalidOperationException("Channel sample count mismatch during decode.");
                         }
 
-                        channelSamples[ch].CopyTo(buffer.Planar[ch], 0);
+                        System.Runtime.InteropServices.CollectionsMarshal
+                            .AsSpan(channelSamples[ch])
+                            .CopyTo(buffer.GetChannelSpan(ch));
                     }
 
                     var durationSeconds = stream->duration > 0 && stream->time_base.den != 0

@@ -253,11 +253,11 @@ public static partial class AudioProcessor
         int count = 0;
         for (int ch = 0; ch < buffer.Channels; ch++)
         {
-            var span = buffer.Planar[ch];
-            int end = Math.Min(span.Length, startSample + length);
+            var channelSpan = buffer.GetChannel(ch).Span;
+            int end = Math.Min(channelSpan.Length, startSample + length);
             for (int i = startSample; i < end; i++)
             {
-                double s = span[i];
+                double s = channelSpan[i];
                 sum += s * s;
                 count++;
             }

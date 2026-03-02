@@ -326,7 +326,7 @@ public class AudioController : ControllerBase
                 {
                     for (var s = blockStart; s < blockEnd; s++)
                     {
-                        var sample = buffer.Planar[ch][s];
+                        var sample = buffer.GetChannel(ch).Span[s];
                         sumSquares += sample * sample;
                         count++;
                     }
