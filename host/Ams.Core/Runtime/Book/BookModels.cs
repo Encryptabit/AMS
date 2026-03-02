@@ -56,7 +56,9 @@ public record SectionRange(
     [property: JsonPropertyName("startParagraph")]
     int StartParagraph,
     [property: JsonPropertyName("endParagraph")]
-    int EndParagraph
+    int EndParagraph,
+    [property: JsonPropertyName("properNouns")]
+    string[]? ProperNouns = null
 );
 
 /// <summary>
