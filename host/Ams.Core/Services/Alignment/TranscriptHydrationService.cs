@@ -232,19 +232,21 @@ public sealed class TranscriptHydrationService : ITranscriptHydrationService
         end = Math.Min(end, book.Words.Length - 1);
         var tokens = new List<string>(Math.Max(0, end - start + 1));
         var phonemes = new List<string[]?>(Math.Max(0, end - start + 1));
+        var wordTokens = new List<string>(4);
 
         for (int i = start; i <= end; i++)
         {
             var word = book.Words[i];
             var normalized = TextNormalizer.Normalize(word.Text, expandContractions: true, removeNumbers: false);
-            var wordTokens = TextNormalizer.TokenizeWords(normalized);
-            if (wordTokens.Length == 0)
+            wordTokens.Clear();
+            TextNormalizer.TokenizeWords(normalized, wordTokens);
+            if (wordTokens.Count == 0)
             {
                 continue;
             }
 
             string[]? variants = null;
-            if (wordTokens.Length == 1)
+            if (wordTokens.Count == 1)
             {
                 variants = ResolveBookWordPhonemes(word, fallbackPronunciations);
             }
@@ -279,6 +281,7 @@ public sealed class TranscriptHydrationService : ITranscriptHydrationService
 
         var tokens = new List<string>(Math.Max(0, e - s + 1));
         var phonemes = new List<string[]?>(Math.Max(0, e - s + 1));
+        var wordTokens = new List<string>(4);
 
         for (int i = s; i <= e; i++)
         {
@@ -289,14 +292,15 @@ public sealed class TranscriptHydrationService : ITranscriptHydrationService
             }
 
             var normalized = TextNormalizer.Normalize(word, expandContractions: true, removeNumbers: false);
-            var wordTokens = TextNormalizer.TokenizeWords(normalized);
-            if (wordTokens.Length == 0)
+            wordTokens.Clear();
+            TextNormalizer.TokenizeWords(normalized, wordTokens);
+            if (wordTokens.Count == 0)
             {
                 continue;
             }
 
             string[]? variants = null;
-            if (wordTokens.Length == 1)
+            if (wordTokens.Count == 1)
             {
                 var lexeme = PronunciationHelper.NormalizeForLookup(word);
                 if (!string.IsNullOrEmpty(lexeme) && pronunciations.TryGetValue(lexeme, out var mapped) &&

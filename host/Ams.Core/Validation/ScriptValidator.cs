@@ -61,8 +61,9 @@ public class ScriptValidator(ValidationOptions? options = null)
     private List<string> ExtractWordsFromScript(string scriptText)
     {
         var normalized = TextNormalizer.Normalize(scriptText, _options.ExpandContractions, _options.RemoveNumbers);
-        var words = TextNormalizer.TokenizeWords(normalized);
-        return words.ToList();
+        var words = new List<string>();
+        TextNormalizer.TokenizeWords(normalized, words);
+        return words;
     }
 
     private List<WordAlignment> ExtractWordsFromAsrResponse(AsrResponse asrResponse)
@@ -202,7 +203,8 @@ public class ScriptValidator(ValidationOptions? options = null)
     {
         if (expected == actual) return 0.0;
 
-        var similarity = TextNormalizer.CalculateSimilarity(expected, actual);
+        // expected/actual are already normalized by ExtractWords* paths.
+        var similarity = TextNormalizer.CalculateSimilarityNormalized(expected, actual);
         return _options.SubstitutionCost * (1.0 - similarity);
     }
 

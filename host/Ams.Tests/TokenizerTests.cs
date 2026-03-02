@@ -7,12 +7,36 @@ public class TextNormalizerTests
     [InlineData("Don't you think it's great?", "do not you think it is great")]
     [InlineData("He whispered, “Don’t move.”", "he whispered do not move")]
     [InlineData("I can't believe it's 123 degrees!", "i cannot believe it is one hundred twenty three degrees")]
+    [InlineData("I'm ready.", "i am ready")]
     [InlineData("  Multiple    spaces   ", "multiple spaces")]
     [InlineData("", "")]
     public void Normalize_ShouldNormalizeTextCorrectly(string input, string expected)
     {
         var result = TextNormalizer.Normalize(input);
         Assert.Equal(expected, result);
+    }
+
+    [Fact]
+    public void Normalize_WithOptions_DisablesContractionExpansion()
+    {
+        var options = new TextNormalizationOptions(ExpandContractions: false, RemoveNumbers: false);
+        var result = TextNormalizer.Normalize("I can't", options);
+        Assert.Equal("i can't", result);
+    }
+
+    [Fact]
+    public void Normalize_WithOptions_RemovesNumbers()
+    {
+        var options = new TextNormalizationOptions(ExpandContractions: true, RemoveNumbers: true);
+        var result = TextNormalizer.Normalize("there are 42 candles", options);
+        Assert.Equal("there are candles", result);
+    }
+
+    [Fact]
+    public void Normalize_NullInput_ReturnsEmpty()
+    {
+        var result = TextNormalizer.Normalize(null!);
+        Assert.Equal(string.Empty, result);
     }
 
     [Theory]
@@ -27,10 +51,32 @@ public class TextNormalizerTests
         Assert.True(similarity >= expectedMin - 0.1, $"Expected similarity >= {expectedMin}, got {similarity}");
     }
 
+    [Fact]
+    public void CalculateSimilarityNormalized_UsesPreNormalizedInputs()
+    {
+        var similarity = TextNormalizer.CalculateSimilarityNormalized("hello world", "hello word");
+        Assert.Equal(10.0 / 11.0, similarity, 6);
+    }
+
+    [Fact]
+    public void CalculateSimilarityNormalized_WithThreshold_ReturnsZeroWhenExceeded()
+    {
+        var similarity = TextNormalizer.CalculateSimilarityNormalized("abcdef", "uvwxyz", maxDistance: 1);
+        Assert.Equal(0.0, similarity);
+    }
+
+    [Fact]
+    public void CalculateSimilarityNormalized_WithThreshold_ReturnsExactWhenWithinThreshold()
+    {
+        var similarity = TextNormalizer.CalculateSimilarityNormalized("cat", "cut", maxDistance: 1);
+        Assert.Equal(2.0 / 3.0, similarity, 6);
+    }
+
     [Theory]
     [InlineData("hello world test", new[] { "hello", "world", "test" })]
     [InlineData("", new string[0])]
     [InlineData("single", new[] { "single" })]
+    [InlineData("a\tb\nc  d", new[] { "a", "b", "c", "d" })]
     public void TokenizeWords_ShouldTokenizeCorrectly(string input, string[] expected)
     {
         var result = TextNormalizer.TokenizeWords(input);
@@ -38,11 +84,63 @@ public class TextNormalizerTests
     }
 
     [Fact]
-    public void NormalizeTypography_ReplacesSmartQuotes()
+    public void TokenizeWords_ListOverload_AppendsToDestination()
+    {
+        var tokens = new List<string>();
+        TextNormalizer.TokenizeWords("alpha\tbeta gamma", tokens);
+        Assert.Equal(new[] { "alpha", "beta", "gamma" }, tokens);
+    }
+
+    [Fact]
+    public void TokenizeWords_NullInput_ReturnsEmpty()
+    {
+        var result = TextNormalizer.TokenizeWords(null!);
+        Assert.Empty(result);
+    }
+
+    [Theory]
+    [InlineData('\u2018', '\'')]
+    [InlineData('\u2019', '\'')]
+    [InlineData('\u201A', '\'')]
+    [InlineData('\u2032', '\'')]
+    [InlineData('\u2035', '\'')]
+    [InlineData('\u201C', '"')]
+    [InlineData('\u201D', '"')]
+    [InlineData('\u201E', '"')]
+    [InlineData('\u2033', '"')]
+    [InlineData('\u00AB', '"')]
+    [InlineData('\u00BB', '"')]
+    [InlineData('\u2013', '-')]
+    [InlineData('\u2014', '-')]
+    [InlineData('\u2212', '-')]
+    public void NormalizeTypography_MapsExpectedCharacters(char input, char expected)
+    {
+        var normalized = TextNormalizer.NormalizeTypography(input.ToString());
+        Assert.Equal(expected.ToString(), normalized);
+    }
+
+    [Fact]
+    public void NormalizeTypography_Idempotent()
     {
         var input = "“Don’t” ‘quote’";
+        var once = TextNormalizer.NormalizeTypography(input);
+        var twice = TextNormalizer.NormalizeTypography(once);
+        Assert.Equal(once, twice);
+    }
+
+    [Fact]
+    public void NormalizeTypography_AsciiInputUnchanged()
+    {
+        var input = "Simple ASCII text";
         var normalized = TextNormalizer.NormalizeTypography(input);
-        Assert.Equal("\"Don't\" 'quote'", normalized);
+        Assert.Equal(input, normalized);
+    }
+
+    [Fact]
+    public void CalculateSimilarity_NullInputs_TreatedAsEmpty()
+    {
+        var similarity = TextNormalizer.CalculateSimilarity(null!, null!);
+        Assert.Equal(1.0, similarity);
     }
 }
 

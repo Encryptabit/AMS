@@ -168,7 +168,9 @@ public static class TextDiffAnalyzer
             return new List<string>();
         }
 
-        return TextNormalizer.TokenizeWords(text).ToList();
+        var tokens = new List<string>();
+        TextNormalizer.TokenizeWords(text, tokens);
+        return tokens;
     }
 
     private static List<string> ResolveScoringTokens(string normalizedFallback, IReadOnlyList<string>? providedTokens)

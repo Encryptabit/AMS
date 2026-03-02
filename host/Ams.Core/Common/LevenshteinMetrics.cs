@@ -47,6 +47,95 @@ public static class LevenshteinMetrics
         return dp[a.Length, b.Length];
     }
 
+    public static int Distance(ReadOnlySpan<char> a, ReadOnlySpan<char> b, int maxDistance)
+    {
+        if (maxDistance < 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(maxDistance), "maxDistance must be non-negative.");
+        }
+
+        if (a.IsEmpty)
+        {
+            return b.Length <= maxDistance ? b.Length : maxDistance + 1;
+        }
+
+        if (b.IsEmpty)
+        {
+            return a.Length <= maxDistance ? a.Length : maxDistance + 1;
+        }
+
+        if (Math.Abs(a.Length - b.Length) > maxDistance)
+        {
+            return maxDistance + 1;
+        }
+
+        if (a.Length > b.Length)
+        {
+            var tmp = a;
+            a = b;
+            b = tmp;
+        }
+
+        var previous = new int[b.Length + 1];
+        var current = new int[b.Length + 1];
+
+        for (int j = 0; j <= b.Length; j++)
+        {
+            previous[j] = j;
+        }
+
+        var unreachable = maxDistance + 1;
+
+        for (int i = 1; i <= a.Length; i++)
+        {
+            current[0] = i;
+            var rowMin = unreachable;
+
+            var from = Math.Max(1, i - maxDistance);
+            var to = Math.Min(b.Length, i + maxDistance);
+            if (from > to)
+            {
+                return unreachable;
+            }
+
+            if (from > 1)
+            {
+                current[from - 1] = unreachable;
+            }
+
+            for (int j = from; j <= to; j++)
+            {
+                var cost = a[i - 1] == b[j - 1] ? 0 : 1;
+
+                var deletion = previous[j] + 1;
+                var insertion = current[j - 1] + 1;
+                var substitution = previous[j - 1] + cost;
+                var best = Math.Min(Math.Min(deletion, insertion), substitution);
+
+                current[j] = best;
+                if (best < rowMin)
+                {
+                    rowMin = best;
+                }
+            }
+
+            if (rowMin > maxDistance)
+            {
+                return unreachable;
+            }
+
+            if (to < b.Length)
+            {
+                current[to + 1] = unreachable;
+            }
+
+            (previous, current) = (current, previous);
+        }
+
+        var distance = previous[b.Length];
+        return distance <= maxDistance ? distance : unreachable;
+    }
+
     public static int Distance(ReadOnlySpan<string> a, ReadOnlySpan<string> b,
         StringComparison comparisonType = StringComparison.Ordinal)
     {
