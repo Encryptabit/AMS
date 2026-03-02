@@ -237,7 +237,7 @@ public sealed class TranscriptHydrationService : ITranscriptHydrationService
         for (int i = start; i <= end; i++)
         {
             var word = book.Words[i];
-            var normalized = TextNormalizer.Normalize(word.Text, expandContractions: true, removeNumbers: false);
+            var normalized = TextNormalizer.Normalize(word.Text, expandContractions: false, removeNumbers: false);
             wordTokens.Clear();
             TextNormalizer.TokenizeWords(normalized, wordTokens);
             if (wordTokens.Count == 0)
@@ -291,7 +291,7 @@ public sealed class TranscriptHydrationService : ITranscriptHydrationService
                 continue;
             }
 
-            var normalized = TextNormalizer.Normalize(word, expandContractions: true, removeNumbers: false);
+            var normalized = TextNormalizer.Normalize(word, expandContractions: false, removeNumbers: false);
             wordTokens.Clear();
             TextNormalizer.TokenizeWords(normalized, wordTokens);
             if (wordTokens.Count == 0)
