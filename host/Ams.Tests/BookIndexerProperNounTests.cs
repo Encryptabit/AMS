@@ -231,6 +231,183 @@ public class BookIndexerProperNounTests
         }
     }
 
+    // --- Contraction tests (Quick-7 Task 1) ---
+
+    [Fact]
+    public async Task Contraction_ShouldNt_NotInProperNouns()
+    {
+        var source = CreateTempFile(
+            "Chapter Nine\n\nHe shouldn't have gone to the Xyvarion fortress.");
+
+        try
+        {
+            var index = await BuildIndex(source);
+            var section = GetSectionWithTitle(index, "Chapter Nine");
+            Assert.NotNull(section.ProperNouns);
+            Assert.DoesNotContain("shouldn't", section.ProperNouns);
+            Assert.DoesNotContain("shouldnt", section.ProperNouns);
+            // Real proper noun still detected
+            Assert.Contains("Xyvarion", section.ProperNouns);
+        }
+        finally
+        {
+            Cleanup(source);
+        }
+    }
+
+    [Fact]
+    public async Task Contraction_HeD_NotInProperNouns()
+    {
+        var source = CreateTempFile(
+            "Chapter Ten\n\nShe said he\u2019d gone to the Zephyrak temple.");
+
+        try
+        {
+            var index = await BuildIndex(source);
+            var section = GetSectionWithTitle(index, "Chapter Ten");
+            Assert.NotNull(section.ProperNouns);
+            Assert.DoesNotContain("he\u2019d", section.ProperNouns);
+            Assert.Contains("Zephyrak", section.ProperNouns);
+        }
+        finally
+        {
+            Cleanup(source);
+        }
+    }
+
+    [Fact]
+    public async Task Contraction_WontAndCant_NotInProperNouns()
+    {
+        var source = CreateTempFile(
+            "Chapter Eleven\n\nThey won't stop and can't retreat from the Draxulim horde.");
+
+        try
+        {
+            var index = await BuildIndex(source);
+            var section = GetSectionWithTitle(index, "Chapter Eleven");
+            Assert.NotNull(section.ProperNouns);
+            Assert.DoesNotContain("won't", section.ProperNouns);
+            Assert.DoesNotContain("can't", section.ProperNouns);
+            Assert.Contains("Draxulim", section.ProperNouns);
+        }
+        finally
+        {
+            Cleanup(source);
+        }
+    }
+
+    [Fact]
+    public async Task Contraction_WithRareBase_StillDetected()
+    {
+        var source = CreateTempFile(
+            "Chapter Twelve\n\nThe Zyxorn'd been waiting for them all along.");
+
+        try
+        {
+            var index = await BuildIndex(source);
+            var section = GetSectionWithTitle(index, "Chapter Twelve");
+            Assert.NotNull(section.ProperNouns);
+            // Zyxorn is rare, so even after stripping 'd it should be detected
+            Assert.Contains(section.ProperNouns, pn => pn.Contains("Zyxorn"));
+        }
+        finally
+        {
+            Cleanup(source);
+        }
+    }
+
+    // --- Em-dash and numeric tests (Quick-7 Task 2) ---
+
+    [Fact]
+    public async Task EmDashCompound_BothCommon_NotInProperNouns()
+    {
+        var source = CreateTempFile(
+            "Chapter Thirteen\n\nThe army arrived before\u2014though the gates remained closed.");
+
+        try
+        {
+            var index = await BuildIndex(source);
+            var section = GetSectionWithTitle(index, "Chapter Thirteen");
+            // "before—though" should not appear since both components are common
+            if (section.ProperNouns != null)
+            {
+                Assert.DoesNotContain(section.ProperNouns, pn => pn.Contains("before") || pn.Contains("though"));
+            }
+        }
+        finally
+        {
+            Cleanup(source);
+        }
+    }
+
+    [Fact]
+    public async Task EmDashCompound_OneRare_OnlyRareSideAdded()
+    {
+        var source = CreateTempFile(
+            "Chapter Fourteen\n\nThe Bloodthrone\u2014undead forces surrounded the castle.");
+
+        try
+        {
+            var index = await BuildIndex(source);
+            var section = GetSectionWithTitle(index, "Chapter Fourteen");
+            Assert.NotNull(section.ProperNouns);
+            // "Bloodthrone" is rare → should be added individually
+            Assert.Contains("Bloodthrone", section.ProperNouns);
+            // "undead" is common → should NOT be added
+            Assert.DoesNotContain("undead", section.ProperNouns);
+            // The compound "Bloodthrone—undead" should NOT be in ProperNouns
+            Assert.DoesNotContain(section.ProperNouns, pn => pn.Contains("\u2014"));
+        }
+        finally
+        {
+            Cleanup(source);
+        }
+    }
+
+    [Fact]
+    public async Task NumericStatToken_NotInProperNouns()
+    {
+        var source = CreateTempFile(
+            "Chapter Fifteen\n\nDamage increased by 1487x and 2,352 points and 0.01 percent and 50% more.");
+
+        try
+        {
+            var index = await BuildIndex(source);
+            var section = GetSectionWithTitle(index, "Chapter Fifteen");
+            if (section.ProperNouns != null)
+            {
+                Assert.DoesNotContain(section.ProperNouns, pn => pn.Contains("1487"));
+                Assert.DoesNotContain(section.ProperNouns, pn => pn.Contains("2,352"));
+                Assert.DoesNotContain(section.ProperNouns, pn => pn.Contains("0.01"));
+                Assert.DoesNotContain(section.ProperNouns, pn => pn.Contains("50"));
+            }
+        }
+        finally
+        {
+            Cleanup(source);
+        }
+    }
+
+    [Fact]
+    public async Task NumericWithText_NotInProperNouns()
+    {
+        var source = CreateTempFile(
+            "Chapter Sixteen\n\nHe gained +50 health from the Zyraketh potion.");
+
+        try
+        {
+            var index = await BuildIndex(source);
+            var section = GetSectionWithTitle(index, "Chapter Sixteen");
+            Assert.NotNull(section.ProperNouns);
+            Assert.DoesNotContain(section.ProperNouns, pn => pn.Contains("+50"));
+            Assert.Contains("Zyraketh", section.ProperNouns);
+        }
+        finally
+        {
+            Cleanup(source);
+        }
+    }
+
     // --- Helpers ---
 
     private static string CreateTempFile(string content)

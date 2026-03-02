@@ -920,12 +920,21 @@ public partial class BookIndexer : IBookIndexer
     /// </summary>
     private static void CheckFrequencyForProperNoun(string rawToken, HashSet<string> properNouns)
     {
+        // Em-dash compounds: split and check each component independently
+        if (rawToken.Contains('\u2014') || rawToken.Contains('\u2013'))
+        {
+            var parts = rawToken.Split(new[] { '\u2014', '\u2013' }, StringSplitOptions.RemoveEmptyEntries);
+            foreach (var part in parts)
+                CheckFrequencyForProperNoun(part.Trim(), properNouns);
+            return;
+        }
+
         var lookupForm = ExtractLookupForm(rawToken);
         if (string.IsNullOrEmpty(lookupForm) || lookupForm.Length <= 1)
             return;
 
-        // Skip purely numeric tokens
-        if (lookupForm.All(char.IsDigit))
+        // Skip numeric/stat tokens: digits mixed with ,./x%:+-
+        if (IsNumericToken(lookupForm))
             return;
 
         // Hyphenated: check each component; add full token only if ALL components are rare
@@ -947,6 +956,23 @@ public partial class BookIndexer : IBookIndexer
             if (surface.Length > 0)
                 properNouns.Add(surface);
         }
+    }
+
+    private static bool IsNumericToken(string lookupForm)
+    {
+        bool hasDigit = false;
+        foreach (var c in lookupForm)
+        {
+            if (char.IsDigit(c))
+            {
+                hasDigit = true;
+            }
+            else if (c is not (',' or '.' or 'x' or '%' or ':' or '/' or '+' or '-'))
+            {
+                return false;
+            }
+        }
+        return hasDigit;
     }
 
     /// <summary>
@@ -984,7 +1010,41 @@ public partial class BookIndexer : IBookIndexer
             }
         }
 
-        return trimmed.Length == 0 ? string.Empty : trimmed.ToString().ToLowerInvariant();
+        // Strip contraction suffixes (handle irregulars first)
+        var trimmedStr = trimmed.ToString();
+        if (trimmedStr.EndsWith("n't", StringComparison.OrdinalIgnoreCase) ||
+            trimmedStr.EndsWith("n\u2019t", StringComparison.OrdinalIgnoreCase))
+        {
+            // Irregular: won't → will, can't → can
+            var baseForm = trimmedStr[..^3];
+            if (baseForm.Equals("wo", StringComparison.OrdinalIgnoreCase))
+                return "will";
+            if (baseForm.Equals("ca", StringComparison.OrdinalIgnoreCase))
+                return "can";
+            return baseForm.Length == 0 ? string.Empty : baseForm.ToLowerInvariant();
+        }
+
+        ReadOnlySpan<string> contractionSuffixes = ["'ve", "\u2019ve", "'re", "\u2019re", "'ll", "\u2019ll"];
+        foreach (var suffix in contractionSuffixes)
+        {
+            if (trimmedStr.EndsWith(suffix, StringComparison.OrdinalIgnoreCase))
+            {
+                var baseForm = trimmedStr[..^suffix.Length];
+                return baseForm.Length == 0 ? string.Empty : baseForm.ToLowerInvariant();
+            }
+        }
+
+        ReadOnlySpan<string> shortSuffixes = ["'d", "\u2019d", "'m", "\u2019m"];
+        foreach (var suffix in shortSuffixes)
+        {
+            if (trimmedStr.EndsWith(suffix, StringComparison.OrdinalIgnoreCase))
+            {
+                var baseForm = trimmedStr[..^suffix.Length];
+                return baseForm.Length == 0 ? string.Empty : baseForm.ToLowerInvariant();
+            }
+        }
+
+        return trimmed.Length == 0 ? string.Empty : trimmedStr.ToLowerInvariant();
     }
 
     /// <summary>
