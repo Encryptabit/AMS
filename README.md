@@ -30,6 +30,8 @@ Validate existing local install only (no download):
 python3 scripts/setup_ffmpeg.py --check-only
 ```
 
-`Ams.Core` now runs this precheck before `Build`/`Publish` and warns when FFmpeg is missing.
+`Ams.Core` now runs this precheck before `Build`/`Publish`.
+- If FFmpeg is missing, it auto-installs by default (`AmsFfmpegAutoInstall=true`).
 - Disable precheck: `/p:AmsFfmpegPrecheck=false`
-- Make missing FFmpeg fail the build: `/p:AmsFfmpegPrecheckFailBuild=true`
+- Disable auto-install fallback: `/p:AmsFfmpegAutoInstall=false`
+- Make precheck/install failures fail the build: `/p:AmsFfmpegPrecheckFailBuild=true`

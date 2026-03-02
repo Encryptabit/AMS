@@ -8,6 +8,7 @@
         <AmsRepoRootDir>$(MSBuildProjectDirectory)/../..</AmsRepoRootDir>
         <AmsFfmpegSetupScript>$(AmsRepoRootDir)/scripts/setup_ffmpeg.py</AmsFfmpegSetupScript>
         <AmsFfmpegPrecheck Condition="'$(AmsFfmpegPrecheck)' == ''">true</AmsFfmpegPrecheck>
+        <AmsFfmpegAutoInstall Condition="'$(AmsFfmpegAutoInstall)' == ''">true</AmsFfmpegAutoInstall>
         <AmsFfmpegPrecheckFailBuild Condition="'$(AmsFfmpegPrecheckFailBuild)' == ''">false</AmsFfmpegPrecheckFailBuild>
     </PropertyGroup>
 
@@ -110,10 +111,41 @@
               Condition="'$(OS)' != 'Windows_NT'">
             <Output TaskParameter="ExitCode" PropertyName="AmsFfmpegPrecheckExitCode"/>
         </Exec>
-        <Warning Condition="'$(AmsFfmpegPrecheckExitCode)' != '' and '$(AmsFfmpegPrecheckExitCode)' != '0' and '$(AmsFfmpegPrecheckFailBuild)' != 'true'"
-                 Text="FFmpeg precheck failed. Run scripts/setup_ffmpeg.py to install pinned FFmpeg binaries. Set AmsFfmpegPrecheck=false to disable this check."/>
-        <Error Condition="'$(AmsFfmpegPrecheckExitCode)' != '' and '$(AmsFfmpegPrecheckExitCode)' != '0' and '$(AmsFfmpegPrecheckFailBuild)' == 'true'"
-               Text="FFmpeg precheck failed. Run scripts/setup_ffmpeg.py to install pinned FFmpeg binaries."/>
+        <Message Importance="high"
+                 Condition="'$(AmsFfmpegPrecheckExitCode)' != '' and '$(AmsFfmpegPrecheckExitCode)' != '0' and '$(AmsFfmpegAutoInstall)' == 'true'"
+                 Text="FFmpeg precheck failed; attempting automatic install via scripts/setup_ffmpeg.py"/>
+        <Exec Command="py &quot;$(AmsFfmpegSetupScript)&quot; --repo-root &quot;$(AmsRepoRootDir)&quot;"
+              IgnoreExitCode="true"
+              Condition="'$(OS)' == 'Windows_NT' and '$(AmsFfmpegPrecheckExitCode)' != '' and '$(AmsFfmpegPrecheckExitCode)' != '0' and '$(AmsFfmpegAutoInstall)' == 'true'">
+            <Output TaskParameter="ExitCode" PropertyName="AmsFfmpegInstallExitCode"/>
+        </Exec>
+        <Exec Command="python3 &quot;$(AmsFfmpegSetupScript)&quot; --repo-root &quot;$(AmsRepoRootDir)&quot;"
+              IgnoreExitCode="true"
+              Condition="'$(OS)' != 'Windows_NT' and '$(AmsFfmpegPrecheckExitCode)' != '' and '$(AmsFfmpegPrecheckExitCode)' != '0' and '$(AmsFfmpegAutoInstall)' == 'true'">
+            <Output TaskParameter="ExitCode" PropertyName="AmsFfmpegInstallExitCode"/>
+        </Exec>
+        <Exec Command="py &quot;$(AmsFfmpegSetupScript)&quot; --repo-root &quot;$(AmsRepoRootDir)&quot; --check-only"
+              IgnoreExitCode="true"
+              Condition="'$(OS)' == 'Windows_NT' and '$(AmsFfmpegInstallExitCode)' == '0' and '$(AmsFfmpegAutoInstall)' == 'true'">
+            <Output TaskParameter="ExitCode" PropertyName="AmsFfmpegFinalCheckExitCode"/>
+        </Exec>
+        <Exec Command="python3 &quot;$(AmsFfmpegSetupScript)&quot; --repo-root &quot;$(AmsRepoRootDir)&quot; --check-only"
+              IgnoreExitCode="true"
+              Condition="'$(OS)' != 'Windows_NT' and '$(AmsFfmpegInstallExitCode)' == '0' and '$(AmsFfmpegAutoInstall)' == 'true'">
+            <Output TaskParameter="ExitCode" PropertyName="AmsFfmpegFinalCheckExitCode"/>
+        </Exec>
+        <Warning Condition="'$(AmsFfmpegPrecheckExitCode)' != '' and '$(AmsFfmpegPrecheckExitCode)' != '0' and '$(AmsFfmpegAutoInstall)' != 'true' and '$(AmsFfmpegPrecheckFailBuild)' != 'true'"
+                 Text="FFmpeg precheck failed and auto-install is disabled. Run scripts/setup_ffmpeg.py manually, or set /p:AmsFfmpegAutoInstall=true."/>
+        <Error Condition="'$(AmsFfmpegPrecheckExitCode)' != '' and '$(AmsFfmpegPrecheckExitCode)' != '0' and '$(AmsFfmpegAutoInstall)' != 'true' and '$(AmsFfmpegPrecheckFailBuild)' == 'true'"
+               Text="FFmpeg precheck failed and auto-install is disabled. Run scripts/setup_ffmpeg.py manually."/>
+        <Warning Condition="'$(AmsFfmpegInstallExitCode)' != '' and '$(AmsFfmpegInstallExitCode)' != '0' and '$(AmsFfmpegPrecheckFailBuild)' != 'true'"
+                 Text="FFmpeg auto-install failed. Run scripts/setup_ffmpeg.py manually and retry build."/>
+        <Error Condition="'$(AmsFfmpegInstallExitCode)' != '' and '$(AmsFfmpegInstallExitCode)' != '0' and '$(AmsFfmpegPrecheckFailBuild)' == 'true'"
+               Text="FFmpeg auto-install failed. Run scripts/setup_ffmpeg.py manually and retry build."/>
+        <Warning Condition="'$(AmsFfmpegInstallExitCode)' == '0' and '$(AmsFfmpegFinalCheckExitCode)' != '' and '$(AmsFfmpegFinalCheckExitCode)' != '0' and '$(AmsFfmpegPrecheckFailBuild)' != 'true'"
+                 Text="FFmpeg auto-install completed but validation still failed. Check ExtTools/ffmpeg/bin contents."/>
+        <Error Condition="'$(AmsFfmpegInstallExitCode)' == '0' and '$(AmsFfmpegFinalCheckExitCode)' != '' and '$(AmsFfmpegFinalCheckExitCode)' != '0' and '$(AmsFfmpegPrecheckFailBuild)' == 'true'"
+               Text="FFmpeg auto-install completed but validation still failed. Check ExtTools/ffmpeg/bin contents."/>
     </Target>
     <PropertyGroup>
         <TargetFramework>net9.0</TargetFramework>
