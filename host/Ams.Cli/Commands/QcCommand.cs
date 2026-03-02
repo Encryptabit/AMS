@@ -152,53 +152,34 @@ public static class QcCommand
                     }
 
                     var repl = ReplContext.Current;
-                    IEnumerable<ChapterDescriptor> targetChapters;
+                    var stem = repl?.ActiveChapterStem;
 
-                    if (repl is null || repl.RunAllChapters)
-                    {
-                        // Standalone CLI or REPL in "mode all"
-                        targetChapters = chapters;
-                    }
-                    else if (repl.ActiveChapterStem is { } stem)
-                    {
-                        // Single chapter selected
-                        targetChapters = chapters.Where(c =>
-                            c.ChapterId.Equals(stem, StringComparison.OrdinalIgnoreCase));
-                    }
-                    else
+                    if (stem is null)
                     {
                         Log.Error("No chapter selected. Use 'use' to select a chapter or 'mode all' for batch analysis.");
                         context.ExitCode = 1;
                         return;
                     }
 
-                    files = [];
-                    foreach (var chapter in targetChapters)
-                    {
-                        var treated = chapter.AudioBuffers.FirstOrDefault(b => b.BufferId == "treated");
-                        if (treated is null)
-                            continue;
+                    var chapter = chapters.FirstOrDefault(c =>
+                        c.ChapterId.Equals(stem, StringComparison.OrdinalIgnoreCase));
 
-                        if (File.Exists(treated.Path))
-                        {
-                            files.Add(new FileInfo(treated.Path));
-                        }
-                        else
-                        {
-                            Log.Debug("Skipping {ChapterId}: treated audio not found at {Path}",
-                                chapter.ChapterId, treated.Path);
-                        }
-                    }
-
-                    if (files.Count == 0)
+                    if (chapter is null)
                     {
-                        Log.Error("No treated audio files found in workspace {Path}. Run the treatment pipeline first.",
-                            root.FullName);
+                        Log.Error("Chapter {ChapterId} not found in workspace", stem);
                         context.ExitCode = 1;
                         return;
                     }
 
-                    Log.Info("Found {Count} treated audio files in workspace", files.Count);
+                    var treated = chapter.AudioBuffers.FirstOrDefault(b => b.BufferId == "treated");
+                    if (treated is null || !File.Exists(treated.Path))
+                    {
+                        Log.Error("Treated audio not found for {ChapterId}. Run the treatment pipeline first.", stem);
+                        context.ExitCode = 1;
+                        return;
+                    }
+
+                    files = [new FileInfo(treated.Path)];
                 }
 
                 // Analyze each file
