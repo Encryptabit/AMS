@@ -486,6 +486,11 @@ public static class AsrProcessor
             }
         }
 
+        if (!string.IsNullOrWhiteSpace(options.Prompt))
+        {
+            builder.WithPrompt(options.Prompt);
+        }
+
         return builder;
     }
 
@@ -646,4 +651,5 @@ public sealed record AsrOptions(
     bool NoSpeechBoost = true,
     int GpuDevice = 0,
     bool UseFlashAttention = true,
-    bool UseDtwTimestamps = false);
+    bool UseDtwTimestamps = false,
+    string? Prompt = null);
