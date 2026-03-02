@@ -431,14 +431,14 @@ public static class FeatureExtraction
 
     private static float[] GetOrCreateMonoReference(AudioBuffer audio)
     {
-        if (audio.Planar.Length == 0)
+        if (audio.Channels == 0)
         {
             return Array.Empty<float>();
         }
 
         if (audio.Channels == 1)
         {
-            return audio.Planar[0];
+            return audio.GetChannel(0).ToArray();
         }
 
         int length = audio.Length;
@@ -446,7 +446,7 @@ public static class FeatureExtraction
         float scale = 1f / audio.Channels;
         for (int ch = 0; ch < audio.Channels; ch++)
         {
-            var source = audio.Planar[ch];
+            var source = audio.GetChannel(ch).Span;
             for (int i = 0; i < length; i++)
             {
                 mono[i] += source[i] * scale;

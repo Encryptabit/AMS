@@ -2532,14 +2532,14 @@ public static class PipelineCommand
     {
         if (buffer.Channels == 1)
         {
-            return (float[])buffer.Planar[0].Clone();
+            return buffer.GetChannel(0).ToArray();
         }
 
         var mono = new float[buffer.Length];
         float scale = 1f / buffer.Channels;
         for (int ch = 0; ch < buffer.Channels; ch++)
         {
-            var src = buffer.Planar[ch];
+            var src = buffer.GetChannel(ch).Span;
             for (int i = 0; i < mono.Length; i++)
             {
                 mono[i] += src[i] * scale;
@@ -2790,7 +2790,6 @@ public static class PipelineCommand
         }
 
         var sampleRate = buffer.SampleRate;
-        var channelData = buffer.Planar;
 
         var perSampleMeanSquare = new double[totalSamples];
         double totalSquares = 0;
@@ -2799,7 +2798,7 @@ public static class PipelineCommand
 
         for (int ch = 0; ch < channels; ch++)
         {
-            var samples = channelData[ch];
+            var samples = buffer.GetChannel(ch).Span;
             double previous = 0;
             for (int i = 0; i < totalSamples; i++)
             {

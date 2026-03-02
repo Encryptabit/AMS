@@ -1,6 +1,7 @@
 using Ams.Core.Artifacts;
 using Ams.Core.Application.Processes;
 using Ams.Core.Processors;
+using Ams.Core.Runtime.Book;
 using Ams.Core.Runtime.Chapter;
 using Ams.Core.Services.Interfaces;
 
@@ -50,6 +51,8 @@ public sealed class GenerateTranscriptCommand
 
         Log.Debug("Whisper model resolved: Path={ModelPath}, Type={ModelType}", modelPath, modelType);
 
+        var prompt = BuildAsrPrompt(chapter);
+
         var asrOptions = new AsrOptions(
             ModelPath: modelPath,
             Language: options.Language,
@@ -62,7 +65,17 @@ public sealed class GenerateTranscriptCommand
             NoSpeechBoost: true,
             GpuDevice: options.GpuDevice,
             UseFlashAttention: options.EnableFlashAttention,
-            UseDtwTimestamps: options.EnableDtwTimestamps);
+            UseDtwTimestamps: options.EnableDtwTimestamps,
+            Prompt: prompt);
+
+        if (prompt is not null)
+        {
+            var section = chapter.Book.Documents.BookIndex?.Sections?
+                .FirstOrDefault(s => s.StartWord == chapter.Descriptor.BookStartWord);
+            Log.Debug("ASR prompt from BookIndex proper nouns ({Count} terms): {Prompt}",
+                section?.ProperNouns?.Length ?? 0,
+                prompt.Length > 200 ? prompt[..200] + "..." : prompt);
+        }
 
         Log.Debug(
             "Submitting audio to Whisper.NET (threads={Threads}, gpu={UseGpu}, beam={BeamSize}, bestOf={BestOf})",
@@ -148,6 +161,36 @@ public sealed class GenerateTranscriptCommand
                 Log.Debug("Failed to delete temporary ASR file {File}: {Message}", file.FullName, ex.Message);
             }
         }
+    }
+
+    private static string? BuildAsrPrompt(ChapterContext chapter)
+    {
+        var bookIndex = chapter.Book.Documents.BookIndex;
+        if (bookIndex?.Sections is not { Length: > 0 })
+            return null;
+
+        // Find the section matching this chapter via BookStartWord on the descriptor
+        var startWord = chapter.Descriptor.BookStartWord;
+        if (startWord is null)
+            return null;
+
+        SectionRange? section = null;
+        foreach (var s in bookIndex.Sections)
+        {
+            if (s.StartWord == startWord.Value)
+            {
+                section = s;
+                break;
+            }
+        }
+
+        if (section?.ProperNouns is not { Length: > 0 })
+            return null;
+
+        // Join proper nouns with commas -- Whisper treats the prompt as prior text context.
+        // Comma-separated names prime the decoder vocabulary without forming sentences.
+        var prompt = string.Join(", ", section.ProperNouns);
+        return prompt.Length > 0 ? prompt : null;
     }
 
 }

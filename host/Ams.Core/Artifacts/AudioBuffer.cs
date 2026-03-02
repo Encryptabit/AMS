@@ -4,21 +4,105 @@ namespace Ams.Core.Artifacts;
 
 public sealed class AudioBuffer
 {
+    private readonly float[] _backing;
+    private readonly int _strideLength; // backing length per channel (may differ from Length for slices)
+    private readonly int _offset;       // sample offset into backing per-channel stride
+
     public int Channels { get; }
     public int SampleRate { get; }
     public int Length { get; }
-    public float[][] Planar { get; }
     public AudioBufferMetadata Metadata { get; private set; }
 
+    /// <summary>
+    /// Creates a new AudioBuffer with a freshly allocated contiguous backing store.
+    /// </summary>
     public AudioBuffer(int channels, int sampleRate, int length, AudioBufferMetadata? metadata = null)
     {
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(channels);
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(sampleRate);
+        ArgumentOutOfRangeException.ThrowIfNegative(length);
+
         Channels = channels;
         SampleRate = sampleRate;
         Length = length;
+        _strideLength = length;
+        _offset = 0;
+        _backing = length > 0 ? new float[channels * length] : Array.Empty<float>();
         Metadata = metadata ?? AudioBufferMetadata.CreateDefault(sampleRate, channels);
+    }
 
-        Planar = new float[channels][];
-        for (var ch = 0; ch < channels; ch++) Planar[ch] = new float[length];
+    /// <summary>
+    /// Internal slice constructor: shares parent backing array with offset/length views.
+    /// </summary>
+    internal AudioBuffer(float[] backing, int channels, int sampleRate,
+        int strideLength, int offset, int length, AudioBufferMetadata? metadata)
+    {
+        _backing = backing;
+        Channels = channels;
+        SampleRate = sampleRate;
+        _strideLength = strideLength;
+        _offset = offset;
+        Length = length;
+        Metadata = metadata ?? AudioBufferMetadata.CreateDefault(sampleRate, channels);
+    }
+
+    /// <summary>
+    /// Returns a read-only memory view of the specified channel's samples.
+    /// </summary>
+    public ReadOnlyMemory<float> GetChannel(int channel)
+        => new(_backing, channel * _strideLength + _offset, Length);
+
+    /// <summary>
+    /// Returns a writable span for producers to populate the buffer.
+    /// Internal to prevent external mutation of buffer internals.
+    /// </summary>
+    internal Span<float> GetChannelSpan(int channel)
+        => _backing.AsSpan(channel * _strideLength + _offset, Length);
+
+    /// <summary>
+    /// Sample indexer for convenient per-sample access.
+    /// </summary>
+    public float this[int channel, int sample]
+    {
+        get => _backing[channel * _strideLength + _offset + sample];
+        internal set => _backing[channel * _strideLength + _offset + sample] = value;
+    }
+
+    /// <summary>
+    /// Returns the underlying backing array for pinning in unmanaged interop (e.g., FFmpeg).
+    /// SAFETY: Callers must ensure the backing array is not moved by GC while pinned.
+    /// </summary>
+    internal float[] GetBackingArray() => _backing;
+
+    /// <summary>
+    /// Returns the byte offset for the specified channel within the backing array.
+    /// Used with GetBackingArray() for computing per-channel pointers during pinning.
+    /// </summary>
+    internal int GetChannelOffset(int channel) => channel * _strideLength + _offset;
+
+    /// <summary>
+    /// Returns a zero-copy slice of this buffer sharing the same backing store.
+    /// </summary>
+    public AudioBuffer Slice(int startSample, int length)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegative(startSample);
+        ArgumentOutOfRangeException.ThrowIfNegative(length);
+        if (startSample + length > Length)
+            throw new ArgumentOutOfRangeException(nameof(length),
+                $"Slice [{startSample}..{startSample + length}) exceeds buffer length {Length}");
+
+        return new AudioBuffer(_backing, Channels, SampleRate,
+            _strideLength, _offset + startSample, length, Metadata);
+    }
+
+    /// <summary>
+    /// Returns a zero-copy slice of this buffer for the given time range.
+    /// </summary>
+    public AudioBuffer Slice(TimeSpan start, TimeSpan end)
+    {
+        var startSample = (int)(start.TotalSeconds * SampleRate);
+        var endSample = Math.Min((int)(end.TotalSeconds * SampleRate), Length);
+        return Slice(startSample, endSample - startSample);
     }
 
     public MemoryStream ToWavStream(AudioEncodeOptions? options = null)
@@ -66,7 +150,7 @@ public sealed class AudioBuffer
             var clone = new AudioBuffer(source.Channels, source.SampleRate, source.Length, source.Metadata);
             for (int ch = 0; ch < source.Channels; ch++)
             {
-                Array.Copy(source.Planar[ch], clone.Planar[ch], source.Length);
+                source.GetChannel(ch).Span.CopyTo(clone.GetChannelSpan(ch));
             }
             return clone;
         }
@@ -109,14 +193,13 @@ public sealed class AudioBuffer
         // Allocate result buffer with metadata from first buffer
         var result = new AudioBuffer(channels, sampleRate, (int)totalLength, first.Metadata);
 
-        // Copy samples from each buffer
-        // TODO: Review this process, there's a better way, manually copying the array isn't the way.
+        // Copy samples from each buffer using span-based copies
         int offset = 0;
         foreach (var buf in bufferList)
         {
             for (int ch = 0; ch < channels; ch++)
             {
-                Array.Copy(buf.Planar[ch], 0, result.Planar[ch], offset, buf.Length);
+                buf.GetChannel(ch).Span.CopyTo(result.GetChannelSpan(ch).Slice(offset, buf.Length));
             }
             offset += buf.Length;
         }

@@ -133,7 +133,7 @@ public static class AsrProcessor
 
         var samples = monoAudio.ToArray();
         var buffer = new AudioBuffer(1, AudioProcessor.DefaultAsrSampleRate, samples.Length);
-        Array.Copy(samples, buffer.Planar[0], samples.Length);
+        samples.AsSpan().CopyTo(buffer.GetChannelSpan(0));
 
         return await TranscribeBufferInternalAsync(buffer, options, cancellationToken).ConfigureAwait(false);
     }
@@ -486,6 +486,11 @@ public static class AsrProcessor
             }
         }
 
+        if (!string.IsNullOrWhiteSpace(options.Prompt))
+        {
+            builder.WithPrompt(options.Prompt);
+        }
+
         return builder;
     }
 
@@ -612,9 +617,7 @@ public static class AsrProcessor
 
         if (buffer.Channels == 1)
         {
-            var mono = new float[buffer.Length];
-            Array.Copy(buffer.Planar[0], mono, buffer.Length);
-            return mono;
+            return buffer.GetChannel(0).ToArray();
         }
 
         var samples = new float[buffer.Length];
@@ -623,7 +626,7 @@ public static class AsrProcessor
             double sum = 0;
             for (int ch = 0; ch < buffer.Channels; ch++)
             {
-                sum += buffer.Planar[ch][i];
+                sum += buffer.GetChannel(ch).Span[i];
             }
 
             samples[i] = (float)(sum / buffer.Channels);
@@ -646,4 +649,5 @@ public sealed record AsrOptions(
     bool NoSpeechBoost = true,
     int GpuDevice = 0,
     bool UseFlashAttention = true,
-    bool UseDtwTimestamps = false);
+    bool UseDtwTimestamps = false,
+    string? Prompt = null);
