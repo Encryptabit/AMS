@@ -1,12 +1,13 @@
 {
-"provider": "codex",
-"model": "gpt-5.3-codex",
-"maxConcurrency": 8,
-"endpoints": [
-"ws://127.0.0.1:8080",
-"ws://127.0.0.1:8081",
-"ws://127.0.0.1:8082",
-"ws://127.0.0.1:8083",
-"ws://127.0.0.1:8084"
-]
+  "provider": "codex",
+  "model": "gpt-5.3-codex",
+  "reasoningEffort": "medium",
+  "maxConcurrency": 8,
+  "endpoints": [
+    "ws://127.0.0.1:8080",
+    "ws://127.0.0.1:8081",
+    "ws://127.0.0.1:8082",
+    "ws://127.0.0.1:8083",
+    "ws://127.0.0.1:8084"
+  ]
 }
