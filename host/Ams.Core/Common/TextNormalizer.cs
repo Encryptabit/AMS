@@ -76,7 +76,7 @@ public static partial class TextNormalizer
     /// Normalizes text for scoring and matching.
     /// Numeric conversion applies to integer tokens in range 0..999 when enabled; other numeric forms are preserved unless removed.
     /// </summary>
-    public static string Normalize(string text, bool expandContractions = true, bool removeNumbers = false) =>
+    public static string Normalize(string text, bool expandContractions = false, bool removeNumbers = false) =>
         Normalize(text, new TextNormalizationOptions(expandContractions, removeNumbers));
 
     public static string Normalize(string text, TextNormalizationOptions options)
@@ -341,7 +341,7 @@ public static partial class TextNormalizer
 public readonly record struct TextNormalizationOptions(
     bool ExpandContractions = true,
     bool RemoveNumbers = false,
-    bool ConvertNumbersToWords = true)
+    bool ConvertNumbersToWords = false)
 {
     public static TextNormalizationOptions Default => new();
 }
