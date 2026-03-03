@@ -74,7 +74,7 @@ public static partial class TextNormalizer
 
     /// <summary>
     /// Normalizes text for scoring and matching.
-    /// Numeric conversion applies to integer tokens in range 0..999; other numeric forms are preserved unless removed.
+    /// Numeric conversion applies to integer tokens in range 0..999 when enabled; other numeric forms are preserved unless removed.
     /// </summary>
     public static string Normalize(string text, bool expandContractions = true, bool removeNumbers = false) =>
         Normalize(text, new TextNormalizationOptions(expandContractions, removeNumbers));
@@ -97,6 +97,9 @@ public static partial class TextNormalizer
                 static match => CommonContractions.TryGetValue(match.Value, out var expansion) ? expansion : match.Value);
         }
 
+        // Keep grouped numerals intact (e.g. "4,224" -> "4224") before punctuation stripping.
+        normalized = DigitGroupingSeparatorsRegex().Replace(normalized, string.Empty);
+
         // Preserve apostrophes so contractions like "he'd" remain a single token when not expanded.
         normalized = PunctuationRegex().Replace(normalized, " ");
 
@@ -104,7 +107,7 @@ public static partial class TextNormalizer
         {
             normalized = NumbersRegex().Replace(normalized, " ");
         }
-        else
+        else if (options.ConvertNumbersToWords)
         {
             normalized = NumbersRegex().Replace(normalized, static match =>
             {
@@ -293,6 +296,9 @@ public static partial class TextNormalizer
     [GeneratedRegex(@"\b\d+\b", RegexOptions.CultureInvariant)]
     private static partial Regex NumbersRegex();
 
+    [GeneratedRegex(@"(?<=\d),(?=\d)", RegexOptions.CultureInvariant)]
+    private static partial Regex DigitGroupingSeparatorsRegex();
+
     private static Regex BuildContractionsRegex()
     {
         var escaped = CommonContractions.Keys
@@ -334,7 +340,8 @@ public static partial class TextNormalizer
 
 public readonly record struct TextNormalizationOptions(
     bool ExpandContractions = true,
-    bool RemoveNumbers = false)
+    bool RemoveNumbers = false,
+    bool ConvertNumbersToWords = true)
 {
     public static TextNormalizationOptions Default => new();
 }

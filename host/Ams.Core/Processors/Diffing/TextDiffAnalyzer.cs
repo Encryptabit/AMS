@@ -183,7 +183,12 @@ public static class TextDiffAnalyzer
     private static string NormalizeForDisplay(string? value)
         => string.IsNullOrWhiteSpace(value)
             ? string.Empty
-            : TextNormalizer.Normalize(value, expandContractions: false, removeNumbers: false);
+            : TextNormalizer.Normalize(
+                value,
+                new TextNormalizationOptions(
+                    ExpandContractions: false,
+                    RemoveNumbers: false,
+                    ConvertNumbersToWords: false));
 
     private static List<string> Tokenize(string text)
     {

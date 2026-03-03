@@ -126,4 +126,21 @@ public sealed class TextDiffAnalyzerTests
         Assert.Equal(0, result.Metrics.MissingRuns);
         Assert.Equal(0, result.Metrics.ExtraRuns);
     }
+
+    [Fact]
+    public void Analyze_DisplayDiff_DoesNotVerbalizeGroupedNumbers()
+    {
+        var result = TextDiffAnalyzer.Analyze(
+            "4,224 895x favorable",
+            "4,224, 895 times favorable");
+
+        var flattened = result.Diff.Ops
+            .SelectMany(op => op.Tokens)
+            .ToArray();
+
+        Assert.DoesNotContain("four", flattened);
+        Assert.DoesNotContain("hundred", flattened);
+        Assert.Contains("4224", flattened);
+        Assert.Contains("895", flattened);
+    }
 }

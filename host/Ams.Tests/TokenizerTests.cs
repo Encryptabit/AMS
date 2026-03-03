@@ -33,6 +33,19 @@ public class TextNormalizerTests
     }
 
     [Fact]
+    public void Normalize_WithOptions_PreservesNumericTokensWithoutWordExpansion()
+    {
+        var options = new TextNormalizationOptions(
+            ExpandContractions: true,
+            RemoveNumbers: false,
+            ConvertNumbersToWords: false);
+
+        var result = TextNormalizer.Normalize("4,224 and 895 times", options);
+
+        Assert.Equal("4224 and 895 times", result);
+    }
+
+    [Fact]
     public void Normalize_NullInput_ReturnsEmpty()
     {
         var result = TextNormalizer.Normalize(null!);
