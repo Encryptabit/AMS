@@ -35,3 +35,25 @@ python3 scripts/setup_ffmpeg.py --check-only
 - Disable precheck: `/p:AmsFfmpegPrecheck=false`
 - Disable auto-install fallback: `/p:AmsFfmpegAutoInstall=false`
 - Make precheck/install failures fail the build: `/p:AmsFfmpegPrecheckFailBuild=true`
+
+## CRX Page Autofill
+Populate missing CRX page numbers from a print PDF using chapter-constrained fuzzy matching:
+
+```bash
+uv run --with openpyxl --with pypdf --with rapidfuzz \
+  python scripts/fill_crx_pdf_pages.py \
+    --xlsx "E:/Audiobooks/Raws/My Book/CRX/My Book_CRX.xlsx" \
+    --pdf "E:/Audiobooks/Raws/My Book/My-Print.pdf" \
+    --book-index "E:/Audiobooks/Raws/My Book/book-index.json" \
+    --dry-run
+```
+
+Write updates (creates a timestamped backup by default):
+
+```bash
+uv run --with openpyxl --with pypdf --with rapidfuzz \
+  python scripts/fill_crx_pdf_pages.py \
+    --xlsx "E:/Audiobooks/Raws/My Book/CRX/My Book_CRX.xlsx" \
+    --pdf "E:/Audiobooks/Raws/My Book/My-Print.pdf" \
+    --book-index "E:/Audiobooks/Raws/My Book/book-index.json"
+```
