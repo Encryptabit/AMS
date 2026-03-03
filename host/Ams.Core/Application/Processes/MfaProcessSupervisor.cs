@@ -35,6 +35,7 @@ public static class MfaProcessSupervisor
     private static CancellationTokenSource? _pumpCts;
     private static bool _isReady;
     private static string? _scriptPath;
+    private static string? _workspaceRoot;
     private static int _activePumpCount;
     private static Task? _startTask;
 
@@ -89,6 +90,7 @@ public static class MfaProcessSupervisor
         try
         {
             await EnsureStartedAsync(cancellationToken).ConfigureAwait(false);
+            MfaWorkspaceResolver.ResetCommandHistoryFile(_workspaceRoot);
 
             var command = BuildCommand(subcommand, args);
             var payload = new Payload(command, NormalizeWorkingDirectory(workingDirectory));
@@ -167,7 +169,12 @@ public static class MfaProcessSupervisor
             if (!string.IsNullOrWhiteSpace(workspaceRoot))
             {
                 psi.Environment["MFA_ROOT_DIR"] = workspaceRoot;
+                _workspaceRoot = workspaceRoot;
                 Log.Debug("MFA supervisor root: {WorkspaceRoot}", workspaceRoot);
+            }
+            else
+            {
+                _workspaceRoot = null;
             }
 
             _process = new Process { StartInfo = psi, EnableRaisingEvents = true };
@@ -362,6 +369,7 @@ public static class MfaProcessSupervisor
 
         _startTask = null;
         _isReady = false;
+        _workspaceRoot = null;
 
         if (IsProcessRunning(_process))
         {

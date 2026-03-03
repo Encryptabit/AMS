@@ -7,6 +7,7 @@ internal static class MfaWorkspaceResolver
     private const string MfaRootEnvVar = "MFA_ROOT_DIR";
     private const string WorkspaceEnvVar = "AMS_MFA_WORKSPACE";
     private const string WorkspacesEnvVar = "AMS_MFA_WORKSPACES";
+    private const string CommandHistoryFileName = "command_history.yaml";
 
     public static string ResolvePreferredRoot(string? overrideRoot = null)
     {
@@ -96,6 +97,28 @@ internal static class MfaWorkspaceResolver
             .Take(generatedTarget)
             .Select(EnsureWorkspace)
             .ToList();
+    }
+
+    public static void ResetCommandHistoryFile(string? workspaceRoot)
+    {
+        if (!TryNormalizePath(workspaceRoot, out var normalized))
+        {
+            return;
+        }
+
+        var workspace = EnsureWorkspace(normalized);
+        var historyPath = Path.Combine(workspace, CommandHistoryFileName);
+
+        try
+        {
+            // MFA's command history can become malformed (for example after interrupted writes).
+            // Reset to a valid empty YAML sequence so subsequent commands do not fail to parse history.
+            File.WriteAllText(historyPath, "[]\n");
+        }
+        catch (Exception ex)
+        {
+            Log.Debug("Unable to reset MFA command history at {Path}: {Message}", historyPath, ex.Message);
+        }
     }
 
     private static IReadOnlyList<string> ParseWorkspaceList(string? raw)
