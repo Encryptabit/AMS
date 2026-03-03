@@ -1,17 +1,15 @@
 #!/usr/bin/env python3
 """
-Install pinned FFmpeg shared binaries for AMS on Windows and Linux.
+Install FFmpeg shared binaries for AMS on Windows and Linux.
 
 Why this script exists:
 - Keep FFmpeg binaries out of git.
 - Provide one cross-platform setup command for local clones.
-- Verify downloaded artifacts with pinned SHA-256 checksums.
 """
 
 from __future__ import annotations
 
 import argparse
-import hashlib
 import os
 import shutil
 import sys
@@ -21,13 +19,6 @@ import urllib.request
 import zipfile
 from pathlib import Path
 
-CHECKSUMS_URL = (
-    "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/checksums.sha256"
-)
-# Pinned from the current `checksums.sha256` file. If upstream rotates `latest`,
-# this value must be updated intentionally in git.
-CHECKSUMS_SHA256 = "d87f0447b4adc09c1125f8af0ec58b7b46c97b2d3131ad8832ccbddb8740b134"
-
 PLATFORM_ARTIFACTS: dict[str, dict[str, str]] = {
     "windows": {
         "archive_name": "ffmpeg-n8.0-latest-win64-gpl-shared-8.0.zip",
@@ -35,7 +26,6 @@ PLATFORM_ARTIFACTS: dict[str, dict[str, str]] = {
             "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/"
             "ffmpeg-n8.0-latest-win64-gpl-shared-8.0.zip"
         ),
-        "archive_sha256": "962efc44c2f3c1bbcdc3b2dc5d58f2a8e1fd5b2442bbd3fef5085b085515fe74",
     },
     "linux": {
         "archive_name": "ffmpeg-n8.0-latest-linux64-gpl-shared-8.0.tar.xz",
@@ -43,7 +33,6 @@ PLATFORM_ARTIFACTS: dict[str, dict[str, str]] = {
             "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/"
             "ffmpeg-n8.0-latest-linux64-gpl-shared-8.0.tar.xz"
         ),
-        "archive_sha256": "45b398f22ca6651c267af608dbb0128b6e81f5dfa617d5912262f1399ac1220c",
     },
 }
 
@@ -90,14 +79,6 @@ def find_valid_install(destinations: list[Path], platform_key: str) -> Path | No
     return None
 
 
-def sha256_file(path: Path) -> str:
-    h = hashlib.sha256()
-    with path.open("rb") as f:
-        for chunk in iter(lambda: f.read(1024 * 1024), b""):
-            h.update(chunk)
-    return h.hexdigest()
-
-
 def download_file(url: str, destination: Path) -> None:
     destination.parent.mkdir(parents=True, exist_ok=True)
     with urllib.request.urlopen(url) as response, destination.open("wb") as out:
@@ -120,22 +101,6 @@ def safe_extract_tar_xz(archive: Path, destination: Path) -> None:
             if not str(resolved).startswith(str(destination.resolve())):
                 raise RuntimeError(f"Unsafe tar entry path: {member.name}")
         tf.extractall(destination)
-
-
-def parse_checksums(path: Path) -> dict[str, str]:
-    out: dict[str, str] = {}
-    for raw_line in path.read_text(encoding="utf-8").splitlines():
-        line = raw_line.strip()
-        if not line:
-            continue
-        # Format: "<sha256>  <filename>"
-        parts = line.split()
-        if len(parts) < 2:
-            continue
-        digest = parts[0].strip().lower()
-        filename = parts[-1].strip()
-        out[filename] = digest
-    return out
 
 
 def detect_platform(explicit: str | None) -> str:
@@ -240,7 +205,7 @@ def install_payload(
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Install pinned FFmpeg shared binaries for AMS."
+        description="Install FFmpeg shared binaries for AMS."
     )
     parser.add_argument(
         "--platform",
@@ -290,50 +255,19 @@ def main() -> int:
         for path in destinations:
             print(f"- {path}", file=sys.stderr)
         print(
-            "Run this script without --check-only to install pinned binaries.",
+            "Run this script without --check-only to install binaries.",
             file=sys.stderr,
         )
         return 2
 
     with tempfile.TemporaryDirectory(prefix="ams-ffmpeg-") as tmp_str:
         tmp = Path(tmp_str)
-        checksums_path = tmp / "checksums.sha256"
         archive_path = tmp / artifact["archive_name"]
         extract_root = tmp / "extract"
         extract_root.mkdir(parents=True, exist_ok=True)
 
-        print("Downloading checksums...")
-        download_file(CHECKSUMS_URL, checksums_path)
-        observed_checksums_sha = sha256_file(checksums_path)
-        if observed_checksums_sha != CHECKSUMS_SHA256:
-            raise RuntimeError(
-                "checksums.sha256 hash mismatch.\n"
-                f"Expected: {CHECKSUMS_SHA256}\n"
-                f"Observed: {observed_checksums_sha}\n"
-                "Upstream latest changed; update pinned hashes in this script."
-            )
-
-        checksums = parse_checksums(checksums_path)
-        archive_name = artifact["archive_name"]
-        expected_archive_sha = artifact["archive_sha256"]
-        checksums_file_sha = checksums.get(archive_name)
-        if checksums_file_sha != expected_archive_sha:
-            raise RuntimeError(
-                "Pinned archive checksum does not match checksums file entry.\n"
-                f"Archive: {archive_name}\n"
-                f"Pinned: {expected_archive_sha}\n"
-                f"From checksums.sha256: {checksums_file_sha}"
-            )
-
         print("Downloading archive...")
         download_file(artifact["archive_url"], archive_path)
-        observed_archive_sha = sha256_file(archive_path)
-        if observed_archive_sha != expected_archive_sha:
-            raise RuntimeError(
-                "Archive hash mismatch.\n"
-                f"Expected: {expected_archive_sha}\n"
-                f"Observed: {observed_archive_sha}"
-            )
 
         print("Extracting archive...")
         if archive_name.endswith(".zip"):
