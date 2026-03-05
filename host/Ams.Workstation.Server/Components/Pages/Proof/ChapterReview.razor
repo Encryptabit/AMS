@@ -470,6 +470,22 @@ else
     }
 
     [JSInvokable]
+    public async Task OnSpacebar()
+    {
+        if (_currentView == "errors")
+        {
+            if (_errorSentencesList.Count == 0) return;
+            var sentence = _errorSentencesList[_selectedErrorIndex];
+            await HandlePlayFromErrors(sentence);
+        }
+        else
+        {
+            if (_waveformPlayer != null)
+                await _waveformPlayer.PlayPause();
+        }
+    }
+
+    [JSInvokable]
     public void OnToggleReviewed()
     {
         ToggleReviewed();

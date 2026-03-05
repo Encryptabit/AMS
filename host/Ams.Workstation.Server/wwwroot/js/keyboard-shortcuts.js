@@ -108,6 +108,12 @@ function handleKeydown(e) {
         e.preventDefault();
         return;
     }
+
+    if (e.key === ' ' && !e.ctrlKey && !e.metaKey && !e.altKey) {
+        _dotNetRef.invokeMethodAsync('OnSpacebar');
+        e.preventDefault();
+        return;
+    }
 }
 
 export function init(dotNetRef) {
