@@ -54,7 +54,7 @@
             {
                 var idx = i;
                 var sentence = ErrorList[idx];
-                <div id="error-card-@sentence.Id">
+                <div id="error-card-@sentence.Id" style="width:100%">
                     <SentenceErrorCard Sentence="sentence"
                                        IsSelected="idx == SelectedIndex"
                                        OnPlayAudio="() => OnPlaySentence.InvokeAsync(sentence)"
