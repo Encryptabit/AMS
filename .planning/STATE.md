@@ -8,8 +8,8 @@ Audio Management System - CLI and core library for audio processing, ASR, forced
 
 **Milestone**: v2.0 Blazor Workstation
 **Phase**: 14 - Shared Chunked ASR/MFA
-**Plan**: 2/7
-**Status**: Plan 14-02 complete; ChunkPlanningService with deterministic generation, policy controls, and 15 unit tests
+**Plan**: 4/7
+**Status**: Plan 14-04 complete; MfaChunkCorpusBuilder generates per-chunk wav/lab corpus from shared chunk plan with BookText-driven labs and 17 unit tests
 
 ## Progress
 
@@ -25,8 +25,8 @@ v2.0 Blazor Workstation[██████████████████�
 |------|------|-------|--------|
 | 14-01 | Chunk Plan Artifact Model | 2 | Complete |
 | 14-02 | Chunk Planning Service | 2 | Complete |
-| 14-03 | TBD | - | Pending |
-| 14-04 | TBD | - | Pending |
+| 14-03 | ASR Chunk-Plan Integration | 2 | Complete |
+| 14-04 | Chunked MFA Corpus Builder | 2 | Complete |
 | 14-05 | TBD | - | Pending |
 | 14-06 | TBD | - | Pending |
 | 14-07 | TBD | - | Pending |
@@ -162,6 +162,10 @@ v2.0 Blazor Workstation[██████████████████�
 | ChunkPlanningPolicy vs ChunkPlanPolicy | Separate input/persisted types | Service resolves defaults; persisted record stores exact values used |
 | Audio fingerprint strategy | path+length+sampleRate+channels | Lightweight identity for invalidation; avoids content hashing overhead |
 | Path separator normalization | Backslash to forward slash in fingerprint | Cross-platform consistency between Windows and Linux |
+| Chunk corpus activation threshold | >1 chunks in plan | Single-chunk plans use legacy single-utterance path to avoid overhead |
+| Chunked MFA fallback strategy | Omit ASR corpus retry | ASR corpus fallback only applies to legacy single-utterance lab failures |
+| MinLabTokenCount | 2 | Prevents empty/trivial lab files that cause MFA alignment errors |
+| Nearest-sentence fallback | Timing midpoint proximity | Deterministic fallback for chunks with no direct sentence timing overlap |
 
 ## Phase 8/8.1 Conclusions (Archived)
 
@@ -208,7 +212,7 @@ poc/VelloSharpPoc/     - Avalonia + VelloSharp (child window fails)
 
 ## Next Action
 
-Plan 14-02 complete. ChunkPlanningService with deterministic generation, policy controls, and 15 unit tests. Continue with plan 14-03.
+Plan 14-04 complete. MfaChunkCorpusBuilder generates per-chunk wav/lab corpus from shared chunk plan. Continue with plan 14-05.
 
 ## Deferred UI Refinements (for Plan 10-04)
 
@@ -225,4 +229,4 @@ None currently.
 
 ## Session Continuity
 
-Last activity: 2026-03-05 - Completed plan 14-02: ChunkPlanningService with deterministic generation and 15 unit tests
+Last activity: 2026-03-05 - Completed plan 14-04: Chunked MFA corpus builder with BookText-driven labs and 17 tests
