@@ -222,6 +222,7 @@ poc/VelloSharpPoc/     - Avalonia + VelloSharp (child window fails)
 | 5 | AudioBuffer contiguous backing + Memory<float> slicing | 2026-03-02 | 7ddc99c | [5-audiobuffer-contiguous-backing-memory-slice](./quick/5-audiobuffer-contiguous-backing-memory-slice/) |
 | 6 | silence-based pre-chunking in AsrProcessor | 2026-03-02 | f76a5c3 | [6-silence-based-pre-chunking-in-asrprocess](./quick/6-silence-based-pre-chunking-in-asrprocess/) |
 | 8 | audiobook QC CLI command (ffmpeg silencedetect) | 2026-03-02 | a11fd4b | [8-add-audiobook-qc-cli-command-ffmpeg-base](./quick/8-add-audiobook-qc-cli-command-ffmpeg-base/) |
+| 9 | keyboard shortcuts for ChapterReview proof page | 2026-03-05 | 29ca378 | [9-add-workstation-keyboard-shortcuts-chapt](./quick/9-add-workstation-keyboard-shortcuts-chapt/) |
 
 ## Next Action
 
@@ -242,4 +243,4 @@ None currently.
 
 ## Session Continuity
 
-Last activity: 2026-03-05 - Completed plan 14-07: Rollout controls and phase verification checklist (Phase 14 complete)
+Last activity: 2026-03-05 - Completed quick task 9: keyboard shortcuts for ChapterReview proof page
