@@ -1,4 +1,5 @@
 @using Ams.Workstation.Server.Models
+@inject IJSRuntime JS
 
 <BitStack Horizontal="false" Gap="1.5rem" AutoHeight="true">
     @if (Report == null)
@@ -47,29 +48,39 @@
         @* Detailed Sentences *@
         <BitStack Horizontal="false" Gap="0.75rem">
             <BitText Typography="BitTypography.Subtitle1">
-                Sentences with Errors (@ErrorSentences.Count())
+                Sentences with Errors (@ErrorList.Count)
             </BitText>
-            @foreach (var sentence in ErrorSentences)
+            @for (var i = 0; i < ErrorList.Count; i++)
             {
-                <SentenceErrorCard Sentence="sentence"
-                                   OnPlayAudio="() => OnPlaySentence.InvokeAsync(sentence)"
-                                   OnExport="() => HandleExport(sentence)"
-                                   OnCrx="() => HandleCrx(sentence)"
-                                   OnIgnore="() => OnIgnoreSentence.InvokeAsync(sentence)"
-                                   IgnoredKeys="IgnoredKeys" />
+                var idx = i;
+                var sentence = ErrorList[idx];
+                <div id="error-card-@sentence.Id">
+                    <SentenceErrorCard Sentence="sentence"
+                                       IsSelected="idx == SelectedIndex"
+                                       OnPlayAudio="() => OnPlaySentence.InvokeAsync(sentence)"
+                                       OnExport="() => HandleExport(sentence)"
+                                       OnCrx="() => HandleCrx(sentence)"
+                                       OnIgnore="() => OnIgnoreSentence.InvokeAsync(sentence)"
+                                       OnView="() => OnViewSentence.InvokeAsync(sentence)"
+                                       IgnoredKeys="IgnoredKeys" />
+                </div>
             }
         </BitStack>
     }
 </BitStack>
 
 @code {
+    private int _lastScrolledIndex = -1;
+
     [Parameter] public ChapterReport? Report { get; set; }
     [Parameter] public IReadOnlyList<ErrorPattern>? ChapterPatterns { get; set; }
+    [Parameter] public int SelectedIndex { get; set; }
     [Parameter] public EventCallback<SentenceReport> OnPlaySentence { get; set; }
     [Parameter] public EventCallback<SentenceReport> OnExportSentence { get; set; }
     [Parameter] public EventCallback<SentenceReport> OnCrxSentence { get; set; }
     [Parameter] public EventCallback<SentenceReport> OnIgnoreSentence { get; set; }
     [Parameter] public EventCallback<ErrorPattern> OnTogglePatternIgnore { get; set; }
+    [Parameter] public EventCallback<SentenceReport> OnViewSentence { get; set; }
     [Parameter] public IReadOnlySet<string>? IgnoredKeys { get; set; }
 
     private IEnumerable<ErrorPattern> VisiblePatterns =>
@@ -81,6 +92,52 @@
             .OrderByDescending(s => ParseWer(s.Wer))
             .ThenBy(s => s.Id)
         ?? Enumerable.Empty<SentenceReport>();
+
+    private List<SentenceReport> ErrorList => ErrorSentences.ToList();
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (SelectedIndex != _lastScrolledIndex)
+        {
+            _lastScrolledIndex = SelectedIndex;
+            var errorList = ErrorList;
+            if (SelectedIndex >= 0 && SelectedIndex < errorList.Count)
+            {
+                var sentenceId = errorList[SelectedIndex].Id;
+                await ScrollToErrorCard(sentenceId);
+            }
+        }
+    }
+
+    private async Task ScrollToErrorCard(int sentenceId)
+    {
+        try
+        {
+            var elementId = $"error-card-{sentenceId}";
+            await JS.InvokeVoidAsync("eval", $@"
+                (function() {{
+                    var el = document.getElementById('{elementId}');
+                    if (!el) return;
+                    var container = el.parentElement;
+                    while (container && container.scrollHeight <= container.clientHeight) {{
+                        container = container.parentElement;
+                    }}
+                    if (container) {{
+                        var elRect = el.getBoundingClientRect();
+                        var cRect = container.getBoundingClientRect();
+                        var targetTop = container.scrollTop + (elRect.top - cRect.top) - (cRect.height / 2) + (elRect.height / 2);
+                        container.scrollTo({{ top: targetTop, behavior: 'smooth' }});
+                    }} else {{
+                        el.scrollIntoView({{ behavior: 'smooth', block: 'center' }});
+                    }}
+                }})();
+            ");
+        }
+        catch
+        {
+            // Ignore scroll errors (e.g., circuit disconnected)
+        }
+    }
 
     private bool HasVisibleError(SentenceReport sentence)
     {

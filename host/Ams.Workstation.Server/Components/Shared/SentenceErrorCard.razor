@@ -45,6 +45,11 @@
                 Play Audio Segment
             </BitButton>
             <BitButton Variant="BitVariant.Outline" Size="BitSize.Medium"
+                       Color="BitColor.Tertiary"
+                       OnClick="() => OnView.InvokeAsync()">
+                View in Playback
+            </BitButton>
+            <BitButton Variant="BitVariant.Outline" Size="BitSize.Medium"
                        OnClick="() => OnExport.InvokeAsync()">
                 Export Audio
             </BitButton>
@@ -62,18 +67,24 @@
 
 @code {
     [Parameter] public SentenceReport Sentence { get; set; } = default!;
+    [Parameter] public bool IsSelected { get; set; }
     [Parameter] public EventCallback OnPlayAudio { get; set; }
     [Parameter] public EventCallback OnExport { get; set; }
     [Parameter] public EventCallback OnCrx { get; set; }
     [Parameter] public EventCallback OnIgnore { get; set; }
+    [Parameter] public EventCallback OnView { get; set; }
     [Parameter] public IReadOnlySet<string>? IgnoredKeys { get; set; }
 
-    private string GetBorderStyle() => Sentence.Status switch
+    private string GetBorderStyle()
     {
-        "unreliable" => "border-left: 3px solid var(--bit-clr-err); margin-bottom: 0.75rem;",
-        "attention" => "border-left: 3px solid var(--bit-clr-wrn); margin-bottom: 0.75rem;",
-        _ => "border-left: 3px solid transparent; margin-bottom: 0.75rem;"
-    };
+        var outline = IsSelected ? "outline: 2px solid var(--bit-clr-pri); " : "";
+        return Sentence.Status switch
+        {
+            "unreliable" => $"{outline}border-left: 3px solid var(--bit-clr-err); margin-bottom: 0.75rem;",
+            "attention" => $"{outline}border-left: 3px solid var(--bit-clr-wrn); margin-bottom: 0.75rem;",
+            _ => $"{outline}border-left: 3px solid transparent; margin-bottom: 0.75rem;"
+        };
+    }
 
     private BitColor GetStatusColor() => Sentence.Status switch
     {
