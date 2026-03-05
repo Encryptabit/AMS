@@ -173,9 +173,34 @@ public static class MfaWorkflow
 
         if (chunkCorpus is not null)
         {
-            // Chunked path: straightforward alignment (no ASR corpus fallback)
-            var alignResult = await service.AlignAsync(alignContext, cancellationToken).ConfigureAwait(false);
-            EnsureSuccess("mfa align", alignResult);
+            // Chunked path: attempt chunked alignment, fall back to single-utterance on total failure.
+            // Chunked alignment can fail when ASR timings are too rough for accurate chunk-to-text mapping
+            // (chicken-and-egg: MFA produces accurate timings, but chunk labs depend on pre-MFA timings).
+            try
+            {
+                var alignResult = await service.AlignAsync(alignContext, cancellationToken).ConfigureAwait(false);
+                EnsureSuccess("mfa align", alignResult);
+            }
+            catch (InvalidOperationException ex)
+            {
+                Log.Warn(
+                    "Chunked MFA alignment failed ({Message}); falling back to single-utterance corpus",
+                    ex.Message);
+
+                // Rebuild corpus as single utterance (same as legacy path)
+                CleanCorpusDirectory(corpusDir);
+                var stagedAudioPath = Path.Combine(corpusDir, chapterStem + ".wav");
+                StageAudio(audioFile, stagedAudioPath);
+                var labPath = Path.Combine(corpusDir, chapterStem + ".lab");
+                await WriteLabFileAsync(hydrateFile, chapterContext, labPath, null, cancellationToken)
+                    .ConfigureAwait(false);
+
+                // Discard chunk corpus so downstream skips aggregation
+                chunkCorpus = null;
+
+                var fallbackResult = await service.AlignAsync(alignContext, cancellationToken).ConfigureAwait(false);
+                EnsureSuccess("mfa align (single-utterance fallback)", fallbackResult);
+            }
         }
         else
         {
