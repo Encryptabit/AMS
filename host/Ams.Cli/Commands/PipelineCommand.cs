@@ -8,6 +8,8 @@ using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
 using Ams.Cli.Utilities;
 using Ams.Cli.Repl;
+using Ams.Core.Application.Commands;
+using Ams.Core.Application.Mfa.Models;
 using Ams.Core.Artifacts;
 using Ams.Core.Processors;
 using Ams.Core.Artifacts.Hydrate;
@@ -448,7 +450,10 @@ public static class PipelineCommand
         int maxAsrParallelism,
         int maxMfaParallelism,
         IPipelineProgressReporter? reporter,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        MfaBeamProfile? mfaProfile = null,
+        int? mfaBeam = null,
+        int? mfaRetryBeam = null)
     {
         ArgumentNullException.ThrowIfNull(pipelineService);
 
@@ -532,7 +537,10 @@ public static class PipelineCommand
                     verbose,
                     reporter,
                     concurrency,
-                    cancellationToken).ConfigureAwait(false);
+                    cancellationToken,
+                    mfaProfile,
+                    mfaBeam,
+                    mfaRetryBeam).ConfigureAwait(false);
 
                 reporter?.MarkComplete(chapterId);
             }
@@ -1135,6 +1143,13 @@ public static class PipelineCommand
         var progressOption =
             new Option<bool>("--progress", () => true, "Display live progress UI while running the pipeline");
 
+        var mfaProfileOption = new Option<string?>("--mfa-profile", () => null,
+            "MFA beam search profile: fast (beam 20/retry 80), balanced (beam 40/retry 120), strict (beam 80/retry 200)");
+        var mfaBeamOption = new Option<int?>("--mfa-beam", () => null,
+            "Explicit MFA beam width (overrides profile default)");
+        var mfaRetryBeamOption = new Option<int?>("--mfa-retry-beam", () => null,
+            "Explicit MFA retry beam width (overrides profile default)");
+
         cmd.AddOption(bookOption);
         cmd.AddOption(audioOption);
         cmd.AddOption(workDirOption);
@@ -1151,6 +1166,9 @@ public static class PipelineCommand
         cmd.AddOption(maxAsrOption);
         cmd.AddOption(maxMfaOption);
         cmd.AddOption(progressOption);
+        cmd.AddOption(mfaProfileOption);
+        cmd.AddOption(mfaBeamOption);
+        cmd.AddOption(mfaRetryBeamOption);
 
         cmd.SetHandler(async context =>
         {
@@ -1170,6 +1188,10 @@ public static class PipelineCommand
             var maxAsr = context.ParseResult.GetValueForOption(maxAsrOption);
             var maxMfa = context.ParseResult.GetValueForOption(maxMfaOption);
             var showProgress = context.ParseResult.GetValueForOption(progressOption);
+            var mfaProfileRaw = context.ParseResult.GetValueForOption(mfaProfileOption);
+            var mfaBeam = context.ParseResult.GetValueForOption(mfaBeamOption);
+            var mfaRetryBeam = context.ParseResult.GetValueForOption(mfaRetryBeamOption);
+            var mfaProfile = ParseMfaProfile(mfaProfileRaw);
             if (showProgress && Log.IsDebugLoggingEnabled())
             {
                 Log.Debug("Progress UI disabled while AMS_LOG_LEVEL requests Debug-level logging.");
@@ -1202,7 +1224,10 @@ public static class PipelineCommand
                                 maxAsr,
                                 maxMfa,
                                 reporter,
-                                cancellationToken));
+                                cancellationToken,
+                                mfaProfile,
+                                mfaBeam,
+                                mfaRetryBeam));
                     }
                     else
                     {
@@ -1223,7 +1248,10 @@ public static class PipelineCommand
                             maxAsr,
                             maxMfa,
                             reporter: null,
-                            cancellationToken).ConfigureAwait(false);
+                            cancellationToken,
+                            mfaProfile,
+                            mfaBeam,
+                            mfaRetryBeam).ConfigureAwait(false);
                     }
                 }
                 catch (Exception ex)
@@ -1272,7 +1300,10 @@ public static class PipelineCommand
                                     verbose,
                                     reporter,
                                     concurrency,
-                                    cancellationToken).ConfigureAwait(false);
+                                    cancellationToken,
+                                    mfaProfile,
+                                    mfaBeam,
+                                    mfaRetryBeam).ConfigureAwait(false);
 
                                 reporter.MarkComplete(chapterId);
                             }
@@ -1307,7 +1338,10 @@ public static class PipelineCommand
                         verbose,
                         progress: null,
                         concurrency,
-                        cancellationToken).ConfigureAwait(false);
+                        cancellationToken,
+                        mfaProfile,
+                        mfaBeam,
+                        mfaRetryBeam).ConfigureAwait(false);
                 }
             }
             catch (OperationCanceledException)
@@ -1340,7 +1374,10 @@ public static class PipelineCommand
         bool verbose,
         IPipelineProgressReporter? progress,
         PipelineConcurrencyControl concurrency,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        MfaBeamProfile? mfaProfile = null,
+        int? mfaBeam = null,
+        int? mfaRetryBeam = null)
     {
         ArgumentNullException.ThrowIfNull(pipelineService);
 
@@ -1431,7 +1468,10 @@ public static class PipelineCommand
                 HydrateFile = hydrateFile,
                 TextGridFile = textGridFile,
                 AlignmentRootDirectory = new DirectoryInfo(Path.Combine(chapterDir, "alignment")),
-                UseDedicatedProcess = useDedicatedMfaProcess
+                UseDedicatedProcess = useDedicatedMfaProcess,
+                BeamProfile = mfaProfile,
+                Beam = mfaBeam,
+                RetryBeam = mfaRetryBeam
             },
             MergeOptions = new MergeTimingsOptions
             {
@@ -2977,6 +3017,21 @@ public static class PipelineCommand
         {
             Directory.CreateDirectory(dir);
         }
+    }
+
+    private static MfaBeamProfile? ParseMfaProfile(string? raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw))
+            return null;
+
+        return raw.Trim().ToLowerInvariant() switch
+        {
+            "fast" => MfaBeamProfile.Fast,
+            "balanced" => MfaBeamProfile.Balanced,
+            "strict" => MfaBeamProfile.Strict,
+            _ => throw new ArgumentException(
+                $"Unknown MFA profile '{raw}'. Valid options: fast, balanced, strict.")
+        };
     }
 
     private static string MakeSafeFileStem(string? value)

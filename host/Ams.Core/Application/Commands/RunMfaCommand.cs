@@ -1,4 +1,5 @@
 using Ams.Core.Application.Mfa;
+using Ams.Core.Application.Mfa.Models;
 using Ams.Core.Runtime.Chapter;
 
 namespace Ams.Core.Application.Commands;
@@ -32,6 +33,11 @@ public sealed class RunMfaCommand
             throw new FileNotFoundException("Audio file not found.", audioFile.FullName);
         }
 
+        var beamSettings = MfaBeamSettings.Resolve(
+            options?.BeamProfile,
+            options?.Beam,
+            options?.RetryBeam);
+
         await MfaWorkflow.RunChapterAsync(
                 chapter,
                 audioFile,
@@ -39,8 +45,9 @@ public sealed class RunMfaCommand
                 chapterStem,
                 chapterDirectory,
                 cancellationToken,
-                options?.UseDedicatedProcess ?? false,
-                options?.WorkspaceRoot)
+                useDedicatedProcess: options?.UseDedicatedProcess ?? false,
+                workspaceRoot: options?.WorkspaceRoot,
+                beamSettings: beamSettings)
             .ConfigureAwait(false);
 
         var alignmentRoot =
@@ -80,6 +87,18 @@ public sealed record RunMfaOptions
     public DirectoryInfo? ChapterDirectory { get; init; }
     public bool UseDedicatedProcess { get; init; }
     public string? WorkspaceRoot { get; init; }
+
+    /// <summary>
+    /// Beam search profile preset. When null, defaults to <see cref="MfaBeamProfile.Balanced"/>.
+    /// Explicit <see cref="Beam"/>/<see cref="RetryBeam"/> values override profile defaults.
+    /// </summary>
+    public MfaBeamProfile? BeamProfile { get; init; }
+
+    /// <summary>Explicit beam width override (supersedes profile default).</summary>
+    public int? Beam { get; init; }
+
+    /// <summary>Explicit retry beam width override (supersedes profile default).</summary>
+    public int? RetryBeam { get; init; }
 }
 
 public sealed record RunMfaResult(FileInfo TextGridFile);
