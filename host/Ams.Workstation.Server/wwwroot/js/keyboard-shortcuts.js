@@ -55,6 +55,18 @@ function handleKeydown(e) {
     }
 
     // Modal NOT open, NOT in input field
+    if (e.key === 'ArrowRight' && e.altKey) {
+        _dotNetRef.invokeMethodAsync('OnChapterNav', 'next');
+        e.preventDefault();
+        return;
+    }
+
+    if (e.key === 'ArrowLeft' && e.altKey) {
+        _dotNetRef.invokeMethodAsync('OnChapterNav', 'prev');
+        e.preventDefault();
+        return;
+    }
+
     if (e.key === 'ArrowRight' && (e.ctrlKey || e.metaKey)) {
         _dotNetRef.invokeMethodAsync('OnCrossNav', 'errors-to-playback');
         e.preventDefault();

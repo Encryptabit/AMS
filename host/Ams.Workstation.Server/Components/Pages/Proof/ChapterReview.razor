@@ -395,6 +395,22 @@ else
     // ── Keyboard JSInvokable handlers ──
 
     [JSInvokable]
+    public void OnChapterNav(string direction)
+    {
+        var chapters = Workspace.AvailableChapters;
+        if (chapters.Count == 0 || string.IsNullOrEmpty(ChapterName)) return;
+
+        var current = Uri.UnescapeDataString(ChapterName);
+        var index = chapters.IndexOf(current);
+        if (index < 0) return;
+
+        var next = direction == "next" ? index + 1 : index - 1;
+        if (next < 0 || next >= chapters.Count) return;
+
+        Navigation.NavigateTo($"/proof/{Uri.EscapeDataString(chapters[next])}");
+    }
+
+    [JSInvokable]
     public void OnSwitchView(string direction)
     {
         // Save current position
