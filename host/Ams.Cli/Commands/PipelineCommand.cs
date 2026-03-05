@@ -453,7 +453,9 @@ public static class PipelineCommand
         CancellationToken cancellationToken,
         MfaBeamProfile? mfaProfile = null,
         int? mfaBeam = null,
-        int? mfaRetryBeam = null)
+        int? mfaRetryBeam = null,
+        bool disableChunkPlan = false,
+        bool disableChunkedMfa = false)
     {
         ArgumentNullException.ThrowIfNull(pipelineService);
 
@@ -540,7 +542,9 @@ public static class PipelineCommand
                     cancellationToken,
                     mfaProfile,
                     mfaBeam,
-                    mfaRetryBeam).ConfigureAwait(false);
+                    mfaRetryBeam,
+                    disableChunkPlan,
+                    disableChunkedMfa).ConfigureAwait(false);
 
                 reporter?.MarkComplete(chapterId);
             }
@@ -1150,6 +1154,11 @@ public static class PipelineCommand
         var mfaRetryBeamOption = new Option<int?>("--mfa-retry-beam", () => null,
             "Explicit MFA retry beam width (overrides profile default)");
 
+        var noChunkPlanOption = new Option<bool>("--no-chunk-plan", () => false,
+            "Disable shared chunk plan generation; ASR processes the full audio as a single pass (legacy behavior)");
+        var noChunkedMfaOption = new Option<bool>("--no-chunked-mfa", () => false,
+            "Force MFA to use single-utterance corpus even when a chunk plan exists");
+
         cmd.AddOption(bookOption);
         cmd.AddOption(audioOption);
         cmd.AddOption(workDirOption);
@@ -1169,6 +1178,8 @@ public static class PipelineCommand
         cmd.AddOption(mfaProfileOption);
         cmd.AddOption(mfaBeamOption);
         cmd.AddOption(mfaRetryBeamOption);
+        cmd.AddOption(noChunkPlanOption);
+        cmd.AddOption(noChunkedMfaOption);
 
         cmd.SetHandler(async context =>
         {
@@ -1192,6 +1203,8 @@ public static class PipelineCommand
             var mfaBeam = context.ParseResult.GetValueForOption(mfaBeamOption);
             var mfaRetryBeam = context.ParseResult.GetValueForOption(mfaRetryBeamOption);
             var mfaProfile = ParseMfaProfile(mfaProfileRaw);
+            var noChunkPlan = context.ParseResult.GetValueForOption(noChunkPlanOption);
+            var noChunkedMfa = context.ParseResult.GetValueForOption(noChunkedMfaOption);
             if (showProgress && Log.IsDebugLoggingEnabled())
             {
                 Log.Debug("Progress UI disabled while AMS_LOG_LEVEL requests Debug-level logging.");
@@ -1227,7 +1240,9 @@ public static class PipelineCommand
                                 cancellationToken,
                                 mfaProfile,
                                 mfaBeam,
-                                mfaRetryBeam));
+                                mfaRetryBeam,
+                                noChunkPlan,
+                                noChunkedMfa));
                     }
                     else
                     {
@@ -1251,7 +1266,9 @@ public static class PipelineCommand
                             cancellationToken,
                             mfaProfile,
                             mfaBeam,
-                            mfaRetryBeam).ConfigureAwait(false);
+                            mfaRetryBeam,
+                            noChunkPlan,
+                            noChunkedMfa).ConfigureAwait(false);
                     }
                 }
                 catch (Exception ex)
@@ -1303,7 +1320,9 @@ public static class PipelineCommand
                                     cancellationToken,
                                     mfaProfile,
                                     mfaBeam,
-                                    mfaRetryBeam).ConfigureAwait(false);
+                                    mfaRetryBeam,
+                                    noChunkPlan,
+                                    noChunkedMfa).ConfigureAwait(false);
 
                                 reporter.MarkComplete(chapterId);
                             }
@@ -1341,7 +1360,9 @@ public static class PipelineCommand
                         cancellationToken,
                         mfaProfile,
                         mfaBeam,
-                        mfaRetryBeam).ConfigureAwait(false);
+                        mfaRetryBeam,
+                        noChunkPlan,
+                        noChunkedMfa).ConfigureAwait(false);
                 }
             }
             catch (OperationCanceledException)
@@ -1377,7 +1398,9 @@ public static class PipelineCommand
         CancellationToken cancellationToken,
         MfaBeamProfile? mfaProfile = null,
         int? mfaBeam = null,
-        int? mfaRetryBeam = null)
+        int? mfaRetryBeam = null,
+        bool disableChunkPlan = false,
+        bool disableChunkedMfa = false)
     {
         ArgumentNullException.ThrowIfNull(pipelineService);
 
@@ -1437,7 +1460,8 @@ public static class PipelineCommand
             ServiceUrl = asrServiceUrl,
             Model = asrModel,
             Language = asrLanguage,
-            EnableWordTimestamps = true
+            EnableWordTimestamps = true,
+            DisableChunkPlan = disableChunkPlan
         };
 
         var useDedicatedMfaProcess = concurrency?.MfaDegree > 1;
@@ -1462,6 +1486,8 @@ public static class PipelineCommand
                 AnchorOptions = defaultAnchorOptions with { EmitWindows = true }
             },
             HydrationOptions = null,
+            DisableChunkPlan = disableChunkPlan,
+            DisableChunkedMfa = disableChunkedMfa,
             MfaOptions = new RunMfaOptions
             {
                 AudioFile = audioFile,
@@ -1471,7 +1497,8 @@ public static class PipelineCommand
                 UseDedicatedProcess = useDedicatedMfaProcess,
                 BeamProfile = mfaProfile,
                 Beam = mfaBeam,
-                RetryBeam = mfaRetryBeam
+                RetryBeam = mfaRetryBeam,
+                DisableChunkedMfa = disableChunkedMfa
             },
             MergeOptions = new MergeTimingsOptions
             {

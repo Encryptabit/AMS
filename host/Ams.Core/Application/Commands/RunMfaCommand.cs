@@ -47,7 +47,8 @@ public sealed class RunMfaCommand
                 cancellationToken,
                 useDedicatedProcess: options?.UseDedicatedProcess ?? false,
                 workspaceRoot: options?.WorkspaceRoot,
-                beamSettings: beamSettings)
+                beamSettings: beamSettings,
+                disableChunkedMfa: options?.DisableChunkedMfa ?? false)
             .ConfigureAwait(false);
 
         var alignmentRoot =
@@ -99,6 +100,13 @@ public sealed record RunMfaOptions
 
     /// <summary>Explicit retry beam width override (supersedes profile default).</summary>
     public int? RetryBeam { get; init; }
+
+    /// <summary>
+    /// When true, forces MFA to use the legacy single-utterance corpus path even
+    /// when a shared chunk plan exists. Use for rollout control to isolate MFA
+    /// chunking behavior independently from ASR chunk planning.
+    /// </summary>
+    public bool DisableChunkedMfa { get; init; }
 }
 
 public sealed record RunMfaResult(FileInfo TextGridFile);

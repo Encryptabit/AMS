@@ -26,6 +26,15 @@ public sealed class AsrService : IAsrService
         ArgumentNullException.ThrowIfNull(chapter);
         var buffer = ResolveAsrReadyBuffer(chapter);
 
+        // Rollout control: DisableChunkPlan bypasses chunk planning entirely,
+        // reverting to the legacy single-buffer ASR path.
+        if (options.DisableChunkPlan)
+        {
+            Log.Debug("ASR chunk planning disabled by rollout flag; using single-buffer path");
+            return await AsrProcessor.TranscribeBufferAsync(buffer, options, cancellationToken)
+                .ConfigureAwait(false);
+        }
+
         var plan = ResolveOrCreateChunkPlan(chapter, buffer);
 
         // Single chunk: fall through to original single-buffer path

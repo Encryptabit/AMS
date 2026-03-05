@@ -959,4 +959,5 @@ public sealed record AsrOptions(
     int GpuDevice = 0,
     bool UseFlashAttention = true,
     bool UseDtwTimestamps = false,
-    string? Prompt = null);
+    string? Prompt = null,
+    bool DisableChunkPlan = false);

@@ -66,7 +66,8 @@ public sealed class GenerateTranscriptCommand
             GpuDevice: options.GpuDevice,
             UseFlashAttention: options.EnableFlashAttention,
             UseDtwTimestamps: options.EnableDtwTimestamps,
-            Prompt: prompt);
+            Prompt: prompt,
+            DisableChunkPlan: options.DisableChunkPlan);
 
         if (prompt is not null)
         {
@@ -214,4 +215,10 @@ public sealed record GenerateTranscriptOptions
     public bool EnableWordTimestamps { get; init; } = true;
     public bool EnableFlashAttention { get; init; }
     public bool EnableDtwTimestamps { get; init; } = false;
+
+    /// <summary>
+    /// When true, ASR processes the full audio buffer as a single pass without
+    /// chunk plan generation. Reverts to pre-chunking behavior for rollout control.
+    /// </summary>
+    public bool DisableChunkPlan { get; init; }
 }

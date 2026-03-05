@@ -37,4 +37,18 @@ public sealed record PipelineRunOptions
     /// <see cref="ChunkPlanningService.IsValid"/> to check before recomputing.
     /// </remarks>
     public ChunkPlanningPolicy? ChunkPlanningPolicy { get; init; }
+
+    /// <summary>
+    /// When true, suppresses shared chunk plan generation and usage during ASR.
+    /// ASR will process the full audio buffer as a single pass (legacy behavior).
+    /// Use this to quickly revert to pre-chunking ASR behavior without code changes.
+    /// </summary>
+    public bool DisableChunkPlan { get; init; }
+
+    /// <summary>
+    /// When true, forces MFA to use the legacy single-utterance corpus path even
+    /// when a chunk plan is available. ASR chunk planning is unaffected.
+    /// Use this to isolate MFA chunking behavior during rollout without affecting ASR.
+    /// </summary>
+    public bool DisableChunkedMfa { get; init; }
 }

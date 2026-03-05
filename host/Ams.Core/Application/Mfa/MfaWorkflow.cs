@@ -24,7 +24,8 @@ public static class MfaWorkflow
         CancellationToken cancellationToken,
         bool useDedicatedProcess = false,
         string? workspaceRoot = null,
-        MfaBeamSettings? beamSettings = null)
+        MfaBeamSettings? beamSettings = null,
+        bool disableChunkedMfa = false)
     {
         if (!useDedicatedProcess)
         {
@@ -66,7 +67,11 @@ public static class MfaWorkflow
         var hydrate = chapterContext.Documents.HydratedTranscript;
         MfaChunkCorpusBuilder.ChunkCorpusResult? chunkCorpus = null;
 
-        if (chunkPlan is not null && hydrate is not null && chunkPlan.Chunks.Count > 1)
+        if (disableChunkedMfa && chunkPlan is not null && chunkPlan.Chunks.Count > 1)
+        {
+            Log.Debug("Chunked MFA disabled by rollout flag; using single-utterance corpus path");
+        }
+        else if (chunkPlan is not null && hydrate is not null && chunkPlan.Chunks.Count > 1)
         {
             // Clean the corpus directory for fresh chunk output
             CleanCorpusDirectory(corpusDir);
