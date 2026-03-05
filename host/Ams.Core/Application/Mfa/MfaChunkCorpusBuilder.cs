@@ -69,11 +69,15 @@ internal static class MfaChunkCorpusBuilder
 
         var sentences = hydrate.Sentences;
         var utterances = new List<UtteranceEntry>(chunkPlan.Chunks.Count);
+        int skippedNoText = 0;
+        int skippedNoAudio = 0;
+        int expandedChunks = 0;
 
         for (int i = 0; i < chunkPlan.Chunks.Count; i++)
         {
             var chunk = chunkPlan.Chunks[i];
             var uttName = FormatUtteranceName(i);
+            var usedFallback = false;
 
             // Find overlapping sentences for this chunk
             var labText = BuildLabText(sentences, chunk.StartSec, chunk.EndSec);
@@ -82,12 +86,18 @@ internal static class MfaChunkCorpusBuilder
             {
                 // Fallback: expand to nearest sentence window
                 labText = BuildLabTextWithFallback(sentences, chunk.StartSec, chunk.EndSec, i);
+                usedFallback = labText is not null;
+                if (usedFallback)
+                {
+                    expandedChunks++;
+                }
             }
 
             if (string.IsNullOrWhiteSpace(labText))
             {
+                skippedNoText++;
                 Log.Debug(
-                    "Chunk {ChunkId} ({StartSec:F2}s-{EndSec:F2}s) produced no usable lab text; skipping",
+                    "Chunk {ChunkId} ({StartSec:F2}s-{EndSec:F2}s) produced no usable lab text after fallback; skipping",
                     chunk.ChunkId, chunk.StartSec, chunk.EndSec);
                 continue;
             }
@@ -97,6 +107,7 @@ internal static class MfaChunkCorpusBuilder
             var sliceLength = Math.Min(chunk.LengthSamples, audioBuffer.Length - chunk.StartSample);
             if (sliceLength <= 0)
             {
+                skippedNoAudio++;
                 Log.Debug(
                     "Chunk {ChunkId} has no audio samples (start={StartSample}, bufLen={BufLen}); skipping",
                     chunk.ChunkId, chunk.StartSample, audioBuffer.Length);
@@ -119,7 +130,11 @@ internal static class MfaChunkCorpusBuilder
                 ChunkEndSec: chunk.EndSec));
         }
 
-        Log.Info("Built chunk corpus: {Count} utterances in {Dir}", utterances.Count, corpusDirectory);
+        Log.Info(
+            "Built chunk corpus: {Count} utterances from {Total} chunks " +
+            "(skipped: {SkippedText} no-text, {SkippedAudio} no-audio; expanded: {Expanded})",
+            utterances.Count, chunkPlan.Chunks.Count, skippedNoText, skippedNoAudio, expandedChunks);
+
         return new ChunkCorpusResult(corpusDirectory, utterances);
     }
 
