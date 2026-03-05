@@ -96,6 +96,7 @@ else
     private IJSObjectReference? _keyboardModule;
     private DotNetObjectReference<ChapterReview>? _dotNetRef;
     private List<SentenceReport> _errorSentencesList = new();
+    private double? _pendingSeekTime;
 
     [Parameter] public string? ChapterName { get; set; }
 
@@ -145,6 +146,13 @@ else
         {
             _scrollToTopPending = false;
             await JS.InvokeVoidAsync("eval", "document.querySelector('.workstation-content')?.scrollTo(0, 0)");
+        }
+
+        if (_pendingSeekTime.HasValue && _waveformPlayer != null)
+        {
+            var seekTime = _pendingSeekTime.Value;
+            _pendingSeekTime = null;
+            await _waveformPlayer.SeekTo(seekTime);
         }
     }
 
@@ -373,12 +381,12 @@ else
         StateHasChanged();
     }
 
-    private async Task HandleViewFromErrors(SentenceReport sentence)
+    private void HandleViewFromErrors(SentenceReport sentence)
     {
         _currentView = "playback";
         var target = _sentences.FirstOrDefault(s => s.Id == sentence.Id);
-        if (target != null && _waveformPlayer != null)
-            await _waveformPlayer.SeekTo(target.StartTime);
+        if (target != null)
+            _pendingSeekTime = target.StartTime;
         StateHasChanged();
     }
 
@@ -429,7 +437,7 @@ else
     }
 
     [JSInvokable]
-    public async Task OnCrossNav(string direction)
+    public void OnCrossNav(string direction)
     {
         if (direction == "errors-to-playback")
         {
@@ -438,8 +446,8 @@ else
             _currentView = "playback";
 
             var sentence = _sentences.FirstOrDefault(s => s.Id == errorSentence.Id);
-            if (sentence != null && _waveformPlayer != null)
-                await _waveformPlayer.SeekTo(sentence.StartTime);
+            if (sentence != null)
+                _pendingSeekTime = sentence.StartTime;
         }
         else // playback-to-errors
         {
