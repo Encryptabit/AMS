@@ -6,6 +6,8 @@
 @inject Ams.Workstation.Server.Services.ReviewedStatusService ReviewedStatusService
 @inject Ams.Workstation.Server.Services.AudioExportService AudioExportService
 @inject Ams.Workstation.Server.Services.IgnoredPatternsService IgnoredPatternsService
+@inject Ams.Workstation.Server.Services.ToastService ToastService
+@inject Ams.Workstation.Server.Services.CrxService CrxService
 @inject NavigationManager Navigation
 @inject IJSRuntime JS
 @using Ams.Workstation.Server.Models
@@ -55,6 +57,7 @@ else
 {
     <ErrorsView Report="_report" ChapterPatterns="_chapterPatterns"
                 IgnoredKeys="IgnoredPatternsService.GetIgnoredKeys()"
+                ExportedSentenceIds="_exportedSentenceIds"
                 SelectedIndex="_selectedErrorIndex"
                 OnPlaySentence="HandlePlayFromErrors"
                 OnExportSentence="HandleExportFromErrors"
@@ -62,14 +65,6 @@ else
                 OnIgnoreSentence="HandleIgnoreFromErrors"
                 OnTogglePatternIgnore="HandleTogglePatternIgnore"
                 OnViewSentence="HandleViewFromErrors" />
-}
-
-@if (!string.IsNullOrEmpty(_exportMessage))
-{
-    <BitText Typography="BitTypography.Caption1" Color="BitColor.SecondaryForeground"
-             Style="text-align: center; padding: 0.5rem;">
-        @_exportMessage
-    </BitText>
 }
 
 <CrxModal @ref="_crxModal" OnSubmitted="HandleCrxSubmitted" />
@@ -85,7 +80,7 @@ else
     private IReadOnlyList<ErrorPattern>? _chapterPatterns;
     private bool _isReviewed;
     private CrxModal? _crxModal;
-    private string? _exportMessage;
+    private HashSet<int> _exportedSentenceIds = new();
     private IJSObjectReference? _snippetPlayer;
     private string? _lastRenderedChapter;
     private bool _scrollToTopPending;
@@ -124,6 +119,9 @@ else
             // Load proof report for errors view
             LoadReport(decodedName);
 
+            // Load exported sentence IDs from CRX entries
+            LoadExportedSentenceIds();
+
             // Load reviewed status (direct service call)
             _isReviewed = ReviewedStatusService.IsReviewed(decodedName);
         }
@@ -159,6 +157,22 @@ else
             _report = ProofReportService.BuildReport(chapterName, hydrate);
             _chapterPatterns = ErrorPatternService.AggregatePatternsForChapter(chapterName, hydrate, IgnoredPatternsService.GetIgnoredKeys()).Patterns;
             MaterializeErrorSentences();
+        }
+    }
+
+    private void LoadExportedSentenceIds()
+    {
+        try
+        {
+            var entries = CrxService.GetEntries();
+            _exportedSentenceIds = entries
+                .Where(e => e.SentenceId > 0)
+                .Select(e => e.SentenceId)
+                .ToHashSet();
+        }
+        catch
+        {
+            _exportedSentenceIds = new();
         }
     }
 
@@ -291,6 +305,7 @@ else
         var decoded = Uri.UnescapeDataString(ChapterName);
         _isReviewed = !_isReviewed;
         ReviewedStatusService.SetReviewed(decoded, _isReviewed);
+        ToastService.Success(_isReviewed ? $"Marked {decoded} as reviewed" : $"Unmarked {decoded} as reviewed");
         StateHasChanged();
     }
 
@@ -300,13 +315,12 @@ else
         try
         {
             var result = AudioExportService.ExportSegment(sentence.StartTime, sentence.EndTime);
-            _exportMessage = $"Exported: {result.Filename}";
+            ToastService.Success($"Exported: {result.Filename}");
         }
         catch (Exception ex)
         {
-            _exportMessage = $"Export failed: {ex.Message}";
+            ToastService.Error($"Export failed: {ex.Message}");
         }
-        StateHasChanged();
     }
 
     private void HandleCrxFromErrors(SentenceReport sentence)
@@ -320,11 +334,12 @@ else
     {
         if (result.Success)
         {
-            _exportMessage = $"CRX #{result.ErrorNumber} added ({result.AudioFile})";
+            ToastService.Success($"Error #{result.ErrorNumber} exported to CRX");
+            LoadExportedSentenceIds();
         }
         else
         {
-            _exportMessage = $"CRX failed: {result.Error}";
+            ToastService.Error($"CRX failed: {result.Error}");
         }
         StateHasChanged();
     }
@@ -367,7 +382,7 @@ else
             var decoded = Uri.UnescapeDataString(ChapterName!);
             LoadReport(decoded);
             await LoadSentencesAsync(decoded);
-            _exportMessage = $"Ignored {count} error pattern{(count == 1 ? "" : "s")} for entire book.";
+            ToastService.Info($"Ignored {count} error pattern{(count == 1 ? "" : "s")} for entire book");
         }
         StateHasChanged();
     }

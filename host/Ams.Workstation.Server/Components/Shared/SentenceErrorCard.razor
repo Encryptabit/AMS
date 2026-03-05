@@ -4,7 +4,15 @@
     <BitStack Horizontal="false" Gap="0.5rem" Style="padding: 1rem;">
         @* Header: ID + WER/CER + Status badge + metadata all horizontal *@
         <BitStack Horizontal="true" Gap="1rem" VerticalAlign="BitAlignment.Center" Wrap="true">
-            <BitText Typography="BitTypography.Body1" Style="font-weight: 600;">#@Sentence.Id</BitText>
+            <BitStack Horizontal="true" Gap="0.35rem" VerticalAlign="BitAlignment.Center">
+                <BitText Typography="BitTypography.Body1" Style="font-weight: 600;">#@Sentence.Id</BitText>
+                @if (IsExported)
+                {
+                    <BitIcon IconName="@BitIconName.SkypeCircleCheck"
+                             Style="color: #4a9eff; font-size: 1rem;"
+                             Title="Exported to CRX" />
+                }
+            </BitStack>
             <BitText Typography="BitTypography.Caption1">
                 WER: <span style="color: var(@GetWerColor());">@Sentence.Wer</span>
                 &nbsp;&nbsp;CER: @Sentence.Cer
@@ -68,6 +76,7 @@
 @code {
     [Parameter] public SentenceReport Sentence { get; set; } = default!;
     [Parameter] public bool IsSelected { get; set; }
+    [Parameter] public bool IsExported { get; set; }
     [Parameter] public EventCallback OnPlayAudio { get; set; }
     [Parameter] public EventCallback OnExport { get; set; }
     [Parameter] public EventCallback OnCrx { get; set; }

@@ -57,6 +57,7 @@
                 <div id="error-card-@sentence.Id" style="width:100%">
                     <SentenceErrorCard Sentence="sentence"
                                        IsSelected="idx == SelectedIndex"
+                                       IsExported="ExportedSentenceIds?.Contains(sentence.Id) == true"
                                        OnPlayAudio="() => OnPlaySentence.InvokeAsync(sentence)"
                                        OnExport="() => HandleExport(sentence)"
                                        OnCrx="() => HandleCrx(sentence)"
@@ -82,6 +83,7 @@
     [Parameter] public EventCallback<ErrorPattern> OnTogglePatternIgnore { get; set; }
     [Parameter] public EventCallback<SentenceReport> OnViewSentence { get; set; }
     [Parameter] public IReadOnlySet<string>? IgnoredKeys { get; set; }
+    [Parameter] public IReadOnlySet<int>? ExportedSentenceIds { get; set; }
 
     private IEnumerable<ErrorPattern> VisiblePatterns =>
         ChapterPatterns?.Where(p => !p.Ignored) ?? Enumerable.Empty<ErrorPattern>();

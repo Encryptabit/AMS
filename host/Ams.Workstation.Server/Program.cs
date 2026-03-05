@@ -29,6 +29,9 @@ builder.Services.AddTransient<ValidationMetricsService>();
 builder.Services.AddTransient<ProofReportService>();
 builder.Services.AddTransient<ErrorPatternService>();
 
+// Toast notification service - singleton (shared across circuits)
+builder.Services.AddSingleton<ToastService>();
+
 // Persistence services - singleton (shared state across circuits)
 builder.Services.AddSingleton<ReviewedStatusService>();
 builder.Services.AddSingleton<IgnoredPatternsService>();
