@@ -82,14 +82,12 @@ public class ReviewedStatusService
         try
         {
             var json = File.ReadAllText(path);
-            using var doc = JsonDocument.Parse(json);
-            if (doc.RootElement.TryGetProperty(_currentBookId ?? "", out var bookElement))
+            var allBooks = JsonSerializer.Deserialize<Dictionary<string, Dictionary<string, ReviewedEntry>>>(json);
+            if (allBooks != null && allBooks.TryGetValue(_currentBookId ?? "", out var bookEntries))
             {
-                foreach (var prop in bookElement.EnumerateObject())
+                foreach (var kvp in bookEntries)
                 {
-                    var reviewed = prop.Value.GetProperty("reviewed").GetBoolean();
-                    var timestamp = prop.Value.GetProperty("timestamp").GetDateTime();
-                    _status[prop.Name] = new ReviewedEntry(reviewed, timestamp);
+                    _status[kvp.Key] = kvp.Value;
                 }
             }
         }
