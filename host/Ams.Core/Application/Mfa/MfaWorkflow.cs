@@ -2,6 +2,7 @@ using System.IO;
 using System.Text;
 using Ams.Core.Application.Processes;
 using Ams.Core.Application.Mfa.Models;
+
 using Ams.Core.Artifacts;
 using Ams.Core.Artifacts.Alignment;
 using Ams.Core.Artifacts.Hydrate;
@@ -21,7 +22,8 @@ public static class MfaWorkflow
         DirectoryInfo chapterDirectory,
         CancellationToken cancellationToken,
         bool useDedicatedProcess = false,
-        string? workspaceRoot = null)
+        string? workspaceRoot = null,
+        MfaBeamSettings? beamSettings = null)
     {
         if (!useDedicatedProcess)
         {
@@ -97,8 +99,8 @@ public static class MfaWorkflow
         var customDictionaryPath = Path.Combine(mfaRoot, chapterStem + ".dictionary.zip");
         var alignOutputDir = Path.Combine(mfaRoot, chapterStem + ".align");
 
-        const int FastAlignBeam = 80;
-        const int FastAlignRetryBeam = 200;
+        var resolvedBeam = beamSettings ?? MfaBeamSettings.Resolve(MfaBeamProfile.Balanced);
+        Log.Debug("MFA beam settings: beam={Beam}, retryBeam={RetryBeam}", resolvedBeam.Beam, resolvedBeam.RetryBeam);
 
         var baseContext = new MfaChapterContext
         {
@@ -110,8 +112,8 @@ public static class MfaWorkflow
             G2pModel = g2pModel,
             G2pOutputPath = g2pOutputPath,
             CustomDictionaryPath = customDictionaryPath,
-            Beam = FastAlignBeam,
-            RetryBeam = FastAlignRetryBeam,
+            Beam = resolvedBeam.Beam,
+            RetryBeam = resolvedBeam.RetryBeam,
             SingleSpeaker = true,
             CleanOutput = true
         };
@@ -205,7 +207,7 @@ public static class MfaWorkflow
 
         if (chunkCorpus is not null)
         {
-            // Chunked path: collect per-utterance TextGrids
+            // Chunked path: collect per-utterance TextGrids into mfaCopyDir for aggregation
             foreach (var utt in chunkCorpus.Utterances)
             {
                 var uttTextGridCandidates = new[]
@@ -223,19 +225,15 @@ public static class MfaWorkflow
                 }
             }
 
-            // Also copy the chapter-level TextGrid if MFA produced one
-            var chapterTextGridCandidates = new[]
+            // Aggregate per-chunk TextGrids into canonical chapter-level TextGrid
+            var aggregatedCount = TextGridAggregationService.Aggregate(
+                chunkCorpus.Utterances,
+                mfaCopyDir,
+                textGridCopyPath);
+
+            if (aggregatedCount == 0)
             {
-                Path.Combine(alignOutputDir, "alignment", "mfa", chapterStem + ".TextGrid"),
-                Path.Combine(alignOutputDir, chapterStem + ".TextGrid")
-            };
-            foreach (var candidate in chapterTextGridCandidates)
-            {
-                if (File.Exists(candidate))
-                {
-                    CopyIfExists(candidate, textGridCopyPath);
-                    break;
-                }
+                Log.Warn("TextGrid aggregation produced no intervals; downstream merge may fail for {Chapter}", chapterStem);
             }
         }
         else
