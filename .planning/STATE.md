@@ -8,8 +8,8 @@ Audio Management System - CLI and core library for audio processing, ASR, forced
 
 **Milestone**: v2.0 Blazor Workstation
 **Phase**: 14 - Shared Chunked ASR/MFA
-**Plan**: 1/7
-**Status**: Plan 14-01 complete; ChunkPlanDocument artifact model with DocumentSlot lifecycle and resolver persistence
+**Plan**: 2/7
+**Status**: Plan 14-02 complete; ChunkPlanningService with deterministic generation, policy controls, and 15 unit tests
 
 ## Progress
 
@@ -24,7 +24,7 @@ v2.0 Blazor Workstation[██████████████████�
 | Plan | Name | Tasks | Status |
 |------|------|-------|--------|
 | 14-01 | Chunk Plan Artifact Model | 2 | Complete |
-| 14-02 | TBD | - | Pending |
+| 14-02 | Chunk Planning Service | 2 | Complete |
 | 14-03 | TBD | - | Pending |
 | 14-04 | TBD | - | Pending |
 | 14-05 | TBD | - | Pending |
@@ -159,6 +159,9 @@ v2.0 Blazor Workstation[██████████████████�
 | Chunk plan artifact naming | {chapterStem}.align.chunks.json | Follows existing align.tx/hydrate/anchors convention |
 | ChunkPlanPolicy fields | threshold, min silence, min chunk, sample rate | Enables downstream plan validity checking |
 | ChunkPlanEntry dual fields | Sample-precise + time-domain | StartSample/LengthSamples for slicing, StartSec/EndSec for offsets |
+| ChunkPlanningPolicy vs ChunkPlanPolicy | Separate input/persisted types | Service resolves defaults; persisted record stores exact values used |
+| Audio fingerprint strategy | path+length+sampleRate+channels | Lightweight identity for invalidation; avoids content hashing overhead |
+| Path separator normalization | Backslash to forward slash in fingerprint | Cross-platform consistency between Windows and Linux |
 
 ## Phase 8/8.1 Conclusions (Archived)
 
@@ -205,7 +208,7 @@ poc/VelloSharpPoc/     - Avalonia + VelloSharp (child window fails)
 
 ## Next Action
 
-Plan 14-01 complete. ChunkPlanDocument artifact model wired through resolver and chapter documents. Continue with plan 14-02.
+Plan 14-02 complete. ChunkPlanningService with deterministic generation, policy controls, and 15 unit tests. Continue with plan 14-03.
 
 ## Deferred UI Refinements (for Plan 10-04)
 
@@ -222,4 +225,4 @@ None currently.
 
 ## Session Continuity
 
-Last activity: 2026-03-05 - Completed plan 14-01: chunk plan artifact model with DocumentSlot lifecycle
+Last activity: 2026-03-05 - Completed plan 14-02: ChunkPlanningService with deterministic generation and 15 unit tests
