@@ -51,17 +51,41 @@ public sealed class AsrService : IAsrService
             plan.Chunks.Count, totalDuration);
 
         var chunkResults = new List<(AsrResponse Response, double OffsetSec)>(plan.Chunks.Count);
+        var chunkAudioEntries = new List<ChunkAudioEntry>(plan.Chunks.Count);
+        var chunkAudioDirectory = PrepareChunkAudioDirectory(chapter);
 
-        foreach (var entry in plan.Chunks)
+        for (int i = 0; i < plan.Chunks.Count; i++)
         {
+            var entry = plan.Chunks[i];
             cancellationToken.ThrowIfCancellationRequested();
 
             var slice = buffer.Slice(entry.StartSample, entry.LengthSamples);
+            var utteranceName = FormatChunkUtteranceName(i);
+            var chunkWavPath = Path.Combine(chunkAudioDirectory, utteranceName + ".wav");
+            AudioProcessor.EncodeWav(chunkWavPath, slice);
+
+            chunkAudioEntries.Add(new ChunkAudioEntry(
+                ChunkId: entry.ChunkId,
+                UtteranceName: utteranceName,
+                StartSec: entry.StartSec,
+                EndSec: entry.EndSec,
+                WavPath: chunkWavPath));
+
             var response = await AsrProcessor.TranscribeBufferAsync(slice, options, cancellationToken)
                 .ConfigureAwait(false);
 
             chunkResults.Add((response, entry.StartSec));
         }
+
+        chapter.Documents.ChunkAudio = new ChunkAudioDocument(
+            Version: ChunkAudioDocument.CurrentVersion,
+            CreatedAtUtc: DateTime.UtcNow,
+            SourceAudioFingerprint: plan.SourceAudioFingerprint,
+            SampleRate: buffer.SampleRate,
+            Channels: buffer.Channels,
+            Chunks: chunkAudioEntries);
+        Log.Debug("ASR persisted chunk audio artifact ({ChunkCount} chunks, dir={Directory})",
+            chunkAudioEntries.Count, chunkAudioDirectory);
 
         return MergeChunkResponses(chunkResults);
     }
@@ -176,4 +200,29 @@ public sealed class AsrService : IAsrService
         var descriptor = chapter.Descriptor.AudioBuffers[0];
         return chapter.Audio.Load(descriptor.BufferId);
     }
+
+    private static string PrepareChunkAudioDirectory(ChapterContext chapter)
+    {
+        var chapterRoot = chapter.Descriptor.RootPath
+            ?? throw new InvalidOperationException("Chapter root path is not configured.");
+        var directory = Path.Combine(chapterRoot, "alignment", "chunk-audio");
+        Directory.CreateDirectory(directory);
+
+        foreach (var file in Directory.EnumerateFiles(directory, "*.wav"))
+        {
+            try
+            {
+                File.Delete(file);
+            }
+            catch (Exception ex)
+            {
+                Log.Debug("Unable to remove stale ASR chunk audio file {Path}: {Message}", file, ex.Message);
+            }
+        }
+
+        return directory;
+    }
+
+    private static string FormatChunkUtteranceName(int index)
+        => $"utt-{index:D4}";
 }

@@ -48,7 +48,8 @@ public sealed class RunMfaCommand
                 useDedicatedProcess: options?.UseDedicatedProcess ?? false,
                 workspaceRoot: options?.WorkspaceRoot,
                 beamSettings: beamSettings,
-                disableChunkedMfa: options?.DisableChunkedMfa ?? false)
+                disableChunkedMfa: options?.DisableChunkedMfa ?? false,
+                requireAsrChunkAudio: options?.RequireAsrChunkAudio ?? false)
             .ConfigureAwait(false);
 
         var alignmentRoot =
@@ -107,6 +108,13 @@ public sealed record RunMfaOptions
     /// chunking behavior independently from ASR chunk planning.
     /// </summary>
     public bool DisableChunkedMfa { get; init; }
+
+    /// <summary>
+    /// When true, chunked MFA requires pre-sliced chunk audio emitted by ASR.
+    /// If chunk-audio artifacts are missing or incompatible, MFA fails instead
+    /// of silently regenerating chunk slices.
+    /// </summary>
+    public bool RequireAsrChunkAudio { get; init; }
 }
 
 public sealed record RunMfaResult(FileInfo TextGridFile);

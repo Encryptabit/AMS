@@ -19,6 +19,7 @@ public sealed class ChapterDocuments
     private readonly DocumentSlot<PausePolicy> _pausePolicy;
     private readonly DocumentSlot<TextGridDocument> _textGrid;
     private readonly DocumentSlot<ChunkPlanDocument> _chunkPlan;
+    private readonly DocumentSlot<ChunkAudioDocument> _chunkAudio;
 
     internal ChapterDocuments(ChapterContext context, IArtifactResolver resolver)
     {
@@ -96,6 +97,11 @@ public sealed class ChapterDocuments
             () => resolver.LoadChunkPlan(context),
             value => resolver.SaveChunkPlan(context, value),
             CreateOptions<ChunkPlanDocument>(() => resolver.GetChunkPlanFile(context)));
+
+        _chunkAudio = new DocumentSlot<ChunkAudioDocument>(
+            () => resolver.LoadChunkAudio(context),
+            value => resolver.SaveChunkAudio(context, value),
+            CreateOptions<ChunkAudioDocument>(() => resolver.GetChunkAudioFile(context)));
     }
 
     public TranscriptIndex? Transcript
@@ -159,6 +165,16 @@ public sealed class ChapterDocuments
         set => _chunkPlan.SetValue(value);
     }
 
+    /// <summary>
+    /// Chunk audio files emitted during ASR chunk transcription and reusable by MFA.
+    /// Persisted as <c>{chapterStem}.align.chunk-audio.json</c>.
+    /// </summary>
+    public ChunkAudioDocument? ChunkAudio
+    {
+        get => _chunkAudio.GetValue();
+        set => _chunkAudio.SetValue(value);
+    }
+
     internal bool IsDirty =>
         _transcript.IsDirty ||
         _hydratedTranscript.IsDirty ||
@@ -168,7 +184,8 @@ public sealed class ChapterDocuments
         _pauseAdjustments.IsDirty ||
         _pausePolicy.IsDirty ||
         _textGrid.IsDirty ||
-        _chunkPlan.IsDirty;
+        _chunkPlan.IsDirty ||
+        _chunkAudio.IsDirty;
 
     internal void SaveChanges()
     {
@@ -181,6 +198,7 @@ public sealed class ChapterDocuments
         _pausePolicy.Save();
         _textGrid.Save();
         _chunkPlan.Save();
+        _chunkAudio.Save();
     }
 
     internal void InvalidateTextGrid() => _textGrid.Invalidate();
@@ -194,4 +212,5 @@ public sealed class ChapterDocuments
     internal FileInfo? GetPausePolicyFile() => _pausePolicy.GetBackingFile();
     internal FileInfo? GetTextGridFile() => _textGrid.GetBackingFile();
     internal FileInfo? GetChunkPlanFile() => _chunkPlan.GetBackingFile();
+    internal FileInfo? GetChunkAudioFile() => _chunkAudio.GetBackingFile();
 }

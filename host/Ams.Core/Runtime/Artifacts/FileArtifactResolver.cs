@@ -137,6 +137,12 @@ public sealed class FileArtifactResolver : IArtifactResolver
     public void SaveChunkPlan(ChapterContext context, ChunkPlanDocument document)
         => SaveJson(GetChapterArtifactPath(context, "align.chunks.json"), document);
 
+    public ChunkAudioDocument? LoadChunkAudio(ChapterContext context)
+        => LoadJson<ChunkAudioDocument>(GetChapterArtifactPath(context, "align.chunk-audio.json"));
+
+    public void SaveChunkAudio(ChapterContext context, ChunkAudioDocument document)
+        => SaveJson(GetChapterArtifactPath(context, "align.chunk-audio.json"), document);
+
     public FileInfo GetBookIndexFile(BookContext context)
         => new(ResolveBookIndexPath(context));
 
@@ -166,6 +172,9 @@ public sealed class FileArtifactResolver : IArtifactResolver
 
     public FileInfo GetChunkPlanFile(ChapterContext context)
         => new(GetChapterArtifactPath(context, "align.chunks.json"));
+
+    public FileInfo GetChunkAudioFile(ChapterContext context)
+        => new(GetChapterArtifactPath(context, "align.chunk-audio.json"));
 
     public FileInfo GetChapterArtifactFile(ChapterContext context, string suffix)
         => new(GetChapterArtifactPath(context, suffix));

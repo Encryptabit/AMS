@@ -46,6 +46,8 @@ internal static class MfaChunkCorpusBuilder
     /// </summary>
     private const int MinLabTokenCount = 2;
 
+    private const double ChunkAudioTimingToleranceSec = 0.05;
+
     /// <summary>
     /// Builds per-chunk wav and lab files under <paramref name="corpusDirectory"/>.
     /// </summary>
@@ -58,7 +60,9 @@ internal static class MfaChunkCorpusBuilder
         AudioBuffer audioBuffer,
         ChunkPlanDocument chunkPlan,
         HydratedTranscript hydrate,
-        string corpusDirectory)
+        string corpusDirectory,
+        ChunkAudioDocument? chunkAudio = null,
+        bool requireAsrChunkAudio = false)
     {
         ArgumentNullException.ThrowIfNull(audioBuffer);
         ArgumentNullException.ThrowIfNull(chunkPlan);
@@ -69,9 +73,17 @@ internal static class MfaChunkCorpusBuilder
 
         var sentences = hydrate.Sentences;
         var utterances = new List<UtteranceEntry>(chunkPlan.Chunks.Count);
+        var chunkAudioByChunkId = BuildChunkAudioLookup(chunkAudio);
+        if (requireAsrChunkAudio && chunkPlan.Chunks.Count > 0 && chunkAudioByChunkId is null)
+        {
+            throw new InvalidOperationException(
+                "ASR chunk audio is required for chunked MFA, but no chunk-audio artifact was available.");
+        }
+
         int skippedNoText = 0;
         int skippedNoAudio = 0;
         int expandedChunks = 0;
+        int reusedChunkAudio = 0;
 
         for (int i = 0; i < chunkPlan.Chunks.Count; i++)
         {
@@ -102,20 +114,38 @@ internal static class MfaChunkCorpusBuilder
                 continue;
             }
 
-            // Write WAV: slice the audio buffer to this chunk's sample range
+            // Write WAV by preferring ASR-emitted chunk audio when available,
+            // otherwise falling back to FFmpeg time-domain trim.
             var wavPath = Path.Combine(corpusDirectory, uttName + ".wav");
-            var sliceLength = Math.Min(chunk.LengthSamples, audioBuffer.Length - chunk.StartSample);
-            if (sliceLength <= 0)
+            if (TryCopyPreSlicedChunkAudio(chunk, uttName, wavPath, chunkAudioByChunkId, out var reuseFailureReason))
             {
-                skippedNoAudio++;
-                Log.Debug(
-                    "Chunk {ChunkId} has no audio samples (start={StartSample}, bufLen={BufLen}); skipping",
-                    chunk.ChunkId, chunk.StartSample, audioBuffer.Length);
-                continue;
+                reusedChunkAudio++;
             }
+            else
+            {
+                if (requireAsrChunkAudio)
+                {
+                    throw new InvalidOperationException(
+                        $"ASR chunk audio is required for chunked MFA, but chunk {chunk.ChunkId} " +
+                        $"({uttName}) could not be reused: {reuseFailureReason}");
+                }
 
-            var slice = audioBuffer.Slice(chunk.StartSample, sliceLength);
-            AudioProcessor.EncodeWav(wavPath, slice);
+                var chunkStart = TimeSpan.FromSeconds(Math.Max(0d, chunk.StartSec));
+                var chunkEnd = TimeSpan.FromSeconds(Math.Max(chunk.StartSec, chunk.EndSec));
+                var slice = AudioProcessor.Trim(audioBuffer, chunkStart, chunkEnd);
+
+                if (slice.Length <= 0)
+                {
+                    skippedNoAudio++;
+                    Log.Debug(
+                        "Chunk {ChunkId} has no audio after FFmpeg trim " +
+                        "(startSec={StartSec:F2}, endSec={EndSec:F2}); skipping",
+                        chunk.ChunkId, chunk.StartSec, chunk.EndSec);
+                    continue;
+                }
+
+                AudioProcessor.EncodeWav(wavPath, slice);
+            }
 
             // Write LAB
             var labPath = Path.Combine(corpusDirectory, uttName + ".lab");
@@ -132,8 +162,8 @@ internal static class MfaChunkCorpusBuilder
 
         Log.Info(
             "Built chunk corpus: {Count} utterances from {Total} chunks " +
-            "(skipped: {SkippedText} no-text, {SkippedAudio} no-audio; expanded: {Expanded})",
-            utterances.Count, chunkPlan.Chunks.Count, skippedNoText, skippedNoAudio, expandedChunks);
+            "(skipped: {SkippedText} no-text, {SkippedAudio} no-audio; expanded: {Expanded}; reused-asr-audio: {Reused})",
+            utterances.Count, chunkPlan.Chunks.Count, skippedNoText, skippedNoAudio, expandedChunks, reusedChunkAudio);
 
         return new ChunkCorpusResult(corpusDirectory, utterances);
     }
@@ -281,4 +311,98 @@ internal static class MfaChunkCorpusBuilder
     /// </summary>
     internal static string FormatUtteranceName(int index)
         => $"utt-{index:D4}";
+
+    internal static bool IsChunkAudioEntryCompatible(
+        ChunkPlanEntry chunk,
+        ChunkAudioEntry entry,
+        string expectedUtteranceName)
+    {
+        ArgumentNullException.ThrowIfNull(chunk);
+        ArgumentNullException.ThrowIfNull(entry);
+        ArgumentException.ThrowIfNullOrWhiteSpace(expectedUtteranceName);
+
+        if (chunk.ChunkId != entry.ChunkId)
+        {
+            return false;
+        }
+
+        if (!string.Equals(entry.UtteranceName, expectedUtteranceName, StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        return Math.Abs(chunk.StartSec - entry.StartSec) <= ChunkAudioTimingToleranceSec &&
+               Math.Abs(chunk.EndSec - entry.EndSec) <= ChunkAudioTimingToleranceSec;
+    }
+
+    private static Dictionary<int, ChunkAudioEntry>? BuildChunkAudioLookup(ChunkAudioDocument? chunkAudio)
+    {
+        if (chunkAudio is null || chunkAudio.Chunks.Count == 0)
+        {
+            return null;
+        }
+
+        var map = new Dictionary<int, ChunkAudioEntry>();
+        foreach (var entry in chunkAudio.Chunks)
+        {
+            map[entry.ChunkId] = entry;
+        }
+
+        return map;
+    }
+
+    private static bool TryCopyPreSlicedChunkAudio(
+        ChunkPlanEntry chunk,
+        string utteranceName,
+        string destinationWavPath,
+        Dictionary<int, ChunkAudioEntry>? chunkAudioByChunkId,
+        out string failureReason)
+    {
+        failureReason = "unknown";
+
+        if (chunkAudioByChunkId is null)
+        {
+            failureReason = "chunk-audio artifact not loaded";
+            return false;
+        }
+
+        if (!chunkAudioByChunkId.TryGetValue(chunk.ChunkId, out var entry))
+        {
+            failureReason = $"no chunk-audio entry for chunk id {chunk.ChunkId}";
+            return false;
+        }
+
+        if (!IsChunkAudioEntryCompatible(chunk, entry, utteranceName))
+        {
+            failureReason = "chunk-audio entry metadata is incompatible (chunk id/timing/utterance mismatch)";
+            return false;
+        }
+
+        if (!File.Exists(entry.WavPath))
+        {
+            failureReason = $"chunk-audio WAV file does not exist ({entry.WavPath})";
+            return false;
+        }
+
+        try
+        {
+            var info = new FileInfo(entry.WavPath);
+            if (info.Length == 0)
+            {
+                failureReason = $"chunk-audio WAV file is empty ({entry.WavPath})";
+                return false;
+            }
+
+            File.Copy(entry.WavPath, destinationWavPath, overwrite: true);
+            return true;
+        }
+        catch (Exception ex)
+        {
+            Log.Debug("Unable to reuse ASR chunk audio {Path} for chunk {ChunkId}: {Message}",
+                entry.WavPath, chunk.ChunkId, ex.Message);
+            failureReason = $"failed to copy chunk-audio WAV ({ex.Message})";
+            return false;
+        }
+    }
+
 }

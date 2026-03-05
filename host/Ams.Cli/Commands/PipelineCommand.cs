@@ -455,7 +455,8 @@ public static class PipelineCommand
         int? mfaBeam = null,
         int? mfaRetryBeam = null,
         bool disableChunkPlan = false,
-        bool disableChunkedMfa = false)
+        bool disableChunkedMfa = false,
+        bool requireAsrChunkAudio = false)
     {
         ArgumentNullException.ThrowIfNull(pipelineService);
 
@@ -544,7 +545,8 @@ public static class PipelineCommand
                     mfaBeam,
                     mfaRetryBeam,
                     disableChunkPlan,
-                    disableChunkedMfa).ConfigureAwait(false);
+                    disableChunkedMfa,
+                    requireAsrChunkAudio).ConfigureAwait(false);
 
                 reporter?.MarkComplete(chapterId);
             }
@@ -1158,6 +1160,8 @@ public static class PipelineCommand
             "Disable shared chunk plan generation; ASR processes the full audio as a single pass (legacy behavior)");
         var noChunkedMfaOption = new Option<bool>("--no-chunked-mfa", () => false,
             "Force MFA to use single-utterance corpus even when a chunk plan exists");
+        var requireAsrChunkAudioOption = new Option<bool>("--require-asr-chunk-audio", () => false,
+            "Require chunked MFA to reuse ASR-emitted chunk audio; fail if missing or incompatible");
 
         cmd.AddOption(bookOption);
         cmd.AddOption(audioOption);
@@ -1180,6 +1184,7 @@ public static class PipelineCommand
         cmd.AddOption(mfaRetryBeamOption);
         cmd.AddOption(noChunkPlanOption);
         cmd.AddOption(noChunkedMfaOption);
+        cmd.AddOption(requireAsrChunkAudioOption);
 
         cmd.SetHandler(async context =>
         {
@@ -1205,6 +1210,7 @@ public static class PipelineCommand
             var mfaProfile = ParseMfaProfile(mfaProfileRaw);
             var noChunkPlan = context.ParseResult.GetValueForOption(noChunkPlanOption);
             var noChunkedMfa = context.ParseResult.GetValueForOption(noChunkedMfaOption);
+            var requireAsrChunkAudio = context.ParseResult.GetValueForOption(requireAsrChunkAudioOption);
             if (showProgress && Log.IsDebugLoggingEnabled())
             {
                 Log.Debug("Progress UI disabled while AMS_LOG_LEVEL requests Debug-level logging.");
@@ -1242,7 +1248,8 @@ public static class PipelineCommand
                                 mfaBeam,
                                 mfaRetryBeam,
                                 noChunkPlan,
-                                noChunkedMfa));
+                                noChunkedMfa,
+                                requireAsrChunkAudio));
                     }
                     else
                     {
@@ -1268,7 +1275,8 @@ public static class PipelineCommand
                             mfaBeam,
                             mfaRetryBeam,
                             noChunkPlan,
-                            noChunkedMfa).ConfigureAwait(false);
+                            noChunkedMfa,
+                            requireAsrChunkAudio).ConfigureAwait(false);
                     }
                 }
                 catch (Exception ex)
@@ -1322,7 +1330,8 @@ public static class PipelineCommand
                                     mfaBeam,
                                     mfaRetryBeam,
                                     noChunkPlan,
-                                    noChunkedMfa).ConfigureAwait(false);
+                                    noChunkedMfa,
+                                    requireAsrChunkAudio).ConfigureAwait(false);
 
                                 reporter.MarkComplete(chapterId);
                             }
@@ -1362,7 +1371,8 @@ public static class PipelineCommand
                         mfaBeam,
                         mfaRetryBeam,
                         noChunkPlan,
-                        noChunkedMfa).ConfigureAwait(false);
+                        noChunkedMfa,
+                        requireAsrChunkAudio).ConfigureAwait(false);
                 }
             }
             catch (OperationCanceledException)
@@ -1400,7 +1410,8 @@ public static class PipelineCommand
         int? mfaBeam = null,
         int? mfaRetryBeam = null,
         bool disableChunkPlan = false,
-        bool disableChunkedMfa = false)
+        bool disableChunkedMfa = false,
+        bool requireAsrChunkAudio = false)
     {
         ArgumentNullException.ThrowIfNull(pipelineService);
 
@@ -1498,7 +1509,8 @@ public static class PipelineCommand
                 BeamProfile = mfaProfile,
                 Beam = mfaBeam,
                 RetryBeam = mfaRetryBeam,
-                DisableChunkedMfa = disableChunkedMfa
+                DisableChunkedMfa = disableChunkedMfa,
+                RequireAsrChunkAudio = requireAsrChunkAudio
             },
             MergeOptions = new MergeTimingsOptions
             {

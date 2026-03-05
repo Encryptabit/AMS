@@ -25,7 +25,8 @@ public static class MfaWorkflow
         bool useDedicatedProcess = false,
         string? workspaceRoot = null,
         MfaBeamSettings? beamSettings = null,
-        bool disableChunkedMfa = false)
+        bool disableChunkedMfa = false,
+        bool requireAsrChunkAudio = false)
     {
         if (!useDedicatedProcess)
         {
@@ -64,6 +65,7 @@ public static class MfaWorkflow
 
         // Determine whether to use chunked or single-utterance corpus
         var chunkPlan = chapterContext.Documents.ChunkPlan;
+        var chunkAudio = chapterContext.Documents.ChunkAudio;
         var hydrate = chapterContext.Documents.HydratedTranscript;
         MfaChunkCorpusBuilder.ChunkCorpusResult? chunkCorpus = null;
 
@@ -77,7 +79,13 @@ public static class MfaWorkflow
             CleanCorpusDirectory(corpusDir);
 
             var audioBuffer = AudioProcessor.Decode(audioFile.FullName);
-            chunkCorpus = MfaChunkCorpusBuilder.Build(audioBuffer, chunkPlan, hydrate, corpusDir);
+            chunkCorpus = MfaChunkCorpusBuilder.Build(
+                audioBuffer,
+                chunkPlan,
+                hydrate,
+                corpusDir,
+                chunkAudio,
+                requireAsrChunkAudio);
 
             Log.Info("Using chunked MFA corpus: {Count} utterances from shared chunk plan", chunkCorpus.Utterances.Count);
         }

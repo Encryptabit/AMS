@@ -230,6 +230,157 @@ public class MfaChunkCorpusBuilderTests
         Assert.Equal(expected, result);
     }
 
+    [Fact]
+    public void IsChunkAudioEntryCompatible_ReturnsTrue_ForMatchingChunkEntry()
+    {
+        var chunk = new ChunkPlanEntry(
+            ChunkId: 3,
+            StartSample: 0,
+            LengthSamples: 10,
+            StartSec: 12.0,
+            EndSec: 24.0);
+        var entry = new ChunkAudioEntry(
+            ChunkId: 3,
+            UtteranceName: "utt-0003",
+            StartSec: 12.01,
+            EndSec: 23.99,
+            WavPath: "/tmp/utt-0003.wav");
+
+        var compatible = MfaChunkCorpusBuilder.IsChunkAudioEntryCompatible(chunk, entry, "utt-0003");
+
+        Assert.True(compatible);
+    }
+
+    [Fact]
+    public void IsChunkAudioEntryCompatible_ReturnsFalse_WhenUtteranceNameDiffers()
+    {
+        var chunk = new ChunkPlanEntry(
+            ChunkId: 0,
+            StartSample: 0,
+            LengthSamples: 10,
+            StartSec: 0.0,
+            EndSec: 1.0);
+        var entry = new ChunkAudioEntry(
+            ChunkId: 0,
+            UtteranceName: "utt-9999",
+            StartSec: 0.0,
+            EndSec: 1.0,
+            WavPath: "/tmp/utt-9999.wav");
+
+        var compatible = MfaChunkCorpusBuilder.IsChunkAudioEntryCompatible(chunk, entry, "utt-0000");
+
+        Assert.False(compatible);
+    }
+
+    [Fact]
+    public void IsChunkAudioEntryCompatible_ReturnsFalse_WhenTimingOutsideTolerance()
+    {
+        var chunk = new ChunkPlanEntry(
+            ChunkId: 8,
+            StartSample: 0,
+            LengthSamples: 10,
+            StartSec: 5.0,
+            EndSec: 10.0);
+        var entry = new ChunkAudioEntry(
+            ChunkId: 8,
+            UtteranceName: "utt-0008",
+            StartSec: 5.25,
+            EndSec: 10.0,
+            WavPath: "/tmp/utt-0008.wav");
+
+        var compatible = MfaChunkCorpusBuilder.IsChunkAudioEntryCompatible(chunk, entry, "utt-0008");
+
+        Assert.False(compatible);
+    }
+
+    [Fact]
+    public void Build_Throws_WhenRequireAsrChunkAudioAndArtifactMissing()
+    {
+        var audio = new AudioBuffer(1, 16000, 16000);
+        var chunkPlan = new ChunkPlanDocument(
+            Version: ChunkPlanDocument.CurrentVersion,
+            CreatedAtUtc: DateTime.UtcNow,
+            SourceAudioPath: "dummy.wav",
+            SourceAudioFingerprint: "fp",
+            Policy: new ChunkPlanPolicy(-40, 200, 1, 16000),
+            Chunks: new[]
+            {
+                new ChunkPlanEntry(0, 0, 16000, 0.0, 1.0)
+            });
+        var hydrate = new HydratedTranscript(
+            AudioPath: "dummy.wav",
+            ScriptPath: "dummy.txt",
+            BookIndexPath: "book-index.json",
+            CreatedAtUtc: DateTime.UtcNow,
+            NormalizationVersion: "v1",
+            Words: Array.Empty<HydratedWord>(),
+            Sentences: new[]
+            {
+                MakeSentence(0, "One two three four.", 0.0, 1.0)
+            },
+            Paragraphs: Array.Empty<HydratedParagraph>());
+
+        var ex = Assert.Throws<InvalidOperationException>(() =>
+            MfaChunkCorpusBuilder.Build(
+                audio,
+                chunkPlan,
+                hydrate,
+                Path.Combine(Path.GetTempPath(), $"mfa-chunk-test-{Guid.NewGuid():N}"),
+                chunkAudio: null,
+                requireAsrChunkAudio: true));
+
+        Assert.Contains("no chunk-audio artifact", ex.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void Build_Throws_WhenRequireAsrChunkAudioAndEntryIncompatible()
+    {
+        var audio = new AudioBuffer(1, 16000, 16000);
+        var chunkPlan = new ChunkPlanDocument(
+            Version: ChunkPlanDocument.CurrentVersion,
+            CreatedAtUtc: DateTime.UtcNow,
+            SourceAudioPath: "dummy.wav",
+            SourceAudioFingerprint: "fp",
+            Policy: new ChunkPlanPolicy(-40, 200, 1, 16000),
+            Chunks: new[]
+            {
+                new ChunkPlanEntry(0, 0, 16000, 0.0, 1.0)
+            });
+        var hydrate = new HydratedTranscript(
+            AudioPath: "dummy.wav",
+            ScriptPath: "dummy.txt",
+            BookIndexPath: "book-index.json",
+            CreatedAtUtc: DateTime.UtcNow,
+            NormalizationVersion: "v1",
+            Words: Array.Empty<HydratedWord>(),
+            Sentences: new[]
+            {
+                MakeSentence(0, "One two three four.", 0.0, 1.0)
+            },
+            Paragraphs: Array.Empty<HydratedParagraph>());
+        var chunkAudio = new ChunkAudioDocument(
+            Version: ChunkAudioDocument.CurrentVersion,
+            CreatedAtUtc: DateTime.UtcNow,
+            SourceAudioFingerprint: "fp",
+            SampleRate: 16000,
+            Channels: 1,
+            Chunks: new[]
+            {
+                new ChunkAudioEntry(0, "utt-9999", 0.0, 1.0, "/tmp/missing.wav")
+            });
+
+        var ex = Assert.Throws<InvalidOperationException>(() =>
+            MfaChunkCorpusBuilder.Build(
+                audio,
+                chunkPlan,
+                hydrate,
+                Path.Combine(Path.GetTempPath(), $"mfa-chunk-test-{Guid.NewGuid():N}"),
+                chunkAudio: chunkAudio,
+                requireAsrChunkAudio: true));
+
+        Assert.Contains("could not be reused", ex.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
     // ----------------------------------------------------------------
     // Deterministic corpus file list test
     // ----------------------------------------------------------------
