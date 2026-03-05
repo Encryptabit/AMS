@@ -449,4 +449,26 @@ public class MfaChunkCorpusBuilderTests
         Assert.Single(result);
         Assert.Equal(0, result[0].Id);
     }
+
+    [Fact]
+    public void FindBoundaryTokenOverlap_ReturnsLongestSuffixPrefixMatch()
+    {
+        var previous = new[] { "alpha", "bravo", "charlie", "delta", "echo" };
+        var current = new[] { "charlie", "delta", "echo", "foxtrot" };
+
+        var overlap = MfaChunkCorpusBuilder.FindBoundaryTokenOverlap(previous, current);
+
+        Assert.Equal(3, overlap);
+    }
+
+    [Fact]
+    public void FindBoundaryTokenOverlap_ReturnsZero_WhenNoSuffixPrefixMatch()
+    {
+        var previous = new[] { "alpha", "bravo", "charlie" };
+        var current = new[] { "delta", "echo", "foxtrot" };
+
+        var overlap = MfaChunkCorpusBuilder.FindBoundaryTokenOverlap(previous, current);
+
+        Assert.Equal(0, overlap);
+    }
 }

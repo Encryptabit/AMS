@@ -45,6 +45,7 @@ internal static class MfaChunkCorpusBuilder
     /// produce fewer tokens after fallback expansion are logged and skipped.
     /// </summary>
     private const int MinLabTokenCount = 2;
+    private const int MinBoundaryOverlapTokensForTrim = 3;
 
     private const double ChunkAudioTimingToleranceSec = 0.05;
 
@@ -84,6 +85,9 @@ internal static class MfaChunkCorpusBuilder
         int skippedNoAudio = 0;
         int expandedChunks = 0;
         int reusedChunkAudio = 0;
+        int boundaryTrimmedChunks = 0;
+        int boundaryTrimmedTokens = 0;
+        IReadOnlyList<string>? previousLabTokens = null;
 
         for (int i = 0; i < chunkPlan.Chunks.Count; i++)
         {
@@ -113,6 +117,41 @@ internal static class MfaChunkCorpusBuilder
                     chunk.ChunkId, chunk.StartSec, chunk.EndSec);
                 continue;
             }
+
+            var labTokens = TokenizeLabText(labText);
+            if (labTokens.Count == 0)
+            {
+                skippedNoText++;
+                Log.Debug(
+                    "Chunk {ChunkId} ({StartSec:F2}s-{EndSec:F2}s) produced no tokenized lab text; skipping",
+                    chunk.ChunkId, chunk.StartSec, chunk.EndSec);
+                continue;
+            }
+
+            if (previousLabTokens is { Count: > 0 })
+            {
+                var overlap = FindBoundaryTokenOverlap(previousLabTokens, labTokens);
+                if (overlap >= MinBoundaryOverlapTokensForTrim)
+                {
+                    labTokens = labTokens.Skip(overlap).ToList();
+                    boundaryTrimmedChunks++;
+                    boundaryTrimmedTokens += overlap;
+                    Log.Debug(
+                        "Chunk {ChunkId} ({Utterance}) trimmed {Overlap} boundary-duplicate tokens",
+                        chunk.ChunkId, uttName, overlap);
+                }
+            }
+
+            if (labTokens.Count < MinLabTokenCount)
+            {
+                skippedNoText++;
+                Log.Debug(
+                    "Chunk {ChunkId} ({StartSec:F2}s-{EndSec:F2}s) has too few lab tokens after boundary dedupe; skipping",
+                    chunk.ChunkId, chunk.StartSec, chunk.EndSec);
+                continue;
+            }
+
+            labText = string.Join(' ', labTokens);
 
             // Write WAV by preferring ASR-emitted chunk audio when available,
             // otherwise falling back to FFmpeg time-domain trim.
@@ -158,12 +197,16 @@ internal static class MfaChunkCorpusBuilder
                 LabPath: labPath,
                 ChunkStartSec: chunk.StartSec,
                 ChunkEndSec: chunk.EndSec));
+
+            previousLabTokens = labTokens;
         }
 
         Log.Info(
             "Built chunk corpus: {Count} utterances from {Total} chunks " +
-            "(skipped: {SkippedText} no-text, {SkippedAudio} no-audio; expanded: {Expanded}; reused-asr-audio: {Reused})",
-            utterances.Count, chunkPlan.Chunks.Count, skippedNoText, skippedNoAudio, expandedChunks, reusedChunkAudio);
+            "(skipped: {SkippedText} no-text, {SkippedAudio} no-audio; expanded: {Expanded}; reused-asr-audio: {Reused}; " +
+            "boundary-dedupe: {DedupedChunks} chunks/{DedupedTokens} tokens)",
+            utterances.Count, chunkPlan.Chunks.Count, skippedNoText, skippedNoAudio, expandedChunks, reusedChunkAudio,
+            boundaryTrimmedChunks, boundaryTrimmedTokens);
 
         return new ChunkCorpusResult(corpusDirectory, utterances);
     }
@@ -312,6 +355,36 @@ internal static class MfaChunkCorpusBuilder
     internal static string FormatUtteranceName(int index)
         => $"utt-{index:D4}";
 
+    internal static int FindBoundaryTokenOverlap(
+        IReadOnlyList<string> previousTokens,
+        IReadOnlyList<string> currentTokens)
+    {
+        ArgumentNullException.ThrowIfNull(previousTokens);
+        ArgumentNullException.ThrowIfNull(currentTokens);
+
+        var maxLength = Math.Min(previousTokens.Count, currentTokens.Count);
+        for (int length = maxLength; length >= 1; length--)
+        {
+            var startInPrevious = previousTokens.Count - length;
+            var isMatch = true;
+            for (int i = 0; i < length; i++)
+            {
+                if (!string.Equals(previousTokens[startInPrevious + i], currentTokens[i], StringComparison.Ordinal))
+                {
+                    isMatch = false;
+                    break;
+                }
+            }
+
+            if (isMatch)
+            {
+                return length;
+            }
+        }
+
+        return 0;
+    }
+
     internal static bool IsChunkAudioEntryCompatible(
         ChunkPlanEntry chunk,
         ChunkAudioEntry entry,
@@ -403,6 +476,20 @@ internal static class MfaChunkCorpusBuilder
             failureReason = $"failed to copy chunk-audio WAV ({ex.Message})";
             return false;
         }
+    }
+
+    private static IReadOnlyList<string> TokenizeLabText(string labText)
+    {
+        if (string.IsNullOrWhiteSpace(labText))
+        {
+            return Array.Empty<string>();
+        }
+
+        return labText
+            .Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Select(t => t.Trim())
+            .Where(t => !string.IsNullOrWhiteSpace(t))
+            .ToArray();
     }
 
 }
