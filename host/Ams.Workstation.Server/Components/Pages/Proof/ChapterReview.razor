@@ -373,10 +373,12 @@ else
         StateHasChanged();
     }
 
-    private void HandleViewFromErrors(SentenceReport sentence)
+    private async Task HandleViewFromErrors(SentenceReport sentence)
     {
-        _selectedSentenceId = sentence.Id;
         _currentView = "playback";
+        var target = _sentences.FirstOrDefault(s => s.Id == sentence.Id);
+        if (target != null && _waveformPlayer != null)
+            await _waveformPlayer.SeekTo(target.StartTime);
         StateHasChanged();
     }
 
@@ -427,14 +429,17 @@ else
     }
 
     [JSInvokable]
-    public void OnCrossNav(string direction)
+    public async Task OnCrossNav(string direction)
     {
         if (direction == "errors-to-playback")
         {
             if (_errorSentencesList.Count == 0) return;
             var errorSentence = _errorSentencesList[_selectedErrorIndex];
-            _selectedSentenceId = errorSentence.Id;
             _currentView = "playback";
+
+            var sentence = _sentences.FirstOrDefault(s => s.Id == errorSentence.Id);
+            if (sentence != null && _waveformPlayer != null)
+                await _waveformPlayer.SeekTo(sentence.StartTime);
         }
         else // playback-to-errors
         {
