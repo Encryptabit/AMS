@@ -159,7 +159,6 @@ public class MfaChunkCorpusBuilderTests
         var labText = MfaChunkCorpusBuilder.BuildLabText(sentences, 0.0, 5.0);
 
         Assert.NotNull(labText);
-        // PronunciationHelper normalizes "Mr." to "mister"
         Assert.Contains("smith", labText);
         Assert.Contains("went", labText);
         Assert.Contains("washington", labText);
