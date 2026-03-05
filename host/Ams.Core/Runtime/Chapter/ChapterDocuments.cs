@@ -18,6 +18,7 @@ public sealed class ChapterDocuments
     private readonly DocumentSlot<PauseAdjustmentsDocument> _pauseAdjustments;
     private readonly DocumentSlot<PausePolicy> _pausePolicy;
     private readonly DocumentSlot<TextGridDocument> _textGrid;
+    private readonly DocumentSlot<ChunkPlanDocument> _chunkPlan;
 
     internal ChapterDocuments(ChapterContext context, IArtifactResolver resolver)
     {
@@ -90,6 +91,11 @@ public sealed class ChapterDocuments
                     var backing = resolver.GetTextGridFile(context).FullName;
                     return doc.SourcePath == backing ? doc : doc with { SourcePath = backing };
                 }));
+
+        _chunkPlan = new DocumentSlot<ChunkPlanDocument>(
+            () => resolver.LoadChunkPlan(context),
+            value => resolver.SaveChunkPlan(context, value),
+            CreateOptions<ChunkPlanDocument>(() => resolver.GetChunkPlanFile(context)));
     }
 
     public TranscriptIndex? Transcript
@@ -144,6 +150,15 @@ public sealed class ChapterDocuments
         set => _textGrid.SetValue(value);
     }
 
+    /// <summary>
+    /// Chunk plan shared by ASR and MFA stages. Persisted as <c>{chapterStem}.align.chunks.json</c>.
+    /// </summary>
+    public ChunkPlanDocument? ChunkPlan
+    {
+        get => _chunkPlan.GetValue();
+        set => _chunkPlan.SetValue(value);
+    }
+
     internal bool IsDirty =>
         _transcript.IsDirty ||
         _hydratedTranscript.IsDirty ||
@@ -152,7 +167,8 @@ public sealed class ChapterDocuments
         _asrTranscriptText.IsDirty ||
         _pauseAdjustments.IsDirty ||
         _pausePolicy.IsDirty ||
-        _textGrid.IsDirty;
+        _textGrid.IsDirty ||
+        _chunkPlan.IsDirty;
 
     internal void SaveChanges()
     {
@@ -164,6 +180,7 @@ public sealed class ChapterDocuments
         _pauseAdjustments.Save();
         _pausePolicy.Save();
         _textGrid.Save();
+        _chunkPlan.Save();
     }
 
     internal void InvalidateTextGrid() => _textGrid.Invalidate();
@@ -176,4 +193,5 @@ public sealed class ChapterDocuments
     internal FileInfo? GetPauseAdjustmentsFile() => _pauseAdjustments.GetBackingFile();
     internal FileInfo? GetPausePolicyFile() => _pausePolicy.GetBackingFile();
     internal FileInfo? GetTextGridFile() => _textGrid.GetBackingFile();
+    internal FileInfo? GetChunkPlanFile() => _chunkPlan.GetBackingFile();
 }
