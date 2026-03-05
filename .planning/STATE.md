@@ -7,9 +7,9 @@ Audio Management System - CLI and core library for audio processing, ASR, forced
 ## Current Position
 
 **Milestone**: v2.0 Blazor Workstation
-**Phase**: 13 - Pickup Substitution
-**Plan**: 7/8
-**Status**: Plan 13-07 complete; old Polish pages decommissioned, /polish route migrated to PickupSubstitution, memory-safe flipper navigation
+**Phase**: 14 - Shared Chunked ASR/MFA
+**Plan**: 1/7
+**Status**: Plan 14-01 complete; ChunkPlanDocument artifact model with DocumentSlot lifecycle and resolver persistence
 
 ## Progress
 
@@ -18,6 +18,18 @@ v1.0 Codebase Audit    [██████████████████�
 v1.1 Execute Refactor  [████████████████████] 100% - SHIPPED
 v2.0 Blazor Workstation[████████████████████] 100% - Phase 10 complete
 ```
+
+## Phase 14 Plans (Shared Chunked ASR/MFA)
+
+| Plan | Name | Tasks | Status |
+|------|------|-------|--------|
+| 14-01 | Chunk Plan Artifact Model | 2 | Complete |
+| 14-02 | TBD | - | Pending |
+| 14-03 | TBD | - | Pending |
+| 14-04 | TBD | - | Pending |
+| 14-05 | TBD | - | Pending |
+| 14-06 | TBD | - | Pending |
+| 14-07 | TBD | - | Pending |
 
 ## Phase 13 Plans (Pickup Substitution)
 
@@ -144,6 +156,9 @@ v2.0 Blazor Workstation[██████████████████�
 | Completion auto-advance | Wrap-around search with 500ms delay | Searches forward then wraps; delay provides visual feedback before flip |
 | Old Polish page decommission | Delete entirely (Index.razor, ChapterPolish.razor) | PickupSubstitution replaces them per locked decision; shared components also deleted |
 | Audio deallocation on chapter flip | Deallocate corrected buffer via CurrentChapterHandle | Prevents memory pressure during multi-chapter navigation |
+| Chunk plan artifact naming | {chapterStem}.align.chunks.json | Follows existing align.tx/hydrate/anchors convention |
+| ChunkPlanPolicy fields | threshold, min silence, min chunk, sample rate | Enables downstream plan validity checking |
+| ChunkPlanEntry dual fields | Sample-precise + time-domain | StartSample/LengthSamples for slicing, StartSec/EndSec for offsets |
 
 ## Phase 8/8.1 Conclusions (Archived)
 
@@ -190,7 +205,7 @@ poc/VelloSharpPoc/     - Avalonia + VelloSharp (child window fails)
 
 ## Next Action
 
-Quick task 8 complete. `qc analyze --dir` CLI command added for audiobook structural QC (head/tail silence, title-body gap analysis). Continue with plan 13-08 or next quick task.
+Plan 14-01 complete. ChunkPlanDocument artifact model wired through resolver and chapter documents. Continue with plan 14-02.
 
 ## Deferred UI Refinements (for Plan 10-04)
 
@@ -207,4 +222,4 @@ None currently.
 
 ## Session Continuity
 
-Last activity: 2026-03-02 - Completed quick task 8: audiobook QC CLI command (ffmpeg silencedetect)
+Last activity: 2026-03-05 - Completed plan 14-01: chunk plan artifact model with DocumentSlot lifecycle
