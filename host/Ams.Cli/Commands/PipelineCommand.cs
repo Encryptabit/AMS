@@ -1142,8 +1142,8 @@ public static class PipelineCommand
             "Maximum number of chapters to process in parallel");
         var maxAsrOption = new Option<int>("--max-asr", () => 1,
             "Maximum number of concurrent ASR jobs (use 1 for large Whisper GPU models)");
-        var maxMfaOption = new Option<int>("--max-mfa", () => Math.Max(1, Environment.ProcessorCount),
-            "Maximum number of concurrent MFA alignment jobs");
+        var maxMfaOption = new Option<int>("--max-mfa", () => Math.Max(1, Environment.ProcessorCount / 2),
+            "Maximum number of concurrent MFA alignment jobs (default: CPU cores / 2)");
         var progressOption =
             new Option<bool>("--progress", () => true, "Display live progress UI while running the pipeline");
 

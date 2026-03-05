@@ -713,14 +713,32 @@ public static class MfaWorkflow
         CancellationToken cancellationToken)
     {
         var strictBeam = MfaBeamSettings.StrictRetry;
+
+        // Build a subset corpus containing only the failed utterance wav+lab files.
+        // This ensures MFA only re-aligns the problematic chunks, preserving throughput.
+        var retryCorpusDir = Path.Combine(
+            Path.GetDirectoryName(alignContext.CorpusDirectory)!,
+            "retry-corpus");
+        if (Directory.Exists(retryCorpusDir))
+            Directory.Delete(retryCorpusDir, recursive: true);
+        Directory.CreateDirectory(retryCorpusDir);
+
+        foreach (var failed in failedChunks)
+        {
+            var uttName = failed.Utterance.UtteranceName;
+            foreach (var ext in new[] { ".wav", ".lab" })
+            {
+                var src = Path.Combine(alignContext.CorpusDirectory, uttName + ext);
+                if (File.Exists(src))
+                    File.Copy(src, Path.Combine(retryCorpusDir, uttName + ext));
+            }
+        }
+
         var retryContext = alignContext with
         {
             Beam = strictBeam.Beam,
             RetryBeam = strictBeam.RetryBeam,
-            // Re-use the same corpus directory which still has all utterance files.
-            // MFA will re-align all utterances in the corpus, but we only collect
-            // the failed ones afterward. This is simpler and safer than creating
-            // a subset corpus directory.
+            CorpusDirectory = retryCorpusDir,
         };
 
         Log.Info(
@@ -790,6 +808,12 @@ public static class MfaWorkflow
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             Log.Warn("Strict retry alignment threw: {Message}; keeping initial results", ex.Message);
+        }
+        finally
+        {
+            // Clean up subset corpus directory
+            try { if (Directory.Exists(retryCorpusDir)) Directory.Delete(retryCorpusDir, recursive: true); }
+            catch { /* best-effort cleanup */ }
         }
     }
 
