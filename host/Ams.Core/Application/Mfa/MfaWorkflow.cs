@@ -85,7 +85,8 @@ public static class MfaWorkflow
                 hydrate,
                 corpusDir,
                 chunkAudio,
-                requireAsrChunkAudio);
+                requireAsrChunkAudio,
+                chapterContext.Documents.Asr);
 
             Log.Info("Using chunked MFA corpus: {Count} utterances from shared chunk plan", chunkCorpus.Utterances.Count);
         }

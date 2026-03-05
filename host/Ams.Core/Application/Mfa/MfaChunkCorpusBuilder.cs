@@ -1,4 +1,5 @@
 using System.Text;
+using Ams.Core.Asr;
 using Ams.Core.Artifacts;
 using Ams.Core.Artifacts.Alignment;
 using Ams.Core.Artifacts.Hydrate;
@@ -13,9 +14,10 @@ namespace Ams.Core.Application.Mfa;
 /// hydrated transcript, and chapter audio. Each chunk produces a deterministic
 /// <c>utt-NNNN.wav</c> / <c>utt-NNNN.lab</c> pair under the corpus directory.
 /// <para>
-/// Lab content is always derived from <see cref="HydratedSentence.BookText"/>
-/// to maintain book-text lexical truth. The builder maps chunk time ranges to
-/// overlapping hydrated sentences and never falls back to raw ASR words.
+/// Lab content prefers hydrate word-level book tokens constrained by ASR word
+/// timing inside each chunk. This keeps text/audio proportional at chunk
+/// boundaries while preserving book-text lexical truth. If word-timed extraction
+/// is insufficient, the builder falls back to sentence overlap heuristics.
 /// </para>
 /// </summary>
 internal static class MfaChunkCorpusBuilder
@@ -46,6 +48,7 @@ internal static class MfaChunkCorpusBuilder
     /// </summary>
     private const int MinLabTokenCount = 2;
     private const int MinBoundaryOverlapTokensForTrim = 3;
+    private const double WordTimingEdgeToleranceSec = 0.03;
 
     private const double ChunkAudioTimingToleranceSec = 0.05;
 
@@ -63,7 +66,8 @@ internal static class MfaChunkCorpusBuilder
         HydratedTranscript hydrate,
         string corpusDirectory,
         ChunkAudioDocument? chunkAudio = null,
-        bool requireAsrChunkAudio = false)
+        bool requireAsrChunkAudio = false,
+        AsrResponse? asr = null)
     {
         ArgumentNullException.ThrowIfNull(audioBuffer);
         ArgumentNullException.ThrowIfNull(chunkPlan);
@@ -87,6 +91,9 @@ internal static class MfaChunkCorpusBuilder
         int reusedChunkAudio = 0;
         int boundaryTrimmedChunks = 0;
         int boundaryTrimmedTokens = 0;
+        int wordTimedChunks = 0;
+        int sentenceTimedChunks = 0;
+        int nearestSentenceFallbackChunks = 0;
         IReadOnlyList<string>? previousLabTokens = null;
 
         for (int i = 0; i < chunkPlan.Chunks.Count; i++)
@@ -95,8 +102,27 @@ internal static class MfaChunkCorpusBuilder
             var uttName = FormatUtteranceName(i);
             var usedFallback = false;
 
-            // Find overlapping sentences for this chunk
-            var labText = BuildLabText(sentences, chunk.StartSec, chunk.EndSec);
+            // Prefer word-level mapping using hydrate BookWord + ASR token timings.
+            // This avoids assigning full sentence text when only part of that sentence
+            // acoustically belongs to the current chunk.
+            var labText = asr is not null
+                ? BuildLabTextFromWordTiming(hydrate.Words, asr, chunk.StartSec, chunk.EndSec)
+                : null;
+
+            if (!string.IsNullOrWhiteSpace(labText))
+            {
+                wordTimedChunks++;
+            }
+
+            if (string.IsNullOrWhiteSpace(labText))
+            {
+                // Fallback: sentence overlap mapping
+                labText = BuildLabText(sentences, chunk.StartSec, chunk.EndSec);
+                if (!string.IsNullOrWhiteSpace(labText))
+                {
+                    sentenceTimedChunks++;
+                }
+            }
 
             if (string.IsNullOrWhiteSpace(labText))
             {
@@ -106,6 +132,7 @@ internal static class MfaChunkCorpusBuilder
                 if (usedFallback)
                 {
                     expandedChunks++;
+                    nearestSentenceFallbackChunks++;
                 }
             }
 
@@ -204,9 +231,11 @@ internal static class MfaChunkCorpusBuilder
         Log.Info(
             "Built chunk corpus: {Count} utterances from {Total} chunks " +
             "(skipped: {SkippedText} no-text, {SkippedAudio} no-audio; expanded: {Expanded}; reused-asr-audio: {Reused}; " +
-            "boundary-dedupe: {DedupedChunks} chunks/{DedupedTokens} tokens)",
+            "boundary-dedupe: {DedupedChunks} chunks/{DedupedTokens} tokens; " +
+            "lab-source: word-timed={WordTimed}, sentence-overlap={SentenceTimed}, nearest-fallback={NearestFallback})",
             utterances.Count, chunkPlan.Chunks.Count, skippedNoText, skippedNoAudio, expandedChunks, reusedChunkAudio,
-            boundaryTrimmedChunks, boundaryTrimmedTokens);
+            boundaryTrimmedChunks, boundaryTrimmedTokens,
+            wordTimedChunks, sentenceTimedChunks, nearestSentenceFallbackChunks);
 
         return new ChunkCorpusResult(corpusDirectory, utterances);
     }
@@ -227,6 +256,87 @@ internal static class MfaChunkCorpusBuilder
         }
 
         return PrepareLabFromSentences(overlapping);
+    }
+
+    /// <summary>
+    /// Builds lab text from hydrate word mappings whose ASR token timing midpoint
+    /// falls inside the chunk time range. Uses hydrate BookWord text for lexical truth.
+    /// </summary>
+    internal static string? BuildLabTextFromWordTiming(
+        IReadOnlyList<HydratedWord> words,
+        AsrResponse asr,
+        double chunkStartSec,
+        double chunkEndSec)
+    {
+        ArgumentNullException.ThrowIfNull(words);
+        ArgumentNullException.ThrowIfNull(asr);
+
+        if (words.Count == 0 || asr.Tokens.Length == 0 || chunkEndSec <= chunkStartSec)
+        {
+            return null;
+        }
+
+        var candidates = new List<(int AsrIdx, int BookIdx, string BookWord)>();
+        foreach (var word in words)
+        {
+            if (word.BookIdx is not int bookIdx || word.AsrIdx is not int asrIdx)
+            {
+                continue;
+            }
+
+            if (asrIdx < 0 || asrIdx >= asr.Tokens.Length)
+            {
+                continue;
+            }
+
+            if (string.IsNullOrWhiteSpace(word.BookWord))
+            {
+                continue;
+            }
+
+            var token = asr.Tokens[asrIdx];
+            var tokenMidpoint = token.StartTime + Math.Max(0d, token.Duration) * 0.5d;
+            if (!IsWithinChunk(tokenMidpoint, chunkStartSec, chunkEndSec))
+            {
+                continue;
+            }
+
+            candidates.Add((asrIdx, bookIdx, word.BookWord));
+        }
+
+        if (candidates.Count == 0)
+        {
+            return null;
+        }
+
+        candidates.Sort((a, b) => a.AsrIdx.CompareTo(b.AsrIdx));
+        var seenBookIdx = new HashSet<int>();
+        var parts = new List<string>(candidates.Count);
+
+        foreach (var candidate in candidates)
+        {
+            // Guard against duplicate align ops that map one book word to multiple ASR indices.
+            if (!seenBookIdx.Add(candidate.BookIdx))
+            {
+                continue;
+            }
+
+            var pronunciationParts = PronunciationHelper.ExtractPronunciationParts(candidate.BookWord);
+            foreach (var part in pronunciationParts)
+            {
+                if (!string.IsNullOrWhiteSpace(part))
+                {
+                    parts.Add(part);
+                }
+            }
+        }
+
+        if (parts.Count < MinLabTokenCount)
+        {
+            return null;
+        }
+
+        return string.Join(' ', parts);
     }
 
     /// <summary>
@@ -490,6 +600,12 @@ internal static class MfaChunkCorpusBuilder
             .Select(t => t.Trim())
             .Where(t => !string.IsNullOrWhiteSpace(t))
             .ToArray();
+    }
+
+    private static bool IsWithinChunk(double tokenMidpointSec, double chunkStartSec, double chunkEndSec)
+    {
+        return tokenMidpointSec >= chunkStartSec - WordTimingEdgeToleranceSec &&
+               tokenMidpointSec < chunkEndSec + WordTimingEdgeToleranceSec;
     }
 
 }
