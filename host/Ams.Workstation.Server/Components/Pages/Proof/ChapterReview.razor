@@ -148,12 +148,6 @@ else
             await JS.InvokeVoidAsync("eval", "document.querySelector('.workstation-content')?.scrollTo(0, 0)");
         }
 
-        if (_pendingSeekTime.HasValue && _waveformPlayer != null)
-        {
-            var seekTime = _pendingSeekTime.Value;
-            _pendingSeekTime = null;
-            await _waveformPlayer.SeekTo(seekTime);
-        }
     }
 
     private void LoadReport(string chapterName)
@@ -242,9 +236,17 @@ else
         StateHasChanged();
     }
 
-    private void HandleWaveformReady()
+    private async Task HandleWaveformReady()
     {
         _isWaveformReady = true;
+
+        if (_pendingSeekTime.HasValue && _waveformPlayer != null)
+        {
+            var seekTime = _pendingSeekTime.Value;
+            _pendingSeekTime = null;
+            await _waveformPlayer.SeekTo(seekTime);
+        }
+
         StateHasChanged();
     }
 
