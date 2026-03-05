@@ -162,6 +162,10 @@ v2.0 Blazor Workstation[██████████████████�
 | ChunkPlanningPolicy vs ChunkPlanPolicy | Separate input/persisted types | Service resolves defaults; persisted record stores exact values used |
 | Audio fingerprint strategy | path+length+sampleRate+channels | Lightweight identity for invalidation; avoids content hashing overhead |
 | Path separator normalization | Backslash to forward slash in fingerprint | Cross-platform consistency between Windows and Linux |
+| ASR chunk-plan sourcing | ChunkPlanningService.GeneratePlan + chapter.Documents.ChunkPlan | ASR generates/persists plan when missing/stale, reuses when valid |
+| Monotonic merge timestamps | High-water-mark clamping in MergeChunkResponses | Prevents boundary overlap regression in merged ASR output |
+| Merge chunk ordering | Sort by OffsetSec before merge | Deterministic token/segment ordering regardless of input order |
+| MergeChunkResponses visibility | internal (was private) | Enables direct unit testing without integration complexity |
 | Chunk corpus activation threshold | >1 chunks in plan | Single-chunk plans use legacy single-utterance path to avoid overhead |
 | Chunked MFA fallback strategy | Omit ASR corpus retry | ASR corpus fallback only applies to legacy single-utterance lab failures |
 | MinLabTokenCount | 2 | Prevents empty/trivial lab files that cause MFA alignment errors |
