@@ -8,8 +8,8 @@ Audio Management System - CLI and core library for audio processing, ASR, forced
 
 **Milestone**: v2.0 Blazor Workstation
 **Phase**: 14 - Shared Chunked ASR/MFA
-**Plan**: 6/7
-**Status**: Plan 14-06 complete; MFA beam profiles (fast/balanced/strict) with adaptive strict retry on low-quality chunk subsets
+**Plan**: 7/7
+**Status**: Phase 14 complete; rollout controls (--no-chunk-plan, --no-chunked-mfa) and verification checklist added
 
 ## Progress
 
@@ -29,7 +29,7 @@ v2.0 Blazor Workstation[██████████████████�
 | 14-04 | Chunked MFA Corpus Builder | 2 | Complete |
 | 14-05 | TextGrid Chunk Aggregation | 2 | Complete |
 | 14-06 | MFA Beam Profiles & Adaptive Retry | 2 | Complete |
-| 14-07 | TBD | - | Pending |
+| 14-07 | Rollout Controls & Verification | 2 | Complete |
 
 ## Phase 13 Plans (Pickup Substitution)
 
@@ -176,6 +176,9 @@ v2.0 Blazor Workstation[██████████████████�
 | MFA beam profile defaults | Fast=20/80, Balanced=40/120, Strict=80/200 | Configurable presets with explicit override precedence |
 | Coverage heuristic threshold | 0.15 ratio (words / expected at 3.3 words/sec) | Low enough to catch real failures, avoids false positives on natural speech variation |
 | Adaptive retry strategy | Re-align full corpus with strict beam, collect only failed chunks | Simpler than subset corpus; MFA handles utterance-level recovery internally |
+| Rollout flag defaults | Both flags false (chunking enabled) | New behavior is default; flags revert to legacy without code changes |
+| DisableChunkPlan scope | Skips chunk plan in AsrService + MFA has no plan to use | Single flag reverts both stages to legacy behavior |
+| DisableChunkedMfa scope | MFA-only; ASR chunking unaffected | Allows isolating MFA chunking behavior independently |
 
 ## Phase 8/8.1 Conclusions (Archived)
 
@@ -222,7 +225,7 @@ poc/VelloSharpPoc/     - Avalonia + VelloSharp (child window fails)
 
 ## Next Action
 
-Plan 14-06 complete. MFA beam profiles and adaptive strict retry implemented. Continue with plan 14-07.
+Phase 14 complete. All 7 plans executed. Populate 14-VERIFICATION.md with runtime benchmarks and complete sign-off checklist before promoting shared chunking as default.
 
 ## Deferred UI Refinements (for Plan 10-04)
 
@@ -239,4 +242,4 @@ None currently.
 
 ## Session Continuity
 
-Last activity: 2026-03-05 - Completed plan 14-06: MFA beam profiles and adaptive strict retry on low-quality chunks
+Last activity: 2026-03-05 - Completed plan 14-07: Rollout controls and phase verification checklist (Phase 14 complete)
