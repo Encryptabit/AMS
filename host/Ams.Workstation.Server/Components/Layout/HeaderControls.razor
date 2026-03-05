@@ -124,6 +124,7 @@
     private void OnLocationChanged(object? sender, LocationChangedEventArgs e)
     {
         UpdateCurrentPath();
+        SyncSelectedChapter();
         StateHasChanged();
     }
 
@@ -131,6 +132,16 @@
     {
         var uri = new Uri(NavigationManager.Uri);
         currentPath = uri.AbsolutePath.TrimStart('/').ToLowerInvariant();
+    }
+
+    private void SyncSelectedChapter()
+    {
+        if (currentPath != null && currentPath.StartsWith("proof/"))
+        {
+            var encoded = currentPath["proof/".Length..];
+            if (!string.IsNullOrEmpty(encoded))
+                selectedChapter = Uri.UnescapeDataString(encoded);
+        }
     }
 
     private bool IsActive(string route) => currentPath?.StartsWith(route) == true;
