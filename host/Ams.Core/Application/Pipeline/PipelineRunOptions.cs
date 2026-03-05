@@ -24,4 +24,17 @@ public sealed record PipelineRunOptions
     public bool SkipTreatedCopy { get; init; }
     public FileInfo? TreatedCopyFile { get; init; }
     public PipelineConcurrencyControl? Concurrency { get; init; }
+
+    /// <summary>
+    /// Optional chunk planning policy for ASR and MFA stages. When null, stages
+    /// use <see cref="ChunkPlanningPolicy.Default"/>. Explicit policy enables
+    /// callers to override silence threshold, minimum silence duration, or minimum
+    /// chunk duration for specific pipeline runs.
+    /// </summary>
+    /// <remarks>
+    /// Invalidation rule: a stored chunk plan should be regenerated when the source
+    /// audio fingerprint or the chunk policy differs from the stored plan. Use
+    /// <see cref="ChunkPlanningService.IsValid"/> to check before recomputing.
+    /// </remarks>
+    public ChunkPlanningPolicy? ChunkPlanningPolicy { get; init; }
 }
