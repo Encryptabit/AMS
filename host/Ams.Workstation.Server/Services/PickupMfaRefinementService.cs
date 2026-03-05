@@ -95,6 +95,10 @@ public class PickupMfaRefinementService
             {
                 await MfaProcessSupervisor.EnsureReadyAsync(ct).ConfigureAwait(false);
 
+                // Pickup refinement uses strict profile for maximum precision
+                // on short single-utterance audio fragments.
+                var pickupBeam = MfaBeamSettings.Resolve(MfaBeamProfile.Strict);
+
                 var context = new MfaChapterContext
                 {
                     CorpusDirectory = corpusDir,
@@ -103,8 +107,8 @@ public class PickupMfaRefinementService
                     DictionaryModel = MfaService.DefaultDictionaryModel,
                     AcousticModel = MfaService.DefaultAcousticModel,
                     G2pModel = MfaService.DefaultG2pModel,
-                    Beam = 80,
-                    RetryBeam = 200,
+                    Beam = pickupBeam.Beam,
+                    RetryBeam = pickupBeam.RetryBeam,
                     SingleSpeaker = true,
                     CleanOutput = true
                 };

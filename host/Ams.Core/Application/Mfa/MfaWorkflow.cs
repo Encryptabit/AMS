@@ -7,6 +7,7 @@ using Ams.Core.Artifacts;
 using Ams.Core.Artifacts.Alignment;
 using Ams.Core.Artifacts.Hydrate;
 using Ams.Core.Processors;
+using Ams.Core.Processors.Alignment.Mfa;
 using Ams.Core.Runtime.Book;
 using Ams.Core.Runtime.Chapter;
 
@@ -207,22 +208,39 @@ public static class MfaWorkflow
 
         if (chunkCorpus is not null)
         {
-            // Chunked path: collect per-utterance TextGrids into mfaCopyDir for aggregation
-            foreach (var utt in chunkCorpus.Utterances)
+            // Chunked path: collect per-utterance TextGrids and detect quality issues
+            var chunkResults = CollectChunkTextGrids(chunkCorpus.Utterances, alignOutputDir, mfaCopyDir);
+
+            // Adaptive strict retry: re-align only problematic chunks with strict beam
+            var failedChunks = chunkResults
+                .Where(r => r.Status != ChunkAlignmentStatus.Ok)
+                .ToList();
+
+            if (failedChunks.Count > 0 &&
+                resolvedBeam.Beam < MfaBeamSettings.StrictRetry.Beam)
             {
-                var uttTextGridCandidates = new[]
-                {
-                    Path.Combine(alignOutputDir, "alignment", "mfa", utt.UtteranceName + ".TextGrid"),
-                    Path.Combine(alignOutputDir, utt.UtteranceName + ".TextGrid")
-                };
-                foreach (var candidate in uttTextGridCandidates)
-                {
-                    if (File.Exists(candidate))
-                    {
-                        CopyIfExists(candidate, Path.Combine(mfaCopyDir, utt.UtteranceName + ".TextGrid"));
-                        break;
-                    }
-                }
+                Log.Info(
+                    "Adaptive retry: {Failed}/{Total} chunks need strict re-alignment " +
+                    "(missing={Missing}, empty={Empty}, lowCoverage={LowCoverage})",
+                    failedChunks.Count, chunkCorpus.Utterances.Count,
+                    failedChunks.Count(r => r.Status == ChunkAlignmentStatus.MissingOutput),
+                    failedChunks.Count(r => r.Status == ChunkAlignmentStatus.ParseFailure),
+                    failedChunks.Count(r => r.Status == ChunkAlignmentStatus.LowCoverage));
+
+                await RetryFailedChunksWithStrictBeamAsync(
+                    failedChunks,
+                    chunkCorpus,
+                    service,
+                    alignContext,
+                    alignOutputDir,
+                    mfaCopyDir,
+                    cancellationToken).ConfigureAwait(false);
+            }
+            else if (failedChunks.Count > 0)
+            {
+                Log.Debug(
+                    "Skipping adaptive retry: already at strict beam ({Beam}/{RetryBeam}), {Failed} chunks still problematic",
+                    resolvedBeam.Beam, resolvedBeam.RetryBeam, failedChunks.Count);
             }
 
             // Aggregate per-chunk TextGrids into canonical chapter-level TextGrid
@@ -584,5 +602,203 @@ public static class MfaWorkflow
             Log.Debug("Failed to copy MFA artifact from {Source} to {Destination}: {Message}", sourcePath,
                 destinationPath, ex.Message);
         }
+    }
+
+    // ----------------------------------------------------------------
+    // Adaptive strict retry: chunk-level quality detection and retry
+    // ----------------------------------------------------------------
+
+    internal enum ChunkAlignmentStatus
+    {
+        Ok,
+        MissingOutput,
+        ParseFailure,
+        LowCoverage
+    }
+
+    internal sealed record ChunkAlignmentResult(
+        MfaChunkCorpusBuilder.UtteranceEntry Utterance,
+        ChunkAlignmentStatus Status,
+        int WordIntervalCount);
+
+    /// <summary>
+    /// Minimum ratio of word intervals to expected coverage (chunk duration / 0.3s per word estimate).
+    /// Chunks below this threshold are considered low-coverage and eligible for strict retry.
+    /// </summary>
+    private const double MinCoverageRatio = 0.15;
+
+    /// <summary>
+    /// Collects per-chunk TextGrid outputs from the alignment directory into the copy directory,
+    /// evaluating quality for each chunk.
+    /// </summary>
+    private static List<ChunkAlignmentResult> CollectChunkTextGrids(
+        IReadOnlyList<MfaChunkCorpusBuilder.UtteranceEntry> utterances,
+        string alignOutputDir,
+        string mfaCopyDir)
+    {
+        var results = new List<ChunkAlignmentResult>(utterances.Count);
+
+        foreach (var utt in utterances)
+        {
+            var destPath = Path.Combine(mfaCopyDir, utt.UtteranceName + ".TextGrid");
+            var sourcePath = FindUtteranceTextGrid(alignOutputDir, utt.UtteranceName);
+
+            if (sourcePath is null)
+            {
+                results.Add(new ChunkAlignmentResult(utt, ChunkAlignmentStatus.MissingOutput, 0));
+                continue;
+            }
+
+            CopyIfExists(sourcePath, destPath);
+
+            // Evaluate quality: parse word intervals
+            int wordCount;
+            try
+            {
+                var intervals = TextGridParser.ParseWordIntervals(destPath);
+                wordCount = intervals.Count(iv =>
+                    !string.IsNullOrWhiteSpace(iv.Text) &&
+                    !string.Equals(iv.Text, "sp", StringComparison.OrdinalIgnoreCase) &&
+                    !string.Equals(iv.Text, "sil", StringComparison.OrdinalIgnoreCase));
+            }
+            catch (Exception ex)
+            {
+                Log.Debug("TextGrid parse failure for chunk {Chunk}: {Message}", utt.UtteranceName, ex.Message);
+                results.Add(new ChunkAlignmentResult(utt, ChunkAlignmentStatus.ParseFailure, 0));
+                continue;
+            }
+
+            if (wordCount == 0)
+            {
+                results.Add(new ChunkAlignmentResult(utt, ChunkAlignmentStatus.ParseFailure, 0));
+                continue;
+            }
+
+            // Low-coverage heuristic: estimate expected words from chunk duration
+            var chunkDuration = utt.ChunkEndSec - utt.ChunkStartSec;
+            var expectedWords = chunkDuration / 0.3; // ~3.3 words/sec average speech rate
+            var coverageRatio = expectedWords > 0 ? wordCount / expectedWords : 1.0;
+
+            if (coverageRatio < MinCoverageRatio)
+            {
+                Log.Debug(
+                    "Low coverage for chunk {Chunk}: {Actual} words vs ~{Expected:F0} expected (ratio={Ratio:F2})",
+                    utt.UtteranceName, wordCount, expectedWords, coverageRatio);
+                results.Add(new ChunkAlignmentResult(utt, ChunkAlignmentStatus.LowCoverage, wordCount));
+                continue;
+            }
+
+            results.Add(new ChunkAlignmentResult(utt, ChunkAlignmentStatus.Ok, wordCount));
+        }
+
+        return results;
+    }
+
+    /// <summary>
+    /// Retries alignment for failed chunks using strict beam settings.
+    /// Only the failed chunks are re-aligned; successful chunks are untouched.
+    /// </summary>
+    private static async Task RetryFailedChunksWithStrictBeamAsync(
+        List<ChunkAlignmentResult> failedChunks,
+        MfaChunkCorpusBuilder.ChunkCorpusResult chunkCorpus,
+        MfaService service,
+        MfaChapterContext alignContext,
+        string alignOutputDir,
+        string mfaCopyDir,
+        CancellationToken cancellationToken)
+    {
+        var strictBeam = MfaBeamSettings.StrictRetry;
+        var retryContext = alignContext with
+        {
+            Beam = strictBeam.Beam,
+            RetryBeam = strictBeam.RetryBeam,
+            // Re-use the same corpus directory which still has all utterance files.
+            // MFA will re-align all utterances in the corpus, but we only collect
+            // the failed ones afterward. This is simpler and safer than creating
+            // a subset corpus directory.
+        };
+
+        Log.Info(
+            "Strict retry: beam={Beam}, retryBeam={RetryBeam} for {Count} chunks",
+            strictBeam.Beam, strictBeam.RetryBeam, failedChunks.Count);
+
+        try
+        {
+            var retryResult = await service.AlignAsync(retryContext, cancellationToken).ConfigureAwait(false);
+            var retrySuccess = EnsureSuccess("mfa align (strict retry)", retryResult, allowFailure: true);
+
+            if (!retrySuccess)
+            {
+                Log.Warn("Strict retry alignment failed; keeping initial results for all chunks");
+                return;
+            }
+
+            // Re-collect TextGrids only for the originally failed chunks
+            var recovered = 0;
+            foreach (var failed in failedChunks)
+            {
+                var utt = failed.Utterance;
+                var retrySrc = FindUtteranceTextGrid(alignOutputDir, utt.UtteranceName);
+                if (retrySrc is null)
+                {
+                    Log.Debug("Strict retry: still no output for chunk {Chunk}", utt.UtteranceName);
+                    continue;
+                }
+
+                var destPath = Path.Combine(mfaCopyDir, utt.UtteranceName + ".TextGrid");
+                CopyIfExists(retrySrc, destPath);
+
+                // Verify the retry actually improved things
+                try
+                {
+                    var intervals = TextGridParser.ParseWordIntervals(destPath);
+                    var retryWordCount = intervals.Count(iv =>
+                        !string.IsNullOrWhiteSpace(iv.Text) &&
+                        !string.Equals(iv.Text, "sp", StringComparison.OrdinalIgnoreCase) &&
+                        !string.Equals(iv.Text, "sil", StringComparison.OrdinalIgnoreCase));
+
+                    if (retryWordCount > failed.WordIntervalCount)
+                    {
+                        recovered++;
+                        Log.Debug(
+                            "Strict retry improved chunk {Chunk}: {Before} -> {After} word intervals",
+                            utt.UtteranceName, failed.WordIntervalCount, retryWordCount);
+                    }
+                    else
+                    {
+                        Log.Debug(
+                            "Strict retry did not improve chunk {Chunk}: {Before} -> {After} word intervals",
+                            utt.UtteranceName, failed.WordIntervalCount, retryWordCount);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Log.Debug("Strict retry TextGrid parse failed for chunk {Chunk}: {Message}",
+                        utt.UtteranceName, ex.Message);
+                }
+            }
+
+            Log.Info(
+                "Strict retry complete: {Recovered}/{Failed} chunks improved",
+                recovered, failedChunks.Count);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            Log.Warn("Strict retry alignment threw: {Message}; keeping initial results", ex.Message);
+        }
+    }
+
+    /// <summary>
+    /// Finds the TextGrid output file for a given utterance name across known MFA output locations.
+    /// </summary>
+    private static string? FindUtteranceTextGrid(string alignOutputDir, string utteranceName)
+    {
+        var candidates = new[]
+        {
+            Path.Combine(alignOutputDir, "alignment", "mfa", utteranceName + ".TextGrid"),
+            Path.Combine(alignOutputDir, utteranceName + ".TextGrid")
+        };
+
+        return candidates.FirstOrDefault(File.Exists);
     }
 }
