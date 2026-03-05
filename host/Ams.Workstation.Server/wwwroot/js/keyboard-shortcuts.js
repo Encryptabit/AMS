@@ -23,15 +23,9 @@ function handleKeydown(e) {
     const modal = isModalOpen();
     const inInput = isInputFocused();
 
-    // When in an input field, only allow modal shortcuts (Q and Enter)
+    // When in an input field, only allow Enter to submit modal
     if (inInput) {
         if (!modal) return;
-
-        if ((e.key === 'q' || e.key === 'Q') && !e.ctrlKey && !e.metaKey && !e.altKey) {
-            _dotNetRef.invokeMethodAsync('OnModalClose');
-            e.preventDefault();
-            return;
-        }
 
         if (e.key === 'Enter' && !e.shiftKey && document.activeElement.tagName !== 'TEXTAREA') {
             _dotNetRef.invokeMethodAsync('OnModalSubmit');
