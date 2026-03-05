@@ -8,8 +8,8 @@ Audio Management System - CLI and core library for audio processing, ASR, forced
 
 **Milestone**: v2.0 Blazor Workstation
 **Phase**: 14 - Shared Chunked ASR/MFA
-**Plan**: 4/7
-**Status**: Plan 14-04 complete; MfaChunkCorpusBuilder generates per-chunk wav/lab corpus from shared chunk plan with BookText-driven labs and 17 unit tests
+**Plan**: 5/7
+**Status**: Plan 14-05 complete; TextGridAggregationService merges per-chunk MFA TextGrids into canonical chapter-level TextGrid with offset-correct monotonic ordering
 
 ## Progress
 
@@ -27,7 +27,7 @@ v2.0 Blazor Workstation[██████████████████�
 | 14-02 | Chunk Planning Service | 2 | Complete |
 | 14-03 | ASR Chunk-Plan Integration | 2 | Complete |
 | 14-04 | Chunked MFA Corpus Builder | 2 | Complete |
-| 14-05 | TBD | - | Pending |
+| 14-05 | TextGrid Chunk Aggregation | 2 | Complete |
 | 14-06 | TBD | - | Pending |
 | 14-07 | TBD | - | Pending |
 
@@ -168,6 +168,9 @@ v2.0 Blazor Workstation[██████████████████�
 | MergeChunkResponses visibility | internal (was private) | Enables direct unit testing without integration complexity |
 | Chunk corpus activation threshold | >1 chunks in plan | Single-chunk plans use legacy single-utterance path to avoid overhead |
 | Chunked MFA fallback strategy | Omit ASR corpus retry | ASR corpus fallback only applies to legacy single-utterance lab failures |
+| TextGrid aggregation format | Standard Praat full-text | Compatible with existing TextGridParser; includes words+phones tiers |
+| Aggregation source directory | mfaCopyDir (post-collection) | Consistent file resolution after per-chunk TextGrids are collected |
+| Interval ordering strategy | Sort by start time after offset | Guaranteed monotonic ordering for downstream MergeTimingsCommand |
 | MinLabTokenCount | 2 | Prevents empty/trivial lab files that cause MFA alignment errors |
 | Nearest-sentence fallback | Timing midpoint proximity | Deterministic fallback for chunks with no direct sentence timing overlap |
 
@@ -216,7 +219,7 @@ poc/VelloSharpPoc/     - Avalonia + VelloSharp (child window fails)
 
 ## Next Action
 
-Plan 14-04 complete. MfaChunkCorpusBuilder generates per-chunk wav/lab corpus from shared chunk plan. Continue with plan 14-05.
+Plan 14-05 complete. TextGridAggregationService merges per-chunk MFA TextGrids into canonical chapter-level TextGrid. Continue with plan 14-06.
 
 ## Deferred UI Refinements (for Plan 10-04)
 
@@ -233,4 +236,4 @@ None currently.
 
 ## Session Continuity
 
-Last activity: 2026-03-05 - Completed plan 14-04: Chunked MFA corpus builder with BookText-driven labs and 17 tests
+Last activity: 2026-03-05 - Completed plan 14-05: TextGrid chunk aggregation with offset-correct merging and 8 tests
