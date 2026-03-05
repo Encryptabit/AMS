@@ -230,6 +230,7 @@ else
     private void HandleTimeUpdate(double time)
     {
         _currentTime = time;
+        _selectedSentenceId = null;
         StateHasChanged();
     }
 
@@ -396,7 +397,7 @@ else
     }
 
     [JSInvokable]
-    public void OnNavigateItem(string direction)
+    public async Task OnNavigateItem(string direction)
     {
         if (_currentView == "errors")
         {
@@ -410,18 +411,7 @@ else
         {
             if (_sentences.Count == 0) return;
 
-            int currentIndex = -1;
-            if (_selectedSentenceId.HasValue)
-            {
-                currentIndex = _sentences.FindIndex(s => s.Id == _selectedSentenceId.Value);
-            }
-
-            if (currentIndex < 0)
-            {
-                // Find by current playback time
-                currentIndex = _sentences.FindIndex(s => _currentTime >= s.StartTime && _currentTime < s.EndTime);
-            }
-
+            int currentIndex = _sentences.FindIndex(s => _currentTime >= s.StartTime && _currentTime < s.EndTime);
             if (currentIndex < 0) currentIndex = 0;
 
             if (direction == "prev")
@@ -429,7 +419,9 @@ else
             else
                 currentIndex = Math.Min(_sentences.Count - 1, currentIndex + 1);
 
-            _selectedSentenceId = _sentences[currentIndex].Id;
+            // Seek the waveform — time-sync handles highlighting from here
+            if (_waveformPlayer != null)
+                await _waveformPlayer.SeekTo(_sentences[currentIndex].StartTime);
         }
         StateHasChanged();
     }
