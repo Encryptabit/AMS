@@ -2,6 +2,10 @@ using System.IO;
 using System.Text;
 using Ams.Core.Application.Processes;
 using Ams.Core.Application.Mfa.Models;
+using Ams.Core.Artifacts;
+using Ams.Core.Artifacts.Alignment;
+using Ams.Core.Artifacts.Hydrate;
+using Ams.Core.Processors;
 using Ams.Core.Runtime.Book;
 using Ams.Core.Runtime.Chapter;
 
@@ -54,12 +58,36 @@ public static class MfaWorkflow
             }
         }
 
-        var stagedAudioPath = Path.Combine(corpusDir, chapterStem + ".wav");
-        StageAudio(audioFile, stagedAudioPath);
+        // Determine whether to use chunked or single-utterance corpus
+        var chunkPlan = chapterContext.Documents.ChunkPlan;
+        var hydrate = chapterContext.Documents.HydratedTranscript;
+        MfaChunkCorpusBuilder.ChunkCorpusResult? chunkCorpus = null;
 
-        var corpusSource = new FileInfo(Path.Combine(chapterDirectory.FullName, chapterStem + ".asr.corpus.txt"));
-        var labPath = Path.Combine(corpusDir, chapterStem + ".lab");
-        await WriteLabFileAsync(hydrateFile, chapterContext, labPath, null, cancellationToken).ConfigureAwait(false);
+        if (chunkPlan is not null && hydrate is not null && chunkPlan.Chunks.Count > 1)
+        {
+            // Clean the corpus directory for fresh chunk output
+            CleanCorpusDirectory(corpusDir);
+
+            var audioBuffer = AudioProcessor.Decode(audioFile.FullName);
+            chunkCorpus = MfaChunkCorpusBuilder.Build(audioBuffer, chunkPlan, hydrate, corpusDir);
+
+            Log.Info("Using chunked MFA corpus: {Count} utterances from shared chunk plan", chunkCorpus.Utterances.Count);
+        }
+        else
+        {
+            // Legacy single-utterance path
+            var stagedAudioPath = Path.Combine(corpusDir, chapterStem + ".wav");
+            StageAudio(audioFile, stagedAudioPath);
+
+            var corpusSource = new FileInfo(Path.Combine(chapterDirectory.FullName, chapterStem + ".asr.corpus.txt"));
+            var labPath = Path.Combine(corpusDir, chapterStem + ".lab");
+            await WriteLabFileAsync(hydrateFile, chapterContext, labPath, null, cancellationToken).ConfigureAwait(false);
+
+            if (chunkPlan is not null && chunkPlan.Chunks.Count <= 1)
+            {
+                Log.Debug("Chunk plan has {Count} chunk(s); using single-utterance corpus path", chunkPlan.Chunks.Count);
+            }
+        }
 
         var dictionaryModel = MfaService.DefaultDictionaryModel;
         var acousticModel = MfaService.DefaultAcousticModel;
@@ -132,25 +160,39 @@ public static class MfaWorkflow
             ? baseContext
             : baseContext with { CustomDictionaryPath = null };
 
-        Log.Debug("Running MFA align for chapter {Chapter}", chapterStem);
-        var alignUsingCorpus = false;
+        Log.Debug("Running MFA align for chapter {Chapter} ({Mode})", chapterStem,
+            chunkCorpus is not null ? $"chunked, {chunkCorpus.Utterances.Count} utterances" : "single-utterance");
 
-        while (true)
+        if (chunkCorpus is not null)
         {
-            try
+            // Chunked path: straightforward alignment (no ASR corpus fallback)
+            var alignResult = await service.AlignAsync(alignContext, cancellationToken).ConfigureAwait(false);
+            EnsureSuccess("mfa align", alignResult);
+        }
+        else
+        {
+            // Legacy single-utterance path with ASR corpus fallback
+            var corpusSource = new FileInfo(Path.Combine(chapterDirectory.FullName, chapterStem + ".asr.corpus.txt"));
+            var labPath = Path.Combine(corpusDir, chapterStem + ".lab");
+            var alignUsingCorpus = false;
+
+            while (true)
             {
-                var alignResult = await service.AlignAsync(alignContext, cancellationToken).ConfigureAwait(false);
-                EnsureSuccess("mfa align", alignResult);
-                break;
-            }
-            catch (InvalidOperationException ex) when (!alignUsingCorpus && corpusSource.Exists)
-            {
-                alignUsingCorpus = true;
-                Log.Warn("MFA align failed using hydrate transcript ({Message}). Retrying with ASR corpus {Corpus}.",
-                    ex.Message, corpusSource.FullName);
-                await WriteLabFileAsync(hydrateFile, chapterContext, labPath, corpusSource, cancellationToken)
-                    .ConfigureAwait(false);
-                continue;
+                try
+                {
+                    var alignResult = await service.AlignAsync(alignContext, cancellationToken).ConfigureAwait(false);
+                    EnsureSuccess("mfa align", alignResult);
+                    break;
+                }
+                catch (InvalidOperationException ex) when (!alignUsingCorpus && corpusSource.Exists)
+                {
+                    alignUsingCorpus = true;
+                    Log.Warn("MFA align failed using hydrate transcript ({Message}). Retrying with ASR corpus {Corpus}.",
+                        ex.Message, corpusSource.FullName);
+                    await WriteLabFileAsync(hydrateFile, chapterContext, labPath, corpusSource, cancellationToken)
+                        .ConfigureAwait(false);
+                    continue;
+                }
             }
         }
 
@@ -161,17 +203,56 @@ public static class MfaWorkflow
         CopyIfExists(Path.Combine(mfaRoot, chapterStem + ".dictionary.zip"),
             Path.Combine(mfaCopyDir, chapterStem + ".dictionary.zip"));
 
-        var textGridCandidates = new[]
+        if (chunkCorpus is not null)
         {
-            Path.Combine(alignOutputDir, "alignment", "mfa", chapterStem + ".TextGrid"),
-            Path.Combine(alignOutputDir, chapterStem + ".TextGrid")
-        };
-        foreach (var candidate in textGridCandidates)
-        {
-            if (File.Exists(candidate))
+            // Chunked path: collect per-utterance TextGrids
+            foreach (var utt in chunkCorpus.Utterances)
             {
-                CopyIfExists(candidate, textGridCopyPath);
-                break;
+                var uttTextGridCandidates = new[]
+                {
+                    Path.Combine(alignOutputDir, "alignment", "mfa", utt.UtteranceName + ".TextGrid"),
+                    Path.Combine(alignOutputDir, utt.UtteranceName + ".TextGrid")
+                };
+                foreach (var candidate in uttTextGridCandidates)
+                {
+                    if (File.Exists(candidate))
+                    {
+                        CopyIfExists(candidate, Path.Combine(mfaCopyDir, utt.UtteranceName + ".TextGrid"));
+                        break;
+                    }
+                }
+            }
+
+            // Also copy the chapter-level TextGrid if MFA produced one
+            var chapterTextGridCandidates = new[]
+            {
+                Path.Combine(alignOutputDir, "alignment", "mfa", chapterStem + ".TextGrid"),
+                Path.Combine(alignOutputDir, chapterStem + ".TextGrid")
+            };
+            foreach (var candidate in chapterTextGridCandidates)
+            {
+                if (File.Exists(candidate))
+                {
+                    CopyIfExists(candidate, textGridCopyPath);
+                    break;
+                }
+            }
+        }
+        else
+        {
+            // Legacy single-utterance TextGrid collection
+            var textGridCandidates = new[]
+            {
+                Path.Combine(alignOutputDir, "alignment", "mfa", chapterStem + ".TextGrid"),
+                Path.Combine(alignOutputDir, chapterStem + ".TextGrid")
+            };
+            foreach (var candidate in textGridCandidates)
+            {
+                if (File.Exists(candidate))
+                {
+                    CopyIfExists(candidate, textGridCopyPath);
+                    break;
+                }
             }
         }
 
@@ -183,6 +264,29 @@ public static class MfaWorkflow
     {
         Directory.CreateDirectory(path);
         return path;
+    }
+
+    /// <summary>
+    /// Removes all files from the corpus directory to prepare for fresh chunk output.
+    /// </summary>
+    private static void CleanCorpusDirectory(string corpusDir)
+    {
+        if (!Directory.Exists(corpusDir))
+        {
+            return;
+        }
+
+        foreach (var file in Directory.EnumerateFiles(corpusDir))
+        {
+            try
+            {
+                File.Delete(file);
+            }
+            catch (Exception ex)
+            {
+                Log.Debug("Failed to clean corpus file {Path}: {Message}", file, ex.Message);
+            }
+        }
     }
 
     private static void StageAudio(FileInfo source, string destination)

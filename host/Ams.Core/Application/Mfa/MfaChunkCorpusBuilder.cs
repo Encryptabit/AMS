@@ -1,0 +1,269 @@
+using System.Text;
+using Ams.Core.Artifacts;
+using Ams.Core.Artifacts.Alignment;
+using Ams.Core.Artifacts.Hydrate;
+using Ams.Core.Common;
+using Ams.Core.Processors;
+using Ams.Core.Runtime.Book;
+
+namespace Ams.Core.Application.Mfa;
+
+/// <summary>
+/// Builds a per-chunk MFA corpus (wav + lab files) from a shared chunk plan,
+/// hydrated transcript, and chapter audio. Each chunk produces a deterministic
+/// <c>utt-NNNN.wav</c> / <c>utt-NNNN.lab</c> pair under the corpus directory.
+/// <para>
+/// Lab content is always derived from <see cref="HydratedSentence.BookText"/>
+/// to maintain book-text lexical truth. The builder maps chunk time ranges to
+/// overlapping hydrated sentences and never falls back to raw ASR words.
+/// </para>
+/// </summary>
+internal static class MfaChunkCorpusBuilder
+{
+    /// <summary>
+    /// Result of a chunk corpus build, containing the list of utterance entries
+    /// and the corpus directory path.
+    /// </summary>
+    internal sealed record ChunkCorpusResult(
+        string CorpusDirectory,
+        IReadOnlyList<UtteranceEntry> Utterances);
+
+    /// <summary>
+    /// A single utterance in the chunk corpus with its file paths and
+    /// the source chunk offset (for later TextGrid aggregation).
+    /// </summary>
+    internal sealed record UtteranceEntry(
+        int ChunkId,
+        string UtteranceName,
+        string WavPath,
+        string LabPath,
+        double ChunkStartSec,
+        double ChunkEndSec);
+
+    /// <summary>
+    /// Minimum number of pronunciation tokens per utterance lab. Chunks that
+    /// produce fewer tokens after fallback expansion are logged and skipped.
+    /// </summary>
+    private const int MinLabTokenCount = 2;
+
+    /// <summary>
+    /// Builds per-chunk wav and lab files under <paramref name="corpusDirectory"/>.
+    /// </summary>
+    /// <param name="audioBuffer">Full chapter audio buffer.</param>
+    /// <param name="chunkPlan">Shared chunk plan document from ChunkPlanningService.</param>
+    /// <param name="hydrate">Hydrated transcript with sentence-level BookText and timing.</param>
+    /// <param name="corpusDirectory">Target directory for utterance corpus assets.</param>
+    /// <returns>A <see cref="ChunkCorpusResult"/> with the list of emitted utterances.</returns>
+    internal static ChunkCorpusResult Build(
+        AudioBuffer audioBuffer,
+        ChunkPlanDocument chunkPlan,
+        HydratedTranscript hydrate,
+        string corpusDirectory)
+    {
+        ArgumentNullException.ThrowIfNull(audioBuffer);
+        ArgumentNullException.ThrowIfNull(chunkPlan);
+        ArgumentNullException.ThrowIfNull(hydrate);
+        ArgumentException.ThrowIfNullOrWhiteSpace(corpusDirectory);
+
+        Directory.CreateDirectory(corpusDirectory);
+
+        var sentences = hydrate.Sentences;
+        var utterances = new List<UtteranceEntry>(chunkPlan.Chunks.Count);
+
+        for (int i = 0; i < chunkPlan.Chunks.Count; i++)
+        {
+            var chunk = chunkPlan.Chunks[i];
+            var uttName = FormatUtteranceName(i);
+
+            // Find overlapping sentences for this chunk
+            var labText = BuildLabText(sentences, chunk.StartSec, chunk.EndSec);
+
+            if (string.IsNullOrWhiteSpace(labText))
+            {
+                // Fallback: expand to nearest sentence window
+                labText = BuildLabTextWithFallback(sentences, chunk.StartSec, chunk.EndSec, i);
+            }
+
+            if (string.IsNullOrWhiteSpace(labText))
+            {
+                Log.Debug(
+                    "Chunk {ChunkId} ({StartSec:F2}s-{EndSec:F2}s) produced no usable lab text; skipping",
+                    chunk.ChunkId, chunk.StartSec, chunk.EndSec);
+                continue;
+            }
+
+            // Write WAV: slice the audio buffer to this chunk's sample range
+            var wavPath = Path.Combine(corpusDirectory, uttName + ".wav");
+            var sliceLength = Math.Min(chunk.LengthSamples, audioBuffer.Length - chunk.StartSample);
+            if (sliceLength <= 0)
+            {
+                Log.Debug(
+                    "Chunk {ChunkId} has no audio samples (start={StartSample}, bufLen={BufLen}); skipping",
+                    chunk.ChunkId, chunk.StartSample, audioBuffer.Length);
+                continue;
+            }
+
+            var slice = audioBuffer.Slice(chunk.StartSample, sliceLength);
+            AudioProcessor.EncodeWav(wavPath, slice);
+
+            // Write LAB
+            var labPath = Path.Combine(corpusDirectory, uttName + ".lab");
+            File.WriteAllText(labPath, labText, Encoding.UTF8);
+
+            utterances.Add(new UtteranceEntry(
+                ChunkId: chunk.ChunkId,
+                UtteranceName: uttName,
+                WavPath: wavPath,
+                LabPath: labPath,
+                ChunkStartSec: chunk.StartSec,
+                ChunkEndSec: chunk.EndSec));
+        }
+
+        Log.Info("Built chunk corpus: {Count} utterances in {Dir}", utterances.Count, corpusDirectory);
+        return new ChunkCorpusResult(corpusDirectory, utterances);
+    }
+
+    /// <summary>
+    /// Builds lab text from hydrated sentences whose timing overlaps
+    /// the chunk time range [chunkStart, chunkEnd).
+    /// </summary>
+    internal static string? BuildLabText(
+        IReadOnlyList<HydratedSentence> sentences,
+        double chunkStartSec,
+        double chunkEndSec)
+    {
+        var overlapping = FindOverlappingSentences(sentences, chunkStartSec, chunkEndSec);
+        if (overlapping.Count == 0)
+        {
+            return null;
+        }
+
+        return PrepareLabFromSentences(overlapping);
+    }
+
+    /// <summary>
+    /// Fallback when no sentences overlap the chunk timing window.
+    /// Expands to the nearest sentence(s) by proximity, ensuring at least
+    /// one sentence is included. Never switches to raw ASR words.
+    /// </summary>
+    internal static string? BuildLabTextWithFallback(
+        IReadOnlyList<HydratedSentence> sentences,
+        double chunkStartSec,
+        double chunkEndSec,
+        int chunkIndex)
+    {
+        if (sentences.Count == 0)
+        {
+            return null;
+        }
+
+        var chunkMidpoint = (chunkStartSec + chunkEndSec) / 2.0;
+
+        // Find the sentence with the closest timing to the chunk midpoint
+        HydratedSentence? closest = null;
+        double closestDistance = double.MaxValue;
+
+        foreach (var sentence in sentences)
+        {
+            if (sentence.Timing is null)
+            {
+                continue;
+            }
+
+            var sentMid = (sentence.Timing.StartSec + sentence.Timing.EndSec) / 2.0;
+            var distance = Math.Abs(sentMid - chunkMidpoint);
+            if (distance < closestDistance)
+            {
+                closestDistance = distance;
+                closest = sentence;
+            }
+        }
+
+        if (closest is null)
+        {
+            // No timed sentences at all: use positional fallback based on chunk index
+            // Map chunk index proportionally to sentence list
+            var proportionalIndex = sentences.Count > 1
+                ? (int)Math.Round((double)chunkIndex / Math.Max(1, chunkIndex + 1) * (sentences.Count - 1))
+                : 0;
+            proportionalIndex = Math.Clamp(proportionalIndex, 0, sentences.Count - 1);
+            closest = sentences[proportionalIndex];
+        }
+
+        Log.Debug(
+            "Chunk {ChunkIndex} ({StartSec:F2}s-{EndSec:F2}s) expanded to nearest sentence {SentenceId}",
+            chunkIndex, chunkStartSec, chunkEndSec, closest.Id);
+
+        var labText = PrepareLabFromSentences(new[] { closest });
+        return string.IsNullOrWhiteSpace(labText) ? null : labText;
+    }
+
+    /// <summary>
+    /// Finds sentences whose timing overlaps [chunkStart, chunkEnd).
+    /// A sentence overlaps if its timing range intersects the chunk range.
+    /// </summary>
+    internal static List<HydratedSentence> FindOverlappingSentences(
+        IReadOnlyList<HydratedSentence> sentences,
+        double chunkStartSec,
+        double chunkEndSec)
+    {
+        var result = new List<HydratedSentence>();
+
+        foreach (var sentence in sentences)
+        {
+            if (sentence.Timing is null)
+            {
+                continue;
+            }
+
+            // Standard interval overlap: [a, b) intersects [c, d) iff a < d && c < b
+            if (sentence.Timing.StartSec < chunkEndSec &&
+                chunkStartSec < sentence.Timing.EndSec)
+            {
+                result.Add(sentence);
+            }
+        }
+
+        return result;
+    }
+
+    /// <summary>
+    /// Prepares a single lab line from the BookText of the given sentences.
+    /// Uses PronunciationHelper to normalize text for MFA consumption.
+    /// </summary>
+    private static string? PrepareLabFromSentences(IEnumerable<HydratedSentence> sentences)
+    {
+        var parts = new List<string>();
+
+        foreach (var sentence in sentences)
+        {
+            var bookText = sentence.BookText;
+            if (string.IsNullOrWhiteSpace(bookText))
+            {
+                continue;
+            }
+
+            var pronunciationParts = PronunciationHelper.ExtractPronunciationParts(bookText);
+            foreach (var part in pronunciationParts)
+            {
+                if (!string.IsNullOrWhiteSpace(part))
+                {
+                    parts.Add(part);
+                }
+            }
+        }
+
+        if (parts.Count < MinLabTokenCount)
+        {
+            return null;
+        }
+
+        return string.Join(' ', parts);
+    }
+
+    /// <summary>
+    /// Formats a zero-padded utterance name for deterministic ordering.
+    /// </summary>
+    internal static string FormatUtteranceName(int index)
+        => $"utt-{index:D4}";
+}
