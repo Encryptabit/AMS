@@ -99,6 +99,15 @@ public sealed class AsrService : IAsrService
     /// offset timestamps. Tokens and segments from each chunk are adjusted
     /// by the chunk's start time offset to produce monotonically increasing timestamps.
     /// </summary>
+    /// <remarks>
+    /// Guardrails enforced:
+    /// <list type="bullet">
+    ///   <item>Chunks are processed in offset order (deterministic ordering).</item>
+    ///   <item>Token timestamps are clamped to maintain monotonic non-decreasing order.</item>
+    ///   <item>Segment timestamps are clamped to maintain monotonic non-decreasing order.</item>
+    ///   <item>Each chunk's offset is applied exactly once (no duplicate offset application).</item>
+    /// </list>
+    /// </remarks>
     internal static AsrResponse MergeChunkResponses(
         IReadOnlyList<(AsrResponse Response, double OffsetSec)> chunks)
     {
@@ -106,7 +115,16 @@ public sealed class AsrService : IAsrService
         var allSegments = new List<AsrSegment>();
         string? modelVersion = null;
 
-        foreach (var (response, offsetSec) in chunks)
+        // Track high-water marks for monotonicity enforcement
+        double lastTokenEnd = 0;
+        double lastSegmentEnd = 0;
+
+        // Process chunks in offset order to guarantee deterministic ordering
+        var ordered = chunks.Count <= 1
+            ? chunks
+            : chunks.OrderBy(c => c.OffsetSec).ToList();
+
+        foreach (var (response, offsetSec) in ordered)
         {
             modelVersion ??= response.ModelVersion;
 
@@ -114,10 +132,10 @@ public sealed class AsrService : IAsrService
             {
                 foreach (var token in response.Tokens)
                 {
-                    allTokens.Add(new AsrToken(
-                        token.StartTime + offsetSec,
-                        token.Duration,
-                        token.Word));
+                    var adjustedStart = Math.Max(token.StartTime + offsetSec, lastTokenEnd);
+                    var adjustedDuration = token.Duration;
+                    allTokens.Add(new AsrToken(adjustedStart, adjustedDuration, token.Word));
+                    lastTokenEnd = adjustedStart + Math.Max(0, adjustedDuration);
                 }
             }
 
@@ -125,10 +143,10 @@ public sealed class AsrService : IAsrService
             {
                 foreach (var segment in response.Segments)
                 {
-                    allSegments.Add(new AsrSegment(
-                        segment.StartSec + offsetSec,
-                        segment.EndSec + offsetSec,
-                        segment.Text));
+                    var adjustedStart = Math.Max(segment.StartSec + offsetSec, lastSegmentEnd);
+                    var adjustedEnd = Math.Max(segment.EndSec + offsetSec, adjustedStart);
+                    allSegments.Add(new AsrSegment(adjustedStart, adjustedEnd, segment.Text));
+                    lastSegmentEnd = adjustedEnd;
                 }
             }
         }
