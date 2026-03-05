@@ -125,7 +125,7 @@ else
         if (_scrollToTopPending)
         {
             _scrollToTopPending = false;
-            await JS.InvokeVoidAsync("scrollTo", 0, 0);
+            await JS.InvokeVoidAsync("eval", "document.querySelector('.workstation-content')?.scrollTo(0, 0)");
         }
     }
 
