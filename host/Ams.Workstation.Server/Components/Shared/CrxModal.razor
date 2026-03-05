@@ -305,6 +305,12 @@
         return $"{(int)ts.TotalMinutes}:{ts.Seconds:D2}.{ts.Milliseconds:D3}";
     }
 
+    public async Task SubmitAsync()
+    {
+        if (_isVisible && !_submitting)
+            await Submit();
+    }
+
     private record ErrorOpItem(string Op, string Text, bool Selected);
 }
 

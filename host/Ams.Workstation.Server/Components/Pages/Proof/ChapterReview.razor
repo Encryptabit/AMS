@@ -46,6 +46,7 @@
             <SentenceList
                 Sentences="@_sentences"
                 CurrentTime="@_currentTime"
+                ActiveSentenceId="@_selectedSentenceId"
                 OnSentenceSelected="HandleSentenceSelected" />
         </BitGridItem>
     </BitGrid>
@@ -54,11 +55,13 @@ else
 {
     <ErrorsView Report="_report" ChapterPatterns="_chapterPatterns"
                 IgnoredKeys="IgnoredPatternsService.GetIgnoredKeys()"
+                SelectedIndex="_selectedErrorIndex"
                 OnPlaySentence="HandlePlayFromErrors"
                 OnExportSentence="HandleExportFromErrors"
                 OnCrxSentence="HandleCrxFromErrors"
                 OnIgnoreSentence="HandleIgnoreFromErrors"
-                OnTogglePatternIgnore="HandleTogglePatternIgnore" />
+                OnTogglePatternIgnore="HandleTogglePatternIgnore"
+                OnViewSentence="HandleViewFromErrors" />
 }
 
 @if (!string.IsNullOrEmpty(_exportMessage))
@@ -87,6 +90,13 @@ else
     private string? _lastRenderedChapter;
     private bool _scrollToTopPending;
 
+    // Keyboard navigation state
+    private int _selectedErrorIndex;
+    private int? _selectedSentenceId;
+    private IJSObjectReference? _keyboardModule;
+    private DotNetObjectReference<ChapterReview>? _dotNetRef;
+    private List<SentenceReport> _errorSentencesList = new();
+
     [Parameter] public string? ChapterName { get; set; }
 
     protected override async Task OnParametersSetAsync()
@@ -99,6 +109,8 @@ else
             {
                 _scrollToTopPending = true;
                 _lastRenderedChapter = decodedName;
+                _selectedErrorIndex = 0;
+                _selectedSentenceId = null;
             }
             if (Workspace.CurrentChapterName != decodedName)
             {
@@ -122,6 +134,13 @@ else
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
+        if (firstRender)
+        {
+            _dotNetRef = DotNetObjectReference.Create(this);
+            _keyboardModule = await JS.InvokeAsync<IJSObjectReference>("import", "./js/keyboard-shortcuts.js");
+            await _keyboardModule.InvokeVoidAsync("init", _dotNetRef);
+        }
+
         if (_scrollToTopPending)
         {
             _scrollToTopPending = false;
@@ -137,13 +156,48 @@ else
         {
             _report = ProofReportService.BuildReport(chapterName, hydrate);
             _chapterPatterns = ErrorPatternService.AggregatePatternsForChapter(chapterName, hydrate, IgnoredPatternsService.GetIgnoredKeys()).Patterns;
+            MaterializeErrorSentences();
         }
+    }
+
+    private void MaterializeErrorSentences()
+    {
+        if (_report == null)
+        {
+            _errorSentencesList = new();
+            return;
+        }
+
+        _errorSentencesList = _report.Sentences
+            .Where(HasVisibleError)
+            .OrderByDescending(s => ParseWer(s.Wer))
+            .ThenBy(s => s.Id)
+            .ToList();
     }
 
     private void SwitchView(string view)
     {
+        // Save position before switching
+        if (_currentView == "playback")
+        {
+            SnapshotPlaybackPosition();
+        }
+
         _currentView = view;
         StateHasChanged();
+    }
+
+    private void SnapshotPlaybackPosition()
+    {
+        // If no explicit selection, find sentence containing current playback time
+        if (!_selectedSentenceId.HasValue && _sentences.Count > 0)
+        {
+            var timeSentence = _sentences.FirstOrDefault(s => _currentTime >= s.StartTime && _currentTime < s.EndTime);
+            if (timeSentence != null)
+            {
+                _selectedSentenceId = timeSentence.Id;
+            }
+        }
     }
 
     private async Task LoadSentencesAsync(string chapterName)
@@ -191,6 +245,7 @@ else
 
     private async Task HandleSentenceSelected(SentenceViewModel sentence)
     {
+        _selectedSentenceId = sentence.Id;
         // Seek waveform to the start time of the selected sentence
         if (_waveformPlayer != null)
         {
@@ -311,6 +366,211 @@ else
         StateHasChanged();
     }
 
+    private void HandleViewFromErrors(SentenceReport sentence)
+    {
+        _selectedSentenceId = sentence.Id;
+        _currentView = "playback";
+        StateHasChanged();
+    }
+
+    // ── Keyboard JSInvokable handlers ──
+
+    [JSInvokable]
+    public void OnSwitchView(string direction)
+    {
+        // Save current position
+        if (_currentView == "playback")
+        {
+            SnapshotPlaybackPosition();
+        }
+
+        // Toggle between the two views
+        _currentView = _currentView == "errors" ? "playback" : "errors";
+        StateHasChanged();
+    }
+
+    [JSInvokable]
+    public void OnNavigateItem(string direction)
+    {
+        if (_currentView == "errors")
+        {
+            if (_errorSentencesList.Count == 0) return;
+            if (direction == "prev")
+                _selectedErrorIndex = Math.Max(0, _selectedErrorIndex - 1);
+            else
+                _selectedErrorIndex = Math.Min(_errorSentencesList.Count - 1, _selectedErrorIndex + 1);
+        }
+        else
+        {
+            if (_sentences.Count == 0) return;
+
+            int currentIndex = -1;
+            if (_selectedSentenceId.HasValue)
+            {
+                currentIndex = _sentences.FindIndex(s => s.Id == _selectedSentenceId.Value);
+            }
+
+            if (currentIndex < 0)
+            {
+                // Find by current playback time
+                currentIndex = _sentences.FindIndex(s => _currentTime >= s.StartTime && _currentTime < s.EndTime);
+            }
+
+            if (currentIndex < 0) currentIndex = 0;
+
+            if (direction == "prev")
+                currentIndex = Math.Max(0, currentIndex - 1);
+            else
+                currentIndex = Math.Min(_sentences.Count - 1, currentIndex + 1);
+
+            _selectedSentenceId = _sentences[currentIndex].Id;
+        }
+        StateHasChanged();
+    }
+
+    [JSInvokable]
+    public void OnCrossNav(string direction)
+    {
+        if (direction == "errors-to-playback")
+        {
+            if (_errorSentencesList.Count == 0) return;
+            var errorSentence = _errorSentencesList[_selectedErrorIndex];
+            _selectedSentenceId = errorSentence.Id;
+            _currentView = "playback";
+        }
+        else // playback-to-errors
+        {
+            // Get current sentence Id
+            int? sentenceId = _selectedSentenceId;
+            if (!sentenceId.HasValue && _sentences.Count > 0)
+            {
+                var timeSentence = _sentences.FirstOrDefault(s => _currentTime >= s.StartTime && _currentTime < s.EndTime);
+                sentenceId = timeSentence?.Id;
+            }
+
+            _currentView = "errors";
+
+            if (sentenceId.HasValue)
+            {
+                var errorIndex = _errorSentencesList.FindIndex(s => s.Id == sentenceId.Value);
+                if (errorIndex >= 0)
+                {
+                    _selectedErrorIndex = errorIndex;
+                }
+                // If not found, keep existing _selectedErrorIndex (saved position fallback)
+            }
+        }
+        StateHasChanged();
+    }
+
+    [JSInvokable]
+    public void OnToggleReviewed()
+    {
+        ToggleReviewed();
+    }
+
+    [JSInvokable]
+    public void OnOpenCrx()
+    {
+        if (_currentView != "errors" || _errorSentencesList.Count == 0) return;
+        var sentence = _errorSentencesList[_selectedErrorIndex];
+        HandleCrxFromErrors(sentence);
+    }
+
+    [JSInvokable]
+    public void OnModalClose()
+    {
+        _crxModal?.Close();
+        StateHasChanged();
+    }
+
+    [JSInvokable]
+    public async Task OnModalSubmit()
+    {
+        if (_crxModal != null)
+        {
+            await _crxModal.SubmitAsync();
+        }
+    }
+
+    // ── Error visibility logic (copied from ErrorsView for indexing) ──
+
+    private bool HasVisibleError(SentenceReport sentence)
+    {
+        if (HasVisibleDiffOps(sentence.Diff, IgnoredPatternsService.GetIgnoredKeys()))
+        {
+            return true;
+        }
+
+        if (sentence.Diff?.Ops is null || sentence.Diff.Ops.Count == 0)
+        {
+            return !string.Equals(sentence.Status, "ok", StringComparison.OrdinalIgnoreCase);
+        }
+
+        return false;
+    }
+
+    private static bool HasVisibleDiffOps(DiffReport? diff, IReadOnlySet<string>? ignoredKeys)
+    {
+        if (diff?.Ops is null || diff.Ops.Count == 0)
+        {
+            return false;
+        }
+
+        if (ignoredKeys is null || ignoredKeys.Count == 0)
+        {
+            return diff.Ops.Any(op => op.Op != "equal");
+        }
+
+        var ops = diff.Ops.ToList();
+        for (var i = 0; i < ops.Count; i++)
+        {
+            var op = ops[i];
+            if (string.Equals(op.Op, "equal", StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            if (string.Equals(op.Op, "delete", StringComparison.Ordinal))
+            {
+                var bookText = string.Join(" ", op.Tokens);
+                if (i + 1 < ops.Count && string.Equals(ops[i + 1].Op, "insert", StringComparison.Ordinal))
+                {
+                    var scriptText = string.Join(" ", ops[i + 1].Tokens);
+                    if (!ignoredKeys.Contains(Services.ErrorPatternService.BuildKey("sub", bookText, scriptText)))
+                    {
+                        return true;
+                    }
+
+                    i++;
+                }
+                else
+                {
+                    if (!ignoredKeys.Contains(Services.ErrorPatternService.BuildKey("del", bookText, string.Empty)))
+                    {
+                        return true;
+                    }
+                }
+            }
+            else if (string.Equals(op.Op, "insert", StringComparison.Ordinal))
+            {
+                var scriptText = string.Join(" ", op.Tokens);
+                if (!ignoredKeys.Contains(Services.ErrorPatternService.BuildKey("ins", string.Empty, scriptText)))
+                {
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
+
+    private static double ParseWer(string wer)
+    {
+        if (double.TryParse(wer.TrimEnd('%'), out var v)) return v;
+        return 0;
+    }
+
     private static string FormatTime(double seconds)
     {
         if (double.IsNaN(seconds) || double.IsInfinity(seconds)) return "0:00.000";
@@ -322,6 +582,17 @@ else
 
     public async ValueTask DisposeAsync()
     {
+        if (_keyboardModule is not null)
+        {
+            try
+            {
+                await _keyboardModule.InvokeVoidAsync("dispose");
+                await _keyboardModule.DisposeAsync();
+            }
+            catch (JSDisconnectedException) { }
+        }
+        _dotNetRef?.Dispose();
+
         if (_snippetPlayer is not null)
         {
             try
