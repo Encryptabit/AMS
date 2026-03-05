@@ -173,6 +173,12 @@ else
             .OrderByDescending(s => ParseWer(s.Wer))
             .ThenBy(s => s.Id)
             .ToList();
+
+        // Clamp index to prevent out-of-range after list shrinks (e.g., ignore pattern)
+        if (_errorSentencesList.Count == 0)
+            _selectedErrorIndex = 0;
+        else if (_selectedErrorIndex >= _errorSentencesList.Count)
+            _selectedErrorIndex = _errorSentencesList.Count - 1;
     }
 
     private void SwitchView(string view)
