@@ -8,8 +8,8 @@ Audio Management System - CLI and core library for audio processing, ASR, forced
 
 **Milestone**: v2.0 Blazor Workstation
 **Phase**: 14 - Shared Chunked ASR/MFA
-**Plan**: 5/7
-**Status**: Plan 14-05 complete; TextGridAggregationService merges per-chunk MFA TextGrids into canonical chapter-level TextGrid with offset-correct monotonic ordering
+**Plan**: 6/7
+**Status**: Plan 14-06 complete; MFA beam profiles (fast/balanced/strict) with adaptive strict retry on low-quality chunk subsets
 
 ## Progress
 
@@ -28,7 +28,7 @@ v2.0 Blazor Workstation[██████████████████�
 | 14-03 | ASR Chunk-Plan Integration | 2 | Complete |
 | 14-04 | Chunked MFA Corpus Builder | 2 | Complete |
 | 14-05 | TextGrid Chunk Aggregation | 2 | Complete |
-| 14-06 | TBD | - | Pending |
+| 14-06 | MFA Beam Profiles & Adaptive Retry | 2 | Complete |
 | 14-07 | TBD | - | Pending |
 
 ## Phase 13 Plans (Pickup Substitution)
@@ -173,6 +173,9 @@ v2.0 Blazor Workstation[██████████████████�
 | Interval ordering strategy | Sort by start time after offset | Guaranteed monotonic ordering for downstream MergeTimingsCommand |
 | MinLabTokenCount | 2 | Prevents empty/trivial lab files that cause MFA alignment errors |
 | Nearest-sentence fallback | Timing midpoint proximity | Deterministic fallback for chunks with no direct sentence timing overlap |
+| MFA beam profile defaults | Fast=20/80, Balanced=40/120, Strict=80/200 | Configurable presets with explicit override precedence |
+| Coverage heuristic threshold | 0.15 ratio (words / expected at 3.3 words/sec) | Low enough to catch real failures, avoids false positives on natural speech variation |
+| Adaptive retry strategy | Re-align full corpus with strict beam, collect only failed chunks | Simpler than subset corpus; MFA handles utterance-level recovery internally |
 
 ## Phase 8/8.1 Conclusions (Archived)
 
@@ -219,7 +222,7 @@ poc/VelloSharpPoc/     - Avalonia + VelloSharp (child window fails)
 
 ## Next Action
 
-Plan 14-05 complete. TextGridAggregationService merges per-chunk MFA TextGrids into canonical chapter-level TextGrid. Continue with plan 14-06.
+Plan 14-06 complete. MFA beam profiles and adaptive strict retry implemented. Continue with plan 14-07.
 
 ## Deferred UI Refinements (for Plan 10-04)
 
@@ -236,4 +239,4 @@ None currently.
 
 ## Session Continuity
 
-Last activity: 2026-03-05 - Completed plan 14-05: TextGrid chunk aggregation with offset-correct merging and 8 tests
+Last activity: 2026-03-05 - Completed plan 14-06: MFA beam profiles and adaptive strict retry on low-quality chunks
