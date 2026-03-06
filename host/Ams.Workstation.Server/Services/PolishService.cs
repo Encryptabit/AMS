@@ -279,14 +279,20 @@ public class PolishService
     }
 
     /// <summary>
-    /// Generates a short staged-audition clip around the replacement boundaries
-    /// (context before + pickup splice + context after), stores it in
-    /// <see cref="PreviewBufferService"/>, and returns the preview version.
+    /// Generates a staged-audition clip around the replacement boundaries, preferring
+    /// previous+current+next sentence coverage when transcript timing is available.
+    /// Falls back to fixed context-before/context-after if neighbor sentence timings
+    /// cannot be resolved. Stores the clip in <see cref="PreviewBufferService"/>.
     /// </summary>
     /// <param name="replacementId">ID of the staged replacement to audition.</param>
-    /// <param name="contextSec">Context duration before/after the splice (seconds).</param>
-    /// <returns>The updated preview buffer version for cache-busted playback URLs.</returns>
-    public long GenerateAuditionClip(string replacementId, double contextSec = DefaultAuditionContextSec)
+    /// <param name="contextSec">Fallback context duration before/after splice (seconds).</param>
+    /// <returns>
+    /// Preview version and chapter-space clip boundaries:
+    /// (PreviewVersion, ChapterStartSec, ChapterEndSec).
+    /// </returns>
+    public (long PreviewVersion, double ChapterStartSec, double ChapterEndSec) GenerateAuditionClip(
+        string replacementId,
+        double contextSec = DefaultAuditionContextSec)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(replacementId);
         contextSec = Math.Max(0, contextSec);
@@ -299,8 +305,47 @@ public class PolishService
 
         var chapterDurationSec = (double)chapterBuffer.Length / chapterBuffer.SampleRate;
         var maxClipStartSec = Math.Max(0, chapterDurationSec - MinAuditionClipDurationSec);
+
+        // Fallback context window around the replacement.
         var clipStartSec = Math.Clamp(item.OriginalStartSec - contextSec, 0, maxClipStartSec);
         var clipEndSec = Math.Min(chapterDurationSec, item.OriginalEndSec + contextSec);
+
+        // Preferred window: previous sentence start -> following sentence end.
+        var hydrate = GetCurrentHydratedTranscript();
+        if (hydrate is not null)
+        {
+            var sentences = hydrate.Sentences;
+            int sentenceIndex = -1;
+            for (int i = 0; i < sentences.Count; i++)
+            {
+                if (sentences[i].Id == item.SentenceId)
+                {
+                    sentenceIndex = i;
+                    break;
+                }
+            }
+
+            if (sentenceIndex > 0)
+            {
+                var previousStart = sentences[sentenceIndex - 1].Timing?.StartSec;
+                if (previousStart.HasValue)
+                {
+                    clipStartSec = Math.Min(clipStartSec, previousStart.Value);
+                }
+            }
+
+            if (sentenceIndex >= 0 && sentenceIndex < sentences.Count - 1)
+            {
+                var nextEnd = sentences[sentenceIndex + 1].Timing?.EndSec;
+                if (nextEnd.HasValue)
+                {
+                    clipEndSec = Math.Max(clipEndSec, nextEnd.Value);
+                }
+            }
+        }
+
+        clipStartSec = Math.Clamp(clipStartSec, 0, maxClipStartSec);
+        clipEndSec = Math.Clamp(clipEndSec, 0, chapterDurationSec);
         if (clipEndSec <= clipStartSec)
         {
             clipEndSec = Math.Min(chapterDurationSec, clipStartSec + MinAuditionClipDurationSec);
@@ -337,7 +382,7 @@ public class PolishService
             item.CrossfadeCurve);
 
         _previewBuffer.Set(resultBuffer);
-        return _previewBuffer.Version;
+        return (_previewBuffer.Version, clipStartSec, clipEndSec);
     }
 
     /// <summary>

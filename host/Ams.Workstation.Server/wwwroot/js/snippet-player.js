@@ -3,12 +3,16 @@
 
 let audio = null;
 let currentUrl = null;
+let activeDotNetRef = null;
+let activeSyncToken = 0;
+let timeUpdateHandler = null;
+let endedHandler = null;
 
 /**
  * Plays an audio clip URL.
  * Caches the Audio object so repeated plays for the same URL are instant.
  */
-export async function playSegment(url) {
+export async function playSegment(url, dotNetRef, syncToken) {
     stopCurrent();
 
     if (currentUrl !== url || !audio) {
@@ -24,6 +28,7 @@ export async function playSegment(url) {
 
     await waitForMetadata(audio);
     audio.currentTime = 0;
+    wireSidecarSync(dotNetRef, syncToken);
 
     try {
         await audio.play();
@@ -36,7 +41,10 @@ export async function playSegment(url) {
  * Stops any currently playing snippet.
  */
 export function stopCurrent() {
-    if (audio) audio.pause();
+    if (audio) {
+        audio.pause();
+    }
+    clearSidecarSyncHandlers();
 }
 
 /**
@@ -49,6 +57,8 @@ export function dispose() {
         audio = null;
     }
     currentUrl = null;
+    activeDotNetRef = null;
+    activeSyncToken = 0;
 }
 
 function waitForMetadata(player) {
@@ -63,4 +73,37 @@ function waitForMetadata(player) {
         };
         player.addEventListener('loadedmetadata', onLoadedMetadata, { once: true });
     });
+}
+
+function wireSidecarSync(dotNetRef, syncToken) {
+    clearSidecarSyncHandlers();
+
+    activeDotNetRef = dotNetRef || null;
+    activeSyncToken = Number.isInteger(syncToken) ? syncToken : 0;
+    if (!audio || !activeDotNetRef) return;
+
+    timeUpdateHandler = () => {
+        activeDotNetRef.invokeMethodAsync('OnSidecarTimeUpdate', audio.currentTime, activeSyncToken);
+    };
+
+    endedHandler = () => {
+        activeDotNetRef.invokeMethodAsync('OnSidecarPlaybackEnded', activeSyncToken);
+    };
+
+    audio.addEventListener('timeupdate', timeUpdateHandler);
+    audio.addEventListener('ended', endedHandler);
+}
+
+function clearSidecarSyncHandlers() {
+    if (!audio) return;
+
+    if (timeUpdateHandler) {
+        audio.removeEventListener('timeupdate', timeUpdateHandler);
+        timeUpdateHandler = null;
+    }
+
+    if (endedHandler) {
+        audio.removeEventListener('ended', endedHandler);
+        endedHandler = null;
+    }
 }

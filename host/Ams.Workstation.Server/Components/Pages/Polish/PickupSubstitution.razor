@@ -332,6 +332,10 @@
     private IReadOnlyList<HydratedSentence>? _flaggedSentences;
     private IReadOnlyList<StagedReplacement>? _stagedItems;
     private IJSObjectReference? _snippetPlayer;
+    private DotNetObjectReference<PickupSubstitution>? _dotNetRef;
+    private int _sidecarSyncToken;
+    private double _sidecarChapterStartSec;
+    private double _sidecarChapterEndSec;
 
     private record ChapterCrxInfo(string ChapterName, string Stem, int CrxCount, bool AllCommitted);
 
@@ -794,15 +798,32 @@
                 {
                     // Stage audition uses a sidecar player so the chapter waveform stays loaded.
                     _snippetPlayer ??= await JS.InvokeAsync<IJSObjectReference>("import", "./js/snippet-player.js");
-                    var previewVersion = PolishService.GenerateAuditionClip(replacementItem.Id);
+                    _dotNetRef ??= DotNetObjectReference.Create(this);
+
+                    var (previewVersion, chapterStartSec, chapterEndSec) =
+                        PolishService.GenerateAuditionClip(replacementItem.Id);
+
+                    _sidecarChapterStartSec = chapterStartSec;
+                    _sidecarChapterEndSec = chapterEndSec;
+                    _sidecarSyncToken++;
+
+                    if (_waveformPlayer != null && _isWaveformReady)
+                    {
+                        await _waveformPlayer.SeekTo(chapterStartSec);
+                    }
+
                     await _snippetPlayer.InvokeVoidAsync(
                         "playSegment",
-                        $"/api/audio/preview?v={previewVersion}");
+                        $"/api/audio/preview?v={previewVersion}",
+                        _dotNetRef,
+                        _sidecarSyncToken);
                     return;
                 }
 
                 if (_waveformPlayer != null && _isWaveformReady && replacementItem.Status == ReplacementStatus.Applied)
                 {
+                    await StopSidecarIfActive();
+
                     // Committed/applied audition plays directly from corrected chapter audio.
                     await _waveformPlayer.PlaySegment(
                         replacementItem.OriginalStartSec,
@@ -814,6 +835,7 @@
         }
 
         if (_waveformPlayer == null || !_isWaveformReady) return;
+        await StopSidecarIfActive();
 
         // For matched items, find by extracting sentenceId from "match-{id}" format
         if (id.StartsWith("match-") && int.TryParse(id["match-".Length..], out var sentenceId))
@@ -824,6 +846,40 @@
                 await _waveformPlayer.PlaySegment(sentence.Timing.StartSec, sentence.Timing.EndSec);
             }
         }
+    }
+
+    private async Task StopSidecarIfActive()
+    {
+        _sidecarSyncToken++;
+        if (_snippetPlayer is null) return;
+        try
+        {
+            await _snippetPlayer.InvokeVoidAsync("stopCurrent");
+        }
+        catch (JSDisconnectedException) { }
+    }
+
+    [JSInvokable]
+    public async Task OnSidecarTimeUpdate(double sidecarTimeSec, int syncToken)
+    {
+        if (syncToken != _sidecarSyncToken) return;
+        if (_waveformPlayer == null || !_isWaveformReady) return;
+
+        var chapterTimeSec = Math.Clamp(
+            _sidecarChapterStartSec + Math.Max(0, sidecarTimeSec),
+            _sidecarChapterStartSec,
+            _sidecarChapterEndSec);
+
+        await _waveformPlayer.SeekTo(chapterTimeSec);
+    }
+
+    [JSInvokable]
+    public async Task OnSidecarPlaybackEnded(int syncToken)
+    {
+        if (syncToken != _sidecarSyncToken) return;
+        if (_waveformPlayer == null || !_isWaveformReady) return;
+
+        await _waveformPlayer.SeekTo(_sidecarChapterEndSec);
     }
 
     // ── Roomtone Operation Handlers ────────────────────────────────
@@ -1121,6 +1177,8 @@
             }
             catch (JSDisconnectedException) { }
         }
+        _dotNetRef?.Dispose();
+        _dotNetRef = null;
 
         // Clear collections to release references
         _matchesByChapter.Clear();
