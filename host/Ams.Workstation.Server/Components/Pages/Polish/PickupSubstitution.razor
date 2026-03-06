@@ -684,6 +684,7 @@
         }
         catch (Exception ex)
         {
+            _processingStatus = $"Stage failed: {ex.Message}";
             Console.WriteLine($"Stage failed: {ex.Message}");
         }
     }
@@ -729,7 +730,11 @@
 
     private async Task HandleCommitAll()
     {
-        var staged = GetStagedItems().ToList();
+        var staged = GetStagedItems()
+            .OrderBy(s => s.OriginalStartSec)
+            .ThenBy(s => s.SentenceId)
+            .ThenBy(s => s.Id)
+            .ToList();
         _isProcessing = true;
         StateHasChanged();
 
@@ -870,8 +875,16 @@
         if (!region.Id.StartsWith("staged-")) return;
         var replacementId = region.Id["staged-".Length..];
 
-        // Update boundaries in staging queue
-        StagingQueueService.UpdateBoundaries(replacementId, region.Start, region.End);
+        // Update boundaries in staging queue.
+        if (!StagingQueueService.TryUpdateBoundaries(replacementId, region.Start, region.End, out var error))
+        {
+            _processingStatus = $"Boundary update rejected: {error}";
+            RefreshCurrentChapterState();
+            await SyncWaveformRegions();
+            StateHasChanged();
+            return;
+        }
+
         RefreshCurrentChapterState();
     }
 

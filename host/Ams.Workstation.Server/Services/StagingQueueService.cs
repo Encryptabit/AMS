@@ -16,6 +16,7 @@ namespace Ams.Workstation.Server.Services;
 public class StagingQueueService
 {
     private static readonly JsonSerializerOptions JsonOptions = new() { WriteIndented = true };
+    private const double BoundaryEpsilonSec = 0.001;
 
     private readonly BlazorWorkspace _workspace;
     private readonly object _lock = new();
@@ -31,6 +32,21 @@ public class StagingQueueService
     /// </summary>
     public void Stage(StagedReplacement item)
     {
+        if (!TryStage(item, out var validationError))
+        {
+            throw new InvalidOperationException(
+                $"Unable to stage replacement '{item.Id}': {validationError ?? "validation failed"}");
+        }
+    }
+
+    /// <summary>
+    /// Adds a replacement to the staging queue for its chapter after validating overlap constraints.
+    /// </summary>
+    /// <param name="item">The replacement to stage.</param>
+    /// <param name="validationError">Validation error if staging failed.</param>
+    /// <returns>True when the item was staged; otherwise false.</returns>
+    public bool TryStage(StagedReplacement item, out string? validationError)
+    {
         ArgumentNullException.ThrowIfNull(item);
 
         lock (_lock)
@@ -42,8 +58,27 @@ public class StagingQueueService
                 _queue[item.ChapterStem] = list;
             }
 
+            if (!IsValidRange(item.OriginalStartSec, item.OriginalEndSec))
+            {
+                validationError = "Replacement boundaries are invalid (end must be greater than start).";
+                return false;
+            }
+
+            var conflicting = FindFirstOverlap(
+                list,
+                item.OriginalStartSec,
+                item.OriginalEndSec,
+                item.Id);
+            if (conflicting is not null)
+            {
+                validationError = BuildOverlapError(conflicting);
+                return false;
+            }
+
             list.Add(item);
             Save();
+            validationError = null;
+            return true;
         }
     }
 
@@ -141,41 +176,79 @@ public class StagingQueueService
     /// <param name="newEndSec">New end time in seconds.</param>
     /// <returns>True if the item was found and updated.</returns>
     public bool UpdateBoundaries(string replacementId, double newStartSec, double newEndSec)
+        => TryUpdateBoundaries(replacementId, newStartSec, newEndSec, out _);
+
+    /// <summary>
+    /// Updates splice boundaries for a staged replacement, rejecting invalid or overlapping ranges.
+    /// </summary>
+    /// <param name="replacementId">The replacement to update.</param>
+    /// <param name="newStartSec">New start time in seconds.</param>
+    /// <param name="newEndSec">New end time in seconds.</param>
+    /// <param name="validationError">Validation error if update failed.</param>
+    /// <returns>True when updated; otherwise false.</returns>
+    public bool TryUpdateBoundaries(
+        string replacementId,
+        double newStartSec,
+        double newEndSec,
+        out string? validationError)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(replacementId);
 
         lock (_lock)
         {
             EnsureLoaded();
+            if (!IsValidRange(newStartSec, newEndSec))
+            {
+                validationError = "Region must have a positive duration.";
+                return false;
+            }
+
             foreach (var list in _queue!.Values)
             {
                 var index = list.FindIndex(r => r.Id == replacementId && r.Status == ReplacementStatus.Staged);
                 if (index >= 0)
                 {
+                    var conflicting = FindFirstOverlap(list, newStartSec, newEndSec, replacementId);
+                    if (conflicting is not null)
+                    {
+                        validationError = BuildOverlapError(conflicting);
+                        return false;
+                    }
+
                     list[index] = list[index] with
                     {
                         OriginalStartSec = newStartSec,
                         OriginalEndSec = newEndSec
                     };
                     Save();
+                    validationError = null;
                     return true;
                 }
             }
 
+            validationError = $"Replacement '{replacementId}' was not found or is not staged.";
             return false;
         }
     }
 
     /// <summary>
     /// Shifts OriginalStartSec and OriginalEndSec for all downstream items in the chapter
-    /// whose SentenceId is greater than <paramref name="pivotSentenceId"/>.
+    /// whose start time is at or after <paramref name="pivotBoundarySec"/>.
     /// Applies to both Staged and Applied items so that revert/preview targets the
     /// correct region even when upstream replacements change duration.
     /// Call after apply/revert to cascade timing changes to downstream items.
     /// </summary>
-    public void ShiftDownstream(string chapterStem, int pivotSentenceId, double deltaSec)
+    /// <param name="chapterStem">The chapter to mutate.</param>
+    /// <param name="pivotBoundarySec">Boundary after which items are considered downstream.</param>
+    /// <param name="deltaSec">The timeline delta to apply.</param>
+    /// <param name="excludeReplacementId">Optional replacement id to exclude from shifting.</param>
+    public void ShiftDownstream(
+        string chapterStem,
+        double pivotBoundarySec,
+        double deltaSec,
+        string? excludeReplacementId = null)
     {
-        if (Math.Abs(deltaSec) < 0.001) return;
+        if (Math.Abs(deltaSec) < BoundaryEpsilonSec) return;
         ArgumentException.ThrowIfNullOrWhiteSpace(chapterStem);
 
         lock (_lock)
@@ -188,7 +261,13 @@ public class StagingQueueService
             for (int i = 0; i < list.Count; i++)
             {
                 var item = list[i];
-                if (item.SentenceId > pivotSentenceId
+                if (!string.IsNullOrWhiteSpace(excludeReplacementId) &&
+                    string.Equals(item.Id, excludeReplacementId, StringComparison.Ordinal))
+                {
+                    continue;
+                }
+
+                if (item.OriginalStartSec >= pivotBoundarySec - BoundaryEpsilonSec
                     && (item.Status == ReplacementStatus.Staged || item.Status == ReplacementStatus.Applied))
                 {
                     list[i] = item with
@@ -198,12 +277,40 @@ public class StagingQueueService
                     };
                     changed = true;
                     Console.WriteLine(
-                        $"[CascadeOffset] Shifted sentence {item.SentenceId} ({item.Status}): " +
+                        $"[CascadeOffset] Shifted sentence {item.SentenceId} ({item.Status}) @ {pivotBoundarySec:F3}s: " +
                         $"{item.OriginalStartSec:F3}s → {list[i].OriginalStartSec:F3}s (delta {deltaSec:+0.000;-0.000}s)");
                 }
             }
 
             if (changed) Save();
+        }
+    }
+
+    /// <summary>
+    /// Checks whether the given range overlaps any active (staged/applied) replacement
+    /// in a chapter, excluding <paramref name="replacementId"/> when provided.
+    /// </summary>
+    public bool TryGetActiveOverlap(
+        string chapterStem,
+        string? replacementId,
+        double startSec,
+        double endSec,
+        out StagedReplacement? conflicting)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(chapterStem);
+
+        lock (_lock)
+        {
+            EnsureLoaded();
+            conflicting = null;
+
+            if (!_queue!.TryGetValue(chapterStem, out var list))
+            {
+                return false;
+            }
+
+            conflicting = FindFirstOverlap(list, startSec, endSec, replacementId);
+            return conflicting is not null;
         }
     }
 
@@ -290,4 +397,50 @@ public class StagingQueueService
             Console.WriteLine($"Failed to save staging queue: {ex.Message}");
         }
     }
+
+    private static bool IsValidRange(double startSec, double endSec)
+        => !double.IsNaN(startSec)
+           && !double.IsNaN(endSec)
+           && !double.IsInfinity(startSec)
+           && !double.IsInfinity(endSec)
+           && endSec > startSec + BoundaryEpsilonSec;
+
+    private static bool Overlaps(double aStart, double aEnd, double bStart, double bEnd)
+        => aStart < bEnd - BoundaryEpsilonSec && bStart < aEnd - BoundaryEpsilonSec;
+
+    private static bool IsActive(StagedReplacement item)
+        => item.Status == ReplacementStatus.Staged || item.Status == ReplacementStatus.Applied;
+
+    private static StagedReplacement? FindFirstOverlap(
+        IReadOnlyList<StagedReplacement> list,
+        double startSec,
+        double endSec,
+        string? excludeReplacementId)
+    {
+        for (var i = 0; i < list.Count; i++)
+        {
+            var item = list[i];
+            if (!IsActive(item))
+            {
+                continue;
+            }
+
+            if (!string.IsNullOrWhiteSpace(excludeReplacementId) &&
+                string.Equals(item.Id, excludeReplacementId, StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            if (Overlaps(startSec, endSec, item.OriginalStartSec, item.OriginalEndSec))
+            {
+                return item;
+            }
+        }
+
+        return null;
+    }
+
+    private static string BuildOverlapError(StagedReplacement conflicting)
+        => $"Overlaps sentence {conflicting.SentenceId} ({conflicting.Status}) at " +
+           $"{conflicting.OriginalStartSec:F3}s-{conflicting.OriginalEndSec:F3}s.";
 }

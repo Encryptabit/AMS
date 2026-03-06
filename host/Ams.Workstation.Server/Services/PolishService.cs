@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -27,6 +28,8 @@ public class PolishService
 {
     private const double PickupSlicePaddingSec = 0.080;
     private static readonly TreatmentOptions SharedTuningDefaults = new();
+    private static readonly ConcurrentDictionary<string, SemaphoreSlim> ChapterMutationLocks =
+        new(StringComparer.OrdinalIgnoreCase);
 
     private static readonly JsonSerializerOptions ArtifactJsonOptions = new()
     {
@@ -225,7 +228,12 @@ public class PolishService
             StagedAtUtc: DateTime.UtcNow,
             Status: ReplacementStatus.Staged);
 
-        _stagingQueue.Stage(replacement);
+        if (!_stagingQueue.TryStage(replacement, out var validationError))
+        {
+            throw new InvalidOperationException(
+                $"Failed to stage replacement for sentence {match.SentenceId}: {validationError}");
+        }
+
         return replacement;
     }
 
@@ -284,51 +292,65 @@ public class PolishService
 
         var operationHandle = GetActiveChapterHandleOrThrow();
         var operationStem = operationHandle.Chapter.Descriptor.ChapterId;
+        var mutationLock = GetChapterMutationLock(operationStem);
+        await mutationLock.WaitAsync(ct).ConfigureAwait(false);
+        try
+        {
+            // 1. Get staged item
+            var item = FindStagedItem(replacementId, operationStem);
 
-        // 1. Get staged item
-        var item = FindStagedItem(replacementId, operationStem);
+            EnsureNoActiveOverlapOrThrow(operationStem, item.Id, item.OriginalStartSec, item.OriginalEndSec);
 
-        // 2. Load chapter audio from workspace (corrected > treated > raw)
-        var chapterBuffer = GetChapterBuffer(operationHandle);
+            // 2. Load chapter audio from workspace (corrected > treated > raw)
+            var chapterBuffer = GetChapterBuffer(operationHandle);
 
-        // 3. Decode and trim pickup audio
-        var pickupTrimmed = LoadPickupSliceForReplacement(operationHandle, item);
+            // 3. Decode and trim pickup audio
+            var pickupTrimmed = LoadPickupSliceForReplacement(operationHandle, item);
 
-        var pickupDuration = (double)pickupTrimmed.Length / pickupTrimmed.SampleRate;
-        var originalDuration = item.OriginalEndSec - item.OriginalStartSec;
+            var pickupDuration = (double)pickupTrimmed.Length / pickupTrimmed.SampleRate;
+            var originalDuration = item.OriginalEndSec - item.OriginalStartSec;
 
-        // 4. Save original segment via UndoService BEFORE splice
-        _undoService.SaveOriginalSegment(
-            item.ChapterStem,
-            item.SentenceId,
-            replacementId,
-            chapterBuffer,
-            item.OriginalStartSec,
-            item.OriginalEndSec,
-            pickupDuration);
+            // 4. Save original segment via UndoService BEFORE splice
+            _undoService.SaveOriginalSegment(
+                item.ChapterStem,
+                item.SentenceId,
+                replacementId,
+                chapterBuffer,
+                item.OriginalStartSec,
+                item.OriginalEndSec,
+                pickupDuration);
 
-        // 5. Splice: replace original segment with pickup
-        var resultBuffer = AudioSpliceService.ReplaceSegment(
-            chapterBuffer,
-            item.OriginalStartSec,
-            item.OriginalEndSec,
-            pickupTrimmed,
-            item.CrossfadeDurationSec,
-            item.CrossfadeCurve);
+            // 5. Splice: replace original segment with pickup
+            var resultBuffer = AudioSpliceService.ReplaceSegment(
+                chapterBuffer,
+                item.OriginalStartSec,
+                item.OriginalEndSec,
+                pickupTrimmed,
+                item.CrossfadeDurationSec,
+                item.CrossfadeCurve);
 
-        // 6. Calculate timing delta
-        var timingDelta = pickupDuration - originalDuration;
+            // 6. Calculate timing delta
+            var timingDelta = pickupDuration - originalDuration;
 
-        // 7. Persist corrected.wav to disk
-        PersistCorrectedBuffer(operationHandle, resultBuffer);
+            // 7. Persist corrected.wav to disk
+            PersistCorrectedBuffer(operationHandle, resultBuffer);
 
-        // 8. Update status to Applied
-        _stagingQueue.UpdateStatus(replacementId, ReplacementStatus.Applied);
+            // 8. Update status to Applied
+            _stagingQueue.UpdateStatus(replacementId, ReplacementStatus.Applied);
 
-        // 9. Cascade timing delta to downstream staged items
-        _stagingQueue.ShiftDownstream(item.ChapterStem, item.SentenceId, timingDelta);
+            // 9. Cascade timing delta to downstream items by timeline position.
+            _stagingQueue.ShiftDownstream(
+                item.ChapterStem,
+                item.OriginalEndSec,
+                timingDelta,
+                replacementId);
 
-        return (resultBuffer, timingDelta);
+            return (resultBuffer, timingDelta);
+        }
+        finally
+        {
+            mutationLock.Release();
+        }
     }
 
     /// <summary>
@@ -346,54 +368,68 @@ public class PolishService
 
         var operationHandle = GetActiveChapterHandleOrThrow();
         var operationStem = operationHandle.Chapter.Descriptor.ChapterId;
-
-        // 1. Get undo record
-        var undoRecord = _undoService.GetUndoRecord(replacementId)
-            ?? throw new InvalidOperationException($"No undo record found for replacement '{replacementId}'.");
-        if (!string.Equals(undoRecord.ChapterStem, operationStem, StringComparison.OrdinalIgnoreCase))
+        var mutationLock = GetChapterMutationLock(operationStem);
+        await mutationLock.WaitAsync(ct).ConfigureAwait(false);
+        try
         {
-            throw new InvalidOperationException(
-                $"Replacement '{replacementId}' belongs to chapter '{undoRecord.ChapterStem}', " +
-                $"but active chapter is '{operationStem}'.");
+            // 1. Get undo record
+            var undoRecord = _undoService.GetUndoRecord(replacementId)
+                ?? throw new InvalidOperationException($"No undo record found for replacement '{replacementId}'.");
+            if (!string.Equals(undoRecord.ChapterStem, operationStem, StringComparison.OrdinalIgnoreCase))
+            {
+                throw new InvalidOperationException(
+                    $"Replacement '{replacementId}' belongs to chapter '{undoRecord.ChapterStem}', " +
+                    $"but active chapter is '{operationStem}'.");
+            }
+
+            // 2. Load original segment from backup
+            var originalSegment = _undoService.LoadOriginalSegment(replacementId)
+                ?? throw new InvalidOperationException($"Undo backup file missing for replacement '{replacementId}'.");
+
+            // 3. Get current chapter audio (which has the replacement applied)
+            var currentBuffer = GetChapterBuffer(operationHandle);
+
+            // 4. Calculate where the replacement currently sits.
+            // Use the queue item's current (shifted) coordinates rather than the stale undo record,
+            // because upstream apply/revert may have cascaded timing deltas since this item was applied.
+            var queueItem = FindStagedItem(replacementId, operationStem);
+            var currentStartSec = queueItem.OriginalStartSec;
+            var replacementDuration = undoRecord.ReplacementDurationSec;
+            var replacementEndSec = currentStartSec + replacementDuration;
+
+            EnsureNoActiveOverlapOrThrow(operationStem, replacementId, currentStartSec, replacementEndSec);
+
+            // 5. Re-splice: put the original back
+            var resultBuffer = AudioSpliceService.ReplaceSegment(
+                currentBuffer,
+                currentStartSec,
+                replacementEndSec,
+                originalSegment,
+                0.030,
+                "tri");
+
+            // 6. Timing delta is negative of original delta
+            var timingDelta = undoRecord.OriginalDurationSec - replacementDuration;
+
+            // 7. Persist corrected.wav to disk
+            PersistCorrectedBuffer(operationHandle, resultBuffer);
+
+            // 8. Update status to Reverted
+            _stagingQueue.UpdateStatus(replacementId, ReplacementStatus.Reverted);
+
+            // 9. Cascade the negative delta to downstream staged items.
+            _stagingQueue.ShiftDownstream(
+                undoRecord.ChapterStem,
+                replacementEndSec,
+                timingDelta,
+                replacementId);
+
+            return (resultBuffer, timingDelta);
         }
-
-        // 2. Load original segment from backup
-        var originalSegment = _undoService.LoadOriginalSegment(replacementId)
-            ?? throw new InvalidOperationException($"Undo backup file missing for replacement '{replacementId}'.");
-
-        // 3. Get current chapter audio (which has the replacement applied)
-        var currentBuffer = GetChapterBuffer(operationHandle);
-
-        // 4. Calculate where the replacement currently sits.
-        // Use the queue item's current (shifted) coordinates rather than the stale undo record,
-        // because upstream apply/revert may have cascaded timing deltas since this item was applied.
-        var queueItem = FindStagedItem(replacementId, operationStem);
-        var currentStartSec = queueItem.OriginalStartSec;
-        var replacementDuration = undoRecord.ReplacementDurationSec;
-        var replacementEndSec = currentStartSec + replacementDuration;
-
-        // 5. Re-splice: put the original back
-        var resultBuffer = AudioSpliceService.ReplaceSegment(
-            currentBuffer,
-            currentStartSec,
-            replacementEndSec,
-            originalSegment,
-            0.030,
-            "tri");
-
-        // 6. Timing delta is negative of original delta
-        var timingDelta = undoRecord.OriginalDurationSec - replacementDuration;
-
-        // 7. Persist corrected.wav to disk
-        PersistCorrectedBuffer(operationHandle, resultBuffer);
-
-        // 8. Update status to Reverted
-        _stagingQueue.UpdateStatus(replacementId, ReplacementStatus.Reverted);
-
-        // 9. Cascade the negative delta to downstream staged items
-        _stagingQueue.ShiftDownstream(undoRecord.ChapterStem, undoRecord.SentenceId, timingDelta);
-
-        return (resultBuffer, timingDelta);
+        finally
+        {
+            mutationLock.Release();
+        }
     }
 
     /// <summary>
@@ -424,68 +460,77 @@ public class PolishService
         ArgumentException.ThrowIfNullOrWhiteSpace(roomtoneFilePath);
 
         var operationHandle = GetActiveChapterHandleOrThrow();
-
-        // 1. Load current chapter audio
-        var chapterBuffer = GetChapterBuffer(operationHandle);
-
-        // 2. Load and decode roomtone file
-        var roomtoneBuffer = AudioProcessor.Decode(roomtoneFilePath);
-
-        // 3. Apply operation
-        AudioBuffer resultBuffer;
-        double replacementDurationSec;
-
-        switch (request.Operation)
+        var operationStem = operationHandle.Chapter.Descriptor.ChapterId;
+        var mutationLock = GetChapterMutationLock(operationStem);
+        await mutationLock.WaitAsync(ct).ConfigureAwait(false);
+        try
         {
-            case RoomtoneOperation.Insert:
-                // Insert roomtone at a point (use the start position as insertion point)
-                // Duration of insertion = EndSec - StartSec (user drags a region to define insertion length)
-                var insertDuration = request.EndSec - request.StartSec;
-                var insertRoomtone = insertDuration > 0.001
-                    ? AudioSpliceService.GenerateRoomtoneFill(roomtoneBuffer, insertDuration)
-                    : roomtoneBuffer; // If near-zero width, use roomtone as-is for a brief insert
-                resultBuffer = AudioSpliceService.InsertAtPoint(
-                    chapterBuffer, request.StartSec, insertRoomtone,
-                    request.CrossfadeDurationSec, request.CrossfadeCurve);
-                replacementDurationSec = (double)insertRoomtone.Length / insertRoomtone.SampleRate;
-                break;
+            // 1. Load current chapter audio
+            var chapterBuffer = GetChapterBuffer(operationHandle);
 
-            case RoomtoneOperation.Replace:
-                // Replace selection with looped roomtone of matching duration (Research Pitfall 6)
-                var regionDuration = request.EndSec - request.StartSec;
-                var fillRoomtone = AudioSpliceService.GenerateRoomtoneFill(roomtoneBuffer, regionDuration);
-                resultBuffer = AudioSpliceService.ReplaceSegment(
-                    chapterBuffer, request.StartSec, request.EndSec,
-                    fillRoomtone, request.CrossfadeDurationSec, request.CrossfadeCurve);
-                replacementDurationSec = regionDuration;
-                break;
+            // 2. Load and decode roomtone file
+            var roomtoneBuffer = AudioProcessor.Decode(roomtoneFilePath);
 
-            case RoomtoneOperation.Delete:
-                // Delete selection (crossfade join, no replacement)
-                resultBuffer = AudioSpliceService.DeleteRegion(
-                    chapterBuffer, request.StartSec, request.EndSec,
-                    request.CrossfadeDurationSec, request.CrossfadeCurve);
-                replacementDurationSec = 0;
-                break;
+            // 3. Apply operation
+            AudioBuffer resultBuffer;
+            double replacementDurationSec;
 
-            default:
-                throw new ArgumentOutOfRangeException(nameof(request.Operation));
+            switch (request.Operation)
+            {
+                case RoomtoneOperation.Insert:
+                    // Insert roomtone at a point (use the start position as insertion point)
+                    // Duration of insertion = EndSec - StartSec (user drags a region to define insertion length)
+                    var insertDuration = request.EndSec - request.StartSec;
+                    var insertRoomtone = insertDuration > 0.001
+                        ? AudioSpliceService.GenerateRoomtoneFill(roomtoneBuffer, insertDuration)
+                        : roomtoneBuffer; // If near-zero width, use roomtone as-is for a brief insert
+                    resultBuffer = AudioSpliceService.InsertAtPoint(
+                        chapterBuffer, request.StartSec, insertRoomtone,
+                        request.CrossfadeDurationSec, request.CrossfadeCurve);
+                    replacementDurationSec = (double)insertRoomtone.Length / insertRoomtone.SampleRate;
+                    break;
+
+                case RoomtoneOperation.Replace:
+                    // Replace selection with looped roomtone of matching duration (Research Pitfall 6)
+                    var regionDuration = request.EndSec - request.StartSec;
+                    var fillRoomtone = AudioSpliceService.GenerateRoomtoneFill(roomtoneBuffer, regionDuration);
+                    resultBuffer = AudioSpliceService.ReplaceSegment(
+                        chapterBuffer, request.StartSec, request.EndSec,
+                        fillRoomtone, request.CrossfadeDurationSec, request.CrossfadeCurve);
+                    replacementDurationSec = regionDuration;
+                    break;
+
+                case RoomtoneOperation.Delete:
+                    // Delete selection (crossfade join, no replacement)
+                    resultBuffer = AudioSpliceService.DeleteRegion(
+                        chapterBuffer, request.StartSec, request.EndSec,
+                        request.CrossfadeDurationSec, request.CrossfadeCurve);
+                    replacementDurationSec = 0;
+                    break;
+
+                default:
+                    throw new ArgumentOutOfRangeException(nameof(request.Operation));
+            }
+
+            // 4. Back up original segment via UndoService before persisting
+            // Use a synthetic replacement ID for undo tracking (sentenceId = -1 for non-sentence ops)
+            var undoId = $"roomtone-{Guid.NewGuid():N}";
+            var stem = operationHandle.Chapter.Descriptor.ChapterId;
+
+            _undoService.SaveOriginalSegment(
+                stem, sentenceId: -1, undoId, chapterBuffer,
+                request.StartSec, request.EndSec,
+                replacementDurationSec);
+
+            // 5. Persist corrected.wav
+            PersistCorrectedBuffer(operationHandle, resultBuffer);
+
+            return resultBuffer;
         }
-
-        // 4. Back up original segment via UndoService before persisting
-        // Use a synthetic replacement ID for undo tracking (sentenceId = -1 for non-sentence ops)
-        var undoId = $"roomtone-{Guid.NewGuid():N}";
-        var stem = operationHandle.Chapter.Descriptor.ChapterId;
-
-        _undoService.SaveOriginalSegment(
-            stem, sentenceId: -1, undoId, chapterBuffer,
-            request.StartSec, request.EndSec,
-            replacementDurationSec);
-
-        // 5. Persist corrected.wav
-        PersistCorrectedBuffer(operationHandle, resultBuffer);
-
-        return resultBuffer;
+        finally
+        {
+            mutationLock.Release();
+        }
     }
 
     #region CRX Artifact Cache
@@ -716,6 +761,33 @@ public class PolishService
         catch (Exception ex)
         {
             Log.Debug("Failed to register pickup in BookAudio cache: {Message}", ex.Message);
+        }
+    }
+
+    private static SemaphoreSlim GetChapterMutationLock(string chapterStem)
+    {
+        if (string.IsNullOrWhiteSpace(chapterStem))
+            throw new ArgumentException("Chapter stem cannot be null or whitespace.", nameof(chapterStem));
+        return ChapterMutationLocks.GetOrAdd(chapterStem, static _ => new SemaphoreSlim(1, 1));
+    }
+
+    private void EnsureNoActiveOverlapOrThrow(
+        string chapterStem,
+        string replacementId,
+        double startSec,
+        double endSec)
+    {
+        if (_stagingQueue.TryGetActiveOverlap(
+                chapterStem,
+                replacementId,
+                startSec,
+                endSec,
+                out var conflict) &&
+            conflict is not null)
+        {
+            throw new InvalidOperationException(
+                $"Replacement '{replacementId}' overlaps active replacement '{conflict.Id}' " +
+                $"(sentence {conflict.SentenceId}, {conflict.OriginalStartSec:F3}s-{conflict.OriginalEndSec:F3}s).");
         }
     }
 
