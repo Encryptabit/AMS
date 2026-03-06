@@ -70,6 +70,7 @@ public class PolishService
             return new Dictionary<string, List<CrossChapterPickupMatch>>();
 
         var fi = new FileInfo(pickupFilePath);
+        RegisterBookPickupIfPossible(fi.FullName);
         var crxFingerprint = ComputeCrxFingerprint(crxTargets);
 
         // Check cached artifacts for freshness
@@ -171,6 +172,8 @@ public class PolishService
                     $"Cannot stage replacement for chapter '{chapterStem}' while active chapter is '{operationStem}'.");
             }
 
+            operationHandle.Chapter.Book.Audio.RegisterPickup(pickupFilePath);
+
             var chapterBuffer = GetChapterBuffer(operationHandle);
             var hydrate = GetCurrentHydratedTranscript();
             double? prevEnd = null;
@@ -251,7 +254,7 @@ public class PolishService
         var item = FindStagedItem(replacementId, operationStem);
         var chapterBuffer = GetChapterBuffer(operationHandle);
 
-        var pickupTrimmed = LoadPickupSliceForReplacement(item);
+        var pickupTrimmed = LoadPickupSliceForReplacement(operationHandle, item);
 
         var resultBuffer = AudioSpliceService.ReplaceSegment(
             chapterBuffer,
@@ -289,7 +292,7 @@ public class PolishService
         var chapterBuffer = GetChapterBuffer(operationHandle);
 
         // 3. Decode and trim pickup audio
-        var pickupTrimmed = LoadPickupSliceForReplacement(item);
+        var pickupTrimmed = LoadPickupSliceForReplacement(operationHandle, item);
 
         var pickupDuration = (double)pickupTrimmed.Length / pickupTrimmed.SampleRate;
         var originalDuration = item.OriginalEndSec - item.OriginalStartSec;
@@ -603,24 +606,27 @@ public class PolishService
         throw new InvalidOperationException("No audio buffer available for the current chapter.");
     }
 
-    private static AudioBuffer LoadPickupSliceForReplacement(StagedReplacement item)
+    private static AudioBuffer LoadPickupSliceForReplacement(
+        ChapterContextHandle handle,
+        StagedReplacement item)
     {
+        var pickupBuffer = handle.Chapter.Book.Audio.LoadPickupByPath(item.PickupSourcePath);
+        var pickupDurationSec = (double)pickupBuffer.Length / pickupBuffer.SampleRate;
         var paddedStartSec = Math.Max(0, item.PickupStartSec - PickupSlicePaddingSec);
-        var paddedEndSec = item.PickupEndSec + PickupSlicePaddingSec;
+        var paddedEndSec = Math.Min(pickupDurationSec, item.PickupEndSec + PickupSlicePaddingSec);
 
         if (paddedEndSec <= paddedStartSec)
         {
             paddedStartSec = Math.Max(0, item.PickupStartSec);
-            paddedEndSec = item.PickupEndSec;
+            paddedEndSec = Math.Min(pickupDurationSec, item.PickupEndSec);
             if (paddedEndSec <= paddedStartSec)
-                paddedEndSec = paddedStartSec + 0.010;
+                paddedEndSec = Math.Min(pickupDurationSec, paddedStartSec + 0.010);
         }
 
-        return AudioProcessor.Decode(
-            item.PickupSourcePath,
-            new AudioDecodeOptions(
-                Start: TimeSpan.FromSeconds(paddedStartSec),
-                Duration: TimeSpan.FromSeconds(paddedEndSec - paddedStartSec)));
+        return AudioProcessor.Trim(
+            pickupBuffer,
+            TimeSpan.FromSeconds(paddedStartSec),
+            TimeSpan.FromSeconds(paddedEndSec));
     }
 
     /// <summary>
@@ -694,6 +700,23 @@ public class PolishService
         throw new InvalidOperationException(
             "Unable to resolve source bit depth from audio metadata. " +
             $"Codec='{metadata.CodecName ?? "<null>"}', SampleFormat='{metadata.SourceSampleFormat ?? "<null>"}'.");
+    }
+
+    private void RegisterBookPickupIfPossible(string pickupPath)
+    {
+        if (!_workspace.IsInitialized)
+        {
+            return;
+        }
+
+        try
+        {
+            _workspace.Book.Audio.RegisterPickup(pickupPath);
+        }
+        catch (Exception ex)
+        {
+            Log.Debug("Failed to register pickup in BookAudio cache: {Message}", ex.Message);
+        }
     }
 
     #endregion
