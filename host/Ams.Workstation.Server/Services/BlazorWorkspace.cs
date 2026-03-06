@@ -23,6 +23,9 @@ namespace Ams.Workstation.Server.Services;
 public sealed class BlazorWorkspace : IWorkspace, IDisposable
 {
     private static readonly string StateFilePath = AmsAppDataPaths.Resolve("workstation-state.json");
+    private static readonly StringComparer PersistedPathComparer = OperatingSystem.IsWindows()
+        ? StringComparer.OrdinalIgnoreCase
+        : StringComparer.Ordinal;
 
     private BookManager? _manager;
     private ChapterContextHandle? _currentChapterHandle;
@@ -107,6 +110,16 @@ public sealed class BlazorWorkspace : IWorkspace, IDisposable
     public string? CurrentChapterName { get; private set; }
 
     /// <summary>
+    /// Last pickup session path used in Polish, persisted with workspace state.
+    /// </summary>
+    public string? PickupSessionPath { get; private set; }
+
+    /// <summary>
+    /// Last roomtone file path used in Polish, persisted with workspace state.
+    /// </summary>
+    public string? RoomtoneFilePath { get; private set; }
+
+    /// <summary>
     /// The currently open chapter handle, or null if no chapter is selected.
     /// Access chapter data via: CurrentChapterHandle.Context.Audio.Current.Buffer
     /// </summary>
@@ -169,7 +182,8 @@ public sealed class BlazorWorkspace : IWorkspace, IDisposable
     {
         if (string.IsNullOrWhiteSpace(path)) return false;
 
-        var trimmed = path.Trim();
+        var trimmed = NormalizeOptionalPath(path);
+        if (string.IsNullOrWhiteSpace(trimmed)) return false;
         if (!Directory.Exists(trimmed)) return false;
 
         // Dispose previous state
@@ -199,6 +213,29 @@ public sealed class BlazorWorkspace : IWorkspace, IDisposable
 
         SavePersistedState();
         return true;
+    }
+
+    /// <summary>
+    /// Persists Polish path inputs (pickup + roomtone) alongside workspace state.
+    /// </summary>
+    public void SetPolishPaths(string? pickupSessionPath, string? roomtoneFilePath)
+    {
+        var normalizedPickup = NormalizeOptionalPath(pickupSessionPath);
+        var normalizedRoomtone = NormalizeOptionalPath(roomtoneFilePath);
+
+        var pickupChanged = !PersistedPathComparer.Equals(
+            PickupSessionPath ?? string.Empty,
+            normalizedPickup ?? string.Empty);
+        var roomtoneChanged = !PersistedPathComparer.Equals(
+            RoomtoneFilePath ?? string.Empty,
+            normalizedRoomtone ?? string.Empty);
+
+        if (!pickupChanged && !roomtoneChanged)
+            return;
+
+        PickupSessionPath = normalizedPickup;
+        RoomtoneFilePath = normalizedRoomtone;
+        SavePersistedState();
     }
 
     /// <summary>
@@ -356,13 +393,21 @@ public sealed class BlazorWorkspace : IWorkspace, IDisposable
             using var doc = JsonDocument.Parse(json);
             var root = doc.RootElement;
 
+            if (root.TryGetProperty("pickupSessionPath", out var pickupProp))
+            {
+                PickupSessionPath = NormalizeOptionalPath(pickupProp.GetString());
+            }
+
+            if (root.TryGetProperty("roomtoneFilePath", out var roomtoneProp))
+            {
+                RoomtoneFilePath = NormalizeOptionalPath(roomtoneProp.GetString());
+            }
+
             if (root.TryGetProperty("workingDirectory", out var wdProp))
             {
-                var wd = wdProp.GetString();
-                if (!string.IsNullOrEmpty(wd) && Directory.Exists(wd))
+                var wd = NormalizeOptionalPath(wdProp.GetString());
+                if (!string.IsNullOrEmpty(wd) && SetWorkingDirectory(wd))
                 {
-                    SetWorkingDirectory(wd);
-
                     // Restore current chapter if still valid
                     if (root.TryGetProperty("currentChapter", out var chProp))
                     {
@@ -394,7 +439,9 @@ public sealed class BlazorWorkspace : IWorkspace, IDisposable
             var state = new
             {
                 workingDirectory = _rootPath,
-                currentChapter = CurrentChapterName
+                currentChapter = CurrentChapterName,
+                pickupSessionPath = PickupSessionPath,
+                roomtoneFilePath = RoomtoneFilePath
             };
 
             var json = JsonSerializer.Serialize(state, new JsonSerializerOptions { WriteIndented = true });
@@ -407,6 +454,25 @@ public sealed class BlazorWorkspace : IWorkspace, IDisposable
     }
 
     #endregion
+
+    private static string? NormalizeOptionalPath(string? path)
+    {
+        if (string.IsNullOrWhiteSpace(path))
+            return null;
+
+        var trimmed = path.Trim().Trim('"', '\'').Trim();
+        if (string.IsNullOrWhiteSpace(trimmed))
+            return null;
+
+        try
+        {
+            return Path.GetFullPath(trimmed);
+        }
+        catch
+        {
+            return trimmed;
+        }
+    }
 
     public void Dispose()
     {

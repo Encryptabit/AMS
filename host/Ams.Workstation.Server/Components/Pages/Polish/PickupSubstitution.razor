@@ -349,6 +349,9 @@
     // ── Lifecycle ─────────────────────────────────────────────────
     protected override async Task OnInitializedAsync()
     {
+        _pickupSessionPath = NormalizePathInput(Workspace.PickupSessionPath);
+        _roomtoneFilePath = NormalizePathInput(Workspace.RoomtoneFilePath);
+
         LoadChaptersWithCrx();
 
         if (_chaptersWithCrx.Count > 0)
@@ -473,13 +476,17 @@
 
     private async Task HandleSetRoomtone()
     {
+        _roomtoneFilePath = NormalizePathInput(_roomtoneFilePath);
+
         // Validate roomtone file path
-        if (!string.IsNullOrWhiteSpace(_roomtoneFilePath) && !System.IO.File.Exists(_roomtoneFilePath.Trim()))
+        if (string.IsNullOrWhiteSpace(_roomtoneFilePath) || !System.IO.File.Exists(_roomtoneFilePath))
         {
             _processingStatus = "Roomtone file not found. Check the file path.";
             StateHasChanged();
             return;
         }
+
+        Workspace.SetPolishPaths(_pickupSessionPath, _roomtoneFilePath);
 
         // Add a blue roomtone selection region to the waveform at a default position
         if (_waveformPlayer != null && _isWaveformReady && !string.IsNullOrWhiteSpace(_roomtoneFilePath))
@@ -509,15 +516,18 @@
     // ── Upfront Cross-Chapter Processing ──────────────────────────
     private async Task HandlePickupFileSet()
     {
+        _pickupSessionPath = NormalizePathInput(_pickupSessionPath);
         if (string.IsNullOrWhiteSpace(_pickupSessionPath)) return;
 
         // Validate pickup file path exists before starting processing
-        if (!System.IO.File.Exists(_pickupSessionPath.Trim()))
+        if (!System.IO.File.Exists(_pickupSessionPath))
         {
             _processingStatus = "Pickup file not found. Check the file path.";
             StateHasChanged();
             return;
         }
+
+        Workspace.SetPolishPaths(_pickupSessionPath, _roomtoneFilePath);
 
         // Cancel any in-progress processing
         await _cts.CancelAsync();
@@ -593,7 +603,7 @@
             });
 
             _matchesByChapter = await PolishService.ImportPickupsCrxAsync(
-                _pickupSessionPath.Trim(), crxTargets, progress, token);
+                _pickupSessionPath, crxTargets, progress, token);
 
             _processingStatus = $"Found {_matchesByChapter.Values.Sum(m => m.Count)} matches across {_matchesByChapter.Count} chapters.";
         }
@@ -896,7 +906,7 @@
                 _crossfadeDurationMs / 1000.0); // Convert ms to seconds
 
             await PolishService.ApplyRoomtoneOperationAsync(
-                request, _roomtoneFilePath.Trim(), _cts.Token);
+                request, _roomtoneFilePath, _cts.Token);
 
             _correctedVersion++;
             _processingStatus = $"Roomtone {operation} applied successfully.";
@@ -1159,6 +1169,15 @@
 
         var center = (sentence.Timing.StartSec + sentence.Timing.EndSec) / 2.0;
         return Math.Abs(center - timeSec);
+    }
+
+    private static string? NormalizePathInput(string? path)
+    {
+        if (string.IsNullOrWhiteSpace(path))
+            return null;
+
+        var normalized = path.Trim().Trim('"', '\'').Trim();
+        return string.IsNullOrWhiteSpace(normalized) ? null : normalized;
     }
 
     // ── Disposal ──────────────────────────────────────────────────
