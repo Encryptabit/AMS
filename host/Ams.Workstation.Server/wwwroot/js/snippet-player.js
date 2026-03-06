@@ -151,7 +151,12 @@ function startWaveformSync(syncOptions) {
     syncWaveformNow();
 
     const loop = () => {
-        if (!audio || audio.ended) {
+        if (!audio) {
+            stopWaveformSync();
+            return;
+        }
+        if (audio.ended) {
+            syncWaveformToEnd();
             stopWaveformSync();
             return;
         }
