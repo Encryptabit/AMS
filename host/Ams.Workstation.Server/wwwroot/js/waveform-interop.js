@@ -279,14 +279,7 @@ export function initRegions(elementId) {
     const instance = window.wavesurferInstances[elementId];
     if (!instance) return;
 
-    if (!instance.regionsPlugin) {
-        // WaveSurfer.Regions is available globally from the CDN
-        if (typeof WaveSurfer.Regions !== 'undefined') {
-            instance.regionsPlugin = instance.wavesurfer.registerPlugin(WaveSurfer.Regions.create());
-        } else {
-            console.error('[waveform-interop] WaveSurfer.Regions plugin not loaded');
-        }
-    }
+    ensureRegionsPlugin(instance);
 }
 
 /**
@@ -299,7 +292,12 @@ export function initRegions(elementId) {
  */
 export function addRegion(elementId, id, start, end, color) {
     const instance = window.wavesurferInstances[elementId];
-    if (!instance || !instance.regionsPlugin) {
+    if (!instance) {
+        console.warn('[waveform-interop] No WaveSurfer instance for addRegion');
+        return;
+    }
+
+    if (!ensureRegionsPlugin(instance)) {
         console.warn('[waveform-interop] Regions plugin not initialized');
         return;
     }
@@ -436,13 +434,8 @@ export function addEditableRegion(elementId, id, start, end, color, dotNetRef) {
     }
 
     // Auto-initialize regions plugin if not yet initialized
-    if (!instance.regionsPlugin) {
-        if (typeof WaveSurfer.Regions !== 'undefined') {
-            instance.regionsPlugin = instance.wavesurfer.registerPlugin(WaveSurfer.Regions.create());
-        } else {
-            console.error('[waveform-interop] WaveSurfer.Regions plugin not loaded');
-            return null;
-        }
+    if (!ensureRegionsPlugin(instance)) {
+        return null;
     }
 
     const region = instance.regionsPlugin.addRegion({
@@ -601,4 +594,19 @@ export async function loadAndDrawMiniWaveform(canvasId, audioPath, startSec, end
     if (!response.ok) return;
     const data = await response.json();
     drawMiniWaveform(canvasId, data, color);
+}
+
+function ensureRegionsPlugin(instance) {
+    if (!instance) return false;
+    if (instance.regionsPlugin) return true;
+
+    // WaveSurfer.Regions is available globally from the CDN.
+    if (typeof WaveSurfer !== 'undefined' &&
+        typeof WaveSurfer.Regions !== 'undefined') {
+        instance.regionsPlugin = instance.wavesurfer.registerPlugin(WaveSurfer.Regions.create());
+        return true;
+    }
+
+    console.error('[waveform-interop] WaveSurfer.Regions plugin not loaded');
+    return false;
 }
