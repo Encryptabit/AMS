@@ -14,21 +14,15 @@ namespace Ams.Core.Audio;
 /// a unified implementation that handles channel downmixing and sample rate conversion.
 /// </para>
 /// <para>
-/// <b>FFmpeg path (high quality):</b> When FFmpeg filter graphs are available, uses the
-/// pan filter for proper channel mixing with equal weighting. This preserves audio quality
-/// better than simple averaging.
-/// </para>
-/// <para>
-/// <b>Fallback path:</b> When FFmpeg is unavailable, uses simple per-sample averaging
-/// for downmixing. This is less accurate but works in all environments.
+/// Uses FFmpeg filter graphs (pan + resample) for conversion quality and consistency.
+/// If FFmpeg filter support is not available, preparation fails fast.
 /// </para>
 /// </remarks>
 public static class AsrAudioPreparer
 {
     /// <summary>
     /// Prepares an audio buffer for ASR by converting to mono and resampling to 16kHz.
-    /// Uses FFmpeg filter graph when available for high-quality conversion,
-    /// falls back to simple averaging otherwise.
+    /// Requires FFmpeg filter graph support and fails fast if unavailable.
     /// </summary>
     /// <param name="buffer">The source audio buffer.</param>
     /// <returns>A mono 16kHz buffer ready for ASR processing.</returns>
@@ -61,8 +55,7 @@ public static class AsrAudioPreparer
 
     /// <summary>
     /// Downmixes a multi-channel buffer to mono.
-    /// Uses FFmpeg pan filter for high-quality mixing when available,
-    /// falls back to simple per-sample averaging otherwise.
+    /// Requires FFmpeg pan filter support and fails fast if unavailable.
     /// </summary>
     private static AudioBuffer DownmixToMono(AudioBuffer buffer)
     {
@@ -71,17 +64,11 @@ public static class AsrAudioPreparer
             return buffer;
         }
 
-        // Try FFmpeg path first for higher quality
-        if (FfSession.FiltersAvailable)
-        {
-            return FfFilterGraph
-                .FromBuffer(buffer)
-                .Custom(BuildMonoPanClause(buffer.Channels))
-                .ToBuffer();
-        }
-
-        // Fallback: simple averaging
-        return DownmixToMonoSimple(buffer);
+        FfSession.EnsureFiltersAvailable();
+        return FfFilterGraph
+            .FromBuffer(buffer)
+            .Custom(BuildMonoPanClause(buffer.Channels))
+            .ToBuffer();
     }
 
     /// <summary>
@@ -115,29 +102,4 @@ public static class AsrAudioPreparer
         return $"pan=mono|c0={builder}";
     }
 
-    /// <summary>
-    /// Simple per-sample averaging downmix (fallback when FFmpeg unavailable).
-    /// </summary>
-    private static AudioBuffer DownmixToMonoSimple(AudioBuffer buffer)
-    {
-        if (buffer.Channels == 1)
-        {
-            return buffer;
-        }
-
-        var mono = new AudioBuffer(1, buffer.SampleRate, buffer.Length);
-        var dst = mono.GetChannelSpan(0);
-        for (var i = 0; i < buffer.Length; i++)
-        {
-            double sum = 0;
-            for (var ch = 0; ch < buffer.Channels; ch++)
-            {
-                sum += buffer.GetChannel(ch).Span[i];
-            }
-
-            dst[i] = (float)(sum / buffer.Channels);
-        }
-
-        return mono;
-    }
 }

@@ -1,4 +1,5 @@
 using Ams.Core.Processors;
+using Ams.Core.Services.Integrations.FFmpeg;
 
 namespace Ams.Core.Artifacts;
 
@@ -143,18 +144,6 @@ public sealed class AudioBuffer
             throw new ArgumentException("At least one buffer is required for concatenation.", nameof(buffers));
         }
 
-        // Single buffer: return a clone
-        if (bufferList.Count == 1)
-        {
-            var source = bufferList[0];
-            var clone = new AudioBuffer(source.Channels, source.SampleRate, source.Length, source.Metadata);
-            for (int ch = 0; ch < source.Channels; ch++)
-            {
-                source.GetChannel(ch).Span.CopyTo(clone.GetChannelSpan(ch));
-            }
-            return clone;
-        }
-
         // Validate all buffers have matching format
         var first = bufferList[0];
         int sampleRate = first.SampleRate;
@@ -177,33 +166,29 @@ public sealed class AudioBuffer
             }
         }
 
-        // Calculate total length
-        long totalLength = 0;
-        foreach (var buf in bufferList)
+        var inputs = new List<FfFilterGraphRunner.GraphInput>(bufferList.Count);
+        var inputFormatClauses = new List<string>(bufferList.Count);
+        var concatInputRefs = new System.Text.StringBuilder(bufferList.Count * 8);
+
+        for (int i = 0; i < bufferList.Count; i++)
         {
-            totalLength += buf.Length;
+            var label = $"in{i}";
+            var formattedLabel = $"f{i}";
+            inputs.Add(new FfFilterGraphRunner.GraphInput(label, bufferList[i]));
+            inputFormatClauses.Add($"[{label}]aformat=sample_fmts=flt[{formattedLabel}]");
+            concatInputRefs.Append($"[{formattedLabel}]");
         }
 
-        if (totalLength > int.MaxValue)
+        if (bufferList.Count == 1)
         {
-            throw new InvalidOperationException(
-                $"Combined buffer length ({totalLength} samples) exceeds maximum ({int.MaxValue}).");
+            return FfFilterGraphRunner.Apply(inputs, inputFormatClauses[0] + ";[f0]anull[out]");
         }
 
-        // Allocate result buffer with metadata from first buffer
-        var result = new AudioBuffer(channels, sampleRate, (int)totalLength, first.Metadata);
+        var filterSpec = string.Join(";", inputFormatClauses)
+                         + ";"
+                         + concatInputRefs
+                         + $"concat=n={bufferList.Count}:v=0:a=1[out]";
 
-        // Copy samples from each buffer using span-based copies
-        int offset = 0;
-        foreach (var buf in bufferList)
-        {
-            for (int ch = 0; ch < channels; ch++)
-            {
-                buf.GetChannel(ch).Span.CopyTo(result.GetChannelSpan(ch).Slice(offset, buf.Length));
-            }
-            offset += buf.Length;
-        }
-
-        return result;
+        return FfFilterGraphRunner.Apply(inputs, filterSpec);
     }
 }
