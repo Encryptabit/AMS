@@ -29,6 +29,7 @@ public class PolishService
     private const double PickupSlicePaddingSec = 0.080;
     private const double DefaultAuditionContextSec = 0.750;
     private const double MinAuditionClipDurationSec = 0.010;
+    private const double TimelineMappingEpsilonSec = 0.001;
     private static readonly TreatmentOptions SharedTuningDefaults = new();
     private static readonly ConcurrentDictionary<string, SemaphoreSlim> ChapterMutationLocks =
         new(StringComparer.OrdinalIgnoreCase);
@@ -163,10 +164,16 @@ public class PolishService
             ? SharedTuningDefaults.SpliceCrossfadeCurve
             : curve;
         var effectiveBoundaryOptions = boundaryOptions ?? CreateBoundaryOptionsFromTreatmentDefaults();
+        var rebasedStartSec = RebaseTranscriptTimeToCurrentTimeline(chapterStem, originalStartSec);
+        var rebasedEndSec = RebaseTranscriptTimeToCurrentTimeline(chapterStem, originalEndSec);
+        if (rebasedEndSec <= rebasedStartSec)
+        {
+            rebasedEndSec = rebasedStartSec + Math.Max(MinAuditionClipDurationSec, originalEndSec - originalStartSec);
+        }
 
         // Refine splice boundaries using silence detection
-        var refinedStart = originalStartSec;
-        var refinedEnd = originalEndSec;
+        var refinedStart = rebasedStartSec;
+        var refinedEnd = rebasedEndSec;
         try
         {
             var operationHandle = GetActiveChapterHandleOrThrow();
@@ -194,13 +201,13 @@ public class PolishService
                 }
 
                 if (idx > 0)
-                    prevEnd = sentences[idx - 1].Timing?.EndSec;
+                    prevEnd = RebaseTranscriptTimeToCurrentTimeline(chapterStem, sentences[idx - 1].Timing?.EndSec);
                 if (idx >= 0 && idx < sentences.Count - 1)
-                    nextStart = sentences[idx + 1].Timing?.StartSec;
+                    nextStart = RebaseTranscriptTimeToCurrentTimeline(chapterStem, sentences[idx + 1].Timing?.StartSec);
             }
 
             var result = SpliceBoundaryService.RefineBoundaries(
-                chapterBuffer, originalStartSec, originalEndSec,
+                chapterBuffer, rebasedStartSec, rebasedEndSec,
                 prevEnd, nextStart, effectiveBoundaryOptions);
 
             refinedStart = result.RefinedStartSec;
@@ -208,8 +215,10 @@ public class PolishService
 
             Console.WriteLine(
                 $"[BoundaryRefinement] Sentence {match.SentenceId}: " +
-                $"start {originalStartSec:F3}s → {refinedStart:F3}s ({result.StartMethod}), " +
-                $"end {originalEndSec:F3}s → {refinedEnd:F3}s ({result.EndMethod})");
+                $"transcript {originalStartSec:F3}s-{originalEndSec:F3}s, " +
+                $"rebased {rebasedStartSec:F3}s-{rebasedEndSec:F3}s, " +
+                $"refined {refinedStart:F3}s-{refinedEnd:F3}s " +
+                $"({result.StartMethod}/{result.EndMethod})");
         }
         catch (Exception ex)
         {
@@ -327,7 +336,9 @@ public class PolishService
 
             if (sentenceIndex > 0)
             {
-                var previousStart = sentences[sentenceIndex - 1].Timing?.StartSec;
+                var previousStart = RebaseTranscriptTimeToCurrentTimeline(
+                    operationStem,
+                    sentences[sentenceIndex - 1].Timing?.StartSec);
                 if (previousStart.HasValue)
                 {
                     clipStartSec = Math.Min(clipStartSec, previousStart.Value);
@@ -336,7 +347,9 @@ public class PolishService
 
             if (sentenceIndex >= 0 && sentenceIndex < sentences.Count - 1)
             {
-                var nextEnd = sentences[sentenceIndex + 1].Timing?.EndSec;
+                var nextEnd = RebaseTranscriptTimeToCurrentTimeline(
+                    operationStem,
+                    sentences[sentenceIndex + 1].Timing?.EndSec);
                 if (nextEnd.HasValue)
                 {
                     clipEndSec = Math.Max(clipEndSec, nextEnd.Value);
@@ -735,6 +748,41 @@ public class PolishService
         return _workspace.TryGetHydratedTranscript(chapterName, out var hydrate)
             ? hydrate
             : null;
+    }
+
+    private double? RebaseTranscriptTimeToCurrentTimeline(string chapterStem, double? transcriptTimeSec)
+    {
+        if (!transcriptTimeSec.HasValue)
+            return null;
+
+        return RebaseTranscriptTimeToCurrentTimeline(chapterStem, transcriptTimeSec.Value);
+    }
+
+    private double RebaseTranscriptTimeToCurrentTimeline(string chapterStem, double transcriptTimeSec)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(chapterStem);
+        if (!double.IsFinite(transcriptTimeSec))
+            return 0;
+
+        var mappedTimeSec = Math.Max(0, transcriptTimeSec);
+        var appliedItems = _stagingQueue.GetQueue(chapterStem)
+            .Where(item => item.Status == ReplacementStatus.Applied)
+            .OrderBy(item => item.OriginalStartSec)
+            .ThenBy(item => item.Id);
+
+        foreach (var item in appliedItems)
+        {
+            var deltaSec = item.PickupDuration() - item.OriginalDuration();
+            if (Math.Abs(deltaSec) < TimelineMappingEpsilonSec)
+                continue;
+
+            if (item.OriginalEndSec <= mappedTimeSec + TimelineMappingEpsilonSec)
+            {
+                mappedTimeSec += deltaSec;
+            }
+        }
+
+        return Math.Max(0, mappedTimeSec);
     }
 
     /// <summary>
