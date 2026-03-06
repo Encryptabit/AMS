@@ -24,6 +24,26 @@ public sealed class AudioBufferManager : IAudioBufferManager
 
     public int Count => _descriptors.Count;
 
+    /// <summary>
+    /// Gets the chapter's raw buffer context without changing the current cursor.
+    /// </summary>
+    public AudioBufferContext? Raw => TryGetByBufferId("raw", moveCursor: false);
+
+    /// <summary>
+    /// Gets the chapter's treated buffer context without changing the current cursor.
+    /// </summary>
+    public AudioBufferContext? Treated => TryGetByBufferId("treated", moveCursor: false);
+
+    /// <summary>
+    /// Gets the chapter's corrected buffer context without changing the current cursor.
+    /// </summary>
+    public AudioBufferContext? Corrected => TryGetByBufferId("corrected", moveCursor: false);
+
+    /// <summary>
+    /// Gets the chapter's filtered buffer context without changing the current cursor.
+    /// </summary>
+    public AudioBufferContext? Filtered => TryGetByBufferId("filtered", moveCursor: false);
+
     public AudioBufferContext Current
     {
         get
@@ -51,17 +71,7 @@ public sealed class AudioBufferManager : IAudioBufferManager
 
     public AudioBufferContext Load(string bufferId)
     {
-        ArgumentException.ThrowIfNullOrEmpty(bufferId);
-        for (int i = 0; i < _descriptors.Count; i++)
-        {
-            if (string.Equals(_descriptors[i].BufferId, bufferId, StringComparison.OrdinalIgnoreCase))
-            {
-                _cursor = i;
-                return GetOrCreate(_descriptors[i]);
-            }
-        }
-
-        throw new KeyNotFoundException($"Buffer '{bufferId}' not found in chapter context.");
+        return GetByBufferId(bufferId, moveCursor: true);
     }
 
     public bool TryMoveNext(out AudioBufferContext bufferContext)
@@ -145,6 +155,33 @@ public sealed class AudioBufferManager : IAudioBufferManager
         }
 
         return context;
+    }
+
+    private AudioBufferContext GetByBufferId(string bufferId, bool moveCursor)
+    {
+        return TryGetByBufferId(bufferId, moveCursor)
+            ?? throw new KeyNotFoundException($"Buffer '{bufferId}' not found in chapter context.");
+    }
+
+    private AudioBufferContext? TryGetByBufferId(string bufferId, bool moveCursor)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(bufferId);
+        for (int i = 0; i < _descriptors.Count; i++)
+        {
+            if (!string.Equals(_descriptors[i].BufferId, bufferId, StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            if (moveCursor)
+            {
+                _cursor = i;
+            }
+
+            return GetOrCreate(_descriptors[i]);
+        }
+
+        return null;
     }
 
     private AudioBuffer? DefaultLoader(AudioBufferDescriptor descriptor)

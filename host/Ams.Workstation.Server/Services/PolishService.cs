@@ -251,8 +251,7 @@ public class PolishService
         var item = FindStagedItem(replacementId, operationStem);
         var chapterBuffer = GetChapterBuffer(operationHandle);
 
-        var pickupBuffer = AudioProcessor.Decode(item.PickupSourcePath);
-        var pickupTrimmed = TrimPickupForReplacement(item, pickupBuffer);
+        var pickupTrimmed = LoadPickupSliceForReplacement(item);
 
         var resultBuffer = AudioSpliceService.ReplaceSegment(
             chapterBuffer,
@@ -290,8 +289,7 @@ public class PolishService
         var chapterBuffer = GetChapterBuffer(operationHandle);
 
         // 3. Decode and trim pickup audio
-        var pickupBuffer = AudioProcessor.Decode(item.PickupSourcePath);
-        var pickupTrimmed = TrimPickupForReplacement(item, pickupBuffer);
+        var pickupTrimmed = LoadPickupSliceForReplacement(item);
 
         var pickupDuration = (double)pickupTrimmed.Length / pickupTrimmed.SampleRate;
         var originalDuration = item.OriginalEndSec - item.OriginalStartSec;
@@ -583,45 +581,46 @@ public class PolishService
     }
 
     /// <summary>
-    /// Resolves the best available chapter audio buffer: corrected.wav > treated.wav > raw.
-    /// Uses direct AudioProcessor.Decode to avoid moving AudioBufferManager cursor.
+    /// Resolves the best available chapter audio buffer from chapter runtime contexts:
+    /// corrected > treated > raw. Buffers are lazy-loaded and cached by AudioBufferManager.
     /// </summary>
     private static AudioBuffer GetChapterBuffer(ChapterContextHandle handle)
     {
-        var chapter = handle.Chapter;
-        var descriptor = chapter.Descriptor;
-        var correctedPath = Path.Combine(descriptor.RootPath, $"{descriptor.ChapterId}.corrected.wav");
+        var audio = handle.Chapter.Audio;
 
-        if (File.Exists(correctedPath))
-            return AudioProcessor.Decode(correctedPath);
+        var correctedBuffer = audio.Corrected?.Buffer;
+        if (correctedBuffer is not null)
+            return correctedBuffer;
 
-        var treatedPath = Path.Combine(descriptor.RootPath, $"{descriptor.ChapterId}.treated.wav");
-        if (File.Exists(treatedPath))
-            return AudioProcessor.Decode(treatedPath);
+        var treatedBuffer = audio.Treated?.Buffer;
+        if (treatedBuffer is not null)
+            return treatedBuffer;
 
-        // Fall back to raw buffer via AudioBufferManager
-        return chapter.Audio.Current.Buffer
-            ?? throw new InvalidOperationException("No audio buffer available for the current chapter.");
+        var rawBuffer = audio.Raw?.Buffer;
+        if (rawBuffer is not null)
+            return rawBuffer;
+
+        throw new InvalidOperationException("No audio buffer available for the current chapter.");
     }
 
-    private static AudioBuffer TrimPickupForReplacement(StagedReplacement item, AudioBuffer pickupBuffer)
+    private static AudioBuffer LoadPickupSliceForReplacement(StagedReplacement item)
     {
-        var pickupDurationSec = (double)pickupBuffer.Length / pickupBuffer.SampleRate;
         var paddedStartSec = Math.Max(0, item.PickupStartSec - PickupSlicePaddingSec);
-        var paddedEndSec = Math.Min(pickupDurationSec, item.PickupEndSec + PickupSlicePaddingSec);
+        var paddedEndSec = item.PickupEndSec + PickupSlicePaddingSec;
 
         if (paddedEndSec <= paddedStartSec)
         {
             paddedStartSec = Math.Max(0, item.PickupStartSec);
-            paddedEndSec = Math.Min(pickupDurationSec, item.PickupEndSec);
+            paddedEndSec = item.PickupEndSec;
             if (paddedEndSec <= paddedStartSec)
-                paddedEndSec = Math.Min(pickupDurationSec, paddedStartSec + 0.010);
+                paddedEndSec = paddedStartSec + 0.010;
         }
 
-        return AudioProcessor.Trim(
-            pickupBuffer,
-            TimeSpan.FromSeconds(paddedStartSec),
-            TimeSpan.FromSeconds(paddedEndSec));
+        return AudioProcessor.Decode(
+            item.PickupSourcePath,
+            new AudioDecodeOptions(
+                Start: TimeSpan.FromSeconds(paddedStartSec),
+                Duration: TimeSpan.FromSeconds(paddedEndSec - paddedStartSec)));
     }
 
     /// <summary>
@@ -637,7 +636,7 @@ public class PolishService
 
         // Resolve bit depth directly from treated-buffer metadata.
         // If treated metadata is unavailable/ambiguous, fail hard.
-        var treatedBuffer = handle.Chapter.Audio.Load("treated").Buffer
+        var treatedBuffer = handle.Chapter.Audio.Treated?.Buffer
             ?? throw new InvalidOperationException(
                 $"Treated audio buffer is unavailable for chapter '{descriptor.ChapterId}'.");
         var sourceBitDepth = ResolveSourceBitDepthOrThrow(treatedBuffer);
