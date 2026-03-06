@@ -5,7 +5,6 @@
 @inject Ams.Workstation.Server.Services.PolishService PolishService
 @inject Ams.Workstation.Server.Services.PickupMatchingService PickupMatchingService
 @inject Ams.Workstation.Server.Services.PolishVerificationService VerificationService
-@inject Ams.Workstation.Server.Services.PreviewBufferService PreviewBufferService
 @inject Ams.Workstation.Server.Services.UndoService UndoService
 @inject NavigationManager Navigation
 @inject IJSRuntime JS
@@ -13,6 +12,7 @@
 @using Ams.Workstation.Server.Services
 @using Ams.Core.Common
 @using Ams.Core.Artifacts.Hydrate
+@using Microsoft.JSInterop
 @using System.Text.RegularExpressions
 @implements IAsyncDisposable
 
@@ -331,6 +331,7 @@
     private long _correctedVersion;
     private IReadOnlyList<HydratedSentence>? _flaggedSentences;
     private IReadOnlyList<StagedReplacement>? _stagedItems;
+    private IJSObjectReference? _snippetPlayer;
 
     private record ChapterCrxInfo(string ChapterName, string Stem, int CrxCount, bool AllCommitted);
 
@@ -782,8 +783,6 @@
 
     private async Task HandleAudition(string id)
     {
-        if (_waveformPlayer == null || !_isWaveformReady) return;
-
         // Try to find a replacement to audition in the active chapter
         var replacementItem = (_stagedItems ?? Array.Empty<StagedReplacement>())
             .FirstOrDefault(s => s.Id == id);
@@ -791,21 +790,30 @@
         {
             try
             {
-                // For staged (not yet applied), generate preview splice first.
-                // For committed/applied, play directly from corrected chapter audio.
                 if (replacementItem.Status == ReplacementStatus.Staged)
                 {
-                    PolishService.GeneratePreview(replacementItem.Id);
+                    // Stage audition uses a sidecar player so the chapter waveform stays loaded.
+                    _snippetPlayer ??= await JS.InvokeAsync<IJSObjectReference>("import", "./js/snippet-player.js");
+                    var previewVersion = PolishService.GenerateAuditionClip(replacementItem.Id);
+                    await _snippetPlayer.InvokeVoidAsync(
+                        "playSegment",
+                        $"/api/audio/preview?v={previewVersion}");
+                    return;
                 }
 
-                // Play the replacement region on the chapter waveform
-                await _waveformPlayer.PlaySegment(
-                    replacementItem.OriginalStartSec,
-                    replacementItem.OriginalStartSec + replacementItem.PickupDuration());
+                if (_waveformPlayer != null && _isWaveformReady && replacementItem.Status == ReplacementStatus.Applied)
+                {
+                    // Committed/applied audition plays directly from corrected chapter audio.
+                    await _waveformPlayer.PlaySegment(
+                        replacementItem.OriginalStartSec,
+                        replacementItem.OriginalStartSec + replacementItem.PickupDuration());
+                }
             }
             catch { /* Non-critical audition failure */ }
             return;
         }
+
+        if (_waveformPlayer == null || !_isWaveformReady) return;
 
         // For matched items, find by extracting sentenceId from "match-{id}" format
         if (id.StartsWith("match-") && int.TryParse(id["match-".Length..], out var sentenceId))
@@ -1098,11 +1106,21 @@
     }
 
     // ── Disposal ──────────────────────────────────────────────────
-    public ValueTask DisposeAsync()
+    public async ValueTask DisposeAsync()
     {
         // Cancel any in-progress processing
         try { _cts.Cancel(); } catch { /* already cancelled */ }
         _cts.Dispose();
+
+        if (_snippetPlayer is not null)
+        {
+            try
+            {
+                await _snippetPlayer.InvokeVoidAsync("dispose");
+                await _snippetPlayer.DisposeAsync();
+            }
+            catch (JSDisconnectedException) { }
+        }
 
         // Clear collections to release references
         _matchesByChapter.Clear();
@@ -1111,8 +1129,7 @@
         _flaggedSentences = null;
         _stagedItems = null;
         _waveformPlayer = null;
+        _snippetPlayer = null;
         _draggedMatch = null;
-
-        return ValueTask.CompletedTask;
     }
 }

@@ -226,7 +226,7 @@ poc/VelloSharpPoc/     - Avalonia + VelloSharp (child window fails)
 
 ### Pending Todos
 
-- 1 pending todo in `.planning/todos/pending`
+- 0 pending todos in `.planning/todos/pending`
 
 ## Next Action
 

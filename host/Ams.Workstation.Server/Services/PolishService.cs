@@ -27,6 +27,8 @@ namespace Ams.Workstation.Server.Services;
 public class PolishService
 {
     private const double PickupSlicePaddingSec = 0.080;
+    private const double DefaultAuditionContextSec = 0.750;
+    private const double MinAuditionClipDurationSec = 0.010;
     private static readonly TreatmentOptions SharedTuningDefaults = new();
     private static readonly ConcurrentDictionary<string, SemaphoreSlim> ChapterMutationLocks =
         new(StringComparer.OrdinalIgnoreCase);
@@ -274,6 +276,68 @@ public class PolishService
 
         _previewBuffer.Set(resultBuffer);
         return resultBuffer;
+    }
+
+    /// <summary>
+    /// Generates a short staged-audition clip around the replacement boundaries
+    /// (context before + pickup splice + context after), stores it in
+    /// <see cref="PreviewBufferService"/>, and returns the preview version.
+    /// </summary>
+    /// <param name="replacementId">ID of the staged replacement to audition.</param>
+    /// <param name="contextSec">Context duration before/after the splice (seconds).</param>
+    /// <returns>The updated preview buffer version for cache-busted playback URLs.</returns>
+    public long GenerateAuditionClip(string replacementId, double contextSec = DefaultAuditionContextSec)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(replacementId);
+        contextSec = Math.Max(0, contextSec);
+
+        var operationHandle = GetActiveChapterHandleOrThrow();
+        var operationStem = operationHandle.Chapter.Descriptor.ChapterId;
+        var item = FindStagedItem(replacementId, operationStem);
+        var chapterBuffer = GetChapterBuffer(operationHandle);
+        var pickupTrimmed = LoadPickupSliceForReplacement(operationHandle, item);
+
+        var chapterDurationSec = (double)chapterBuffer.Length / chapterBuffer.SampleRate;
+        var maxClipStartSec = Math.Max(0, chapterDurationSec - MinAuditionClipDurationSec);
+        var clipStartSec = Math.Clamp(item.OriginalStartSec - contextSec, 0, maxClipStartSec);
+        var clipEndSec = Math.Min(chapterDurationSec, item.OriginalEndSec + contextSec);
+        if (clipEndSec <= clipStartSec)
+        {
+            clipEndSec = Math.Min(chapterDurationSec, clipStartSec + MinAuditionClipDurationSec);
+        }
+
+        var chapterClip = AudioProcessor.Trim(
+            chapterBuffer,
+            TimeSpan.FromSeconds(clipStartSec),
+            TimeSpan.FromSeconds(clipEndSec));
+
+        var clipDurationSec = (double)chapterClip.Length / chapterClip.SampleRate;
+        if (clipDurationSec <= 0)
+        {
+            throw new InvalidOperationException("Unable to generate audition clip for an empty chapter segment.");
+        }
+
+        var replaceStartSec = Math.Clamp(item.OriginalStartSec - clipStartSec, 0, clipDurationSec);
+        var replaceEndSec = Math.Clamp(item.OriginalEndSec - clipStartSec, 0, clipDurationSec);
+        if (replaceEndSec <= replaceStartSec)
+        {
+            replaceEndSec = Math.Min(clipDurationSec, replaceStartSec + MinAuditionClipDurationSec);
+            if (replaceEndSec <= replaceStartSec)
+            {
+                replaceStartSec = Math.Max(0, replaceEndSec - MinAuditionClipDurationSec);
+            }
+        }
+
+        var resultBuffer = AudioSpliceService.ReplaceSegment(
+            chapterClip,
+            replaceStartSec,
+            replaceEndSec,
+            pickupTrimmed,
+            item.CrossfadeDurationSec,
+            item.CrossfadeCurve);
+
+        _previewBuffer.Set(resultBuffer);
+        return _previewBuffer.Version;
     }
 
     /// <summary>
