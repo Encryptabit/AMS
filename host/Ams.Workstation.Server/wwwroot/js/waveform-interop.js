@@ -4,6 +4,11 @@
 // Global instance registry keyed by element ID
 window.wavesurferInstances = window.wavesurferInstances || {};
 
+const DEFAULT_WHEEL_ZOOM_SCALE = 0.5;
+const DEFAULT_WHEEL_DELTA_THRESHOLD = 5;
+const DEFAULT_MAX_ZOOM = 5000;
+const DEFAULT_HEIGHT_SCALE = 0.15;
+
 /**
  * Creates a new WaveSurfer instance and stores it in the registry.
  * @param {string} elementId - The DOM element ID for the waveform container
@@ -20,11 +25,10 @@ export function createWaveSurfer(elementId, options) {
     // Destroy existing instance if present
     if (window.wavesurferInstances[elementId]) {
         try {
-            window.wavesurferInstances[elementId].wavesurfer.destroy();
+            destroy(elementId);
         } catch (e) {
             console.warn(`[waveform-interop] Error destroying existing instance:`, e);
         }
-        delete window.wavesurferInstances[elementId];
     }
 
     const wsOptions = {
@@ -57,14 +61,33 @@ export function createWaveSurfer(elementId, options) {
     }
 
     const wavesurfer = WaveSurfer.create(wsOptions);
+    let zoomPlugin = null;
+
+    if (typeof WaveSurfer !== 'undefined' && typeof WaveSurfer.Zoom !== 'undefined') {
+        zoomPlugin = wavesurfer.registerPlugin(WaveSurfer.Zoom.create({
+            scale: options.wheelZoomScale || DEFAULT_WHEEL_ZOOM_SCALE,
+            maxZoom: options.maxZoomPxPerSec || DEFAULT_MAX_ZOOM,
+            deltaThreshold: options.wheelZoomDeltaThreshold || DEFAULT_WHEEL_DELTA_THRESHOLD,
+        }));
+    }
 
     // Store instance with metadata
     window.wavesurferInstances[elementId] = {
         wavesurfer: wavesurfer,
+        zoomPlugin: zoomPlugin,
         regionsPlugin: null,
         dotNetRef: null,
         isPlaying: false,
-        preservePitch: true
+        preservePitch: true,
+        currentZoom: wsOptions.minPxPerSec,
+        currentHeight: options.height || 128,
+        minHeight: options.minWaveformHeightPx || 64,
+        maxHeight: options.maxWaveformHeightPx || 320,
+        heightScale: options.heightWheelScale || DEFAULT_HEIGHT_SCALE,
+        heightDeltaThreshold: options.heightWheelDeltaThreshold || DEFAULT_WHEEL_DELTA_THRESHOLD,
+        heightAccumulatedDelta: 0,
+        zoomSyncTimerId: null,
+        cleanupHandlers: [],
     };
 
     return elementId;
@@ -224,6 +247,19 @@ export function registerCallbacks(elementId, dotNetRef) {
     instance.lastTimeUpdate = 0;
     const ws = instance.wavesurfer;
 
+    ws.on('zoom', (pxPerSec) => {
+        instance.currentZoom = pxPerSec;
+        if (instance.zoomSyncTimerId !== null) {
+            clearTimeout(instance.zoomSyncTimerId);
+        }
+
+        instance.zoomSyncTimerId = setTimeout(() => {
+            instance.zoomSyncTimerId = null;
+            dotNetRef.invokeMethodAsync('OnZoomChanged', Math.round(pxPerSec))
+                .catch(err => console.warn('[waveform-interop] Error invoking OnZoomChanged:', err));
+        }, 50);
+    });
+
     // Ready event - fires when audio is decoded and waveform is drawn
     ws.on('ready', () => {
         const duration = ws.getDuration();
@@ -269,6 +305,8 @@ export function registerCallbacks(elementId, dotNetRef) {
         dotNetRef.invokeMethodAsync('OnError', error.toString())
             .catch(err => console.warn('[waveform-interop] Error invoking OnError:', err));
     });
+
+    attachCtrlWheelHeightHandler(instance, dotNetRef);
 }
 
 /**
@@ -396,6 +434,19 @@ export function destroy(elementId) {
     if (!instance) return;
 
     try {
+        if (instance.zoomSyncTimerId !== null) {
+            clearTimeout(instance.zoomSyncTimerId);
+            instance.zoomSyncTimerId = null;
+        }
+        if (instance.cleanupHandlers && instance.cleanupHandlers.length > 0) {
+            instance.cleanupHandlers.forEach((cleanup) => {
+                try {
+                    cleanup();
+                } catch (e) {
+                    console.warn('[waveform-interop] Error during cleanup:', e);
+                }
+            });
+        }
         instance.wavesurfer.destroy();
     } catch (e) {
         console.warn('[waveform-interop] Error during destroy:', e);
@@ -549,6 +600,7 @@ export function setZoom(elementId, pxPerSec) {
     const instance = window.wavesurferInstances[elementId];
     if (!instance) return;
 
+    instance.currentZoom = pxPerSec;
     instance.wavesurfer.zoom(pxPerSec);
 }
 
@@ -609,4 +661,52 @@ function ensureRegionsPlugin(instance) {
 
     console.error('[waveform-interop] WaveSurfer.Regions plugin not loaded');
     return false;
+}
+
+function attachCtrlWheelHeightHandler(instance, dotNetRef) {
+    if (!instance || !instance.wavesurfer) return;
+
+    const wheelTarget = instance.wavesurfer.getWrapper()?.parentElement;
+    if (!wheelTarget) return;
+
+    const onWheel = (event) => {
+        if (!event.ctrlKey) {
+            return;
+        }
+
+        if (Math.abs(event.deltaX) >= Math.abs(event.deltaY)) {
+            return;
+        }
+
+        event.preventDefault();
+        event.stopPropagation();
+
+        instance.heightAccumulatedDelta += -event.deltaY;
+        if (instance.heightDeltaThreshold !== 0 &&
+            Math.abs(instance.heightAccumulatedDelta) < instance.heightDeltaThreshold) {
+            return;
+        }
+
+        const nextHeight = clamp(
+            Math.round(instance.currentHeight + instance.heightAccumulatedDelta * instance.heightScale),
+            instance.minHeight,
+            instance.maxHeight);
+
+        instance.heightAccumulatedDelta = 0;
+
+        if (nextHeight === instance.currentHeight) {
+            return;
+        }
+
+        instance.currentHeight = nextHeight;
+        instance.wavesurfer.setOptions({ height: nextHeight });
+
+        if (dotNetRef) {
+            dotNetRef.invokeMethodAsync('OnHeightChanged', nextHeight)
+                .catch(err => console.warn('[waveform-interop] Error invoking OnHeightChanged:', err));
+        }
+    };
+
+    wheelTarget.addEventListener('wheel', onWheel, { passive: false, capture: true });
+    instance.cleanupHandlers.push(() => wheelTarget.removeEventListener('wheel', onWheel, true));
 }

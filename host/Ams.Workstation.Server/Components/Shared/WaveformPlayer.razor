@@ -6,7 +6,7 @@
         <span class="waveform-title">@Title</span>
         <span class="waveform-time">@FormatTime(CurrentTime) / @FormatTime(Duration)</span>
     </div>
-    <div id="@_elementId" class="waveform-container" style="--wfp-height: @(Height)px;">
+    <div id="@_elementId" class="waveform-container" style="--wfp-height: @(WaveformHeightPx)px;">
         @if (!_isReady)
         {
             <div class="waveform-loading">
@@ -91,6 +91,18 @@
     public int Height { get; set; } = 128;
 
     /// <summary>
+    /// Minimum waveform height in pixels when resizing with Ctrl + wheel.
+    /// </summary>
+    [Parameter]
+    public int MinWaveformHeightPx { get; set; } = 64;
+
+    /// <summary>
+    /// Maximum waveform height in pixels when resizing with Ctrl + wheel.
+    /// </summary>
+    [Parameter]
+    public int MaxWaveformHeightPx { get; set; } = 320;
+
+    /// <summary>
     /// Default waveform zoom in pixels per second.
     /// </summary>
     [Parameter]
@@ -165,6 +177,11 @@
     public int ZoomPxPerSec { get; private set; } = 100;
 
     /// <summary>
+    /// Current waveform height in pixels.
+    /// </summary>
+    public int WaveformHeightPx { get; private set; } = 128;
+
+    /// <summary>
     /// Returns a task that completes when the waveform is ready. If already ready, returns immediately.
     /// </summary>
     public Task WaitForReadyAsync()
@@ -212,14 +229,18 @@
             _module = await JS.InvokeAsync<IJSObjectReference>("import", "./js/waveform-interop.js");
             _dotNetRef = DotNetObjectReference.Create(this);
             ZoomPxPerSec = ClampZoom(InitialZoomPxPerSec);
+            WaveformHeightPx = ClampWaveformHeight(Height);
 
             var options = new
             {
-                height = Height,
+                height = WaveformHeightPx,
                 waveColor = "#4a9eff",
                 progressColor = "#1177bb",
                 cursorColor = "#ffffff",
-                minPxPerSec = ZoomPxPerSec
+                minPxPerSec = ZoomPxPerSec,
+                maxZoomPxPerSec = MaxZoomPxPerSec,
+                minWaveformHeightPx = MinWaveformHeightPx,
+                maxWaveformHeightPx = MaxWaveformHeightPx
             };
 
             await _module.InvokeVoidAsync("createWaveSurfer", _elementId, options);
@@ -471,6 +492,22 @@
     }
 
     [JSInvokable]
+    public Task OnZoomChanged(int pxPerSec)
+    {
+        ZoomPxPerSec = ClampZoom(pxPerSec);
+        StateHasChanged();
+        return Task.CompletedTask;
+    }
+
+    [JSInvokable]
+    public Task OnHeightChanged(int heightPx)
+    {
+        WaveformHeightPx = ClampWaveformHeight(heightPx);
+        StateHasChanged();
+        return Task.CompletedTask;
+    }
+
+    [JSInvokable]
     public async Task OnRegionBoundsUpdated(string regionId, double start, double end)
     {
         await OnRegionUpdated.InvokeAsync((regionId, start, end));
@@ -489,6 +526,13 @@
         var min = Math.Max(1, MinZoomPxPerSec);
         var max = Math.Max(min, MaxZoomPxPerSec);
         return Math.Clamp(pxPerSec, min, max);
+    }
+
+    private int ClampWaveformHeight(int heightPx)
+    {
+        var min = Math.Max(24, MinWaveformHeightPx);
+        var max = Math.Max(min, MaxWaveformHeightPx);
+        return Math.Clamp(heightPx, min, max);
     }
 
     public async ValueTask DisposeAsync()
