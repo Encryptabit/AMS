@@ -332,6 +332,7 @@
     private IReadOnlyList<HydratedSentence>? _flaggedSentences;
     private IReadOnlyList<StagedReplacement>? _stagedItems;
     private IJSObjectReference? _snippetPlayer;
+    private bool _hasAutoLoadedKnownPaths;
 
     private record ChapterCrxInfo(string ChapterName, string Stem, int CrxCount, bool AllCommitted);
 
@@ -354,6 +355,8 @@
         {
             await NavigateToChapter(0);
         }
+
+        await AutoLoadKnownPaths();
     }
 
     // ── Flipper Navigation ────────────────────────────────────────
@@ -484,29 +487,48 @@
 
         Workspace.SetPolishPaths(_pickupSessionPath, _roomtoneFilePath);
 
-        // Add a blue roomtone selection region to the waveform at a default position
-        if (_waveformPlayer != null && _isWaveformReady && !string.IsNullOrWhiteSpace(_roomtoneFilePath))
+        // Initialize a default roomtone selection region.
+        var defaultStart = 1.0;
+        var defaultEnd = 2.0;
+        if (_waveformPlayer?.Duration > 0)
         {
-            // Default region: 1-second selection near the start
-            var defaultStart = 1.0;
-            var defaultEnd = 2.0;
-            if (_waveformPlayer.Duration > 0)
-            {
-                defaultEnd = Math.Min(defaultEnd, _waveformPlayer.Duration * 0.1);
-                if (defaultEnd <= defaultStart)
-                    defaultEnd = Math.Min(defaultStart + 0.5, _waveformPlayer.Duration);
-            }
+            defaultEnd = Math.Min(defaultEnd, _waveformPlayer.Duration * 0.1);
+            if (defaultEnd <= defaultStart)
+                defaultEnd = Math.Min(defaultStart + 0.5, _waveformPlayer.Duration);
+        }
 
-            _roomtoneRegionStart = defaultStart;
-            _roomtoneRegionEnd = defaultEnd;
-            _roomtoneRegionValid = defaultEnd > defaultStart;
+        _roomtoneRegionStart = defaultStart;
+        _roomtoneRegionEnd = defaultEnd;
+        _roomtoneRegionValid = defaultEnd > defaultStart;
 
+        // Add region immediately if waveform is already ready.
+        if (_waveformPlayer != null && _isWaveformReady && _roomtoneRegionValid)
+        {
             await _waveformPlayer.AddEditableRegion(
                 "roomtone-selection", defaultStart, defaultEnd,
                 "rgba(59, 130, 246, 0.3)"); // Blue for roomtone
         }
 
         StateHasChanged();
+    }
+
+    private async Task AutoLoadKnownPaths()
+    {
+        if (_hasAutoLoadedKnownPaths)
+            return;
+
+        _hasAutoLoadedKnownPaths = true;
+
+        var hasPickupPath = !string.IsNullOrWhiteSpace(_pickupSessionPath) &&
+            System.IO.File.Exists(_pickupSessionPath);
+        var hasRoomtonePath = !string.IsNullOrWhiteSpace(_roomtoneFilePath) &&
+            System.IO.File.Exists(_roomtoneFilePath);
+
+        if (hasPickupPath && _chaptersWithCrx.Count > 0)
+            await HandlePickupFileSet();
+
+        if (hasRoomtonePath)
+            await HandleSetRoomtone();
     }
 
     // ── Upfront Cross-Chapter Processing ──────────────────────────
