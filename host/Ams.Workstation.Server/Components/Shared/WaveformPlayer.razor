@@ -19,6 +19,23 @@
         <BitButton Variant="BitVariant.Text" OnClick="SkipToStart" Title="Skip to start" IsEnabled="_isReady" IconName="@BitIconName.Previous" Color="BitColor.Secondary" />
         <BitButton Variant="BitVariant.Fill" OnClick="PlayPause" Title="@(IsPlaying ? "Pause" : "Play")" IsEnabled="_isReady" IconName="@(IsPlaying ? BitIconName.Pause : BitIconName.Play)" />
         <BitButton Variant="BitVariant.Text" OnClick="SkipToEnd" Title="Skip to end" IsEnabled="_isReady" IconName="@BitIconName.Next" Color="BitColor.Secondary" />
+        <div class="waveform-zoom-section">
+            <BitButton Variant="BitVariant.Text"
+                       OnClick="ResetZoom"
+                       Title="Reset zoom"
+                       IsEnabled="_isReady"
+                       IconName="@BitIconName.ZoomOut" />
+            <input type="range"
+                   min="@MinZoomPxPerSec"
+                   max="@MaxZoomPxPerSec"
+                   step="10"
+                   value="@ZoomPxPerSec"
+                   @oninput="OnZoomInput"
+                   title="Waveform zoom"
+                   class="waveform-zoom-slider"
+                   disabled="@(!_isReady)" />
+            <span class="waveform-zoom-value">@ZoomPxPerSec px/s</span>
+        </div>
         <div class="waveform-speed-section">
             <input type="range"
                    min="0.5"
@@ -74,6 +91,24 @@
     public int Height { get; set; } = 128;
 
     /// <summary>
+    /// Default waveform zoom in pixels per second.
+    /// </summary>
+    [Parameter]
+    public int InitialZoomPxPerSec { get; set; } = 100;
+
+    /// <summary>
+    /// Minimum waveform zoom in pixels per second.
+    /// </summary>
+    [Parameter]
+    public int MinZoomPxPerSec { get; set; } = 50;
+
+    /// <summary>
+    /// Maximum waveform zoom in pixels per second.
+    /// </summary>
+    [Parameter]
+    public int MaxZoomPxPerSec { get; set; } = 1200;
+
+    /// <summary>
     /// Callback fired when the current playback time changes.
     /// </summary>
     [Parameter]
@@ -125,6 +160,11 @@
     public double PlaybackRate { get; private set; } = 1.0;
 
     /// <summary>
+    /// Current waveform zoom in pixels per second.
+    /// </summary>
+    public int ZoomPxPerSec { get; private set; } = 100;
+
+    /// <summary>
     /// Returns a task that completes when the waveform is ready. If already ready, returns immediately.
     /// </summary>
     public Task WaitForReadyAsync()
@@ -171,13 +211,15 @@
         {
             _module = await JS.InvokeAsync<IJSObjectReference>("import", "./js/waveform-interop.js");
             _dotNetRef = DotNetObjectReference.Create(this);
+            ZoomPxPerSec = ClampZoom(InitialZoomPxPerSec);
 
             var options = new
             {
                 height = Height,
                 waveColor = "#4a9eff",
                 progressColor = "#1177bb",
-                cursorColor = "#ffffff"
+                cursorColor = "#ffffff",
+                minPxPerSec = ZoomPxPerSec
             };
 
             await _module.InvokeVoidAsync("createWaveSurfer", _elementId, options);
@@ -269,6 +311,35 @@
         }
     }
 
+    private async Task OnZoomInput(ChangeEventArgs e)
+    {
+        if (!int.TryParse(e.Value?.ToString(), out var zoom))
+        {
+            return;
+        }
+
+        ZoomPxPerSec = ClampZoom(zoom);
+
+        if (_module == null || !_isReady)
+        {
+            return;
+        }
+
+        await _module.InvokeVoidAsync("setZoom", _elementId, ZoomPxPerSec);
+    }
+
+    private async Task ResetZoom()
+    {
+        ZoomPxPerSec = ClampZoom(InitialZoomPxPerSec);
+
+        if (_module == null || !_isReady)
+        {
+            return;
+        }
+
+        await _module.InvokeVoidAsync("setZoom", _elementId, ZoomPxPerSec);
+    }
+
     /// <summary>
     /// Set the playback rate programmatically.
     /// </summary>
@@ -340,7 +411,9 @@
     public async Task SetZoom(int pxPerSec)
     {
         if (_module == null || !_isReady) return;
-        await _module.InvokeVoidAsync("setZoom", _elementId, pxPerSec);
+        ZoomPxPerSec = ClampZoom(pxPerSec);
+        await _module.InvokeVoidAsync("setZoom", _elementId, ZoomPxPerSec);
+        StateHasChanged();
     }
 
     // Callback methods invoked from JavaScript
@@ -409,6 +482,13 @@
         var mins = (int)(seconds / 60);
         var secs = (int)(seconds % 60);
         return $"{mins}:{secs:D2}";
+    }
+
+    private int ClampZoom(int pxPerSec)
+    {
+        var min = Math.Max(1, MinZoomPxPerSec);
+        var max = Math.Max(min, MaxZoomPxPerSec);
+        return Math.Clamp(pxPerSec, min, max);
     }
 
     public async ValueTask DisposeAsync()
