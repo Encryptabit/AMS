@@ -100,6 +100,7 @@
                 <WaveformPlayer
                     @ref="_waveformPlayer"
                     AudioUrl="@GetAudioUrl()"
+                    PeaksUrl="@GetPeaksUrl()"
                     Title="@GetCurrentChapterName()"
                     OnReady="HandleWaveformReady"
                     OnRegionUpdated="HandleRegionUpdated" />
@@ -333,6 +334,7 @@
     private IReadOnlyList<StagedReplacement>? _stagedItems;
     private IJSObjectReference? _snippetPlayer;
     private bool _hasAutoLoadedKnownPaths;
+    private const int PeakPxPerSec = 1200;
 
     private record ChapterCrxInfo(string ChapterName, string Stem, int CrxCount, bool AllCommitted);
 
@@ -1039,6 +1041,15 @@
 
         var chapterName = _chaptersWithCrx[_currentChapterIndex].ChapterName;
         return $"/api/audio/chapter/{Uri.EscapeDataString(chapterName)}/corrected?v={_correctedVersion}";
+    }
+
+    private string? GetPeaksUrl()
+    {
+        if (_currentChapterIndex < 0 || _currentChapterIndex >= _chaptersWithCrx.Count)
+            return null;
+
+        var chapterName = _chaptersWithCrx[_currentChapterIndex].ChapterName;
+        return $"/api/audio/chapter/{Uri.EscapeDataString(chapterName)}/corrected/peaks?pxPerSec={PeakPxPerSec}&v={_correctedVersion}";
     }
 
     private string GetCurrentChapterName()

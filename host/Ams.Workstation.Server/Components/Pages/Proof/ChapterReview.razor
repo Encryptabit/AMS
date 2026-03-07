@@ -38,6 +38,7 @@
                 <WaveformPlayer
                     @ref="_waveformPlayer"
                     AudioUrl="@GetAudioUrl()"
+                    PeaksUrl="@GetPeaksUrl()"
                     Title="@GetDisplayTitle()"
                     TimeUpdated="HandleTimeUpdate"
                     OnReady="HandleWaveformReady"
@@ -71,6 +72,7 @@ else
 
 
 @code {
+    private const int PeakPxPerSec = 1200;
     private double _currentTime;
     private bool _isWaveformReady;
     private WaveformPlayer? _waveformPlayer;
@@ -236,6 +238,16 @@ else
         }
 
         return "/api/audio"; // Falls back to sample audio
+    }
+
+    private string? GetPeaksUrl()
+    {
+        if (string.IsNullOrEmpty(ChapterName))
+        {
+            return null;
+        }
+
+        return $"/api/audio/chapter/{Uri.EscapeDataString(ChapterName)}/peaks?pxPerSec={PeakPxPerSec}";
     }
 
     private string GetDisplayTitle()

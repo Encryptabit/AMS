@@ -1,6 +1,9 @@
 using System;
 using System.IO;
+using Ams.Core.Artifacts;
+using Ams.Core.Audio;
 using Ams.Core.Processors;
+using Ams.Core.Runtime.Audio;
 using Ams.Workstation.Server.Services;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc;
@@ -16,6 +19,8 @@ namespace Ams.Workstation.Server.Controllers;
 [Route("api/[controller]")]
 public class AudioController : ControllerBase
 {
+    private const int DefaultPeakPxPerSec = 1200;
+    private const int MaxWaveformBuckets = 500_000;
     private readonly IWebHostEnvironment _environment;
     private readonly ILogger<AudioController> _logger;
     private readonly BlazorWorkspace _workspace;
@@ -118,6 +123,47 @@ public class AudioController : ControllerBase
     }
 
     /// <summary>
+    /// Returns precomputed min/max waveform peaks for the current chapter audio.
+    /// Optional start/end values trim the chapter before peak extraction.
+    /// </summary>
+    [HttpGet("chapter/{chapterName}/peaks")]
+    public IActionResult GetChapterPeaks(
+        string chapterName,
+        [FromQuery] int pxPerSec = DefaultPeakPxPerSec,
+        [FromQuery] double? start = null,
+        [FromQuery] double? end = null)
+    {
+        if (_workspace.CurrentChapterHandle is null)
+        {
+            return NotFound("No chapter loaded");
+        }
+
+        var audioContext = _workspace.CurrentChapterHandle.Chapter.Audio.Current;
+        var buffer = audioContext.Buffer;
+        if (buffer is null)
+        {
+            return NotFound("Audio buffer not available");
+        }
+
+        if (start.HasValue || end.HasValue)
+        {
+            var segment = TrimBuffer(buffer, start, end);
+            return segment is null
+                ? BadRequest("Invalid chapter peak range")
+                : Ok(BuildWaveformPeaksPayload(segment, pxPerSec, $"chapter '{chapterName}' range"));
+        }
+
+        var bucketCount = ResolveWaveformBucketCount(buffer, pxPerSec, $"chapter '{chapterName}'");
+        var peaks = audioContext.GetOrCreateWaveformPeaks(bucketCount);
+        if (peaks is null)
+        {
+            return NotFound("Audio buffer not available");
+        }
+
+        return Ok(ToWaveformResponse(peaks));
+    }
+
+    /// <summary>
     /// Serves a partial region of a chapter's audio by decoding only the requested time range.
     /// Uses the workspace to resolve the chapter's audio file path and decodes directly from disk
     /// with start/duration parameters for memory-efficient partial loading.
@@ -210,6 +256,21 @@ public class AudioController : ControllerBase
     }
 
     /// <summary>
+    /// Returns precomputed min/max waveform peaks for the transient in-memory preview buffer.
+    /// </summary>
+    [HttpGet("preview/peaks")]
+    public IActionResult GetPreviewPeaks([FromQuery] int pxPerSec = DefaultPeakPxPerSec)
+    {
+        var buffer = _previewBuffer.Buffer;
+        if (buffer is null)
+        {
+            return NotFound("No preview buffer available");
+        }
+
+        return Ok(BuildWaveformPeaksPayload(buffer, pxPerSec, "preview buffer"));
+    }
+
+    /// <summary>
     /// Serves the corrected chapter audio from disk.
     /// Falls back to treated.wav, then raw audio if corrected.wav does not exist.
     /// </summary>
@@ -251,6 +312,35 @@ public class AudioController : ControllerBase
         {
             return NotFound("No audio available");
         }
+    }
+
+    /// <summary>
+    /// Returns precomputed min/max waveform peaks for corrected chapter audio.
+    /// Falls back to treated/current audio using the same resolution logic as playback.
+    /// </summary>
+    [HttpGet("chapter/{chapterName}/corrected/peaks")]
+    public IActionResult GetCorrectedChapterPeaks(string chapterName, [FromQuery] int pxPerSec = DefaultPeakPxPerSec)
+    {
+        if (_workspace.CurrentChapterHandle is null)
+        {
+            return NotFound("No chapter loaded");
+        }
+
+        var audioContext = ResolveCorrectedPlaybackContext();
+        var buffer = audioContext?.Buffer;
+        if (audioContext is null || buffer is null)
+        {
+            return NotFound("No audio available");
+        }
+
+        var bucketCount = ResolveWaveformBucketCount(buffer, pxPerSec, $"corrected chapter '{chapterName}'");
+        var peaks = audioContext.GetOrCreateWaveformPeaks(bucketCount);
+        if (peaks is null)
+        {
+            return NotFound("No audio available");
+        }
+
+        return Ok(ToWaveformResponse(peaks));
     }
 
     /// <summary>
@@ -376,5 +466,81 @@ public class AudioController : ControllerBase
 
         var fileStream = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.Read);
         return File(fileStream, contentType, enableRangeProcessing: true);
+    }
+
+    private object BuildWaveformPeaksPayload(AudioBuffer buffer, int pxPerSec, string description)
+    {
+        var bucketCount = ResolveWaveformBucketCount(buffer, pxPerSec, description);
+        var peaks = WaveformPeakExtractor.ComputeMonoMinMaxEnvelope(buffer, bucketCount);
+        return ToWaveformResponse(peaks);
+    }
+
+    private object ToWaveformResponse(WaveformPeaks peaks)
+    {
+        return new
+        {
+            duration = peaks.DurationSeconds,
+            peaks = new[] { peaks.Data }
+        };
+    }
+
+    private int ResolveWaveformBucketCount(AudioBuffer buffer, int pxPerSec, string description)
+    {
+        var clampedPxPerSec = Math.Max(1, pxPerSec);
+        var durationSeconds = buffer.SampleRate > 0
+            ? buffer.Length / (double)buffer.SampleRate
+            : 0d;
+
+        var requestedBuckets = Math.Max(1, (int)Math.Ceiling(durationSeconds * clampedPxPerSec));
+        var actualBuckets = Math.Min(requestedBuckets, MaxWaveformBuckets);
+
+        if (actualBuckets != requestedBuckets)
+        {
+            _logger.LogInformation(
+                "Clamped waveform peak bucket count for {Description} from {RequestedBuckets} to {ActualBuckets}",
+                description,
+                requestedBuckets,
+                actualBuckets);
+        }
+
+        return actualBuckets;
+    }
+
+    private static AudioBuffer? TrimBuffer(AudioBuffer buffer, double? start, double? end)
+    {
+        var maxDuration = buffer.SampleRate > 0
+            ? buffer.Length / (double)buffer.SampleRate
+            : 0d;
+
+        var clampedStart = Math.Max(0d, start ?? 0d);
+        var clampedEnd = end.HasValue ? Math.Min(end.Value, maxDuration) : maxDuration;
+        if (clampedEnd <= clampedStart)
+        {
+            return null;
+        }
+
+        return AudioProcessor.Trim(
+            buffer,
+            TimeSpan.FromSeconds(clampedStart),
+            TimeSpan.FromSeconds(clampedEnd));
+    }
+
+    private AudioBufferContext? ResolveCorrectedPlaybackContext()
+    {
+        if (_workspace.CurrentChapterHandle is null)
+        {
+            return null;
+        }
+
+        var audio = _workspace.CurrentChapterHandle.Chapter.Audio;
+        foreach (var candidate in new[] { audio.Corrected, audio.Treated, audio.Current })
+        {
+            if (candidate?.Buffer is not null)
+            {
+                return candidate;
+            }
+        }
+
+        return null;
     }
 }

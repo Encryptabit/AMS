@@ -82,7 +82,7 @@ export function createWaveSurfer(elementId, options) {
         currentZoom: wsOptions.minPxPerSec,
         currentBarHeight: wsOptions.barHeight || 1,
         minBarHeight: options.minBarHeightScale || 0.25,
-        maxBarHeight: options.maxBarHeightScale || 4,
+        maxBarHeight: options.maxBarHeightScale || 8,
         barHeightScale: options.barHeightWheelScale || DEFAULT_BAR_HEIGHT_SCALE,
         heightDeltaThreshold: options.heightWheelDeltaThreshold || DEFAULT_WHEEL_DELTA_THRESHOLD,
         heightAccumulatedDelta: 0,
@@ -105,6 +105,43 @@ export function loadAudio(elementId, url) {
         return;
     }
     instance.wavesurfer.load(url);
+}
+
+/**
+ * Loads audio using a streamable URL plus a precomputed peaks JSON payload.
+ * Falls back to the normal decode path if the peaks request fails.
+ * @param {string} elementId - The element ID of the WaveSurfer instance
+ * @param {string} url - The URL of the audio file to load
+ * @param {string} peaksUrl - The URL of the peaks payload
+ */
+export async function loadAudioWithPeaks(elementId, url, peaksUrl) {
+    const instance = window.wavesurferInstances[elementId];
+    if (!instance) {
+        console.error(`[waveform-interop] No WaveSurfer instance for '${elementId}'`);
+        return;
+    }
+
+    try {
+        const response = await fetch(peaksUrl, {
+            headers: {
+                'Accept': 'application/json'
+            }
+        });
+
+        if (!response.ok) {
+            throw new Error(`Failed to fetch peaks: ${response.status} ${response.statusText}`);
+        }
+
+        const payload = await response.json();
+        if (!payload || !Array.isArray(payload.peaks) || typeof payload.duration !== 'number') {
+            throw new Error('Invalid peaks payload');
+        }
+
+        instance.wavesurfer.load(url, payload.peaks, payload.duration);
+    } catch (error) {
+        console.warn('[waveform-interop] Falling back to client decode for waveform peaks:', error);
+        instance.wavesurfer.load(url);
+    }
 }
 
 /**

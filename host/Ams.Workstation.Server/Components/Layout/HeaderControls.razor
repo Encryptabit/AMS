@@ -66,6 +66,9 @@
                    IsEnabled="@Workspace.IsInitialized">
             Reset Metadata
         </BitButton>
+        <BitCheckbox Label="Precompute Peaks In Background"
+                     Value="@Workspace.PrecomputePeaksInBackground"
+                     OnChange="HandlePrecomputePeaksToggle" />
     </div>
 </div>
 
@@ -223,6 +226,11 @@
         {
             NavigationManager.NavigateTo($"/proof/{Uri.EscapeDataString(chapter)}");
         }
+    }
+
+    private void HandlePrecomputePeaksToggle(bool enabled)
+    {
+        Workspace.SetPrecomputePeaksInBackground(enabled);
     }
 
     private void ResetMetadataAsync()

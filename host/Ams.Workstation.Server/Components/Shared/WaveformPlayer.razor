@@ -65,6 +65,7 @@
     private bool _isReady;
     private string? _errorMessage;
     private string? _loadedAudioUrl;
+    private string? _loadedPeaksUrl;
     private TaskCompletionSource? _readyTcs;
 
     /// <summary>
@@ -77,6 +78,12 @@
     /// </summary>
     [Parameter]
     public string? AudioUrl { get; set; }
+
+    /// <summary>
+    /// Optional URL that returns precomputed peaks payload for the audio.
+    /// </summary>
+    [Parameter]
+    public string? PeaksUrl { get; set; }
 
     /// <summary>
     /// Title displayed above the waveform.
@@ -100,7 +107,7 @@
     /// Maximum waveform bar-height scale when resizing with Ctrl + wheel.
     /// </summary>
     [Parameter]
-    public double MaxBarHeightScale { get; set; } = 4.0;
+    public double MaxBarHeightScale { get; set; } = 8.0;
 
     /// <summary>
     /// Default waveform zoom in pixels per second.
@@ -197,7 +204,9 @@
     protected override async Task OnParametersSetAsync()
     {
         // If AudioUrl changed after initial render, reload audio
-        if (_module != null && AudioUrl != _loadedAudioUrl && !string.IsNullOrEmpty(AudioUrl))
+        var audioChanged = AudioUrl != _loadedAudioUrl;
+        var peaksChanged = PeaksUrl != _loadedPeaksUrl;
+        if (_module != null && !string.IsNullOrEmpty(AudioUrl) && (audioChanged || peaksChanged))
         {
             _isReady = false;
             _readyTcs?.TrySetCanceled();
@@ -207,13 +216,14 @@
             Duration = 0;
             IsPlaying = false;
             StateHasChanged(); // Update UI before loading new audio
-            await LoadAudioAsync(AudioUrl);
+            await LoadAudioAsync(AudioUrl, PeaksUrl);
         }
         else if (string.IsNullOrEmpty(AudioUrl))
         {
             // Clear cached URL so next non-empty URL always triggers a reload
             // (e.g. when a parent modal closes then reopens with the same audio)
             _loadedAudioUrl = null;
+            _loadedPeaksUrl = null;
         }
     }
 
@@ -242,7 +252,7 @@
 
             if (!string.IsNullOrEmpty(AudioUrl))
             {
-                await LoadAudioAsync(AudioUrl);
+                await LoadAudioAsync(AudioUrl, PeaksUrl);
             }
         }
         catch (Exception ex)
@@ -252,14 +262,23 @@
         }
     }
 
-    private async Task LoadAudioAsync(string url)
+    private async Task LoadAudioAsync(string url, string? peaksUrl)
     {
         if (_module == null) return;
 
         try
         {
             _loadedAudioUrl = url;
-            await _module.InvokeVoidAsync("loadAudio", _elementId, url);
+            _loadedPeaksUrl = peaksUrl;
+
+            if (!string.IsNullOrEmpty(peaksUrl))
+            {
+                await _module.InvokeVoidAsync("loadAudioWithPeaks", _elementId, url, peaksUrl);
+            }
+            else
+            {
+                await _module.InvokeVoidAsync("loadAudio", _elementId, url);
+            }
         }
         catch (Exception ex)
         {

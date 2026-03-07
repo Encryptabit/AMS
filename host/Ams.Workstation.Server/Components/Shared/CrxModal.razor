@@ -59,6 +59,7 @@
                 <div class="crx-col-right">
                     <WaveformPlayer @ref="_waveformPlayer"
                                     AudioUrl="@_audioUrl"
+                                    PeaksUrl="@_peaksUrl"
                                     Title="Audio Preview"
                                     Height="80" />
                     <BitText Typography="BitTypography.Caption2" Color="BitColor.SecondaryForeground"
@@ -86,6 +87,7 @@
 </div>
 
 @code {
+    private const int PeakPxPerSec = 1200;
     private bool _isVisible;
     private string _chapterName = "";
     private double _startTime;
@@ -97,6 +99,7 @@
     private int _paddingMs = 50;
     private bool _submitting;
     private string _audioUrl = "";
+    private string? _peaksUrl;
     private SentenceReport? _sentenceReport;
     private WaveformPlayer? _waveformPlayer;
 
@@ -132,6 +135,7 @@
 
         // Set audio URL
         _audioUrl = BuildAudioUrl();
+        _peaksUrl = BuildPeaksUrl();
 
         StateHasChanged();
     }
@@ -140,6 +144,7 @@
     {
         _isVisible = false;
         _audioUrl = "";
+        _peaksUrl = null;
         StateHasChanged();
     }
 
@@ -262,6 +267,7 @@
         {
             _paddingMs = val;
             _audioUrl = BuildAudioUrl();
+            _peaksUrl = BuildPeaksUrl();
             StateHasChanged();
         }
     }
@@ -270,6 +276,12 @@
     {
         var end = _endTime + (_paddingMs / 1000.0);
         return $"/api/audio/chapter/{Uri.EscapeDataString(_chapterName)}?start={_startTime}&end={end}";
+    }
+
+    private string BuildPeaksUrl()
+    {
+        var end = _endTime + (_paddingMs / 1000.0);
+        return $"/api/audio/chapter/{Uri.EscapeDataString(_chapterName)}/peaks?start={_startTime}&end={end}&pxPerSec={PeakPxPerSec}";
     }
 
     private async Task Submit()

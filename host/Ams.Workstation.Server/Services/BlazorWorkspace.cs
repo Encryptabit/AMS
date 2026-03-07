@@ -26,11 +26,15 @@ public sealed class BlazorWorkspace : IWorkspace, IDisposable
     private static readonly StringComparer PersistedPathComparer = OperatingSystem.IsWindows()
         ? StringComparer.OrdinalIgnoreCase
         : StringComparer.Ordinal;
+    private const int BackgroundPeakPxPerSec = 1200;
+    private const int MaxBackgroundPeakBuckets = 500_000;
 
     private BookManager? _manager;
     private ChapterContextHandle? _currentChapterHandle;
     private string? _rootPath;
     private bool _disposed;
+    private CancellationTokenSource? _backgroundPeakPrecomputeCts;
+    private Task? _backgroundPeakPrecomputeTask;
 
     // Maps display title (e.g., "CHAPTER 3") to WAV stem (e.g., "03_CultistOfCerebon2_Ch3")
     private readonly Dictionary<string, string> _stemByTitle = new(StringComparer.OrdinalIgnoreCase);
@@ -120,6 +124,11 @@ public sealed class BlazorWorkspace : IWorkspace, IDisposable
     public string? RoomtoneFilePath { get; private set; }
 
     /// <summary>
+    /// Whether waveform peaks should be computed for all chapters in the background after loading a workspace.
+    /// </summary>
+    public bool PrecomputePeaksInBackground { get; private set; }
+
+    /// <summary>
     /// The currently open chapter handle, or null if no chapter is selected.
     /// Access chapter data via: CurrentChapterHandle.Context.Audio.Current.Buffer
     /// </summary>
@@ -140,30 +149,8 @@ public sealed class BlazorWorkspace : IWorkspace, IDisposable
         if (string.IsNullOrEmpty(chapterName) || _manager == null || string.IsNullOrEmpty(_rootPath))
             return false;
 
-        var chapterStem = _stemByTitle.GetValueOrDefault(chapterName, chapterName);
-
-        if (!_chapterHandles.TryGetValue(chapterStem, out var handle))
-        {
-            try
-            {
-                var audioPath = Path.Combine(_rootPath, $"{chapterStem}.wav");
-                var chapterDir = Path.Combine(_rootPath, chapterStem);
-
-                handle = OpenChapter(new ChapterOpenOptions
-                {
-                    ChapterId = chapterStem,
-                    AudioFile = File.Exists(audioPath) ? new FileInfo(audioPath) : null,
-                    ChapterDirectory = Directory.Exists(chapterDir) ? new DirectoryInfo(chapterDir) : null
-                });
-
-                _chapterHandles[chapterStem] = handle;
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"Failed to open chapter '{chapterName}' (stem: {chapterStem}) for hydrate: {ex.Message}");
-                return false;
-            }
-        }
+        if (!TryGetOrCreateChapterHandle(chapterName, out var handle))
+            return false;
 
         hydrated = handle.Chapter.Documents.HydratedTranscript;
         return hydrated != null;
@@ -185,6 +172,8 @@ public sealed class BlazorWorkspace : IWorkspace, IDisposable
         var trimmed = NormalizeOptionalPath(path);
         if (string.IsNullOrWhiteSpace(trimmed)) return false;
         if (!Directory.Exists(trimmed)) return false;
+
+        CancelBackgroundPeakPrecompute();
 
         // Dispose previous state
         foreach (var handle in _chapterHandles.Values)
@@ -212,6 +201,7 @@ public sealed class BlazorWorkspace : IWorkspace, IDisposable
         }
 
         SavePersistedState();
+        RestartBackgroundPeakPrecompute();
         return true;
     }
 
@@ -239,6 +229,19 @@ public sealed class BlazorWorkspace : IWorkspace, IDisposable
     }
 
     /// <summary>
+    /// Enables or disables background waveform peak precomputation for all chapters in the active workspace.
+    /// </summary>
+    public void SetPrecomputePeaksInBackground(bool enabled)
+    {
+        if (PrecomputePeaksInBackground == enabled)
+            return;
+
+        PrecomputePeaksInBackground = enabled;
+        SavePersistedState();
+        RestartBackgroundPeakPrecompute();
+    }
+
+    /// <summary>
     /// Selects a chapter by name, opening its context handle.
     /// Chapters remain cached until workspace is disposed (LRU managed by ChapterManager).
     /// </summary>
@@ -249,44 +252,16 @@ public sealed class BlazorWorkspace : IWorkspace, IDisposable
         if (string.IsNullOrEmpty(chapterName) || _manager == null || string.IsNullOrEmpty(_rootPath))
             return false;
 
-        // Resolve display title to WAV stem
-        // If not found in mapping, assume chapterName IS the stem (direct usage)
-        var chapterStem = _stemByTitle.GetValueOrDefault(chapterName, chapterName);
-
-        // Check if we already have this chapter cached
-        if (_chapterHandles.TryGetValue(chapterStem, out var existingHandle))
+        if (!TryGetOrCreateChapterHandle(chapterName, out var handle))
         {
-            _currentChapterHandle = existingHandle;
-            CurrentChapterName = chapterName;
-            SavePersistedState();
-            return true;
-        }
-
-        try
-        {
-            // WAV files are in the root directory, not inside the chapter folder
-            var audioPath = Path.Combine(_rootPath, $"{chapterStem}.wav");
-            var chapterDir = Path.Combine(_rootPath, chapterStem);
-
-            var handle = OpenChapter(new ChapterOpenOptions
-            {
-                ChapterId = chapterStem,
-                AudioFile = File.Exists(audioPath) ? new FileInfo(audioPath) : null,
-                ChapterDirectory = Directory.Exists(chapterDir) ? new DirectoryInfo(chapterDir) : null
-            });
-
-            _chapterHandles[chapterStem] = handle;
-            _currentChapterHandle = handle;
-            CurrentChapterName = chapterName; // Store display name for UI
-            SavePersistedState();
-            return true;
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"Failed to open chapter '{chapterName}' (stem: {chapterStem}): {ex.Message}");
             CurrentChapterName = null;
             return false;
         }
+
+        _currentChapterHandle = handle;
+        CurrentChapterName = chapterName; // Store display name for UI
+        SavePersistedState();
+        return true;
     }
 
     /// <summary>
@@ -294,6 +269,7 @@ public sealed class BlazorWorkspace : IWorkspace, IDisposable
     /// </summary>
     public void Clear()
     {
+        CancelBackgroundPeakPrecompute();
         foreach (var handle in _chapterHandles.Values)
         {
             handle.Dispose();
@@ -403,6 +379,12 @@ public sealed class BlazorWorkspace : IWorkspace, IDisposable
                 RoomtoneFilePath = NormalizeOptionalPath(roomtoneProp.GetString());
             }
 
+            if (root.TryGetProperty("precomputePeaksInBackground", out var precomputeProp) &&
+                (precomputeProp.ValueKind == JsonValueKind.True || precomputeProp.ValueKind == JsonValueKind.False))
+            {
+                PrecomputePeaksInBackground = precomputeProp.GetBoolean();
+            }
+
             if (root.TryGetProperty("workingDirectory", out var wdProp))
             {
                 var wd = NormalizeOptionalPath(wdProp.GetString());
@@ -441,7 +423,8 @@ public sealed class BlazorWorkspace : IWorkspace, IDisposable
                 workingDirectory = _rootPath,
                 currentChapter = CurrentChapterName,
                 pickupSessionPath = PickupSessionPath,
-                roomtoneFilePath = RoomtoneFilePath
+                roomtoneFilePath = RoomtoneFilePath,
+                precomputePeaksInBackground = PrecomputePeaksInBackground
             };
 
             var json = JsonSerializer.Serialize(state, new JsonSerializerOptions { WriteIndented = true });
@@ -478,11 +461,130 @@ public sealed class BlazorWorkspace : IWorkspace, IDisposable
     {
         if (_disposed) return;
         _disposed = true;
+        CancelBackgroundPeakPrecompute();
         foreach (var handle in _chapterHandles.Values)
         {
             handle.Dispose();
         }
         _chapterHandles.Clear();
         _currentChapterHandle = null;
+    }
+
+    private bool TryGetOrCreateChapterHandle(string chapterName, out ChapterContextHandle handle)
+    {
+        var chapterStem = _stemByTitle.GetValueOrDefault(chapterName, chapterName);
+
+        if (_chapterHandles.TryGetValue(chapterStem, out handle!))
+        {
+            return true;
+        }
+
+        try
+        {
+            var audioPath = Path.Combine(_rootPath!, $"{chapterStem}.wav");
+            var chapterDir = Path.Combine(_rootPath!, chapterStem);
+
+            handle = OpenChapter(new ChapterOpenOptions
+            {
+                ChapterId = chapterStem,
+                AudioFile = File.Exists(audioPath) ? new FileInfo(audioPath) : null,
+                ChapterDirectory = Directory.Exists(chapterDir) ? new DirectoryInfo(chapterDir) : null
+            });
+
+            _chapterHandles[chapterStem] = handle;
+            return true;
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Failed to open chapter '{chapterName}' (stem: {chapterStem}): {ex.Message}");
+            handle = null!;
+            return false;
+        }
+    }
+
+    private void RestartBackgroundPeakPrecompute()
+    {
+        CancelBackgroundPeakPrecompute();
+
+        if (!PrecomputePeaksInBackground || _manager == null || string.IsNullOrEmpty(_rootPath) || AvailableChapters.Count == 0)
+            return;
+
+        var chapters = AvailableChapters.ToList();
+        var cts = new CancellationTokenSource();
+        _backgroundPeakPrecomputeCts = cts;
+        _backgroundPeakPrecomputeTask = Task.Run(() => PrecomputeWaveformPeaksAsync(chapters, cts.Token), cts.Token);
+    }
+
+    private void CancelBackgroundPeakPrecompute()
+    {
+        if (_backgroundPeakPrecomputeCts is null)
+            return;
+
+        try
+        {
+            _backgroundPeakPrecomputeCts.Cancel();
+        }
+        catch
+        {
+            // Ignore cancellation disposal races
+        }
+        finally
+        {
+            _backgroundPeakPrecomputeCts.Dispose();
+            _backgroundPeakPrecomputeCts = null;
+            _backgroundPeakPrecomputeTask = null;
+        }
+    }
+
+    private async Task PrecomputeWaveformPeaksAsync(IReadOnlyList<string> chapters, CancellationToken cancellationToken)
+    {
+        foreach (var chapter in chapters)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            if (!TryGetOrCreateChapterHandle(chapter, out var handle))
+                continue;
+
+            try
+            {
+                var seenBufferIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                var audioContexts = new[]
+                {
+                    handle.Chapter.Audio.Current,
+                    handle.Chapter.Audio.Treated,
+                    handle.Chapter.Audio.Corrected
+                };
+
+                foreach (var audioContext in audioContexts)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+
+                    if (audioContext is null || !seenBufferIds.Add(audioContext.Descriptor.BufferId))
+                        continue;
+
+                    var buffer = audioContext.Buffer;
+                    if (buffer is null)
+                        continue;
+
+                    var durationSeconds = buffer.SampleRate > 0
+                        ? buffer.Length / (double)buffer.SampleRate
+                        : 0d;
+                    var requestedBuckets = Math.Max(1, (int)Math.Ceiling(durationSeconds * BackgroundPeakPxPerSec));
+                    var bucketCount = Math.Min(requestedBuckets, MaxBackgroundPeakBuckets);
+
+                    audioContext.GetOrCreateWaveformPeaks(bucketCount);
+                }
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Failed to precompute waveform peaks for '{chapter}': {ex.Message}");
+            }
+
+            await Task.Yield();
+        }
     }
 }
