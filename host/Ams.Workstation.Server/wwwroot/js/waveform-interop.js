@@ -671,6 +671,17 @@ function attachCtrlWheelHeightHandler(instance, dotNetRef) {
 
     const onWheel = (event) => {
         if (!event.ctrlKey) {
+            if (!event.shiftKey) {
+                return;
+            }
+
+            // Preserve the expected browser gesture: Shift + wheel pans horizontally.
+            // Stop the zoom plugin from consuming the event, then apply horizontal scroll.
+            event.preventDefault();
+            event.stopImmediatePropagation();
+
+            const delta = Math.abs(event.deltaX) > 0 ? event.deltaX : event.deltaY;
+            wheelTarget.scrollLeft += delta;
             return;
         }
 
@@ -687,7 +698,7 @@ function attachCtrlWheelHeightHandler(instance, dotNetRef) {
             return;
         }
 
-        const nextHeight = clamp(
+        const nextHeight = clampNumber(
             Math.round(instance.currentHeight + instance.heightAccumulatedDelta * instance.heightScale),
             instance.minHeight,
             instance.maxHeight);
@@ -709,4 +720,8 @@ function attachCtrlWheelHeightHandler(instance, dotNetRef) {
 
     wheelTarget.addEventListener('wheel', onWheel, { passive: false, capture: true });
     instance.cleanupHandlers.push(() => wheelTarget.removeEventListener('wheel', onWheel, true));
+}
+
+function clampNumber(value, min, max) {
+    return Math.min(max, Math.max(min, value));
 }
