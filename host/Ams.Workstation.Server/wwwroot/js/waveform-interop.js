@@ -7,7 +7,7 @@ window.wavesurferInstances = window.wavesurferInstances || {};
 const DEFAULT_WHEEL_ZOOM_SCALE = 0.5;
 const DEFAULT_WHEEL_DELTA_THRESHOLD = 5;
 const DEFAULT_MAX_ZOOM = 5000;
-const DEFAULT_HEIGHT_SCALE = 0.15;
+const DEFAULT_BAR_HEIGHT_SCALE = 0.01;
 
 /**
  * Creates a new WaveSurfer instance and stores it in the registry.
@@ -80,10 +80,10 @@ export function createWaveSurfer(elementId, options) {
         isPlaying: false,
         preservePitch: true,
         currentZoom: wsOptions.minPxPerSec,
-        currentHeight: options.height || 128,
-        minHeight: options.minWaveformHeightPx || 64,
-        maxHeight: options.maxWaveformHeightPx || 320,
-        heightScale: options.heightWheelScale || DEFAULT_HEIGHT_SCALE,
+        currentBarHeight: wsOptions.barHeight || 1,
+        minBarHeight: options.minBarHeightScale || 0.25,
+        maxBarHeight: options.maxBarHeightScale || 4,
+        barHeightScale: options.barHeightWheelScale || DEFAULT_BAR_HEIGHT_SCALE,
         heightDeltaThreshold: options.heightWheelDeltaThreshold || DEFAULT_WHEEL_DELTA_THRESHOLD,
         heightAccumulatedDelta: 0,
         zoomSyncTimerId: null,
@@ -698,24 +698,19 @@ function attachCtrlWheelHeightHandler(instance, dotNetRef) {
             return;
         }
 
-        const nextHeight = clampNumber(
-            Math.round(instance.currentHeight + instance.heightAccumulatedDelta * instance.heightScale),
-            instance.minHeight,
-            instance.maxHeight);
+        const nextBarHeight = clampNumber(
+            Number((instance.currentBarHeight + instance.heightAccumulatedDelta * instance.barHeightScale).toFixed(2)),
+            instance.minBarHeight,
+            instance.maxBarHeight);
 
         instance.heightAccumulatedDelta = 0;
 
-        if (nextHeight === instance.currentHeight) {
+        if (nextBarHeight === instance.currentBarHeight) {
             return;
         }
 
-        instance.currentHeight = nextHeight;
-        instance.wavesurfer.setOptions({ height: nextHeight });
-
-        if (dotNetRef) {
-            dotNetRef.invokeMethodAsync('OnHeightChanged', nextHeight)
-                .catch(err => console.warn('[waveform-interop] Error invoking OnHeightChanged:', err));
-        }
+        instance.currentBarHeight = nextBarHeight;
+        instance.wavesurfer.setOptions({ barHeight: nextBarHeight });
     };
 
     wheelTarget.addEventListener('wheel', onWheel, { passive: false, capture: true });
