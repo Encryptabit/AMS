@@ -431,7 +431,7 @@ public static class MfaWorkflow
         TryDeleteDirectory(Path.Combine(mfaRoot, $"{chapterStem}.align"));
         TryDeleteDirectory(Path.Combine(mfaRoot, $"{chapterStem}.g2p"));
         TryDeleteDirectory(Path.Combine(mfaRoot, $"{chapterStem}.oov.cleaned"));
-        // MFA itself uses Documents/MFA/corpus as a shared working directory.
+        // MFA itself uses the default workspace root (now Documents/MFA_1) for shared scratch data.
         // Parallel alignment jobs can hold open sqlite handles (corpus.db), so deleting
         // this directory per chapter causes needless contention/log noise.
         // Leave it intact so concurrent runs can share the workspace safely.

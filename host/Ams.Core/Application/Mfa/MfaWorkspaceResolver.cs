@@ -7,6 +7,8 @@ internal static class MfaWorkspaceResolver
     private const string MfaRootEnvVar = "MFA_ROOT_DIR";
     private const string WorkspaceEnvVar = "AMS_MFA_WORKSPACE";
     private const string WorkspacesEnvVar = "AMS_MFA_WORKSPACES";
+    private const string LegacyWorkspaceName = "MFA";
+    private const string PrimaryWorkspaceName = "MFA_1";
 
     public static string ResolvePreferredRoot(string? overrideRoot = null)
     {
@@ -44,7 +46,7 @@ internal static class MfaWorkspaceResolver
             return EnsureWorkspace(existing);
         }
 
-        return EnsureWorkspace(Path.Combine(documents, "MFA"));
+        return EnsureWorkspace(Path.Combine(documents, PrimaryWorkspaceName));
     }
 
     public static IReadOnlyList<string> ResolveWorkspaceRoots(int requestedCount)
@@ -71,16 +73,17 @@ internal static class MfaWorkspaceResolver
 
         foreach (var existing in EnumerateExistingWorkspaceCandidates(documents))
         {
-            if (seen.Add(existing))
+            var canonical = CanonicalizeWorkspacePath(existing);
+            if (seen.Add(canonical))
             {
-                roots.Add(existing);
+                roots.Add(canonical);
             }
         }
 
         var generatedTarget = desiredCount <= 1 ? 1 : Math.Max(8, desiredCount);
         for (int i = 1; i <= generatedTarget; i++)
         {
-            var generated = Path.Combine(documents, $"MFA_{i}");
+            var generated = CanonicalizeWorkspacePath(Path.Combine(documents, $"MFA_{i}"));
             if (seen.Add(generated))
             {
                 roots.Add(generated);
@@ -89,7 +92,7 @@ internal static class MfaWorkspaceResolver
 
         if (roots.Count == 0)
         {
-            roots.Add(Path.Combine(documents, "MFA"));
+            roots.Add(Path.Combine(documents, PrimaryWorkspaceName));
         }
 
         return roots
@@ -175,7 +178,7 @@ internal static class MfaWorkspaceResolver
 
         try
         {
-            normalized = Path.GetFullPath(path.Trim());
+            normalized = CanonicalizeWorkspacePath(Path.GetFullPath(path.Trim()));
             return true;
         }
         catch
@@ -186,7 +189,106 @@ internal static class MfaWorkspaceResolver
 
     private static string EnsureWorkspace(string path)
     {
-        Directory.CreateDirectory(path);
-        return Path.GetFullPath(path);
+        var normalized = CanonicalizeWorkspacePath(path);
+        SeedPrimaryWorkspaceFromLegacy(normalized);
+        Directory.CreateDirectory(normalized);
+        return Path.GetFullPath(normalized);
+    }
+
+    private static string CanonicalizeWorkspacePath(string path)
+    {
+        var fullPath = Path.GetFullPath(path);
+        var name = Path.GetFileName(fullPath);
+        if (!name.Equals(LegacyWorkspaceName, StringComparison.OrdinalIgnoreCase))
+        {
+            return fullPath;
+        }
+
+        var parent = Path.GetDirectoryName(fullPath);
+        if (string.IsNullOrWhiteSpace(parent))
+        {
+            return fullPath;
+        }
+
+        return Path.Combine(parent, PrimaryWorkspaceName);
+    }
+
+    private static void SeedPrimaryWorkspaceFromLegacy(string canonicalPath)
+    {
+        var name = Path.GetFileName(canonicalPath);
+        if (!name.Equals(PrimaryWorkspaceName, StringComparison.OrdinalIgnoreCase))
+        {
+            return;
+        }
+
+        var parent = Path.GetDirectoryName(canonicalPath);
+        if (string.IsNullOrWhiteSpace(parent))
+        {
+            return;
+        }
+
+        var legacyPath = Path.Combine(parent, LegacyWorkspaceName);
+        if (!Directory.Exists(legacyPath))
+        {
+            return;
+        }
+
+        Directory.CreateDirectory(canonicalPath);
+        CopyFileIfMissing(
+            Path.Combine(legacyPath, "global_config.yaml"),
+            Path.Combine(canonicalPath, "global_config.yaml"));
+        CopyDirectoryContentsIfMissing(
+            Path.Combine(legacyPath, "pretrained_models"),
+            Path.Combine(canonicalPath, "pretrained_models"));
+    }
+
+    private static void CopyFileIfMissing(string sourcePath, string destinationPath)
+    {
+        if (!File.Exists(sourcePath) || File.Exists(destinationPath))
+        {
+            return;
+        }
+
+        var destinationDirectory = Path.GetDirectoryName(destinationPath);
+        if (!string.IsNullOrWhiteSpace(destinationDirectory))
+        {
+            Directory.CreateDirectory(destinationDirectory);
+        }
+
+        File.Copy(sourcePath, destinationPath, overwrite: false);
+    }
+
+    private static void CopyDirectoryContentsIfMissing(string sourceDirectory, string destinationDirectory)
+    {
+        if (!Directory.Exists(sourceDirectory))
+        {
+            return;
+        }
+
+        Directory.CreateDirectory(destinationDirectory);
+
+        foreach (var directory in Directory.EnumerateDirectories(sourceDirectory, "*", SearchOption.AllDirectories))
+        {
+            var relative = Path.GetRelativePath(sourceDirectory, directory);
+            Directory.CreateDirectory(Path.Combine(destinationDirectory, relative));
+        }
+
+        foreach (var file in Directory.EnumerateFiles(sourceDirectory, "*", SearchOption.AllDirectories))
+        {
+            var relative = Path.GetRelativePath(sourceDirectory, file);
+            var destinationPath = Path.Combine(destinationDirectory, relative);
+            if (File.Exists(destinationPath))
+            {
+                continue;
+            }
+
+            var destinationParent = Path.GetDirectoryName(destinationPath);
+            if (!string.IsNullOrWhiteSpace(destinationParent))
+            {
+                Directory.CreateDirectory(destinationParent);
+            }
+
+            File.Copy(file, destinationPath, overwrite: false);
+        }
     }
 }
