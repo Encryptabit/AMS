@@ -5,6 +5,7 @@ using Ams.Cli.Repl;
 using Ams.Cli.Commands;
 using Ams.Core.Application.Mfa;
 using Ams.Core.Application.Validation;
+using Ams.Core.Asr;
 using Ams.Core.Runtime.Book;
 using Ams.Core.Services;
 using Ams.Core.Services.Alignment;
@@ -45,18 +46,9 @@ internal static class Program
         using var loggerFactory = Log.ConfigureDefaults(logFileName: "ams-log.txt");
         Log.Debug("Structured logging initialized. Console + file at {LogFile}", Log.LogFilePath ?? "(unknown)");
 
-        AsrProcessSupervisor.RegisterForShutdown();
         var configuredEngine = AsrEngineConfig.Resolve();
         Log.Debug("ASR engine configured as {Engine}", configuredEngine);
-        if (configuredEngine == AsrEngine.Nemo)
-        {
-            var defaultAsrUrl = ResolveDefaultAsrUrl();
-            AsrProcessSupervisor.TriggerBackgroundWarmup(defaultAsrUrl);
-        }
-        else
-        {
-            Log.Debug("Whisper.NET in-process ASR selected; skipping external service warmup.");
-        }
+        Log.Debug("In-process ASR selected; skipping external service warmup.");
 
         MfaProcessSupervisor.RegisterForShutdown();
         MfaProcessSupervisor.TriggerBackgroundWarmup();
@@ -178,7 +170,7 @@ internal static class Program
     {
         var dirLabel = state.WorkingDirectoryLabel;
         var scopeLabel = state.ScopeLabel;
-        var asrLabel = AsrProcessSupervisor.StatusLabel;
+        var asrLabel = GetAsrStatusLabel();
         return $"[AMS|{dirLabel}|{scopeLabel}|{asrLabel}]> ";
     }
 
@@ -189,10 +181,7 @@ internal static class Program
                || input.Equals("q", StringComparison.OrdinalIgnoreCase);
     }
 
-    private static string ResolveDefaultAsrUrl()
-    {
-        return Environment.GetEnvironmentVariable("AMS_ASR_SERVICE_URL") ?? AsrCommand.DefaultServiceUrl;
-    }
+    private static string GetAsrStatusLabel() => $"ASR:{AsrEngineConfig.Resolve().ToString().ToLowerInvariant()}";
 
     private static async Task<bool> TryHandleBuiltInAsync(string input, ReplState state, RootCommand rootCommand)
     {

@@ -10,6 +10,7 @@ using Ams.Cli.Utilities;
 using Ams.Cli.Repl;
 using Ams.Core.Application.Commands;
 using Ams.Core.Application.Mfa.Models;
+using Ams.Core.Asr;
 using Ams.Core.Artifacts;
 using Ams.Core.Processors;
 using Ams.Core.Artifacts.Hydrate;
@@ -441,7 +442,7 @@ public static class PipelineCommand
         bool forceIndex,
         bool force,
         double avgWpm,
-        string asrServiceUrl,
+        AsrEngine asrEngine,
         string? asrModel,
         string asrLanguage,
         bool verbose,
@@ -534,7 +535,7 @@ public static class PipelineCommand
                     forceIndex,
                     force,
                     avgWpm,
-                    asrServiceUrl,
+                    asrEngine,
                     asrModel,
                     asrLanguage,
                     verbose,
@@ -1132,10 +1133,12 @@ public static class PipelineCommand
         var avgWpmOption = new Option<double>("--avg-wpm", () => 200.0,
             "Average WPM used for duration estimation when indexing");
 
-        var asrServiceOption = new Option<string>("--asr-service", () => "http://localhost:8000", "ASR service URL");
-        asrServiceOption.AddAlias("-s");
         var asrModelOption = new Option<string?>("--asr-model", () => null, "Optional ASR model identifier");
         asrModelOption.AddAlias("-m");
+        var asrEngineOption = new Option<string>(
+            "--asr-engine",
+            () => AsrEngineConfig.Resolve().ToString().ToLowerInvariant(),
+            "ASR engine to use for pipeline transcription (whisper or whisperx)");
         var asrLanguageOption = new Option<string>("--language", () => "en", "ASR language code");
         asrLanguageOption.AddAlias("-l");
 
@@ -1171,8 +1174,8 @@ public static class PipelineCommand
         cmd.AddOption(forceOption);
         cmd.AddOption(forceIndexOption);
         cmd.AddOption(avgWpmOption);
-        cmd.AddOption(asrServiceOption);
         cmd.AddOption(asrModelOption);
+        cmd.AddOption(asrEngineOption);
         cmd.AddOption(asrLanguageOption);
         cmd.AddOption(verboseOption);
         cmd.AddOption(maxWorkersOption);
@@ -1196,8 +1199,8 @@ public static class PipelineCommand
             var forceAll = context.ParseResult.GetValueForOption(forceOption);
             var forceIndex = context.ParseResult.GetValueForOption(forceIndexOption);
             var avgWpm = context.ParseResult.GetValueForOption(avgWpmOption);
-            var asrServiceUrl = context.ParseResult.GetValueForOption(asrServiceOption) ?? "http://localhost:8000";
             var asrModel = context.ParseResult.GetValueForOption(asrModelOption);
+            var asrEngine = AsrEngineConfig.Resolve(context.ParseResult.GetValueForOption(asrEngineOption));
             var asrLanguage = context.ParseResult.GetValueForOption(asrLanguageOption) ?? "en";
             var verbose = context.ParseResult.GetValueForOption(verboseOption);
             var maxWorkers = context.ParseResult.GetValueForOption(maxWorkersOption);
@@ -1234,7 +1237,7 @@ public static class PipelineCommand
                                 forceIndex,
                                 forceAll,
                                 avgWpm,
-                                asrServiceUrl,
+                                asrEngine,
                                 asrModel,
                                 asrLanguage,
                                 verbose,
@@ -1261,7 +1264,7 @@ public static class PipelineCommand
                             forceIndex,
                             forceAll,
                             avgWpm,
-                            asrServiceUrl,
+                            asrEngine,
                             asrModel,
                             asrLanguage,
                             verbose,
@@ -1319,7 +1322,7 @@ public static class PipelineCommand
                                     forceIndex,
                                     forceAll,
                                     avgWpm,
-                                    asrServiceUrl,
+                                    asrEngine,
                                     asrModel,
                                     asrLanguage,
                                     verbose,
@@ -1360,7 +1363,7 @@ public static class PipelineCommand
                         forceIndex,
                         forceAll,
                         avgWpm,
-                        asrServiceUrl,
+                        asrEngine,
                         asrModel,
                         asrLanguage,
                         verbose,
@@ -1399,7 +1402,7 @@ public static class PipelineCommand
         bool forceIndex,
         bool force,
         double avgWpm,
-        string asrServiceUrl,
+        AsrEngine asrEngine,
         string? asrModel,
         string asrLanguage,
         bool verbose,
@@ -1467,8 +1470,7 @@ public static class PipelineCommand
 
         var transcriptOptions = new GenerateTranscriptOptions
         {
-            Engine = AsrEngineConfig.Resolve(),
-            ServiceUrl = asrServiceUrl,
+            Engine = asrEngine,
             Model = asrModel,
             Language = asrLanguage,
             EnableWordTimestamps = true,

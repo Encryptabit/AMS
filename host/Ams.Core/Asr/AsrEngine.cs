@@ -6,13 +6,15 @@ namespace Ams.Core.Asr;
 public enum AsrEngine
 {
     Whisper,
-    Nemo
+    WhisperX
 }
 
 public static class AsrEngineConfig
 {
     public const string EngineEnvironmentVariable = "AMS_ASR_ENGINE";
     public const string WhisperModelPathEnvironmentVariable = "AMS_WHISPER_MODEL_PATH";
+    public const string WhisperXExecutableEnvironmentVariable = "AMS_WHISPERX_BIN";
+    public const string DefaultWhisperXModel = "large-v3";
 
     /// <summary>Default Whisper model type when none is specified.</summary>
     public static GgmlType DefaultModelType => GgmlType.LargeV3Turbo;
@@ -29,17 +31,18 @@ public static class AsrEngineConfig
         value = value.Trim().ToLowerInvariant();
         return value switch
         {
-            "nemo" => AsrEngine.Nemo,
             "whisper" => AsrEngine.Whisper,
             "whispernet" => AsrEngine.Whisper,
             "whisper.net" => AsrEngine.Whisper,
+            "whisperx" => AsrEngine.WhisperX,
+            "whisper-x" => AsrEngine.WhisperX,
             _ => AsrEngine.Whisper
         };
     }
 
     public static bool IsWhisper(string? engineOption = null) => Resolve(engineOption) == AsrEngine.Whisper;
 
-    public static bool IsNemo(string? engineOption = null) => Resolve(engineOption) == AsrEngine.Nemo;
+    public static bool IsWhisperX(string? engineOption = null) => Resolve(engineOption) == AsrEngine.WhisperX;
 
     /// <summary>
     /// Synchronous model path resolution from explicit value or environment variable.

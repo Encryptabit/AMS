@@ -13,12 +13,12 @@ Audio Management System (AMS) - CLI and core library for audio processing, ASR, 
 
 ## Current Pipeline (MFA-based)
 
-The pipeline uses **Nemo ASR** for initial speech recognition and **Montreal Forced Aligner (MFA)** for precise word/phone-level timing refinement.
+The pipeline uses **Whisper-family ASR** (in-process Whisper.NET or spawned WhisperX) for initial speech recognition and **Montreal Forced Aligner (MFA)** for precise word/phone-level timing refinement.
 
 ### Pipeline Stages
 
 1. **ASR Stage** (`host/Ams.Cli/Commands/AsrCommand.cs`)
-   - Uses Nemo ASR service to generate initial word-level timings
+   - Uses Whisper.NET or WhisperX to generate initial word-level timings
    - Outputs: `{chapter}.asr.json` with token timings
 
 2. **Alignment Stage** (`host/Ams.Cli/Commands/AlignCommand.cs`)
@@ -43,7 +43,8 @@ The pipeline uses **Nemo ASR** for initial speech recognition and **Montreal For
 
 ### Key Models & Services
 
-- **Nemo ASR**: Default service at `http://localhost:8765`
+- **Whisper.NET**: default in-process backend using GGML models
+- **WhisperX**: optional spawned backend for alternative word timing behavior
 - **MFA Models**:
   - Dictionary: `english_us_arpa`
   - Acoustic: `english_us_arpa`

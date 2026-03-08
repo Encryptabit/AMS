@@ -279,6 +279,8 @@ else
     private void HandleSeek(double time)
     {
         _currentTime = time;
+        _selectedSentenceId = null;
+        StateHasChanged();
     }
 
     private void HandlePlaybackFinished()

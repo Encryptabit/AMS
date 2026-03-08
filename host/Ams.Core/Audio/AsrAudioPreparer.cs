@@ -6,7 +6,7 @@ using Ams.Core.Services.Integrations.FFmpeg;
 namespace Ams.Core.Audio;
 
 /// <summary>
-/// Prepares audio buffers for ASR engines (Whisper, Nemo) by converting to mono 16kHz.
+/// Prepares audio buffers for ASR engines by converting to mono 16kHz.
 /// </summary>
 /// <remarks>
 /// <para>

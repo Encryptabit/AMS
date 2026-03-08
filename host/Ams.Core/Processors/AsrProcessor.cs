@@ -4,8 +4,10 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Text;
+using System.Text.Json;
 using System.Threading;
 using Ams.Core.Artifacts;
+using Ams.Core.Asr;
 using Ams.Core.Audio;
 using Ams.Core.Common;
 using Whisper.net;
@@ -350,7 +352,7 @@ public static class AsrProcessor
         }
 
         options = options ?? throw new ArgumentNullException(nameof(options));
-        EnsureModelPath(options.ModelPath);
+        ValidateOptions(options);
         cancellationToken.ThrowIfCancellationRequested();
 
         var decodeOptions = new AudioDecodeOptions(
@@ -367,7 +369,7 @@ public static class AsrProcessor
         CancellationToken cancellationToken = default)
     {
         options = options ?? throw new ArgumentNullException(nameof(options));
-        EnsureModelPath(options.ModelPath);
+        ValidateOptions(options);
         cancellationToken.ThrowIfCancellationRequested();
 
         var samples = monoAudio.ToArray();
@@ -383,9 +385,28 @@ public static class AsrProcessor
         CancellationToken cancellationToken = default)
     {
         options = options ?? throw new ArgumentNullException(nameof(options));
-        EnsureModelPath(options.ModelPath);
+        ValidateOptions(options);
         cancellationToken.ThrowIfCancellationRequested();
         return TranscribeBufferInternalAsync(buffer, options, cancellationToken);
+    }
+
+    private static void ValidateOptions(AsrOptions options)
+    {
+        switch (options.Engine)
+        {
+            case AsrEngine.WhisperX:
+                if (string.IsNullOrWhiteSpace(options.ModelName))
+                {
+                    throw new ArgumentException("WhisperX model name must be provided.", nameof(options));
+                }
+
+                break;
+
+            case AsrEngine.Whisper:
+            default:
+                EnsureModelPath(options.ModelPath);
+                break;
+        }
     }
 
     private static async Task<AsrResponse> TranscribeBufferInternalAsync(
@@ -396,7 +417,11 @@ public static class AsrProcessor
         cancellationToken.ThrowIfCancellationRequested();
         buffer = AsrAudioPreparer.PrepareForAsr(buffer);
 
-        return await TranscribeWithWhisperNetAsync(buffer, options, cancellationToken).ConfigureAwait(false);
+        return options.Engine switch
+        {
+            AsrEngine.WhisperX => await RunWhisperXPassAsync(buffer, options, cancellationToken).ConfigureAwait(false),
+            _ => await TranscribeWithWhisperNetAsync(buffer, options, cancellationToken).ConfigureAwait(false)
+        };
     }
 
     private static async Task<AsrResponse> TranscribeWithWhisperNetAsync(
@@ -488,6 +513,80 @@ public static class AsrProcessor
         }
     }
 
+    private static async Task<AsrResponse> RunWhisperXPassAsync(
+        AudioBuffer buffer,
+        AsrOptions options,
+        CancellationToken cancellationToken)
+    {
+        var executable = ResolveWhisperXExecutable();
+        var model = ResolveWhisperXModel(options);
+        var tempDir = Path.Combine(Path.GetTempPath(), $"ams-whisperx-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(tempDir);
+
+        try
+        {
+            var audioPath = Path.Combine(tempDir, "input.wav");
+            AudioProcessor.EncodeWav(audioPath, buffer);
+
+            using var process = new Process
+            {
+                StartInfo = CreateWhisperXStartInfo(executable, model, audioPath, tempDir, options)
+            };
+
+            Log.Debug(
+                "Starting WhisperX process executable={Executable} model={Model} gpu={UseGpu} align={Align}",
+                executable,
+                model,
+                options.UseGpu,
+                options.EnableWordTimestamps);
+
+            if (!process.Start())
+            {
+                throw new InvalidOperationException("Failed to start whisperx process.");
+            }
+
+            var stdoutTask = process.StandardOutput.ReadToEndAsync(cancellationToken);
+            var stderrTask = process.StandardError.ReadToEndAsync(cancellationToken);
+            using var registration = cancellationToken.Register(static state =>
+            {
+                var proc = (Process)state!;
+                try
+                {
+                    if (!proc.HasExited)
+                    {
+                        proc.Kill(entireProcessTree: true);
+                    }
+                }
+                catch
+                {
+                }
+            }, process);
+
+            await process.WaitForExitAsync(cancellationToken).ConfigureAwait(false);
+            var stdout = await stdoutTask.ConfigureAwait(false);
+            var stderr = await stderrTask.ConfigureAwait(false);
+
+            if (process.ExitCode != 0)
+            {
+                throw new InvalidOperationException(
+                    $"whisperx exited with code {process.ExitCode}.{FormatWhisperXFailure(stdout, stderr)}");
+            }
+
+            var jsonPath = Path.Combine(tempDir, Path.GetFileNameWithoutExtension(audioPath) + ".json");
+            if (!File.Exists(jsonPath))
+            {
+                throw new FileNotFoundException($"WhisperX output JSON not found: {jsonPath}", jsonPath);
+            }
+
+            var json = await File.ReadAllTextAsync(jsonPath, cancellationToken).ConfigureAwait(false);
+            return ParseWhisperXJson(json, $"whisperx:{model}");
+        }
+        finally
+        {
+            TryDeleteDirectory(tempDir);
+        }
+    }
+
     private static bool ShouldRetryWithoutDtw(
         AsrOptions options,
         AudioBuffer buffer,
@@ -562,6 +661,143 @@ public static class AsrProcessor
 
     private static int _whisperInflight;
 
+    private static string ResolveWhisperXExecutable()
+    {
+        var configured = Environment.GetEnvironmentVariable(AsrEngineConfig.WhisperXExecutableEnvironmentVariable);
+        return string.IsNullOrWhiteSpace(configured) ? "whisperx" : configured.Trim();
+    }
+
+    private static string ResolveWhisperXModel(AsrOptions options)
+    {
+        if (!string.IsNullOrWhiteSpace(options.ModelName))
+        {
+            return options.ModelName.Trim();
+        }
+
+        return AsrEngineConfig.DefaultWhisperXModel;
+    }
+
+    private static ProcessStartInfo CreateWhisperXStartInfo(
+        string executable,
+        string model,
+        string audioPath,
+        string outputDirectory,
+        AsrOptions options)
+    {
+        var startInfo = new ProcessStartInfo
+        {
+            FileName = executable,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+            CreateNoWindow = true
+        };
+
+        startInfo.ArgumentList.Add(audioPath);
+        startInfo.ArgumentList.Add("--model");
+        startInfo.ArgumentList.Add(model);
+        startInfo.ArgumentList.Add("--output_dir");
+        startInfo.ArgumentList.Add(outputDirectory);
+        startInfo.ArgumentList.Add("--output_format");
+        startInfo.ArgumentList.Add("json");
+        startInfo.ArgumentList.Add("--threads");
+        startInfo.ArgumentList.Add(Math.Max(0, options.Threads).ToString());
+        startInfo.ArgumentList.Add("--log-level");
+        startInfo.ArgumentList.Add("error");
+
+        if (options.UseGpu)
+        {
+            startInfo.ArgumentList.Add("--device");
+            startInfo.ArgumentList.Add("cuda");
+            startInfo.ArgumentList.Add("--device_index");
+            startInfo.ArgumentList.Add(options.GpuDevice.ToString());
+            startInfo.ArgumentList.Add("--compute_type");
+            startInfo.ArgumentList.Add("float16");
+        }
+        else
+        {
+            startInfo.ArgumentList.Add("--device");
+            startInfo.ArgumentList.Add("cpu");
+            startInfo.ArgumentList.Add("--compute_type");
+            startInfo.ArgumentList.Add("int8");
+        }
+
+        if (!string.IsNullOrWhiteSpace(options.Language) &&
+            !options.Language.Equals("auto", StringComparison.OrdinalIgnoreCase))
+        {
+            startInfo.ArgumentList.Add("--language");
+            startInfo.ArgumentList.Add(options.Language);
+        }
+
+        if (!options.EnableWordTimestamps)
+        {
+            startInfo.ArgumentList.Add("--no_align");
+        }
+
+        if (options.BeamSize > 0)
+        {
+            startInfo.ArgumentList.Add("--beam_size");
+            startInfo.ArgumentList.Add(options.BeamSize.ToString());
+        }
+
+        if (options.BestOf > 0)
+        {
+            startInfo.ArgumentList.Add("--best_of");
+            startInfo.ArgumentList.Add(options.BestOf.ToString());
+        }
+
+        if (options.Temperature > 0f)
+        {
+            startInfo.ArgumentList.Add("--temperature");
+            startInfo.ArgumentList.Add(options.Temperature.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        }
+
+        if (!string.IsNullOrWhiteSpace(options.Prompt))
+        {
+            var normalizedPrompt = NormalizePrompt(options.Prompt);
+            if (!string.IsNullOrWhiteSpace(normalizedPrompt))
+            {
+                startInfo.ArgumentList.Add("--initial_prompt");
+                startInfo.ArgumentList.Add(normalizedPrompt);
+            }
+        }
+
+        return startInfo;
+    }
+
+    private static string FormatWhisperXFailure(string stdout, string stderr)
+    {
+        var details = new List<string>(2);
+        if (!string.IsNullOrWhiteSpace(stderr))
+        {
+            details.Add($" stderr: {stderr.Trim()}");
+        }
+
+        if (!string.IsNullOrWhiteSpace(stdout))
+        {
+            details.Add($" stdout: {stdout.Trim()}");
+        }
+
+        return details.Count == 0 ? string.Empty : string.Concat(details);
+    }
+
+    private static void TryDeleteDirectory(string path)
+    {
+        if (!Directory.Exists(path))
+        {
+            return;
+        }
+
+        try
+        {
+            Directory.Delete(path, recursive: true);
+        }
+        catch (Exception ex)
+        {
+            Log.Debug("Failed to delete temporary directory {Directory}: {Message}", path, ex.Message);
+        }
+    }
+
     private static void EnsureModelPath(string modelPath)
     {
         if (string.IsNullOrWhiteSpace(modelPath))
@@ -582,6 +818,14 @@ public static class AsrProcessor
         var dtwPreset = dtwRequested ? ResolveDtwPreset(options.ModelPath) : null;
         var dtwEnabled = dtwRequested && dtwPreset.HasValue;
 
+        if (dtwRequested && OperatingSystem.IsWindows())
+        {
+            Log.Warn(
+                "DTW timestamps requested on Windows for model '{Model}', but the Windows DTW path is currently disabled.",
+                options.ModelPath);
+            dtwEnabled = false;
+        }
+
         if (dtwRequested && !dtwPreset.HasValue)
         {
             Log.Warn(
@@ -589,11 +833,20 @@ public static class AsrProcessor
                 options.ModelPath);
         }
 
+        var useFlashAttention = options.UseFlashAttention;
+        if (dtwEnabled && useFlashAttention)
+        {
+            Log.Warn(
+                "DTW timestamps requested with FlashAttention enabled for model '{Model}'. Disabling FlashAttention because whisper.cpp does not support DTW with flash_attn.",
+                options.ModelPath);
+            useFlashAttention = false;
+        }
+
         return new WhisperFactoryOptions
         {
             UseGpu = options.UseGpu,
             GpuDevice = options.GpuDevice,
-            UseFlashAttention = options.UseFlashAttention,
+            UseFlashAttention = useFlashAttention,
             UseDtwTimeStamps = dtwEnabled,
             HeadsPreset = dtwPreset ?? WhisperAlignmentHeadsPreset.None
         };
@@ -802,12 +1055,180 @@ public static class AsrProcessor
         }
     }
 
-    private static List<AsrToken> AggregateTokens(WhisperToken[] rawTokens) =>
-        AggregateTokens(
-            rawTokens,
-            token => token.Start / 100.0,
-            token => Math.Max(token.Start / 100.0, token.End / 100.0),
+    internal static List<AsrToken> AggregateTokens(WhisperToken[] rawTokens)
+    {
+        if (rawTokens.Length == 0)
+        {
+            return new List<AsrToken>();
+        }
+
+        if (!rawTokens.Any(token => token.DtwTimestamp >= 0))
+        {
+            return AggregateTokens(
+                rawTokens,
+                token => token.Start / 100.0,
+                token => Math.Max(token.Start / 100.0, token.End / 100.0),
+                token => token.Text);
+        }
+
+        var timedTokens = BuildDtwTimedTokens(rawTokens);
+        return AggregateTokens(
+            timedTokens,
+            token => token.StartSec,
+            token => token.EndSec,
             token => token.Text);
+    }
+
+    private static DtwTimedToken[] BuildDtwTimedTokens(WhisperToken[] rawTokens)
+    {
+        var nextDtwStartSec = new double?[rawTokens.Length];
+        double? nextAssignedSec = null;
+        for (int i = rawTokens.Length - 1; i >= 0; i--)
+        {
+            nextDtwStartSec[i] = nextAssignedSec;
+            if (rawTokens[i].DtwTimestamp >= 0)
+            {
+                nextAssignedSec = rawTokens[i].DtwTimestamp / 100.0;
+            }
+        }
+
+        var timedTokens = new DtwTimedToken[rawTokens.Length];
+        for (int i = 0; i < rawTokens.Length; i++)
+        {
+            var token = rawTokens[i];
+            var rawStartSec = token.Start / 100.0;
+            var rawEndSec = Math.Max(rawStartSec, token.End / 100.0);
+            var startSec = token.DtwTimestamp >= 0 ? token.DtwTimestamp / 100.0 : rawStartSec;
+            var endSec = token.DtwTimestamp >= 0
+                ? Math.Max(startSec, nextDtwStartSec[i] ?? rawEndSec)
+                : rawEndSec;
+            timedTokens[i] = new DtwTimedToken(startSec, endSec, token.Text);
+        }
+
+        return timedTokens;
+    }
+
+    internal static AsrResponse ParseWhisperXJson(string json, string modelVersion)
+    {
+        using var document = JsonDocument.Parse(json);
+        var root = document.RootElement;
+        var segments = ParseWhisperXSegments(root);
+        var tokens = ParseWhisperXTokens(root);
+        return new AsrResponse(modelVersion, tokens.ToArray(), segments.ToArray());
+    }
+
+    private static List<AsrSegment> ParseWhisperXSegments(JsonElement root)
+    {
+        var segments = new List<AsrSegment>();
+        if (!root.TryGetProperty("segments", out var segmentArray) || segmentArray.ValueKind != JsonValueKind.Array)
+        {
+            return segments;
+        }
+
+        foreach (var segment in segmentArray.EnumerateArray())
+        {
+            if (!TryGetDouble(segment, "start", out var start))
+            {
+                continue;
+            }
+
+            var end = TryGetDouble(segment, "end", out var parsedEnd) ? Math.Max(start, parsedEnd) : start;
+            var text = segment.TryGetProperty("text", out var textElement)
+                ? textElement.GetString()?.Trim() ?? string.Empty
+                : string.Empty;
+            segments.Add(new AsrSegment(start, end, text));
+        }
+
+        return segments;
+    }
+
+    private static List<AsrToken> ParseWhisperXTokens(JsonElement root)
+    {
+        if (root.TryGetProperty("word_segments", out var wordSegments) && wordSegments.ValueKind == JsonValueKind.Array)
+        {
+            var direct = ParseWhisperXWordArray(wordSegments);
+            if (direct.Count > 0)
+            {
+                return direct;
+            }
+        }
+
+        if (!root.TryGetProperty("segments", out var segmentArray) || segmentArray.ValueKind != JsonValueKind.Array)
+        {
+            return new List<AsrToken>();
+        }
+
+        var tokens = new List<AsrToken>();
+        foreach (var segment in segmentArray.EnumerateArray())
+        {
+            if (!segment.TryGetProperty("words", out var words) || words.ValueKind != JsonValueKind.Array)
+            {
+                continue;
+            }
+
+            tokens.AddRange(ParseWhisperXWordArray(words));
+        }
+
+        return tokens;
+    }
+
+    private static List<AsrToken> ParseWhisperXWordArray(JsonElement words)
+    {
+        var tokens = new List<AsrToken>();
+        foreach (var word in words.EnumerateArray())
+        {
+            if (!TryGetDouble(word, "start", out var start))
+            {
+                continue;
+            }
+
+            var end = TryGetDouble(word, "end", out var parsedEnd) ? Math.Max(start, parsedEnd) : start;
+            var text = GetWhisperXWordText(word);
+            if (string.IsNullOrWhiteSpace(text))
+            {
+                continue;
+            }
+
+            tokens.Add(new AsrToken(start, Math.Max(0.05, end - start), text));
+        }
+
+        return tokens;
+    }
+
+    private static string GetWhisperXWordText(JsonElement word)
+    {
+        if (word.TryGetProperty("word", out var value))
+        {
+            return value.GetString()?.Trim() ?? string.Empty;
+        }
+
+        if (word.TryGetProperty("text", out value))
+        {
+            return value.GetString()?.Trim() ?? string.Empty;
+        }
+
+        return string.Empty;
+    }
+
+    private static bool TryGetDouble(JsonElement element, string propertyName, out double value)
+    {
+        value = 0;
+        if (!element.TryGetProperty(propertyName, out var property))
+        {
+            return false;
+        }
+
+        return property.ValueKind switch
+        {
+            JsonValueKind.Number => property.TryGetDouble(out value),
+            JsonValueKind.String => double.TryParse(
+                property.GetString(),
+                System.Globalization.NumberStyles.Float,
+                System.Globalization.CultureInfo.InvariantCulture,
+                out value),
+            _ => false
+        };
+    }
 
     private static List<AsrToken> AggregateTokens<TToken>(
         IEnumerable<TToken> rawTokens,
@@ -931,6 +1352,8 @@ public static class AsrProcessor
 
 public sealed record AsrOptions(
     string ModelPath,
+    AsrEngine Engine = AsrEngine.Whisper,
+    string? ModelName = null,
     string Language = "auto",
     int Threads = 8,
     bool UseGpu = true,
@@ -945,3 +1368,5 @@ public sealed record AsrOptions(
     bool UseDtwTimestamps = false,
     string? Prompt = null,
     bool DisableChunkPlan = false);
+
+internal readonly record struct DtwTimedToken(double StartSec, double EndSec, string? Text);

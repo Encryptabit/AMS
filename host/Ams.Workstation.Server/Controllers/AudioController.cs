@@ -8,6 +8,7 @@ using Ams.Workstation.Server.Services;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Primitives;
 
 namespace Ams.Workstation.Server.Controllers;
 
@@ -94,6 +95,8 @@ public class AudioController : ControllerBase
                 _logger.LogWarning("Audio buffer not available for chapter '{ChapterName}'", chapterName);
                 return NotFound("Audio buffer not available");
             }
+
+            LogRangeDiagnostics(chapterName, buffer, start, end);
 
             // If start/end provided, trim to segment
             if (start.HasValue && end.HasValue)
@@ -504,6 +507,74 @@ public class AudioController : ControllerBase
         }
 
         return actualBuckets;
+    }
+
+    private void LogRangeDiagnostics(string chapterName, AudioBuffer buffer, double? start, double? end)
+    {
+        if (!_logger.IsEnabled(LogLevel.Debug))
+        {
+            return;
+        }
+
+        var rangeHeader = Request.Headers.Range;
+        if (StringValues.IsNullOrEmpty(rangeHeader))
+        {
+            return;
+        }
+
+        var rangeValue = rangeHeader.ToString();
+        var approxSec = TryEstimateWavRangeStartSeconds(rangeValue, buffer, out var seconds)
+            ? $"{seconds:F3}s"
+            : "n/a";
+
+        _logger.LogDebug(
+            "Chapter audio request range: chapter={ChapterName} buffer={BufferId} range={RangeHeader} approxWavStart={ApproxStart} queryStart={QueryStart} queryEnd={QueryEnd} sampleRate={SampleRate} channels={Channels}",
+            chapterName,
+            _workspace.CurrentChapterHandle?.Chapter.Audio.Current.Descriptor.BufferId,
+            rangeValue,
+            approxSec,
+            start,
+            end,
+            buffer.SampleRate,
+            buffer.Channels);
+    }
+
+    private static bool TryEstimateWavRangeStartSeconds(string rangeHeader, AudioBuffer buffer, out double seconds)
+    {
+        seconds = 0;
+        if (string.IsNullOrWhiteSpace(rangeHeader))
+        {
+            return false;
+        }
+
+        const int wavHeaderBytes = 44;
+        const string prefix = "bytes=";
+        if (!rangeHeader.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        var dashIndex = rangeHeader.IndexOf('-', prefix.Length);
+        if (dashIndex < 0)
+        {
+            return false;
+        }
+
+        var startToken = rangeHeader.Substring(prefix.Length, dashIndex - prefix.Length);
+        if (!long.TryParse(startToken, out var startBytes) || startBytes < 0)
+        {
+            return false;
+        }
+
+        var bytesPerSampleFrame = buffer.Channels * sizeof(short);
+        if (buffer.SampleRate <= 0 || bytesPerSampleFrame <= 0)
+        {
+            return false;
+        }
+
+        var audioBytes = Math.Max(0, startBytes - wavHeaderBytes);
+        seconds = audioBytes / (double)(buffer.SampleRate * bytesPerSampleFrame);
+        return true;
     }
 
     private static AudioBuffer? TrimBuffer(AudioBuffer buffer, double? start, double? end)

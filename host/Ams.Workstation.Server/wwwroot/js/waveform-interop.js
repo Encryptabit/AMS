@@ -183,10 +183,32 @@ export function seekTo(elementId, seconds) {
     const instance = window.wavesurferInstances[elementId];
     if (!instance) return;
 
-    const duration = instance.wavesurfer.getDuration();
+    const ws = instance.wavesurfer;
+    const media = typeof ws.getMediaElement === 'function' ? ws.getMediaElement() : null;
+    const duration = ws.getDuration();
+
+    instance.pendingSeekRequest = {
+        requestedSec: seconds,
+        issuedAtMs: Date.now(),
+    };
+
+    console.info(
+        `[waveform-interop] seek request element=${elementId} requested=${seconds.toFixed(3)}s duration=${duration.toFixed(3)}s current=${ws.getCurrentTime().toFixed(3)}s`
+    );
+
+    if (typeof ws.setTime === 'function') {
+        ws.setTime(seconds);
+        return;
+    }
+
+    if (media && Number.isFinite(media.duration) && media.duration > 0) {
+        media.currentTime = seconds;
+        return;
+    }
+
     if (duration > 0) {
-        // seekTo expects a ratio 0-1
-        instance.wavesurfer.seekTo(seconds / duration);
+        // Fallback for older WaveSurfer builds that only expose ratio-based seeking.
+        ws.seekTo(seconds / duration);
     }
 }
 
@@ -283,6 +305,39 @@ export function registerCallbacks(elementId, dotNetRef) {
     instance.dotNetRef = dotNetRef;
     instance.lastTimeUpdate = 0;
     const ws = instance.wavesurfer;
+    const notifyTimeUpdate = (currentTime, force = false) => {
+        if (!Number.isFinite(currentTime)) {
+            return;
+        }
+
+        if (!force && Math.abs(currentTime - instance.lastTimeUpdate) < 0.025) {
+            return;
+        }
+
+        instance.lastTimeUpdate = currentTime;
+        dotNetRef.invokeMethodAsync('OnTimeUpdate', currentTime)
+            .catch(err => console.warn('[waveform-interop] Error invoking OnTimeUpdate:', err));
+    };
+    const logSeekProgress = (eventName, currentTime) => {
+        if (!instance.pendingSeekRequest) {
+            return;
+        }
+
+        const media = typeof ws.getMediaElement === 'function' ? ws.getMediaElement() : null;
+        const mediaTime = media && Number.isFinite(media.currentTime) ? media.currentTime : null;
+        const requestedSec = instance.pendingSeekRequest.requestedSec;
+        const deltaSec = currentTime - requestedSec;
+        const mediaDeltaSec = mediaTime == null ? null : mediaTime - requestedSec;
+
+        console.info(
+            `[waveform-interop] seek ${eventName} element=${elementId} requested=${requestedSec.toFixed(3)}s ws=${currentTime.toFixed(3)}s delta=${deltaSec.toFixed(3)}s`
+            + (mediaTime == null ? '' : ` media=${mediaTime.toFixed(3)}s mediaDelta=${mediaDeltaSec.toFixed(3)}s`)
+        );
+    };
+    const clearSeekProgress = (eventName, currentTime) => {
+        logSeekProgress(eventName, currentTime);
+        instance.pendingSeekRequest = null;
+    };
 
     ws.on('zoom', (pxPerSec) => {
         instance.currentZoom = pxPerSec;
@@ -304,14 +359,20 @@ export function registerCallbacks(elementId, dotNetRef) {
             .catch(err => console.warn('[waveform-interop] Error invoking OnWaveformReady:', err));
     });
 
-    // Time update event - throttled to ~10fps to reduce Blazor re-renders
+    // Smooth playback updates while audio is actively playing.
     ws.on('audioprocess', (currentTime) => {
-        dotNetRef.invokeMethodAsync('OnTimeUpdate', currentTime)
-            .catch(err => console.warn('[waveform-interop] Error invoking OnTimeUpdate:', err));
+        notifyTimeUpdate(currentTime);
+    });
+
+    // MediaElement-backed streaming emits timeupdate reliably even when audioprocess is sparse.
+    ws.on('timeupdate', (currentTime) => {
+        notifyTimeUpdate(currentTime, true);
     });
 
     // Seeking event - fires when user clicks on waveform
     ws.on('seeking', (currentTime) => {
+        notifyTimeUpdate(currentTime, true);
+        logSeekProgress('seeking', currentTime);
         dotNetRef.invokeMethodAsync('OnSeeking', currentTime)
             .catch(err => console.warn('[waveform-interop] Error invoking OnSeeking:', err));
     });
@@ -325,6 +386,9 @@ export function registerCallbacks(elementId, dotNetRef) {
     // Play event
     ws.on('play', () => {
         instance.isPlaying = true;
+        const currentTime = ws.getCurrentTime();
+        notifyTimeUpdate(currentTime, true);
+        logSeekProgress('play', currentTime);
         dotNetRef.invokeMethodAsync('OnPlayStateChanged', true)
             .catch(err => console.warn('[waveform-interop] Error invoking OnPlayStateChanged:', err));
     });
@@ -342,6 +406,38 @@ export function registerCallbacks(elementId, dotNetRef) {
         dotNetRef.invokeMethodAsync('OnError', error.toString())
             .catch(err => console.warn('[waveform-interop] Error invoking OnError:', err));
     });
+
+    if (typeof ws.getMediaElement === 'function') {
+        const media = ws.getMediaElement();
+        if (media) {
+            const onPlaying = () => {
+                const currentTime = ws.getCurrentTime();
+                notifyTimeUpdate(currentTime, true);
+                clearSeekProgress('playing', currentTime);
+            };
+            const onSeeked = () => {
+                const currentTime = ws.getCurrentTime();
+                notifyTimeUpdate(currentTime, true);
+                clearSeekProgress('seeked', currentTime);
+            };
+            const onLoadedMetadata = () => {
+                const durationText = Number.isFinite(media.duration)
+                    ? media.duration.toFixed(3)
+                    : 'NaN';
+                console.info(
+                    `[waveform-interop] media loadedmetadata element=${elementId} mediaDuration=${durationText}s wsDuration=${ws.getDuration().toFixed(3)}s`
+                );
+            };
+
+            media.addEventListener('playing', onPlaying);
+            media.addEventListener('seeked', onSeeked);
+            media.addEventListener('loadedmetadata', onLoadedMetadata);
+
+            instance.cleanupHandlers.push(() => media.removeEventListener('playing', onPlaying));
+            instance.cleanupHandlers.push(() => media.removeEventListener('seeked', onSeeked));
+            instance.cleanupHandlers.push(() => media.removeEventListener('loadedmetadata', onLoadedMetadata));
+        }
+    }
 
     attachCtrlWheelHeightHandler(instance, dotNetRef);
 }
