@@ -165,7 +165,7 @@ public class MfaChunkCorpusBuilderTests
     }
 
     [Fact]
-    public void BuildLabTextFromWordTiming_UsesBookWordsWithinChunk()
+    public void BuildLabTextFromWordTiming_UsesBookWordsForMatchesWithinChunk()
     {
         var words = new[]
         {
@@ -188,6 +188,105 @@ public class MfaChunkCorpusBuilderTests
         Assert.Contains("alpha", lab);
         Assert.Contains("mr", lab);
         Assert.DoesNotContain("charlie", lab);
+    }
+
+    [Fact]
+    public void BuildLabTextFromWordTiming_UsesSpokenWordForSubstitution()
+    {
+        var words = new[]
+        {
+            new HydratedWord(10, 0, "going", "gonna", "Sub", "near_or_diff", 1.0),
+            new HydratedWord(11, 1, "home", "home", "Match", "equal_or_equiv", 0.0)
+        };
+        var asr = new AsrResponse(
+            modelVersion: "test",
+            tokens:
+            [
+                new AsrToken(0.10, 0.20, "gonna"),
+                new AsrToken(0.40, 0.20, "home")
+            ]);
+
+        var lab = MfaChunkCorpusBuilder.BuildLabTextFromWordTiming(words, asr, 0.0, 1.0);
+
+        Assert.NotNull(lab);
+        Assert.Contains("gonna", lab);
+        Assert.DoesNotContain("going", lab);
+        Assert.Contains("home", lab);
+    }
+
+    [Fact]
+    public void BuildLabTextFromWordTiming_IncludesNonFillerInsertion()
+    {
+        var words = new[]
+        {
+            new HydratedWord(10, 0, "alpha", "alpha", "Match", "equal_or_equiv", 0.0),
+            new HydratedWord(null, 1, null, "really", "Ins", "extra", 1.0),
+            new HydratedWord(11, 2, "bravo", "bravo", "Match", "equal_or_equiv", 0.0)
+        };
+        var asr = new AsrResponse(
+            modelVersion: "test",
+            tokens:
+            [
+                new AsrToken(0.10, 0.20, "alpha"),
+                new AsrToken(0.30, 0.20, "really"),
+                new AsrToken(0.50, 0.20, "bravo")
+            ]);
+
+        var lab = MfaChunkCorpusBuilder.BuildLabTextFromWordTiming(words, asr, 0.0, 1.0);
+
+        Assert.NotNull(lab);
+        var tokens = lab.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        Assert.Equal(["alpha", "really", "bravo"], tokens);
+    }
+
+    [Fact]
+    public void BuildLabTextFromWordTiming_OmitsDeletion()
+    {
+        var words = new[]
+        {
+            new HydratedWord(10, 0, "alpha", "alpha", "Match", "equal_or_equiv", 0.0),
+            new HydratedWord(11, null, "missing", null, "Del", "missing_book", 1.0),
+            new HydratedWord(12, 1, "bravo", "bravo", "Match", "equal_or_equiv", 0.0)
+        };
+        var asr = new AsrResponse(
+            modelVersion: "test",
+            tokens:
+            [
+                new AsrToken(0.10, 0.20, "alpha"),
+                new AsrToken(0.50, 0.20, "bravo")
+            ]);
+
+        var lab = MfaChunkCorpusBuilder.BuildLabTextFromWordTiming(words, asr, 0.0, 1.0);
+
+        Assert.NotNull(lab);
+        Assert.DoesNotContain("missing", lab);
+        Assert.Contains("alpha", lab);
+        Assert.Contains("bravo", lab);
+    }
+
+    [Fact]
+    public void BuildLabTextFromWordTiming_OmitsFillerInsertion()
+    {
+        var words = new[]
+        {
+            new HydratedWord(10, 0, "alpha", "alpha", "Match", "equal_or_equiv", 0.0),
+            new HydratedWord(null, 1, null, "um", "Ins", "filler", 0.3),
+            new HydratedWord(11, 2, "bravo", "bravo", "Match", "equal_or_equiv", 0.0)
+        };
+        var asr = new AsrResponse(
+            modelVersion: "test",
+            tokens:
+            [
+                new AsrToken(0.10, 0.20, "alpha"),
+                new AsrToken(0.30, 0.20, "um"),
+                new AsrToken(0.50, 0.20, "bravo")
+            ]);
+
+        var lab = MfaChunkCorpusBuilder.BuildLabTextFromWordTiming(words, asr, 0.0, 1.0);
+
+        Assert.NotNull(lab);
+        var tokens = lab.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        Assert.Equal(["alpha", "bravo"], tokens);
     }
 
     [Fact]

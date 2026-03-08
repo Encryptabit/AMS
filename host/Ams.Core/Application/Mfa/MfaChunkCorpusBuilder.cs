@@ -260,7 +260,10 @@ internal static class MfaChunkCorpusBuilder
 
     /// <summary>
     /// Builds lab text from hydrate word mappings whose ASR token timing midpoint
-    /// falls inside the chunk time range. Uses hydrate BookWord text for lexical truth.
+    /// falls inside the chunk time range. The emitted surface follows what should
+    /// be aligned phonetically rather than always forcing canonical book text:
+    /// matches use book words, substitutions prefer spoken ASR words, insertions
+    /// include spoken ASR words, and deletions are omitted.
     /// </summary>
     internal static string? BuildLabTextFromWordTiming(
         IReadOnlyList<HydratedWord> words,
@@ -276,10 +279,10 @@ internal static class MfaChunkCorpusBuilder
             return null;
         }
 
-        var candidates = new List<(int AsrIdx, int BookIdx, string BookWord)>();
+        var candidates = new List<AlignmentWordCandidate>();
         foreach (var word in words)
         {
-            if (word.BookIdx is not int bookIdx || word.AsrIdx is not int asrIdx)
+            if (word.AsrIdx is not int asrIdx)
             {
                 continue;
             }
@@ -289,7 +292,8 @@ internal static class MfaChunkCorpusBuilder
                 continue;
             }
 
-            if (string.IsNullOrWhiteSpace(word.BookWord))
+            var lexemeParts = ResolveAlignmentLexemeParts(word);
+            if (lexemeParts.Count == 0)
             {
                 continue;
             }
@@ -301,7 +305,7 @@ internal static class MfaChunkCorpusBuilder
                 continue;
             }
 
-            candidates.Add((asrIdx, bookIdx, word.BookWord));
+            candidates.Add(new AlignmentWordCandidate(asrIdx, word.BookIdx, lexemeParts));
         }
 
         if (candidates.Count == 0)
@@ -316,13 +320,12 @@ internal static class MfaChunkCorpusBuilder
         foreach (var candidate in candidates)
         {
             // Guard against duplicate align ops that map one book word to multiple ASR indices.
-            if (!seenBookIdx.Add(candidate.BookIdx))
+            if (candidate.BookIdx is int bookIdx && !seenBookIdx.Add(bookIdx))
             {
                 continue;
             }
 
-            var pronunciationParts = PronunciationHelper.ExtractPronunciationParts(candidate.BookWord);
-            foreach (var part in pronunciationParts)
+            foreach (var part in candidate.LexemeParts)
             {
                 if (!string.IsNullOrWhiteSpace(part))
                 {
@@ -338,6 +341,67 @@ internal static class MfaChunkCorpusBuilder
 
         return string.Join(' ', parts);
     }
+
+    private static IReadOnlyList<string> ResolveAlignmentLexemeParts(HydratedWord word)
+    {
+        ArgumentNullException.ThrowIfNull(word);
+
+        if (IsDeleteOperation(word.Op))
+        {
+            return Array.Empty<string>();
+        }
+
+        if (IsInsertOperation(word.Op))
+        {
+            if (string.Equals(word.Reason, "filler", StringComparison.OrdinalIgnoreCase))
+            {
+                return Array.Empty<string>();
+            }
+
+            return ExtractPreferredPronunciationParts(word.AsrWord);
+        }
+
+        if (IsSubstitutionOperation(word.Op))
+        {
+            var spokenParts = ExtractPreferredPronunciationParts(word.AsrWord);
+            if (spokenParts.Count > 0)
+            {
+                return spokenParts;
+            }
+        }
+
+        var canonicalParts = ExtractPreferredPronunciationParts(word.BookWord);
+        if (canonicalParts.Count > 0)
+        {
+            return canonicalParts;
+        }
+
+        return ExtractPreferredPronunciationParts(word.AsrWord);
+    }
+
+    private static IReadOnlyList<string> ExtractPreferredPronunciationParts(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return Array.Empty<string>();
+        }
+
+        return PronunciationHelper.ExtractPronunciationParts(value);
+    }
+
+    private static bool IsDeleteOperation(string? operation)
+        => string.Equals(operation, nameof(AlignOp.Del), StringComparison.OrdinalIgnoreCase);
+
+    private static bool IsInsertOperation(string? operation)
+        => string.Equals(operation, nameof(AlignOp.Ins), StringComparison.OrdinalIgnoreCase);
+
+    private static bool IsSubstitutionOperation(string? operation)
+        => string.Equals(operation, nameof(AlignOp.Sub), StringComparison.OrdinalIgnoreCase);
+
+    private sealed record AlignmentWordCandidate(
+        int AsrIdx,
+        int? BookIdx,
+        IReadOnlyList<string> LexemeParts);
 
     /// <summary>
     /// Fallback when no sentences overlap the chunk timing window.
