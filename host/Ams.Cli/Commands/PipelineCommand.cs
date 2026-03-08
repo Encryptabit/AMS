@@ -444,6 +444,7 @@ public static class PipelineCommand
         double avgWpm,
         AsrEngine asrEngine,
         string? asrModel,
+        bool asrDtwTimestamps,
         string asrLanguage,
         bool verbose,
         IReadOnlyList<FileInfo> chapterFiles,
@@ -537,6 +538,7 @@ public static class PipelineCommand
                     avgWpm,
                     asrEngine,
                     asrModel,
+                    asrDtwTimestamps,
                     asrLanguage,
                     verbose,
                     reporter,
@@ -1139,6 +1141,10 @@ public static class PipelineCommand
             "--asr-engine",
             () => AsrEngineConfig.Resolve().ToString().ToLowerInvariant(),
             "ASR engine to use for pipeline transcription (whisper or whisperx)");
+        var asrDtwOption = new Option<bool>(
+            "--dtw-timestamps",
+            () => false,
+            "Enable DTW timestamp refinement for Whisper ASR during pipeline transcription");
         var asrLanguageOption = new Option<string>("--language", () => "en", "ASR language code");
         asrLanguageOption.AddAlias("-l");
 
@@ -1176,6 +1182,7 @@ public static class PipelineCommand
         cmd.AddOption(avgWpmOption);
         cmd.AddOption(asrModelOption);
         cmd.AddOption(asrEngineOption);
+        cmd.AddOption(asrDtwOption);
         cmd.AddOption(asrLanguageOption);
         cmd.AddOption(verboseOption);
         cmd.AddOption(maxWorkersOption);
@@ -1201,6 +1208,7 @@ public static class PipelineCommand
             var avgWpm = context.ParseResult.GetValueForOption(avgWpmOption);
             var asrModel = context.ParseResult.GetValueForOption(asrModelOption);
             var asrEngine = AsrEngineConfig.Resolve(context.ParseResult.GetValueForOption(asrEngineOption));
+            var asrDtwTimestamps = context.ParseResult.GetValueForOption(asrDtwOption);
             var asrLanguage = context.ParseResult.GetValueForOption(asrLanguageOption) ?? "en";
             var verbose = context.ParseResult.GetValueForOption(verboseOption);
             var maxWorkers = context.ParseResult.GetValueForOption(maxWorkersOption);
@@ -1239,6 +1247,7 @@ public static class PipelineCommand
                                 avgWpm,
                                 asrEngine,
                                 asrModel,
+                                asrDtwTimestamps,
                                 asrLanguage,
                                 verbose,
                                 repl.Chapters,
@@ -1266,6 +1275,7 @@ public static class PipelineCommand
                             avgWpm,
                             asrEngine,
                             asrModel,
+                            asrDtwTimestamps,
                             asrLanguage,
                             verbose,
                             repl.Chapters,
@@ -1324,6 +1334,7 @@ public static class PipelineCommand
                                     avgWpm,
                                     asrEngine,
                                     asrModel,
+                                    asrDtwTimestamps,
                                     asrLanguage,
                                     verbose,
                                     reporter,
@@ -1365,6 +1376,7 @@ public static class PipelineCommand
                         avgWpm,
                         asrEngine,
                         asrModel,
+                        asrDtwTimestamps,
                         asrLanguage,
                         verbose,
                         progress: null,
@@ -1404,6 +1416,7 @@ public static class PipelineCommand
         double avgWpm,
         AsrEngine asrEngine,
         string? asrModel,
+        bool asrDtwTimestamps,
         string asrLanguage,
         bool verbose,
         IPipelineProgressReporter? progress,
@@ -1457,6 +1470,11 @@ public static class PipelineCommand
         LogStageInfo(logInfo, "Chapter={Chapter}", chapterStem);
         LogStageInfo(logInfo, "ChapterDir={ChapterDir}", chapterDir);
 
+        if (asrDtwTimestamps && asrEngine == AsrEngine.WhisperX)
+        {
+            Log.Warn("DTW timestamps were requested for pipeline ASR, but WhisperX does not consume DTW. The flag is ignored unless --asr-engine whisper is used.");
+        }
+
         var defaultAnchorOptions = new AnchorComputationOptions
         {
             DetectSection = true,
@@ -1474,6 +1492,7 @@ public static class PipelineCommand
             Model = asrModel,
             Language = asrLanguage,
             EnableWordTimestamps = true,
+            EnableDtwTimestamps = asrDtwTimestamps,
             DisableChunkPlan = disableChunkPlan
         };
 

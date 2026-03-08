@@ -17,6 +17,7 @@ public static class MfaProcessSupervisor
     private const string ReadyToken = "__MFA_READY__";
     private const string ExitToken = "__MFA_EXIT__";
     private const string QuitToken = "__QUIT__";
+    private const string CondaExecutableEnvVar = "AMS_MFA_CONDA_EXE";
 
     private static readonly SemaphoreSlim CommandGate = new(1, 1);
     private static readonly object StartLock = new();
@@ -515,17 +516,87 @@ public static class MfaProcessSupervisor
             return fromEnv.Replace("\r\n", "\n");
         }
 
-        // Default sequence — resolve conda paths from user home so it works on both Windows and Linux.
-        var condaRoot = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
-            "miniconda3");
-        var condaHook = Path.Combine(condaRoot, "shell", "condabin", "conda-hook.ps1");
+        var condaExecutable = ResolveCondaExecutable()
+            ?? throw new InvalidOperationException(
+                $"Unable to locate a Conda executable for MFA bootstrap. Set {CondaExecutableEnvVar} or install Miniconda/Conda in WSL.");
 
         return string.Join(
             Environment.NewLine,
-            $"& '{condaHook}'",
-            $"conda activate '{condaRoot}'",
+            $"$env:CONDA_EXE = '{condaExecutable}'",
+            $"(& '{condaExecutable}' 'shell.powershell' 'hook') | Out-String | Invoke-Expression",
             "conda activate aligner");
+    }
+
+    private static string? ResolveCondaExecutable()
+    {
+        var explicitPath = Environment.GetEnvironmentVariable(CondaExecutableEnvVar);
+        if (IsUsableExecutable(explicitPath))
+        {
+            return Path.GetFullPath(explicitPath!);
+        }
+
+        var fromCondaExe = Environment.GetEnvironmentVariable("CONDA_EXE");
+        if (IsUsableExecutable(fromCondaExe))
+        {
+            return Path.GetFullPath(fromCondaExe!);
+        }
+
+        var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+        var candidates = RuntimeInformation.IsOSPlatform(OSPlatform.Windows)
+            ? new[]
+            {
+                Path.Combine(home, "miniconda3", "Scripts", "conda.exe"),
+                Path.Combine(home, "anaconda3", "Scripts", "conda.exe")
+            }
+            : new[]
+            {
+                Path.Combine(home, "miniconda3", "bin", "conda"),
+                Path.Combine(home, "anaconda3", "bin", "conda"),
+                Path.Combine(home, "mambaforge", "bin", "conda"),
+                Path.Combine(home, "miniforge3", "bin", "conda")
+            };
+
+        foreach (var candidate in candidates)
+        {
+            if (IsUsableExecutable(candidate))
+            {
+                return candidate;
+            }
+        }
+
+        var path = Environment.GetEnvironmentVariable("PATH");
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            return null;
+        }
+
+        foreach (var entry in path.Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            var candidate = Path.Combine(entry, RuntimeInformation.IsOSPlatform(OSPlatform.Windows) ? "conda.exe" : "conda");
+            if (IsUsableExecutable(candidate))
+            {
+                return candidate;
+            }
+        }
+
+        return null;
+    }
+
+    private static bool IsUsableExecutable(string? path)
+    {
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            return false;
+        }
+
+        try
+        {
+            return File.Exists(path.Trim());
+        }
+        catch
+        {
+            return false;
+        }
     }
 
     private static string BuildSupervisorScript(string bootstrap)
@@ -540,6 +611,7 @@ public static class MfaProcessSupervisor
         builder.AppendLine("    Invoke-Expression $bootstrap");
         builder.AppendLine("} catch {");
         builder.AppendLine("    Write-Error $_");
+        builder.AppendLine("    exit 1");
         builder.AppendLine("}");
         builder.AppendLine("Write-Output '" + ReadyToken + "'");
         builder.AppendLine("while ($true) {");
