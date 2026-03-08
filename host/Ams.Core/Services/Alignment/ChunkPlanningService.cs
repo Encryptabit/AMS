@@ -27,9 +27,9 @@ public sealed record ChunkPlanningPolicy
 
     /// <summary>
     /// Minimum chunk duration to prevent excessive fragmentation.
-    /// Default: 30 seconds (matching SilenceChunker).
+    /// Default: 15 seconds to stay comfortably below Whisper's 30 second window.
     /// </summary>
-    public TimeSpan MinChunkDuration { get; init; } = TimeSpan.FromSeconds(30);
+    public TimeSpan MinChunkDuration { get; init; } = TimeSpan.FromSeconds(15);
 
     /// <summary>
     /// Returns the shared default policy derived from <see cref="AudioDefaults"/>.

@@ -162,7 +162,7 @@ public class ChunkPlanningServiceTests
 
         Assert.Equal(AudioDefaults.SilenceThresholdDb, plan.Policy.SilenceThresholdDb);
         Assert.Equal(AudioDefaults.MinimumSilenceDuration.TotalMilliseconds, plan.Policy.MinSilenceDurationMs);
-        Assert.Equal(30.0, plan.Policy.MinChunkDurationSec);
+        Assert.Equal(15.0, plan.Policy.MinChunkDurationSec);
     }
 
     [Fact]

@@ -44,7 +44,7 @@ public class SilenceChunkerTests
     public void SingleSilenceRegion_SplitsAtMidpoint()
     {
         // 90s audio, 300ms silence at 45s mark, then more audio
-        // Both resulting chunks (~45s each) are well above the 30s minChunkDuration
+        // Both resulting chunks (~45s each) are well above the 15s minChunkDuration
         var silenceDurationSamples = (int)(0.3 * SampleRate); // 300ms = 4800 samples
         var silenceStart = SampleRate * 45;
         var totalLength = SampleRate * 90;
@@ -88,8 +88,8 @@ public class SilenceChunkerTests
     [Fact]
     public void ShortBuffer_ReturnsSingleChunkRegardlessOfSilence()
     {
-        // Buffer shorter than minChunkDuration (default 30s)
-        var totalLength = SampleRate * 20; // 20 seconds
+        // Buffer shorter than minChunkDuration (default 15s)
+        var totalLength = SampleRate * 10; // 10 seconds
         var buffer = CreateBuffer(totalLength);
         FillAudio(buffer, 0, totalLength / 2);
         FillSilence(buffer, totalLength / 2, (int)(0.5 * SampleRate)); // 500ms silence
@@ -175,7 +175,7 @@ public class SilenceChunkerTests
         var buffer = CreateBuffer(totalLength);
         FillAudio(buffer, 0, totalLength);
 
-        // Place silence every 5 seconds (well under default 30s minChunkDuration)
+        // Place silence every 5 seconds (well under default 15s minChunkDuration)
         for (int sec = 5; sec < 120; sec += 5)
         {
             var silStart = sec * SampleRate;
@@ -187,8 +187,8 @@ public class SilenceChunkerTests
         var chunks = SilenceChunker.FindChunkBoundaries(buffer);
 
         // Should have fewer chunks than silence regions due to minChunkDuration filtering
-        // With 120s and 30s min, we expect at most ~4 chunks
-        Assert.InRange(chunks.Count, 2, 5);
+        // With 120s and 15s min, we still expect far fewer chunks than silence regions.
+        Assert.InRange(chunks.Count, 4, 9);
     }
 
     [Fact]

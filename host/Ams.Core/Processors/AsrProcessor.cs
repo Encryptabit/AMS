@@ -399,23 +399,6 @@ public static class AsrProcessor
         return await TranscribeWithWhisperNetAsync(buffer, options, cancellationToken).ConfigureAwait(false);
     }
 
-    private static async Task<string> DetectLanguageInternalAsync(
-        AudioBuffer buffer,
-        AsrOptions options,
-        CancellationToken cancellationToken)
-    {
-        cancellationToken.ThrowIfCancellationRequested();
-
-        var factoryOptions = CreateFactoryOptions(options);
-        using var handle = WhisperFactoryPool.Acquire(options.ModelPath, factoryOptions, out var factory);
-        var builder = ConfigureBuilder(factory, options, enableTokenTimestamps: false);
-        await using var processor = builder.Build();
-
-        var samples = ExtractMonoSamples(buffer);
-        var (language, _) = processor.DetectLanguageWithProbability(samples);
-        return string.IsNullOrWhiteSpace(language) ? options.Language : language!;
-    }
-
     private static async Task<AsrResponse> TranscribeWithWhisperNetAsync(
         AudioBuffer buffer,
         AsrOptions options,
@@ -588,6 +571,7 @@ public static class AsrProcessor
 
         if (!File.Exists(modelPath))
         {
+
             throw new FileNotFoundException($"Whisper model not found: {modelPath}", modelPath);
         }
     }

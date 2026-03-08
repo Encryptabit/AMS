@@ -29,7 +29,7 @@ public static class SilenceChunker
     /// Default minimum chunk duration. Prevents excessive fragmentation
     /// on audiobooks with frequent pauses.
     /// </summary>
-    private static readonly TimeSpan DefaultMinChunkDuration = TimeSpan.FromSeconds(30);
+    private static readonly TimeSpan DefaultMinChunkDuration = TimeSpan.FromSeconds(15);
 
     /// <summary>
     /// Returns chunk boundaries for splitting an AudioBuffer at silence points.
