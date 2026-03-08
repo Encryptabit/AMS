@@ -551,8 +551,6 @@ public sealed class BlazorWorkspace : IWorkspace, IDisposable
                 var audioContexts = new[]
                 {
                     handle.Chapter.Audio.Current,
-                    handle.Chapter.Audio.Treated,
-                    handle.Chapter.Audio.Corrected
                 };
 
                 foreach (var audioContext in audioContexts)
