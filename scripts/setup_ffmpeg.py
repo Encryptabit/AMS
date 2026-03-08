@@ -262,7 +262,8 @@ def main() -> int:
 
     with tempfile.TemporaryDirectory(prefix="ams-ffmpeg-") as tmp_str:
         tmp = Path(tmp_str)
-        archive_path = tmp / artifact["archive_name"]
+        archive_name = artifact["archive_name"]
+        archive_path = tmp / archive_name
         extract_root = tmp / "extract"
         extract_root.mkdir(parents=True, exist_ok=True)
 
