@@ -23,7 +23,27 @@ public sealed class AsrProcessorWhisperXTests
         Assert.Equal(0.60, tokens[0].Duration, 3);
         Assert.Equal("world.", tokens[1].Word);
         Assert.Equal(1.50, tokens[1].StartTime, 3);
-        Assert.Equal(0.70, tokens[1].Duration, 3);
+        Assert.Equal(1.50, tokens[1].Duration, 3);
+    }
+
+    [Fact]
+    public void BuildSegment_PrefersAggregatedTokenSpan_WhenPresent()
+    {
+        var tokens = new[]
+        {
+            new AsrToken(1158.292, 0.96, "Aetherslash"),
+            new AsrToken(1159.252, 0.12, "and"),
+            new AsrToken(1172.792, 0.05, "targets.")
+        };
+
+        var segment = AsrProcessor.BuildSegment(
+            rawStartSec: 1172.896,
+            rawEndSec: 1172.896,
+            text: "Aetherslash and ... targets.",
+            tokens);
+
+        Assert.Equal(1158.292, segment.StartSec, 3);
+        Assert.Equal(1172.842, segment.EndSec, 3);
     }
 
     [Fact]

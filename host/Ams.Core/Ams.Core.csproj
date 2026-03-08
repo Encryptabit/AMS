@@ -52,6 +52,8 @@
         <PackageReference Include="Whisper.net" Version="1.9.0" />
         <PackageReference Include="Whisper.net.Runtime" Version="1.9.0" />
         <PackageReference Include="Whisper.net.Runtime.Cuda" Version="1.9.0" />
+        <PackageReference Include="Whisper.net.Runtime.Cuda.Linux" Version="1.9.0" />
+        <PackageReference Include="Whisper.net.Runtime.Cuda.Windows" Version="1.9.0" />
     </ItemGroup>
     <PropertyGroup>
         <CopyCudaToolkitDlls Condition="'$(CopyCudaToolkitDlls)' == '' and '$(OS)' == 'Windows_NT'">true</CopyCudaToolkitDlls>

@@ -215,6 +215,7 @@ internal static class MfaWorkspaceResolver
         var normalized = CanonicalizeWorkspacePath(path);
         SeedPrimaryWorkspaceFromLegacy(normalized);
         Directory.CreateDirectory(normalized);
+        SeedWorkspaceFromPrimary(normalized);
         return Path.GetFullPath(normalized);
     }
 
@@ -262,6 +263,34 @@ internal static class MfaWorkspaceResolver
             Path.Combine(canonicalPath, "global_config.yaml"));
         CopyDirectoryContentsIfMissing(
             Path.Combine(legacyPath, "pretrained_models"),
+            Path.Combine(canonicalPath, "pretrained_models"));
+    }
+
+    private static void SeedWorkspaceFromPrimary(string canonicalPath)
+    {
+        var name = Path.GetFileName(canonicalPath);
+        if (name.Equals(PrimaryWorkspaceName, StringComparison.OrdinalIgnoreCase))
+        {
+            return;
+        }
+
+        var parent = Path.GetDirectoryName(canonicalPath);
+        if (string.IsNullOrWhiteSpace(parent))
+        {
+            return;
+        }
+
+        var primaryPath = Path.Combine(parent, PrimaryWorkspaceName);
+        if (!Directory.Exists(primaryPath))
+        {
+            return;
+        }
+
+        CopyFileIfMissing(
+            Path.Combine(primaryPath, "global_config.yaml"),
+            Path.Combine(canonicalPath, "global_config.yaml"));
+        CopyDirectoryContentsIfMissing(
+            Path.Combine(primaryPath, "pretrained_models"),
             Path.Combine(canonicalPath, "pretrained_models"));
     }
 

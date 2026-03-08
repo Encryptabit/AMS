@@ -481,11 +481,19 @@ public static class AsrProcessor
             await foreach (var segment in processor.ProcessAsync(wavStream, cancellationToken).ConfigureAwait(false))
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                segments.Add(new AsrSegment(
+                var aggregatedTokens = segment.Tokens is { Length: > 0 }
+                    ? AggregateTokens(segment.Tokens)
+                    : null;
+                segments.Add(BuildSegment(
                     segment.Start.TotalSeconds,
                     segment.End.TotalSeconds,
-                    segment.Text?.Trim() ?? string.Empty));
-                AppendTokens(tokens, segment);
+                    segment.Text?.Trim() ?? string.Empty,
+                    aggregatedTokens));
+
+                if (aggregatedTokens is { Count: > 0 })
+                {
+                    tokens.AddRange(aggregatedTokens);
+                }
             }
 
             var modelVersion = Path.GetFileName(options.ModelPath) ?? "whisper";
@@ -1040,19 +1048,20 @@ public static class AsrProcessor
         return builder.ToString().Trim();
     }
 
-    private static void AppendTokens(List<AsrToken> tokens, SegmentData segment)
+    internal static AsrSegment BuildSegment(
+        double rawStartSec,
+        double rawEndSec,
+        string text,
+        IReadOnlyList<AsrToken>? tokens)
     {
-        var aggregated = segment.Tokens is { Length: > 0 }
-            ? AggregateTokens(segment.Tokens)
-            : null;
-
-        if (aggregated is { Count: > 0 })
+        if (tokens is { Count: > 0 })
         {
-            foreach (var token in aggregated)
-            {
-                tokens.Add(token);
-            }
+            var start = tokens[0].StartTime;
+            var end = tokens[^1].StartTime + Math.Max(0, tokens[^1].Duration);
+            return new AsrSegment(start, Math.Max(start, end), text);
         }
+
+        return new AsrSegment(rawStartSec, rawEndSec, text);
     }
 
     internal static List<AsrToken> AggregateTokens(WhisperToken[] rawTokens)
