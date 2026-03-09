@@ -24,7 +24,7 @@ namespace Ams.Workstation.Server.Services;
 /// </summary>
 public class PickupMfaRefinementService
 {
-    private const string PickupMfaCacheVersion = "pickup-mfa-v3";
+    private const string PickupMfaCacheVersion = "pickup-mfa-v4";
 
     private static readonly JsonSerializerOptions CacheJsonOptions = new()
     {
@@ -138,35 +138,8 @@ public class PickupMfaRefinementService
                     };
 
                     var service = new MfaService(useDedicatedProcess: false);
-                    var validateResult = await service.ValidateAsync(context, ct).ConfigureAwait(false);
-                    LogMfaResult("mfa validate (pickup)", validateResult);
-
-                    var oovPath = FindOovListFile(artifactRoot);
-                    if (oovPath != null)
-                    {
-                        var g2pOutputPath = Path.Combine(artifactRoot, "pickup.g2p.txt");
-                        var customDictPath = Path.Combine(artifactRoot, "pickup.dictionary.zip");
-
-                        var g2pContext = context with
-                        {
-                            OovListPath = oovPath,
-                            G2pOutputPath = g2pOutputPath,
-                            CustomDictionaryPath = customDictPath
-                        };
-
-                        var g2pResult = await service.GeneratePronunciationsAsync(g2pContext, ct).ConfigureAwait(false);
-                        LogMfaResult("mfa g2p (pickup)", g2pResult);
-
-                        if (g2pResult.ExitCode == 0 && File.Exists(g2pOutputPath) && new FileInfo(g2pOutputPath).Length > 0)
-                        {
-                            var addWordsResult = await service.AddWordsAsync(g2pContext, ct).ConfigureAwait(false);
-                            LogMfaResult("mfa add_words (pickup)", addWordsResult);
-                            if (addWordsResult.ExitCode == 0 && File.Exists(customDictPath))
-                                context = context with { CustomDictionaryPath = customDictPath };
-                        }
-                    }
-
                     var alignResult = await service.AlignAsync(context, ct).ConfigureAwait(false);
+                    LogMfaResult("mfa align (pickup)", alignResult);
                     if (alignResult.ExitCode != 0)
                     {
                         Log.Warn("Chunked MFA align failed for pickup (exit {Code}), using ASR timings", alignResult.ExitCode);
@@ -228,40 +201,8 @@ public class PickupMfaRefinementService
 
                 var service = new MfaService(useDedicatedProcess: false);
 
-                var validateResult = await service.ValidateAsync(context, ct).ConfigureAwait(false);
-                LogMfaResult("mfa validate (pickup)", validateResult);
-
-                var oovPath = FindOovListFile(artifactRoot);
-                if (oovPath != null)
-                {
-                    var g2pOutputPath = Path.Combine(artifactRoot, "pickup.g2p.txt");
-                    var customDictPath = Path.Combine(artifactRoot, "pickup.dictionary.zip");
-
-                    var g2pContext = context with
-                    {
-                        OovListPath = oovPath,
-                        G2pOutputPath = g2pOutputPath,
-                        CustomDictionaryPath = customDictPath
-                    };
-
-                    var g2pResult = await service.GeneratePronunciationsAsync(g2pContext, ct)
-                        .ConfigureAwait(false);
-                    LogMfaResult("mfa g2p (pickup)", g2pResult);
-
-                    if (g2pResult.ExitCode == 0 &&
-                        File.Exists(g2pOutputPath) &&
-                        new FileInfo(g2pOutputPath).Length > 0)
-                    {
-                        var addWordsResult = await service.AddWordsAsync(g2pContext, ct)
-                            .ConfigureAwait(false);
-                        LogMfaResult("mfa add_words (pickup)", addWordsResult);
-
-                        if (addWordsResult.ExitCode == 0 && File.Exists(customDictPath))
-                            context = context with { CustomDictionaryPath = customDictPath };
-                    }
-                }
-
                 var alignResult = await service.AlignAsync(context, ct).ConfigureAwait(false);
+                LogMfaResult("mfa align (pickup)", alignResult);
                 if (alignResult.ExitCode != 0)
                 {
                     Log.Warn("MFA align failed for pickup (exit {Code}), using ASR timings", alignResult.ExitCode);
