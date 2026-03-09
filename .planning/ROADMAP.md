@@ -266,8 +266,15 @@ Phases execute in numeric order: 1 -> 2 -> ... -> 15
 #### Phase 15: Pickup Flow Redesign
 **Goal**: Redesign pickup substitution to support order-independent multi-pickup application, unified timeline projection, dual-side boundary refinement, and both session-file and individual-file pickup sources
 **Depends on**: Phase 13, Phase 14
-**Research**: Complete (analysis in-conversation)
-**Plans**: 0 plans
+**Research**: Complete (15-RESEARCH.md)
+**Plans**: 7 plans
+**Requirements:** PFR-MODELS, PFR-BREATH, PFR-IMPORT, PFR-MATCH, PFR-EDITLIST, PFR-REVERT, PFR-TIMELINE, PFR-DUAL, PFR-REASSIGN, PFR-CONTEXT
 
 Plans:
-- [ ] TBD (run /gsd:plan-phase 15 to break down)
+- [ ] 15-01-PLAN.md — Domain models (PickupAsset, ChapterEdit) + TimelineProjection + EditListService
+- [ ] 15-02-PLAN.md — Breath-aware boundary enhancement to SpliceBoundaryService
+- [ ] 15-03-PLAN.md — PickupAssetService (unified import) + PickupMatchingService (hybrid text-similarity)
+- [ ] 15-04-PLAN.md — StagingQueueService refactor (immutable records) + UndoService simplification
+- [ ] 15-05-PLAN.md — PolishService refactor (rebuild-based revert, TimelineProjection, unified edit pipeline)
+- [ ] 15-06-PLAN.md — UI refactor (dual-side handles, unmatched bucket, manual reassignment, context playback)
+- [ ] 15-07-PLAN.md — End-to-end verification checkpoint
