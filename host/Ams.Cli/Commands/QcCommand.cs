@@ -1,5 +1,6 @@
 using System.CommandLine;
 using System.Globalization;
+using System.Text.RegularExpressions;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Ams.Cli.Repl;
@@ -19,6 +20,7 @@ namespace Ams.Cli.Commands;
 public static class QcCommand
 {
     private static readonly string[] AudioExtensions = ["*.mp3", "*.wav", "*.flac", "*.m4a"];
+    private static readonly Regex FileNumberRegex = new(@"\d+", RegexOptions.Compiled);
 
     public static Command Create()
     {
@@ -125,7 +127,12 @@ public static class QcCommand
 
                     files = AudioExtensions
                         .SelectMany(ext => dir.GetFiles(ext))
-                        .OrderBy(f => f.Name, StringComparer.OrdinalIgnoreCase)
+                        .Select(file => new { File = file, Key = GetSortKey(file) })
+                        .OrderBy(entry => entry.Key.Category)
+                        .ThenBy(entry => entry.Key.PrimaryNumber)
+                        .ThenBy(entry => entry.Key.NameLower, StringComparer.Ordinal)
+                        .ThenBy(entry => entry.File.Name, StringComparer.OrdinalIgnoreCase)
+                        .Select(entry => entry.File)
                         .ToList();
 
                     if (files.Count == 0)
@@ -309,4 +316,18 @@ public static class QcCommand
         var parenIndex = flag.IndexOf('(');
         return parenIndex > 0 ? flag[..parenIndex].TrimEnd() : flag;
     }
+
+    private static AudioFileSortKey GetSortKey(FileInfo file)
+    {
+        var stem = Path.GetFileNameWithoutExtension(file.Name);
+        var match = FileNumberRegex.Match(stem);
+        if (match.Success && int.TryParse(match.Value, out var primary))
+        {
+            return new AudioFileSortKey(0, primary, stem.ToLowerInvariant());
+        }
+
+        return new AudioFileSortKey(1, int.MaxValue, stem.ToLowerInvariant());
+    }
+
+    private readonly record struct AudioFileSortKey(int Category, int PrimaryNumber, string NameLower);
 }

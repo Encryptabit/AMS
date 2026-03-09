@@ -15,6 +15,7 @@ public static class AudioQcAnalyzer
     /// or ending "near" the total file duration.
     /// </summary>
     private const double NearBoundaryTolerance = 0.05;
+    private const double DefaultMinimumStructuralGapDuration = 0.30;
 
     /// <summary>
     /// Analyzes the structure of detected silence regions to identify head silence,
@@ -26,7 +27,10 @@ public static class AudioQcAnalyzer
     /// after accounting for head and tail).
     /// </returns>
     public static (double HeadSilenceSec, double? TitleDurationSec, double? TitleBodyGapSec, double TailSilenceSec)
-        AnalyzeStructure(IReadOnlyList<SilenceRegion> silences, double totalDurationSec)
+        AnalyzeStructure(
+            IReadOnlyList<SilenceRegion> silences,
+            double totalDurationSec,
+            double minimumStructuralGapDurationSec = DefaultMinimumStructuralGapDuration)
     {
         if (silences.Count == 0)
             return (0.0, null, null, 0.0);
@@ -56,17 +60,34 @@ public static class AudioQcAnalyzer
                 : totalDurationSec - lastRegion.Start;
         }
 
-        // Title-body gap: the longest non-head, non-tail silence in the first portion
-        // of the file (first 60s or 10% of duration, whichever is larger). The structural
-        // gap between title narration and body text is typically the most prominent silence
-        // near the start — much longer than inter-word pauses.
+        // Title-body gap: prefer the first plausible structural gap near the start of the
+        // file, rather than the longest pause in the opening minutes. This avoids treating
+        // an early paragraph pause as the title/body break on long chapters.
         double? titleDurationSec = null;
         double? titleBodyGapSec = null;
 
         var searchLimit = Math.Max(60.0, totalDurationSec * 0.10);
         int gapIndex = -1;
-        double longestGapDuration = 0.0;
         for (int i = 0; i < silences.Count; i++)
+        {
+            if (i == headIndex || i == tailIndex) continue;
+            if (silences[i].Start > searchLimit) break;
+
+            var dur = silences[i].Duration >= 0
+                ? silences[i].Duration
+                : totalDurationSec - silences[i].Start;
+            if (dur >= minimumStructuralGapDurationSec)
+            {
+                gapIndex = i;
+                break;
+            }
+        }
+
+        // Fall back to the largest early gap when no structural candidate clears the
+        // minimum duration, so very short title/body gaps can still be surfaced.
+        double longestGapDuration = 0.0;
+        int fallbackGapIndex = -1;
+        for (int i = 0; gapIndex < 0 && i < silences.Count; i++)
         {
             if (i == headIndex || i == tailIndex) continue;
             if (silences[i].Start > searchLimit) break;
@@ -76,8 +97,13 @@ public static class AudioQcAnalyzer
             if (dur > longestGapDuration)
             {
                 longestGapDuration = dur;
-                gapIndex = i;
+                fallbackGapIndex = i;
             }
+        }
+
+        if (gapIndex < 0)
+        {
+            gapIndex = fallbackGapIndex;
         }
 
         if (gapIndex >= 0 && headIndex >= 0)
@@ -181,7 +207,10 @@ public static class AudioQcAnalyzer
 
         // Analyze structure
         var (headSilence, titleDuration, titleBodyGap, tailSilence) =
-            AnalyzeStructure(silences, durationSec);
+            AnalyzeStructure(
+                silences,
+                durationSec,
+                Math.Max(minSilenceDurationSec * 4.0, thresholds.MinTitleBodyGap * 0.5));
 
         var result = new ChapterQcResult
         {

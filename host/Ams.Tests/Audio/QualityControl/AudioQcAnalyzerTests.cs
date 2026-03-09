@@ -144,6 +144,48 @@ public class AudioQcAnalyzerTests
         Assert.Equal(2.6, tail);
     }
 
+    [Fact]
+    public void AnalyzeStructure_LaterLongerPause_PrefersFirstStructuralGap()
+    {
+        var silences = new SilenceRegion[]
+        {
+            new(0.0, 0.70, 0.70),
+            new(3.10, 4.60, 1.50),
+            new(85.0, 87.8, 2.80),
+            new(297.0, 300.0, 3.0)
+        };
+
+        var (head, title, gap, tail) = AudioQcAnalyzer.AnalyzeStructure(silences, 300.0);
+
+        Assert.Equal(0.70, head);
+        Assert.NotNull(title);
+        Assert.Equal(3.10 - 0.70, title.Value, 3);
+        Assert.NotNull(gap);
+        Assert.Equal(1.50, gap.Value, 3);
+        Assert.Equal(3.0, tail);
+    }
+
+    [Fact]
+    public void AnalyzeStructure_NoPlausibleStructuralGap_FallsBackToLongestEarlyGap()
+    {
+        var silences = new SilenceRegion[]
+        {
+            new(0.0, 0.70, 0.70),
+            new(1.60, 1.78, 0.18),
+            new(2.90, 3.16, 0.26),
+            new(297.0, 300.0, 3.0)
+        };
+
+        var (head, title, gap, tail) = AudioQcAnalyzer.AnalyzeStructure(silences, 300.0);
+
+        Assert.Equal(0.70, head);
+        Assert.NotNull(title);
+        Assert.Equal(2.90 - 0.70, title.Value, 3);
+        Assert.NotNull(gap);
+        Assert.Equal(0.26, gap.Value, 3);
+        Assert.Equal(3.0, tail);
+    }
+
     #endregion
 
     #region FlagAnomalies
