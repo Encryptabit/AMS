@@ -45,7 +45,10 @@ public enum BoundaryMethod
     SnapEnergy,
 
     /// <summary>No refinement possible; original boundary used as-is.</summary>
-    Original
+    Original,
+
+    /// <summary>Boundary shifted to avoid bisecting a detected breath.</summary>
+    BreathAware
 }
 
 /// <summary>
@@ -118,6 +121,110 @@ public static class SpliceBoundaryService
             opts);
 
         // Sanity: ensure start < end
+        if (refinedStart >= refinedEnd)
+        {
+            refinedStart = roughStartSec;
+            refinedEnd = roughEndSec;
+            startMethod = BoundaryMethod.Original;
+            endMethod = BoundaryMethod.Original;
+        }
+
+        return new SpliceBoundaryResult(
+            refinedStart, refinedEnd,
+            startMethod, endMethod,
+            roughStartSec, roughEndSec);
+    }
+
+    /// <summary>
+    /// Refines boundaries with breath awareness: calls <see cref="RefineBoundaries"/> first,
+    /// then checks for breath overlap at each refined boundary. If a proposed cut point
+    /// bisects a detected breath, the cut is shifted to avoid splitting it.
+    /// </summary>
+    /// <param name="chapterBuffer">The full chapter audio buffer.</param>
+    /// <param name="roughStartSec">ASR/MFA-derived start time of the sentence.</param>
+    /// <param name="roughEndSec">ASR/MFA-derived end time of the sentence.</param>
+    /// <param name="prevSentenceEndSec">End time of the previous sentence (null if first).</param>
+    /// <param name="nextSentenceStartSec">Start time of the next sentence (null if last).</param>
+    /// <param name="options">Optional refinement thresholds (includes breath detection settings).</param>
+    /// <returns>Refined start/end boundaries with method annotations.</returns>
+    public static SpliceBoundaryResult RefineBoundariesBreathAware(
+        AudioBuffer chapterBuffer,
+        double roughStartSec,
+        double roughEndSec,
+        double? prevSentenceEndSec,
+        double? nextSentenceStartSec,
+        SpliceBoundaryOptions? options = null)
+    {
+        ArgumentNullException.ThrowIfNull(chapterBuffer);
+
+        var opts = options ?? DefaultOptions;
+
+        // 1. Get the initial refinement from existing logic
+        var baseResult = RefineBoundaries(
+            chapterBuffer, roughStartSec, roughEndSec,
+            prevSentenceEndSec, nextSentenceStartSec, opts);
+
+        var bufferDurationSec = (double)chapterBuffer.Length / chapterBuffer.SampleRate;
+        var breathOpts = new FrameBreathDetectorOptions();
+        const double breathSearchRadius = 0.2;
+        const double breathGuard = 0.005;
+
+        var refinedStart = baseResult.RefinedStartSec;
+        var startMethod = baseResult.StartMethod;
+        var refinedEnd = baseResult.RefinedEndSec;
+        var endMethod = baseResult.EndMethod;
+
+        // 2. Check for breath overlap at start boundary
+        {
+            double searchStart = Math.Max(0, refinedStart - breathSearchRadius);
+            double searchEnd = Math.Min(bufferDurationSec, refinedStart + breathSearchRadius);
+
+            if (searchEnd > searchStart)
+            {
+                var breaths = FeatureExtraction.Detect(chapterBuffer, searchStart, searchEnd, breathOpts);
+                foreach (var breath in breaths)
+                {
+                    // If a breath straddles the proposed start cut point, shift after the breath
+                    if (breath.StartSec <= refinedStart && refinedStart <= breath.EndSec)
+                    {
+                        refinedStart = breath.EndSec + breathGuard;
+                        startMethod = BoundaryMethod.BreathAware;
+                        break; // Only adjust for the first straddling breath
+                    }
+                }
+            }
+        }
+
+        // 3. Check for breath overlap at end boundary
+        {
+            double searchStart = Math.Max(0, refinedEnd - breathSearchRadius);
+            double searchEnd = Math.Min(bufferDurationSec, refinedEnd + breathSearchRadius);
+
+            if (searchEnd > searchStart)
+            {
+                var breaths = FeatureExtraction.Detect(chapterBuffer, searchStart, searchEnd, breathOpts);
+                foreach (var breath in breaths)
+                {
+                    // If a breath straddles the proposed end cut point, shift before the breath
+                    if (breath.StartSec <= refinedEnd && refinedEnd <= breath.EndSec)
+                    {
+                        refinedEnd = breath.StartSec - breathGuard;
+                        endMethod = BoundaryMethod.BreathAware;
+                        break; // Only adjust for the first straddling breath
+                    }
+                }
+            }
+        }
+
+        // 4. Re-apply boundary padding with breath-adjusted positions
+        var minStartSec = Math.Max(0.0, prevSentenceEndSec ?? 0.0);
+        var maxEndSec = Math.Min(bufferDurationSec, nextSentenceStartSec ?? bufferDurationSec);
+        (refinedStart, refinedEnd) = ApplyBoundaryPadding(
+            refinedStart, refinedEnd,
+            minStartSec, maxEndSec,
+            opts);
+
+        // 5. Sanity: ensure start < end, fall back to originals if not
         if (refinedStart >= refinedEnd)
         {
             refinedStart = roughStartSec;
