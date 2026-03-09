@@ -46,6 +46,7 @@ builder.Services.AddTransient<CrxService>();
 builder.Services.AddSingleton<StagingQueueService>();
 builder.Services.AddSingleton<UndoService>();
 builder.Services.AddSingleton<PreviewBufferService>();
+builder.Services.AddSingleton<EditListService>();
 
 // Polish area services - transient (stateless matching and orchestration)
 builder.Services.AddTransient<PickupMfaRefinementService>();
