@@ -1,13 +1,19 @@
+using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using Ams.Core.Application.Mfa;
 using Ams.Core.Application.Mfa.Models;
 using Ams.Core.Application.Processes;
+using Ams.Core.Artifacts;
+using Ams.Core.Artifacts.Alignment;
 using Ams.Core.Asr;
+using Ams.Core.Audio;
 using Ams.Core.Common;
+using Ams.Core.Processors;
 using Ams.Core.Processors.Alignment.Mfa;
 using Ams.Core.Runtime.Book;
+using Ams.Core.Services.Alignment;
 
 namespace Ams.Workstation.Server.Services;
 
@@ -18,7 +24,7 @@ namespace Ams.Workstation.Server.Services;
 /// </summary>
 public class PickupMfaRefinementService
 {
-    private const string PickupMfaCacheVersion = "pickup-mfa-v2";
+    private const string PickupMfaCacheVersion = "pickup-mfa-v3";
 
     private static readonly JsonSerializerOptions CacheJsonOptions = new()
     {
@@ -26,6 +32,7 @@ public class PickupMfaRefinementService
     };
 
     private readonly BlazorWorkspace _workspace;
+    private readonly ChunkPlanningService _chunkPlanning = new();
 
     public PickupMfaRefinementService(BlazorWorkspace workspace)
     {
@@ -33,15 +40,30 @@ public class PickupMfaRefinementService
     }
 
     /// <summary>
-    /// Refines ASR token timings using full-file MFA forced alignment.
-    /// Falls back to the original ASR response on any MFA failure.
-    /// </summary>
+     /// Refines ASR token timings using full-file MFA forced alignment.
+     /// Falls back to the original ASR response on any MFA failure.
+     /// </summary>
     public async Task<AsrResponse> RefineAsrTimingsAsync(
         string pickupFilePath,
         AsrResponse asrResponse,
         CancellationToken ct)
     {
+        var pickupBuffer = AudioProcessor.Decode(pickupFilePath);
+        var asrReady = AsrAudioPreparer.PrepareForAsr(pickupBuffer);
+        var chunkPlan = _chunkPlanning.GeneratePlan(asrReady, pickupFilePath);
+        return await RefineAsrTimingsAsync(pickupFilePath, asrReady, chunkPlan, asrResponse, ct).ConfigureAwait(false);
+    }
+
+    public async Task<AsrResponse> RefineAsrTimingsAsync(
+        string pickupFilePath,
+        AudioBuffer asrReadyBuffer,
+        ChunkPlanDocument chunkPlan,
+        AsrResponse asrResponse,
+        CancellationToken ct)
+    {
         ArgumentException.ThrowIfNullOrWhiteSpace(pickupFilePath);
+        ArgumentNullException.ThrowIfNull(asrReadyBuffer);
+        ArgumentNullException.ThrowIfNull(chunkPlan);
         ArgumentNullException.ThrowIfNull(asrResponse);
 
         if (asrResponse.Tokens is not { Length: > 0 })
@@ -71,28 +93,117 @@ public class PickupMfaRefinementService
                 return cachedRefined;
             }
 
-            // Persistent first-class artifact directory reused across runs.
-            var corpusDir = Path.Combine(pickupCacheDir, "mfa", cacheHash);
-            Directory.CreateDirectory(corpusDir);
+            var artifactRoot = Path.Combine(pickupCacheDir, "mfa", cacheHash);
+            Directory.CreateDirectory(artifactRoot);
 
-            // Always stage the full pickup WAV (never clip).
-            var stagedWavPath = Path.Combine(corpusDir, "pickup.wav");
-            EnsureStagedPickupWav(pickupFilePath, stagedWavPath);
-
-            var labPath = Path.Combine(corpusDir, "pickup.lab");
-            var labContent = string.Join(' ', alignmentWords);
-            if (string.IsNullOrWhiteSpace(labContent))
-            {
-                Log.Debug("MFA pickup refinement skipped: lab content was empty");
-                return asrResponse;
-            }
-
-            await EnsureLabContentAsync(labPath, labContent, ct).ConfigureAwait(false);
-
-            var outputDir = Path.Combine(corpusDir, "output");
+            var corpusDir = artifactRoot;
+            var outputDir = Path.Combine(artifactRoot, "output");
             Directory.CreateDirectory(outputDir);
 
-            var textGridPath = FindTextGridFile(outputDir);
+            string? textGridPath;
+            if (chunkPlan.Chunks.Count > 1)
+            {
+                var chunkAudioDir = Path.Combine(artifactRoot, "chunk-audio");
+                corpusDir = Path.Combine(artifactRoot, "corpus");
+                var mfaCopyDir = Path.Combine(artifactRoot, "mfa");
+                Directory.CreateDirectory(chunkAudioDir);
+                Directory.CreateDirectory(corpusDir);
+                Directory.CreateDirectory(mfaCopyDir);
+
+                var utterances = BuildChunkCorpus(asrReadyBuffer, chunkPlan, asrResponse, chunkAudioDir, corpusDir);
+                if (utterances.Count == 0)
+                {
+                    Log.Warn("MFA pickup refinement skipped: chunked pickup corpus produced no utterances");
+                    return asrResponse;
+                }
+
+                textGridPath = Path.Combine(mfaCopyDir, "pickup.TextGrid");
+                if (!File.Exists(textGridPath))
+                {
+                    await MfaProcessSupervisor.EnsureReadyAsync(ct).ConfigureAwait(false);
+
+                    var pickupBeam = MfaBeamSettings.Resolve(MfaBeamProfile.Strict);
+                    var context = new MfaChapterContext
+                    {
+                        CorpusDirectory = corpusDir,
+                        OutputDirectory = outputDir,
+                        WorkingDirectory = artifactRoot,
+                        DictionaryModel = MfaService.DefaultDictionaryModel,
+                        AcousticModel = MfaService.DefaultAcousticModel,
+                        G2pModel = MfaService.DefaultG2pModel,
+                        Beam = pickupBeam.Beam,
+                        RetryBeam = pickupBeam.RetryBeam,
+                        SingleSpeaker = true,
+                        CleanOutput = true
+                    };
+
+                    var service = new MfaService(useDedicatedProcess: false);
+                    var validateResult = await service.ValidateAsync(context, ct).ConfigureAwait(false);
+                    LogMfaResult("mfa validate (pickup)", validateResult);
+
+                    var oovPath = FindOovListFile(artifactRoot);
+                    if (oovPath != null)
+                    {
+                        var g2pOutputPath = Path.Combine(artifactRoot, "pickup.g2p.txt");
+                        var customDictPath = Path.Combine(artifactRoot, "pickup.dictionary.zip");
+
+                        var g2pContext = context with
+                        {
+                            OovListPath = oovPath,
+                            G2pOutputPath = g2pOutputPath,
+                            CustomDictionaryPath = customDictPath
+                        };
+
+                        var g2pResult = await service.GeneratePronunciationsAsync(g2pContext, ct).ConfigureAwait(false);
+                        LogMfaResult("mfa g2p (pickup)", g2pResult);
+
+                        if (g2pResult.ExitCode == 0 && File.Exists(g2pOutputPath) && new FileInfo(g2pOutputPath).Length > 0)
+                        {
+                            var addWordsResult = await service.AddWordsAsync(g2pContext, ct).ConfigureAwait(false);
+                            LogMfaResult("mfa add_words (pickup)", addWordsResult);
+                            if (addWordsResult.ExitCode == 0 && File.Exists(customDictPath))
+                                context = context with { CustomDictionaryPath = customDictPath };
+                        }
+                    }
+
+                    var alignResult = await service.AlignAsync(context, ct).ConfigureAwait(false);
+                    if (alignResult.ExitCode != 0)
+                    {
+                        Log.Warn("Chunked MFA align failed for pickup (exit {Code}), using ASR timings", alignResult.ExitCode);
+                        return asrResponse;
+                    }
+
+                    CollectChunkTextGrids(utterances, outputDir, mfaCopyDir);
+                    var aggregatedCount = AggregateChunkTextGrids(utterances, mfaCopyDir, textGridPath);
+                    if (aggregatedCount == 0)
+                    {
+                        Log.Warn("Chunked MFA pickup aggregation produced no intervals, using ASR timings");
+                        return asrResponse;
+                    }
+                }
+                else
+                {
+                    Log.Debug("MFA pickup chunked artifact reuse hit ({Hash})", cacheHash);
+                }
+            }
+            else
+            {
+                // Always stage the full pickup WAV (never clip).
+                var stagedWavPath = Path.Combine(corpusDir, "pickup.wav");
+                EnsureStagedPickupWav(pickupFilePath, stagedWavPath);
+
+                var labPath = Path.Combine(corpusDir, "pickup.lab");
+                var labContent = string.Join(' ', alignmentWords);
+                if (string.IsNullOrWhiteSpace(labContent))
+                {
+                    Log.Debug("MFA pickup refinement skipped: lab content was empty");
+                    return asrResponse;
+                }
+
+                await EnsureLabContentAsync(labPath, labContent, ct).ConfigureAwait(false);
+                textGridPath = FindTextGridFile(outputDir);
+            }
+
             if (textGridPath == null)
             {
                 await MfaProcessSupervisor.EnsureReadyAsync(ct).ConfigureAwait(false);
@@ -105,7 +216,7 @@ public class PickupMfaRefinementService
                 {
                     CorpusDirectory = corpusDir,
                     OutputDirectory = outputDir,
-                    WorkingDirectory = corpusDir,
+                    WorkingDirectory = artifactRoot,
                     DictionaryModel = MfaService.DefaultDictionaryModel,
                     AcousticModel = MfaService.DefaultAcousticModel,
                     G2pModel = MfaService.DefaultG2pModel,
@@ -120,11 +231,11 @@ public class PickupMfaRefinementService
                 var validateResult = await service.ValidateAsync(context, ct).ConfigureAwait(false);
                 LogMfaResult("mfa validate (pickup)", validateResult);
 
-                var oovPath = FindOovListFile(corpusDir);
+                var oovPath = FindOovListFile(artifactRoot);
                 if (oovPath != null)
                 {
-                    var g2pOutputPath = Path.Combine(corpusDir, "pickup.g2p.txt");
-                    var customDictPath = Path.Combine(corpusDir, "pickup.dictionary.zip");
+                    var g2pOutputPath = Path.Combine(artifactRoot, "pickup.g2p.txt");
+                    var customDictPath = Path.Combine(artifactRoot, "pickup.dictionary.zip");
 
                     var g2pContext = context with
                     {
@@ -358,6 +469,263 @@ public class PickupMfaRefinementService
 
         return true;
     }
+
+    private static List<PickupChunkUtterance> BuildChunkCorpus(
+        AudioBuffer asrReadyBuffer,
+        ChunkPlanDocument chunkPlan,
+        AsrResponse asrResponse,
+        string chunkAudioDir,
+        string corpusDir)
+    {
+        CleanDirectory(chunkAudioDir, "*.wav");
+        CleanDirectory(corpusDir, "*.wav", "*.lab");
+
+        var utterances = new List<PickupChunkUtterance>(chunkPlan.Chunks.Count);
+        for (var i = 0; i < chunkPlan.Chunks.Count; i++)
+        {
+            var chunk = chunkPlan.Chunks[i];
+            var utteranceName = $"utt-{i:D4}";
+            var labWords = ExtractChunkAlignmentWords(
+                asrResponse.Tokens,
+                chunk.StartSec,
+                chunk.EndSec,
+                isLastChunk: i == chunkPlan.Chunks.Count - 1);
+
+            if (labWords.Count == 0)
+            {
+                Log.Debug(
+                    "Pickup MFA chunk {ChunkId} ({Utterance}) produced no alignment words; skipping",
+                    chunk.ChunkId,
+                    utteranceName);
+                continue;
+            }
+
+            var slice = asrReadyBuffer.Slice(chunk.StartSample, chunk.LengthSamples);
+            if (slice.Length <= 0)
+            {
+                Log.Debug(
+                    "Pickup MFA chunk {ChunkId} ({Utterance}) produced no audio; skipping",
+                    chunk.ChunkId,
+                    utteranceName);
+                continue;
+            }
+
+            var chunkAudioPath = Path.Combine(chunkAudioDir, utteranceName + ".wav");
+            var corpusAudioPath = Path.Combine(corpusDir, utteranceName + ".wav");
+            var labPath = Path.Combine(corpusDir, utteranceName + ".lab");
+
+            AudioProcessor.EncodeWav(chunkAudioPath, slice);
+            File.Copy(chunkAudioPath, corpusAudioPath, overwrite: true);
+            File.WriteAllText(labPath, string.Join(' ', labWords), Encoding.UTF8);
+
+            utterances.Add(new PickupChunkUtterance(
+                chunk.ChunkId,
+                utteranceName,
+                chunk.StartSec,
+                chunk.EndSec));
+        }
+
+        Log.Debug(
+            "Pickup MFA using shared chunk plan: {Utterances}/{Chunks} utterances emitted",
+            utterances.Count,
+            chunkPlan.Chunks.Count);
+
+        return utterances;
+    }
+
+    private static List<string> ExtractChunkAlignmentWords(
+        IReadOnlyList<AsrToken> tokens,
+        double chunkStartSec,
+        double chunkEndSec,
+        bool isLastChunk)
+    {
+        var words = new List<string>();
+
+        foreach (var token in tokens)
+        {
+            var midpoint = token.StartTime + (Math.Max(0.01, token.Duration) / 2.0);
+            var inChunk = midpoint >= chunkStartSec && (midpoint < chunkEndSec || (isLastChunk && midpoint <= chunkEndSec));
+            if (!inChunk)
+                continue;
+
+            var parts = PronunciationHelper.ExtractPronunciationParts(token.Word);
+            if (parts.Count == 0)
+            {
+                var normalized = NormalizeAlignmentWord(token.Word);
+                if (normalized.Length > 0)
+                    words.Add(normalized);
+                continue;
+            }
+
+            foreach (var part in parts)
+            {
+                var normalized = NormalizeAlignmentWord(part);
+                if (normalized.Length > 0)
+                    words.Add(normalized);
+            }
+        }
+
+        return words;
+    }
+
+    private static void CollectChunkTextGrids(
+        IReadOnlyList<PickupChunkUtterance> utterances,
+        string alignOutputDir,
+        string mfaCopyDir)
+    {
+        Directory.CreateDirectory(mfaCopyDir);
+        foreach (var utterance in utterances)
+        {
+            var candidate = FindChunkTextGridFile(alignOutputDir, utterance.UtteranceName);
+            if (candidate == null)
+                continue;
+
+            File.Copy(candidate, Path.Combine(mfaCopyDir, utterance.UtteranceName + ".TextGrid"), overwrite: true);
+        }
+    }
+
+    private static string? FindChunkTextGridFile(string outputDir, string utteranceName)
+    {
+        var candidates = new[]
+        {
+            Path.Combine(outputDir, "alignment", "mfa", utteranceName + ".TextGrid"),
+            Path.Combine(outputDir, utteranceName + ".TextGrid")
+        };
+
+        return candidates.FirstOrDefault(File.Exists);
+    }
+
+    private static int AggregateChunkTextGrids(
+        IReadOnlyList<PickupChunkUtterance> utterances,
+        string chunkTextGridDirectory,
+        string outputPath)
+    {
+        var allWordIntervals = new List<TextGridInterval>();
+        var allPhoneIntervals = new List<TextGridInterval>();
+
+        foreach (var utterance in utterances)
+        {
+            var textGridPath = Path.Combine(chunkTextGridDirectory, utterance.UtteranceName + ".TextGrid");
+            if (!File.Exists(textGridPath))
+                continue;
+
+            foreach (var interval in TextGridParser.ParseWordIntervals(textGridPath))
+            {
+                allWordIntervals.Add(new TextGridInterval(
+                    interval.Start + utterance.ChunkStartSec,
+                    interval.End + utterance.ChunkStartSec,
+                    interval.Text));
+            }
+
+            foreach (var interval in TextGridParser.ParsePhoneIntervals(textGridPath))
+            {
+                allPhoneIntervals.Add(new TextGridInterval(
+                    interval.Start + utterance.ChunkStartSec,
+                    interval.End + utterance.ChunkStartSec,
+                    interval.Text));
+            }
+        }
+
+        if (allWordIntervals.Count == 0)
+            return 0;
+
+        allWordIntervals.Sort((a, b) => a.Start.CompareTo(b.Start));
+        allPhoneIntervals.Sort((a, b) => a.Start.CompareTo(b.Start));
+
+        var xmin = Math.Min(
+            allWordIntervals.Count > 0 ? allWordIntervals[0].Start : 0.0,
+            allPhoneIntervals.Count > 0 ? allPhoneIntervals[0].Start : double.MaxValue);
+        var xmax = Math.Max(
+            allWordIntervals.Count > 0 ? allWordIntervals[^1].End : 0.0,
+            allPhoneIntervals.Count > 0 ? allPhoneIntervals[^1].End : 0.0);
+
+        var outputDirectory = Path.GetDirectoryName(outputPath);
+        if (!string.IsNullOrWhiteSpace(outputDirectory))
+            Directory.CreateDirectory(outputDirectory);
+
+        WriteTextGrid(outputPath, xmin, xmax, allWordIntervals, allPhoneIntervals);
+        return allWordIntervals.Count;
+    }
+
+    private static void WriteTextGrid(
+        string outputPath,
+        double xmin,
+        double xmax,
+        IReadOnlyList<TextGridInterval> wordIntervals,
+        IReadOnlyList<TextGridInterval> phoneIntervals)
+    {
+        var sb = new StringBuilder();
+        var ci = CultureInfo.InvariantCulture;
+        var tierCount = phoneIntervals.Count > 0 ? 2 : 1;
+
+        sb.AppendLine("File type = \"ooTextFile\"");
+        sb.AppendLine("Object class = \"TextGrid\"");
+        sb.AppendLine();
+        sb.AppendLine(string.Create(ci, $"xmin = {xmin}"));
+        sb.AppendLine(string.Create(ci, $"xmax = {xmax}"));
+        sb.AppendLine("tiers? <exists>");
+        sb.AppendLine(string.Create(ci, $"size = {tierCount}"));
+        sb.AppendLine("item []:");
+
+        WriteTier(sb, ci, 1, "words", xmin, xmax, wordIntervals);
+        if (phoneIntervals.Count > 0)
+            WriteTier(sb, ci, 2, "phones", xmin, xmax, phoneIntervals);
+
+        File.WriteAllText(outputPath, sb.ToString(), Encoding.UTF8);
+    }
+
+    private static void WriteTier(
+        StringBuilder sb,
+        CultureInfo ci,
+        int tierIndex,
+        string tierName,
+        double xmin,
+        double xmax,
+        IReadOnlyList<TextGridInterval> intervals)
+    {
+        sb.AppendLine(string.Create(ci, $"    item [{tierIndex}]:"));
+        sb.AppendLine("        class = \"IntervalTier\"");
+        sb.AppendLine(string.Create(ci, $"        name = \"{tierName}\""));
+        sb.AppendLine(string.Create(ci, $"        xmin = {xmin}"));
+        sb.AppendLine(string.Create(ci, $"        xmax = {xmax}"));
+        sb.AppendLine(string.Create(ci, $"        intervals: size = {intervals.Count}"));
+
+        for (var i = 0; i < intervals.Count; i++)
+        {
+            var interval = intervals[i];
+            sb.AppendLine(string.Create(ci, $"        intervals [{i + 1}]:"));
+            sb.AppendLine(string.Create(ci, $"            xmin = {interval.Start}"));
+            sb.AppendLine(string.Create(ci, $"            xmax = {interval.End}"));
+            sb.AppendLine($"            text = \"{interval.Text.Replace("\"", "\"\"")}\"");
+        }
+    }
+
+    private static void CleanDirectory(string directory, params string[] patterns)
+    {
+        if (!Directory.Exists(directory))
+            return;
+
+        foreach (var pattern in patterns)
+        {
+            foreach (var file in Directory.EnumerateFiles(directory, pattern))
+            {
+                try
+                {
+                    File.Delete(file);
+                }
+                catch (Exception ex)
+                {
+                    Log.Debug("Failed to remove stale pickup MFA artifact {Path}: {Message}", file, ex.Message);
+                }
+            }
+        }
+    }
+
+    private sealed record PickupChunkUtterance(
+        int ChunkId,
+        string UtteranceName,
+        double ChunkStartSec,
+        double ChunkEndSec);
 
     #endregion
 

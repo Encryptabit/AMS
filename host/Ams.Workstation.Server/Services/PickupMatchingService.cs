@@ -7,6 +7,7 @@ using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
 using Ams.Core.Artifacts;
+using Ams.Core.Artifacts.Alignment;
 using Ams.Core.Artifacts.Hydrate;
 using Ams.Core.Asr;
 using Ams.Core.Audio;
@@ -67,15 +68,17 @@ public class PickupMatchingService
                 "Pickup import requires CRX.json targets. No CRX targets were provided for deterministic pairing.");
         }
 
+        var pickupBuffer = AudioProcessor.Decode(pickupFilePath);
+        var asrReady = AsrAudioPreparer.PrepareForAsr(pickupBuffer);
+        var chunkPlan = _chunkPlanning.GeneratePlan(asrReady, pickupFilePath);
+
         // 1. ASR on full WAV (with named artifact cache)
         var asrResponse = TryReadNamedAsrCache(pickupFilePath);
 
         if (asrResponse == null)
         {
-            var pickupBuffer = AudioProcessor.Decode(pickupFilePath);
-            var asrReady = AsrAudioPreparer.PrepareForAsr(pickupBuffer);
             var asrOptions = await BuildAsrOptionsAsync(ct).ConfigureAwait(false);
-            asrResponse = await TranscribePickupBufferAsync(pickupFilePath, asrReady, asrOptions, ct)
+            asrResponse = await TranscribePickupBufferAsync(asrReady, chunkPlan, asrOptions, ct)
                 .ConfigureAwait(false);
             WriteNamedAsrCache(pickupFilePath, asrResponse);
         }
@@ -83,6 +86,8 @@ public class PickupMatchingService
         // 2. MFA refinement
         asrResponse = await _mfaRefinement.RefineAsrTimingsAsync(
             pickupFilePath,
+            asrReady,
+            chunkPlan,
             asrResponse,
             ct).ConfigureAwait(false);
         WriteNamedMfaCache(asrResponse);
@@ -409,9 +414,10 @@ public class PickupMatchingService
 
         var pickupBuffer = AudioProcessor.Decode(pickupFilePath);
         var asrReady = AsrAudioPreparer.PrepareForAsr(pickupBuffer);
+        var chunkPlan = _chunkPlanning.GeneratePlan(asrReady, pickupFilePath);
 
         var asrOptions = await BuildAsrOptionsAsync(ct).ConfigureAwait(false);
-        var asrResponse = await TranscribePickupBufferAsync(pickupFilePath, asrReady, asrOptions, ct)
+        var asrResponse = await TranscribePickupBufferAsync(asrReady, chunkPlan, asrOptions, ct)
             .ConfigureAwait(false);
 
         var recognizedText = ExtractFullText(asrResponse);
@@ -478,13 +484,12 @@ public class PickupMatchingService
     }
 
     private async Task<AsrResponse> TranscribePickupBufferAsync(
-        string pickupFilePath,
         AudioBuffer asrReady,
+        ChunkPlanDocument chunkPlan,
         AsrOptions asrOptions,
         CancellationToken ct)
     {
-        var plan = _chunkPlanning.GeneratePlan(asrReady, pickupFilePath);
-        if (plan.Chunks.Count <= 1)
+        if (chunkPlan.Chunks.Count <= 1)
         {
             return await AsrProcessor.TranscribeBufferAsync(asrReady, asrOptions, ct).ConfigureAwait(false);
         }
@@ -492,11 +497,11 @@ public class PickupMatchingService
         var totalDuration = asrReady.Length / (double)asrReady.SampleRate;
         Log.Debug(
             "Pickup ASR chunk-plan driven: {ChunkCount} chunks from {TotalDuration:F1}s audio",
-            plan.Chunks.Count,
+            chunkPlan.Chunks.Count,
             totalDuration);
 
-        var chunkResults = new List<(AsrResponse Response, double OffsetSec)>(plan.Chunks.Count);
-        foreach (var entry in plan.Chunks)
+        var chunkResults = new List<(AsrResponse Response, double OffsetSec)>(chunkPlan.Chunks.Count);
+        foreach (var entry in chunkPlan.Chunks)
         {
             ct.ThrowIfCancellationRequested();
             var slice = asrReady.Slice(entry.StartSample, entry.LengthSamples);
