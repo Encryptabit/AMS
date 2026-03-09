@@ -4,6 +4,8 @@
 @inject Ams.Workstation.Server.Services.StagingQueueService StagingQueueService
 @inject Ams.Workstation.Server.Services.PolishService PolishService
 @inject Ams.Workstation.Server.Services.PickupMatchingService PickupMatchingService
+@inject Ams.Workstation.Server.Services.PickupAssetService PickupAssetService
+@inject Ams.Workstation.Server.Services.EditListService EditListService
 @inject Ams.Workstation.Server.Services.PolishVerificationService VerificationService
 @inject Ams.Workstation.Server.Services.UndoService UndoService
 @inject NavigationManager Navigation
@@ -167,10 +169,34 @@
                                 <PickupBox Match="@item.Match"
                                            State="PickupBoxState.Matched"
                                            Sentence="@FindSentence(item.Match.SentenceId)"
+                                           AvailableTargets="@_availableCrxTargets"
                                            OnStage="HandleStageMatch"
+                                           OnReassign="HandleReassign"
+                                           OnSelect="HandlePickupBoxSelect"
                                            OnAudition="HandleAudition" />
                             }
                         </div>
+                    }
+
+                    @* Unmatched bucket within Matches column *@
+                    @if (_unmatchedPickups.Count > 0)
+                    {
+                        <BitStack Horizontal="true" Gap="0.5rem" VerticalAlign="BitAlignment.Center" AutoHeight="true"
+                                  Style="margin-top: 0.5rem; border-top: 1px solid var(--bit-clr-bg-sec); padding-top: 0.5rem;">
+                            <BitText Typography="BitTypography.Subtitle2"
+                                     Style="text-transform: uppercase; letter-spacing: 0.05em;">
+                                Unmatched
+                            </BitText>
+                            <BitTag Color="BitColor.Warning">@_unmatchedPickups.Count</BitTag>
+                        </BitStack>
+                        @foreach (var asset in _unmatchedPickups)
+                        {
+                            <PickupBox Asset="@asset"
+                                       State="PickupBoxState.Unmatched"
+                                       AvailableTargets="@_availableCrxTargets"
+                                       OnAssign="HandleManualAssign"
+                                       OnSelect="HandlePickupBoxSelect" />
+                        }
                     }
                 </BitStack>
             </BitGridItem>
@@ -206,7 +232,9 @@
                                    Sentence="@FindSentence(item.SentenceId)"
                                    OnUnstage="HandleUnstage"
                                    OnCommit="HandleCommit"
-                                   OnAudition="HandleAudition" />
+                                   OnAuditionContext="HandleAuditionContext"
+                                   OnAudition="HandleAudition"
+                                   OnSelect="HandlePickupBoxSelect" />
                     }
                 </BitStack>
                 </div>
@@ -228,7 +256,8 @@
                                    State="PickupBoxState.Committed"
                                    Sentence="@FindSentence(item.SentenceId)"
                                    OnRevert="HandleRevert"
-                                   OnAudition="HandleAudition" />
+                                   OnAudition="HandleAudition"
+                                   OnSelect="HandlePickupBoxSelect" />
                     }
                 </BitStack>
             </BitGridItem>
@@ -321,6 +350,20 @@
     // ── Cross-chapter pickup data ─────────────────────────────────
     private Dictionary<string, List<CrossChapterPickupMatch>> _matchesByChapter = new();
     private HashSet<int> _confirmedLowConfidence = new();
+
+    // ── Unified import state (PickupAssetService) ─────────────────
+    private List<PickupAsset> _matchedPickups = new();
+    private List<PickupAsset> _unmatchedPickups = new();
+    private List<CrxPickupTarget> _availableCrxTargets = new();
+
+    // ── Selected pickup for detail panel ──────────────────────────
+    private PickupAsset? _selectedPickup;
+    private StagedReplacement? _selectedReplacement;
+    private WaveformPlayer? _pickupWaveform;
+    private bool _isPickupWaveformReady;
+
+    // ── Migration state ───────────────────────────────────────────
+    private bool _showMigrationWarning;
 
     // ── Flipper navigation ────────────────────────────────────────
     private List<ChapterCrxInfo> _chaptersWithCrx = new();
@@ -614,18 +657,33 @@
                 return;
             }
 
-            // 3. Run CRX-driven import with progress
+            // 3. Store CRX targets for reassignment UI
+            _availableCrxTargets = crxTargets;
+
+            // 4. Run unified import via PickupAssetService (returns matched + unmatched)
+            _processingStatus = "Running unified import...";
+            _processingProgress = 0.3;
+            await InvokeAsync(StateHasChanged);
+
+            var (matched, unmatched) = await PickupAssetService.ImportAsync(
+                _pickupSessionPath, crxTargets, token);
+
+            _matchedPickups = matched.ToList();
+            _unmatchedPickups = unmatched.ToList();
+
+            // 5. Also run CRX-driven import with progress for the existing matching pipeline
             var progress = new Progress<(string Status, double Progress)>(p =>
             {
                 _processingStatus = p.Status;
-                _processingProgress = p.Progress;
+                _processingProgress = 0.3 + (p.Progress * 0.7);
                 InvokeAsync(StateHasChanged);
             });
 
             _matchesByChapter = await PolishService.ImportPickupsCrxAsync(
                 _pickupSessionPath, crxTargets, progress, token);
 
-            _processingStatus = $"Found {_matchesByChapter.Values.Sum(m => m.Count)} matches across {_matchesByChapter.Count} chapters.";
+            var totalMatches = _matchesByChapter.Values.Sum(m => m.Count);
+            _processingStatus = $"Found {totalMatches} matches across {_matchesByChapter.Count} chapters. {unmatched.Count} unmatched.";
         }
         catch (OperationCanceledException) { _processingStatus = "Processing cancelled."; }
         catch (System.IO.FileNotFoundException) { _processingStatus = "Pickup file not found. Check the file path."; }
@@ -875,6 +933,134 @@
                 await _waveformPlayer.PlaySegment(sentence.Timing.StartSec, sentence.Timing.EndSec);
             }
         }
+    }
+
+    private async Task HandleAuditionContext(string replacementId)
+    {
+        try
+        {
+            _snippetPlayer ??= await JS.InvokeAsync<IJSObjectReference>("import", "./js/snippet-player.js");
+
+            var (previewVersion, chapterStartSec, chapterEndSec) =
+                PolishService.GenerateContextPlaybackPreview(replacementId);
+
+            if (_waveformPlayer != null && _isWaveformReady)
+            {
+                await _waveformPlayer.SeekTo(chapterStartSec);
+            }
+
+            await _snippetPlayer.InvokeVoidAsync(
+                "playSegment",
+                $"/api/audio/preview?v={previewVersion}",
+                new
+                {
+                    waveformElementId = _waveformPlayer?.ElementId,
+                    chapterStartSec,
+                    chapterEndSec
+                });
+        }
+        catch { /* Non-critical context audition failure */ }
+    }
+
+    private async Task HandleManualAssign((PickupAsset Asset, CrxPickupTarget Target) args)
+    {
+        // Create a new PickupAsset with updated match fields
+        var assigned = args.Asset with
+        {
+            MatchedErrorNumber = args.Target.ErrorNumber,
+            MatchedSentenceId = args.Target.SentenceId,
+            MatchedChapterStem = args.Target.ChapterStem
+        };
+
+        // Move from unmatched to matched
+        _unmatchedPickups.Remove(args.Asset);
+        _matchedPickups.Add(assigned);
+
+        // Also add a CrossChapterPickupMatch to _matchesByChapter so staging works
+        var match = new PickupMatch(
+            SentenceId: args.Target.SentenceId,
+            PickupStartSec: assigned.TrimStartSec,
+            PickupEndSec: assigned.TrimEndSec,
+            Confidence: assigned.Confidence,
+            RecognizedText: assigned.TranscribedText,
+            ErrorNumber: args.Target.ErrorNumber,
+            IsLowConfidence: false);
+
+        var crossMatch = new CrossChapterPickupMatch(args.Target.ChapterStem, match);
+        if (!_matchesByChapter.TryGetValue(args.Target.ChapterStem, out var chapterMatches))
+        {
+            chapterMatches = new List<CrossChapterPickupMatch>();
+            _matchesByChapter[args.Target.ChapterStem] = chapterMatches;
+        }
+        chapterMatches.Add(crossMatch);
+
+        await SyncWaveformRegions();
+        StateHasChanged();
+    }
+
+    private async Task HandleReassign((PickupAsset Asset, CrxPickupTarget Target) args)
+    {
+        // Remove old match from _matchesByChapter if it exists
+        if (args.Asset.MatchedChapterStem != null &&
+            _matchesByChapter.TryGetValue(args.Asset.MatchedChapterStem, out var oldChapterMatches))
+        {
+            oldChapterMatches.RemoveAll(m =>
+                m.Match.ErrorNumber == args.Asset.MatchedErrorNumber);
+        }
+
+        // Create updated asset
+        var reassigned = args.Asset with
+        {
+            MatchedErrorNumber = args.Target.ErrorNumber,
+            MatchedSentenceId = args.Target.SentenceId,
+            MatchedChapterStem = args.Target.ChapterStem
+        };
+
+        // Update in matched list
+        var idx = _matchedPickups.FindIndex(p => p.Id == args.Asset.Id);
+        if (idx >= 0) _matchedPickups[idx] = reassigned;
+
+        // Add new CrossChapterPickupMatch
+        var match = new PickupMatch(
+            SentenceId: args.Target.SentenceId,
+            PickupStartSec: reassigned.TrimStartSec,
+            PickupEndSec: reassigned.TrimEndSec,
+            Confidence: reassigned.Confidence,
+            RecognizedText: reassigned.TranscribedText,
+            ErrorNumber: args.Target.ErrorNumber,
+            IsLowConfidence: false);
+
+        var crossMatch = new CrossChapterPickupMatch(args.Target.ChapterStem, match);
+        if (!_matchesByChapter.TryGetValue(args.Target.ChapterStem, out var newChapterMatches))
+        {
+            newChapterMatches = new List<CrossChapterPickupMatch>();
+            _matchesByChapter[args.Target.ChapterStem] = newChapterMatches;
+        }
+        newChapterMatches.Add(crossMatch);
+
+        await SyncWaveformRegions();
+        StateHasChanged();
+    }
+
+    private void HandlePickupBoxSelect(string id)
+    {
+        // Find the selected pickup asset or staged replacement for the detail panel
+        _selectedPickup = _matchedPickups.FirstOrDefault(p => p.Id == id)
+                       ?? _unmatchedPickups.FirstOrDefault(p => p.Id == id);
+
+        if (_selectedPickup == null)
+        {
+            // Check if it's a staged replacement ID
+            _selectedReplacement = (_stagedItems ?? Array.Empty<StagedReplacement>())
+                .FirstOrDefault(s => s.Id == id);
+        }
+        else
+        {
+            _selectedReplacement = null;
+        }
+
+        _isPickupWaveformReady = false;
+        StateHasChanged();
     }
 
     private async Task StopSidecarIfActive()

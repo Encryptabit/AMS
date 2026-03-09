@@ -160,7 +160,10 @@ public enum PickupBoxState
     Staged,
 
     /// <summary>Pickup replacement has been committed to the chapter audio.</summary>
-    Committed
+    Committed,
+
+    /// <summary>Pickup could not be confidently matched to any CRX target.</summary>
+    Unmatched
 }
 
 public sealed record CrxPickupTarget(
