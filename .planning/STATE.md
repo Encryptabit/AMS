@@ -8,8 +8,8 @@ Audio Management System - CLI and core library for audio processing, ASR, forced
 
 **Milestone**: v2.0 Blazor Workstation
 **Phase**: 15 - Pickup Flow Redesign
-**Plan**: 2/7
-**Status**: Plan 15-02 complete; breath-aware splice boundaries via RefineBoundariesBreathAware wrapping existing refinement with FeatureExtraction.Detect overlay
+**Plan**: 4/7
+**Status**: Plan 15-04 complete; StagingQueueService refactored to immutable baseline coordinates with EditListService integration, UndoService enhanced with replacement segment storage for rebuild-based revert
 
 ## Progress
 
@@ -25,8 +25,8 @@ v2.0 Blazor Workstation[██████████████████�
 |------|------|-------|--------|
 | 15-01 | Domain Models & Timeline Projection | 2 | Complete |
 | 15-02 | Breath-Aware Splice Boundaries | 2 | Complete |
-| 15-03 | Refactored Apply/Revert Flow | 2 | Pending |
-| 15-04 | Breath-Aware Boundary Detection | 2 | Pending |
+| 15-03 | Refactored Apply/Revert Flow | 2 | Complete |
+| 15-04 | StagingQueue & UndoService Refactor | 2 | Complete |
 | 15-05 | Dual-Side Handle Editing | 2 | Pending |
 | 15-06 | Context Playback & Audition | 2 | Pending |
 | 15-07 | Integration & Cleanup | 2 | Pending |
@@ -245,7 +245,7 @@ poc/VelloSharpPoc/     - Avalonia + VelloSharp (child window fails)
 
 ## Next Action
 
-Phase 15, Plan 02 complete. Ready for Plan 15-03 (Refactored Apply/Revert Flow).
+Phase 15, Plan 04 complete. Ready for Plan 15-05 (Dual-Side Handle Editing).
 
 ## Deferred UI Refinements (for Plan 10-04)
 
@@ -262,4 +262,4 @@ None currently.
 
 ## Session Continuity
 
-Last activity: 2026-03-09 - Completed 15-02: Breath-Aware Splice Boundaries
+Last activity: 2026-03-09 - Completed 15-04: StagingQueue & UndoService Refactor
