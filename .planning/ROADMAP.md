@@ -272,7 +272,7 @@ Phases execute in numeric order: 1 -> 2 -> ... -> 15
 **Requirements:** PFR-MODELS, PFR-BREATH, PFR-IMPORT, PFR-MATCH, PFR-EDITLIST, PFR-REVERT, PFR-TIMELINE, PFR-DUAL, PFR-REASSIGN, PFR-CONTEXT
 
 Plans:
-- [ ] 15-01-PLAN.md — Domain models (PickupAsset, ChapterEdit) + TimelineProjection + EditListService
+- [x] 15-01-PLAN.md — Domain models (PickupAsset, ChapterEdit) + TimelineProjection + EditListService
 - [ ] 15-02-PLAN.md — Breath-aware boundary enhancement to SpliceBoundaryService
 - [ ] 15-03-PLAN.md — PickupAssetService (unified import) + PickupMatchingService (hybrid text-similarity)
 - [ ] 15-04-PLAN.md — StagingQueueService refactor (immutable records) + UndoService simplification
