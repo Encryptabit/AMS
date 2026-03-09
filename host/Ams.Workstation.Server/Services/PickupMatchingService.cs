@@ -17,14 +17,15 @@ namespace Ams.Workstation.Server.Services;
 
 /// <summary>
 /// Runs ASR on pickup recording files and matches recognized utterances to
-/// CRX target sentences using positional pairing (CRX order drives the match).
-/// Levenshtein similarity is used as a confidence metric, not a filter.
+/// CRX target sentences. Supports both positional pairing (CRX order) and
+/// text-similarity matching (greedy best-first) for out-of-order recordings.
 /// </summary>
 public class PickupMatchingService
 {
     private const double LowConfidenceThreshold = 0.4;
+    private const double TextSimilarityMinThreshold = 0.2;
     private const double MinSegmentDurationSec = 0.3;
-    private const double UtteranceGapSec = 0.8;
+    private const double DefaultUtteranceGapSec = 0.8;
 
     private static readonly Regex PunctuationRegex = new(@"[^\w\s]", RegexOptions.Compiled);
     private static readonly Regex WhitespaceRegex = new(@"\s+", RegexOptions.Compiled);
@@ -79,16 +80,121 @@ public class PickupMatchingService
             ct).ConfigureAwait(false);
         WriteNamedMfaCache(asrResponse);
 
-        // 3. Utterance segmentation: detect gaps >= 0.8s between MFA-refined tokens
+        // 3. Utterance segmentation: detect gaps using MFA-aware threshold (0.4s)
+        //    since MFA refinement gives precise phone boundaries.
         var tokens = asrResponse.Tokens;
         if (tokens is not { Length: > 0 })
             return new List<PickupMatch>();
 
-        var segments = SegmentUtterances(tokens);
+        var segments = SegmentUtterances(tokens, utteranceGapThresholdSec: 0.4);
 
-        // 4. CRX positional pairing
+        // 4. Strategy selection: text similarity (primary) vs positional (fallback)
         var sortedTargets = crxTargets.OrderBy(t => t.ErrorNumber).ToList();
-        var matches = PairSegmentsToTargets(segments, sortedTargets);
+
+        // Use text similarity when segments have meaningful transcribed text
+        var segmentsWithText = segments.Count(s => !string.IsNullOrWhiteSpace(s.TranscribedText));
+        var matches = segmentsWithText >= segments.Count / 2.0
+            ? MatchByTextSimilarity(segments, sortedTargets)
+            : PairSegmentsToTargets(segments, sortedTargets);
+
+        return matches;
+    }
+
+    /// <summary>
+    /// Matches pickup segments to CRX targets using greedy best-first text similarity.
+    /// Handles out-of-order recordings by pairing each segment with its best-matching
+    /// target regardless of position. Uses Levenshtein similarity scoring.
+    /// </summary>
+    /// <remarks>
+    /// Algorithm (greedy best-first assignment per research Pattern 7):
+    /// 1. Compute similarity score for every segment × target pair
+    /// 2. Pick the highest-confidence pair, assign it, remove both from pools
+    /// 3. Repeat until best remaining score is below threshold or pools are empty
+    /// 4. Remaining unmatched segments get zero-confidence entries
+    ///
+    /// Complexity is O(n² · m) which is negligible for typical pool sizes (5–30 items).
+    /// </remarks>
+    public static List<PickupMatch> MatchByTextSimilarity(
+        IReadOnlyList<PickupSegment> segments,
+        IReadOnlyList<CrxPickupTarget> targets)
+    {
+        if (segments.Count == 0 || targets.Count == 0)
+            return new List<PickupMatch>();
+
+        // Available indices
+        var availableSegments = new HashSet<int>(Enumerable.Range(0, segments.Count));
+        var availableTargets = new HashSet<int>(Enumerable.Range(0, targets.Count));
+
+        var matches = new List<PickupMatch>();
+
+        while (availableSegments.Count > 0 && availableTargets.Count > 0)
+        {
+            // Find the best (segment, target) pair among remaining
+            double bestScore = -1;
+            int bestSegIdx = -1;
+            int bestTgtIdx = -1;
+
+            foreach (var si in availableSegments)
+            {
+                var normalizedSegment = NormalizeForMatch(segments[si].TranscribedText);
+                if (string.IsNullOrWhiteSpace(normalizedSegment))
+                    continue;
+
+                foreach (var ti in availableTargets)
+                {
+                    var normalizedTarget = NormalizeForMatch(targets[ti].ShouldBeText);
+                    var score = LevenshteinMetrics.Similarity(normalizedSegment, normalizedTarget);
+                    if (score > bestScore)
+                    {
+                        bestScore = score;
+                        bestSegIdx = si;
+                        bestTgtIdx = ti;
+                    }
+                }
+            }
+
+            // Stop if no useful matches remain
+            if (bestScore < TextSimilarityMinThreshold || bestSegIdx < 0 || bestTgtIdx < 0)
+                break;
+
+            var segment = segments[bestSegIdx];
+            var target = targets[bestTgtIdx];
+            var isLowConfidence = bestScore < LowConfidenceThreshold;
+
+            if (isLowConfidence)
+            {
+                Log.Warn(
+                    "Low confidence text match for error #{ErrorNumber} (sentence {SentenceId}): " +
+                    "confidence={Confidence:F3}, expected=\"{Expected}\", got=\"{Got}\"",
+                    target.ErrorNumber, target.SentenceId, bestScore,
+                    target.ShouldBeText, segment.TranscribedText);
+            }
+
+            matches.Add(new PickupMatch(
+                SentenceId: target.SentenceId,
+                PickupStartSec: segment.StartSec,
+                PickupEndSec: segment.EndSec,
+                Confidence: bestScore,
+                RecognizedText: segment.TranscribedText,
+                ErrorNumber: target.ErrorNumber,
+                IsLowConfidence: isLowConfidence));
+
+            availableSegments.Remove(bestSegIdx);
+            availableTargets.Remove(bestTgtIdx);
+        }
+
+        // Remaining unmatched segments
+        foreach (var si in availableSegments)
+        {
+            var segment = segments[si];
+            matches.Add(new PickupMatch(
+                SentenceId: 0,
+                PickupStartSec: segment.StartSec,
+                PickupEndSec: segment.EndSec,
+                Confidence: 0.0,
+                RecognizedText: segment.TranscribedText,
+                IsLowConfidence: true));
+        }
 
         return matches;
     }
@@ -97,7 +203,14 @@ public class PickupMatchingService
     /// Segments ASR tokens into utterances based on silence gaps.
     /// Short fragments are merged into neighboring segments rather than dropped.
     /// </summary>
-    private static List<PickupSegment> SegmentUtterances(AsrToken[] tokens)
+    /// <param name="tokens">ASR tokens to segment.</param>
+    /// <param name="utteranceGapThresholdSec">
+    /// Minimum gap duration (seconds) to split utterances. Use 0.4 for MFA-refined
+    /// timings (more precise word boundaries), or 0.8 (default) for raw ASR timings.
+    /// </param>
+    internal static List<PickupSegment> SegmentUtterances(
+        AsrToken[] tokens,
+        double utteranceGapThresholdSec = DefaultUtteranceGapSec)
     {
         var segments = new List<PickupSegment>();
         if (tokens.Length == 0)
@@ -120,7 +233,7 @@ public class PickupMatchingService
             var prevEnd = previous.StartTime + Math.Max(0.01, previous.Duration);
             var gap = orderedTokens[i].StartTime - prevEnd;
 
-            if (gap >= UtteranceGapSec)
+            if (gap >= utteranceGapThresholdSec)
             {
                 tokenGroups.Add(currentGroup);
                 currentGroup = new List<AsrToken>();
@@ -357,8 +470,9 @@ public class PickupMatchingService
 
     /// <summary>
     /// Extracts the full recognized text from an ASR response by joining token words.
+    /// Public for reuse by <see cref="PickupAssetService"/> and other callers.
     /// </summary>
-    internal static string ExtractFullText(AsrResponse response)
+    public static string ExtractFullText(AsrResponse response)
     {
         if (response.Tokens is { Length: > 0 })
         {
@@ -375,8 +489,9 @@ public class PickupMatchingService
 
     /// <summary>
     /// Normalizes text for fuzzy matching: lowercase, collapse whitespace, remove punctuation.
+    /// Public for reuse by <see cref="PickupAssetService"/> and other callers.
     /// </summary>
-    internal static string NormalizeForMatch(string text)
+    public static string NormalizeForMatch(string text)
     {
         if (string.IsNullOrWhiteSpace(text))
             return string.Empty;
