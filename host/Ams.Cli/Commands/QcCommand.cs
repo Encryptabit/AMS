@@ -54,8 +54,8 @@ public static class QcCommand
 
         var minSilenceOption = new Option<double>(
             "--min-silence",
-            () => 0.05,
-            "Minimum silence duration in seconds for detection");
+            () => 0.25,
+            "Minimum silence duration in seconds for detection (default: 0.25)");
 
         var jsonOption = new Option<FileInfo?>(
             "--json",

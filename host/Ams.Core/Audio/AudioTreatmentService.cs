@@ -115,21 +115,32 @@ public sealed class AudioTreatmentService
 
         // Find title and content boundaries
         var sectionTitle = ResolveSectionTitle(chapter);
-        var (titleStart, titleEnd, contentStart, contentEnd, decoratorEnd, titleResumeStart) = FindTreatmentLayout(
+        var rawLayout = FindTreatmentLayout(
             chapterBuffer,
             silenceIntervals,
             opts.TitleContentGapThreshold,
             chapter.Documents.HydratedTranscript,
             sectionTitle);
+        var (titleStart, titleEnd, contentStart, contentEnd, decoratorEnd, titleResumeStart) = ApplyLayoutPadding(
+            rawLayout,
+            chapterBuffer.Length / (double)chapterBuffer.SampleRate,
+            opts.BoundaryPaddingSeconds);
 
         Log.Debug(
-            "Treatment layout: title={TitleStart:F3}s-{TitleEnd:F3}s, decoratorEnd={DecoratorEnd}, titleResume={TitleResume}, content={ContentStart:F3}s-{ContentEnd:F3}s, sectionTitle={SectionTitle}",
+            "Treatment layout: rawTitle={RawTitleStart:F3}s-{RawTitleEnd:F3}s, rawDecoratorEnd={RawDecoratorEnd}, rawTitleResume={RawTitleResume}, rawContent={RawContentStart:F3}s-{RawContentEnd:F3}s, title={TitleStart:F3}s-{TitleEnd:F3}s, decoratorEnd={DecoratorEnd}, titleResume={TitleResume}, content={ContentStart:F3}s-{ContentEnd:F3}s, padding={Padding:F3}s, sectionTitle={SectionTitle}",
+            rawLayout.TitleStart,
+            rawLayout.TitleEnd,
+            rawLayout.DecoratorEnd?.ToString("F3") ?? "-",
+            rawLayout.TitleResumeStart?.ToString("F3") ?? "-",
+            rawLayout.ContentStart,
+            rawLayout.ContentEnd,
             titleStart,
             titleEnd,
             decoratorEnd?.ToString("F3") ?? "-",
             titleResumeStart?.ToString("F3") ?? "-",
             contentStart,
             contentEnd,
+            opts.BoundaryPaddingSeconds,
             sectionTitle ?? "-");
 
         // Check if we have a separate title segment (titleStart >= 0 AND has positive duration)
@@ -473,6 +484,50 @@ public sealed class AudioTreatmentService
         return (boundaries.TitleStart, boundaries.TitleEnd, boundaries.ContentStart, boundaries.ContentEnd, null, null);
     }
 
+    internal static (
+        double TitleStart,
+        double TitleEnd,
+        double ContentStart,
+        double ContentEnd,
+        double? DecoratorEnd,
+        double? TitleResumeStart) ApplyLayoutPadding(
+        (double TitleStart, double TitleEnd, double ContentStart, double ContentEnd, double? DecoratorEnd, double? TitleResumeStart) layout,
+        double audioDuration,
+        double paddingSec)
+    {
+        var duration = Math.Max(0.0, audioDuration);
+        var hasTitle = layout.TitleStart >= 0 && layout.TitleEnd > layout.TitleStart;
+        var titleStart = hasTitle ? Math.Max(0.0, layout.TitleStart - Math.Max(0.0, paddingSec)) : layout.TitleStart;
+        var titleEnd = layout.TitleEnd;
+        var contentStart = layout.ContentStart;
+        var contentEnd = Math.Min(duration, layout.ContentEnd + Math.Max(0.0, paddingSec));
+        var decoratorEnd = layout.DecoratorEnd;
+        var titleResumeStart = layout.TitleResumeStart;
+
+        if (!hasTitle)
+        {
+            contentStart = Math.Max(0.0, layout.ContentStart - Math.Max(0.0, paddingSec));
+            contentEnd = Math.Max(contentStart, contentEnd);
+            return (-1.0, -1.0, contentStart, contentEnd, null, null);
+        }
+
+        if (decoratorEnd is double decoratorBoundary &&
+            titleResumeStart is double titleBoundary &&
+            titleBoundary >= decoratorBoundary)
+        {
+            (decoratorBoundary, titleBoundary) = ExpandBoundaryPair(decoratorBoundary, titleBoundary, paddingSec);
+            decoratorEnd = Math.Clamp(decoratorBoundary, titleStart, layout.TitleEnd);
+            titleResumeStart = Math.Clamp(titleBoundary, decoratorEnd.Value, layout.TitleEnd);
+        }
+
+        (titleEnd, contentStart) = ExpandBoundaryPair(layout.TitleEnd, layout.ContentStart, paddingSec);
+        titleEnd = Math.Clamp(titleEnd, titleStart, contentEnd);
+        contentStart = Math.Clamp(contentStart, titleEnd, contentEnd);
+        contentEnd = Math.Max(contentStart, contentEnd);
+
+        return (titleStart, titleEnd, contentStart, contentEnd, decoratorEnd, titleResumeStart);
+    }
+
     private static bool TryFindBoundariesFromHydrate(
         IReadOnlyList<HydratedSentence>? hydratedSentences,
         double speechStart,
@@ -789,6 +844,27 @@ public sealed class AudioTreatmentService
 
     private static int CountDisplayWords(string text)
         => Regex.Matches(text, @"\S+").Count;
+
+    private static (double LeftEnd, double RightStart) ExpandBoundaryPair(
+        double leftEnd,
+        double rightStart,
+        double paddingSec)
+    {
+        if (paddingSec <= 0 || rightStart < leftEnd)
+        {
+            return (leftEnd, rightStart);
+        }
+
+        var expandedLeftEnd = leftEnd + paddingSec;
+        var expandedRightStart = rightStart - paddingSec;
+        if (expandedLeftEnd <= expandedRightStart)
+        {
+            return (expandedLeftEnd, expandedRightStart);
+        }
+
+        var midpoint = (leftEnd + rightStart) / 2.0;
+        return (midpoint, midpoint);
+    }
 
     private static string NormalizeHeadingText(string text)
     {

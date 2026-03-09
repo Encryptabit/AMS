@@ -181,6 +181,68 @@ public sealed class AudioTreatmentServiceTests
     }
 
     [Fact]
+    public void ApplyLayoutPadding_ExpandsTreatBoundaries_WhenPaddingFitsWithinGap()
+    {
+        var result = AudioTreatmentService.ApplyLayoutPadding(
+            (TitleStart: 0.29, TitleEnd: 0.83, ContentStart: 2.55, ContentEnd: 9.0, DecoratorEnd: (double?)null, TitleResumeStart: (double?)null),
+            audioDuration: 10.0,
+            paddingSec: 0.05);
+
+        Assert.Equal(0.24, result.TitleStart, precision: 2);
+        Assert.Equal(0.88, result.TitleEnd, precision: 2);
+        Assert.Equal(2.50, result.ContentStart, precision: 2);
+        Assert.Equal(9.05, result.ContentEnd, precision: 2);
+        Assert.Null(result.DecoratorEnd);
+        Assert.Null(result.TitleResumeStart);
+    }
+
+    [Fact]
+    public void ApplyLayoutPadding_SharesShortGapWithoutOverlap()
+    {
+        var result = AudioTreatmentService.ApplyLayoutPadding(
+            (TitleStart: 0.29, TitleEnd: 0.83, ContentStart: 0.89, ContentEnd: 9.0, DecoratorEnd: (double?)null, TitleResumeStart: (double?)null),
+            audioDuration: 10.0,
+            paddingSec: 0.05);
+
+        Assert.Equal(0.24, result.TitleStart, precision: 2);
+        Assert.Equal(0.86, result.TitleEnd, precision: 2);
+        Assert.Equal(0.86, result.ContentStart, precision: 2);
+        Assert.Equal(9.05, result.ContentEnd, precision: 2);
+    }
+
+    [Fact]
+    public void ApplyLayoutPadding_ExpandsDecoratorGapBoundaries_WhenHeadingIsSplit()
+    {
+        var result = AudioTreatmentService.ApplyLayoutPadding(
+            (TitleStart: 0.29, TitleEnd: 2.08, ContentStart: 3.58, ContentEnd: 9.0, DecoratorEnd: 0.84, TitleResumeStart: 1.61),
+            audioDuration: 10.0,
+            paddingSec: 0.05);
+
+        Assert.Equal(0.24, result.TitleStart, precision: 2);
+        Assert.Equal(2.13, result.TitleEnd, precision: 2);
+        Assert.Equal(3.53, result.ContentStart, precision: 2);
+        Assert.Equal(9.05, result.ContentEnd, precision: 2);
+        Assert.Equal(0.89, result.DecoratorEnd!.Value, precision: 2);
+        Assert.Equal(1.56, result.TitleResumeStart!.Value, precision: 2);
+    }
+
+    [Fact]
+    public void ApplyLayoutPadding_ExpandsContentOnly_WhenNoTitleExists()
+    {
+        var result = AudioTreatmentService.ApplyLayoutPadding(
+            (TitleStart: -1.0, TitleEnd: -1.0, ContentStart: 0.30, ContentEnd: 9.0, DecoratorEnd: (double?)null, TitleResumeStart: (double?)null),
+            audioDuration: 10.0,
+            paddingSec: 0.05);
+
+        Assert.Equal(-1.0, result.TitleStart, precision: 6);
+        Assert.Equal(-1.0, result.TitleEnd, precision: 6);
+        Assert.Equal(0.25, result.ContentStart, precision: 2);
+        Assert.Equal(9.05, result.ContentEnd, precision: 2);
+        Assert.Null(result.DecoratorEnd);
+        Assert.Null(result.TitleResumeStart);
+    }
+
+    [Fact]
     public void ResolvePreferredBitDepth_Returns24_ForPcmS24Codec()
     {
         var metadata = AudioBufferMetadata.CreateDefault(sampleRate: 44_100, channels: 1) with

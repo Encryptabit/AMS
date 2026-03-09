@@ -26,6 +26,11 @@ public sealed record TreatmentOptions
     public double SilenceThresholdDb { get; init; } = -55.0;
 
     /// <summary>
+    /// Safety padding added around detected speech boundaries before splicing (seconds).
+    /// </summary>
+    public double BoundaryPaddingSeconds { get; init; } = 0.0;
+
+    /// <summary>
     /// Minimum duration of silence to consider as a gap (seconds).
     /// </summary>
     public double MinimumSilenceDuration { get; init; } = 0.05;
