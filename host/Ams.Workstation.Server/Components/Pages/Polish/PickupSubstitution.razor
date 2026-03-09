@@ -675,7 +675,7 @@
         _hasAutoLoadedKnownPaths = true;
 
         var hasPickupPath = !string.IsNullOrWhiteSpace(_pickupSessionPath) &&
-            System.IO.File.Exists(_pickupSessionPath);
+            (System.IO.File.Exists(_pickupSessionPath) || System.IO.Directory.Exists(_pickupSessionPath));
         var hasRoomtonePath = !string.IsNullOrWhiteSpace(_roomtoneFilePath) &&
             System.IO.File.Exists(_roomtoneFilePath);
 
