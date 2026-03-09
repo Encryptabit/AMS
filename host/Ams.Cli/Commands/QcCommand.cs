@@ -291,7 +291,7 @@ public static class QcCommand
         table.AddColumn(new TableColumn("Delta") { Alignment = Justify.Right });
         table.AddColumn(new TableColumn("Head") { Alignment = Justify.Right });
         table.AddColumn(new TableColumn("Heading") { Alignment = Justify.Right });
-        table.AddColumn(new TableColumn("DGap") { Alignment = Justify.Right });
+        table.AddColumn(new TableColumn("DecGap") { Alignment = Justify.Right });
         table.AddColumn(new TableColumn("Gap") { Alignment = Justify.Right });
         table.AddColumn(new TableColumn("Tail") { Alignment = Justify.Right });
         table.AddColumn("Flags");

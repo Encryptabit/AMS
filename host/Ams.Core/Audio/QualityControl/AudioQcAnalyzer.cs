@@ -20,6 +20,9 @@ public static class AudioQcAnalyzer
     private static readonly Regex DecoratedChapterTitlePattern = new(
         @"^\s*chapter\b.+?[:\-–—]\s*.+\s*$",
         RegexOptions.Compiled | RegexOptions.IgnoreCase);
+    private static readonly Regex DecoratedChapterTitlePartsPattern = new(
+        @"^\s*(chapter\b.+?)\s*[:\-–—]\s*(.+?)\s*$",
+        RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
     /// <summary>
     /// Analyzes the structure of detected silence regions to identify head silence,
@@ -40,7 +43,9 @@ public static class AudioQcAnalyzer
             IReadOnlyList<SilenceRegion> silences,
             double totalDurationSec,
             double minimumStructuralGapDurationSec = DefaultMinimumStructuralGapDuration,
-            bool expectDecorator = false)
+            bool expectDecorator = false,
+            double minimumDecoratorSpeechDurationSec = 0.0,
+            double minimumTitleSpeechDurationSec = 0.0)
     {
         if (silences.Count == 0)
             return (0.0, null, null, null, 0.0);
@@ -111,27 +116,34 @@ public static class AudioQcAnalyzer
             }
         }
 
+        var headEnd = headIndex >= 0
+            ? (silences[headIndex].End >= 0 ? silences[headIndex].End : totalDurationSec)
+            : 0.0;
+
         int gapIndex = -1;
-        if (expectDecorator && candidateGapIndices.Count >= 2)
+        if (expectDecorator && candidateGapIndices.Count > 0)
         {
-            int decoratorGapIndex = candidateGapIndices[0];
-            gapIndex = candidateGapIndices[1];
-            decoratorGapSec = silences[decoratorGapIndex].Duration >= 0
-                ? silences[decoratorGapIndex].Duration
-                : totalDurationSec - silences[decoratorGapIndex].Start;
-        }
-        else if (expectDecorator && candidateGapIndices.Count == 1)
-        {
-            int decoratorGapIndex = candidateGapIndices[0];
+            var decoratorGapIndex = FindGapIndexMeetingMinimumSpeech(
+                silences,
+                candidateGapIndices,
+                headEnd,
+                minimumDecoratorSpeechDurationSec);
+            decoratorGapIndex = decoratorGapIndex >= 0 ? decoratorGapIndex : candidateGapIndices[0];
+
+            var decoratorGapEnd = silences[decoratorGapIndex].End >= 0
+                ? silences[decoratorGapIndex].End
+                : totalDurationSec;
             gapIndex = FindSecondaryGapIndex(
                 silences,
                 decoratorGapIndex,
                 tailIndex,
+                decoratorGapEnd,
                 totalDurationSec,
                 searchLimit,
-                minimumStructuralGapDurationSec);
+                minimumStructuralGapDurationSec,
+                minimumTitleSpeechDurationSec);
 
-            if (gapIndex >= 0)
+            if (gapIndex > decoratorGapIndex)
             {
                 decoratorGapSec = silences[decoratorGapIndex].Duration >= 0
                     ? silences[decoratorGapIndex].Duration
@@ -144,7 +156,12 @@ public static class AudioQcAnalyzer
         }
         else if (candidateGapIndices.Count > 0)
         {
-            gapIndex = candidateGapIndices[0];
+            gapIndex = FindGapIndexMeetingMinimumSpeech(
+                silences,
+                candidateGapIndices,
+                headEnd,
+                minimumTitleSpeechDurationSec);
+            gapIndex = gapIndex >= 0 ? gapIndex : candidateGapIndices[0];
         }
         else
         {
@@ -159,9 +176,6 @@ public static class AudioQcAnalyzer
                 : totalDurationSec - gapRegion.Start;
 
             // Title duration: speech between end of head silence and start of gap
-            var headEnd = silences[headIndex].End >= 0
-                ? silences[headIndex].End
-                : totalDurationSec;
             titleDurationSec = gapRegion.Start - headEnd;
         }
 
@@ -257,7 +271,9 @@ public static class AudioQcAnalyzer
                 silences,
                 durationSec,
                 Math.Max(minSilenceDurationSec * 4.0, thresholds.MinTitleBodyGap * 0.5),
-                HasDecorator(sectionTitle));
+                HasDecorator(sectionTitle),
+                GetMinimumDecoratorSpeechDurationSec(sectionTitle),
+                GetMinimumTitleSpeechDurationSec(sectionTitle));
 
         var result = new ChapterQcResult
         {
@@ -288,12 +304,16 @@ public static class AudioQcAnalyzer
         IReadOnlyList<SilenceRegion> silences,
         int decoratorGapIndex,
         int tailIndex,
+        double decoratorGapEnd,
         double totalDurationSec,
         double searchLimit,
-        double minimumStructuralGapDurationSec)
+        double minimumStructuralGapDurationSec,
+        double minimumTitleSpeechDurationSec)
     {
-        int fallbackIndex = -1;
-        double fallbackDuration = 0.0;
+        int fallbackQualifiedIndex = -1;
+        double fallbackQualifiedDuration = 0.0;
+        int fallbackAnyIndex = -1;
+        double fallbackAnyDuration = 0.0;
 
         for (int i = decoratorGapIndex + 1; i < silences.Count; i++)
         {
@@ -303,19 +323,113 @@ public static class AudioQcAnalyzer
             var dur = silences[i].Duration >= 0
                 ? silences[i].Duration
                 : totalDurationSec - silences[i].Start;
+
+            if (dur > fallbackAnyDuration)
+            {
+                fallbackAnyDuration = dur;
+                fallbackAnyIndex = i;
+            }
+
+            if (silences[i].Start - decoratorGapEnd < minimumTitleSpeechDurationSec)
+            {
+                continue;
+            }
+
             if (dur >= minimumStructuralGapDurationSec)
             {
                 return i;
             }
 
-            if (dur > fallbackDuration)
+            if (dur > fallbackQualifiedDuration)
             {
-                fallbackDuration = dur;
-                fallbackIndex = i;
+                fallbackQualifiedDuration = dur;
+                fallbackQualifiedIndex = i;
             }
         }
 
-        return fallbackIndex;
+        return fallbackQualifiedIndex >= 0 ? fallbackQualifiedIndex : fallbackAnyIndex;
+    }
+
+    private static int FindGapIndexMeetingMinimumSpeech(
+        IReadOnlyList<SilenceRegion> silences,
+        IReadOnlyList<int> candidateGapIndices,
+        double speechStartSec,
+        double minimumSpeechDurationSec)
+    {
+        if (minimumSpeechDurationSec <= 0)
+        {
+            return candidateGapIndices.Count > 0 ? candidateGapIndices[0] : -1;
+        }
+
+        foreach (var gapIndex in candidateGapIndices)
+        {
+            if (silences[gapIndex].Start - speechStartSec >= minimumSpeechDurationSec)
+            {
+                return gapIndex;
+            }
+        }
+
+        return -1;
+    }
+
+    private static double GetMinimumDecoratorSpeechDurationSec(string? sectionTitle)
+    {
+        if (!TrySplitDecoratorTitle(sectionTitle, out var decoratorText, out _))
+        {
+            return 0.0;
+        }
+
+        return EstimateMinimumSpeechDurationSec(CountWords(decoratorText));
+    }
+
+    private static double GetMinimumTitleSpeechDurationSec(string? sectionTitle)
+    {
+        if (TrySplitDecoratorTitle(sectionTitle, out _, out var titleText))
+        {
+            return EstimateMinimumSpeechDurationSec(CountWords(titleText));
+        }
+
+        return EstimateMinimumSpeechDurationSec(CountWords(sectionTitle));
+    }
+
+    private static bool TrySplitDecoratorTitle(string? sectionTitle, out string decoratorText, out string titleText)
+    {
+        decoratorText = string.Empty;
+        titleText = string.Empty;
+        if (string.IsNullOrWhiteSpace(sectionTitle))
+        {
+            return false;
+        }
+
+        var match = DecoratedChapterTitlePartsPattern.Match(sectionTitle);
+        if (!match.Success)
+        {
+            return false;
+        }
+
+        decoratorText = match.Groups[1].Value.Trim();
+        titleText = match.Groups[2].Value.Trim();
+        return decoratorText.Length > 0 && titleText.Length > 0;
+    }
+
+    private static int CountWords(string? text)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            return 0;
+        }
+
+        return Regex.Matches(text, @"\S+").Count;
+    }
+
+    private static double EstimateMinimumSpeechDurationSec(int wordCount)
+    {
+        if (wordCount <= 0)
+        {
+            return 0.0;
+        }
+
+        return Math.Clamp(wordCount * 0.18, 0.35, 1.75);
     }
 
     /// <summary>

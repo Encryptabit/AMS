@@ -273,6 +273,35 @@ public class AudioQcAnalyzerTests
         Assert.Equal(3.0, tail);
     }
 
+    [Fact]
+    public void AnalyzeStructure_DecoratedLongTitle_IgnoresIntermediateTitlePauseBeforeBodyGap()
+    {
+        var silences = new SilenceRegion[]
+        {
+            new(0.0, 0.70, 0.70),
+            new(1.60, 2.55, 0.95),
+            new(3.10, 3.82, 0.72),
+            new(5.05, 6.58, 1.53),
+            new(297.0, 300.0, 3.0)
+        };
+
+        var (head, title, decoratorGap, gap, tail) = AudioQcAnalyzer.AnalyzeStructure(
+            silences,
+            300.0,
+            expectDecorator: true,
+            minimumDecoratorSpeechDurationSec: 0.35,
+            minimumTitleSpeechDurationSec: 1.0);
+
+        Assert.Equal(0.70, head);
+        Assert.NotNull(title);
+        Assert.Equal(5.05 - 0.70, title!.Value, 3);
+        Assert.NotNull(decoratorGap);
+        Assert.Equal(0.95, decoratorGap!.Value, 3);
+        Assert.NotNull(gap);
+        Assert.Equal(1.53, gap!.Value, 3);
+        Assert.Equal(3.0, tail);
+    }
+
     #endregion
 
     #region FlagAnomalies
