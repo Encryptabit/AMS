@@ -3,6 +3,8 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Text.Json;
+using System.Threading;
+using System.Threading.Tasks;
 using Ams.Core.Artifacts;
 using Ams.Core.Processors;
 using Ams.Workstation.Server.Models;
@@ -11,6 +13,8 @@ namespace Ams.Workstation.Server.Services;
 
 /// <summary>
 /// Saves original audio segments to disk before replacement application and can restore them.
+/// Also saves replacement (pickup) audio segments for rebuild-based revert, where the
+/// chapter audio is reconstructed from the baseline by re-applying the remaining edits.
 /// Uses versioned segment files on disk with a JSON manifest per chapter.
 /// Persists undo data to {workDir}/.polish-undo/{chapterStem}/.
 /// Singleton -- shared across all Blazor circuits.
@@ -211,6 +215,79 @@ public class UndoService
         }
     }
 
+    /// <summary>
+    /// Saves the replacement (pickup) audio segment to disk so the rebuild process
+    /// can re-apply edits to the baseline audio when reverting via full rebuild.
+    /// Updates the <see cref="UndoRecord"/> with the replacement segment path.
+    /// </summary>
+    /// <param name="chapterStem">The chapter stem identifier.</param>
+    /// <param name="replacementId">The ID of the replacement whose pickup audio to save.</param>
+    /// <param name="replacementBuffer">The trimmed pickup audio buffer.</param>
+    /// <param name="ct">Cancellation token.</param>
+    public async Task SaveReplacementSegmentAsync(
+        string chapterStem,
+        string replacementId,
+        AudioBuffer replacementBuffer,
+        CancellationToken ct)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(chapterStem);
+        ArgumentException.ThrowIfNullOrWhiteSpace(replacementId);
+        ArgumentNullException.ThrowIfNull(replacementBuffer);
+
+        await Task.Run(() =>
+        {
+            lock (_lock)
+            {
+                EnsureLoaded(chapterStem);
+
+                var record = GetUndoRecordInternal(replacementId);
+                if (record == null)
+                {
+                    Console.WriteLine($"[UndoService] No undo record found for '{replacementId}'; cannot save replacement segment.");
+                    return;
+                }
+
+                var dir = GetChapterUndoDir(chapterStem);
+                var fileName = $"sent{record.SentenceId}.{replacementId}.replacement.wav";
+                var filePath = Path.Combine(dir, fileName);
+
+                AudioProcessor.EncodeWav(filePath, replacementBuffer);
+
+                // Update the record with replacement segment path
+                UpdateRecordReplacementPath(chapterStem, replacementId, filePath);
+            }
+        }, ct).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Loads the replacement (pickup) audio segment from disk for rebuild.
+    /// </summary>
+    /// <param name="chapterStem">The chapter stem identifier.</param>
+    /// <param name="replacementId">The ID of the replacement whose pickup audio to load.</param>
+    /// <returns>The replacement audio buffer, or null if not found.</returns>
+    public AudioBuffer? LoadReplacementSegment(string chapterStem, string replacementId)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(chapterStem);
+        ArgumentException.ThrowIfNullOrWhiteSpace(replacementId);
+
+        lock (_lock)
+        {
+            EnsureLoaded(chapterStem);
+
+            var record = GetUndoRecordInternal(replacementId);
+            if (record?.ReplacementSegmentPath == null)
+                return null;
+
+            if (!File.Exists(record.ReplacementSegmentPath))
+            {
+                Console.WriteLine($"Replacement segment file missing: {record.ReplacementSegmentPath}");
+                return null;
+            }
+
+            return AudioProcessor.Decode(record.ReplacementSegmentPath);
+        }
+    }
+
     #region Private Helpers
 
     private string GetWorkDir()
@@ -274,6 +351,19 @@ public class UndoService
         }
 
         return null;
+    }
+
+    private void UpdateRecordReplacementPath(string chapterStem, string replacementId, string filePath)
+    {
+        if (!_records.TryGetValue(chapterStem, out var list))
+            return;
+
+        var index = list.FindIndex(r => r.ReplacementId == replacementId);
+        if (index >= 0)
+        {
+            list[index] = list[index] with { ReplacementSegmentPath = filePath };
+            SaveManifest(chapterStem);
+        }
     }
 
     private void EnsureLoaded(string chapterStem)

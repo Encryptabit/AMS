@@ -66,6 +66,8 @@ public sealed record PickupSegment(
 /// Tracks a backup of the original audio segment before a replacement was applied.
 /// Used by the undo system to restore the original audio if a replacement is reverted.
 /// The <see cref="ReplacementId"/> links back to the originating <see cref="StagedReplacement"/>.
+/// For rebuild-based revert, also tracks the replacement audio segment path so the
+/// rebuild process can re-apply edits to the baseline audio.
 /// </summary>
 public sealed record UndoRecord(
     string ReplacementId,
@@ -76,7 +78,8 @@ public sealed record UndoRecord(
     double OriginalEndSec,
     double OriginalDurationSec,
     double ReplacementDurationSec,
-    DateTime AppliedAtUtc);
+    DateTime AppliedAtUtc,
+    string? ReplacementSegmentPath = null);
 
 /// <summary>
 /// Type of batch operation that can be applied across multiple chapters in the Polish workflow.
