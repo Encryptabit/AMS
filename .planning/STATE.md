@@ -8,8 +8,8 @@ Audio Management System - CLI and core library for audio processing, ASR, forced
 
 **Milestone**: v2.0 Blazor Workstation
 **Phase**: 15 - Pickup Flow Redesign
-**Plan**: 4/7
-**Status**: Plan 15-04 complete; StagingQueueService refactored to immutable baseline coordinates with EditListService integration, UndoService enhanced with replacement segment storage for rebuild-based revert
+**Plan**: 5/7
+**Status**: Plan 15-05 complete; PolishService refactored with RebuildChapterAsync, unified ChapterEdit pipeline for pickups/roomtone, breath-aware boundaries, context playback preview
 
 ## Progress
 
@@ -27,7 +27,7 @@ v2.0 Blazor Workstation[██████████████████�
 | 15-02 | Breath-Aware Splice Boundaries | 2 | Complete |
 | 15-03 | Pickup Asset Import & Text-Similarity Matching | 2 | Complete |
 | 15-04 | StagingQueue & UndoService Refactor | 2 | Complete |
-| 15-05 | Dual-Side Handle Editing | 2 | Pending |
+| 15-05 | Dual-Side Handle Editing | 2 | Complete |
 | 15-06 | Context Playback & Audition | 2 | Pending |
 | 15-07 | Integration & Cleanup | 2 | Pending |
 
@@ -194,6 +194,9 @@ v2.0 Blazor Workstation[██████████████████�
 | ChapterEdit placement | Ams.Core.Audio | Domain model with no UI deps; enables TimelineProjection to reference without circular dependency |
 | PickupAsset/Cache placement | Workstation PolishModels | Import-workflow specific, not needed by Core |
 | EditListService pattern | Singleton + lazy-load + JSON to .polish/ | Consistent with StagingQueueService; coexists during transition |
+| Rebuild edit order | Back-to-front (descending BaselineStartSec) | Each edit only affects content after itself; preserves upstream positions |
+| Roomtone ChapterEdit creation | Direct in PolishService, not StagingQueueService | Roomtone ops lack staging lifecycle; unified pipeline still produces ChapterEdit records |
+| Handle sizing | CrossfadeDuration + 30ms guard | Replaces fixed 80ms; ensures crossfade fits entirely in non-speech audio |
 
 ## Phase 8/8.1 Conclusions (Archived)
 
@@ -245,7 +248,7 @@ poc/VelloSharpPoc/     - Avalonia + VelloSharp (child window fails)
 
 ## Next Action
 
-Phase 15, Plan 04 complete. Ready for Plan 15-05 (Dual-Side Handle Editing).
+Phase 15, Plan 05 complete. Ready for Plan 15-06 (Context Playback & Audition).
 
 ## Deferred UI Refinements (for Plan 10-04)
 
@@ -262,4 +265,4 @@ None currently.
 
 ## Session Continuity
 
-Last activity: 2026-03-09 - Completed 15-03: Pickup Asset Import & Text-Similarity Matching (wave 2 parallel with 15-04)
+Last activity: 2026-03-09 - Completed 15-05: PolishService refactor with rebuild-based revert, unified edit pipeline, breath-aware boundaries
