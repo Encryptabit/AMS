@@ -25,7 +25,7 @@ v2.0 Blazor Workstation[██████████████████�
 |------|------|-------|--------|
 | 15-01 | Domain Models & Timeline Projection | 2 | Complete |
 | 15-02 | Breath-Aware Splice Boundaries | 2 | Complete |
-| 15-03 | Refactored Apply/Revert Flow | 2 | Complete |
+| 15-03 | Pickup Asset Import & Text-Similarity Matching | 2 | Complete |
 | 15-04 | StagingQueue & UndoService Refactor | 2 | Complete |
 | 15-05 | Dual-Side Handle Editing | 2 | Pending |
 | 15-06 | Context Playback & Audition | 2 | Pending |
@@ -262,4 +262,4 @@ None currently.
 
 ## Session Continuity
 
-Last activity: 2026-03-09 - Completed 15-04: StagingQueue & UndoService Refactor
+Last activity: 2026-03-09 - Completed 15-03: Pickup Asset Import & Text-Similarity Matching (wave 2 parallel with 15-04)
