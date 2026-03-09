@@ -26,6 +26,8 @@ namespace Ams.Workstation.Server.Services;
 /// </summary>
 public class PolishService
 {
+    private const string CrxFingerprintVersion = "pickup-matching-v2";
+
     /// <summary>Minimum padding beyond the crossfade zone so handles extend into non-speech audio.</summary>
     private const double HandleGuardSec = 0.030;
     private const double DefaultAuditionContextSec = 0.750;
@@ -866,6 +868,7 @@ public class PolishService
     private static string ComputeCrxFingerprint(IReadOnlyList<CrxPickupTarget> targets)
     {
         var sb = new StringBuilder();
+        sb.Append(CrxFingerprintVersion).Append('\n');
         foreach (var t in targets.OrderBy(t => t.ErrorNumber))
         {
             sb.Append(t.ErrorNumber).Append('|')

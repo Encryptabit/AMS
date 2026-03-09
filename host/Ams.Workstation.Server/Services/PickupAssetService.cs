@@ -24,6 +24,8 @@ namespace Ams.Workstation.Server.Services;
 /// </summary>
 public class PickupAssetService
 {
+    private const string CrxFingerprintVersion = "pickup-matching-v2";
+
     /// <summary>
     /// Confidence threshold below which individual-file imports are considered unmatched.
     /// </summary>
@@ -286,8 +288,8 @@ public class PickupAssetService
     {
         var pairs = targets
             .OrderBy(t => t.ErrorNumber)
-            .Select(t => $"{t.ErrorNumber}:{t.SentenceId}");
-        var joined = string.Join(";", pairs);
+            .Select(t => $"{t.ErrorNumber}:{t.ChapterStem}:{t.SentenceId}:{t.ShouldBeText}");
+        var joined = CrxFingerprintVersion + ";" + string.Join(";", pairs);
         var hashBytes = SHA256.HashData(Encoding.UTF8.GetBytes(joined));
         return Convert.ToHexString(hashBytes)[..16].ToLowerInvariant();
     }

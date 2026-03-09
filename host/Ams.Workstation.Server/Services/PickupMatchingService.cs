@@ -26,6 +26,7 @@ public class PickupMatchingService
     private const double TextSimilarityMinThreshold = 0.2;
     private const double MinSegmentDurationSec = 0.3;
     private const double DefaultUtteranceGapSec = 0.8;
+    private const double PreferTextSimilarityMargin = 0.08;
 
     private static readonly Regex PunctuationRegex = new(@"[^\w\s]", RegexOptions.Compiled);
     private static readonly Regex WhitespaceRegex = new(@"\s+", RegexOptions.Compiled);
@@ -94,11 +95,82 @@ public class PickupMatchingService
         // Use text similarity when segments have meaningful transcribed text
         var segmentsWithText = segments.Count(s => !string.IsNullOrWhiteSpace(s.TranscribedText));
         var matches = segmentsWithText >= segments.Count / 2.0
-            ? MatchByTextSimilarity(segments, sortedTargets)
+            ? MatchSessionSegmentsHybrid(segments, sortedTargets)
             : PairSegmentsToTargets(segments, sortedTargets);
 
         return matches;
     }
+
+    private static List<PickupMatch> MatchSessionSegmentsHybrid(
+        IReadOnlyList<PickupSegment> segments,
+        IReadOnlyList<CrxPickupTarget> sortedTargets)
+    {
+        var textMatches = MatchByTextSimilarity(segments, sortedTargets, logWarnings: false);
+        var positionalMatches = PairSegmentsToTargets(segments.ToList(), sortedTargets.ToList(), logWarnings: false);
+
+        var textSummary = SummarizeMatches(textMatches);
+        var positionalSummary = SummarizeMatches(positionalMatches);
+        var preferText = ShouldPreferTextSimilarity(textSummary, positionalSummary);
+
+        Log.Debug(
+            "Pickup matching strategy selected: {Strategy} (text avg={TextAverage:F3}, high={TextHigh}, assigned={TextAssigned}; positional avg={PosAverage:F3}, high={PosHigh}, assigned={PosAssigned})",
+            preferText ? "text-similarity" : "positional",
+            textSummary.AverageConfidence,
+            textSummary.HighConfidenceCount,
+            textSummary.AssignedCount,
+            positionalSummary.AverageConfidence,
+            positionalSummary.HighConfidenceCount,
+            positionalSummary.AssignedCount);
+
+        return preferText ? MatchByTextSimilarity(segments, sortedTargets) : PairSegmentsToTargets(segments.ToList(), sortedTargets.ToList());
+    }
+
+    private static bool ShouldPreferTextSimilarity(MatchSummary textSummary, MatchSummary positionalSummary)
+    {
+        if (textSummary.AssignedCount == 0)
+            return false;
+
+        if (positionalSummary.AssignedCount == 0)
+            return true;
+
+        if (textSummary.HighConfidenceCount > positionalSummary.HighConfidenceCount &&
+            textSummary.AverageConfidence >= positionalSummary.AverageConfidence - 0.02)
+        {
+            return true;
+        }
+
+        if (textSummary.HighConfidenceCount == positionalSummary.HighConfidenceCount &&
+            textSummary.AverageConfidence >= positionalSummary.AverageConfidence + PreferTextSimilarityMargin)
+        {
+            return true;
+        }
+
+        return false;
+    }
+
+    private static MatchSummary SummarizeMatches(IReadOnlyList<PickupMatch> matches)
+    {
+        var assigned = matches
+            .Where(m => m.ErrorNumber.HasValue && m.SentenceId > 0)
+            .ToList();
+
+        if (assigned.Count == 0)
+            return new MatchSummary(0, 0, 0, 0);
+
+        var highConfidenceCount = assigned.Count(m => m.Confidence >= LowConfidenceThreshold);
+        var averageConfidence = assigned.Average(m => m.Confidence);
+        return new MatchSummary(
+            assigned.Count,
+            highConfidenceCount,
+            assigned.Count - highConfidenceCount,
+            averageConfidence);
+    }
+
+    private readonly record struct MatchSummary(
+        int AssignedCount,
+        int HighConfidenceCount,
+        int LowConfidenceCount,
+        double AverageConfidence);
 
     /// <summary>
     /// Matches pickup segments to CRX targets using greedy best-first text similarity.
@@ -116,7 +188,8 @@ public class PickupMatchingService
     /// </remarks>
     public static List<PickupMatch> MatchByTextSimilarity(
         IReadOnlyList<PickupSegment> segments,
-        IReadOnlyList<CrxPickupTarget> targets)
+        IReadOnlyList<CrxPickupTarget> targets,
+        bool logWarnings = true)
     {
         if (segments.Count == 0 || targets.Count == 0)
             return new List<PickupMatch>();
@@ -161,7 +234,7 @@ public class PickupMatchingService
             var target = targets[bestTgtIdx];
             var isLowConfidence = bestScore < LowConfidenceThreshold;
 
-            if (isLowConfidence)
+            if (isLowConfidence && logWarnings)
             {
                 Log.Warn(
                     "Low confidence text match for error #{ErrorNumber} (sentence {SentenceId}): " +
@@ -356,7 +429,8 @@ public class PickupMatchingService
     /// </summary>
     private static List<PickupMatch> PairSegmentsToTargets(
         List<PickupSegment> segments,
-        List<CrxPickupTarget> targets)
+        List<CrxPickupTarget> targets,
+        bool logWarnings = true)
     {
         if (segments.Count == 0 || targets.Count == 0)
             return new List<PickupMatch>();
@@ -391,7 +465,7 @@ public class PickupMatchingService
         var matches = new List<PickupMatch>();
         int pairsToMake = Math.Min(targets.Count, segments.Count - bestOffset);
 
-        if (pairsToMake < targets.Count)
+        if (pairsToMake < targets.Count && logWarnings)
         {
             Log.Warn(
                 "Fewer segments ({Segments}) than targets ({Targets}); {Unpaired} targets will be unmatched",
@@ -408,7 +482,7 @@ public class PickupMatchingService
             var confidence = LevenshteinMetrics.Similarity(normalizedSegment, normalizedTarget);
             var isLowConfidence = confidence < LowConfidenceThreshold;
 
-            if (isLowConfidence)
+            if (isLowConfidence && logWarnings)
             {
                 Log.Warn(
                     "Low confidence match for error #{ErrorNumber} (sentence {SentenceId}): " +
