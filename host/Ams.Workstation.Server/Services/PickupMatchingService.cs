@@ -6,11 +6,13 @@ using System.Text.Json;
 using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
+using Ams.Core.Artifacts;
 using Ams.Core.Artifacts.Hydrate;
 using Ams.Core.Asr;
 using Ams.Core.Audio;
 using Ams.Core.Common;
 using Ams.Core.Processors;
+using Ams.Core.Services.Alignment;
 using Ams.Workstation.Server.Models;
 
 namespace Ams.Workstation.Server.Services;
@@ -22,6 +24,7 @@ namespace Ams.Workstation.Server.Services;
 /// </summary>
 public class PickupMatchingService
 {
+    private const string PickupAsrCacheVersion = "pickup-asr-v2";
     private const double LowConfidenceThreshold = 0.4;
     private const double TextSimilarityMinThreshold = 0.2;
     private const double MinSegmentDurationSec = 0.3;
@@ -37,6 +40,7 @@ public class PickupMatchingService
 
     private readonly BlazorWorkspace _workspace;
     private readonly PickupMfaRefinementService _mfaRefinement;
+    private readonly ChunkPlanningService _chunkPlanning = new();
 
     public PickupMatchingService(BlazorWorkspace workspace, PickupMfaRefinementService mfaRefinement)
     {
@@ -71,7 +75,7 @@ public class PickupMatchingService
             var pickupBuffer = AudioProcessor.Decode(pickupFilePath);
             var asrReady = AsrAudioPreparer.PrepareForAsr(pickupBuffer);
             var asrOptions = await BuildAsrOptionsAsync(ct).ConfigureAwait(false);
-            asrResponse = await AsrProcessor.TranscribeBufferAsync(asrReady, asrOptions, ct)
+            asrResponse = await TranscribePickupBufferAsync(pickupFilePath, asrReady, asrOptions, ct)
                 .ConfigureAwait(false);
             WriteNamedAsrCache(pickupFilePath, asrResponse);
         }
@@ -407,7 +411,7 @@ public class PickupMatchingService
         var asrReady = AsrAudioPreparer.PrepareForAsr(pickupBuffer);
 
         var asrOptions = await BuildAsrOptionsAsync(ct).ConfigureAwait(false);
-        var asrResponse = await AsrProcessor.TranscribeBufferAsync(asrReady, asrOptions, ct)
+        var asrResponse = await TranscribePickupBufferAsync(pickupFilePath, asrReady, asrOptions, ct)
             .ConfigureAwait(false);
 
         var recognizedText = ExtractFullText(asrResponse);
@@ -473,6 +477,76 @@ public class PickupMatchingService
             EnableWordTimestamps: true);
     }
 
+    private async Task<AsrResponse> TranscribePickupBufferAsync(
+        string pickupFilePath,
+        AudioBuffer asrReady,
+        AsrOptions asrOptions,
+        CancellationToken ct)
+    {
+        var plan = _chunkPlanning.GeneratePlan(asrReady, pickupFilePath);
+        if (plan.Chunks.Count <= 1)
+        {
+            return await AsrProcessor.TranscribeBufferAsync(asrReady, asrOptions, ct).ConfigureAwait(false);
+        }
+
+        var totalDuration = asrReady.Length / (double)asrReady.SampleRate;
+        Log.Debug(
+            "Pickup ASR chunk-plan driven: {ChunkCount} chunks from {TotalDuration:F1}s audio",
+            plan.Chunks.Count,
+            totalDuration);
+
+        var chunkResults = new List<(AsrResponse Response, double OffsetSec)>(plan.Chunks.Count);
+        foreach (var entry in plan.Chunks)
+        {
+            ct.ThrowIfCancellationRequested();
+            var slice = asrReady.Slice(entry.StartSample, entry.LengthSamples);
+            var response = await AsrProcessor.TranscribeBufferAsync(slice, asrOptions, ct).ConfigureAwait(false);
+            chunkResults.Add((Response: response, OffsetSec: entry.StartSec));
+        }
+
+        return MergeChunkResponses(chunkResults);
+    }
+
+    private static AsrResponse MergeChunkResponses(
+        IReadOnlyList<(AsrResponse Response, double OffsetSec)> chunks)
+    {
+        var allTokens = new List<AsrToken>();
+        var allSegments = new List<AsrSegment>();
+        string? modelVersion = null;
+        double lastTokenEnd = 0;
+        double lastSegmentEnd = 0;
+
+        var ordered = chunks.Count <= 1 ? chunks : chunks.OrderBy(c => c.OffsetSec).ToList();
+        foreach (var (response, offsetSec) in ordered)
+        {
+            modelVersion ??= response.ModelVersion;
+
+            if (response.Tokens is { Length: > 0 })
+            {
+                foreach (var token in response.Tokens)
+                {
+                    var adjustedStart = Math.Max(token.StartTime + offsetSec, lastTokenEnd);
+                    var adjustedDuration = token.Duration;
+                    allTokens.Add(new AsrToken(adjustedStart, adjustedDuration, token.Word));
+                    lastTokenEnd = adjustedStart + Math.Max(0, adjustedDuration);
+                }
+            }
+
+            if (response.Segments is { Length: > 0 })
+            {
+                foreach (var segment in response.Segments)
+                {
+                    var adjustedStart = Math.Max(segment.StartSec + offsetSec, lastSegmentEnd);
+                    var adjustedEnd = Math.Max(segment.EndSec + offsetSec, adjustedStart);
+                    allSegments.Add(new AsrSegment(adjustedStart, adjustedEnd, segment.Text));
+                    lastSegmentEnd = adjustedEnd;
+                }
+            }
+        }
+
+        return new AsrResponse(modelVersion ?? "whisper", allTokens.ToArray(), allSegments.ToArray());
+    }
+
     #region Named Artifact Cache
 
     private string GetPickupsDir()
@@ -494,6 +568,8 @@ public class PickupMatchingService
             var json = File.ReadAllText(cachePath);
             var wrapper = JsonSerializer.Deserialize<AsrCacheWrapper>(json);
             if (wrapper == null) return null;
+            if (!string.Equals(wrapper.Version, PickupAsrCacheVersion, StringComparison.Ordinal))
+                return null;
 
             // Staleness check: pickup file identity
             var fi = new FileInfo(pickupFilePath);
@@ -518,7 +594,7 @@ public class PickupMatchingService
         {
             var fi = new FileInfo(pickupFilePath);
             var wrapper = new AsrCacheWrapper(
-                fi.FullName, fi.Length, fi.LastWriteTimeUtc, response);
+                PickupAsrCacheVersion, fi.FullName, fi.Length, fi.LastWriteTimeUtc, response);
 
             var cachePath = Path.Combine(GetPickupsDir(), "pickups.asr.json");
             var json = JsonSerializer.Serialize(wrapper, CacheJsonOptions);
@@ -545,6 +621,7 @@ public class PickupMatchingService
     }
 
     private sealed record AsrCacheWrapper(
+        string Version,
         string PickupFilePath,
         long PickupFileSizeBytes,
         DateTime PickupFileModifiedUtc,

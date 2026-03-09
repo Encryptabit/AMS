@@ -782,47 +782,12 @@
             _matchedPickups = matched.ToList();
             _unmatchedPickups = unmatched.ToList();
 
-            // 5. Also run CRX-driven import with progress for the existing matching pipeline.
-            //    ImportPickupsCrxAsync is session-file oriented (decodes a single WAV),
-            //    so skip it when the source is a directory (individual-file import).
-            if (System.IO.File.Exists(_pickupSessionPath))
-            {
-                var progress = new Progress<(string Status, double Progress)>(p =>
-                {
-                    _processingStatus = p.Status;
-                    _processingProgress = 0.3 + (p.Progress * 0.7);
-                    InvokeAsync(StateHasChanged);
-                });
-
-                _matchesByChapter = await PolishService.ImportPickupsCrxAsync(
-                    _pickupSessionPath, crxTargets, progress, token);
-
-                var totalMatches = _matchesByChapter.Values.Sum(m => m.Count);
-                _processingStatus = $"Found {totalMatches} matches across {_matchesByChapter.Count} chapters. {unmatched.Count} unmatched.";
-            }
-            else
-            {
-                // Directory source — PickupAssetService.ImportAsync already handled matching above.
-                // Convert matched PickupAsset records into CrossChapterPickupMatch entries so
-                // they appear in the Matches column (GetMatchedItems reads _matchesByChapter).
-                _matchesByChapter = matched
-                    .Where(a => a.MatchedChapterStem != null && a.MatchedSentenceId.HasValue)
-                    .Select(a => new CrossChapterPickupMatch(
-                        a.MatchedChapterStem!,
-                        new PickupMatch(
-                            SentenceId: a.MatchedSentenceId!.Value,
-                            PickupStartSec: a.TrimStartSec,
-                            PickupEndSec: a.TrimEndSec,
-                            Confidence: a.Confidence,
-                            RecognizedText: a.TranscribedText,
-                            ErrorNumber: a.MatchedErrorNumber,
-                            IsLowConfidence: a.Confidence < 0.5)))
-                    .GroupBy(m => m.ChapterStem)
-                    .ToDictionary(g => g.Key, g => g.ToList());
-
-                var totalMatches = _matchesByChapter.Values.Sum(m => m.Count);
-                _processingStatus = $"Imported {totalMatches} pickups from folder. {unmatched.Count} unmatched.";
-            }
+            _matchesByChapter = BuildMatchesByChapterFromAssets(matched);
+            var totalMatches = _matchesByChapter.Values.Sum(m => m.Count);
+            _processingProgress = 1.0;
+            _processingStatus = System.IO.File.Exists(_pickupSessionPath)
+                ? $"Imported {totalMatches} pickups from session file. {unmatched.Count} unmatched."
+                : $"Imported {totalMatches} pickups from folder. {unmatched.Count} unmatched.";
         }
         catch (OperationCanceledException) { _processingStatus = "Processing cancelled."; }
         catch (System.IO.FileNotFoundException) { _processingStatus = "Pickup file not found. Check the file path."; }
@@ -854,6 +819,25 @@
         return matches
             .Where(m => !stagedSentenceIds.Contains(m.Match.SentenceId))
             .ToList();
+    }
+
+    private static Dictionary<string, List<CrossChapterPickupMatch>> BuildMatchesByChapterFromAssets(
+        IReadOnlyList<PickupAsset> matchedAssets)
+    {
+        return matchedAssets
+            .Where(a => !string.IsNullOrWhiteSpace(a.MatchedChapterStem) && a.MatchedSentenceId.HasValue)
+            .Select(a => new CrossChapterPickupMatch(
+                a.MatchedChapterStem!,
+                new PickupMatch(
+                    SentenceId: a.MatchedSentenceId!.Value,
+                    PickupStartSec: a.TrimStartSec,
+                    PickupEndSec: a.TrimEndSec,
+                    Confidence: a.Confidence,
+                    RecognizedText: a.TranscribedText,
+                    ErrorNumber: a.MatchedErrorNumber,
+                    IsLowConfidence: a.Confidence < 0.5)))
+            .GroupBy(m => m.ChapterStem, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(g => g.Key, g => g.ToList(), StringComparer.OrdinalIgnoreCase);
     }
 
     private IReadOnlyList<StagedReplacement> GetStagedItems()

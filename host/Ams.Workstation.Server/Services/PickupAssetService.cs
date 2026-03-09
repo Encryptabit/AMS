@@ -24,7 +24,7 @@ namespace Ams.Workstation.Server.Services;
 /// </summary>
 public class PickupAssetService
 {
-    private const string CrxFingerprintVersion = "pickup-matching-v3";
+    private const string CrxFingerprintVersion = "pickup-matching-v4";
 
     /// <summary>
     /// Confidence threshold below which individual-file imports are considered unmatched.
