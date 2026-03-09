@@ -114,10 +114,10 @@ public class PolishService
                     var replacement = _undoService.LoadReplacementSegment(chapterStem, edit.Id);
                     if (replacement is null)
                     {
-                        Console.WriteLine(
+                        throw new InvalidOperationException(
                             $"[RebuildChapter] Replacement segment missing for edit '{edit.Id}' " +
-                            $"({edit.Operation}); skipping.");
-                        continue;
+                            $"({edit.Operation}). Cannot rebuild without all replacement segments. " +
+                            $"Remove the edit or restore the missing segment file before retrying.");
                     }
 
                     buffer = AudioSpliceService.ReplaceSegment(
@@ -135,10 +135,10 @@ public class PolishService
                     var replacement = _undoService.LoadReplacementSegment(chapterStem, edit.Id);
                     if (replacement is null)
                     {
-                        Console.WriteLine(
+                        throw new InvalidOperationException(
                             $"[RebuildChapter] Replacement segment missing for edit '{edit.Id}' " +
-                            $"(RoomtoneInsert); skipping.");
-                        continue;
+                            $"(RoomtoneInsert). Cannot rebuild without all replacement segments. " +
+                            $"Remove the edit or restore the missing segment file before retrying.");
                     }
 
                     buffer = AudioSpliceService.InsertAtPoint(

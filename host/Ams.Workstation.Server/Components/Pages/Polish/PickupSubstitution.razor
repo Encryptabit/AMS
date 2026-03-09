@@ -802,8 +802,25 @@
             else
             {
                 // Directory source — PickupAssetService.ImportAsync already handled matching above.
-                _matchesByChapter = new Dictionary<string, List<CrossChapterPickupMatch>>();
-                _processingStatus = $"Imported {matched.Count} pickups from folder. {unmatched.Count} unmatched.";
+                // Convert matched PickupAsset records into CrossChapterPickupMatch entries so
+                // they appear in the Matches column (GetMatchedItems reads _matchesByChapter).
+                _matchesByChapter = matched
+                    .Where(a => a.MatchedChapterStem != null && a.MatchedSentenceId.HasValue)
+                    .Select(a => new CrossChapterPickupMatch(
+                        a.MatchedChapterStem!,
+                        new PickupMatch(
+                            SentenceId: a.MatchedSentenceId!.Value,
+                            PickupStartSec: a.TrimStartSec,
+                            PickupEndSec: a.TrimEndSec,
+                            Confidence: a.Confidence,
+                            RecognizedText: a.TranscribedText,
+                            ErrorNumber: a.MatchedErrorNumber,
+                            IsLowConfidence: a.Confidence < 0.5)))
+                    .GroupBy(m => m.ChapterStem)
+                    .ToDictionary(g => g.Key, g => g.ToList());
+
+                var totalMatches = _matchesByChapter.Values.Sum(m => m.Count);
+                _processingStatus = $"Imported {totalMatches} pickups from folder. {unmatched.Count} unmatched.";
             }
         }
         catch (OperationCanceledException) { _processingStatus = "Processing cancelled."; }
@@ -884,12 +901,21 @@
         if (sentence?.Timing == null || string.IsNullOrWhiteSpace(_pickupSessionPath))
             return;
 
+        // Resolve the actual pickup file path. For directory sources, the PickupAsset
+        // holds the individual WAV file path; for session files, use _pickupSessionPath.
+        var pickupFilePath = _pickupSessionPath.Trim();
+        var asset = FindAssetForMatch(match);
+        if (asset != null && asset.SourceType == PickupSourceType.IndividualFile)
+        {
+            pickupFilePath = asset.SourceFilePath;
+        }
+
         try
         {
             PolishService.StageReplacement(
                 info.Stem,
                 match,
-                _pickupSessionPath.Trim(),
+                pickupFilePath,
                 sentence.Timing.StartSec,
                 sentence.Timing.EndSec);
 
