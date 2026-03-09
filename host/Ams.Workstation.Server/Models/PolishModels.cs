@@ -178,6 +178,51 @@ public sealed record PickupArtifacts(
     string CrxTargetsFingerprint,
     Dictionary<string, List<CrossChapterPickupMatch>> MatchesByChapter);
 
+/// <summary>
+/// Identifies the source type of a pickup asset — either a segment within
+/// a multi-pickup session file or an individual standalone WAV file.
+/// </summary>
+public enum PickupSourceType
+{
+    /// <summary>A segment extracted from a multi-pickup session recording.</summary>
+    SessionSegment,
+
+    /// <summary>An individual standalone pickup WAV file.</summary>
+    IndividualFile
+}
+
+/// <summary>
+/// A normalized pickup asset that unifies both session-file segments and individual
+/// pickup files into a single shape. Created during import processing and cached
+/// for reuse. Each asset references a source file with trim boundaries and
+/// carries ASR transcription and matching metadata.
+/// </summary>
+public sealed record PickupAsset(
+    string Id,
+    PickupSourceType SourceType,
+    string SourceFilePath,
+    double TrimStartSec,
+    double TrimEndSec,
+    string TranscribedText,
+    double Confidence,
+    int? MatchedErrorNumber,
+    int? MatchedSentenceId,
+    string? MatchedChapterStem,
+    DateTime ImportedAtUtc);
+
+/// <summary>
+/// Cached results of pickup asset processing for a source file. Invalidated
+/// when the source file changes (path + size + modified timestamp) or when
+/// the CRX target set changes.
+/// </summary>
+public sealed record PickupAssetCache(
+    string SourceFilePath,
+    long SourceFileSizeBytes,
+    DateTime SourceFileModifiedUtc,
+    string CrxTargetsFingerprint,
+    IReadOnlyList<PickupAsset> Assets,
+    DateTime ProcessedAtUtc);
+
 public static class StagedReplacementExtensions
 {
     public static double PickupDuration(this StagedReplacement r) =>
