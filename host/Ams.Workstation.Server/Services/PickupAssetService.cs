@@ -24,8 +24,6 @@ namespace Ams.Workstation.Server.Services;
 /// </summary>
 public class PickupAssetService
 {
-    private const string CrxFingerprintVersion = "pickup-matching-v4";
-
     /// <summary>
     /// Confidence threshold below which individual-file imports are considered unmatched.
     /// </summary>
@@ -111,10 +109,11 @@ public class PickupAssetService
         if (wavFiles.Count == 0)
             return (Array.Empty<PickupAsset>(), Array.Empty<PickupAsset>());
 
-        // Build CRX lookup by error number
+        // Build CRX lookup by error number — use a list per key because error numbers
+        // restart at 1 per chapter, so multiple targets can share the same number.
         var targetsByErrorNumber = crxTargets
             .GroupBy(t => t.ErrorNumber)
-            .ToDictionary(g => g.Key, g => g.First());
+            .ToDictionary(g => g.Key, g => g.ToList());
 
         var matched = new List<PickupAsset>();
         var unmatched = new List<PickupAsset>();
@@ -138,17 +137,41 @@ public class PickupAssetService
                 .ConfigureAwait(false);
             var transcribedText = PickupMatchingService.ExtractFullText(asrResponse);
 
-            // Try to find matching CRX target
+            // Try to find matching CRX target — when multiple targets share an error number
+            // (across chapters), pick the one with the best text similarity.
             CrxPickupTarget? matchedTarget = null;
             double confidence = 0;
-            if (errorNumber.HasValue && targetsByErrorNumber.TryGetValue(errorNumber.Value, out var target))
+            if (errorNumber.HasValue && targetsByErrorNumber.TryGetValue(errorNumber.Value, out var candidates))
             {
-                matchedTarget = target;
-                if (!string.IsNullOrWhiteSpace(transcribedText))
+                if (candidates.Count == 1)
                 {
+                    matchedTarget = candidates[0];
+                    if (!string.IsNullOrWhiteSpace(transcribedText))
+                    {
+                        var normalizedAsr = PickupMatchingService.NormalizeForMatch(transcribedText);
+                        var normalizedShouldBe = PickupMatchingService.NormalizeForMatch(matchedTarget.ShouldBeText);
+                        confidence = LevenshteinMetrics.Similarity(normalizedAsr, normalizedShouldBe);
+                    }
+                }
+                else if (!string.IsNullOrWhiteSpace(transcribedText))
+                {
+                    // Multiple targets share this error number — disambiguate by text similarity
                     var normalizedAsr = PickupMatchingService.NormalizeForMatch(transcribedText);
-                    var normalizedShouldBe = PickupMatchingService.NormalizeForMatch(target.ShouldBeText);
-                    confidence = LevenshteinMetrics.Similarity(normalizedAsr, normalizedShouldBe);
+                    foreach (var candidate in candidates)
+                    {
+                        var normalizedShouldBe = PickupMatchingService.NormalizeForMatch(candidate.ShouldBeText);
+                        var score = LevenshteinMetrics.Similarity(normalizedAsr, normalizedShouldBe);
+                        if (score > confidence)
+                        {
+                            confidence = score;
+                            matchedTarget = candidate;
+                        }
+                    }
+                }
+                else
+                {
+                    // No transcribed text to disambiguate — take the first candidate
+                    matchedTarget = candidates[0];
                 }
             }
 
@@ -211,19 +234,19 @@ public class PickupAssetService
         var matches = await _pickupMatching.MatchPickupCrxAsync(sessionFilePath, crxTargets, ct)
             .ConfigureAwait(false);
 
-        // Build a lookup for CRX targets by error number
-        var targetsByErrorNumber = crxTargets
-            .GroupBy(t => t.ErrorNumber)
-            .ToDictionary(g => g.Key, g => g.First());
+        // MatchPickupCrxAsync returns matches in the same order as crxTargets sorted by ErrorNumber.
+        // Zip by index instead of looking up by ErrorNumber, because error numbers are NOT globally
+        // unique — they restart at 1 per chapter, so a dictionary keyed by ErrorNumber silently
+        // drops targets from all but one chapter sharing a given number.
+        var sortedTargets = crxTargets.OrderBy(t => t.ErrorNumber).ToList();
 
         var assets = new List<PickupAsset>();
         var now = DateTime.UtcNow;
 
-        foreach (var match in matches)
+        for (int i = 0; i < matches.Count; i++)
         {
-            CrxPickupTarget? target = null;
-            if (match.ErrorNumber.HasValue)
-                targetsByErrorNumber.TryGetValue(match.ErrorNumber.Value, out target);
+            var match = matches[i];
+            var target = i < sortedTargets.Count ? sortedTargets[i] : null;
 
             assets.Add(new PickupAsset(
                 Id: Guid.NewGuid().ToString("N"),
@@ -289,7 +312,7 @@ public class PickupAssetService
         var pairs = targets
             .OrderBy(t => t.ErrorNumber)
             .Select(t => $"{t.ErrorNumber}:{t.ChapterStem}:{t.SentenceId}:{t.ShouldBeText}");
-        var joined = CrxFingerprintVersion + ";" + string.Join(";", pairs);
+        var joined = string.Join(";", pairs);
         var hashBytes = SHA256.HashData(Encoding.UTF8.GetBytes(joined));
         return Convert.ToHexString(hashBytes)[..16].ToLowerInvariant();
     }

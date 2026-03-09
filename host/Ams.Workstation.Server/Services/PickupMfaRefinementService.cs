@@ -24,8 +24,6 @@ namespace Ams.Workstation.Server.Services;
 /// </summary>
 public class PickupMfaRefinementService
 {
-    private const string PickupMfaCacheVersion = "pickup-mfa-v4";
-
     private static readonly JsonSerializerOptions CacheJsonOptions = new()
     {
         WriteIndented = false
@@ -676,7 +674,6 @@ public class PickupMfaRefinementService
     {
         var fi = new FileInfo(pickupFilePath);
         var sb = new StringBuilder();
-        sb.Append(PickupMfaCacheVersion).Append('|');
         sb.Append(fi.FullName).Append('|').Append(fi.Length).Append('|').Append(fi.LastWriteTimeUtc.ToString("O"));
         sb.Append('|').Append(alignmentWords.Count);
         foreach (var word in alignmentWords)

@@ -25,7 +25,6 @@ namespace Ams.Workstation.Server.Services;
 /// </summary>
 public class PickupMatchingService
 {
-    private const string PickupAsrCacheVersion = "pickup-asr-v2";
     private const double LowConfidenceThreshold = 0.4;
     private const double TextSimilarityMinThreshold = 0.2;
     private const double MinSegmentDurationSec = 0.3;
@@ -573,8 +572,6 @@ public class PickupMatchingService
             var json = File.ReadAllText(cachePath);
             var wrapper = JsonSerializer.Deserialize<AsrCacheWrapper>(json);
             if (wrapper == null) return null;
-            if (!string.Equals(wrapper.Version, PickupAsrCacheVersion, StringComparison.Ordinal))
-                return null;
 
             // Staleness check: pickup file identity
             var fi = new FileInfo(pickupFilePath);
@@ -599,7 +596,7 @@ public class PickupMatchingService
         {
             var fi = new FileInfo(pickupFilePath);
             var wrapper = new AsrCacheWrapper(
-                PickupAsrCacheVersion, fi.FullName, fi.Length, fi.LastWriteTimeUtc, response);
+                fi.FullName, fi.Length, fi.LastWriteTimeUtc, response);
 
             var cachePath = Path.Combine(GetPickupsDir(), "pickups.asr.json");
             var json = JsonSerializer.Serialize(wrapper, CacheJsonOptions);
@@ -626,7 +623,6 @@ public class PickupMatchingService
     }
 
     private sealed record AsrCacheWrapper(
-        string Version,
         string PickupFilePath,
         long PickupFileSizeBytes,
         DateTime PickupFileModifiedUtc,
