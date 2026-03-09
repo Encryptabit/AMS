@@ -51,6 +51,7 @@ builder.Services.AddSingleton<EditListService>();
 // Polish area services - transient (stateless matching and orchestration)
 builder.Services.AddTransient<PickupMfaRefinementService>();
 builder.Services.AddTransient<PickupMatchingService>();
+builder.Services.AddTransient<PickupAssetService>();
 builder.Services.AddTransient<PolishService>();
 builder.Services.AddTransient<PolishVerificationService>();
 builder.Services.AddTransient<BatchOperationService>();
