@@ -29,7 +29,6 @@ public class PolishService
     private const double PickupSlicePaddingSec = 0.080;
     private const double DefaultAuditionContextSec = 0.750;
     private const double MinAuditionClipDurationSec = 0.010;
-    private const double TimelineMappingEpsilonSec = 0.001;
     private static readonly TreatmentOptions SharedTuningDefaults = new();
     private static readonly ConcurrentDictionary<string, SemaphoreSlim> ChapterMutationLocks =
         new(StringComparer.OrdinalIgnoreCase);
@@ -44,19 +43,129 @@ public class PolishService
     private readonly UndoService _undoService;
     private readonly PickupMatchingService _pickupMatching;
     private readonly PreviewBufferService _previewBuffer;
+    private readonly EditListService _editListService;
 
     public PolishService(
         BlazorWorkspace workspace,
         StagingQueueService stagingQueue,
         UndoService undoService,
         PickupMatchingService pickupMatching,
-        PreviewBufferService previewBuffer)
+        PreviewBufferService previewBuffer,
+        EditListService editListService)
     {
         _workspace = workspace;
         _stagingQueue = stagingQueue;
         _undoService = undoService;
         _pickupMatching = pickupMatching;
         _previewBuffer = previewBuffer;
+        _editListService = editListService;
+    }
+
+    /// <summary>
+    /// Rebuilds the chapter audio from the original treated baseline by re-applying
+    /// the given edits back-to-front (descending <see cref="ChapterEdit.BaselineStartSec"/>).
+    /// Each edit loads its replacement audio from <see cref="UndoService"/> and applies the
+    /// appropriate splice operation. The result is a deterministically-correct chapter
+    /// regardless of which edits were reverted.
+    /// </summary>
+    /// <param name="handle">Active chapter handle providing access to the treated baseline audio.</param>
+    /// <param name="editsToApply">The set of edits to re-apply to the baseline.</param>
+    /// <param name="ct">Cancellation token.</param>
+    /// <returns>The rebuilt audio buffer with all edits applied.</returns>
+    public async Task<AudioBuffer> RebuildChapterAsync(
+        ChapterContextHandle handle,
+        IReadOnlyList<ChapterEdit> editsToApply,
+        CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(handle);
+        ArgumentNullException.ThrowIfNull(editsToApply);
+
+        var treatedBuffer = handle.Chapter.Audio.Treated?.Buffer
+            ?? throw new InvalidOperationException(
+                $"Treated audio buffer is unavailable for chapter '{handle.Chapter.Descriptor.ChapterId}'. " +
+                "Cannot rebuild without baseline audio.");
+
+        if (editsToApply.Count == 0)
+            return treatedBuffer;
+
+        // Clone the treated buffer data so we can mutate without affecting the cached original.
+        // We work on an AudioBuffer reference that gets replaced at each splice step.
+        var buffer = treatedBuffer;
+        var chapterStem = handle.Chapter.Descriptor.ChapterId;
+
+        // Sort edits by BaselineStartSec DESCENDING — back-to-front application preserves
+        // upstream positions because each edit only affects content after itself.
+        var sortedEdits = editsToApply
+            .OrderByDescending(e => e.BaselineStartSec)
+            .ToList();
+
+        foreach (var edit in sortedEdits)
+        {
+            ct.ThrowIfCancellationRequested();
+
+            switch (edit.Operation)
+            {
+                case EditOperation.PickupReplace:
+                case EditOperation.RoomtoneReplace:
+                {
+                    var replacement = _undoService.LoadReplacementSegment(chapterStem, edit.Id);
+                    if (replacement is null)
+                    {
+                        Console.WriteLine(
+                            $"[RebuildChapter] Replacement segment missing for edit '{edit.Id}' " +
+                            $"({edit.Operation}); skipping.");
+                        continue;
+                    }
+
+                    buffer = AudioSpliceService.ReplaceSegment(
+                        buffer,
+                        edit.BaselineStartSec,
+                        edit.BaselineEndSec,
+                        replacement,
+                        edit.CrossfadeDurationSec,
+                        edit.CrossfadeCurve);
+                    break;
+                }
+
+                case EditOperation.RoomtoneInsert:
+                {
+                    var replacement = _undoService.LoadReplacementSegment(chapterStem, edit.Id);
+                    if (replacement is null)
+                    {
+                        Console.WriteLine(
+                            $"[RebuildChapter] Replacement segment missing for edit '{edit.Id}' " +
+                            $"(RoomtoneInsert); skipping.");
+                        continue;
+                    }
+
+                    buffer = AudioSpliceService.InsertAtPoint(
+                        buffer,
+                        edit.BaselineStartSec,
+                        replacement,
+                        edit.CrossfadeDurationSec,
+                        edit.CrossfadeCurve);
+                    break;
+                }
+
+                case EditOperation.RoomtoneDelete:
+                {
+                    buffer = AudioSpliceService.DeleteRegion(
+                        buffer,
+                        edit.BaselineStartSec,
+                        edit.BaselineEndSec,
+                        edit.CrossfadeDurationSec,
+                        edit.CrossfadeCurve);
+                    break;
+                }
+
+                default:
+                    Console.WriteLine(
+                        $"[RebuildChapter] Unknown edit operation '{edit.Operation}' for edit '{edit.Id}'; skipping.");
+                    break;
+            }
+        }
+
+        return await Task.FromResult(buffer).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -164,8 +273,8 @@ public class PolishService
             ? SharedTuningDefaults.SpliceCrossfadeCurve
             : curve;
         var effectiveBoundaryOptions = boundaryOptions ?? CreateBoundaryOptionsFromTreatmentDefaults();
-        var rebasedStartSec = RebaseTranscriptTimeToCurrentTimeline(chapterStem, originalStartSec);
-        var rebasedEndSec = RebaseTranscriptTimeToCurrentTimeline(chapterStem, originalEndSec);
+        var rebasedStartSec = MapBaselineToCurrentTime(chapterStem, originalStartSec);
+        var rebasedEndSec = MapBaselineToCurrentTime(chapterStem, originalEndSec);
         if (rebasedEndSec <= rebasedStartSec)
         {
             rebasedEndSec = rebasedStartSec + Math.Max(MinAuditionClipDurationSec, originalEndSec - originalStartSec);
@@ -201,9 +310,9 @@ public class PolishService
                 }
 
                 if (idx > 0)
-                    prevEnd = RebaseTranscriptTimeToCurrentTimeline(chapterStem, sentences[idx - 1].Timing?.EndSec);
+                    prevEnd = MapBaselineToCurrentTime(chapterStem, sentences[idx - 1].Timing?.EndSec);
                 if (idx >= 0 && idx < sentences.Count - 1)
-                    nextStart = RebaseTranscriptTimeToCurrentTimeline(chapterStem, sentences[idx + 1].Timing?.StartSec);
+                    nextStart = MapBaselineToCurrentTime(chapterStem, sentences[idx + 1].Timing?.StartSec);
             }
 
             var result = SpliceBoundaryService.RefineBoundaries(
@@ -336,7 +445,7 @@ public class PolishService
 
             if (sentenceIndex > 0)
             {
-                var previousStart = RebaseTranscriptTimeToCurrentTimeline(
+                var previousStart = MapBaselineToCurrentTime(
                     operationStem,
                     sentences[sentenceIndex - 1].Timing?.StartSec);
                 if (previousStart.HasValue)
@@ -347,7 +456,7 @@ public class PolishService
 
             if (sentenceIndex >= 0 && sentenceIndex < sentences.Count - 1)
             {
-                var nextEnd = RebaseTranscriptTimeToCurrentTimeline(
+                var nextEnd = MapBaselineToCurrentTime(
                     operationStem,
                     sentences[sentenceIndex + 1].Timing?.EndSec);
                 if (nextEnd.HasValue)
@@ -399,13 +508,12 @@ public class PolishService
     }
 
     /// <summary>
-    /// Applies a staged replacement: backs up the original segment, splices in
-    /// the pickup audio with crossfade, writes the result to corrected.wav,
-    /// and records the timing delta.
+    /// Applies a staged replacement: backs up the original segment and the pickup audio,
+    /// records the edit, then rebuilds the chapter from treated baseline with all edits.
     /// </summary>
     /// <param name="replacementId">ID of the staged replacement to apply.</param>
     /// <param name="ct">Cancellation token.</param>
-    /// <returns>The spliced audio buffer and the timing delta (positive = longer, negative = shorter).</returns>
+    /// <returns>The rebuilt audio buffer and the timing delta (positive = longer, negative = shorter).</returns>
     public async Task<(AudioBuffer ResultBuffer, double TimingDeltaSec)> ApplyReplacementAsync(
         string replacementId,
         CancellationToken ct)
@@ -442,26 +550,22 @@ public class PolishService
                 item.OriginalEndSec,
                 pickupDuration);
 
-            // 5. Splice: replace original segment with pickup
-            var resultBuffer = AudioSpliceService.ReplaceSegment(
-                chapterBuffer,
-                item.OriginalStartSec,
-                item.OriginalEndSec,
-                pickupTrimmed,
-                item.CrossfadeDurationSec,
-                item.CrossfadeCurve);
+            // 5. Save replacement (pickup) audio for rebuild-based revert
+            await _undoService.SaveReplacementSegmentAsync(
+                item.ChapterStem, replacementId, pickupTrimmed, ct).ConfigureAwait(false);
 
-            // 6. Calculate timing delta
-            var timingDelta = pickupDuration - originalDuration;
-
-            // 7. Persist corrected.wav to disk
-            PersistCorrectedBuffer(operationHandle, resultBuffer);
-
-            // 8. Update status to Applied (also creates ChapterEdit in edit list for timeline projection)
+            // 6. Update status to Applied (also creates ChapterEdit in edit list for timeline projection)
             _stagingQueue.UpdateStatus(replacementId, ReplacementStatus.Applied);
 
-            // Note: ShiftDownstream removed — baseline coordinates are immutable.
-            // Timeline mapping is handled by TimelineProjection via the edit list.
+            // 7. Rebuild chapter from treated baseline with ALL current edits
+            var allEdits = _editListService.GetEdits(operationStem);
+            var resultBuffer = await RebuildChapterAsync(operationHandle, allEdits, ct).ConfigureAwait(false);
+
+            // 8. Calculate timing delta
+            var timingDelta = pickupDuration - originalDuration;
+
+            // 9. Persist corrected.wav to disk
+            PersistCorrectedBuffer(operationHandle, resultBuffer);
 
             return (resultBuffer, timingDelta);
         }
@@ -472,12 +576,13 @@ public class PolishService
     }
 
     /// <summary>
-    /// Reverts a previously applied replacement by restoring the original audio segment
-    /// from the undo backup, then persists the result to corrected.wav.
+    /// Reverts a previously applied replacement by removing its edit from the edit list,
+    /// then rebuilding the chapter from treated baseline with the remaining edits.
+    /// If no edits remain, the treated baseline is restored directly.
     /// </summary>
     /// <param name="replacementId">ID of the replacement to revert.</param>
     /// <param name="ct">Cancellation token.</param>
-    /// <returns>The restored audio buffer and the negative timing delta.</returns>
+    /// <returns>The rebuilt audio buffer and the negative timing delta.</returns>
     public async Task<(AudioBuffer ResultBuffer, double TimingDeltaSec)> RevertReplacementAsync(
         string replacementId,
         CancellationToken ct)
@@ -490,7 +595,7 @@ public class PolishService
         await mutationLock.WaitAsync(ct).ConfigureAwait(false);
         try
         {
-            // 1. Get undo record
+            // 1. Get undo record for timing delta calculation
             var undoRecord = _undoService.GetUndoRecord(replacementId)
                 ?? throw new InvalidOperationException($"No undo record found for replacement '{replacementId}'.");
             if (!string.Equals(undoRecord.ChapterStem, operationStem, StringComparison.OrdinalIgnoreCase))
@@ -500,43 +605,31 @@ public class PolishService
                     $"but active chapter is '{operationStem}'.");
             }
 
-            // 2. Load original segment from backup
-            var originalSegment = _undoService.LoadOriginalSegment(replacementId)
-                ?? throw new InvalidOperationException($"Undo backup file missing for replacement '{replacementId}'.");
-
-            // 3. Get current chapter audio (which has the replacement applied)
-            var currentBuffer = GetChapterBuffer(operationHandle);
-
-            // 4. Calculate where the replacement currently sits.
-            // Use the queue item's current (shifted) coordinates rather than the stale undo record,
-            // because upstream apply/revert may have cascaded timing deltas since this item was applied.
-            var queueItem = FindStagedItem(replacementId, operationStem);
-            var currentStartSec = queueItem.OriginalStartSec;
-            var replacementDuration = undoRecord.ReplacementDurationSec;
-            var replacementEndSec = currentStartSec + replacementDuration;
-
-            EnsureNoActiveOverlapOrThrow(operationStem, replacementId, currentStartSec, replacementEndSec);
-
-            // 5. Re-splice: put the original back
-            var resultBuffer = AudioSpliceService.ReplaceSegment(
-                currentBuffer,
-                currentStartSec,
-                replacementEndSec,
-                originalSegment,
-                0.030,
-                "tri");
-
-            // 6. Timing delta is negative of original delta
-            var timingDelta = undoRecord.OriginalDurationSec - replacementDuration;
-
-            // 7. Persist corrected.wav to disk
-            PersistCorrectedBuffer(operationHandle, resultBuffer);
-
-            // 8. Update status to Reverted (also removes ChapterEdit from edit list)
+            // 2. Update status to Reverted (removes ChapterEdit from edit list)
             _stagingQueue.UpdateStatus(replacementId, ReplacementStatus.Reverted);
 
-            // Note: ShiftDownstream removed — baseline coordinates are immutable.
-            // Timeline mapping is handled by TimelineProjection via the edit list.
+            // 3. Get remaining edits and rebuild
+            var remainingEdits = _editListService.GetEdits(operationStem);
+            AudioBuffer resultBuffer;
+
+            if (remainingEdits.Count > 0)
+            {
+                // Rebuild from treated baseline with remaining edits
+                resultBuffer = await RebuildChapterAsync(operationHandle, remainingEdits, ct).ConfigureAwait(false);
+            }
+            else
+            {
+                // No edits remain — restore to original treated audio
+                resultBuffer = operationHandle.Chapter.Audio.Treated?.Buffer
+                    ?? throw new InvalidOperationException(
+                        $"Treated audio buffer is unavailable for chapter '{operationStem}'.");
+            }
+
+            // 4. Timing delta is negative of original delta
+            var timingDelta = undoRecord.OriginalDurationSec - undoRecord.ReplacementDurationSec;
+
+            // 5. Persist corrected.wav to disk
+            PersistCorrectedBuffer(operationHandle, resultBuffer);
 
             return (resultBuffer, timingDelta);
         }
@@ -558,8 +651,9 @@ public class PolishService
 
     /// <summary>
     /// Applies a roomtone editing operation (insert, replace, or delete) to the current
-    /// chapter audio at the specified region. Backs up the original segment via UndoService,
-    /// then persists the result as corrected.wav.
+    /// chapter audio at the specified region. Creates a <see cref="ChapterEdit"/> record
+    /// via the unified edit pipeline, saves replacement audio for rebuild, and rebuilds
+    /// the chapter from treated baseline with all edits.
     /// </summary>
     /// <param name="request">The roomtone operation parameters.</param>
     /// <param name="roomtoneFilePath">Path to the roomtone WAV file (used for Insert/Replace).</param>
@@ -579,64 +673,86 @@ public class PolishService
         await mutationLock.WaitAsync(ct).ConfigureAwait(false);
         try
         {
-            // 1. Load current chapter audio
+            // 1. Load current chapter audio (for original segment backup)
             var chapterBuffer = GetChapterBuffer(operationHandle);
 
             // 2. Load and decode roomtone file
             var roomtoneBuffer = AudioProcessor.Decode(roomtoneFilePath);
 
-            // 3. Apply operation
-            AudioBuffer resultBuffer;
+            // 3. Determine replacement audio and edit operation type
+            AudioBuffer? replacementAudio = null;
             double replacementDurationSec;
+            EditOperation editOp;
 
             switch (request.Operation)
             {
                 case RoomtoneOperation.Insert:
-                    // Insert roomtone at a point (use the start position as insertion point)
-                    // Duration of insertion = EndSec - StartSec (user drags a region to define insertion length)
+                {
                     var insertDuration = request.EndSec - request.StartSec;
-                    var insertRoomtone = insertDuration > 0.001
+                    replacementAudio = insertDuration > 0.001
                         ? AudioSpliceService.GenerateRoomtoneFill(roomtoneBuffer, insertDuration)
-                        : roomtoneBuffer; // If near-zero width, use roomtone as-is for a brief insert
-                    resultBuffer = AudioSpliceService.InsertAtPoint(
-                        chapterBuffer, request.StartSec, insertRoomtone,
-                        request.CrossfadeDurationSec, request.CrossfadeCurve);
-                    replacementDurationSec = (double)insertRoomtone.Length / insertRoomtone.SampleRate;
+                        : roomtoneBuffer;
+                    replacementDurationSec = (double)replacementAudio.Length / replacementAudio.SampleRate;
+                    editOp = EditOperation.RoomtoneInsert;
                     break;
+                }
 
                 case RoomtoneOperation.Replace:
-                    // Replace selection with looped roomtone of matching duration (Research Pitfall 6)
+                {
                     var regionDuration = request.EndSec - request.StartSec;
-                    var fillRoomtone = AudioSpliceService.GenerateRoomtoneFill(roomtoneBuffer, regionDuration);
-                    resultBuffer = AudioSpliceService.ReplaceSegment(
-                        chapterBuffer, request.StartSec, request.EndSec,
-                        fillRoomtone, request.CrossfadeDurationSec, request.CrossfadeCurve);
+                    replacementAudio = AudioSpliceService.GenerateRoomtoneFill(roomtoneBuffer, regionDuration);
                     replacementDurationSec = regionDuration;
+                    editOp = EditOperation.RoomtoneReplace;
                     break;
+                }
 
                 case RoomtoneOperation.Delete:
-                    // Delete selection (crossfade join, no replacement)
-                    resultBuffer = AudioSpliceService.DeleteRegion(
-                        chapterBuffer, request.StartSec, request.EndSec,
-                        request.CrossfadeDurationSec, request.CrossfadeCurve);
+                {
                     replacementDurationSec = 0;
+                    editOp = EditOperation.RoomtoneDelete;
                     break;
+                }
 
                 default:
                     throw new ArgumentOutOfRangeException(nameof(request.Operation));
             }
 
-            // 4. Back up original segment via UndoService before persisting
-            // Use a synthetic replacement ID for undo tracking (sentenceId = -1 for non-sentence ops)
+            // 4. Back up original segment via UndoService
             var undoId = $"roomtone-{Guid.NewGuid():N}";
-            var stem = operationHandle.Chapter.Descriptor.ChapterId;
 
             _undoService.SaveOriginalSegment(
-                stem, sentenceId: -1, undoId, chapterBuffer,
+                operationStem, sentenceId: -1, undoId, chapterBuffer,
                 request.StartSec, request.EndSec,
                 replacementDurationSec);
 
-            // 5. Persist corrected.wav
+            // 5. Save replacement audio for rebuild (null for delete operations)
+            if (replacementAudio is not null)
+            {
+                await _undoService.SaveReplacementSegmentAsync(
+                    operationStem, undoId, replacementAudio, ct).ConfigureAwait(false);
+            }
+
+            // 6. Create ChapterEdit record for the unified edit pipeline
+            var chapterEdit = new ChapterEdit(
+                Id: undoId,
+                ChapterStem: operationStem,
+                Operation: editOp,
+                BaselineStartSec: request.StartSec,
+                BaselineEndSec: request.EndSec,
+                ReplacementDurationSec: replacementDurationSec,
+                SentenceId: null,
+                ErrorNumber: null,
+                PickupAssetId: null,
+                CrossfadeDurationSec: request.CrossfadeDurationSec,
+                CrossfadeCurve: request.CrossfadeCurve,
+                AppliedAtUtc: DateTime.UtcNow);
+            _editListService.Add(chapterEdit);
+
+            // 7. Rebuild chapter from treated baseline with ALL current edits
+            var allEdits = _editListService.GetEdits(operationStem);
+            var resultBuffer = await RebuildChapterAsync(operationHandle, allEdits, ct).ConfigureAwait(false);
+
+            // 8. Persist corrected.wav
             PersistCorrectedBuffer(operationHandle, resultBuffer);
 
             return resultBuffer;
@@ -742,39 +858,30 @@ public class PolishService
             : null;
     }
 
-    private double? RebaseTranscriptTimeToCurrentTimeline(string chapterStem, double? transcriptTimeSec)
+    /// <summary>
+    /// Maps a baseline time to the current (post-edit) timeline using
+    /// <see cref="TimelineProjection.BaselineToCurrentTime"/>.
+    /// </summary>
+    private double? MapBaselineToCurrentTime(string chapterStem, double? baselineTimeSec)
     {
-        if (!transcriptTimeSec.HasValue)
+        if (!baselineTimeSec.HasValue)
             return null;
 
-        return RebaseTranscriptTimeToCurrentTimeline(chapterStem, transcriptTimeSec.Value);
+        return MapBaselineToCurrentTime(chapterStem, baselineTimeSec.Value);
     }
 
-    private double RebaseTranscriptTimeToCurrentTimeline(string chapterStem, double transcriptTimeSec)
+    /// <summary>
+    /// Maps a baseline time to the current (post-edit) timeline using
+    /// <see cref="TimelineProjection.BaselineToCurrentTime"/>.
+    /// </summary>
+    private double MapBaselineToCurrentTime(string chapterStem, double baselineTimeSec)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(chapterStem);
-        if (!double.IsFinite(transcriptTimeSec))
+        if (!double.IsFinite(baselineTimeSec))
             return 0;
 
-        var mappedTimeSec = Math.Max(0, transcriptTimeSec);
-        var appliedItems = _stagingQueue.GetQueue(chapterStem)
-            .Where(item => item.Status == ReplacementStatus.Applied)
-            .OrderBy(item => item.OriginalStartSec)
-            .ThenBy(item => item.Id);
-
-        foreach (var item in appliedItems)
-        {
-            var deltaSec = item.PickupDuration() - item.OriginalDuration();
-            if (Math.Abs(deltaSec) < TimelineMappingEpsilonSec)
-                continue;
-
-            if (item.OriginalEndSec <= mappedTimeSec + TimelineMappingEpsilonSec)
-            {
-                mappedTimeSec += deltaSec;
-            }
-        }
-
-        return Math.Max(0, mappedTimeSec);
+        var edits = _editListService.GetEdits(chapterStem);
+        return TimelineProjection.BaselineToCurrentTime(baselineTimeSec, edits);
     }
 
     /// <summary>
