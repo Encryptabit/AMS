@@ -28,8 +28,8 @@ public sealed record PipelineRunOptions
     /// <summary>
     /// Optional chunk planning policy for ASR and MFA stages. When null, stages
     /// use <see cref="ChunkPlanningPolicy.Default"/>. Explicit policy enables
-    /// callers to override silence threshold, minimum silence duration, or minimum
-    /// chunk duration for specific pipeline runs.
+    /// callers to override silence threshold, minimum silence duration, or chunk
+    /// duration bounds for specific pipeline runs.
     /// </summary>
     /// <remarks>
     /// Invalidation rule: a stored chunk plan should be regenerated when the source

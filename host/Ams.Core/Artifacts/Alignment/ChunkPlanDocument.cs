@@ -33,7 +33,7 @@ public sealed record ChunkPlanDocument(
     /// Current document schema version. Increment when making breaking changes
     /// to the chunk plan format.
     /// </summary>
-    public const int CurrentVersion = 1;
+    public const int CurrentVersion = 2;
 }
 
 /// <summary>
@@ -50,6 +50,9 @@ public sealed record ChunkPlanPolicy(
 
     [property: JsonPropertyName("minChunkDurationSec")]
     double MinChunkDurationSec,
+
+    [property: JsonPropertyName("maxChunkDurationSec")]
+    double MaxChunkDurationSec,
 
     [property: JsonPropertyName("sampleRate")]
     int SampleRate);

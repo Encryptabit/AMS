@@ -475,7 +475,7 @@ public class MfaChunkCorpusBuilderTests
             CreatedAtUtc: DateTime.UtcNow,
             SourceAudioPath: "dummy.wav",
             SourceAudioFingerprint: "fp",
-            Policy: new ChunkPlanPolicy(-40, 200, 1, 16000),
+            Policy: new ChunkPlanPolicy(-40, 200, 1, 29.5, 16000),
             Chunks: new[]
             {
                 new ChunkPlanEntry(0, 0, 16000, 0.0, 1.0)
@@ -514,7 +514,7 @@ public class MfaChunkCorpusBuilderTests
             CreatedAtUtc: DateTime.UtcNow,
             SourceAudioPath: "dummy.wav",
             SourceAudioFingerprint: "fp",
-            Policy: new ChunkPlanPolicy(-40, 200, 1, 16000),
+            Policy: new ChunkPlanPolicy(-40, 200, 1, 29.5, 16000),
             Chunks: new[]
             {
                 new ChunkPlanEntry(0, 0, 16000, 0.0, 1.0)

@@ -1,0 +1,569 @@
+diff --git a/host/Ams.Cli/Commands/PipelineCommand.cs b/host/Ams.Cli/Commands/PipelineCommand.cs
+index efab154..f28d965 100644
+--- a/host/Ams.Cli/Commands/PipelineCommand.cs
++++ b/host/Ams.Cli/Commands/PipelineCommand.cs
+@@ -8,6 +8,8 @@ using System.Text.Json.Serialization;
+ using System.Text.RegularExpressions;
+ using Ams.Cli.Utilities;
+ using Ams.Cli.Repl;
++using Ams.Core.Application.Commands;
++using Ams.Core.Application.Mfa.Models;
+ using Ams.Core.Artifacts;
+ using Ams.Core.Processors;
+ using Ams.Core.Artifacts.Hydrate;
+@@ -448,7 +450,10 @@ public static class PipelineCommand
+         int maxAsrParallelism,
+         int maxMfaParallelism,
+         IPipelineProgressReporter? reporter,
+-        CancellationToken cancellationToken)
++        CancellationToken cancellationToken,
++        MfaBeamProfile? mfaProfile = null,
++        int? mfaBeam = null,
++        int? mfaRetryBeam = null)
+     {
+         ArgumentNullException.ThrowIfNull(pipelineService);
+ 
+@@ -532,7 +537,10 @@ public static class PipelineCommand
+                     verbose,
+                     reporter,
+                     concurrency,
+-                    cancellationToken).ConfigureAwait(false);
++                    cancellationToken,
++                    mfaProfile,
++                    mfaBeam,
++                    mfaRetryBeam).ConfigureAwait(false);
+ 
+                 reporter?.MarkComplete(chapterId);
+             }
+@@ -1135,6 +1143,13 @@ public static class PipelineCommand
+         var progressOption =
+             new Option<bool>("--progress", () => true, "Display live progress UI while running the pipeline");
+ 
++        var mfaProfileOption = new Option<string?>("--mfa-profile", () => null,
++            "MFA beam search profile: fast (beam 20/retry 80), balanced (beam 40/retry 120), strict (beam 80/retry 200)");
++        var mfaBeamOption = new Option<int?>("--mfa-beam", () => null,
++            "Explicit MFA beam width (overrides profile default)");
++        var mfaRetryBeamOption = new Option<int?>("--mfa-retry-beam", () => null,
++            "Explicit MFA retry beam width (overrides profile default)");
++
+         cmd.AddOption(bookOption);
+         cmd.AddOption(audioOption);
+         cmd.AddOption(workDirOption);
+@@ -1151,6 +1166,9 @@ public static class PipelineCommand
+         cmd.AddOption(maxAsrOption);
+         cmd.AddOption(maxMfaOption);
+         cmd.AddOption(progressOption);
++        cmd.AddOption(mfaProfileOption);
++        cmd.AddOption(mfaBeamOption);
++        cmd.AddOption(mfaRetryBeamOption);
+ 
+         cmd.SetHandler(async context =>
+         {
+@@ -1170,6 +1188,10 @@ public static class PipelineCommand
+             var maxAsr = context.ParseResult.GetValueForOption(maxAsrOption);
+             var maxMfa = context.ParseResult.GetValueForOption(maxMfaOption);
+             var showProgress = context.ParseResult.GetValueForOption(progressOption);
++            var mfaProfileRaw = context.ParseResult.GetValueForOption(mfaProfileOption);
++            var mfaBeam = context.ParseResult.GetValueForOption(mfaBeamOption);
++            var mfaRetryBeam = context.ParseResult.GetValueForOption(mfaRetryBeamOption);
++            var mfaProfile = ParseMfaProfile(mfaProfileRaw);
+             if (showProgress && Log.IsDebugLoggingEnabled())
+             {
+                 Log.Debug("Progress UI disabled while AMS_LOG_LEVEL requests Debug-level logging.");
+@@ -1202,7 +1224,10 @@ public static class PipelineCommand
+                                 maxAsr,
+                                 maxMfa,
+                                 reporter,
+-                                cancellationToken));
++                                cancellationToken,
++                                mfaProfile,
++                                mfaBeam,
++                                mfaRetryBeam));
+                     }
+                     else
+                     {
+@@ -1223,7 +1248,10 @@ public static class PipelineCommand
+                             maxAsr,
+                             maxMfa,
+                             reporter: null,
+-                            cancellationToken).ConfigureAwait(false);
++                            cancellationToken,
++                            mfaProfile,
++                            mfaBeam,
++                            mfaRetryBeam).ConfigureAwait(false);
+                     }
+                 }
+                 catch (Exception ex)
+@@ -1272,7 +1300,10 @@ public static class PipelineCommand
+                                     verbose,
+                                     reporter,
+                                     concurrency,
+-                                    cancellationToken).ConfigureAwait(false);
++                                    cancellationToken,
++                                    mfaProfile,
++                                    mfaBeam,
++                                    mfaRetryBeam).ConfigureAwait(false);
+ 
+                                 reporter.MarkComplete(chapterId);
+                             }
+@@ -1307,7 +1338,10 @@ public static class PipelineCommand
+                         verbose,
+                         progress: null,
+                         concurrency,
+-                        cancellationToken).ConfigureAwait(false);
++                        cancellationToken,
++                        mfaProfile,
++                        mfaBeam,
++                        mfaRetryBeam).ConfigureAwait(false);
+                 }
+             }
+             catch (OperationCanceledException)
+@@ -1340,7 +1374,10 @@ public static class PipelineCommand
+         bool verbose,
+         IPipelineProgressReporter? progress,
+         PipelineConcurrencyControl concurrency,
+-        CancellationToken cancellationToken)
++        CancellationToken cancellationToken,
++        MfaBeamProfile? mfaProfile = null,
++        int? mfaBeam = null,
++        int? mfaRetryBeam = null)
+     {
+         ArgumentNullException.ThrowIfNull(pipelineService);
+ 
+@@ -1431,7 +1468,10 @@ public static class PipelineCommand
+                 HydrateFile = hydrateFile,
+                 TextGridFile = textGridFile,
+                 AlignmentRootDirectory = new DirectoryInfo(Path.Combine(chapterDir, "alignment")),
+-                UseDedicatedProcess = useDedicatedMfaProcess
++                UseDedicatedProcess = useDedicatedMfaProcess,
++                BeamProfile = mfaProfile,
++                Beam = mfaBeam,
++                RetryBeam = mfaRetryBeam
+             },
+             MergeOptions = new MergeTimingsOptions
+             {
+@@ -2979,6 +3019,21 @@ public static class PipelineCommand
+         }
+     }
+ 
++    private static MfaBeamProfile? ParseMfaProfile(string? raw)
++    {
++        if (string.IsNullOrWhiteSpace(raw))
++            return null;
++
++        return raw.Trim().ToLowerInvariant() switch
++        {
++            "fast" => MfaBeamProfile.Fast,
++            "balanced" => MfaBeamProfile.Balanced,
++            "strict" => MfaBeamProfile.Strict,
++            _ => throw new ArgumentException(
++                $"Unknown MFA profile '{raw}'. Valid options: fast, balanced, strict.")
++        };
++    }
++
+     private static string MakeSafeFileStem(string? value)
+     {
+         const string fallback = "chapter";
+diff --git a/host/Ams.Core/Application/Commands/RunMfaCommand.cs b/host/Ams.Core/Application/Commands/RunMfaCommand.cs
+index 781f473..83fe691 100644
+--- a/host/Ams.Core/Application/Commands/RunMfaCommand.cs
++++ b/host/Ams.Core/Application/Commands/RunMfaCommand.cs
+@@ -1,4 +1,5 @@
+ using Ams.Core.Application.Mfa;
++using Ams.Core.Application.Mfa.Models;
+ using Ams.Core.Runtime.Chapter;
+ 
+ namespace Ams.Core.Application.Commands;
+@@ -32,6 +33,11 @@ public sealed class RunMfaCommand
+             throw new FileNotFoundException("Audio file not found.", audioFile.FullName);
+         }
+ 
++        var beamSettings = MfaBeamSettings.Resolve(
++            options?.BeamProfile,
++            options?.Beam,
++            options?.RetryBeam);
++
+         await MfaWorkflow.RunChapterAsync(
+                 chapter,
+                 audioFile,
+@@ -39,8 +45,9 @@ public sealed class RunMfaCommand
+                 chapterStem,
+                 chapterDirectory,
+                 cancellationToken,
+-                options?.UseDedicatedProcess ?? false,
+-                options?.WorkspaceRoot)
++                useDedicatedProcess: options?.UseDedicatedProcess ?? false,
++                workspaceRoot: options?.WorkspaceRoot,
++                beamSettings: beamSettings)
+             .ConfigureAwait(false);
+ 
+         var alignmentRoot =
+@@ -80,6 +87,18 @@ public sealed record RunMfaOptions
+     public DirectoryInfo? ChapterDirectory { get; init; }
+     public bool UseDedicatedProcess { get; init; }
+     public string? WorkspaceRoot { get; init; }
++
++    /// <summary>
++    /// Beam search profile preset. When null, defaults to <see cref="MfaBeamProfile.Balanced"/>.
++    /// Explicit <see cref="Beam"/>/<see cref="RetryBeam"/> values override profile defaults.
++    /// </summary>
++    public MfaBeamProfile? BeamProfile { get; init; }
++
++    /// <summary>Explicit beam width override (supersedes profile default).</summary>
++    public int? Beam { get; init; }
++
++    /// <summary>Explicit retry beam width override (supersedes profile default).</summary>
++    public int? RetryBeam { get; init; }
+ }
+ 
+ public sealed record RunMfaResult(FileInfo TextGridFile);
+\ No newline at end of file
+diff --git a/host/Ams.Core/Application/Mfa/MfaWorkflow.cs b/host/Ams.Core/Application/Mfa/MfaWorkflow.cs
+index 2108d7c..59dadc3 100644
+--- a/host/Ams.Core/Application/Mfa/MfaWorkflow.cs
++++ b/host/Ams.Core/Application/Mfa/MfaWorkflow.cs
+@@ -7,6 +7,7 @@ using Ams.Core.Artifacts;
+ using Ams.Core.Artifacts.Alignment;
+ using Ams.Core.Artifacts.Hydrate;
+ using Ams.Core.Processors;
++using Ams.Core.Processors.Alignment.Mfa;
+ using Ams.Core.Runtime.Book;
+ using Ams.Core.Runtime.Chapter;
+ 
+@@ -207,22 +208,39 @@ public static class MfaWorkflow
+ 
+         if (chunkCorpus is not null)
+         {
+-            // Chunked path: collect per-utterance TextGrids into mfaCopyDir for aggregation
+-            foreach (var utt in chunkCorpus.Utterances)
++            // Chunked path: collect per-utterance TextGrids and detect quality issues
++            var chunkResults = CollectChunkTextGrids(chunkCorpus.Utterances, alignOutputDir, mfaCopyDir);
++
++            // Adaptive strict retry: re-align only problematic chunks with strict beam
++            var failedChunks = chunkResults
++                .Where(r => r.Status != ChunkAlignmentStatus.Ok)
++                .ToList();
++
++            if (failedChunks.Count > 0 &&
++                resolvedBeam.Beam < MfaBeamSettings.StrictRetry.Beam)
+             {
+-                var uttTextGridCandidates = new[]
+-                {
+-                    Path.Combine(alignOutputDir, "alignment", "mfa", utt.UtteranceName + ".TextGrid"),
+-                    Path.Combine(alignOutputDir, utt.UtteranceName + ".TextGrid")
+-                };
+-                foreach (var candidate in uttTextGridCandidates)
+-                {
+-                    if (File.Exists(candidate))
+-                    {
+-                        CopyIfExists(candidate, Path.Combine(mfaCopyDir, utt.UtteranceName + ".TextGrid"));
+-                        break;
+-                    }
+-                }
++                Log.Info(
++                    "Adaptive retry: {Failed}/{Total} chunks need strict re-alignment " +
++                    "(missing={Missing}, empty={Empty}, lowCoverage={LowCoverage})",
++                    failedChunks.Count, chunkCorpus.Utterances.Count,
++                    failedChunks.Count(r => r.Status == ChunkAlignmentStatus.MissingOutput),
++                    failedChunks.Count(r => r.Status == ChunkAlignmentStatus.ParseFailure),
++                    failedChunks.Count(r => r.Status == ChunkAlignmentStatus.LowCoverage));
++
++                await RetryFailedChunksWithStrictBeamAsync(
++                    failedChunks,
++                    chunkCorpus,
++                    service,
++                    alignContext,
++                    alignOutputDir,
++                    mfaCopyDir,
++                    cancellationToken).ConfigureAwait(false);
++            }
++            else if (failedChunks.Count > 0)
++            {
++                Log.Debug(
++                    "Skipping adaptive retry: already at strict beam ({Beam}/{RetryBeam}), {Failed} chunks still problematic",
++                    resolvedBeam.Beam, resolvedBeam.RetryBeam, failedChunks.Count);
+             }
+ 
+             // Aggregate per-chunk TextGrids into canonical chapter-level TextGrid
+@@ -585,4 +603,202 @@ public static class MfaWorkflow
+                 destinationPath, ex.Message);
+         }
+     }
++
++    // ----------------------------------------------------------------
++    // Adaptive strict retry: chunk-level quality detection and retry
++    // ----------------------------------------------------------------
++
++    internal enum ChunkAlignmentStatus
++    {
++        Ok,
++        MissingOutput,
++        ParseFailure,
++        LowCoverage
++    }
++
++    internal sealed record ChunkAlignmentResult(
++        MfaChunkCorpusBuilder.UtteranceEntry Utterance,
++        ChunkAlignmentStatus Status,
++        int WordIntervalCount);
++
++    /// <summary>
++    /// Minimum ratio of word intervals to expected coverage (chunk duration / 0.3s per word estimate).
++    /// Chunks below this threshold are considered low-coverage and eligible for strict retry.
++    /// </summary>
++    private const double MinCoverageRatio = 0.15;
++
++    /// <summary>
++    /// Collects per-chunk TextGrid outputs from the alignment directory into the copy directory,
++    /// evaluating quality for each chunk.
++    /// </summary>
++    private static List<ChunkAlignmentResult> CollectChunkTextGrids(
++        IReadOnlyList<MfaChunkCorpusBuilder.UtteranceEntry> utterances,
++        string alignOutputDir,
++        string mfaCopyDir)
++    {
++        var results = new List<ChunkAlignmentResult>(utterances.Count);
++
++        foreach (var utt in utterances)
++        {
++            var destPath = Path.Combine(mfaCopyDir, utt.UtteranceName + ".TextGrid");
++            var sourcePath = FindUtteranceTextGrid(alignOutputDir, utt.UtteranceName);
++
++            if (sourcePath is null)
++            {
++                results.Add(new ChunkAlignmentResult(utt, ChunkAlignmentStatus.MissingOutput, 0));
++                continue;
++            }
++
++            CopyIfExists(sourcePath, destPath);
++
++            // Evaluate quality: parse word intervals
++            int wordCount;
++            try
++            {
++                var intervals = TextGridParser.ParseWordIntervals(destPath);
++                wordCount = intervals.Count(iv =>
++                    !string.IsNullOrWhiteSpace(iv.Text) &&
++                    !string.Equals(iv.Text, "sp", StringComparison.OrdinalIgnoreCase) &&
++                    !string.Equals(iv.Text, "sil", StringComparison.OrdinalIgnoreCase));
++            }
++            catch (Exception ex)
++            {
++                Log.Debug("TextGrid parse failure for chunk {Chunk}: {Message}", utt.UtteranceName, ex.Message);
++                results.Add(new ChunkAlignmentResult(utt, ChunkAlignmentStatus.ParseFailure, 0));
++                continue;
++            }
++
++            if (wordCount == 0)
++            {
++                results.Add(new ChunkAlignmentResult(utt, ChunkAlignmentStatus.ParseFailure, 0));
++                continue;
++            }
++
++            // Low-coverage heuristic: estimate expected words from chunk duration
++            var chunkDuration = utt.ChunkEndSec - utt.ChunkStartSec;
++            var expectedWords = chunkDuration / 0.3; // ~3.3 words/sec average speech rate
++            var coverageRatio = expectedWords > 0 ? wordCount / expectedWords : 1.0;
++
++            if (coverageRatio < MinCoverageRatio)
++            {
++                Log.Debug(
++                    "Low coverage for chunk {Chunk}: {Actual} words vs ~{Expected:F0} expected (ratio={Ratio:F2})",
++                    utt.UtteranceName, wordCount, expectedWords, coverageRatio);
++                results.Add(new ChunkAlignmentResult(utt, ChunkAlignmentStatus.LowCoverage, wordCount));
++                continue;
++            }
++
++            results.Add(new ChunkAlignmentResult(utt, ChunkAlignmentStatus.Ok, wordCount));
++        }
++
++        return results;
++    }
++
++    /// <summary>
++    /// Retries alignment for failed chunks using strict beam settings.
++    /// Only the failed chunks are re-aligned; successful chunks are untouched.
++    /// </summary>
++    private static async Task RetryFailedChunksWithStrictBeamAsync(
++        List<ChunkAlignmentResult> failedChunks,
++        MfaChunkCorpusBuilder.ChunkCorpusResult chunkCorpus,
++        MfaService service,
++        MfaChapterContext alignContext,
++        string alignOutputDir,
++        string mfaCopyDir,
++        CancellationToken cancellationToken)
++    {
++        var strictBeam = MfaBeamSettings.StrictRetry;
++        var retryContext = alignContext with
++        {
++            Beam = strictBeam.Beam,
++            RetryBeam = strictBeam.RetryBeam,
++            // Re-use the same corpus directory which still has all utterance files.
++            // MFA will re-align all utterances in the corpus, but we only collect
++            // the failed ones afterward. This is simpler and safer than creating
++            // a subset corpus directory.
++        };
++
++        Log.Info(
++            "Strict retry: beam={Beam}, retryBeam={RetryBeam} for {Count} chunks",
++            strictBeam.Beam, strictBeam.RetryBeam, failedChunks.Count);
++
++        try
++        {
++            var retryResult = await service.AlignAsync(retryContext, cancellationToken).ConfigureAwait(false);
++            var retrySuccess = EnsureSuccess("mfa align (strict retry)", retryResult, allowFailure: true);
++
++            if (!retrySuccess)
++            {
++                Log.Warn("Strict retry alignment failed; keeping initial results for all chunks");
++                return;
++            }
++
++            // Re-collect TextGrids only for the originally failed chunks
++            var recovered = 0;
++            foreach (var failed in failedChunks)
++            {
++                var utt = failed.Utterance;
++                var retrySrc = FindUtteranceTextGrid(alignOutputDir, utt.UtteranceName);
++                if (retrySrc is null)
++                {
++                    Log.Debug("Strict retry: still no output for chunk {Chunk}", utt.UtteranceName);
++                    continue;
++                }
++
++                var destPath = Path.Combine(mfaCopyDir, utt.UtteranceName + ".TextGrid");
++                CopyIfExists(retrySrc, destPath);
++
++                // Verify the retry actually improved things
++                try
++                {
++                    var intervals = TextGridParser.ParseWordIntervals(destPath);
++                    var retryWordCount = intervals.Count(iv =>
++                        !string.IsNullOrWhiteSpace(iv.Text) &&
++                        !string.Equals(iv.Text, "sp", StringComparison.OrdinalIgnoreCase) &&
++                        !string.Equals(iv.Text, "sil", StringComparison.OrdinalIgnoreCase));
++
++                    if (retryWordCount > failed.WordIntervalCount)
++                    {
++                        recovered++;
++                        Log.Debug(
++                            "Strict retry improved chunk {Chunk}: {Before} -> {After} word intervals",
++                            utt.UtteranceName, failed.WordIntervalCount, retryWordCount);
++                    }
++                    else
++                    {
++                        Log.Debug(
++                            "Strict retry did not improve chunk {Chunk}: {Before} -> {After} word intervals",
++                            utt.UtteranceName, failed.WordIntervalCount, retryWordCount);
++                    }
++                }
++                catch (Exception ex)
++                {
++                    Log.Debug("Strict retry TextGrid parse failed for chunk {Chunk}: {Message}",
++                        utt.UtteranceName, ex.Message);
++                }
++            }
++
++            Log.Info(
++                "Strict retry complete: {Recovered}/{Failed} chunks improved",
++                recovered, failedChunks.Count);
++        }
++        catch (Exception ex) when (ex is not OperationCanceledException)
++        {
++            Log.Warn("Strict retry alignment threw: {Message}; keeping initial results", ex.Message);
++        }
++    }
++
++    /// <summary>
++    /// Finds the TextGrid output file for a given utterance name across known MFA output locations.
++    /// </summary>
++    private static string? FindUtteranceTextGrid(string alignOutputDir, string utteranceName)
++    {
++        var candidates = new[]
++        {
++            Path.Combine(alignOutputDir, "alignment", "mfa", utteranceName + ".TextGrid"),
++            Path.Combine(alignOutputDir, utteranceName + ".TextGrid")
++        };
++
++        return candidates.FirstOrDefault(File.Exists);
++    }
+ }
+diff --git a/host/Ams.Core/Application/Mfa/Models/MfaBeamProfile.cs b/host/Ams.Core/Application/Mfa/Models/MfaBeamProfile.cs
+new file mode 100644
+index 0000000..70f617c
+--- /dev/null
++++ b/host/Ams.Core/Application/Mfa/Models/MfaBeamProfile.cs
+@@ -0,0 +1,47 @@
++namespace Ams.Core.Application.Mfa.Models;
++
++/// <summary>
++/// Predefined beam search profiles for MFA forced alignment.
++/// Higher beam values improve alignment quality at the cost of throughput.
++/// </summary>
++public enum MfaBeamProfile
++{
++    /// <summary>Beam 20 / retry 80. Fastest throughput, suitable for clean recordings.</summary>
++    Fast,
++
++    /// <summary>Beam 40 / retry 120. Default tradeoff between speed and quality.</summary>
++    Balanced,
++
++    /// <summary>Beam 80 / retry 200. Maximum precision, used for difficult alignments and adaptive retry.</summary>
++    Strict
++}
++
++/// <summary>
++/// Resolved beam search parameters for an MFA alignment run.
++/// </summary>
++public sealed record MfaBeamSettings(int Beam, int RetryBeam)
++{
++    /// <summary>
++    /// Resolves beam settings from an optional profile and optional explicit overrides.
++    /// Explicit values always supersede profile defaults.
++    /// </summary>
++    public static MfaBeamSettings Resolve(
++        MfaBeamProfile? profile = null,
++        int? explicitBeam = null,
++        int? explicitRetryBeam = null)
++    {
++        var (defaultBeam, defaultRetryBeam) = (profile ?? MfaBeamProfile.Balanced) switch
++        {
++            MfaBeamProfile.Fast => (20, 80),
++            MfaBeamProfile.Strict => (80, 200),
++            _ => (40, 120) // Balanced
++        };
++
++        return new MfaBeamSettings(
++            explicitBeam ?? defaultBeam,
++            explicitRetryBeam ?? defaultRetryBeam);
++    }
++
++    /// <summary>Settings for the strict retry profile, used by adaptive retry logic.</summary>
++    public static MfaBeamSettings StrictRetry => Resolve(MfaBeamProfile.Strict);
++}
+diff --git a/host/Ams.Workstation.Server/Services/PickupMfaRefinementService.cs b/host/Ams.Workstation.Server/Services/PickupMfaRefinementService.cs
+index 736fd51..16ef0ba 100644
+--- a/host/Ams.Workstation.Server/Services/PickupMfaRefinementService.cs
++++ b/host/Ams.Workstation.Server/Services/PickupMfaRefinementService.cs
+@@ -95,6 +95,10 @@ public class PickupMfaRefinementService
+             {
+                 await MfaProcessSupervisor.EnsureReadyAsync(ct).ConfigureAwait(false);
+ 
++                // Pickup refinement uses strict profile for maximum precision
++                // on short single-utterance audio fragments.
++                var pickupBeam = MfaBeamSettings.Resolve(MfaBeamProfile.Strict);
++
+                 var context = new MfaChapterContext
+                 {
+                     CorpusDirectory = corpusDir,
+@@ -103,8 +107,8 @@ public class PickupMfaRefinementService
+                     DictionaryModel = MfaService.DefaultDictionaryModel,
+                     AcousticModel = MfaService.DefaultAcousticModel,
+                     G2pModel = MfaService.DefaultG2pModel,
+-                    Beam = 80,
+-                    RetryBeam = 200,
++                    Beam = pickupBeam.Beam,
++                    RetryBeam = pickupBeam.RetryBeam,
+                     SingleSpeaker = true,
+                     CleanOutput = true
+                 };

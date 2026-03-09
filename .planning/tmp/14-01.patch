@@ -1,0 +1,365 @@
+diff --git a/.planning/STATE.md b/.planning/STATE.md
+index db9b3cf..ab309d9 100644
+--- a/.planning/STATE.md
++++ b/.planning/STATE.md
+@@ -7,9 +7,9 @@ Audio Management System - CLI and core library for audio processing, ASR, forced
+ ## Current Position
+ 
+ **Milestone**: v2.0 Blazor Workstation
+-**Phase**: 13 - Pickup Substitution
+-**Plan**: 7/8
+-**Status**: Plan 13-07 complete; old Polish pages decommissioned, /polish route migrated to PickupSubstitution, memory-safe flipper navigation
++**Phase**: 14 - Shared Chunked ASR/MFA
++**Plan**: 1/7
++**Status**: Plan 14-01 complete; ChunkPlanDocument artifact model with DocumentSlot lifecycle and resolver persistence
+ 
+ ## Progress
+ 
+@@ -19,6 +19,18 @@ v1.1 Execute Refactor  [██████████████████
+ v2.0 Blazor Workstation[████████████████████] 100% - Phase 10 complete
+ ```
+ 
++## Phase 14 Plans (Shared Chunked ASR/MFA)
++
++| Plan | Name | Tasks | Status |
++|------|------|-------|--------|
++| 14-01 | Chunk Plan Artifact Model | 2 | Complete |
++| 14-02 | TBD | - | Pending |
++| 14-03 | TBD | - | Pending |
++| 14-04 | TBD | - | Pending |
++| 14-05 | TBD | - | Pending |
++| 14-06 | TBD | - | Pending |
++| 14-07 | TBD | - | Pending |
++
+ ## Phase 13 Plans (Pickup Substitution)
+ 
+ | Plan | Name | Tasks | Status |
+@@ -144,6 +156,9 @@ v2.0 Blazor Workstation[██████████████████
+ | Completion auto-advance | Wrap-around search with 500ms delay | Searches forward then wraps; delay provides visual feedback before flip |
+ | Old Polish page decommission | Delete entirely (Index.razor, ChapterPolish.razor) | PickupSubstitution replaces them per locked decision; shared components also deleted |
+ | Audio deallocation on chapter flip | Deallocate corrected buffer via CurrentChapterHandle | Prevents memory pressure during multi-chapter navigation |
++| Chunk plan artifact naming | {chapterStem}.align.chunks.json | Follows existing align.tx/hydrate/anchors convention |
++| ChunkPlanPolicy fields | threshold, min silence, min chunk, sample rate | Enables downstream plan validity checking |
++| ChunkPlanEntry dual fields | Sample-precise + time-domain | StartSample/LengthSamples for slicing, StartSec/EndSec for offsets |
+ 
+ ## Phase 8/8.1 Conclusions (Archived)
+ 
+@@ -190,7 +205,7 @@ poc/VelloSharpPoc/     - Avalonia + VelloSharp (child window fails)
+ 
+ ## Next Action
+ 
+-Quick task 8 complete. `qc analyze --dir` CLI command added for audiobook structural QC (head/tail silence, title-body gap analysis). Continue with plan 13-08 or next quick task.
++Plan 14-01 complete. ChunkPlanDocument artifact model wired through resolver and chapter documents. Continue with plan 14-02.
+ 
+ ## Deferred UI Refinements (for Plan 10-04)
+ 
+@@ -207,4 +222,4 @@ None currently.
+ 
+ ## Session Continuity
+ 
+-Last activity: 2026-03-02 - Completed quick task 8: audiobook QC CLI command (ffmpeg silencedetect)
++Last activity: 2026-03-05 - Completed plan 14-01: chunk plan artifact model with DocumentSlot lifecycle
+diff --git a/.planning/phases/14-shared-chunked-asr-mfa/14-01-SUMMARY.md b/.planning/phases/14-shared-chunked-asr-mfa/14-01-SUMMARY.md
+new file mode 100644
+index 0000000..61aecd6
+--- /dev/null
++++ b/.planning/phases/14-shared-chunked-asr-mfa/14-01-SUMMARY.md
+@@ -0,0 +1,102 @@
++---
++phase: 14-shared-chunked-asr-mfa
++plan: 01
++subsystem: alignment
++tags: [chunk-plan, artifact, document-slot, resolver, asr, mfa]
++
++# Dependency graph
++requires: []
++provides:
++  - ChunkPlanDocument artifact model (ChunkPlanDocument, ChunkPlanPolicy, ChunkPlanEntry)
++  - IArtifactResolver chunk plan Load/Save/GetFile methods
++  - ChapterDocuments.ChunkPlan DocumentSlot with full lifecycle participation
++affects: [14-02, 14-03, 14-04, 14-05, 14-06, 14-07]
++
++# Tech tracking
++tech-stack:
++  added: []
++  patterns: [DocumentSlot artifact lifecycle for chunk plan]
++
++key-files:
++  created:
++    - host/Ams.Core/Artifacts/Alignment/ChunkPlanDocument.cs
++  modified:
++    - host/Ams.Core/Runtime/Artifacts/IArtifactResolver.cs
++    - host/Ams.Core/Runtime/Artifacts/FileArtifactResolver.cs
++    - host/Ams.Core/Runtime/Chapter/ChapterDocuments.cs
++
++key-decisions:
++  - "Chunk plan persisted as {chapterStem}.align.chunks.json following existing artifact naming convention"
++  - "ChunkPlanPolicy captures silence threshold, min silence/chunk durations, and sample rate for plan validity checking"
++  - "ChunkPlanEntry includes both sample-precise (StartSample, LengthSamples) and time-domain (StartSec, EndSec) fields"
++
++patterns-established:
++  - "Chunk plan follows same DocumentSlot + resolver architecture as transcript/hydrate/anchors/asr"
++
++requirements-completed: [CHUNK-ARTIFACTS]
++
++# Metrics
++duration: 2min
++completed: 2026-03-05
++---
++
++# Phase 14 Plan 01: Chunk Plan Artifact Summary
++
++**First-class ChunkPlanDocument artifact with DocumentSlot lifecycle, resolver persistence as align.chunks.json, shared by ASR and MFA stages**
++
++## Performance
++
++- **Duration:** 2 min
++- **Started:** 2026-03-05T06:17:16Z
++- **Completed:** 2026-03-05T06:19:27Z
++- **Tasks:** 2
++- **Files modified:** 4
++
++## Accomplishments
++- Defined canonical ChunkPlanDocument with version, audio identity fingerprint, chunking policy metadata, and ordered chunk entries
++- Wired chunk plan through IArtifactResolver and FileArtifactResolver as align.chunks.json
++- Integrated DocumentSlot<ChunkPlanDocument> into ChapterDocuments with IsDirty and SaveChanges participation
++
++## Task Commits
++
++Each task was committed atomically:
++
++1. **Task 1: Define chunk plan artifact model** - `840b7d6` (feat)
++2. **Task 2: Wire chunk artifact through resolver + chapter documents** - `54781eb` (feat)
++
++## Files Created/Modified
++- `host/Ams.Core/Artifacts/Alignment/ChunkPlanDocument.cs` - ChunkPlanDocument, ChunkPlanPolicy, ChunkPlanEntry record types
++- `host/Ams.Core/Runtime/Artifacts/IArtifactResolver.cs` - LoadChunkPlan, SaveChunkPlan, GetChunkPlanFile interface methods
++- `host/Ams.Core/Runtime/Artifacts/FileArtifactResolver.cs` - Implementation using LoadJson/SaveJson with align.chunks.json suffix
++- `host/Ams.Core/Runtime/Chapter/ChapterDocuments.cs` - DocumentSlot<ChunkPlanDocument> with property, IsDirty, SaveChanges, backing file getter
++
++## Decisions Made
++- Chunk plan artifact named `{chapterStem}.align.chunks.json` to align with existing `align.tx.json`, `align.hydrate.json`, `align.anchors.json` convention
++- ChunkPlanPolicy records the exact parameters used for chunking (silence threshold dB, min silence duration ms, min chunk duration sec, sample rate) so downstream stages can validate plan freshness
++- ChunkPlanEntry stores both sample-precise fields (StartSample, LengthSamples) for audio slicing and time-domain fields (StartSec, EndSec) for alignment offset math
++- Document version field (currently 1) enables future schema evolution without breaking existing artifacts
++
++## Deviations from Plan
++
++None - plan executed exactly as written.
++
++## Issues Encountered
++
++None.
++
++## User Setup Required
++
++None - no external service configuration required.
++
++## Next Phase Readiness
++- ChunkPlanDocument is ready for plan 14-02+ to produce and consume through ChapterDocuments.ChunkPlan
++- All downstream plans can access chunk plan via `chapter.Documents.ChunkPlan` without ad-hoc file IO
++- Backing file resolves through resolver as `{chapterStem}.align.chunks.json`
++
++## Self-Check: PASSED
++
++All created files verified on disk. All commit hashes found in git log.
++
++---
++*Phase: 14-shared-chunked-asr-mfa*
++*Completed: 2026-03-05*
+diff --git a/host/Ams.Core/Artifacts/Alignment/ChunkPlanDocument.cs b/host/Ams.Core/Artifacts/Alignment/ChunkPlanDocument.cs
+new file mode 100644
+index 0000000..46396b9
+--- /dev/null
++++ b/host/Ams.Core/Artifacts/Alignment/ChunkPlanDocument.cs
+@@ -0,0 +1,76 @@
++using System.Text.Json.Serialization;
++
++namespace Ams.Core.Artifacts.Alignment;
++
++/// <summary>
++/// Canonical chunk plan artifact representing the silence-based audio segmentation
++/// for a chapter. This document is shared by both the ASR and MFA execution stages
++/// to ensure deterministic, consistent chunk boundaries across the pipeline.
++/// <para>
++/// Persisted as <c>{chapterStem}.align.chunks.json</c> through the artifact resolver.
++/// </para>
++/// </summary>
++public sealed record ChunkPlanDocument(
++    [property: JsonPropertyName("version")]
++    int Version,
++
++    [property: JsonPropertyName("createdAtUtc")]
++    DateTime CreatedAtUtc,
++
++    [property: JsonPropertyName("sourceAudioPath")]
++    string SourceAudioPath,
++
++    [property: JsonPropertyName("sourceAudioFingerprint")]
++    string SourceAudioFingerprint,
++
++    [property: JsonPropertyName("policy")]
++    ChunkPlanPolicy Policy,
++
++    [property: JsonPropertyName("chunks")]
++    IReadOnlyList<ChunkPlanEntry> Chunks)
++{
++    /// <summary>
++    /// Current document schema version. Increment when making breaking changes
++    /// to the chunk plan format.
++    /// </summary>
++    public const int CurrentVersion = 1;
++}
++
++/// <summary>
++/// Policy metadata capturing the parameters used to generate the chunk plan.
++/// Enables downstream stages to verify whether the plan is still valid for
++/// their execution requirements.
++/// </summary>
++public sealed record ChunkPlanPolicy(
++    [property: JsonPropertyName("silenceThresholdDb")]
++    double SilenceThresholdDb,
++
++    [property: JsonPropertyName("minSilenceDurationMs")]
++    double MinSilenceDurationMs,
++
++    [property: JsonPropertyName("minChunkDurationSec")]
++    double MinChunkDurationSec,
++
++    [property: JsonPropertyName("sampleRate")]
++    int SampleRate);
++
++/// <summary>
++/// A single contiguous chunk within the chapter audio. Each chunk is defined
++/// by its sample range (for precise slicing) and its time range (for alignment
++/// offset calculations).
++/// </summary>
++public sealed record ChunkPlanEntry(
++    [property: JsonPropertyName("chunkId")]
++    int ChunkId,
++
++    [property: JsonPropertyName("startSample")]
++    int StartSample,
++
++    [property: JsonPropertyName("lengthSamples")]
++    int LengthSamples,
++
++    [property: JsonPropertyName("startSec")]
++    double StartSec,
++
++    [property: JsonPropertyName("endSec")]
++    double EndSec);
+diff --git a/host/Ams.Core/Runtime/Artifacts/FileArtifactResolver.cs b/host/Ams.Core/Runtime/Artifacts/FileArtifactResolver.cs
+index fa1f282..00da3b2 100644
+--- a/host/Ams.Core/Runtime/Artifacts/FileArtifactResolver.cs
++++ b/host/Ams.Core/Runtime/Artifacts/FileArtifactResolver.cs
+@@ -131,6 +131,12 @@ public sealed class FileArtifactResolver : IArtifactResolver
+         // TextGrid documents are derived from the MFA output TextGrid file and do not need separate persistence.
+     }
+ 
++    public ChunkPlanDocument? LoadChunkPlan(ChapterContext context)
++        => LoadJson<ChunkPlanDocument>(GetChapterArtifactPath(context, "align.chunks.json"));
++
++    public void SaveChunkPlan(ChapterContext context, ChunkPlanDocument document)
++        => SaveJson(GetChapterArtifactPath(context, "align.chunks.json"), document);
++
+     public FileInfo GetBookIndexFile(BookContext context)
+         => new(ResolveBookIndexPath(context));
+ 
+@@ -158,6 +164,9 @@ public sealed class FileArtifactResolver : IArtifactResolver
+     public FileInfo GetTextGridFile(ChapterContext context)
+         => new(GetTextGridPath(context));
+ 
++    public FileInfo GetChunkPlanFile(ChapterContext context)
++        => new(GetChapterArtifactPath(context, "align.chunks.json"));
++
+     public FileInfo GetChapterArtifactFile(ChapterContext context, string suffix)
+         => new(GetChapterArtifactPath(context, suffix));
+ 
+diff --git a/host/Ams.Core/Runtime/Artifacts/IArtifactResolver.cs b/host/Ams.Core/Runtime/Artifacts/IArtifactResolver.cs
+index 575617d..b9c25a3 100644
+--- a/host/Ams.Core/Runtime/Artifacts/IArtifactResolver.cs
++++ b/host/Ams.Core/Runtime/Artifacts/IArtifactResolver.cs
+@@ -38,6 +38,9 @@ public interface IArtifactResolver
+     TextGridDocument? LoadTextGrid(ChapterContext context);
+     void SaveTextGrid(ChapterContext context, TextGridDocument document);
+ 
++    ChunkPlanDocument? LoadChunkPlan(ChapterContext context);
++    void SaveChunkPlan(ChapterContext context, ChunkPlanDocument document);
++
+     FileInfo GetBookIndexFile(BookContext context);
+ 
+     FileInfo GetTranscriptFile(ChapterContext context);
+@@ -48,6 +51,7 @@ public interface IArtifactResolver
+     FileInfo GetPausePolicyFile(ChapterContext context);
+     FileInfo GetPauseAdjustmentsFile(ChapterContext context);
+     FileInfo GetTextGridFile(ChapterContext context);
++    FileInfo GetChunkPlanFile(ChapterContext context);
+ 
+     FileInfo GetChapterArtifactFile(ChapterContext context, string suffix);
+     FileInfo GetBookArtifactFile(BookContext context, string fileName);
+diff --git a/host/Ams.Core/Runtime/Chapter/ChapterDocuments.cs b/host/Ams.Core/Runtime/Chapter/ChapterDocuments.cs
+index 2fe7543..a7632d5 100644
+--- a/host/Ams.Core/Runtime/Chapter/ChapterDocuments.cs
++++ b/host/Ams.Core/Runtime/Chapter/ChapterDocuments.cs
+@@ -18,6 +18,7 @@ public sealed class ChapterDocuments
+     private readonly DocumentSlot<PauseAdjustmentsDocument> _pauseAdjustments;
+     private readonly DocumentSlot<PausePolicy> _pausePolicy;
+     private readonly DocumentSlot<TextGridDocument> _textGrid;
++    private readonly DocumentSlot<ChunkPlanDocument> _chunkPlan;
+ 
+     internal ChapterDocuments(ChapterContext context, IArtifactResolver resolver)
+     {
+@@ -90,6 +91,11 @@ public sealed class ChapterDocuments
+                     var backing = resolver.GetTextGridFile(context).FullName;
+                     return doc.SourcePath == backing ? doc : doc with { SourcePath = backing };
+                 }));
++
++        _chunkPlan = new DocumentSlot<ChunkPlanDocument>(
++            () => resolver.LoadChunkPlan(context),
++            value => resolver.SaveChunkPlan(context, value),
++            CreateOptions<ChunkPlanDocument>(() => resolver.GetChunkPlanFile(context)));
+     }
+ 
+     public TranscriptIndex? Transcript
+@@ -144,6 +150,15 @@ public sealed class ChapterDocuments
+         set => _textGrid.SetValue(value);
+     }
+ 
++    /// <summary>
++    /// Chunk plan shared by ASR and MFA stages. Persisted as <c>{chapterStem}.align.chunks.json</c>.
++    /// </summary>
++    public ChunkPlanDocument? ChunkPlan
++    {
++        get => _chunkPlan.GetValue();
++        set => _chunkPlan.SetValue(value);
++    }
++
+     internal bool IsDirty =>
+         _transcript.IsDirty ||
+         _hydratedTranscript.IsDirty ||
+@@ -152,7 +167,8 @@ public sealed class ChapterDocuments
+         _asrTranscriptText.IsDirty ||
+         _pauseAdjustments.IsDirty ||
+         _pausePolicy.IsDirty ||
+-        _textGrid.IsDirty;
++        _textGrid.IsDirty ||
++        _chunkPlan.IsDirty;
+ 
+     internal void SaveChanges()
+     {
+@@ -164,6 +180,7 @@ public sealed class ChapterDocuments
+         _pauseAdjustments.Save();
+         _pausePolicy.Save();
+         _textGrid.Save();
++        _chunkPlan.Save();
+     }
+ 
+     internal void InvalidateTextGrid() => _textGrid.Invalidate();
+@@ -176,4 +193,5 @@ public sealed class ChapterDocuments
+     internal FileInfo? GetPauseAdjustmentsFile() => _pauseAdjustments.GetBackingFile();
+     internal FileInfo? GetPausePolicyFile() => _pausePolicy.GetBackingFile();
+     internal FileInfo? GetTextGridFile() => _textGrid.GetBackingFile();
++    internal FileInfo? GetChunkPlanFile() => _chunkPlan.GetBackingFile();
+ }
+\ No newline at end of file

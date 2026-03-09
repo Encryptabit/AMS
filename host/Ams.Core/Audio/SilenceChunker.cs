@@ -32,6 +32,12 @@ public static class SilenceChunker
     private static readonly TimeSpan DefaultMinChunkDuration = TimeSpan.FromSeconds(15);
 
     /// <summary>
+    /// Default maximum chunk duration. Keeps chunks below Whisper's 30 second
+    /// context window with a small safety margin.
+    /// </summary>
+    private static readonly TimeSpan DefaultMaxChunkDuration = TimeSpan.FromSeconds(29.5);
+
+    /// <summary>
     /// Returns chunk boundaries for splitting an AudioBuffer at silence points.
     /// Uses a sliding RMS window to detect silence regions, then splits at their midpoints.
     /// Operates on channel 0 only (buffer is mono by the time it reaches ASR).
@@ -39,23 +45,34 @@ public static class SilenceChunker
     /// <param name="buffer">The audio buffer to analyze.</param>
     /// <param name="silenceThresholdDb">Silence threshold in dB (default: AudioDefaults.SilenceThresholdDb).</param>
     /// <param name="minSilenceDuration">Minimum silence duration to qualify as a split point (default: AudioDefaults.MinimumSilenceDuration).</param>
-    /// <param name="minChunkDuration">Minimum chunk duration to prevent excessive fragmentation (default: 30 seconds).</param>
+    /// <param name="minChunkDuration">Minimum chunk duration to prevent excessive fragmentation (default: 15 seconds).</param>
+    /// <param name="maxChunkDuration">Maximum chunk duration to keep slices inside Whisper's stable window (default: 29.5 seconds).</param>
     /// <returns>Contiguous chunk boundaries covering the entire buffer with no gaps.</returns>
     public static IReadOnlyList<ChunkBoundary> FindChunkBoundaries(
         AudioBuffer buffer,
         double silenceThresholdDb = AudioDefaults.SilenceThresholdDb,
         TimeSpan? minSilenceDuration = null,
-        TimeSpan? minChunkDuration = null)
+        TimeSpan? minChunkDuration = null,
+        TimeSpan? maxChunkDuration = null)
     {
         ArgumentNullException.ThrowIfNull(buffer);
 
         var effectiveMinSilence = minSilenceDuration ?? AudioDefaults.MinimumSilenceDuration;
         var effectiveMinChunk = minChunkDuration ?? DefaultMinChunkDuration;
+        var effectiveMaxChunk = maxChunkDuration ?? DefaultMaxChunkDuration;
+        if (effectiveMaxChunk < effectiveMinChunk)
+        {
+            throw new ArgumentOutOfRangeException(nameof(maxChunkDuration),
+                "Maximum chunk duration must be greater than or equal to the minimum chunk duration.");
+        }
 
         var minSilenceSamples = (int)(effectiveMinSilence.TotalSeconds * buffer.SampleRate);
         var minChunkSamples = (int)(effectiveMinChunk.TotalSeconds * buffer.SampleRate);
+        var maxChunkSamples = (int)(effectiveMaxChunk.TotalSeconds * buffer.SampleRate);
 
-        // If buffer is shorter than minChunkDuration, return single chunk
+        // If buffer is shorter than minChunkDuration, return single chunk.
+        // Larger buffers can still benefit from silence-based splits even when
+        // they already fit within the hard max window.
         if (buffer.Length <= minChunkSamples)
         {
             return [new ChunkBoundary(0, buffer.Length)];
@@ -66,11 +83,6 @@ public static class SilenceChunker
 
         // Detect silence regions via single O(n) pass with sliding RMS window
         var silenceRegions = DetectSilenceRegions(buffer, threshold, minSilenceSamples);
-
-        if (silenceRegions.Count == 0)
-        {
-            return [new ChunkBoundary(0, buffer.Length)];
-        }
 
         // Extract midpoints as split candidates.
         // Skip regions that span the entire buffer (all-silence) or sit at the
@@ -89,8 +101,13 @@ public static class SilenceChunker
             splitCandidates.Add(midpoint);
         }
 
-        // Greedily select boundaries that respect minChunkDuration
-        var selectedSplits = SelectSplitPoints(splitCandidates, buffer.Length, minChunkSamples);
+        // Greedily select boundaries that prefer silence midpoints, but force
+        // additional splits when needed to stay below the hard chunk ceiling.
+        var selectedSplits = SelectSplitPoints(
+            splitCandidates,
+            buffer.Length,
+            minChunkSamples,
+            maxChunkSamples);
 
         // Build contiguous chunk boundaries from selected split points
         return BuildChunkBoundaries(selectedSplits, buffer.Length);
@@ -185,21 +202,49 @@ public static class SilenceChunker
     private static List<int> SelectSplitPoints(
         List<int> candidates,
         int totalLength,
-        int minChunkSamples)
+        int minChunkSamples,
+        int maxChunkSamples)
     {
         var selected = new List<int>();
         int lastSplit = 0;
+        int candidateIndex = 0;
 
-        foreach (var candidate in candidates)
+        while (candidateIndex < candidates.Count)
         {
+            var candidate = candidates[candidateIndex];
+            while (candidate - lastSplit > maxChunkSamples)
+            {
+                var forcedSplit = Math.Min(lastSplit + maxChunkSamples, totalLength - minChunkSamples);
+                if (forcedSplit <= lastSplit)
+                {
+                    forcedSplit = lastSplit + maxChunkSamples;
+                }
+
+                selected.Add(forcedSplit);
+                lastSplit = forcedSplit;
+            }
+
             var chunkBefore = candidate - lastSplit;
             var remaining = totalLength - candidate;
-
             if (chunkBefore >= minChunkSamples && remaining >= minChunkSamples)
             {
                 selected.Add(candidate);
                 lastSplit = candidate;
             }
+
+            candidateIndex++;
+        }
+
+        while (totalLength - lastSplit > maxChunkSamples)
+        {
+            var forcedSplit = Math.Min(lastSplit + maxChunkSamples, totalLength - minChunkSamples);
+            if (forcedSplit <= lastSplit)
+            {
+                forcedSplit = lastSplit + maxChunkSamples;
+            }
+
+            selected.Add(forcedSplit);
+            lastSplit = forcedSplit;
         }
 
         return selected;

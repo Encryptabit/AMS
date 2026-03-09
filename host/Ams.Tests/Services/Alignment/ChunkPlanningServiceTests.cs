@@ -118,7 +118,8 @@ public class ChunkPlanningServiceTests
         {
             SilenceThresholdDb = -50.0,
             MinSilenceDuration = TimeSpan.FromMilliseconds(300),
-            MinChunkDuration = TimeSpan.FromSeconds(20)
+            MinChunkDuration = TimeSpan.FromSeconds(20),
+            MaxChunkDuration = TimeSpan.FromSeconds(27)
         };
 
         var plan = _service.GeneratePlan(buffer, "/audio/test.wav", policy);
@@ -126,6 +127,7 @@ public class ChunkPlanningServiceTests
         Assert.Equal(-50.0, plan.Policy.SilenceThresholdDb);
         Assert.Equal(300.0, plan.Policy.MinSilenceDurationMs);
         Assert.Equal(20.0, plan.Policy.MinChunkDurationSec);
+        Assert.Equal(27.0, plan.Policy.MaxChunkDurationSec);
         Assert.Equal(SampleRate, plan.Policy.SampleRate);
     }
 
@@ -163,6 +165,7 @@ public class ChunkPlanningServiceTests
         Assert.Equal(AudioDefaults.SilenceThresholdDb, plan.Policy.SilenceThresholdDb);
         Assert.Equal(AudioDefaults.MinimumSilenceDuration.TotalMilliseconds, plan.Policy.MinSilenceDurationMs);
         Assert.Equal(15.0, plan.Policy.MinChunkDurationSec);
+        Assert.Equal(29.5, plan.Policy.MaxChunkDurationSec);
     }
 
     [Fact]
@@ -206,6 +209,30 @@ public class ChunkPlanningServiceTests
         };
 
         Assert.False(_service.IsValid(plan, buffer, "/audio/test.wav", differentPolicy));
+    }
+
+    [Fact]
+    public void IsValid_ReturnsFalseForOlderPlanVersion()
+    {
+        var buffer = CreateAudioBuffer(SampleRate * 60);
+        var plan = _service.GeneratePlan(buffer, "/audio/test.wav") with { Version = 1 };
+
+        Assert.False(_service.IsValid(plan, buffer, "/audio/test.wav"));
+    }
+
+    [Fact]
+    public void GeneratePlan_EnforcesDefaultMaxChunkDuration()
+    {
+        var totalLength = (int)(45.121375 * SampleRate);
+        var buffer = CreateAudioBuffer(totalLength);
+        FillWithAmplitude(buffer, SampleRate * 15, (int)(0.3 * SampleRate), SilenceAmplitude);
+        FillWithAmplitude(buffer, (int)(40.044125 * SampleRate),
+            totalLength - (int)(40.044125 * SampleRate), SilenceAmplitude);
+
+        var plan = _service.GeneratePlan(buffer, "/audio/test.wav");
+        var maxChunkSamples = (int)(29.5 * SampleRate);
+
+        Assert.All(plan.Chunks, chunk => Assert.InRange(chunk.LengthSamples, 1, maxChunkSamples));
     }
 
     [Fact]

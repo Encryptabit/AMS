@@ -27,9 +27,16 @@ public sealed record ChunkPlanningPolicy
 
     /// <summary>
     /// Minimum chunk duration to prevent excessive fragmentation.
-    /// Default: 15 seconds to stay comfortably below Whisper's 30 second window.
+    /// Default: 15 seconds to prevent tiny fragments around short pauses.
     /// </summary>
     public TimeSpan MinChunkDuration { get; init; } = TimeSpan.FromSeconds(15);
+
+    /// <summary>
+    /// Maximum chunk duration to keep segments inside Whisper's stable 30 second
+    /// context window.
+    /// Default: 29.5 seconds to leave a small safety margin.
+    /// </summary>
+    public TimeSpan MaxChunkDuration { get; init; } = TimeSpan.FromSeconds(29.5);
 
     /// <summary>
     /// Returns the shared default policy derived from <see cref="AudioDefaults"/>.
@@ -71,7 +78,8 @@ public sealed class ChunkPlanningService
             buffer,
             silenceThresholdDb: effectivePolicy.SilenceThresholdDb,
             minSilenceDuration: effectivePolicy.MinSilenceDuration,
-            minChunkDuration: effectivePolicy.MinChunkDuration);
+            minChunkDuration: effectivePolicy.MinChunkDuration,
+            maxChunkDuration: effectivePolicy.MaxChunkDuration);
 
         // Convert sample boundaries to ChunkPlanEntry list with stable chunk ids
         var entries = new List<ChunkPlanEntry>(boundaries.Count);
@@ -99,6 +107,7 @@ public sealed class ChunkPlanningService
                 SilenceThresholdDb: effectivePolicy.SilenceThresholdDb,
                 MinSilenceDurationMs: effectivePolicy.MinSilenceDuration.TotalMilliseconds,
                 MinChunkDurationSec: effectivePolicy.MinChunkDuration.TotalSeconds,
+                MaxChunkDurationSec: effectivePolicy.MaxChunkDuration.TotalSeconds,
                 SampleRate: buffer.SampleRate),
             Chunks: entries);
     }
@@ -147,6 +156,11 @@ public sealed class ChunkPlanningService
 
         var effectivePolicy = policy ?? ChunkPlanningPolicy.Default;
 
+        if (existing.Version != ChunkPlanDocument.CurrentVersion)
+        {
+            return false;
+        }
+
         // Check audio identity
         var currentFingerprint = ComputeAudioFingerprint(buffer, sourceAudioPath);
         if (!string.Equals(existing.SourceAudioFingerprint, currentFingerprint, StringComparison.Ordinal))
@@ -159,6 +173,7 @@ public sealed class ChunkPlanningService
         if (existingPolicy.SilenceThresholdDb != effectivePolicy.SilenceThresholdDb ||
             existingPolicy.MinSilenceDurationMs != effectivePolicy.MinSilenceDuration.TotalMilliseconds ||
             existingPolicy.MinChunkDurationSec != effectivePolicy.MinChunkDuration.TotalSeconds ||
+            existingPolicy.MaxChunkDurationSec != effectivePolicy.MaxChunkDuration.TotalSeconds ||
             existingPolicy.SampleRate != buffer.SampleRate)
         {
             return false;

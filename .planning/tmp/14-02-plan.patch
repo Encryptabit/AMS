@@ -1,0 +1,775 @@
+diff --git a/.planning/STATE.md b/.planning/STATE.md
+index db9b3cf..1fc7628 100644
+--- a/.planning/STATE.md
++++ b/.planning/STATE.md
+@@ -7,9 +7,9 @@ Audio Management System - CLI and core library for audio processing, ASR, forced
+ ## Current Position
+ 
+ **Milestone**: v2.0 Blazor Workstation
+-**Phase**: 13 - Pickup Substitution
+-**Plan**: 7/8
+-**Status**: Plan 13-07 complete; old Polish pages decommissioned, /polish route migrated to PickupSubstitution, memory-safe flipper navigation
++**Phase**: 14 - Shared Chunked ASR/MFA
++**Plan**: 2/7
++**Status**: Plan 14-02 complete; ChunkPlanningService with deterministic generation, policy controls, and 15 unit tests
+ 
+ ## Progress
+ 
+@@ -19,6 +19,18 @@ v1.1 Execute Refactor  [██████████████████
+ v2.0 Blazor Workstation[████████████████████] 100% - Phase 10 complete
+ ```
+ 
++## Phase 14 Plans (Shared Chunked ASR/MFA)
++
++| Plan | Name | Tasks | Status |
++|------|------|-------|--------|
++| 14-01 | Chunk Plan Artifact Model | 2 | Complete |
++| 14-02 | Chunk Planning Service | 2 | Complete |
++| 14-03 | TBD | - | Pending |
++| 14-04 | TBD | - | Pending |
++| 14-05 | TBD | - | Pending |
++| 14-06 | TBD | - | Pending |
++| 14-07 | TBD | - | Pending |
++
+ ## Phase 13 Plans (Pickup Substitution)
+ 
+ | Plan | Name | Tasks | Status |
+@@ -144,6 +156,12 @@ v2.0 Blazor Workstation[██████████████████
+ | Completion auto-advance | Wrap-around search with 500ms delay | Searches forward then wraps; delay provides visual feedback before flip |
+ | Old Polish page decommission | Delete entirely (Index.razor, ChapterPolish.razor) | PickupSubstitution replaces them per locked decision; shared components also deleted |
+ | Audio deallocation on chapter flip | Deallocate corrected buffer via CurrentChapterHandle | Prevents memory pressure during multi-chapter navigation |
++| Chunk plan artifact naming | {chapterStem}.align.chunks.json | Follows existing align.tx/hydrate/anchors convention |
++| ChunkPlanPolicy fields | threshold, min silence, min chunk, sample rate | Enables downstream plan validity checking |
++| ChunkPlanEntry dual fields | Sample-precise + time-domain | StartSample/LengthSamples for slicing, StartSec/EndSec for offsets |
++| ChunkPlanningPolicy vs ChunkPlanPolicy | Separate input/persisted types | Service resolves defaults; persisted record stores exact values used |
++| Audio fingerprint strategy | path+length+sampleRate+channels | Lightweight identity for invalidation; avoids content hashing overhead |
++| Path separator normalization | Backslash to forward slash in fingerprint | Cross-platform consistency between Windows and Linux |
+ 
+ ## Phase 8/8.1 Conclusions (Archived)
+ 
+@@ -190,7 +208,7 @@ poc/VelloSharpPoc/     - Avalonia + VelloSharp (child window fails)
+ 
+ ## Next Action
+ 
+-Quick task 8 complete. `qc analyze --dir` CLI command added for audiobook structural QC (head/tail silence, title-body gap analysis). Continue with plan 13-08 or next quick task.
++Plan 14-02 complete. ChunkPlanningService with deterministic generation, policy controls, and 15 unit tests. Continue with plan 14-03.
+ 
+ ## Deferred UI Refinements (for Plan 10-04)
+ 
+@@ -207,4 +225,4 @@ None currently.
+ 
+ ## Session Continuity
+ 
+-Last activity: 2026-03-02 - Completed quick task 8: audiobook QC CLI command (ffmpeg silencedetect)
++Last activity: 2026-03-05 - Completed plan 14-02: ChunkPlanningService with deterministic generation and 15 unit tests
+diff --git a/.planning/phases/14-shared-chunked-asr-mfa/14-01-SUMMARY.md b/.planning/phases/14-shared-chunked-asr-mfa/14-01-SUMMARY.md
+new file mode 100644
+index 0000000..61aecd6
+--- /dev/null
++++ b/.planning/phases/14-shared-chunked-asr-mfa/14-01-SUMMARY.md
+@@ -0,0 +1,102 @@
++---
++phase: 14-shared-chunked-asr-mfa
++plan: 01
++subsystem: alignment
++tags: [chunk-plan, artifact, document-slot, resolver, asr, mfa]
++
++# Dependency graph
++requires: []
++provides:
++  - ChunkPlanDocument artifact model (ChunkPlanDocument, ChunkPlanPolicy, ChunkPlanEntry)
++  - IArtifactResolver chunk plan Load/Save/GetFile methods
++  - ChapterDocuments.ChunkPlan DocumentSlot with full lifecycle participation
++affects: [14-02, 14-03, 14-04, 14-05, 14-06, 14-07]
++
++# Tech tracking
++tech-stack:
++  added: []
++  patterns: [DocumentSlot artifact lifecycle for chunk plan]
++
++key-files:
++  created:
++    - host/Ams.Core/Artifacts/Alignment/ChunkPlanDocument.cs
++  modified:
++    - host/Ams.Core/Runtime/Artifacts/IArtifactResolver.cs
++    - host/Ams.Core/Runtime/Artifacts/FileArtifactResolver.cs
++    - host/Ams.Core/Runtime/Chapter/ChapterDocuments.cs
++
++key-decisions:
++  - "Chunk plan persisted as {chapterStem}.align.chunks.json following existing artifact naming convention"
++  - "ChunkPlanPolicy captures silence threshold, min silence/chunk durations, and sample rate for plan validity checking"
++  - "ChunkPlanEntry includes both sample-precise (StartSample, LengthSamples) and time-domain (StartSec, EndSec) fields"
++
++patterns-established:
++  - "Chunk plan follows same DocumentSlot + resolver architecture as transcript/hydrate/anchors/asr"
++
++requirements-completed: [CHUNK-ARTIFACTS]
++
++# Metrics
++duration: 2min
++completed: 2026-03-05
++---
++
++# Phase 14 Plan 01: Chunk Plan Artifact Summary
++
++**First-class ChunkPlanDocument artifact with DocumentSlot lifecycle, resolver persistence as align.chunks.json, shared by ASR and MFA stages**
++
++## Performance
++
++- **Duration:** 2 min
++- **Started:** 2026-03-05T06:17:16Z
++- **Completed:** 2026-03-05T06:19:27Z
++- **Tasks:** 2
++- **Files modified:** 4
++
++## Accomplishments
++- Defined canonical ChunkPlanDocument with version, audio identity fingerprint, chunking policy metadata, and ordered chunk entries
++- Wired chunk plan through IArtifactResolver and FileArtifactResolver as align.chunks.json
++- Integrated DocumentSlot<ChunkPlanDocument> into ChapterDocuments with IsDirty and SaveChanges participation
++
++## Task Commits
++
++Each task was committed atomically:
++
++1. **Task 1: Define chunk plan artifact model** - `840b7d6` (feat)
++2. **Task 2: Wire chunk artifact through resolver + chapter documents** - `54781eb` (feat)
++
++## Files Created/Modified
++- `host/Ams.Core/Artifacts/Alignment/ChunkPlanDocument.cs` - ChunkPlanDocument, ChunkPlanPolicy, ChunkPlanEntry record types
++- `host/Ams.Core/Runtime/Artifacts/IArtifactResolver.cs` - LoadChunkPlan, SaveChunkPlan, GetChunkPlanFile interface methods
++- `host/Ams.Core/Runtime/Artifacts/FileArtifactResolver.cs` - Implementation using LoadJson/SaveJson with align.chunks.json suffix
++- `host/Ams.Core/Runtime/Chapter/ChapterDocuments.cs` - DocumentSlot<ChunkPlanDocument> with property, IsDirty, SaveChanges, backing file getter
++
++## Decisions Made
++- Chunk plan artifact named `{chapterStem}.align.chunks.json` to align with existing `align.tx.json`, `align.hydrate.json`, `align.anchors.json` convention
++- ChunkPlanPolicy records the exact parameters used for chunking (silence threshold dB, min silence duration ms, min chunk duration sec, sample rate) so downstream stages can validate plan freshness
++- ChunkPlanEntry stores both sample-precise fields (StartSample, LengthSamples) for audio slicing and time-domain fields (StartSec, EndSec) for alignment offset math
++- Document version field (currently 1) enables future schema evolution without breaking existing artifacts
++
++## Deviations from Plan
++
++None - plan executed exactly as written.
++
++## Issues Encountered
++
++None.
++
++## User Setup Required
++
++None - no external service configuration required.
++
++## Next Phase Readiness
++- ChunkPlanDocument is ready for plan 14-02+ to produce and consume through ChapterDocuments.ChunkPlan
++- All downstream plans can access chunk plan via `chapter.Documents.ChunkPlan` without ad-hoc file IO
++- Backing file resolves through resolver as `{chapterStem}.align.chunks.json`
++
++## Self-Check: PASSED
++
++All created files verified on disk. All commit hashes found in git log.
++
++---
++*Phase: 14-shared-chunked-asr-mfa*
++*Completed: 2026-03-05*
+diff --git a/.planning/phases/14-shared-chunked-asr-mfa/14-02-SUMMARY.md b/.planning/phases/14-shared-chunked-asr-mfa/14-02-SUMMARY.md
+new file mode 100644
+index 0000000..30c4c4b
+--- /dev/null
++++ b/.planning/phases/14-shared-chunked-asr-mfa/14-02-SUMMARY.md
+@@ -0,0 +1,113 @@
++---
++phase: 14-shared-chunked-asr-mfa
++plan: 02
++subsystem: alignment
++tags: [silence-chunking, asr, mfa, deterministic, audio-processing]
++
++# Dependency graph
++requires:
++  - phase: 14-shared-chunked-asr-mfa
++    provides: "ChunkPlanDocument artifact model (14-01)"
++provides:
++  - "ChunkPlanningService for deterministic chunk plan generation"
++  - "ChunkPlanningPolicy with explicit knobs for silence threshold, min silence, min chunk"
++  - "Pipeline policy plumbing via PipelineRunOptions.ChunkPlanningPolicy"
++  - "IsValid method for chunk plan invalidation decisions"
++affects: [14-03, 14-04, 14-05, 14-06, 14-07]
++
++# Tech tracking
++tech-stack:
++  added: []
++  patterns:
++    - "Single-source chunk planning: all stages use ChunkPlanningService, no independent boundary logic"
++    - "Audio fingerprint for invalidation: path + sampleCount + sampleRate + channels"
++
++key-files:
++  created:
++    - host/Ams.Core/Services/Alignment/ChunkPlanningService.cs
++    - host/Ams.Tests/Services/Alignment/ChunkPlanningServiceTests.cs
++  modified:
++    - host/Ams.Core/Application/Pipeline/PipelineRunOptions.cs
++
++key-decisions:
++  - "ChunkPlanningPolicy as separate input type from persisted ChunkPlanPolicy, allowing service-side defaults"
++  - "Lightweight audio fingerprint (path+length+sampleRate+channels) over cryptographic hash for speed"
++  - "Path separator normalization in fingerprint for cross-platform consistency"
++
++patterns-established:
++  - "ChunkPlanningService is the single source of chunk-plan generation for ASR and MFA"
++  - "Chunk plan invalidation via IsValid: check fingerprint + policy match before recomputing"
++
++requirements-completed: [CHUNK-PLANNER]
++
++# Metrics
++duration: 5min
++completed: 2026-03-05
++---
++
++# Phase 14 Plan 02: Chunk Planning Service Summary
++
++**ChunkPlanningService with deterministic silence-based chunk plan generation, explicit policy controls, and 15 unit tests for ordering/coverage/invalidation**
++
++## Performance
++
++- **Duration:** 5 min
++- **Started:** 2026-03-05T06:17:27Z
++- **Completed:** 2026-03-05T06:22:05Z
++- **Tasks:** 2
++- **Files modified:** 3
++
++## Accomplishments
++- ChunkPlanningService computes deterministic ChunkPlanDocument from chapter audio via SilenceChunker
++- ChunkPlanningPolicy exposes explicit knobs: silence threshold, min silence duration, min chunk duration with sensible defaults from AudioDefaults
++- IsValid method enables invalidation decisions comparing audio fingerprint and policy match
++- Pipeline policy plumbing via PipelineRunOptions.ChunkPlanningPolicy for explicit per-run overrides
++- 15 unit tests covering determinism, sequential chunk IDs, contiguous coverage, time conversion consistency, validation, and edge cases
++
++## Task Commits
++
++Each task was committed atomically:
++
++1. **Task 1: Implement ChunkPlanningService** - `225326e` (feat)
++2. **Task 2: Determinism + policy plumbing** - `384c3ad` (feat)
++
++## Files Created/Modified
++- `host/Ams.Core/Services/Alignment/ChunkPlanningService.cs` - Service with GeneratePlan (buffer and ChapterContext overloads) and IsValid for invalidation
++- `host/Ams.Core/Application/Pipeline/PipelineRunOptions.cs` - Added ChunkPlanningPolicy property for pipeline-level policy propagation
++- `host/Ams.Tests/Services/Alignment/ChunkPlanningServiceTests.cs` - 15 unit tests for deterministic generation, ordering, coverage, policy storage, validation
++
++## Decisions Made
++- ChunkPlanningPolicy is a separate input configuration type from the persisted ChunkPlanPolicy record, allowing service-side default resolution
++- Audio fingerprint uses lightweight path+length+sampleRate+channels identity rather than content hashing for speed; sufficient for invalidation since re-encoded or truncated files will differ
++- Path separator normalization (backslash to forward slash) in fingerprint ensures cross-platform consistency between Windows and Linux
++- GeneratePlan supports both direct AudioBuffer input (for testing/flexibility) and ChapterContext-based loading (for production pipeline usage)
++
++## Deviations from Plan
++
++### Auto-fixed Issues
++
++**1. [Rule 3 - Blocking] ChapterDocuments ChunkPlan wiring incomplete from plan 14-01**
++- **Found during:** Task 1 (pre-implementation dependency check)
++- **Issue:** Plan 14-01 (dependency) had partially committed its artifact model and resolver methods, but the ChapterDocuments IsDirty/SaveChanges/GetBackingFile integration was already wired when re-examined -- the field, constructor init, property, IsDirty, SaveChanges, and GetChunkPlanFile were all present in the latest version on disk
++- **Fix:** No additional code changes needed; verified all wiring was complete
++- **Verification:** Full solution build succeeded with 0 errors
++
++---
++
++**Total deviations:** 1 investigated (0 code changes needed)
++**Impact on plan:** No scope creep. Dependency wiring from 14-01 was already committed.
++
++## Issues Encountered
++None
++
++## User Setup Required
++None - no external service configuration required.
++
++## Next Phase Readiness
++- ChunkPlanningService is ready for consumption by ASR stage (14-03) and MFA stage (later plans)
++- PipelineRunOptions.ChunkPlanningPolicy enables callers to override defaults for specific runs
++- IsValid enables incremental execution: skip chunk plan regeneration when inputs unchanged
++
++---
++*Phase: 14-shared-chunked-asr-mfa*
++*Completed: 2026-03-05*
+diff --git a/host/Ams.Core/Application/Pipeline/PipelineRunOptions.cs b/host/Ams.Core/Application/Pipeline/PipelineRunOptions.cs
+index 4a58078..4343e7e 100644
+--- a/host/Ams.Core/Application/Pipeline/PipelineRunOptions.cs
++++ b/host/Ams.Core/Application/Pipeline/PipelineRunOptions.cs
+@@ -24,4 +24,17 @@ public sealed record PipelineRunOptions
+     public bool SkipTreatedCopy { get; init; }
+     public FileInfo? TreatedCopyFile { get; init; }
+     public PipelineConcurrencyControl? Concurrency { get; init; }
++
++    /// <summary>
++    /// Optional chunk planning policy for ASR and MFA stages. When null, stages
++    /// use <see cref="ChunkPlanningPolicy.Default"/>. Explicit policy enables
++    /// callers to override silence threshold, minimum silence duration, or minimum
++    /// chunk duration for specific pipeline runs.
++    /// </summary>
++    /// <remarks>
++    /// Invalidation rule: a stored chunk plan should be regenerated when the source
++    /// audio fingerprint or the chunk policy differs from the stored plan. Use
++    /// <see cref="ChunkPlanningService.IsValid"/> to check before recomputing.
++    /// </remarks>
++    public ChunkPlanningPolicy? ChunkPlanningPolicy { get; init; }
+ }
+\ No newline at end of file
+diff --git a/host/Ams.Core/Services/Alignment/ChunkPlanningService.cs b/host/Ams.Core/Services/Alignment/ChunkPlanningService.cs
+new file mode 100644
+index 0000000..5df8d93
+--- /dev/null
++++ b/host/Ams.Core/Services/Alignment/ChunkPlanningService.cs
+@@ -0,0 +1,186 @@
++using Ams.Core.Artifacts;
++using Ams.Core.Artifacts.Alignment;
++using Ams.Core.Audio;
++using Ams.Core.Runtime.Chapter;
++
++namespace Ams.Core.Services.Alignment;
++
++/// <summary>
++/// Configuration knobs controlling how chapter audio is segmented into chunks.
++/// These values parameterize the SilenceChunker algorithm and are stored in
++/// the resulting <see cref="ChunkPlanDocument"/> for reproducibility.
++/// </summary>
++public sealed record ChunkPlanningPolicy
++{
++    /// <summary>
++    /// Silence threshold in decibels. Signals below this level are treated
++    /// as silence for boundary detection.
++    /// Default: <see cref="AudioDefaults.SilenceThresholdDb"/>.
++    /// </summary>
++    public double SilenceThresholdDb { get; init; } = AudioDefaults.SilenceThresholdDb;
++
++    /// <summary>
++    /// Minimum silence duration to qualify as a split point.
++    /// Default: <see cref="AudioDefaults.MinimumSilenceDuration"/>.
++    /// </summary>
++    public TimeSpan MinSilenceDuration { get; init; } = AudioDefaults.MinimumSilenceDuration;
++
++    /// <summary>
++    /// Minimum chunk duration to prevent excessive fragmentation.
++    /// Default: 30 seconds (matching SilenceChunker).
++    /// </summary>
++    public TimeSpan MinChunkDuration { get; init; } = TimeSpan.FromSeconds(30);
++
++    /// <summary>
++    /// Returns the shared default policy derived from <see cref="AudioDefaults"/>.
++    /// </summary>
++    public static ChunkPlanningPolicy Default => new();
++}
++
++/// <summary>
++/// Computes a reusable chapter chunk plan from chapter audio using silence-based
++/// boundary detection. The resulting <see cref="ChunkPlanDocument"/> is shared by
++/// both ASR and MFA execution stages to guarantee deterministic, consistent
++/// chunk boundaries across the pipeline.
++/// <para>
++/// This service is the single source of chunk-plan generation. No stage should
++/// compute its own independent boundary logic.
++/// </para>
++/// </summary>
++public sealed class ChunkPlanningService
++{
++    /// <summary>
++    /// Generates a chunk plan for the given chapter audio buffer and policy.
++    /// </summary>
++    /// <param name="buffer">Chapter audio loaded through AudioBufferManager/AudioBufferContext.</param>
++    /// <param name="sourceAudioPath">Path to the source audio file for fingerprint tracking.</param>
++    /// <param name="policy">Chunk planning policy. If null, <see cref="ChunkPlanningPolicy.Default"/> is used.</param>
++    /// <returns>A deterministic <see cref="ChunkPlanDocument"/> with stable chunk ids in source order.</returns>
++    public ChunkPlanDocument GeneratePlan(
++        AudioBuffer buffer,
++        string sourceAudioPath,
++        ChunkPlanningPolicy? policy = null)
++    {
++        ArgumentNullException.ThrowIfNull(buffer);
++        ArgumentException.ThrowIfNullOrWhiteSpace(sourceAudioPath);
++
++        var effectivePolicy = policy ?? ChunkPlanningPolicy.Default;
++
++        // Invoke SilenceChunker with policy parameters
++        var boundaries = SilenceChunker.FindChunkBoundaries(
++            buffer,
++            silenceThresholdDb: effectivePolicy.SilenceThresholdDb,
++            minSilenceDuration: effectivePolicy.MinSilenceDuration,
++            minChunkDuration: effectivePolicy.MinChunkDuration);
++
++        // Convert sample boundaries to ChunkPlanEntry list with stable chunk ids
++        var entries = new List<ChunkPlanEntry>(boundaries.Count);
++        for (int i = 0; i < boundaries.Count; i++)
++        {
++            var boundary = boundaries[i];
++            entries.Add(new ChunkPlanEntry(
++                ChunkId: i,
++                StartSample: boundary.StartSample,
++                LengthSamples: boundary.Length,
++                StartSec: (double)boundary.StartSample / buffer.SampleRate,
++                EndSec: (double)(boundary.StartSample + boundary.Length) / buffer.SampleRate));
++        }
++
++        // Compute source audio fingerprint: combine path, sample count, and sample rate
++        // for a lightweight but sufficient identity for invalidation decisions.
++        var fingerprint = ComputeAudioFingerprint(buffer, sourceAudioPath);
++
++        return new ChunkPlanDocument(
++            Version: ChunkPlanDocument.CurrentVersion,
++            CreatedAtUtc: DateTime.UtcNow,
++            SourceAudioPath: sourceAudioPath,
++            SourceAudioFingerprint: fingerprint,
++            Policy: new ChunkPlanPolicy(
++                SilenceThresholdDb: effectivePolicy.SilenceThresholdDb,
++                MinSilenceDurationMs: effectivePolicy.MinSilenceDuration.TotalMilliseconds,
++                MinChunkDurationSec: effectivePolicy.MinChunkDuration.TotalSeconds,
++                SampleRate: buffer.SampleRate),
++            Chunks: entries);
++    }
++
++    /// <summary>
++    /// Generates a chunk plan for a chapter context by loading its audio through
++    /// the chapter's AudioBufferManager.
++    /// </summary>
++    /// <param name="chapter">Chapter context with audio runtime abstractions.</param>
++    /// <param name="policy">Chunk planning policy. If null, <see cref="ChunkPlanningPolicy.Default"/> is used.</param>
++    /// <returns>A deterministic <see cref="ChunkPlanDocument"/>.</returns>
++    /// <exception cref="InvalidOperationException">
++    /// Thrown when the chapter audio buffer is not available or cannot be loaded.
++    /// </exception>
++    public ChunkPlanDocument GeneratePlan(
++        ChapterContext chapter,
++        ChunkPlanningPolicy? policy = null)
++    {
++        ArgumentNullException.ThrowIfNull(chapter);
++
++        var audioContext = chapter.Audio.Current;
++        var buffer = audioContext.Buffer
++            ?? throw new InvalidOperationException(
++                $"Audio buffer for chapter '{chapter.Descriptor.ChapterId}' could not be loaded.");
++
++        return GeneratePlan(buffer, audioContext.Descriptor.Path, policy);
++    }
++
++    /// <summary>
++    /// Determines whether an existing chunk plan needs regeneration based on
++    /// source audio identity and policy differences.
++    /// </summary>
++    /// <param name="existing">The existing chunk plan document to evaluate.</param>
++    /// <param name="buffer">Current chapter audio buffer.</param>
++    /// <param name="sourceAudioPath">Current source audio path.</param>
++    /// <param name="policy">Current chunk planning policy.</param>
++    /// <returns>True if the existing plan is still valid; false if regeneration is needed.</returns>
++    public bool IsValid(
++        ChunkPlanDocument existing,
++        AudioBuffer buffer,
++        string sourceAudioPath,
++        ChunkPlanningPolicy? policy = null)
++    {
++        ArgumentNullException.ThrowIfNull(existing);
++        ArgumentNullException.ThrowIfNull(buffer);
++
++        var effectivePolicy = policy ?? ChunkPlanningPolicy.Default;
++
++        // Check audio identity
++        var currentFingerprint = ComputeAudioFingerprint(buffer, sourceAudioPath);
++        if (!string.Equals(existing.SourceAudioFingerprint, currentFingerprint, StringComparison.Ordinal))
++        {
++            return false;
++        }
++
++        // Check policy match
++        var existingPolicy = existing.Policy;
++        if (existingPolicy.SilenceThresholdDb != effectivePolicy.SilenceThresholdDb ||
++            existingPolicy.MinSilenceDurationMs != effectivePolicy.MinSilenceDuration.TotalMilliseconds ||
++            existingPolicy.MinChunkDurationSec != effectivePolicy.MinChunkDuration.TotalSeconds ||
++            existingPolicy.SampleRate != buffer.SampleRate)
++        {
++            return false;
++        }
++
++        return true;
++    }
++
++    /// <summary>
++    /// Computes a lightweight fingerprint for audio identity tracking.
++    /// Combines the file path, sample count, and sample rate to produce a
++    /// deterministic identity string for invalidation decisions.
++    /// </summary>
++    /// <remarks>
++    /// This is not a cryptographic hash of audio content -- it trades collision
++    /// resistance for speed. Regenerate the chunk plan when source audio changes
++    /// (different file, re-encoded, or truncated).
++    /// </remarks>
++    private static string ComputeAudioFingerprint(AudioBuffer buffer, string sourceAudioPath)
++    {
++        // Normalize path to forward slashes for cross-platform consistency
++        var normalizedPath = sourceAudioPath.Replace('\\', '/');
++        return $"{normalizedPath}|{buffer.Length}|{buffer.SampleRate}|{buffer.Channels}";
++    }
++}
+diff --git a/host/Ams.Tests/Services/Alignment/ChunkPlanningServiceTests.cs b/host/Ams.Tests/Services/Alignment/ChunkPlanningServiceTests.cs
+new file mode 100644
+index 0000000..ece789f
+--- /dev/null
++++ b/host/Ams.Tests/Services/Alignment/ChunkPlanningServiceTests.cs
+@@ -0,0 +1,263 @@
++using Ams.Core.Artifacts;
++using Ams.Core.Artifacts.Alignment;
++using Ams.Core.Audio;
++using Ams.Core.Services.Alignment;
++
++namespace Ams.Tests.Services.Alignment;
++
++public class ChunkPlanningServiceTests
++{
++    private const int SampleRate = 16000;
++    private const float SilenceAmplitude = 0.0005f;
++    private const float AudioAmplitude = 0.1f;
++    private readonly ChunkPlanningService _service = new();
++
++    [Fact]
++    public void GeneratePlan_Deterministic_IdenticalInputYieldsIdenticalOutput()
++    {
++        var buffer = CreateBufferWithSilence(SampleRate * 120, SampleRate * 60, (int)(0.5 * SampleRate));
++        var policy = ChunkPlanningPolicy.Default;
++
++        var plan1 = _service.GeneratePlan(buffer, "/audio/chapter01.wav", policy);
++        var plan2 = _service.GeneratePlan(buffer, "/audio/chapter01.wav", policy);
++
++        Assert.Equal(plan1.Chunks.Count, plan2.Chunks.Count);
++        for (int i = 0; i < plan1.Chunks.Count; i++)
++        {
++            Assert.Equal(plan1.Chunks[i].ChunkId, plan2.Chunks[i].ChunkId);
++            Assert.Equal(plan1.Chunks[i].StartSample, plan2.Chunks[i].StartSample);
++            Assert.Equal(plan1.Chunks[i].LengthSamples, plan2.Chunks[i].LengthSamples);
++            Assert.Equal(plan1.Chunks[i].StartSec, plan2.Chunks[i].StartSec);
++            Assert.Equal(plan1.Chunks[i].EndSec, plan2.Chunks[i].EndSec);
++        }
++
++        Assert.Equal(plan1.SourceAudioFingerprint, plan2.SourceAudioFingerprint);
++    }
++
++    [Fact]
++    public void GeneratePlan_ChunkIdsAreSequentialFromZero()
++    {
++        var buffer = CreateBufferWithMultipleSilences(SampleRate * 180, new[]
++        {
++            (SampleRate * 60, (int)(0.5 * SampleRate)),
++            (SampleRate * 120, (int)(0.5 * SampleRate))
++        });
++
++        var plan = _service.GeneratePlan(buffer, "/audio/test.wav");
++
++        for (int i = 0; i < plan.Chunks.Count; i++)
++        {
++            Assert.Equal(i, plan.Chunks[i].ChunkId);
++        }
++    }
++
++    [Fact]
++    public void GeneratePlan_ChunksAreSortedByStartSample()
++    {
++        var buffer = CreateBufferWithMultipleSilences(SampleRate * 180, new[]
++        {
++            (SampleRate * 60, (int)(0.5 * SampleRate)),
++            (SampleRate * 120, (int)(0.5 * SampleRate))
++        });
++
++        var plan = _service.GeneratePlan(buffer, "/audio/test.wav");
++
++        for (int i = 1; i < plan.Chunks.Count; i++)
++        {
++            Assert.True(plan.Chunks[i].StartSample > plan.Chunks[i - 1].StartSample,
++                $"Chunk {i} StartSample ({plan.Chunks[i].StartSample}) should be > chunk {i - 1} StartSample ({plan.Chunks[i - 1].StartSample})");
++        }
++    }
++
++    [Fact]
++    public void GeneratePlan_ChunksCoverEntireBuffer()
++    {
++        var totalLength = SampleRate * 120;
++        var buffer = CreateBufferWithSilence(totalLength, SampleRate * 60, (int)(0.5 * SampleRate));
++
++        var plan = _service.GeneratePlan(buffer, "/audio/test.wav");
++
++        // First chunk starts at 0
++        Assert.Equal(0, plan.Chunks[0].StartSample);
++
++        // Contiguous coverage
++        for (int i = 1; i < plan.Chunks.Count; i++)
++        {
++            var prevEnd = plan.Chunks[i - 1].StartSample + plan.Chunks[i - 1].LengthSamples;
++            Assert.Equal(prevEnd, plan.Chunks[i].StartSample);
++        }
++
++        // Total length matches buffer
++        var totalCoverage = plan.Chunks.Sum(c => c.LengthSamples);
++        Assert.Equal(totalLength, totalCoverage);
++    }
++
++    [Fact]
++    public void GeneratePlan_TimeConversionsAreConsistent()
++    {
++        var totalLength = SampleRate * 120;
++        var buffer = CreateBufferWithSilence(totalLength, SampleRate * 60, (int)(0.5 * SampleRate));
++
++        var plan = _service.GeneratePlan(buffer, "/audio/test.wav");
++
++        foreach (var chunk in plan.Chunks)
++        {
++            var expectedStartSec = (double)chunk.StartSample / SampleRate;
++            var expectedEndSec = (double)(chunk.StartSample + chunk.LengthSamples) / SampleRate;
++
++            Assert.Equal(expectedStartSec, chunk.StartSec);
++            Assert.Equal(expectedEndSec, chunk.EndSec);
++        }
++    }
++
++    [Fact]
++    public void GeneratePlan_StoresPolicyInDocument()
++    {
++        var buffer = CreateAudioBuffer(SampleRate * 60);
++        var policy = new ChunkPlanningPolicy
++        {
++            SilenceThresholdDb = -50.0,
++            MinSilenceDuration = TimeSpan.FromMilliseconds(300),
++            MinChunkDuration = TimeSpan.FromSeconds(20)
++        };
++
++        var plan = _service.GeneratePlan(buffer, "/audio/test.wav", policy);
++
++        Assert.Equal(-50.0, plan.Policy.SilenceThresholdDb);
++        Assert.Equal(300.0, plan.Policy.MinSilenceDurationMs);
++        Assert.Equal(20.0, plan.Policy.MinChunkDurationSec);
++        Assert.Equal(SampleRate, plan.Policy.SampleRate);
++    }
++
++    [Fact]
++    public void GeneratePlan_StoresVersionAndMetadata()
++    {
++        var buffer = CreateAudioBuffer(SampleRate * 60);
++
++        var plan = _service.GeneratePlan(buffer, "/audio/chapter01.wav");
++
++        Assert.Equal(ChunkPlanDocument.CurrentVersion, plan.Version);
++        Assert.Equal("/audio/chapter01.wav", plan.SourceAudioPath);
++        Assert.True(plan.CreatedAtUtc <= DateTime.UtcNow);
++        Assert.True(plan.CreatedAtUtc > DateTime.UtcNow.AddMinutes(-1));
++    }
++
++    [Fact]
++    public void GeneratePlan_FingerprintNormalizesPathSeparators()
++    {
++        var buffer = CreateAudioBuffer(SampleRate * 60);
++
++        var plan1 = _service.GeneratePlan(buffer, @"C:\Audio\chapter01.wav");
++        var plan2 = _service.GeneratePlan(buffer, "C:/Audio/chapter01.wav");
++
++        Assert.Equal(plan1.SourceAudioFingerprint, plan2.SourceAudioFingerprint);
++    }
++
++    [Fact]
++    public void GeneratePlan_DefaultPolicyMatchesAudioDefaults()
++    {
++        var buffer = CreateAudioBuffer(SampleRate * 60);
++
++        var plan = _service.GeneratePlan(buffer, "/audio/test.wav");
++
++        Assert.Equal(AudioDefaults.SilenceThresholdDb, plan.Policy.SilenceThresholdDb);
++        Assert.Equal(AudioDefaults.MinimumSilenceDuration.TotalMilliseconds, plan.Policy.MinSilenceDurationMs);
++        Assert.Equal(30.0, plan.Policy.MinChunkDurationSec);
++    }
++
++    [Fact]
++    public void IsValid_ReturnsTrueForMatchingInputs()
++    {
++        var buffer = CreateAudioBuffer(SampleRate * 60);
++        var policy = ChunkPlanningPolicy.Default;
++        var plan = _service.GeneratePlan(buffer, "/audio/test.wav", policy);
++
++        Assert.True(_service.IsValid(plan, buffer, "/audio/test.wav", policy));
++    }
++
++    [Fact]
++    public void IsValid_ReturnsFalseForDifferentAudioLength()
++    {
++        var buffer1 = CreateAudioBuffer(SampleRate * 60);
++        var buffer2 = CreateAudioBuffer(SampleRate * 90);
++        var plan = _service.GeneratePlan(buffer1, "/audio/test.wav");
++
++        Assert.False(_service.IsValid(plan, buffer2, "/audio/test.wav"));
++    }
++
++    [Fact]
++    public void IsValid_ReturnsFalseForDifferentPath()
++    {
++        var buffer = CreateAudioBuffer(SampleRate * 60);
++        var plan = _service.GeneratePlan(buffer, "/audio/chapter01.wav");
++
++        Assert.False(_service.IsValid(plan, buffer, "/audio/chapter02.wav"));
++    }
++
++    [Fact]
++    public void IsValid_ReturnsFalseForDifferentPolicy()
++    {
++        var buffer = CreateAudioBuffer(SampleRate * 60);
++        var plan = _service.GeneratePlan(buffer, "/audio/test.wav");
++
++        var differentPolicy = new ChunkPlanningPolicy
++        {
++            SilenceThresholdDb = -45.0
++        };
++
++        Assert.False(_service.IsValid(plan, buffer, "/audio/test.wav", differentPolicy));
++    }
++
++    [Fact]
++    public void GeneratePlan_NullBuffer_ThrowsArgumentNullException()
++    {
++        Assert.Throws<ArgumentNullException>(() =>
++            _service.GeneratePlan((AudioBuffer)null!, "/audio/test.wav"));
++    }
++
++    [Fact]
++    public void GeneratePlan_EmptyPath_ThrowsArgumentException()
++    {
++        var buffer = CreateAudioBuffer(SampleRate * 60);
++
++        Assert.Throws<ArgumentException>(() =>
++            _service.GeneratePlan(buffer, ""));
++    }
++
++    // --- Helper methods ---
++
++    private static AudioBuffer CreateAudioBuffer(int length)
++    {
++        var buffer = new AudioBuffer(1, SampleRate, length);
++        FillWithAmplitude(buffer, 0, length, AudioAmplitude);
++        return buffer;
++    }
++
++    private static AudioBuffer CreateBufferWithSilence(int totalLength, int silenceStart, int silenceDuration)
++    {
++        var buffer = new AudioBuffer(1, SampleRate, totalLength);
++        FillWithAmplitude(buffer, 0, totalLength, AudioAmplitude);
++        FillWithAmplitude(buffer, silenceStart, silenceDuration, SilenceAmplitude);
++        return buffer;
++    }
++
++    private static AudioBuffer CreateBufferWithMultipleSilences(int totalLength, (int start, int duration)[] silences)
++    {
++        var buffer = new AudioBuffer(1, SampleRate, totalLength);
++        FillWithAmplitude(buffer, 0, totalLength, AudioAmplitude);
++        foreach (var (start, duration) in silences)
++        {
++            FillWithAmplitude(buffer, start, duration, SilenceAmplitude);
++        }
++        return buffer;
++    }
++
++    private static void FillWithAmplitude(AudioBuffer buffer, int offset, int length, float amplitude)
++    {
++        var span = buffer.GetChannelSpan(0);
++        for (int i = offset; i < offset + length && i < buffer.Length; i++)
++        {
++            span[i] = amplitude * MathF.Sin(2 * MathF.PI * 440 * i / buffer.SampleRate);
++        }
++    }
++}

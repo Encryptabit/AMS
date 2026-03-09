@@ -6,6 +6,7 @@ namespace Ams.Tests.Audio;
 public class SilenceChunkerTests
 {
     private const int SampleRate = 16000;
+    private static readonly TimeSpan EffectivelyUnlimitedChunkDuration = TimeSpan.FromHours(1);
 
     /// <summary>
     /// Threshold amplitude for -55dB: 10^(-55/20) ~= 0.001778
@@ -20,7 +21,8 @@ public class SilenceChunkerTests
         var buffer = CreateBuffer(SampleRate * 60); // 60 seconds of silence
         FillSilence(buffer, 0, buffer.Length);
 
-        var chunks = SilenceChunker.FindChunkBoundaries(buffer);
+        var chunks = SilenceChunker.FindChunkBoundaries(buffer,
+            maxChunkDuration: EffectivelyUnlimitedChunkDuration);
 
         Assert.Single(chunks);
         Assert.Equal(0, chunks[0].StartSample);
@@ -33,7 +35,8 @@ public class SilenceChunkerTests
         var buffer = CreateBuffer(SampleRate * 60); // 60 seconds of audio
         FillAudio(buffer, 0, buffer.Length);
 
-        var chunks = SilenceChunker.FindChunkBoundaries(buffer);
+        var chunks = SilenceChunker.FindChunkBoundaries(buffer,
+            maxChunkDuration: EffectivelyUnlimitedChunkDuration);
 
         Assert.Single(chunks);
         Assert.Equal(0, chunks[0].StartSample);
@@ -54,7 +57,8 @@ public class SilenceChunkerTests
         FillSilence(buffer, silenceStart, silenceDurationSamples);
         FillAudio(buffer, silenceStart + silenceDurationSamples, totalLength - silenceStart - silenceDurationSamples);
 
-        var chunks = SilenceChunker.FindChunkBoundaries(buffer);
+        var chunks = SilenceChunker.FindChunkBoundaries(buffer,
+            maxChunkDuration: EffectivelyUnlimitedChunkDuration);
 
         Assert.Equal(2, chunks.Count);
         // Split point should be near the midpoint of the silence region
@@ -80,7 +84,8 @@ public class SilenceChunkerTests
         FillSilence(buffer, silence1Start, silenceDuration);
         FillSilence(buffer, silence2Start, silenceDuration);
 
-        var chunks = SilenceChunker.FindChunkBoundaries(buffer);
+        var chunks = SilenceChunker.FindChunkBoundaries(buffer,
+            maxChunkDuration: EffectivelyUnlimitedChunkDuration);
 
         Assert.Equal(3, chunks.Count);
     }
@@ -96,7 +101,8 @@ public class SilenceChunkerTests
         FillAudio(buffer, totalLength / 2 + (int)(0.5 * SampleRate),
             totalLength - totalLength / 2 - (int)(0.5 * SampleRate));
 
-        var chunks = SilenceChunker.FindChunkBoundaries(buffer);
+        var chunks = SilenceChunker.FindChunkBoundaries(buffer,
+            maxChunkDuration: EffectivelyUnlimitedChunkDuration);
 
         Assert.Single(chunks);
         Assert.Equal(0, chunks[0].StartSample);
@@ -116,7 +122,8 @@ public class SilenceChunkerTests
         FillSilence(buffer, silenceStart, shortSilenceDuration);
         FillAudio(buffer, silenceStart + shortSilenceDuration, totalLength - silenceStart - shortSilenceDuration);
 
-        var chunks = SilenceChunker.FindChunkBoundaries(buffer);
+        var chunks = SilenceChunker.FindChunkBoundaries(buffer,
+            maxChunkDuration: EffectivelyUnlimitedChunkDuration);
 
         Assert.Single(chunks);
     }
@@ -134,7 +141,8 @@ public class SilenceChunkerTests
         FillSilence(buffer, SampleRate * 90, silenceDuration);
         FillSilence(buffer, SampleRate * 135, silenceDuration);
 
-        var chunks = SilenceChunker.FindChunkBoundaries(buffer);
+        var chunks = SilenceChunker.FindChunkBoundaries(buffer,
+            maxChunkDuration: EffectivelyUnlimitedChunkDuration);
 
         // No gaps
         for (int i = 1; i < chunks.Count; i++)
@@ -161,7 +169,8 @@ public class SilenceChunkerTests
         var buffer = CreateBuffer(totalLength);
         FillWithAmplitude(buffer, 0, totalLength, amplitude);
 
-        var chunks = SilenceChunker.FindChunkBoundaries(buffer);
+        var chunks = SilenceChunker.FindChunkBoundaries(buffer,
+            maxChunkDuration: EffectivelyUnlimitedChunkDuration);
 
         // No silence detected, single chunk
         Assert.Single(chunks);
@@ -184,7 +193,8 @@ public class SilenceChunkerTests
                 FillSilence(buffer, silStart, silLen);
         }
 
-        var chunks = SilenceChunker.FindChunkBoundaries(buffer);
+        var chunks = SilenceChunker.FindChunkBoundaries(buffer,
+            maxChunkDuration: EffectivelyUnlimitedChunkDuration);
 
         // Should have fewer chunks than silence regions due to minChunkDuration filtering
         // With 120s and 15s min, we still expect far fewer chunks than silence regions.
@@ -205,14 +215,49 @@ public class SilenceChunkerTests
 
         // With 5s minChunkDuration, should split at more points
         var chunks5s = SilenceChunker.FindChunkBoundaries(buffer,
-            minChunkDuration: TimeSpan.FromSeconds(5));
+            minChunkDuration: TimeSpan.FromSeconds(5),
+            maxChunkDuration: EffectivelyUnlimitedChunkDuration);
 
         // With 25s minChunkDuration, should split at fewer points
         var chunks25s = SilenceChunker.FindChunkBoundaries(buffer,
-            minChunkDuration: TimeSpan.FromSeconds(25));
+            minChunkDuration: TimeSpan.FromSeconds(25),
+            maxChunkDuration: EffectivelyUnlimitedChunkDuration);
 
         Assert.True(chunks5s.Count > chunks25s.Count,
             $"5s min should produce more chunks ({chunks5s.Count}) than 25s min ({chunks25s.Count})");
+    }
+
+    [Fact]
+    public void MaxChunkDuration_EnforcedWhenNoInteriorSplitExists()
+    {
+        var totalLength = (int)(45.121375 * SampleRate);
+        var buffer = CreateBuffer(totalLength);
+        FillAudio(buffer, 0, totalLength);
+
+        // Simulate a valid early split followed by a long final region with only
+        // trailing silence, which Chapter 11 used to turn into a >30s chunk.
+        FillSilence(buffer, SampleRate * 15, (int)(0.3 * SampleRate));
+        FillSilence(buffer, (int)(40.044125 * SampleRate), totalLength - (int)(40.044125 * SampleRate));
+
+        var chunks = SilenceChunker.FindChunkBoundaries(buffer);
+        var maxChunkSamples = (int)(29.5 * SampleRate);
+
+        Assert.True(chunks.Count >= 2);
+        Assert.All(chunks, chunk => Assert.InRange(chunk.Length, 1, maxChunkSamples));
+    }
+
+    [Fact]
+    public void MaxChunkDuration_ForceSplitsContinuousAudio()
+    {
+        var totalLength = SampleRate * 75;
+        var buffer = CreateBuffer(totalLength);
+        FillAudio(buffer, 0, totalLength);
+
+        var chunks = SilenceChunker.FindChunkBoundaries(buffer);
+        var maxChunkSamples = (int)(29.5 * SampleRate);
+
+        Assert.True(chunks.Count >= 3);
+        Assert.All(chunks, chunk => Assert.InRange(chunk.Length, 1, maxChunkSamples));
     }
 
     // --- Helper methods ---
