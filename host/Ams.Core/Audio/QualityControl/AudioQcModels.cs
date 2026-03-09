@@ -29,8 +29,11 @@ public sealed record ChapterQcResult
     public int SampleRate { get; init; }
     public double HeadSilenceSec { get; init; }
     public double? TitleDurationSec { get; init; }
+    public double? DecoratorGapSec { get; init; }
     public double? TitleBodyGapSec { get; init; }
     public double TailSilenceSec { get; init; }
+    public double? RawDurationSec { get; init; }
+    public double? RuntimeDeltaSec { get; init; }
     public IReadOnlyList<SilenceRegion> AllSilences { get; init; } = [];
     public IReadOnlyList<string> Flags { get; init; } = [];
 }

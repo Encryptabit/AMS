@@ -17,11 +17,12 @@ public class AudioQcAnalyzerTests
             new(297.5, 300.1, 2.6)
         };
 
-        var (head, title, gap, tail) = AudioQcAnalyzer.AnalyzeStructure(silences, 300.1);
+        var (head, title, decoratorGap, gap, tail) = AudioQcAnalyzer.AnalyzeStructure(silences, 300.1);
 
         Assert.Equal(0.75, head);
         Assert.NotNull(title);
         Assert.Equal(3.2 - 0.75, title.Value, 3); // title duration = speech between head end and gap start
+        Assert.Null(decoratorGap);
         Assert.Equal(1.6, gap);
         Assert.Equal(2.6, tail);
     }
@@ -31,10 +32,11 @@ public class AudioQcAnalyzerTests
     {
         var silences = Array.Empty<SilenceRegion>();
 
-        var (head, title, gap, tail) = AudioQcAnalyzer.AnalyzeStructure(silences, 300.0);
+        var (head, title, decoratorGap, gap, tail) = AudioQcAnalyzer.AnalyzeStructure(silences, 300.0);
 
         Assert.Equal(0.0, head);
         Assert.Null(title);
+        Assert.Null(decoratorGap);
         Assert.Null(gap);
         Assert.Equal(0.0, tail);
     }
@@ -47,10 +49,11 @@ public class AudioQcAnalyzerTests
             new(0.0, 0.8, 0.8)
         };
 
-        var (head, title, gap, tail) = AudioQcAnalyzer.AnalyzeStructure(silences, 300.0);
+        var (head, title, decoratorGap, gap, tail) = AudioQcAnalyzer.AnalyzeStructure(silences, 300.0);
 
         Assert.Equal(0.8, head);
         Assert.Null(title);
+        Assert.Null(decoratorGap);
         Assert.Null(gap);
         Assert.Equal(0.0, tail);
     }
@@ -64,10 +67,11 @@ public class AudioQcAnalyzerTests
             new(297.0, 300.0, 3.0)
         };
 
-        var (head, title, gap, tail) = AudioQcAnalyzer.AnalyzeStructure(silences, 300.0);
+        var (head, title, decoratorGap, gap, tail) = AudioQcAnalyzer.AnalyzeStructure(silences, 300.0);
 
         Assert.Equal(0.8, head);
         Assert.Null(title);
+        Assert.Null(decoratorGap);
         Assert.Null(gap);
         Assert.Equal(3.0, tail);
     }
@@ -82,9 +86,10 @@ public class AudioQcAnalyzerTests
             new(295.3, -1.0, -1.0)
         };
 
-        var (head, title, gap, tail) = AudioQcAnalyzer.AnalyzeStructure(silences, 300.0);
+        var (head, title, decoratorGap, gap, tail) = AudioQcAnalyzer.AnalyzeStructure(silences, 300.0);
 
         Assert.Equal(0.75, head);
+        Assert.Null(decoratorGap);
         Assert.Equal(300.0 - 295.3, tail, 3); // 4.7s
     }
 
@@ -98,9 +103,10 @@ public class AudioQcAnalyzerTests
             new(297.0, 300.0, 3.0)
         };
 
-        var (head, title, gap, tail) = AudioQcAnalyzer.AnalyzeStructure(silences, 300.0);
+        var (head, title, decoratorGap, gap, tail) = AudioQcAnalyzer.AnalyzeStructure(silences, 300.0);
 
         Assert.Equal(0.0, head);
+        Assert.Null(decoratorGap);
         Assert.Equal(3.0, tail);
     }
 
@@ -112,10 +118,11 @@ public class AudioQcAnalyzerTests
             new(298.0, 300.0, 2.0)
         };
 
-        var (head, title, gap, tail) = AudioQcAnalyzer.AnalyzeStructure(silences, 300.0);
+        var (head, title, decoratorGap, gap, tail) = AudioQcAnalyzer.AnalyzeStructure(silences, 300.0);
 
         Assert.Equal(0.0, head);
         Assert.Null(title);
+        Assert.Null(decoratorGap);
         Assert.Null(gap);
         Assert.Equal(2.0, tail);
     }
@@ -134,10 +141,11 @@ public class AudioQcAnalyzerTests
             new(297.5, 300.1, 2.60)      // tail
         };
 
-        var (head, title, gap, tail) = AudioQcAnalyzer.AnalyzeStructure(silences, 300.1);
+        var (head, title, decoratorGap, gap, tail) = AudioQcAnalyzer.AnalyzeStructure(silences, 300.1);
 
         Assert.Equal(0.75, head);
         Assert.NotNull(gap);
+        Assert.Null(decoratorGap);
         Assert.Equal(1.6, gap.Value, 3);
         Assert.NotNull(title);
         Assert.Equal(3.20 - 0.75, title.Value, 3); // title = speech between head end and gap start
@@ -155,12 +163,13 @@ public class AudioQcAnalyzerTests
             new(297.0, 300.0, 3.0)
         };
 
-        var (head, title, gap, tail) = AudioQcAnalyzer.AnalyzeStructure(silences, 300.0);
+        var (head, title, decoratorGap, gap, tail) = AudioQcAnalyzer.AnalyzeStructure(silences, 300.0);
 
         Assert.Equal(0.70, head);
         Assert.NotNull(title);
         Assert.Equal(3.10 - 0.70, title.Value, 3);
         Assert.NotNull(gap);
+        Assert.Null(decoratorGap);
         Assert.Equal(1.50, gap.Value, 3);
         Assert.Equal(3.0, tail);
     }
@@ -176,13 +185,91 @@ public class AudioQcAnalyzerTests
             new(297.0, 300.0, 3.0)
         };
 
-        var (head, title, gap, tail) = AudioQcAnalyzer.AnalyzeStructure(silences, 300.0);
+        var (head, title, decoratorGap, gap, tail) = AudioQcAnalyzer.AnalyzeStructure(silences, 300.0);
 
         Assert.Equal(0.70, head);
         Assert.NotNull(title);
         Assert.Equal(2.90 - 0.70, title.Value, 3);
         Assert.NotNull(gap);
+        Assert.Null(decoratorGap);
         Assert.Equal(0.26, gap.Value, 3);
+        Assert.Equal(3.0, tail);
+    }
+
+    [Fact]
+    public void AnalyzeStructure_DecoratedHeading_UsesSecondStructuralGapAsTitleBodyGap()
+    {
+        var silences = new SilenceRegion[]
+        {
+            new(0.0, 0.75, 0.75),
+            new(1.80, 2.55, 0.75),
+            new(4.10, 5.60, 1.50),
+            new(297.0, 300.0, 3.0)
+        };
+
+        var (head, title, decoratorGap, gap, tail) = AudioQcAnalyzer.AnalyzeStructure(
+            silences,
+            300.0,
+            expectDecorator: true);
+
+        Assert.Equal(0.75, head);
+        Assert.NotNull(title);
+        Assert.Equal(4.10 - 0.75, title!.Value, 3);
+        Assert.NotNull(decoratorGap);
+        Assert.Equal(0.75, decoratorGap!.Value, 3);
+        Assert.NotNull(gap);
+        Assert.Equal(1.50, gap!.Value, 3);
+        Assert.Equal(3.0, tail);
+    }
+
+    [Fact]
+    public void AnalyzeStructure_DecoratedHeadingWithoutSecondGap_FallsBackToSingleGapBehavior()
+    {
+        var silences = new SilenceRegion[]
+        {
+            new(0.0, 0.70, 0.70),
+            new(2.80, 4.30, 1.50),
+            new(297.0, 300.0, 3.0)
+        };
+
+        var (head, title, decoratorGap, gap, tail) = AudioQcAnalyzer.AnalyzeStructure(
+            silences,
+            300.0,
+            expectDecorator: true);
+
+        Assert.Equal(0.70, head);
+        Assert.NotNull(title);
+        Assert.Equal(2.80 - 0.70, title!.Value, 3);
+        Assert.Null(decoratorGap);
+        Assert.NotNull(gap);
+        Assert.Equal(1.50, gap!.Value, 3);
+        Assert.Equal(3.0, tail);
+    }
+
+    [Fact]
+    public void AnalyzeStructure_DecoratedHeading_UsesLargestRemainingEarlyGap_WhenSecondGapIsBelowThreshold()
+    {
+        var silences = new SilenceRegion[]
+        {
+            new(0.0, 0.70, 0.70),
+            new(1.60, 2.35, 0.75),
+            new(4.30, 4.72, 0.42),
+            new(297.0, 300.0, 3.0)
+        };
+
+        var (head, title, decoratorGap, gap, tail) = AudioQcAnalyzer.AnalyzeStructure(
+            silences,
+            300.0,
+            minimumStructuralGapDurationSec: 0.50,
+            expectDecorator: true);
+
+        Assert.Equal(0.70, head);
+        Assert.NotNull(title);
+        Assert.Equal(4.30 - 0.70, title!.Value, 3);
+        Assert.NotNull(decoratorGap);
+        Assert.Equal(0.75, decoratorGap!.Value, 3);
+        Assert.NotNull(gap);
+        Assert.Equal(0.42, gap!.Value, 3);
         Assert.Equal(3.0, tail);
     }
 

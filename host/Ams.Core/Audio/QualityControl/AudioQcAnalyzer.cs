@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Text.RegularExpressions;
 using Ams.Core.Processors;
 
 namespace Ams.Core.Audio.QualityControl;
@@ -16,6 +17,9 @@ public static class AudioQcAnalyzer
     /// </summary>
     private const double NearBoundaryTolerance = 0.05;
     private const double DefaultMinimumStructuralGapDuration = 0.30;
+    private static readonly Regex DecoratedChapterTitlePattern = new(
+        @"^\s*chapter\b.+?[:\-–—]\s*.+\s*$",
+        RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
     /// <summary>
     /// Analyzes the structure of detected silence regions to identify head silence,
@@ -26,14 +30,20 @@ public static class AudioQcAnalyzer
     /// Title and gap are null when the structure cannot be identified (fewer than 3 silence regions
     /// after accounting for head and tail).
     /// </returns>
-    public static (double HeadSilenceSec, double? TitleDurationSec, double? TitleBodyGapSec, double TailSilenceSec)
+    public static (
+        double HeadSilenceSec,
+        double? TitleDurationSec,
+        double? DecoratorGapSec,
+        double? TitleBodyGapSec,
+        double TailSilenceSec)
         AnalyzeStructure(
             IReadOnlyList<SilenceRegion> silences,
             double totalDurationSec,
-            double minimumStructuralGapDurationSec = DefaultMinimumStructuralGapDuration)
+            double minimumStructuralGapDurationSec = DefaultMinimumStructuralGapDuration,
+            bool expectDecorator = false)
     {
         if (silences.Count == 0)
-            return (0.0, null, null, 0.0);
+            return (0.0, null, null, null, 0.0);
 
         double headSilenceSec = 0.0;
         double tailSilenceSec = 0.0;
@@ -64,10 +74,11 @@ public static class AudioQcAnalyzer
         // file, rather than the longest pause in the opening minutes. This avoids treating
         // an early paragraph pause as the title/body break on long chapters.
         double? titleDurationSec = null;
+        double? decoratorGapSec = null;
         double? titleBodyGapSec = null;
 
         var searchLimit = Math.Max(60.0, totalDurationSec * 0.10);
-        int gapIndex = -1;
+        var candidateGapIndices = new List<int>(2);
         for (int i = 0; i < silences.Count; i++)
         {
             if (i == headIndex || i == tailIndex) continue;
@@ -78,8 +89,7 @@ public static class AudioQcAnalyzer
                 : totalDurationSec - silences[i].Start;
             if (dur >= minimumStructuralGapDurationSec)
             {
-                gapIndex = i;
-                break;
+                candidateGapIndices.Add(i);
             }
         }
 
@@ -87,7 +97,7 @@ public static class AudioQcAnalyzer
         // minimum duration, so very short title/body gaps can still be surfaced.
         double longestGapDuration = 0.0;
         int fallbackGapIndex = -1;
-        for (int i = 0; gapIndex < 0 && i < silences.Count; i++)
+        for (int i = 0; candidateGapIndices.Count == 0 && i < silences.Count; i++)
         {
             if (i == headIndex || i == tailIndex) continue;
             if (silences[i].Start > searchLimit) break;
@@ -101,7 +111,42 @@ public static class AudioQcAnalyzer
             }
         }
 
-        if (gapIndex < 0)
+        int gapIndex = -1;
+        if (expectDecorator && candidateGapIndices.Count >= 2)
+        {
+            int decoratorGapIndex = candidateGapIndices[0];
+            gapIndex = candidateGapIndices[1];
+            decoratorGapSec = silences[decoratorGapIndex].Duration >= 0
+                ? silences[decoratorGapIndex].Duration
+                : totalDurationSec - silences[decoratorGapIndex].Start;
+        }
+        else if (expectDecorator && candidateGapIndices.Count == 1)
+        {
+            int decoratorGapIndex = candidateGapIndices[0];
+            gapIndex = FindSecondaryGapIndex(
+                silences,
+                decoratorGapIndex,
+                tailIndex,
+                totalDurationSec,
+                searchLimit,
+                minimumStructuralGapDurationSec);
+
+            if (gapIndex >= 0)
+            {
+                decoratorGapSec = silences[decoratorGapIndex].Duration >= 0
+                    ? silences[decoratorGapIndex].Duration
+                    : totalDurationSec - silences[decoratorGapIndex].Start;
+            }
+            else
+            {
+                gapIndex = decoratorGapIndex;
+            }
+        }
+        else if (candidateGapIndices.Count > 0)
+        {
+            gapIndex = candidateGapIndices[0];
+        }
+        else
         {
             gapIndex = fallbackGapIndex;
         }
@@ -120,7 +165,7 @@ public static class AudioQcAnalyzer
             titleDurationSec = gapRegion.Start - headEnd;
         }
 
-        return (headSilenceSec, titleDurationSec, titleBodyGapSec, tailSilenceSec);
+        return (headSilenceSec, titleDurationSec, decoratorGapSec, titleBodyGapSec, tailSilenceSec);
     }
 
     /// <summary>
@@ -186,7 +231,8 @@ public static class AudioQcAnalyzer
         string filePath,
         double noiseDb,
         double minSilenceDurationSec,
-        QcThresholds thresholds)
+        QcThresholds thresholds,
+        string? sectionTitle = null)
     {
         var fileName = Path.GetFileName(filePath);
 
@@ -206,11 +252,12 @@ public static class AudioQcAnalyzer
         var silences = MapToRegions(intervals, durationSec);
 
         // Analyze structure
-        var (headSilence, titleDuration, titleBodyGap, tailSilence) =
+        var (headSilence, titleDuration, decoratorGap, titleBodyGap, tailSilence) =
             AnalyzeStructure(
                 silences,
                 durationSec,
-                Math.Max(minSilenceDurationSec * 4.0, thresholds.MinTitleBodyGap * 0.5));
+                Math.Max(minSilenceDurationSec * 4.0, thresholds.MinTitleBodyGap * 0.5),
+                HasDecorator(sectionTitle));
 
         var result = new ChapterQcResult
         {
@@ -220,6 +267,7 @@ public static class AudioQcAnalyzer
             SampleRate = info.SampleRate,
             HeadSilenceSec = headSilence,
             TitleDurationSec = titleDuration,
+            DecoratorGapSec = decoratorGap,
             TitleBodyGapSec = titleBodyGap,
             TailSilenceSec = tailSilence,
             AllSilences = silences
@@ -230,6 +278,44 @@ public static class AudioQcAnalyzer
         result = result with { Flags = flags };
 
         return result;
+    }
+
+    private static bool HasDecorator(string? sectionTitle)
+        => !string.IsNullOrWhiteSpace(sectionTitle) &&
+           DecoratedChapterTitlePattern.IsMatch(sectionTitle);
+
+    private static int FindSecondaryGapIndex(
+        IReadOnlyList<SilenceRegion> silences,
+        int decoratorGapIndex,
+        int tailIndex,
+        double totalDurationSec,
+        double searchLimit,
+        double minimumStructuralGapDurationSec)
+    {
+        int fallbackIndex = -1;
+        double fallbackDuration = 0.0;
+
+        for (int i = decoratorGapIndex + 1; i < silences.Count; i++)
+        {
+            if (i == tailIndex) continue;
+            if (silences[i].Start > searchLimit) break;
+
+            var dur = silences[i].Duration >= 0
+                ? silences[i].Duration
+                : totalDurationSec - silences[i].Start;
+            if (dur >= minimumStructuralGapDurationSec)
+            {
+                return i;
+            }
+
+            if (dur > fallbackDuration)
+            {
+                fallbackDuration = dur;
+                fallbackIndex = i;
+            }
+        }
+
+        return fallbackIndex;
     }
 
     /// <summary>

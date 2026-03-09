@@ -7,6 +7,8 @@ using Ams.Cli.Repl;
 using Ams.Cli.Utilities;
 using Ams.Core.Audio.QualityControl;
 using Ams.Core.Common;
+using Ams.Core.Processors;
+using Ams.Core.Processors.Alignment.Anchors;
 using Ams.Core.Runtime.Book;
 using Ams.Core.Runtime.Workspace;
 using Spectre.Console;
@@ -21,6 +23,10 @@ public static class QcCommand
 {
     private static readonly string[] AudioExtensions = ["*.mp3", "*.wav", "*.flac", "*.m4a"];
     private static readonly Regex FileNumberRegex = new(@"\d+", RegexOptions.Compiled);
+    private static readonly Regex DecoratedChapterTitleRegex = new(
+        @"^\s*chapter\b.+?[:\-–—]\s*.+\s*$",
+        RegexOptions.Compiled | RegexOptions.IgnoreCase);
+    private static readonly string[] VariantMarkers = [".pause-adjusted", ".treated", ".corrected", ".filtered"];
 
     public static Command Create()
     {
@@ -102,6 +108,10 @@ public static class QcCommand
                 var noiseDb = context.ParseResult.GetValueForOption(noiseOption);
                 var minSilenceSec = context.ParseResult.GetValueForOption(minSilenceOption);
                 var jsonOutput = context.ParseResult.GetValueForOption(jsonOption);
+                var workspaceRoot = CommandInputResolver.ResolveDirectory(null);
+                var workspaceChapters = TryDiscoverWorkspaceChapters(workspaceRoot);
+                var bookIndex = TryLoadBookIndex();
+                var rawLookup = BuildRawEquivalentLookup(workspaceChapters, bookIndex);
 
                 var thresholds = new QcThresholds
                 {
@@ -148,12 +158,11 @@ public static class QcCommand
                 else
                 {
                     // Workspace-aware mode: discover treated WAV files
-                    var root = CommandInputResolver.ResolveDirectory(null);
-                    var chapters = WorkspaceChapterDiscovery.Discover(root.FullName);
+                    var chapters = workspaceChapters;
 
                     if (chapters.Count == 0)
                     {
-                        Log.Error("No chapters found in workspace {Path}", root.FullName);
+                        Log.Error("No chapters found in workspace {Path}", workspaceRoot.FullName);
                         context.ExitCode = 1;
                         return;
                     }
@@ -200,7 +209,21 @@ public static class QcCommand
                     try
                     {
                         var result = AudioQcAnalyzer.AnalyzeFile(
-                            file.FullName, noiseDb, minSilenceSec, thresholds);
+                            file.FullName,
+                            noiseDb,
+                            minSilenceSec,
+                            thresholds,
+                            ResolveSectionTitle(file, bookIndex));
+
+                        if (TryResolveRawDuration(file, rawLookup, result.DurationSec, out var rawDurationSec))
+                        {
+                            result = result with
+                            {
+                                RawDurationSec = rawDurationSec,
+                                RuntimeDeltaSec = result.DurationSec - rawDurationSec
+                            };
+                        }
+
                         results.Add(result);
                     }
                     catch (Exception ex)
@@ -217,6 +240,7 @@ public static class QcCommand
 
                 // Render console table
                 RenderTable(results);
+                RenderRuntimeSummary(results);
 
                 // Summary line
                 var flaggedCount = results.Count(r => r.Flags.Count > 0);
@@ -264,8 +288,10 @@ public static class QcCommand
 
         table.AddColumn(new TableColumn("File") { NoWrap = true });
         table.AddColumn(new TableColumn("Duration") { Alignment = Justify.Right });
+        table.AddColumn(new TableColumn("Delta") { Alignment = Justify.Right });
         table.AddColumn(new TableColumn("Head") { Alignment = Justify.Right });
-        table.AddColumn(new TableColumn("Title") { Alignment = Justify.Right });
+        table.AddColumn(new TableColumn("Heading") { Alignment = Justify.Right });
+        table.AddColumn(new TableColumn("DGap") { Alignment = Justify.Right });
         table.AddColumn(new TableColumn("Gap") { Alignment = Justify.Right });
         table.AddColumn(new TableColumn("Tail") { Alignment = Justify.Right });
         table.AddColumn("Flags");
@@ -273,8 +299,10 @@ public static class QcCommand
         foreach (var r in results)
         {
             var duration = FormatDuration(r.DurationSec);
+            var delta = r.RuntimeDeltaSec.HasValue ? FormatSignedDuration(r.RuntimeDeltaSec.Value) : "-";
             var head = FormatSeconds(r.HeadSilenceSec);
             var title = r.TitleDurationSec.HasValue ? FormatSeconds(r.TitleDurationSec.Value) : "-";
+            var decoratorGap = r.DecoratorGapSec.HasValue ? FormatSeconds(r.DecoratorGapSec.Value) : "-";
             var gap = r.TitleBodyGapSec.HasValue ? FormatSeconds(r.TitleBodyGapSec.Value) : "-";
             var tail = FormatSeconds(r.TailSilenceSec);
 
@@ -285,14 +313,44 @@ public static class QcCommand
             table.AddRow(
                 Markup.Escape(r.FileName),
                 duration,
+                delta,
                 head,
                 title,
+                decoratorGap,
                 gap,
                 tail,
                 flagText);
         }
 
         AnsiConsole.Write(table);
+    }
+
+    private static void RenderRuntimeSummary(List<ChapterQcResult> results)
+    {
+        var matched = results.Where(static r => r.RawDurationSec.HasValue).ToList();
+        if (matched.Count == 0)
+        {
+            return;
+        }
+
+        var targetRuntimeSec = matched.Sum(static r => r.DurationSec);
+        var rawRuntimeSec = matched.Sum(static r => r.RawDurationSec ?? 0.0);
+        var deltaSec = targetRuntimeSec - rawRuntimeSec;
+        var deltaColor = deltaSec switch
+        {
+            > 0.005 => "yellow",
+            < -0.005 => "green",
+            _ => "grey"
+        };
+
+        AnsiConsole.MarkupLine(
+            "\n[bold]Runtime delta[/] (matched {0}/{1}): raw {2}, target {3}, [{4}]{5}[/]",
+            matched.Count,
+            results.Count,
+            FormatDuration(rawRuntimeSec),
+            FormatDuration(targetRuntimeSec),
+            deltaColor,
+            FormatSignedDuration(deltaSec));
     }
 
     private static string FormatDuration(double seconds)
@@ -306,6 +364,13 @@ public static class QcCommand
     private static string FormatSeconds(double seconds)
     {
         return seconds.ToString("F2", CultureInfo.InvariantCulture) + "s";
+    }
+
+    private static string FormatSignedDuration(double seconds)
+    {
+        var sign = seconds >= 0 ? "+" : "-";
+        var absolute = Math.Abs(seconds);
+        return sign + (absolute >= 60.0 ? FormatDuration(absolute) : FormatSeconds(absolute));
     }
 
     /// <summary>
@@ -327,6 +392,142 @@ public static class QcCommand
         }
 
         return new AudioFileSortKey(1, int.MaxValue, stem.ToLowerInvariant());
+    }
+
+    private static IReadOnlyList<ChapterDescriptor> TryDiscoverWorkspaceChapters(DirectoryInfo root)
+    {
+        try
+        {
+            return WorkspaceChapterDiscovery.Discover(root.FullName);
+        }
+        catch (Exception ex)
+        {
+            Log.Debug(ex, "Unable to discover workspace chapters from {Path}", root.FullName);
+            return [];
+        }
+    }
+
+    private static BookIndex? TryLoadBookIndex()
+    {
+        try
+        {
+            var bookIndexFile = CommandInputResolver.ResolveBookIndex(null, mustExist: false);
+            if (!bookIndexFile.Exists)
+            {
+                return null;
+            }
+
+            return JsonSerializer.Deserialize<BookIndex>(File.ReadAllText(bookIndexFile.FullName));
+        }
+        catch (Exception ex)
+        {
+            Log.Debug(ex, "Unable to load book-index.json for QC analysis");
+            return null;
+        }
+    }
+
+    private static Dictionary<string, string> BuildRawEquivalentLookup(
+        IReadOnlyList<ChapterDescriptor> chapters,
+        BookIndex? bookIndex)
+    {
+        var lookup = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var chapter in chapters)
+        {
+            var rawPath = chapter.AudioBuffers
+                .FirstOrDefault(static buffer => string.Equals(buffer.BufferId, "raw", StringComparison.OrdinalIgnoreCase))
+                ?.Path;
+            if (string.IsNullOrWhiteSpace(rawPath) || !File.Exists(rawPath))
+            {
+                continue;
+            }
+
+            AddLookupKey(lookup, NormalizeChapterStem(chapter.ChapterId), rawPath);
+            AddLookupKey(lookup, NormalizeChapterStem(Path.GetFileNameWithoutExtension(rawPath)), rawPath);
+
+            var sectionTitle = ResolveSectionTitleFromChapter(chapter, bookIndex);
+            if (!string.IsNullOrWhiteSpace(sectionTitle))
+            {
+                AddLookupKey(lookup, NormalizeChapterStem(sectionTitle), rawPath);
+            }
+        }
+
+        return lookup;
+    }
+
+    private static void AddLookupKey(Dictionary<string, string> lookup, string key, string rawPath)
+    {
+        if (string.IsNullOrWhiteSpace(key))
+        {
+            return;
+        }
+
+        lookup.TryAdd(key, rawPath);
+    }
+
+    private static string? ResolveSectionTitle(FileInfo file, BookIndex? bookIndex)
+    {
+        var stem = NormalizeChapterStem(Path.GetFileNameWithoutExtension(file.Name));
+        if (bookIndex is not null)
+        {
+            var section = SectionLocator.ResolveSectionByTitle(bookIndex, stem);
+            if (!string.IsNullOrWhiteSpace(section?.Title))
+            {
+                return section!.Title;
+            }
+        }
+
+        return DecoratedChapterTitleRegex.IsMatch(stem) ? stem : null;
+    }
+
+    private static string? ResolveSectionTitleFromChapter(ChapterDescriptor chapter, BookIndex? bookIndex)
+    {
+        if (bookIndex is null)
+        {
+            return null;
+        }
+
+        var section = SectionLocator.ResolveSectionByTitle(bookIndex, chapter.ChapterId);
+        return string.IsNullOrWhiteSpace(section?.Title) ? null : section!.Title;
+    }
+
+    private static bool TryResolveRawDuration(
+        FileInfo analyzedFile,
+        IReadOnlyDictionary<string, string> rawLookup,
+        double analyzedDurationSec,
+        out double rawDurationSec)
+    {
+        rawDurationSec = 0.0;
+        var key = NormalizeChapterStem(Path.GetFileNameWithoutExtension(analyzedFile.Name));
+        if (!rawLookup.TryGetValue(key, out var rawPath))
+        {
+            return false;
+        }
+
+        rawDurationSec = string.Equals(Path.GetFullPath(rawPath), analyzedFile.FullName, StringComparison.OrdinalIgnoreCase)
+            ? analyzedDurationSec
+            : AudioProcessor.Probe(rawPath).Duration.TotalSeconds;
+        return true;
+    }
+
+    private static string NormalizeChapterStem(string stem)
+    {
+        var normalized = stem.Trim();
+        bool removedMarker;
+        do
+        {
+            removedMarker = false;
+            foreach (var marker in VariantMarkers)
+            {
+                if (normalized.EndsWith(marker, StringComparison.OrdinalIgnoreCase))
+                {
+                    normalized = normalized[..^marker.Length].TrimEnd();
+                    removedMarker = true;
+                }
+            }
+        } while (removedMarker);
+
+        return normalized;
     }
 
     private readonly record struct AudioFileSortKey(int Category, int PrimaryNumber, string NameLower);
