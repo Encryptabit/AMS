@@ -121,13 +121,17 @@ public sealed class AudioTreatmentService
             opts.TitleContentGapThreshold,
             chapter.Documents.HydratedTranscript,
             sectionTitle);
+        // Add crossfade duration on top of user padding so the splice blend lands in
+        // silence and the user's --padding-ms value represents the actual safety margin
+        // *after* the crossfade, preventing fricative tails from being faded out.
+        var effectivePaddingSec = opts.BoundaryPaddingSeconds + opts.SpliceCrossfadeDurationSec;
         var (titleStart, titleEnd, contentStart, contentEnd, decoratorEnd, titleResumeStart) = ApplyLayoutPadding(
             rawLayout,
             chapterBuffer.Length / (double)chapterBuffer.SampleRate,
-            opts.BoundaryPaddingSeconds);
+            effectivePaddingSec);
 
         Log.Debug(
-            "Treatment layout: rawTitle={RawTitleStart:F3}s-{RawTitleEnd:F3}s, rawDecoratorEnd={RawDecoratorEnd}, rawTitleResume={RawTitleResume}, rawContent={RawContentStart:F3}s-{RawContentEnd:F3}s, title={TitleStart:F3}s-{TitleEnd:F3}s, decoratorEnd={DecoratorEnd}, titleResume={TitleResume}, content={ContentStart:F3}s-{ContentEnd:F3}s, padding={Padding:F3}s, sectionTitle={SectionTitle}",
+            "Treatment layout: rawTitle={RawTitleStart:F3}s-{RawTitleEnd:F3}s, rawDecoratorEnd={RawDecoratorEnd}, rawTitleResume={RawTitleResume}, rawContent={RawContentStart:F3}s-{RawContentEnd:F3}s, title={TitleStart:F3}s-{TitleEnd:F3}s, decoratorEnd={DecoratorEnd}, titleResume={TitleResume}, content={ContentStart:F3}s-{ContentEnd:F3}s, padding={Padding:F3}s (effective={EffectivePadding:F3}s incl. {Crossfade:F3}s crossfade), sectionTitle={SectionTitle}",
             rawLayout.TitleStart,
             rawLayout.TitleEnd,
             rawLayout.DecoratorEnd?.ToString("F3") ?? "-",
@@ -141,6 +145,8 @@ public sealed class AudioTreatmentService
             contentStart,
             contentEnd,
             opts.BoundaryPaddingSeconds,
+            effectivePaddingSec,
+            opts.SpliceCrossfadeDurationSec,
             sectionTitle ?? "-");
 
         // Check if we have a separate title segment (titleStart >= 0 AND has positive duration)
