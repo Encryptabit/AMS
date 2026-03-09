@@ -76,7 +76,9 @@ public class EditListService
     }
 
     /// <summary>
-    /// Returns all edits for a specific chapter, sorted by <see cref="ChapterEdit.AppliedAtUtc"/>.
+    /// Returns all edits for a specific chapter, sorted by <see cref="ChapterEdit.BaselineStartSec"/>
+    /// (front-to-back in the original timeline). This ordering is required by
+    /// <see cref="TimelineProjection.BaselineToCurrentTime"/> which walks edits sequentially.
     /// </summary>
     public IReadOnlyList<ChapterEdit> GetEdits(string chapterStem)
     {
@@ -89,7 +91,7 @@ public class EditListService
                 return Array.Empty<ChapterEdit>();
 
             return list
-                .OrderBy(e => e.AppliedAtUtc)
+                .OrderBy(e => e.BaselineStartSec)
                 .ToList()
                 .AsReadOnly();
         }
@@ -105,7 +107,7 @@ public class EditListService
             EnsureLoaded();
             return _edits!.Values
                 .SelectMany(list => list)
-                .OrderBy(e => e.AppliedAtUtc)
+                .OrderBy(e => e.BaselineStartSec)
                 .ToList()
                 .AsReadOnly();
         }

@@ -192,6 +192,7 @@
                             else
                             {
                                 <PickupBox Match="@item.Match"
+                                           Asset="@FindAssetForMatch(item.Match)"
                                            State="PickupBoxState.Matched"
                                            Sentence="@FindSentence(item.Match.SentenceId)"
                                            AvailableTargets="@_availableCrxTargets"
@@ -691,10 +692,10 @@
         _pickupSessionPath = NormalizePathInput(_pickupSessionPath);
         if (string.IsNullOrWhiteSpace(_pickupSessionPath)) return;
 
-        // Validate pickup file path exists before starting processing
-        if (!System.IO.File.Exists(_pickupSessionPath))
+        // Validate pickup source path exists (file or directory for individual pickups)
+        if (!System.IO.File.Exists(_pickupSessionPath) && !System.IO.Directory.Exists(_pickupSessionPath))
         {
-            _processingStatus = "Pickup file not found. Check the file path.";
+            _processingStatus = "Pickup file or folder not found. Check the path.";
             StateHasChanged();
             return;
         }
@@ -1461,6 +1462,18 @@
     private HydratedSentence? FindSentence(int sentenceId)
     {
         return _flaggedSentences?.FirstOrDefault(s => s.Id == sentenceId);
+    }
+
+    /// <summary>
+    /// Finds the corresponding <see cref="PickupAsset"/> for a <see cref="PickupMatch"/>
+    /// by correlating on error number and sentence ID. Required for the reassignment
+    /// callback path which operates on PickupAsset instances.
+    /// </summary>
+    private PickupAsset? FindAssetForMatch(PickupMatch match)
+    {
+        return _matchedPickups.FirstOrDefault(a =>
+            a.MatchedErrorNumber == match.ErrorNumber &&
+            a.MatchedSentenceId == match.SentenceId);
     }
 
     // ── CRX Chapter Matching ─────────────────────────────────────

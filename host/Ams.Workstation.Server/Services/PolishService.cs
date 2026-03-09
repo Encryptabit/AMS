@@ -537,9 +537,15 @@ public class PolishService
 
         var chapterDurationSec = (double)chapterBuffer.Length / chapterBuffer.SampleRate;
 
-        // Extract a context window around the replacement region
-        var contextStartSec = Math.Max(0, item.OriginalStartSec - contextWindowSec);
-        var contextEndSec = Math.Min(chapterDurationSec, item.OriginalEndSec + contextWindowSec);
+        // Map baseline coordinates to current (post-edit) timeline positions.
+        // GetChapterBuffer returns the current audio (corrected > treated > raw),
+        // so we must project baseline positions through the edit list.
+        var currentStartSec = MapBaselineToCurrentTime(operationStem, item.OriginalStartSec);
+        var currentEndSec = MapBaselineToCurrentTime(operationStem, item.OriginalEndSec);
+
+        // Extract a context window around the replacement region in current-time space
+        var contextStartSec = Math.Max(0, currentStartSec - contextWindowSec);
+        var contextEndSec = Math.Min(chapterDurationSec, currentEndSec + contextWindowSec);
 
         if (contextEndSec <= contextStartSec)
         {
@@ -558,9 +564,9 @@ public class PolishService
             throw new InvalidOperationException("Unable to generate context playback preview for an empty chapter segment.");
         }
 
-        // Calculate the replacement position relative to the context clip
-        var replaceStartSec = Math.Clamp(item.OriginalStartSec - contextStartSec, 0, clipDurationSec);
-        var replaceEndSec = Math.Clamp(item.OriginalEndSec - contextStartSec, 0, clipDurationSec);
+        // Calculate the replacement position relative to the context clip (in current-time space)
+        var replaceStartSec = Math.Clamp(currentStartSec - contextStartSec, 0, clipDurationSec);
+        var replaceEndSec = Math.Clamp(currentEndSec - contextStartSec, 0, clipDurationSec);
         if (replaceEndSec <= replaceStartSec)
         {
             replaceEndSec = Math.Min(clipDurationSec, replaceStartSec + MinAuditionClipDurationSec);
