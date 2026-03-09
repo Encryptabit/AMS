@@ -776,8 +776,36 @@
             _processingProgress = 0.3;
             await InvokeAsync(StateHasChanged);
 
-            var (matched, unmatched) = await PickupAssetService.ImportAsync(
-                _pickupSessionPath, crxTargets, token);
+            IReadOnlyList<PickupAsset> matched;
+            IReadOnlyList<PickupAsset> unmatched;
+            var isSingleFileSource = System.IO.File.Exists(_pickupSessionPath);
+
+            try
+            {
+                (matched, unmatched) = await PickupAssetService.ImportAsync(
+                    _pickupSessionPath, crxTargets, token);
+            }
+            catch (InvalidOperationException ex) when (
+                isSingleFileSource &&
+                ex.Message.Contains("Deterministic CRX pairing requires equal counts", StringComparison.Ordinal))
+            {
+                var currentStem = GetCurrentChapterStem();
+                var chapterTargets = currentStem == null
+                    ? new List<CrxPickupTarget>()
+                    : crxTargets
+                        .Where(t => string.Equals(t.ChapterStem, currentStem, StringComparison.OrdinalIgnoreCase))
+                        .ToList();
+
+                if (chapterTargets.Count == 0)
+                    throw;
+
+                _processingStatus = $"Session count mismatch detected. Retrying against current chapter ({chapterTargets.Count} targets)...";
+                _processingProgress = 0.4;
+                await InvokeAsync(StateHasChanged);
+
+                (matched, unmatched) = await PickupAssetService.ImportAsync(
+                    _pickupSessionPath, chapterTargets, token);
+            }
 
             _matchedPickups = matched.ToList();
             _unmatchedPickups = unmatched.ToList();
