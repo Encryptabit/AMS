@@ -276,6 +276,11 @@ public class PolishService
             ? SharedTuningDefaults.SpliceCrossfadeCurve
             : curve;
         var effectiveBoundaryOptions = boundaryOptions ?? CreateBoundaryOptionsFromTreatmentDefaults();
+
+        // Map baseline transcript positions to current-time for boundary refinement.
+        // Boundary refinement must operate in current-time space (analyzing the current buffer),
+        // but the final stored coordinates MUST remain in baseline space for correct
+        // TimelineProjection and rebuild behavior.
         var rebasedStartSec = MapBaselineToCurrentTime(chapterStem, originalStartSec);
         var rebasedEndSec = MapBaselineToCurrentTime(chapterStem, originalEndSec);
         if (rebasedEndSec <= rebasedStartSec)
@@ -283,9 +288,9 @@ public class PolishService
             rebasedEndSec = rebasedStartSec + Math.Max(MinAuditionClipDurationSec, originalEndSec - originalStartSec);
         }
 
-        // Refine splice boundaries using silence detection
-        var refinedStart = rebasedStartSec;
-        var refinedEnd = rebasedEndSec;
+        // Start with baseline coordinates — refinement deltas will be applied to these.
+        var baselineRefinedStart = originalStartSec;
+        var baselineRefinedEnd = originalEndSec;
         try
         {
             var operationHandle = GetActiveChapterHandleOrThrow();
@@ -318,18 +323,32 @@ public class PolishService
                     nextStart = MapBaselineToCurrentTime(chapterStem, sentences[idx + 1].Timing?.StartSec);
             }
 
+            // Refine in current-time space (boundary detection analyzes the current audio buffer)
             var result = SpliceBoundaryService.RefineBoundariesBreathAware(
                 chapterBuffer, rebasedStartSec, rebasedEndSec,
                 prevEnd, nextStart, effectiveBoundaryOptions);
 
-            refinedStart = result.RefinedStartSec;
-            refinedEnd = result.RefinedEndSec;
+            // Compute refinement deltas in current-time space, then apply back to baseline.
+            // This preserves the baseline-coordinate invariant while allowing boundary
+            // refinement to operate on the actual (post-edit) audio buffer.
+            var refinementDeltaStart = result.RefinedStartSec - rebasedStartSec;
+            var refinementDeltaEnd = result.RefinedEndSec - rebasedEndSec;
+            baselineRefinedStart = originalStartSec + refinementDeltaStart;
+            baselineRefinedEnd = originalEndSec + refinementDeltaEnd;
+
+            // Sanity: ensure baseline coordinates are still valid
+            if (baselineRefinedEnd <= baselineRefinedStart)
+            {
+                baselineRefinedStart = originalStartSec;
+                baselineRefinedEnd = originalEndSec;
+            }
 
             Console.WriteLine(
                 $"[BoundaryRefinement] Sentence {match.SentenceId}: " +
-                $"transcript {originalStartSec:F3}s-{originalEndSec:F3}s, " +
-                $"rebased {rebasedStartSec:F3}s-{rebasedEndSec:F3}s, " +
-                $"refined {refinedStart:F3}s-{refinedEnd:F3}s " +
+                $"transcript(baseline) {originalStartSec:F3}s-{originalEndSec:F3}s, " +
+                $"current {rebasedStartSec:F3}s-{rebasedEndSec:F3}s, " +
+                $"refined(current) {result.RefinedStartSec:F3}s-{result.RefinedEndSec:F3}s, " +
+                $"stored(baseline) {baselineRefinedStart:F3}s-{baselineRefinedEnd:F3}s " +
                 $"({result.StartMethod}/{result.EndMethod})");
         }
         catch (Exception ex)
@@ -337,12 +356,13 @@ public class PolishService
             Console.WriteLine($"[BoundaryRefinement] Failed, using original boundaries: {ex.Message}");
         }
 
+        // Store BASELINE coordinates — TimelineProjection and rebuild depend on this invariant.
         var replacement = new StagedReplacement(
             Id: Guid.NewGuid().ToString("N"),
             ChapterStem: chapterStem,
             SentenceId: match.SentenceId,
-            OriginalStartSec: refinedStart,
-            OriginalEndSec: refinedEnd,
+            OriginalStartSec: baselineRefinedStart,
+            OriginalEndSec: baselineRefinedEnd,
             PickupSourcePath: pickupFilePath,
             PickupStartSec: match.PickupStartSec,
             PickupEndSec: match.PickupEndSec,

@@ -781,19 +781,30 @@
             _matchedPickups = matched.ToList();
             _unmatchedPickups = unmatched.ToList();
 
-            // 5. Also run CRX-driven import with progress for the existing matching pipeline
-            var progress = new Progress<(string Status, double Progress)>(p =>
+            // 5. Also run CRX-driven import with progress for the existing matching pipeline.
+            //    ImportPickupsCrxAsync is session-file oriented (decodes a single WAV),
+            //    so skip it when the source is a directory (individual-file import).
+            if (System.IO.File.Exists(_pickupSessionPath))
             {
-                _processingStatus = p.Status;
-                _processingProgress = 0.3 + (p.Progress * 0.7);
-                InvokeAsync(StateHasChanged);
-            });
+                var progress = new Progress<(string Status, double Progress)>(p =>
+                {
+                    _processingStatus = p.Status;
+                    _processingProgress = 0.3 + (p.Progress * 0.7);
+                    InvokeAsync(StateHasChanged);
+                });
 
-            _matchesByChapter = await PolishService.ImportPickupsCrxAsync(
-                _pickupSessionPath, crxTargets, progress, token);
+                _matchesByChapter = await PolishService.ImportPickupsCrxAsync(
+                    _pickupSessionPath, crxTargets, progress, token);
 
-            var totalMatches = _matchesByChapter.Values.Sum(m => m.Count);
-            _processingStatus = $"Found {totalMatches} matches across {_matchesByChapter.Count} chapters. {unmatched.Count} unmatched.";
+                var totalMatches = _matchesByChapter.Values.Sum(m => m.Count);
+                _processingStatus = $"Found {totalMatches} matches across {_matchesByChapter.Count} chapters. {unmatched.Count} unmatched.";
+            }
+            else
+            {
+                // Directory source — PickupAssetService.ImportAsync already handled matching above.
+                _matchesByChapter = new Dictionary<string, List<CrossChapterPickupMatch>>();
+                _processingStatus = $"Imported {matched.Count} pickups from folder. {unmatched.Count} unmatched.";
+            }
         }
         catch (OperationCanceledException) { _processingStatus = "Processing cancelled."; }
         catch (System.IO.FileNotFoundException) { _processingStatus = "Pickup file not found. Check the file path."; }
