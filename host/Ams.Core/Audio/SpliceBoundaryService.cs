@@ -31,6 +31,15 @@ public sealed record SpliceBoundaryOptions
 
     /// <summary>Margin to back off from a snap-to-energy edge (default 30ms).</summary>
     public double EnergyBackoffSec { get; init; } = 0.030;
+
+    /// <summary>Whether to run breath detection on boundary regions (default true).</summary>
+    public bool EnableBreathDetection { get; init; } = true;
+
+    /// <summary>Search window radius around each boundary for breath detection (default 0.2s).</summary>
+    public double BreathSearchRadiusSec { get; init; } = 0.2;
+
+    /// <summary>Small gap (seconds) to leave between the breath edge and the cut point (default 5ms).</summary>
+    public double BreathGuardSec { get; init; } = 0.005;
 }
 
 /// <summary>
@@ -164,10 +173,12 @@ public static class SpliceBoundaryService
             chapterBuffer, roughStartSec, roughEndSec,
             prevSentenceEndSec, nextSentenceStartSec, opts);
 
+        // If breath detection is disabled, return the base result as-is
+        if (!opts.EnableBreathDetection)
+            return baseResult;
+
         var bufferDurationSec = (double)chapterBuffer.Length / chapterBuffer.SampleRate;
         var breathOpts = new FrameBreathDetectorOptions();
-        const double breathSearchRadius = 0.2;
-        const double breathGuard = 0.005;
 
         var refinedStart = baseResult.RefinedStartSec;
         var startMethod = baseResult.StartMethod;
@@ -176,8 +187,8 @@ public static class SpliceBoundaryService
 
         // 2. Check for breath overlap at start boundary
         {
-            double searchStart = Math.Max(0, refinedStart - breathSearchRadius);
-            double searchEnd = Math.Min(bufferDurationSec, refinedStart + breathSearchRadius);
+            double searchStart = Math.Max(0, refinedStart - opts.BreathSearchRadiusSec);
+            double searchEnd = Math.Min(bufferDurationSec, refinedStart + opts.BreathSearchRadiusSec);
 
             if (searchEnd > searchStart)
             {
@@ -187,7 +198,7 @@ public static class SpliceBoundaryService
                     // If a breath straddles the proposed start cut point, shift after the breath
                     if (breath.StartSec <= refinedStart && refinedStart <= breath.EndSec)
                     {
-                        refinedStart = breath.EndSec + breathGuard;
+                        refinedStart = breath.EndSec + opts.BreathGuardSec;
                         startMethod = BoundaryMethod.BreathAware;
                         break; // Only adjust for the first straddling breath
                     }
@@ -197,8 +208,8 @@ public static class SpliceBoundaryService
 
         // 3. Check for breath overlap at end boundary
         {
-            double searchStart = Math.Max(0, refinedEnd - breathSearchRadius);
-            double searchEnd = Math.Min(bufferDurationSec, refinedEnd + breathSearchRadius);
+            double searchStart = Math.Max(0, refinedEnd - opts.BreathSearchRadiusSec);
+            double searchEnd = Math.Min(bufferDurationSec, refinedEnd + opts.BreathSearchRadiusSec);
 
             if (searchEnd > searchStart)
             {
@@ -208,7 +219,7 @@ public static class SpliceBoundaryService
                     // If a breath straddles the proposed end cut point, shift before the breath
                     if (breath.StartSec <= refinedEnd && refinedEnd <= breath.EndSec)
                     {
-                        refinedEnd = breath.StartSec - breathGuard;
+                        refinedEnd = breath.StartSec - opts.BreathGuardSec;
                         endMethod = BoundaryMethod.BreathAware;
                         break; // Only adjust for the first straddling breath
                     }
