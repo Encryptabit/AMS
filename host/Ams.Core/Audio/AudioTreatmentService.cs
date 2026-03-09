@@ -1,7 +1,10 @@
 using Ams.Core.Artifacts;
 using Ams.Core.Artifacts.Hydrate;
+using Ams.Core.Common;
 using Ams.Core.Processors;
+using Ams.Core.Processors.Alignment.Anchors;
 using Ams.Core.Runtime.Chapter;
+using System.Text.RegularExpressions;
 
 namespace Ams.Core.Audio;
 
@@ -11,6 +14,9 @@ namespace Ams.Core.Audio;
 public sealed class AudioTreatmentService
 {
     private const double MaxTitleBoundarySearchSeconds = 30.0;
+    private static readonly Regex ChapterTitlePattern = new(
+        @"^\s*(chapter\b.+?)\s*[:\-–—]\s*(.+?)\s*$",
+        RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
     /// <summary>
     /// Result of audio treatment processing.
@@ -108,15 +114,23 @@ public sealed class AudioTreatmentService
         var silenceIntervals = AudioProcessor.DetectSilence(chapterBuffer, silenceOpts);
 
         // Find title and content boundaries
-        var (titleStart, titleEnd, contentStart, contentEnd) = FindSpeechBoundaries(
+        var sectionTitle = ResolveSectionTitle(chapter);
+        var (titleStart, titleEnd, contentStart, contentEnd, decoratorEnd, titleResumeStart) = FindTreatmentLayout(
             chapterBuffer,
             silenceIntervals,
             opts.TitleContentGapThreshold,
-            chapter.Documents.HydratedTranscript?.Sentences);
+            chapter.Documents.HydratedTranscript,
+            sectionTitle);
 
         Log.Debug(
-            "Speech boundaries: title={TitleStart:F3}s-{TitleEnd:F3}s, content={ContentStart:F3}s-{ContentEnd:F3}s",
-            titleStart, titleEnd, contentStart, contentEnd);
+            "Treatment layout: title={TitleStart:F3}s-{TitleEnd:F3}s, decoratorEnd={DecoratorEnd}, titleResume={TitleResume}, content={ContentStart:F3}s-{ContentEnd:F3}s, sectionTitle={SectionTitle}",
+            titleStart,
+            titleEnd,
+            decoratorEnd?.ToString("F3") ?? "-",
+            titleResumeStart?.ToString("F3") ?? "-",
+            contentStart,
+            contentEnd,
+            sectionTitle ?? "-");
 
         // Check if we have a separate title segment (titleStart >= 0 AND has positive duration)
         bool hasTitle = titleStart >= 0 && titleEnd > titleStart;
@@ -130,13 +144,40 @@ public sealed class AudioTreatmentService
 
         if (hasTitle)
         {
-            // Extract title segment
-            Log.Debug("Extracting title segment: {Start:F3}s - {End:F3}s", titleStart, titleEnd);
-            var titleBuffer = AudioProcessor.Trim(
-                chapterBuffer,
-                TimeSpan.FromSeconds(titleStart),
-                TimeSpan.FromSeconds(titleEnd));
-            segments.Add(titleBuffer);
+            if (decoratorEnd is double decoratorBoundary &&
+                titleResumeStart is double titleBoundary &&
+                decoratorBoundary > titleStart &&
+                titleBoundary < titleEnd)
+            {
+                Log.Debug("Extracting chapter decorator segment: {Start:F3}s - {End:F3}s",
+                    titleStart, decoratorBoundary);
+                var decoratorBuffer = AudioProcessor.Trim(
+                    chapterBuffer,
+                    TimeSpan.FromSeconds(titleStart),
+                    TimeSpan.FromSeconds(decoratorBoundary));
+                segments.Add(decoratorBuffer);
+
+                var decoratorGapBuffer = PrepareRoomtoneSegment(roomtoneBuffer, opts.PrerollSeconds);
+                segments.Add(decoratorGapBuffer);
+
+                Log.Debug("Extracting chapter title segment: {Start:F3}s - {End:F3}s",
+                    titleBoundary, titleEnd);
+                var titleBuffer = AudioProcessor.Trim(
+                    chapterBuffer,
+                    TimeSpan.FromSeconds(titleBoundary),
+                    TimeSpan.FromSeconds(titleEnd));
+                segments.Add(titleBuffer);
+            }
+            else
+            {
+                // Extract title segment
+                Log.Debug("Extracting title segment: {Start:F3}s - {End:F3}s", titleStart, titleEnd);
+                var titleBuffer = AudioProcessor.Trim(
+                    chapterBuffer,
+                    TimeSpan.FromSeconds(titleStart),
+                    TimeSpan.FromSeconds(titleEnd));
+                segments.Add(titleBuffer);
+            }
 
             // Gap between title and content
             var gapBuffer = PrepareRoomtoneSegment(roomtoneBuffer, opts.ChapterToContentGapSeconds);
@@ -395,6 +436,43 @@ public sealed class AudioTreatmentService
         return (titleStart, titleEnd, contentStart, contentEnd);
     }
 
+    internal static (
+        double TitleStart,
+        double TitleEnd,
+        double ContentStart,
+        double ContentEnd,
+        double? DecoratorEnd,
+        double? TitleResumeStart) FindTreatmentLayout(
+        AudioBuffer buffer,
+        IReadOnlyList<SilenceInterval> silenceIntervals,
+        double gapThreshold,
+        HydratedTranscript? hydratedTranscript = null,
+        string? sectionTitle = null)
+    {
+        double audioDuration = buffer.Length / (double)buffer.SampleRate;
+        double contentEnd = FindContentEnd(audioDuration, silenceIntervals);
+        double speechStart = FindSpeechStart(silenceIntervals, audioDuration);
+
+        if (TryFindDecoratorTitleLayoutFromHydrate(
+                hydratedTranscript,
+                sectionTitle,
+                speechStart,
+                contentEnd,
+                audioDuration,
+                out var layout))
+        {
+            return layout;
+        }
+
+        var boundaries = FindSpeechBoundaries(
+            buffer,
+            silenceIntervals,
+            gapThreshold,
+            hydratedTranscript?.Sentences);
+
+        return (boundaries.TitleStart, boundaries.TitleEnd, boundaries.ContentStart, boundaries.ContentEnd, null, null);
+    }
+
     private static bool TryFindBoundariesFromHydrate(
         IReadOnlyList<HydratedSentence>? hydratedSentences,
         double speechStart,
@@ -462,6 +540,109 @@ public sealed class AudioTreatmentService
         return true;
     }
 
+    private static bool TryFindDecoratorTitleLayoutFromHydrate(
+        HydratedTranscript? hydratedTranscript,
+        string? sectionTitle,
+        double speechStart,
+        double contentEnd,
+        double audioDuration,
+        out (double TitleStart, double TitleEnd, double ContentStart, double ContentEnd, double? DecoratorEnd, double? TitleResumeStart) layout)
+    {
+        layout = default;
+        if (hydratedTranscript is null ||
+            !TryParseChapterDecoratorTitle(sectionTitle, out var decoratorText, out var headingTitleText))
+        {
+            return false;
+        }
+
+        var timedSentences = GetTimedSentences(hydratedTranscript.Sentences, audioDuration);
+        if (timedSentences.Count < 2)
+        {
+            return false;
+        }
+
+        var headingSentence = timedSentences
+            .Where(static s => s.ScriptStart is not null)
+            .OrderBy(static s => s.ScriptStart)
+            .ThenBy(static s => s.StartSec)
+            .FirstOrDefault();
+
+        if (headingSentence.Equals(default(TimedSentence)))
+        {
+            headingSentence = timedSentences[0];
+        }
+
+        var headingSentenceIndex = timedSentences.IndexOf(headingSentence);
+        if (headingSentenceIndex < 0 || headingSentenceIndex + 1 >= timedSentences.Count)
+        {
+            return false;
+        }
+
+        var nextSentence = timedSentences[headingSentenceIndex + 1];
+        var headingStart = Math.Max(speechStart, headingSentence.StartSec);
+        var headingSentenceText = NormalizeHeadingText(headingSentence.Sentence.BookText);
+        var decoratorTextNormalized = NormalizeHeadingText(decoratorText);
+        var headingTitleTextNormalized = NormalizeHeadingText(headingTitleText);
+        var fullTitleNormalized = NormalizeHeadingText(sectionTitle!);
+
+        if (headingSentenceText == decoratorTextNormalized &&
+            NormalizeHeadingText(nextSentence.Sentence.BookText) == headingTitleTextNormalized)
+        {
+            if (headingSentenceIndex + 2 >= timedSentences.Count)
+            {
+                return false;
+            }
+
+            var firstContentSentence = timedSentences[headingSentenceIndex + 2];
+            var headingEnd = Math.Max(headingStart, nextSentence.EndSec);
+            var contentStart = Math.Max(headingEnd, firstContentSentence.StartSec);
+            if (contentEnd <= contentStart)
+            {
+                return false;
+            }
+
+            layout = (
+                headingStart,
+                headingEnd,
+                contentStart,
+                contentEnd,
+                Math.Max(headingStart, headingSentence.EndSec),
+                Math.Max(headingSentence.EndSec, nextSentence.StartSec));
+            return true;
+        }
+
+        if (headingSentenceText != fullTitleNormalized)
+        {
+            return false;
+        }
+
+        if (!TryFindDecoratorWordBoundary(
+                hydratedTranscript,
+                headingSentence,
+                CountDisplayWords(decoratorText),
+                out var decoratorEnd,
+                out var titleResumeStart))
+        {
+            return false;
+        }
+
+        var overallTitleEnd = Math.Max(headingStart, headingSentence.EndSec);
+        var overallContentStart = Math.Max(overallTitleEnd, nextSentence.StartSec);
+        if (contentEnd <= overallContentStart)
+        {
+            return false;
+        }
+
+        layout = (
+            headingStart,
+            overallTitleEnd,
+            overallContentStart,
+            contentEnd,
+            decoratorEnd,
+            titleResumeStart);
+        return true;
+    }
+
     private static List<TimedSentence> GetTimedSentences(
         IReadOnlyList<HydratedSentence> hydratedSentences,
         double audioDuration)
@@ -514,6 +695,112 @@ public sealed class AudioTreatmentService
         }
 
         return Math.Clamp(contentEnd, 0.0, audioDuration);
+    }
+
+    private static string? ResolveSectionTitle(ChapterContext chapter)
+    {
+        ArgumentNullException.ThrowIfNull(chapter);
+
+        var bookIndex = chapter.Book.Documents.BookIndex;
+        if (bookIndex is not null)
+        {
+            IEnumerable<string> candidates = Enumerable.Empty<string>();
+            if (!string.IsNullOrWhiteSpace(chapter.Descriptor.ChapterId))
+            {
+                candidates = candidates.Append(chapter.Descriptor.ChapterId);
+            }
+
+            candidates = candidates.Concat(chapter.Descriptor.Aliases ?? Array.Empty<string>());
+            foreach (var candidate in candidates.Where(static value => !string.IsNullOrWhiteSpace(value))
+                         .Distinct(StringComparer.OrdinalIgnoreCase))
+            {
+                var section = SectionLocator.ResolveSectionByTitle(bookIndex, candidate);
+                if (!string.IsNullOrWhiteSpace(section?.Title))
+                {
+                    return section!.Title;
+                }
+            }
+        }
+
+        return chapter.Descriptor.Aliases?
+            .Where(static alias => !string.IsNullOrWhiteSpace(alias) &&
+                                   alias.StartsWith("Chapter", StringComparison.OrdinalIgnoreCase))
+            .OrderByDescending(static alias => alias.Length)
+            .FirstOrDefault();
+    }
+
+    private static bool TryParseChapterDecoratorTitle(
+        string? sectionTitle,
+        out string decoratorText,
+        out string headingTitleText)
+    {
+        decoratorText = string.Empty;
+        headingTitleText = string.Empty;
+        if (string.IsNullOrWhiteSpace(sectionTitle))
+        {
+            return false;
+        }
+
+        var match = ChapterTitlePattern.Match(sectionTitle);
+        if (!match.Success)
+        {
+            return false;
+        }
+
+        decoratorText = match.Groups[1].Value.Trim();
+        headingTitleText = match.Groups[2].Value.Trim();
+        return decoratorText.Length > 0 && headingTitleText.Length > 0;
+    }
+
+    private static bool TryFindDecoratorWordBoundary(
+        HydratedTranscript hydratedTranscript,
+        TimedSentence headingSentence,
+        int decoratorWordCount,
+        out double decoratorEnd,
+        out double titleResumeStart)
+    {
+        decoratorEnd = 0;
+        titleResumeStart = 0;
+        if (decoratorWordCount <= 0)
+        {
+            return false;
+        }
+
+        var timedWords = hydratedTranscript.Words
+            .Where(w => w.BookIdx is int idx &&
+                        idx >= headingSentence.Sentence.BookRange.Start &&
+                        idx <= headingSentence.Sentence.BookRange.End &&
+                        w.StartSec is not null &&
+                        w.EndSec is not null)
+            .GroupBy(w => w.BookIdx!.Value)
+            .OrderBy(group => group.Key)
+            .Select(group => group.First())
+            .ToList();
+
+        if (timedWords.Count <= decoratorWordCount)
+        {
+            return false;
+        }
+
+        decoratorEnd = timedWords[decoratorWordCount - 1].EndSec!.Value;
+        titleResumeStart = timedWords[decoratorWordCount].StartSec!.Value;
+        return titleResumeStart > decoratorEnd;
+    }
+
+    private static int CountDisplayWords(string text)
+        => Regex.Matches(text, @"\S+").Count;
+
+    private static string NormalizeHeadingText(string text)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            return string.Empty;
+        }
+
+        var normalized = TextNormalizer.Normalize(text, expandContractions: true, removeNumbers: false);
+        var tokens = new List<string>(8);
+        TextNormalizer.TokenizeWords(normalized, tokens);
+        return string.Join(' ', tokens);
     }
 
     private readonly record struct TimedSentence(HydratedSentence Sentence, double StartSec, double EndSec, int? ScriptStart);
