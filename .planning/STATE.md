@@ -7,9 +7,9 @@ Audio Management System - CLI and core library for audio processing, ASR, forced
 ## Current Position
 
 **Milestone**: v2.0 Blazor Workstation
-**Phase**: 14 - Shared Chunked ASR/MFA
-**Plan**: 7/7
-**Status**: Phase 14 complete; rollout controls (--no-chunk-plan, --no-chunked-mfa) and verification checklist added
+**Phase**: 15 - Pickup Flow Redesign
+**Plan**: 2/7
+**Status**: Plan 15-02 complete; breath-aware splice boundaries via RefineBoundariesBreathAware wrapping existing refinement with FeatureExtraction.Detect overlay
 
 ## Progress
 
@@ -18,6 +18,18 @@ v1.0 Codebase Audit    [██████████████████�
 v1.1 Execute Refactor  [████████████████████] 100% - SHIPPED
 v2.0 Blazor Workstation[████████████████████] 100% - Phase 10 complete
 ```
+
+## Phase 15 Plans (Pickup Flow Redesign)
+
+| Plan | Name | Tasks | Status |
+|------|------|-------|--------|
+| 15-01 | Domain Models & Timeline Projection | 2 | Complete |
+| 15-02 | Breath-Aware Splice Boundaries | 2 | Complete |
+| 15-03 | Refactored Apply/Revert Flow | 2 | Pending |
+| 15-04 | Breath-Aware Boundary Detection | 2 | Pending |
+| 15-05 | Dual-Side Handle Editing | 2 | Pending |
+| 15-06 | Context Playback & Audition | 2 | Pending |
+| 15-07 | Integration & Cleanup | 2 | Pending |
 
 ## Phase 14 Plans (Shared Chunked ASR/MFA)
 
@@ -179,6 +191,9 @@ v2.0 Blazor Workstation[██████████████████�
 | Rollout flag defaults | Both flags false (chunking enabled) | New behavior is default; flags revert to legacy without code changes |
 | DisableChunkPlan scope | Skips chunk plan in AsrService + MFA has no plan to use | Single flag reverts both stages to legacy behavior |
 | DisableChunkedMfa scope | MFA-only; ASR chunking unaffected | Allows isolating MFA chunking behavior independently |
+| ChapterEdit placement | Ams.Core.Audio | Domain model with no UI deps; enables TimelineProjection to reference without circular dependency |
+| PickupAsset/Cache placement | Workstation PolishModels | Import-workflow specific, not needed by Core |
+| EditListService pattern | Singleton + lazy-load + JSON to .polish/ | Consistent with StagingQueueService; coexists during transition |
 
 ## Phase 8/8.1 Conclusions (Archived)
 
@@ -230,7 +245,7 @@ poc/VelloSharpPoc/     - Avalonia + VelloSharp (child window fails)
 
 ## Next Action
 
-Phase 14 complete. All 7 plans executed. Populate 14-VERIFICATION.md with runtime benchmarks and complete sign-off checklist before promoting shared chunking as default.
+Phase 15, Plan 02 complete. Ready for Plan 15-03 (Refactored Apply/Revert Flow).
 
 ## Deferred UI Refinements (for Plan 10-04)
 
@@ -247,4 +262,4 @@ None currently.
 
 ## Session Continuity
 
-Last activity: 2026-03-05 - Completed quick task 9: keyboard shortcuts for ChapterReview proof page
+Last activity: 2026-03-09 - Completed 15-02: Breath-Aware Splice Boundaries
