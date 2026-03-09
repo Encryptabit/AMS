@@ -126,6 +126,7 @@ public sealed class PipelineService
         bool transcriptRan = false;
         bool hydrateRan = false;
         bool mfaRan = false;
+        bool promptlessAsrRecoveryRequested = false;
 
         if (IsStageEnabled(PipelineStage.Asr, options) && (options.Force || !hasAsr))
         {
@@ -208,6 +209,14 @@ public sealed class PipelineService
                     mfaRan = true;
                     hasTextGrid = HasTextGridDocument();
                     textGridExists = hasTextGrid;
+
+                    if (result.PromptlessAsrRetryRecommended)
+                    {
+                        promptlessAsrRecoveryRequested = true;
+                        Log.Info(
+                            "MFA requested promptless ASR recovery for {Chapter}; deferring retry so scheduler can requeue without hijacking ASR concurrency",
+                            chapter.Descriptor.ChapterId);
+                    }
                 }
                 finally
                 {
@@ -253,7 +262,8 @@ public sealed class PipelineService
             ResolveTranscriptFile(),
             ResolveHydrateFile(),
             TextGridFile(),
-            ResolveTreatedFile());
+            ResolveTreatedFile(),
+            promptlessAsrRecoveryRequested);
     }
 
     private static bool IsStageEnabled(PipelineStage stage, PipelineRunOptions options)

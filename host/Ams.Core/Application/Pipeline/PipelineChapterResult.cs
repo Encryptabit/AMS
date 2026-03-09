@@ -14,4 +14,5 @@ public sealed record PipelineChapterResult(
     FileInfo TranscriptFile,
     FileInfo HydrateFile,
     FileInfo TextGridFile,
-    FileInfo TreatedAudioFile);
+    FileInfo TreatedAudioFile,
+    bool PromptlessAsrRecoveryRequested = false);

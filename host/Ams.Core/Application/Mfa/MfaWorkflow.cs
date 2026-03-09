@@ -15,7 +15,9 @@ namespace Ams.Core.Application.Mfa;
 
 public static class MfaWorkflow
 {
-    internal static async Task RunChapterAsync(
+    internal readonly record struct RunOutcome(bool PromptlessAsrRetryRecommended);
+
+    internal static async Task<RunOutcome> RunChapterAsync(
         ChapterContext chapterContext,
         FileInfo audioFile,
         FileInfo hydrateFile,
@@ -28,6 +30,8 @@ public static class MfaWorkflow
         bool disableChunkedMfa = false,
         bool requireAsrChunkAudio = false)
     {
+        var promptlessAsrRetryRecommended = false;
+
         if (!useDedicatedProcess)
         {
             await MfaProcessSupervisor.EnsureReadyAsync(cancellationToken).ConfigureAwait(false);
@@ -255,31 +259,18 @@ public static class MfaWorkflow
                 .Where(r => r.Status != ChunkAlignmentStatus.Ok)
                 .ToList();
 
-            if (failedChunks.Count > 0 &&
-                resolvedBeam.Beam < MfaBeamSettings.StrictRetry.Beam)
+            if (failedChunks.Count > 0)
             {
+                promptlessAsrRetryRecommended = true;
                 Log.Info(
-                    "Adaptive retry: {Failed}/{Total} chunks need strict re-alignment " +
+                    "Chunked MFA detected {Failed}/{Total} problematic chunks " +
                     "(missing={Missing}, empty={Empty}, lowCoverage={LowCoverage})",
                     failedChunks.Count, chunkCorpus.Utterances.Count,
                     failedChunks.Count(r => r.Status == ChunkAlignmentStatus.MissingOutput),
                     failedChunks.Count(r => r.Status == ChunkAlignmentStatus.ParseFailure),
                     failedChunks.Count(r => r.Status == ChunkAlignmentStatus.LowCoverage));
-
-                await RetryFailedChunksWithStrictBeamAsync(
-                    failedChunks,
-                    chunkCorpus,
-                    service,
-                    alignContext,
-                    alignOutputDir,
-                    mfaCopyDir,
-                    cancellationToken).ConfigureAwait(false);
-            }
-            else if (failedChunks.Count > 0)
-            {
-                Log.Debug(
-                    "Skipping adaptive retry: already at strict beam ({Beam}/{RetryBeam}), {Failed} chunks still problematic",
-                    resolvedBeam.Beam, resolvedBeam.RetryBeam, failedChunks.Count);
+                Log.Info(
+                    "Skipping strict MFA retry; recommend chapter ASR regeneration with prompt disabled before re-running alignment");
             }
 
             // Aggregate per-chunk TextGrids into canonical chapter-level TextGrid
@@ -313,6 +304,8 @@ public static class MfaWorkflow
 
         CopyIfExists(Path.Combine(alignOutputDir, "alignment", "mfa", "alignment_analysis.csv"),
             Path.Combine(mfaCopyDir, "alignment_analysis.csv"));
+
+        return new RunOutcome(promptlessAsrRetryRecommended);
     }
 
     private static string EnsureDirectory(string path)
@@ -731,124 +724,6 @@ public static class MfaWorkflow
         }
 
         return results;
-    }
-
-    /// <summary>
-    /// Retries alignment for failed chunks using strict beam settings.
-    /// Only the failed chunks are re-aligned; successful chunks are untouched.
-    /// </summary>
-    private static async Task RetryFailedChunksWithStrictBeamAsync(
-        List<ChunkAlignmentResult> failedChunks,
-        MfaChunkCorpusBuilder.ChunkCorpusResult chunkCorpus,
-        MfaService service,
-        MfaChapterContext alignContext,
-        string alignOutputDir,
-        string mfaCopyDir,
-        CancellationToken cancellationToken)
-    {
-        var strictBeam = MfaBeamSettings.StrictRetry;
-
-        // Build a subset corpus containing only the failed utterance wav+lab files.
-        // This ensures MFA only re-aligns the problematic chunks, preserving throughput.
-        var retryCorpusDir = Path.Combine(
-            Path.GetDirectoryName(alignContext.CorpusDirectory)!,
-            "retry-corpus");
-        if (Directory.Exists(retryCorpusDir))
-            Directory.Delete(retryCorpusDir, recursive: true);
-        Directory.CreateDirectory(retryCorpusDir);
-
-        foreach (var failed in failedChunks)
-        {
-            var uttName = failed.Utterance.UtteranceName;
-            foreach (var ext in new[] { ".wav", ".lab" })
-            {
-                var src = Path.Combine(alignContext.CorpusDirectory, uttName + ext);
-                if (File.Exists(src))
-                    File.Copy(src, Path.Combine(retryCorpusDir, uttName + ext));
-            }
-        }
-
-        var retryContext = alignContext with
-        {
-            Beam = strictBeam.Beam,
-            RetryBeam = strictBeam.RetryBeam,
-            CorpusDirectory = retryCorpusDir,
-        };
-
-        Log.Info(
-            "Strict retry: beam={Beam}, retryBeam={RetryBeam} for {Count} chunks",
-            strictBeam.Beam, strictBeam.RetryBeam, failedChunks.Count);
-
-        try
-        {
-            var retryResult = await service.AlignAsync(retryContext, cancellationToken).ConfigureAwait(false);
-            var retrySuccess = EnsureSuccess("mfa align (strict retry)", retryResult, allowFailure: true);
-
-            if (!retrySuccess)
-            {
-                Log.Warn("Strict retry alignment failed; keeping initial results for all chunks");
-                return;
-            }
-
-            // Re-collect TextGrids only for the originally failed chunks
-            var recovered = 0;
-            foreach (var failed in failedChunks)
-            {
-                var utt = failed.Utterance;
-                var retrySrc = FindUtteranceTextGrid(alignOutputDir, utt.UtteranceName);
-                if (retrySrc is null)
-                {
-                    Log.Debug("Strict retry: still no output for chunk {Chunk}", utt.UtteranceName);
-                    continue;
-                }
-
-                var destPath = Path.Combine(mfaCopyDir, utt.UtteranceName + ".TextGrid");
-                CopyIfExists(retrySrc, destPath);
-
-                // Verify the retry actually improved things
-                try
-                {
-                    var intervals = TextGridParser.ParseWordIntervals(destPath);
-                    var retryWordCount = intervals.Count(iv =>
-                        !string.IsNullOrWhiteSpace(iv.Text) &&
-                        !string.Equals(iv.Text, "sp", StringComparison.OrdinalIgnoreCase) &&
-                        !string.Equals(iv.Text, "sil", StringComparison.OrdinalIgnoreCase));
-
-                    if (retryWordCount > failed.WordIntervalCount)
-                    {
-                        recovered++;
-                        Log.Debug(
-                            "Strict retry improved chunk {Chunk}: {Before} -> {After} word intervals",
-                            utt.UtteranceName, failed.WordIntervalCount, retryWordCount);
-                    }
-                    else
-                    {
-                        Log.Debug(
-                            "Strict retry did not improve chunk {Chunk}: {Before} -> {After} word intervals",
-                            utt.UtteranceName, failed.WordIntervalCount, retryWordCount);
-                    }
-                }
-                catch (Exception ex)
-                {
-                    Log.Debug("Strict retry TextGrid parse failed for chunk {Chunk}: {Message}",
-                        utt.UtteranceName, ex.Message);
-                }
-            }
-
-            Log.Info(
-                "Strict retry complete: {Recovered}/{Failed} chunks improved",
-                recovered, failedChunks.Count);
-        }
-        catch (Exception ex) when (ex is not OperationCanceledException)
-        {
-            Log.Warn("Strict retry alignment threw: {Message}; keeping initial results", ex.Message);
-        }
-        finally
-        {
-            // Clean up subset corpus directory
-            try { if (Directory.Exists(retryCorpusDir)) Directory.Delete(retryCorpusDir, recursive: true); }
-            catch { /* best-effort cleanup */ }
-        }
     }
 
     /// <summary>

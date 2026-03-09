@@ -9,6 +9,7 @@ using System.Text.RegularExpressions;
 using Ams.Cli.Utilities;
 using Ams.Cli.Repl;
 using Ams.Core.Application.Commands;
+using Ams.Core.Application.Pipeline;
 using Ams.Core.Application.Mfa.Models;
 using Ams.Core.Asr;
 using Ams.Core.Artifacts;
@@ -459,7 +460,8 @@ public static class PipelineCommand
         int? mfaRetryBeam = null,
         bool disableChunkPlan = false,
         bool disableChunkedMfa = false,
-        bool requireAsrChunkAudio = false)
+        bool requireAsrChunkAudio = false,
+        bool promptlessRecoveryPass = false)
     {
         ArgumentNullException.ThrowIfNull(pipelineService);
 
@@ -504,6 +506,7 @@ public static class PipelineCommand
         using var concurrency = PipelineConcurrencyControl.CreateShared(maxAsrParallelism, maxMfaParallelism);
         using var workerSemaphore = new SemaphoreSlim(maxWorkers, maxWorkers);
         var errors = new ConcurrentBag<Exception>();
+        var promptlessRecoveryQueue = new ConcurrentBag<FileInfo>();
 
         var tasks = existingChapters.Select(async chapter =>
         {
@@ -527,7 +530,7 @@ public static class PipelineCommand
                 cancellationToken.ThrowIfCancellationRequested();
                 reporter?.MarkRunning(chapterId);
 
-                await RunPipelineAsync(
+                var result = await RunPipelineAsync(
                     pipelineService,
                     bookFile,
                     chapter,
@@ -551,9 +554,32 @@ public static class PipelineCommand
                     mfaRetryBeam,
                     disableChunkPlan,
                     disableChunkedMfa,
-                    requireAsrChunkAudio).ConfigureAwait(false);
+                    requireAsrChunkAudio,
+                    promptlessRecoveryPass).ConfigureAwait(false);
 
-                reporter?.MarkComplete(chapterId);
+                if (result.PromptlessAsrRecoveryRequested)
+                {
+                    if (promptlessRecoveryPass)
+                    {
+                        Log.Warn(
+                            "Promptless ASR recovery pass still reported low-coverage MFA chunks for {Chapter}; keeping best-effort output",
+                            chapterId);
+                        reporter?.MarkComplete(chapterId);
+                    }
+                    else
+                    {
+                        reporter?.ReportStage(
+                            chapterId,
+                            PipelineStage.Mfa,
+                            "Queued for promptless ASR recovery pass");
+                        reporter?.SetQueued(chapterId);
+                        promptlessRecoveryQueue.Add(chapter);
+                    }
+                }
+                else
+                {
+                    reporter?.MarkComplete(chapterId);
+                }
             }
             catch (OperationCanceledException oce)
             {
@@ -576,6 +602,45 @@ public static class PipelineCommand
         if (!errors.IsEmpty)
         {
             throw new AggregateException(errors);
+        }
+
+        if (!promptlessRecoveryPass && !promptlessRecoveryQueue.IsEmpty)
+        {
+            var recoveryChapters = promptlessRecoveryQueue
+                .DistinctBy(file => file.FullName, PathComparer)
+                .ToList();
+
+            Log.Info(
+                "Starting promptless ASR recovery pass for {Count} chapter(s).",
+                recoveryChapters.Count);
+
+            await RunPipelineForMultipleChaptersAsync(
+                pipelineService,
+                bookFile,
+                workDirOption,
+                bookIndexOverride,
+                forceIndex,
+                force,
+                avgWpm,
+                asrEngine,
+                asrModel,
+                asrDtwTimestamps,
+                asrFlashAttention,
+                asrLanguage,
+                verbose,
+                recoveryChapters,
+                maxWorkers,
+                maxAsrParallelism,
+                maxMfaParallelism,
+                reporter,
+                cancellationToken,
+                mfaProfile,
+                mfaBeam,
+                mfaRetryBeam,
+                disableChunkPlan,
+                disableChunkedMfa,
+                requireAsrChunkAudio,
+                promptlessRecoveryPass: true).ConfigureAwait(false);
         }
 
         Log.Debug("Parallel pipeline run complete.");
@@ -1332,7 +1397,7 @@ public static class PipelineCommand
                             try
                             {
                                 reporter.MarkRunning(chapterId);
-                                await RunPipelineAsync(
+                                var result = await RunPipelineAsync(
                                     pipelineService,
                                     bookFile,
                                     audioFile,
@@ -1358,6 +1423,50 @@ public static class PipelineCommand
                                     noChunkedMfa,
                                     requireAsrChunkAudio).ConfigureAwait(false);
 
+                                if (result.PromptlessAsrRecoveryRequested)
+                                {
+                                    reporter.ReportStage(
+                                        chapterId,
+                                        PipelineStage.Mfa,
+                                        "Queued for promptless ASR recovery pass");
+                                    reporter.SetQueued(chapterId);
+                                    reporter.MarkRunning(chapterId);
+
+                                    var recoveryResult = await RunPipelineAsync(
+                                        pipelineService,
+                                        bookFile,
+                                        audioFile,
+                                        workDir,
+                                        bookIndex,
+                                        chapterId,
+                                        forceIndex,
+                                        forceAll,
+                                        avgWpm,
+                                        asrEngine,
+                                        asrModel,
+                                        asrDtwTimestamps,
+                                        asrFlashAttention,
+                                        asrLanguage,
+                                        verbose,
+                                        reporter,
+                                        concurrency,
+                                        cancellationToken,
+                                        mfaProfile,
+                                        mfaBeam,
+                                        mfaRetryBeam,
+                                        noChunkPlan,
+                                        noChunkedMfa,
+                                        requireAsrChunkAudio,
+                                        promptlessRecoveryPass: true).ConfigureAwait(false);
+
+                                    if (recoveryResult.PromptlessAsrRecoveryRequested)
+                                    {
+                                        Log.Warn(
+                                            "Promptless ASR recovery pass still reported low-coverage MFA chunks for {Chapter}; keeping best-effort output",
+                                            chapterId);
+                                    }
+                                }
+
                                 reporter.MarkComplete(chapterId);
                             }
                             catch (OperationCanceledException)
@@ -1375,7 +1484,7 @@ public static class PipelineCommand
                 else
                 {
                     using var concurrency = PipelineConcurrencyControl.CreateSingle();
-                    await RunPipelineAsync(
+                    var result = await RunPipelineAsync(
                         pipelineService,
                         bookFile,
                         audioFile,
@@ -1400,6 +1509,43 @@ public static class PipelineCommand
                         noChunkPlan,
                         noChunkedMfa,
                         requireAsrChunkAudio).ConfigureAwait(false);
+
+                    if (result.PromptlessAsrRecoveryRequested)
+                    {
+                        var recoveryResult = await RunPipelineAsync(
+                            pipelineService,
+                            bookFile,
+                            audioFile,
+                            workDir,
+                            bookIndex,
+                            chapterId,
+                            forceIndex,
+                            forceAll,
+                            avgWpm,
+                            asrEngine,
+                            asrModel,
+                            asrDtwTimestamps,
+                            asrFlashAttention,
+                            asrLanguage,
+                            verbose,
+                            progress: null,
+                            concurrency,
+                            cancellationToken,
+                            mfaProfile,
+                            mfaBeam,
+                            mfaRetryBeam,
+                            noChunkPlan,
+                            noChunkedMfa,
+                            requireAsrChunkAudio,
+                            promptlessRecoveryPass: true).ConfigureAwait(false);
+
+                        if (recoveryResult.PromptlessAsrRecoveryRequested)
+                        {
+                            Log.Warn(
+                                "Promptless ASR recovery pass still reported low-coverage MFA chunks for {Chapter}; keeping best-effort output",
+                                chapterId);
+                        }
+                    }
                 }
             }
             catch (OperationCanceledException)
@@ -1416,7 +1562,7 @@ public static class PipelineCommand
         return cmd;
     }
 
-    private static async Task RunPipelineAsync(
+    private static async Task<PipelineChapterResult> RunPipelineAsync(
         PipelineService pipelineService,
         FileInfo bookFile,
         FileInfo audioFile,
@@ -1440,7 +1586,8 @@ public static class PipelineCommand
         int? mfaRetryBeam = null,
         bool disableChunkPlan = false,
         bool disableChunkedMfa = false,
-        bool requireAsrChunkAudio = false)
+        bool requireAsrChunkAudio = false,
+        bool promptlessRecoveryPass = false)
     {
         ArgumentNullException.ThrowIfNull(pipelineService);
 
@@ -1512,7 +1659,8 @@ public static class PipelineCommand
             EnableWordTimestamps = true,
             EnableFlashAttention = asrFlashAttention,
             EnableDtwTimestamps = asrDtwTimestamps,
-            DisableChunkPlan = disableChunkPlan
+            DisableChunkPlan = disableChunkPlan,
+            DisablePrompt = promptlessRecoveryPass
         };
 
         var useDedicatedMfaProcess = concurrency?.MfaDegree > 1;
@@ -1524,8 +1672,10 @@ public static class PipelineCommand
             AudioFile = audioFile,
             ChapterDirectory = chapterDirInfo,
             ChapterId = chapterStem,
-            Force = force,
+            Force = force || promptlessRecoveryPass,
             ForceIndex = forceIndex,
+            StartStage = promptlessRecoveryPass ? PipelineStage.Asr : PipelineStage.BookIndex,
+            EndStage = PipelineStage.Mfa,
             AverageWordsPerMinute = avgWpm,
             TranscriptOptions = transcriptOptions,
             AnchorOptions = defaultAnchorOptions with { EmitWindows = false },
@@ -1603,6 +1753,8 @@ public static class PipelineCommand
         LogStageInfo(logInfo, "Transcript : {TranscriptFile}", txFile.FullName);
         LogStageInfo(logInfo, "Hydrated   : {HydratedFile}", hydrateFile.FullName);
         LogStageInfo(logInfo, "Treated    : {TreatedFile}", treatedWav.FullName);
+
+        return result;
     }
 
     private static void PerformSoftReset(DirectoryInfo root, CancellationToken cancellationToken)

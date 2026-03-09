@@ -408,6 +408,27 @@ public class BookIndexerProperNounTests
         }
     }
 
+    [Fact]
+    public async Task BracketedSystemPromptNoise_FilteredFromProperNouns()
+    {
+        var source = CreateTempFile(
+            "Chapter Seventeen\n\nHe used [Consume] on his gear. [2,000 Prosperity has been consumed.] Reeze waited.");
+
+        try
+        {
+            var index = await BuildIndex(source);
+            var section = GetSectionWithTitle(index, "Chapter Seventeen");
+            Assert.NotNull(section.ProperNouns);
+            Assert.DoesNotContain("Consume", section.ProperNouns);
+            Assert.DoesNotContain("2,000 Prosperity has been consumed", section.ProperNouns);
+            Assert.Contains("Reeze", section.ProperNouns);
+        }
+        finally
+        {
+            Cleanup(source);
+        }
+    }
+
     // --- Helpers ---
 
     private static string CreateTempFile(string content)

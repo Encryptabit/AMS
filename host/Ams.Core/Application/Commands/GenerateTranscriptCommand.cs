@@ -50,7 +50,7 @@ public sealed class GenerateTranscriptCommand
 
         Log.Debug("Whisper model resolved: Path={ModelPath}, Type={ModelType}", modelPath, modelType);
 
-        var prompt = BuildAsrPrompt(chapter);
+        var prompt = options.DisablePrompt ? null : BuildAsrPrompt(chapter);
 
         var asrOptions = new AsrOptions(
             ModelPath: modelPath,
@@ -106,7 +106,7 @@ public sealed class GenerateTranscriptCommand
 
         Log.Debug("WhisperX model resolved: {Model}", model);
 
-        var prompt = BuildAsrPrompt(chapter);
+        var prompt = options.DisablePrompt ? null : BuildAsrPrompt(chapter);
         var asrOptions = new AsrOptions(
             ModelPath: string.Empty,
             Engine: AsrEngine.WhisperX,
@@ -170,9 +170,15 @@ public sealed class GenerateTranscriptCommand
         if (section?.ProperNouns is not { Length: > 0 })
             return null;
 
+        var promptTerms = ProperNounPromptFilter.Filter(section.ProperNouns);
+        if (promptTerms.Length == 0)
+        {
+            return null;
+        }
+
         // Join proper nouns with commas -- Whisper treats the prompt as prior text context.
         // Comma-separated names prime the decoder vocabulary without forming sentences.
-        var prompt = string.Join(", ", section.ProperNouns);
+        var prompt = string.Join(", ", promptTerms);
         return prompt.Length > 0 ? prompt : null;
     }
 
@@ -195,6 +201,7 @@ public sealed record GenerateTranscriptOptions
     public bool EnableWordTimestamps { get; init; } = true;
     public bool EnableFlashAttention { get; init; }
     public bool EnableDtwTimestamps { get; init; } = false;
+    public bool DisablePrompt { get; init; }
 
     /// <summary>
     /// When true, ASR processes the full audio buffer as a single pass without

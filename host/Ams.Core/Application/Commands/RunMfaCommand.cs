@@ -38,7 +38,7 @@ public sealed class RunMfaCommand
             options?.Beam,
             options?.RetryBeam);
 
-        await MfaWorkflow.RunChapterAsync(
+        var outcome = await MfaWorkflow.RunChapterAsync(
                 chapter,
                 audioFile,
                 hydrateFile,
@@ -60,7 +60,7 @@ public sealed class RunMfaCommand
 
         chapter.Documents.InvalidateTextGrid();
 
-        return new RunMfaResult(textGridFile);
+        return new RunMfaResult(textGridFile, outcome.PromptlessAsrRetryRecommended);
     }
 
     private static FileInfo ResolveAudioFile(ChapterContext chapter, RunMfaOptions? options)
@@ -117,4 +117,4 @@ public sealed record RunMfaOptions
     public bool RequireAsrChunkAudio { get; init; }
 }
 
-public sealed record RunMfaResult(FileInfo TextGridFile);
+public sealed record RunMfaResult(FileInfo TextGridFile, bool PromptlessAsrRetryRecommended = false);
