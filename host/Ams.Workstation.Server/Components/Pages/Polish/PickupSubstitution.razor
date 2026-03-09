@@ -68,6 +68,31 @@
     }
     else
     {
+        @* Migration warning banner *@
+        @if (_showMigrationWarning)
+        {
+            <BitMessage Color="BitColor.Warning">
+                <BitStack Horizontal="true" Gap="0.5rem" VerticalAlign="BitAlignment.Center" AutoHeight="true">
+                    <BitText Typography="BitTypography.Body2">
+                        Existing staged items use the old timeline format.
+                        Clear and re-import pickups to use the new system with projection-mapped boundaries.
+                    </BitText>
+                    <BitButton Variant="BitVariant.Outline"
+                               Color="BitColor.Warning"
+                               Size="BitSize.Small"
+                               OnClick="HandleClearAndRestart"
+                               IsEnabled="@(!_isProcessing)">
+                        Clear &amp; Restart
+                    </BitButton>
+                    <BitButton Variant="BitVariant.Text"
+                               Size="BitSize.Small"
+                               OnClick="() => { _showMigrationWarning = false; StateHasChanged(); }">
+                        Dismiss
+                    </BitButton>
+                </BitStack>
+            </BitMessage>
+        }
+
         @* Row 1 - Breadcrumb *@
         <BitStack Horizontal="true" Gap="0.5rem" VerticalAlign="BitAlignment.Center" AutoHeight="true">
             @if (_currentChapterIndex >= 0 && _currentChapterIndex < _chaptersWithCrx.Count)
@@ -424,12 +449,68 @@
 
         LoadChaptersWithCrx();
 
+        // Migration detection: check if old staging queue has items but new edit list is empty
+        DetectMigrationNeeded();
+
         if (_chaptersWithCrx.Count > 0)
         {
             await NavigateToChapter(0);
         }
 
         await AutoLoadKnownPaths();
+    }
+
+    private void DetectMigrationNeeded()
+    {
+        foreach (var ch in _chaptersWithCrx)
+        {
+            var queue = StagingQueueService.GetQueue(ch.Stem);
+            var hasOldItems = queue.Any(s =>
+                s.Status == ReplacementStatus.Staged || s.Status == ReplacementStatus.Applied);
+
+            if (hasOldItems && !EditListService.HasEdits(ch.Stem))
+            {
+                _showMigrationWarning = true;
+                return;
+            }
+        }
+    }
+
+    private async Task HandleClearAndRestart()
+    {
+        _isProcessing = true;
+        _processingStatus = "Clearing old data...";
+        StateHasChanged();
+
+        try
+        {
+            foreach (var ch in _chaptersWithCrx)
+            {
+                StagingQueueService.Clear(ch.Stem);
+                EditListService.Clear(ch.Stem);
+            }
+
+            _showMigrationWarning = false;
+            _matchesByChapter.Clear();
+            _matchedPickups.Clear();
+            _unmatchedPickups.Clear();
+            _confirmedLowConfidence.Clear();
+            _selectedPickup = null;
+            _selectedReplacement = null;
+
+            RefreshCurrentChapterState();
+            await SyncWaveformRegions();
+            _processingStatus = "Cleared. Re-import pickups to use the new system.";
+        }
+        catch (Exception ex)
+        {
+            _processingStatus = $"Clear failed: {ex.Message}";
+        }
+        finally
+        {
+            _isProcessing = false;
+            StateHasChanged();
+        }
     }
 
     // ── Flipper Navigation ────────────────────────────────────────
