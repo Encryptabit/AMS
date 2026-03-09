@@ -26,8 +26,11 @@ namespace Ams.Workstation.Server.Services;
 /// </summary>
 public class PolishService
 {
-    private const double PickupSlicePaddingSec = 0.080;
+    /// <summary>Minimum padding beyond the crossfade zone so handles extend into non-speech audio.</summary>
+    private const double HandleGuardSec = 0.030;
     private const double DefaultAuditionContextSec = 0.750;
+    /// <summary>Default context window (seconds) before/after splice for context playback preview.</summary>
+    private const double DefaultContextPlaybackWindowSec = 2.0;
     private const double MinAuditionClipDurationSec = 0.010;
     private static readonly TreatmentOptions SharedTuningDefaults = new();
     private static readonly ConcurrentDictionary<string, SemaphoreSlim> ChapterMutationLocks =
@@ -315,7 +318,7 @@ public class PolishService
                     nextStart = MapBaselineToCurrentTime(chapterStem, sentences[idx + 1].Timing?.StartSec);
             }
 
-            var result = SpliceBoundaryService.RefineBoundaries(
+            var result = SpliceBoundaryService.RefineBoundariesBreathAware(
                 chapterBuffer, rebasedStartSec, rebasedEndSec,
                 prevEnd, nextStart, effectiveBoundaryOptions);
 
@@ -505,6 +508,75 @@ public class PolishService
 
         _previewBuffer.Set(resultBuffer);
         return (_previewBuffer.Version, clipStartSec, clipEndSec);
+    }
+
+    /// <summary>
+    /// Generates a context playback preview that includes surrounding chapter audio spliced
+    /// around the pickup replacement. Extracts a window of chapter audio
+    /// (±<paramref name="contextWindowSec"/>) around the replacement region, then replaces
+    /// the center with the pickup. Stores the result in <see cref="PreviewBufferService"/>.
+    /// </summary>
+    /// <param name="replacementId">ID of the staged replacement to preview.</param>
+    /// <param name="contextWindowSec">Duration of surrounding chapter audio to include (default 2.0s).</param>
+    /// <returns>
+    /// Preview version and chapter-space clip boundaries:
+    /// (PreviewVersion, ChapterStartSec, ChapterEndSec).
+    /// </returns>
+    public (long PreviewVersion, double ChapterStartSec, double ChapterEndSec) GenerateContextPlaybackPreview(
+        string replacementId,
+        double contextWindowSec = DefaultContextPlaybackWindowSec)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(replacementId);
+        contextWindowSec = Math.Max(0.1, contextWindowSec);
+
+        var operationHandle = GetActiveChapterHandleOrThrow();
+        var operationStem = operationHandle.Chapter.Descriptor.ChapterId;
+        var item = FindStagedItem(replacementId, operationStem);
+        var chapterBuffer = GetChapterBuffer(operationHandle);
+        var pickupTrimmed = LoadPickupSliceForReplacement(operationHandle, item);
+
+        var chapterDurationSec = (double)chapterBuffer.Length / chapterBuffer.SampleRate;
+
+        // Extract a context window around the replacement region
+        var contextStartSec = Math.Max(0, item.OriginalStartSec - contextWindowSec);
+        var contextEndSec = Math.Min(chapterDurationSec, item.OriginalEndSec + contextWindowSec);
+
+        if (contextEndSec <= contextStartSec)
+        {
+            contextEndSec = Math.Min(chapterDurationSec, contextStartSec + MinAuditionClipDurationSec);
+        }
+
+        // Trim the context window from the chapter
+        var contextClip = AudioProcessor.Trim(
+            chapterBuffer,
+            TimeSpan.FromSeconds(contextStartSec),
+            TimeSpan.FromSeconds(contextEndSec));
+
+        var clipDurationSec = (double)contextClip.Length / contextClip.SampleRate;
+        if (clipDurationSec <= 0)
+        {
+            throw new InvalidOperationException("Unable to generate context playback preview for an empty chapter segment.");
+        }
+
+        // Calculate the replacement position relative to the context clip
+        var replaceStartSec = Math.Clamp(item.OriginalStartSec - contextStartSec, 0, clipDurationSec);
+        var replaceEndSec = Math.Clamp(item.OriginalEndSec - contextStartSec, 0, clipDurationSec);
+        if (replaceEndSec <= replaceStartSec)
+        {
+            replaceEndSec = Math.Min(clipDurationSec, replaceStartSec + MinAuditionClipDurationSec);
+        }
+
+        // Splice the pickup into the context clip
+        var resultBuffer = AudioSpliceService.ReplaceSegment(
+            contextClip,
+            replaceStartSec,
+            replaceEndSec,
+            pickupTrimmed,
+            item.CrossfadeDurationSec,
+            item.CrossfadeCurve);
+
+        _previewBuffer.Set(resultBuffer);
+        return (_previewBuffer.Version, contextStartSec, contextEndSec);
     }
 
     /// <summary>
@@ -907,14 +979,22 @@ public class PolishService
         throw new InvalidOperationException("No audio buffer available for the current chapter.");
     }
 
+    /// <summary>
+    /// Trims the pickup audio for a replacement with content-aware handle sizing.
+    /// The handle zone extends <c>crossfadeDuration + HandleGuardSec</c> beyond
+    /// the speech edges so the crossfade fits entirely inside non-speech audio.
+    /// </summary>
     private static AudioBuffer LoadPickupSliceForReplacement(
         ChapterContextHandle handle,
         StagedReplacement item)
     {
         var pickupBuffer = handle.Chapter.Book.Audio.LoadPickupByPath(item.PickupSourcePath);
         var pickupDurationSec = (double)pickupBuffer.Length / pickupBuffer.SampleRate;
-        var paddedStartSec = Math.Max(0, item.PickupStartSec - PickupSlicePaddingSec);
-        var paddedEndSec = Math.Min(pickupDurationSec, item.PickupEndSec + PickupSlicePaddingSec);
+
+        // Content-aware handle: crossfade + guard ensures crossfade fits outside speech
+        var handlePaddingSec = item.CrossfadeDurationSec + HandleGuardSec;
+        var paddedStartSec = Math.Max(0, item.PickupStartSec - handlePaddingSec);
+        var paddedEndSec = Math.Min(pickupDurationSec, item.PickupEndSec + handlePaddingSec);
 
         if (paddedEndSec <= paddedStartSec)
         {
