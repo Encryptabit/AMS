@@ -16,9 +16,9 @@ using Ams.Workstation.Server.Models;
 namespace Ams.Workstation.Server.Services;
 
 /// <summary>
-/// Runs ASR on pickup recording files and matches recognized utterances to
-/// CRX target sentences. Supports both positional pairing (CRX order) and
-/// text-similarity matching (greedy best-first) for out-of-order recordings.
+/// Runs ASR on pickup recording files and matches segmented pickup utterances to
+/// CRX targets. Session-file pairing is deterministic and CRX-driven: MFA-refined
+/// pickup segment ranges are assigned to CRX entries in ErrorNumber order.
 /// </summary>
 public class PickupMatchingService
 {
@@ -26,7 +26,6 @@ public class PickupMatchingService
     private const double TextSimilarityMinThreshold = 0.2;
     private const double MinSegmentDurationSec = 0.3;
     private const double DefaultUtteranceGapSec = 0.8;
-    private const double PreferTextSimilarityMargin = 0.08;
 
     private static readonly Regex PunctuationRegex = new(@"[^\w\s]", RegexOptions.Compiled);
     private static readonly Regex WhitespaceRegex = new(@"\s+", RegexOptions.Compiled);
@@ -59,7 +58,10 @@ public class PickupMatchingService
         ArgumentNullException.ThrowIfNull(crxTargets);
 
         if (crxTargets.Count == 0)
-            return new List<PickupMatch>();
+        {
+            throw new InvalidOperationException(
+                "Pickup import requires CRX.json targets. No CRX targets were provided for deterministic pairing.");
+        }
 
         // 1. ASR on full WAV (with named artifact cache)
         var asrResponse = TryReadNamedAsrCache(pickupFilePath);
@@ -85,92 +87,15 @@ public class PickupMatchingService
         //    since MFA refinement gives precise phone boundaries.
         var tokens = asrResponse.Tokens;
         if (tokens is not { Length: > 0 })
-            return new List<PickupMatch>();
+        {
+            throw new InvalidOperationException(
+                "Pickup import could not derive any MFA-refined pickup tokens from the session file.");
+        }
 
         var segments = SegmentUtterances(tokens, utteranceGapThresholdSec: 0.4);
-
-        // 4. Strategy selection: text similarity (primary) vs positional (fallback)
         var sortedTargets = crxTargets.OrderBy(t => t.ErrorNumber).ToList();
-
-        // Use text similarity when segments have meaningful transcribed text
-        var segmentsWithText = segments.Count(s => !string.IsNullOrWhiteSpace(s.TranscribedText));
-        var matches = segmentsWithText >= segments.Count / 2.0
-            ? MatchSessionSegmentsHybrid(segments, sortedTargets)
-            : PairSegmentsToTargets(segments, sortedTargets);
-
-        return matches;
+        return PairSegmentsToTargets(segments, sortedTargets);
     }
-
-    private static List<PickupMatch> MatchSessionSegmentsHybrid(
-        IReadOnlyList<PickupSegment> segments,
-        IReadOnlyList<CrxPickupTarget> sortedTargets)
-    {
-        var textMatches = MatchByTextSimilarity(segments, sortedTargets, logWarnings: false);
-        var positionalMatches = PairSegmentsToTargets(segments.ToList(), sortedTargets.ToList(), logWarnings: false);
-
-        var textSummary = SummarizeMatches(textMatches);
-        var positionalSummary = SummarizeMatches(positionalMatches);
-        var preferText = ShouldPreferTextSimilarity(textSummary, positionalSummary);
-
-        Log.Debug(
-            "Pickup matching strategy selected: {Strategy} (text avg={TextAverage:F3}, high={TextHigh}, assigned={TextAssigned}; positional avg={PosAverage:F3}, high={PosHigh}, assigned={PosAssigned})",
-            preferText ? "text-similarity" : "positional",
-            textSummary.AverageConfidence,
-            textSummary.HighConfidenceCount,
-            textSummary.AssignedCount,
-            positionalSummary.AverageConfidence,
-            positionalSummary.HighConfidenceCount,
-            positionalSummary.AssignedCount);
-
-        return preferText ? MatchByTextSimilarity(segments, sortedTargets) : PairSegmentsToTargets(segments.ToList(), sortedTargets.ToList());
-    }
-
-    private static bool ShouldPreferTextSimilarity(MatchSummary textSummary, MatchSummary positionalSummary)
-    {
-        if (textSummary.AssignedCount == 0)
-            return false;
-
-        if (positionalSummary.AssignedCount == 0)
-            return true;
-
-        if (textSummary.HighConfidenceCount > positionalSummary.HighConfidenceCount &&
-            textSummary.AverageConfidence >= positionalSummary.AverageConfidence - 0.02)
-        {
-            return true;
-        }
-
-        if (textSummary.HighConfidenceCount == positionalSummary.HighConfidenceCount &&
-            textSummary.AverageConfidence >= positionalSummary.AverageConfidence + PreferTextSimilarityMargin)
-        {
-            return true;
-        }
-
-        return false;
-    }
-
-    private static MatchSummary SummarizeMatches(IReadOnlyList<PickupMatch> matches)
-    {
-        var assigned = matches
-            .Where(m => m.ErrorNumber.HasValue && m.SentenceId > 0)
-            .ToList();
-
-        if (assigned.Count == 0)
-            return new MatchSummary(0, 0, 0, 0);
-
-        var highConfidenceCount = assigned.Count(m => m.Confidence >= LowConfidenceThreshold);
-        var averageConfidence = assigned.Average(m => m.Confidence);
-        return new MatchSummary(
-            assigned.Count,
-            highConfidenceCount,
-            assigned.Count - highConfidenceCount,
-            averageConfidence);
-    }
-
-    private readonly record struct MatchSummary(
-        int AssignedCount,
-        int HighConfidenceCount,
-        int LowConfidenceCount,
-        double AverageConfidence);
 
     /// <summary>
     /// Matches pickup segments to CRX targets using greedy best-first text similarity.
@@ -423,82 +348,44 @@ public class PickupMatchingService
     }
 
     /// <summary>
-    /// Pairs utterance segments to CRX targets using positional alignment.
-    /// When there are more segments than targets, finds the best starting offset
-    /// by maximizing total confidence.
+    /// Pairs utterance segments to CRX targets deterministically in ErrorNumber order.
+    /// The MFA-refined pickup segment timing range becomes the pickup range owned by
+    /// the corresponding CRX entry. Counts must match exactly.
     /// </summary>
     private static List<PickupMatch> PairSegmentsToTargets(
         List<PickupSegment> segments,
-        List<CrxPickupTarget> targets,
-        bool logWarnings = true)
+        List<CrxPickupTarget> targets)
     {
         if (segments.Count == 0 || targets.Count == 0)
             return new List<PickupMatch>();
 
-        // Find best starting offset when segment count differs from target count
-        int bestOffset = 0;
-        double bestTotalConfidence = -1;
-
-        int maxOffset = Math.Max(0, segments.Count - targets.Count);
-        for (int offset = 0; offset <= maxOffset; offset++)
+        if (segments.Count != targets.Count)
         {
-            double totalConfidence = 0;
-            int pairCount = Math.Min(targets.Count, segments.Count - offset);
-
-            for (int i = 0; i < pairCount; i++)
-            {
-                var segment = segments[offset + i];
-                var target = targets[i];
-                var normalizedSegment = NormalizeForMatch(segment.TranscribedText);
-                var normalizedTarget = NormalizeForMatch(target.ShouldBeText);
-                totalConfidence += LevenshteinMetrics.Similarity(normalizedSegment, normalizedTarget);
-            }
-
-            if (totalConfidence > bestTotalConfidence)
-            {
-                bestTotalConfidence = totalConfidence;
-                bestOffset = offset;
-            }
+            throw new InvalidOperationException(
+                $"Deterministic CRX pairing requires equal counts, but detected {segments.Count} pickup segments " +
+                $"for {targets.Count} CRX targets. Re-import after fixing segmentation or CRX coverage.");
         }
 
-        // Pair using best offset
+        Log.Debug(
+            "Pickup matching strategy selected: deterministic-crx-order (segments={Segments}, targets={Targets})",
+            segments.Count,
+            targets.Count);
+
         var matches = new List<PickupMatch>();
-        int pairsToMake = Math.Min(targets.Count, segments.Count - bestOffset);
 
-        if (pairsToMake < targets.Count && logWarnings)
+        for (int i = 0; i < targets.Count; i++)
         {
-            Log.Warn(
-                "Fewer segments ({Segments}) than targets ({Targets}); {Unpaired} targets will be unmatched",
-                segments.Count, targets.Count, targets.Count - pairsToMake);
-        }
-
-        for (int i = 0; i < pairsToMake; i++)
-        {
-            var segment = segments[bestOffset + i];
+            var segment = segments[i];
             var target = targets[i];
-
-            var normalizedSegment = NormalizeForMatch(segment.TranscribedText);
-            var normalizedTarget = NormalizeForMatch(target.ShouldBeText);
-            var confidence = LevenshteinMetrics.Similarity(normalizedSegment, normalizedTarget);
-            var isLowConfidence = confidence < LowConfidenceThreshold;
-
-            if (isLowConfidence && logWarnings)
-            {
-                Log.Warn(
-                    "Low confidence match for error #{ErrorNumber} (sentence {SentenceId}): " +
-                    "confidence={Confidence:F3}, expected=\"{Expected}\", got=\"{Got}\"",
-                    target.ErrorNumber, target.SentenceId, confidence,
-                    target.ShouldBeText, segment.TranscribedText);
-            }
 
             matches.Add(new PickupMatch(
                 SentenceId: target.SentenceId,
                 PickupStartSec: segment.StartSec,
                 PickupEndSec: segment.EndSec,
-                Confidence: confidence,
+                Confidence: 1.0,
                 RecognizedText: segment.TranscribedText,
                 ErrorNumber: target.ErrorNumber,
-                IsLowConfidence: isLowConfidence));
+                IsLowConfidence: false));
         }
 
         return matches;

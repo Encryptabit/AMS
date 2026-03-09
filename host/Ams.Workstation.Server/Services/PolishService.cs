@@ -26,7 +26,7 @@ namespace Ams.Workstation.Server.Services;
 /// </summary>
 public class PolishService
 {
-    private const string CrxFingerprintVersion = "pickup-matching-v2";
+    private const string CrxFingerprintVersion = "pickup-matching-v3";
 
     /// <summary>Minimum padding beyond the crossfade zone so handles extend into non-speech audio.</summary>
     private const double HandleGuardSec = 0.030;
