@@ -239,7 +239,7 @@ Plans:
 ## Progress
 
 **Execution Order:**
-Phases execute in numeric order: 1 -> 2 -> ... -> 13
+Phases execute in numeric order: 1 -> 2 -> ... -> 15
 
 | Phase | Milestone | Plans Complete | Status | Completed |
 |-------|-----------|----------------|--------|-----------|
@@ -260,4 +260,14 @@ Phases execute in numeric order: 1 -> 2 -> ... -> 13
 | 11. Prep Area Implementation | v2.0 | 0/? | Not started | - |
 | 12. Polish Area Foundation | v2.0 | Complete    | 2026-02-24 | - |
 | 12.1. MFA Pickup Refinement | v2.0 | Complete    | 2026-02-24 | - |
-| 13. Pickup Substitution | v2.0 | 0/8 | Planning complete | - |
+| 13. Pickup Substitution | v2.0 | 7/8 | Complete (pending verification) | - |
+| 14. Shared Chunked ASR/MFA | v2.0 | 7/7 | Complete | - |
+
+#### Phase 15: Pickup Flow Redesign
+**Goal**: Redesign pickup substitution to support order-independent multi-pickup application, unified timeline projection, dual-side boundary refinement, and both session-file and individual-file pickup sources
+**Depends on**: Phase 13, Phase 14
+**Research**: Complete (analysis in-conversation)
+**Plans**: 0 plans
+
+Plans:
+- [ ] TBD (run /gsd:plan-phase 15 to break down)
