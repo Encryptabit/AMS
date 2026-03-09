@@ -402,7 +402,7 @@ public static class QcCommand
         }
         catch (Exception ex)
         {
-            Log.Debug(ex, "Unable to discover workspace chapters from {Path}", root.FullName);
+            Log.Debug("Unable to discover workspace chapters from {Path}: {Message}", root.FullName, ex.Message);
             return [];
         }
     }
@@ -421,7 +421,7 @@ public static class QcCommand
         }
         catch (Exception ex)
         {
-            Log.Debug(ex, "Unable to load book-index.json for QC analysis");
+            Log.Debug("Unable to load book-index.json for QC analysis: {Message}", ex.Message);
             return null;
         }
     }
