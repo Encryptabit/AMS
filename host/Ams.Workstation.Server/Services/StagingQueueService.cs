@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Text.Json;
+using Ams.Core.Audio;
 using Ams.Workstation.Server.Models;
 
 namespace Ams.Workstation.Server.Services;
@@ -19,12 +20,14 @@ public class StagingQueueService
     private const double BoundaryEpsilonSec = 0.001;
 
     private readonly BlazorWorkspace _workspace;
+    private readonly EditListService _editListService;
     private readonly object _lock = new();
     private Dictionary<string, List<StagedReplacement>>? _queue;
 
-    public StagingQueueService(BlazorWorkspace workspace)
+    public StagingQueueService(BlazorWorkspace workspace, EditListService editListService)
     {
         _workspace = workspace;
+        _editListService = editListService;
     }
 
     /// <summary>
@@ -142,6 +145,8 @@ public class StagingQueueService
 
     /// <summary>
     /// Transitions the status of a replacement (e.g., Staged -> Applied, Applied -> Reverted).
+    /// When transitioning to Applied, creates a <see cref="ChapterEdit"/> record in the edit list.
+    /// When transitioning to Reverted, removes the corresponding edit record.
     /// </summary>
     /// <returns>True if the item was found and updated.</returns>
     public bool UpdateStatus(string replacementId, ReplacementStatus newStatus)
@@ -156,8 +161,33 @@ public class StagingQueueService
                 var index = list.FindIndex(r => r.Id == replacementId);
                 if (index >= 0)
                 {
-                    list[index] = list[index] with { Status = newStatus };
+                    var replacement = list[index];
+                    list[index] = replacement with { Status = newStatus };
                     Save();
+
+                    // Track in edit list for timeline projection
+                    if (newStatus == ReplacementStatus.Applied)
+                    {
+                        var edit = new ChapterEdit(
+                            Id: replacement.Id,
+                            ChapterStem: replacement.ChapterStem,
+                            Operation: EditOperation.PickupReplace,
+                            BaselineStartSec: replacement.OriginalStartSec,
+                            BaselineEndSec: replacement.OriginalEndSec,
+                            ReplacementDurationSec: replacement.PickupDuration(),
+                            SentenceId: replacement.SentenceId,
+                            ErrorNumber: null,
+                            PickupAssetId: null,
+                            CrossfadeDurationSec: replacement.CrossfadeDurationSec,
+                            CrossfadeCurve: replacement.CrossfadeCurve,
+                            AppliedAtUtc: DateTime.UtcNow);
+                        _editListService.Add(edit);
+                    }
+                    else if (newStatus == ReplacementStatus.Reverted)
+                    {
+                        _editListService.Remove(replacement.Id);
+                    }
+
                     return true;
                 }
             }
@@ -232,58 +262,16 @@ public class StagingQueueService
     }
 
     /// <summary>
-    /// Shifts OriginalStartSec and OriginalEndSec for all downstream items in the chapter
-    /// whose start time is at or after <paramref name="pivotBoundarySec"/>.
-    /// Applies to both Staged and Applied items so that revert/preview targets the
-    /// correct region even when upstream replacements change duration.
-    /// Call after apply/revert to cascade timing changes to downstream items.
+    /// Maps a baseline time position to the current (post-edit) timeline for a chapter
+    /// by delegating to <see cref="TimelineProjection.BaselineToCurrentTime"/>.
     /// </summary>
-    /// <param name="chapterStem">The chapter to mutate.</param>
-    /// <param name="pivotBoundarySec">Boundary after which items are considered downstream.</param>
-    /// <param name="deltaSec">The timeline delta to apply.</param>
-    /// <param name="excludeReplacementId">Optional replacement id to exclude from shifting.</param>
-    public void ShiftDownstream(
-        string chapterStem,
-        double pivotBoundarySec,
-        double deltaSec,
-        string? excludeReplacementId = null)
+    /// <param name="chapterStem">The chapter whose edit list to use.</param>
+    /// <param name="baselineTimeSec">A time in the original, unedited audio.</param>
+    /// <returns>The equivalent time in the current post-edit audio.</returns>
+    public double GetCurrentTime(string chapterStem, double baselineTimeSec)
     {
-        if (Math.Abs(deltaSec) < BoundaryEpsilonSec) return;
-        ArgumentException.ThrowIfNullOrWhiteSpace(chapterStem);
-
-        lock (_lock)
-        {
-            EnsureLoaded();
-            if (!_queue!.TryGetValue(chapterStem, out var list))
-                return;
-
-            bool changed = false;
-            for (int i = 0; i < list.Count; i++)
-            {
-                var item = list[i];
-                if (!string.IsNullOrWhiteSpace(excludeReplacementId) &&
-                    string.Equals(item.Id, excludeReplacementId, StringComparison.Ordinal))
-                {
-                    continue;
-                }
-
-                if (item.OriginalStartSec >= pivotBoundarySec - BoundaryEpsilonSec
-                    && (item.Status == ReplacementStatus.Staged || item.Status == ReplacementStatus.Applied))
-                {
-                    list[i] = item with
-                    {
-                        OriginalStartSec = item.OriginalStartSec + deltaSec,
-                        OriginalEndSec = item.OriginalEndSec + deltaSec
-                    };
-                    changed = true;
-                    Console.WriteLine(
-                        $"[CascadeOffset] Shifted sentence {item.SentenceId} ({item.Status}) @ {pivotBoundarySec:F3}s: " +
-                        $"{item.OriginalStartSec:F3}s → {list[i].OriginalStartSec:F3}s (delta {deltaSec:+0.000;-0.000}s)");
-                }
-            }
-
-            if (changed) Save();
-        }
+        var edits = _editListService.GetEdits(chapterStem);
+        return TimelineProjection.BaselineToCurrentTime(baselineTimeSec, edits);
     }
 
     /// <summary>

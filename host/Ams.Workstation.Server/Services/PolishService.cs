@@ -457,15 +457,11 @@ public class PolishService
             // 7. Persist corrected.wav to disk
             PersistCorrectedBuffer(operationHandle, resultBuffer);
 
-            // 8. Update status to Applied
+            // 8. Update status to Applied (also creates ChapterEdit in edit list for timeline projection)
             _stagingQueue.UpdateStatus(replacementId, ReplacementStatus.Applied);
 
-            // 9. Cascade timing delta to downstream items by timeline position.
-            _stagingQueue.ShiftDownstream(
-                item.ChapterStem,
-                item.OriginalEndSec,
-                timingDelta,
-                replacementId);
+            // Note: ShiftDownstream removed — baseline coordinates are immutable.
+            // Timeline mapping is handled by TimelineProjection via the edit list.
 
             return (resultBuffer, timingDelta);
         }
@@ -536,15 +532,11 @@ public class PolishService
             // 7. Persist corrected.wav to disk
             PersistCorrectedBuffer(operationHandle, resultBuffer);
 
-            // 8. Update status to Reverted
+            // 8. Update status to Reverted (also removes ChapterEdit from edit list)
             _stagingQueue.UpdateStatus(replacementId, ReplacementStatus.Reverted);
 
-            // 9. Cascade the negative delta to downstream staged items.
-            _stagingQueue.ShiftDownstream(
-                undoRecord.ChapterStem,
-                replacementEndSec,
-                timingDelta,
-                replacementId);
+            // Note: ShiftDownstream removed — baseline coordinates are immutable.
+            // Timeline mapping is handled by TimelineProjection via the edit list.
 
             return (resultBuffer, timingDelta);
         }
