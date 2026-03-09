@@ -1,4 +1,5 @@
 using Ams.Core.Artifacts;
+using System.Text;
 
 namespace Ams.Tests;
 
@@ -68,14 +69,34 @@ public class AudioBufferSliceTests
         Assert.NotNull(wavStream);
         Assert.True(wavStream.Length > 44, "WAV stream should have header + data");
 
-        // WAV header: bytes 40-43 contain data chunk size (little-endian)
-        wavStream.Position = 40;
-        var reader = new byte[4];
-        wavStream.Read(reader, 0, 4);
-        int dataSize = BitConverter.ToInt32(reader, 0);
+        var bytes = wavStream.ToArray();
+        var dataOffset = FindChunk(bytes, "data");
+        Assert.True(dataOffset >= 0, "WAV stream should contain a data chunk.");
+        int dataSize = BitConverter.ToInt32(bytes, dataOffset + 4);
 
         // 8000 samples * 2 bytes/sample (16-bit) = 16000 bytes
         Assert.Equal(8000 * 2, dataSize);
+    }
+
+    private static int FindChunk(byte[] wavBytes, string chunkId)
+    {
+        for (int offset = 12; offset + 8 <= wavBytes.Length;)
+        {
+            if (Encoding.ASCII.GetString(wavBytes, offset, 4) == chunkId)
+            {
+                return offset;
+            }
+
+            var chunkSize = BitConverter.ToInt32(wavBytes, offset + 4);
+            if (chunkSize < 0)
+            {
+                break;
+            }
+
+            offset += 8 + chunkSize + (chunkSize & 1);
+        }
+
+        return -1;
     }
 
     [Fact]

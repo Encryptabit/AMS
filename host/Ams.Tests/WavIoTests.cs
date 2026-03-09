@@ -1,4 +1,5 @@
 using System.Text;
+using Ams.Core.Artifacts;
 using Ams.Core.Processors;
 using Ams.Core.Services.Integrations.FFmpeg;
 
@@ -130,6 +131,37 @@ public class WavIoTests
         }
     }
 
+    [Fact]
+    public void EncodeToCustomStream_SeekableOutput_FinalizesWavHeader()
+    {
+        if (FfmpegUnavailable()) return;
+
+        var buffer = new AudioBuffer(1, 16000, 16000);
+        var span = buffer.GetChannelSpan(0);
+        for (int i = 0; i < span.Length; i++)
+        {
+            span[i] = (float)(0.5 * Math.Sin(2 * Math.PI * 440 * i / buffer.SampleRate));
+        }
+
+        using var stream = new TrackingMemoryStream();
+        FfEncoder.EncodeToCustomStream(buffer, stream, new AudioEncodeOptions(TargetBitDepth: 16));
+
+        Assert.True(stream.SeekCount > 0);
+
+        var bytes = stream.ToArray();
+        Assert.True(bytes.Length > 44);
+        Assert.Equal("RIFF", Encoding.ASCII.GetString(bytes, 0, 4));
+        Assert.Equal("WAVE", Encoding.ASCII.GetString(bytes, 8, 4));
+
+        var riffSize = BitConverter.ToInt32(bytes, 4);
+        var dataOffset = FindChunk(bytes, "data");
+        Assert.True(dataOffset >= 0, "WAV stream should contain a data chunk.");
+        var dataSize = BitConverter.ToInt32(bytes, dataOffset + 4);
+
+        Assert.Equal(bytes.Length - 8, riffSize);
+        Assert.Equal(buffer.Length * sizeof(short), dataSize);
+    }
+
     private static string WriteTempWav(ushort audioFormat, ushort bitsPerSample, int sampleRate, byte[] data)
     {
         const ushort channels = 1;
@@ -213,5 +245,37 @@ public class WavIoTests
         var path = Path.Combine(Path.GetTempPath(), $"wav-io-junk-{Guid.NewGuid():N}.wav");
         File.WriteAllBytes(path, ms.ToArray());
         return path;
+    }
+
+    private static int FindChunk(byte[] wavBytes, string chunkId)
+    {
+        for (int offset = 12; offset + 8 <= wavBytes.Length;)
+        {
+            if (Encoding.ASCII.GetString(wavBytes, offset, 4) == chunkId)
+            {
+                return offset;
+            }
+
+            var chunkSize = BitConverter.ToInt32(wavBytes, offset + 4);
+            if (chunkSize < 0)
+            {
+                break;
+            }
+
+            offset += 8 + chunkSize + (chunkSize & 1);
+        }
+
+        return -1;
+    }
+
+    private sealed class TrackingMemoryStream : MemoryStream
+    {
+        public int SeekCount { get; private set; }
+
+        public override long Seek(long offset, SeekOrigin loc)
+        {
+            SeekCount++;
+            return base.Seek(offset, loc);
+        }
     }
 }
