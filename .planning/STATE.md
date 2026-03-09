@@ -8,8 +8,8 @@ Audio Management System - CLI and core library for audio processing, ASR, forced
 
 **Milestone**: v2.0 Blazor Workstation
 **Phase**: 15 - Pickup Flow Redesign
-**Plan**: 5/7
-**Status**: Plan 15-05 complete; PolishService refactored with RebuildChapterAsync, unified ChapterEdit pipeline for pickups/roomtone, breath-aware boundaries, context playback preview
+**Plan**: 6/7
+**Status**: Plan 15-06 complete; PickupSubstitution UI refactored with unified import, unmatched bucket, reassignment, projection-mapped regions, pickup trim panel, migration detection
 
 ## Progress
 
@@ -28,7 +28,7 @@ v2.0 Blazor Workstation[██████████████████�
 | 15-03 | Pickup Asset Import & Text-Similarity Matching | 2 | Complete |
 | 15-04 | StagingQueue & UndoService Refactor | 2 | Complete |
 | 15-05 | Dual-Side Handle Editing | 2 | Complete |
-| 15-06 | Context Playback & Audition | 2 | Pending |
+| 15-06 | Context Playback & Audition | 3 | Complete |
 | 15-07 | Integration & Cleanup | 2 | Pending |
 
 ## Phase 14 Plans (Shared Chunked ASR/MFA)
@@ -197,6 +197,10 @@ v2.0 Blazor Workstation[██████████████████�
 | Rebuild edit order | Back-to-front (descending BaselineStartSec) | Each edit only affects content after itself; preserves upstream positions |
 | Roomtone ChapterEdit creation | Direct in PolishService, not StagingQueueService | Roomtone ops lack staging lifecycle; unified pipeline still produces ChapterEdit records |
 | Handle sizing | CrossfadeDuration + 30ms guard | Replaces fixed 80ms; ensures crossfade fits entirely in non-speech audio |
+| Unmatched bucket placement | Within Matches column | Below matched items rather than 4th column for layout efficiency |
+| Region baseline conversion | oldBaseline + (newCurrent - oldCurrent) | Preserves baseline-coordinate invariant while allowing current-time user adjustments |
+| Context playback on staged | GenerateContextPlaybackPreview | ±2.0s surrounding chapter audio spliced with pickup for in-context audition |
+| Migration detection | Old queue items + no edit list | Read-only check; no auto-migration of incompatible coordinate systems |
 
 ## Phase 8/8.1 Conclusions (Archived)
 
@@ -248,7 +252,7 @@ poc/VelloSharpPoc/     - Avalonia + VelloSharp (child window fails)
 
 ## Next Action
 
-Phase 15, Plan 05 complete. Ready for Plan 15-06 (Context Playback & Audition).
+Phase 15, Plan 06 complete. Ready for Plan 15-07 (Integration & Cleanup).
 
 ## Deferred UI Refinements (for Plan 10-04)
 
@@ -265,4 +269,4 @@ None currently.
 
 ## Session Continuity
 
-Last activity: 2026-03-09 - Completed 15-05: PolishService refactor with rebuild-based revert, unified edit pipeline, breath-aware boundaries
+Last activity: 2026-03-09 - Completed 15-06: PickupSubstitution UI refactor with unified import, unmatched bucket, reassignment, projection-mapped regions, pickup trim panel, migration detection

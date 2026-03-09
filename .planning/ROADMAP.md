@@ -262,7 +262,7 @@ Phases execute in numeric order: 1 -> 2 -> ... -> 15
 | 12.1. MFA Pickup Refinement | v2.0 | Complete    | 2026-02-24 | - |
 | 13. Pickup Substitution | v2.0 | 7/8 | Complete (pending verification) | - |
 | 14. Shared Chunked ASR/MFA | v2.0 | 7/7 | Complete | - |
-| 15. Pickup Flow Redesign | 2/7 | In Progress|  | - |
+| 15. Pickup Flow Redesign | 6/7 | In Progress |  | - |
 
 #### Phase 15: Pickup Flow Redesign
 **Goal**: Redesign pickup substitution to support order-independent multi-pickup application, unified timeline projection, dual-side boundary refinement, and both session-file and individual-file pickup sources
