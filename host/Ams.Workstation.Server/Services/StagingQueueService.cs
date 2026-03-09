@@ -262,6 +262,54 @@ public class StagingQueueService
     }
 
     /// <summary>
+    /// Updates the pickup-side (trim) boundaries for a staged replacement.
+    /// Called when the user adjusts trim handles on the pickup detail panel.
+    /// Only updates items with <see cref="ReplacementStatus.Staged"/> status.
+    /// </summary>
+    /// <param name="replacementId">The replacement to update.</param>
+    /// <param name="newPickupStartSec">New pickup trim start time in seconds.</param>
+    /// <param name="newPickupEndSec">New pickup trim end time in seconds.</param>
+    /// <param name="validationError">Validation error if update failed.</param>
+    /// <returns>True when updated; otherwise false.</returns>
+    public bool TryUpdatePickupBoundaries(
+        string replacementId,
+        double newPickupStartSec,
+        double newPickupEndSec,
+        out string? validationError)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(replacementId);
+
+        lock (_lock)
+        {
+            EnsureLoaded();
+            if (!IsValidRange(newPickupStartSec, newPickupEndSec))
+            {
+                validationError = "Pickup trim must have a positive duration.";
+                return false;
+            }
+
+            foreach (var list in _queue!.Values)
+            {
+                var index = list.FindIndex(r => r.Id == replacementId && r.Status == ReplacementStatus.Staged);
+                if (index >= 0)
+                {
+                    list[index] = list[index] with
+                    {
+                        PickupStartSec = newPickupStartSec,
+                        PickupEndSec = newPickupEndSec
+                    };
+                    Save();
+                    validationError = null;
+                    return true;
+                }
+            }
+
+            validationError = $"Replacement '{replacementId}' was not found or is not staged.";
+            return false;
+        }
+    }
+
+    /// <summary>
     /// Maps a baseline time position to the current (post-edit) timeline for a chapter
     /// by delegating to <see cref="TimelineProjection.BaselineToCurrentTime"/>.
     /// </summary>

@@ -263,6 +263,34 @@
             </BitGridItem>
         </BitGrid>
 
+        @* Row 3.5 - Pickup Detail Panel (shown when a pickup is selected) *@
+        @if (_selectedPickup != null)
+        {
+            <BitCard Style="padding: 0.75rem;">
+                <BitStack Horizontal="false" Gap="0.5rem" AutoHeight="true">
+                    <BitStack Horizontal="true" Gap="0.5rem" VerticalAlign="BitAlignment.Center" AutoHeight="true">
+                        <BitText Typography="BitTypography.Subtitle2">
+                            Pickup Trim
+                        </BitText>
+                        <BitText Typography="BitTypography.Caption1" Color="BitColor.SecondaryForeground">
+                            @TruncateText(_selectedPickup.TranscribedText, 60)
+                        </BitText>
+                        <BitButton Variant="BitVariant.Text"
+                                   Size="BitSize.Small"
+                                   OnClick="() => { _selectedPickup = null; _selectedReplacement = null; StateHasChanged(); }"
+                                   Style="margin-left: auto;">
+                            Close
+                        </BitButton>
+                    </BitStack>
+                    <WaveformPlayer @ref="_pickupWaveform"
+                                    AudioUrl="@GetPickupAudioUrl(_selectedPickup)"
+                                    Height="120"
+                                    OnReady="HandlePickupWaveformReady"
+                                    OnRegionUpdated="HandleRegionUpdated" />
+                </BitStack>
+            </BitCard>
+        }
+
         @* Row 4 - Roomtone Operations (visible when roomtone file is set) *@
         @if (!string.IsNullOrWhiteSpace(_roomtoneFilePath))
         {
@@ -1126,12 +1154,60 @@
             return;
         }
 
+        // Handle pickup trim region updates
+        if (region.Id == "pickup-trim" && _selectedPickup != null)
+        {
+            _selectedPickup = _selectedPickup with
+            {
+                TrimStartSec = Math.Max(0, region.Start),
+                TrimEndSec = region.End
+            };
+
+            // Update in the matched/unmatched lists
+            var matchedIdx = _matchedPickups.FindIndex(p => p.Id == _selectedPickup.Id);
+            if (matchedIdx >= 0) _matchedPickups[matchedIdx] = _selectedPickup;
+            var unmatchedIdx = _unmatchedPickups.FindIndex(p => p.Id == _selectedPickup.Id);
+            if (unmatchedIdx >= 0) _unmatchedPickups[unmatchedIdx] = _selectedPickup;
+
+            // If there's a corresponding staged replacement, update its pickup boundaries
+            if (_selectedPickup.MatchedSentenceId.HasValue)
+            {
+                var replacement = (_stagedItems ?? Array.Empty<StagedReplacement>())
+                    .FirstOrDefault(s => s.SentenceId == _selectedPickup.MatchedSentenceId.Value
+                                         && s.Status == ReplacementStatus.Staged);
+                if (replacement != null)
+                {
+                    StagingQueueService.TryUpdatePickupBoundaries(
+                        replacement.Id, region.Start, region.End, out _);
+                    RefreshCurrentChapterState();
+                }
+            }
+
+            StateHasChanged();
+            return;
+        }
+
         // Extract replacement ID from region ID (format: "staged-{replacementId}")
         if (!region.Id.StartsWith("staged-")) return;
         var replacementId = region.Id["staged-".Length..];
 
-        // Update boundaries in staging queue.
-        if (!StagingQueueService.TryUpdateBoundaries(replacementId, region.Start, region.End, out var error))
+        var stem = GetCurrentChapterStem();
+        if (stem == null) return;
+
+        // The region boundaries come in current-time space (projected).
+        // Convert back to baseline coordinates for storage:
+        // newBaseline = oldBaseline + (newCurrent - oldCurrent)
+        var replacement2 = (_stagedItems ?? Array.Empty<StagedReplacement>())
+            .FirstOrDefault(s => s.Id == replacementId);
+        if (replacement2 == null) return;
+
+        var oldCurrentStart = StagingQueueService.GetCurrentTime(stem, replacement2.OriginalStartSec);
+        var oldCurrentEnd = StagingQueueService.GetCurrentTime(stem, replacement2.OriginalEndSec);
+        var newBaselineStart = replacement2.OriginalStartSec + (region.Start - oldCurrentStart);
+        var newBaselineEnd = replacement2.OriginalEndSec + (region.End - oldCurrentEnd);
+
+        // Update boundaries in staging queue with baseline coordinates.
+        if (!StagingQueueService.TryUpdateBoundaries(replacementId, newBaselineStart, newBaselineEnd, out var error))
         {
             _processingStatus = $"Boundary update rejected: {error}";
             RefreshCurrentChapterState();
@@ -1147,28 +1223,41 @@
     {
         if (_waveformPlayer == null || !_isWaveformReady) return;
 
+        var stem = GetCurrentChapterStem();
+
         // Clear all existing regions
         await _waveformPlayer.ClearRegions();
 
-        // Add editable regions for staged items (green)
+        // Add editable regions for staged items (green) at projection-mapped positions
         var staged = GetStagedItems();
         foreach (var item in staged)
         {
+            var currentStart = stem != null
+                ? StagingQueueService.GetCurrentTime(stem, item.OriginalStartSec)
+                : item.OriginalStartSec;
+            var currentEnd = stem != null
+                ? StagingQueueService.GetCurrentTime(stem, item.OriginalEndSec)
+                : item.OriginalEndSec;
+
             await _waveformPlayer.AddEditableRegion(
                 $"staged-{item.Id}",
-                item.OriginalStartSec,
-                item.OriginalEndSec,
+                currentStart,
+                currentEnd,
                 "rgba(59, 200, 120, 0.3)"); // Green for staged
         }
 
-        // Add non-editable regions for committed items (gray, dimmed)
+        // Add non-editable regions for committed items (gray, dimmed) at projected positions
         var committed = GetCommittedItems();
         foreach (var item in committed)
         {
+            var currentStart = stem != null
+                ? StagingQueueService.GetCurrentTime(stem, item.OriginalStartSec)
+                : item.OriginalStartSec;
+
             await _waveformPlayer.AddRegion(
                 $"committed-{item.Id}",
-                item.OriginalStartSec,
-                item.OriginalStartSec + item.PickupDuration(),
+                currentStart,
+                currentStart + item.PickupDuration(),
                 "rgba(150, 150, 150, 0.25)"); // Gray for committed
         }
 
@@ -1206,6 +1295,47 @@
             await HandleStageMatch(_draggedMatch.Match);
             _draggedMatch = null;
         }
+    }
+
+    // ── Pickup Detail Panel ──────────────────────────────────────
+    private string GetPickupAudioUrl(PickupAsset asset)
+    {
+        // For individual files, serve the file directly
+        // For session segments, serve with trim boundaries
+        if (asset.SourceType == PickupSourceType.IndividualFile)
+        {
+            return $"/api/audio/pickup?path={Uri.EscapeDataString(asset.SourceFilePath)}";
+        }
+        return $"/api/audio/pickup?path={Uri.EscapeDataString(asset.SourceFilePath)}&start={asset.TrimStartSec:F3}&end={asset.TrimEndSec:F3}";
+    }
+
+    private async Task HandlePickupWaveformReady()
+    {
+        _isPickupWaveformReady = true;
+
+        // Add trim region to pickup waveform (orange for pickup trim)
+        if (_pickupWaveform != null && _selectedPickup != null)
+        {
+            await _pickupWaveform.AddEditableRegion(
+                "pickup-trim",
+                _selectedPickup.TrimStartSec,
+                _selectedPickup.TrimEndSec,
+                "rgba(245, 158, 11, 0.35)"); // Orange/amber for pickup trim
+        }
+        StateHasChanged();
+    }
+
+    private static string TruncateText(string? text, int maxLength)
+    {
+        if (string.IsNullOrEmpty(text)) return "";
+        return text.Length <= maxLength ? text : text[..maxLength] + "...";
+    }
+
+    private string? GetCurrentChapterStem()
+    {
+        if (_currentChapterIndex < 0 || _currentChapterIndex >= _chaptersWithCrx.Count)
+            return null;
+        return _chaptersWithCrx[_currentChapterIndex].Stem;
     }
 
     // ── State Refresh ─────────────────────────────────────────────
