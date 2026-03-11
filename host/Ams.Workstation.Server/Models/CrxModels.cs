@@ -74,3 +74,49 @@ public static class CrxCommentParser
     public static string StripBrackets(string text)
         => text.Replace("[", "").Replace("]", "").Trim();
 }
+
+internal static class CrxChapterMatcher
+{
+    private static readonly Regex ChapterLabelRegex = new(@"^(chapter|epilogue)\s+(\d+)\b", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+    private static readonly Regex CollapseWhitespaceRegex = new(@"\s+", RegexOptions.Compiled);
+    private static readonly Regex NonWordRegex = new(@"[^\w\s]", RegexOptions.Compiled);
+
+    public static bool Matches(string? crxChapter, string? currentChapter)
+    {
+        if (string.IsNullOrWhiteSpace(crxChapter) || string.IsNullOrWhiteSpace(currentChapter))
+            return false;
+
+        var crxLabel = TryParseLabel(crxChapter);
+        var currentLabel = TryParseLabel(currentChapter);
+        if (crxLabel.HasValue && currentLabel.HasValue)
+        {
+            return crxLabel.Value.Kind == currentLabel.Value.Kind &&
+                   crxLabel.Value.Number == currentLabel.Value.Number;
+        }
+
+        return string.Equals(
+            NormalizeForCompare(crxChapter),
+            NormalizeForCompare(currentChapter),
+            StringComparison.Ordinal);
+    }
+
+    private static (string Kind, int Number)? TryParseLabel(string chapterLabel)
+    {
+        var match = ChapterLabelRegex.Match(chapterLabel);
+        if (!match.Success)
+            return null;
+
+        return int.TryParse(match.Groups[2].Value, out var number)
+            ? (match.Groups[1].Value.ToLowerInvariant(), number)
+            : null;
+    }
+
+    private static string NormalizeForCompare(string? text)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+            return string.Empty;
+
+        var normalized = NonWordRegex.Replace(text.ToLowerInvariant().Trim(), " ");
+        return CollapseWhitespaceRegex.Replace(normalized, " ").Trim();
+    }
+}

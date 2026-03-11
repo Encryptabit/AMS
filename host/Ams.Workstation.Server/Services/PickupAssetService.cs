@@ -1,7 +1,3 @@
-using System.Security.Cryptography;
-using System.Text;
-using System.Text.Json;
-using Ams.Core.Common;
 using Ams.Workstation.Server.Models;
 
 namespace Ams.Workstation.Server.Services;
@@ -12,18 +8,12 @@ namespace Ams.Workstation.Server.Services;
 /// </summary>
 public class PickupAssetService
 {
-    private static readonly JsonSerializerOptions CacheJsonOptions = new()
-    {
-        WriteIndented = true
-    };
-
     private readonly PickupMatchingService _pickupMatching;
-    private readonly BlazorWorkspace _workspace;
 
     public PickupAssetService(PickupMatchingService pickupMatching, BlazorWorkspace workspace)
     {
         _pickupMatching = pickupMatching;
-        _workspace = workspace;
+        _ = workspace;
     }
 
     public async Task<(IReadOnlyList<PickupAsset> Matched, IReadOnlyList<PickupAsset> Unmatched)> ImportAsync(
@@ -66,17 +56,6 @@ public class PickupAssetService
         }
 
         var fi = new FileInfo(sessionFilePath);
-        var crxFingerprint = ComputeCrxFingerprint(crxTargets);
-
-        var cached = TryReadAssetCache();
-        if (cached != null &&
-            cached.SourceFilePath == fi.FullName &&
-            cached.SourceFileSizeBytes == fi.Length &&
-            cached.SourceFileModifiedUtc == fi.LastWriteTimeUtc &&
-            cached.CrxTargetsFingerprint == crxFingerprint)
-        {
-            return (cached.Assets, Array.Empty<PickupAsset>());
-        }
 
         var matches = await _pickupMatching.MatchPickupCrxAsync(sessionFilePath, crxTargets, ct)
             .ConfigureAwait(false);
@@ -116,75 +95,6 @@ public class PickupAssetService
                 ImportedAtUtc: now));
         }
 
-        var cache = new PickupAssetCache(
-            SourceFilePath: fi.FullName,
-            SourceFileSizeBytes: fi.Length,
-            SourceFileModifiedUtc: fi.LastWriteTimeUtc,
-            CrxTargetsFingerprint: crxFingerprint,
-            Assets: assets,
-            ProcessedAtUtc: now);
-        WriteAssetCache(cache);
-
         return (assets, Array.Empty<PickupAsset>());
-    }
-
-    private static string ComputeCrxFingerprint(IReadOnlyList<CrxPickupTarget> targets)
-    {
-        var pairs = targets
-            .OrderBy(t => t.ErrorNumber)
-            .Select(t => $"{t.ErrorNumber}:{t.ChapterStem}:{t.SentenceId}:{t.ShouldBeText}");
-        var joined = string.Join(";", pairs);
-        var hashBytes = SHA256.HashData(Encoding.UTF8.GetBytes(joined));
-        return Convert.ToHexString(hashBytes)[..16].ToLowerInvariant();
-    }
-
-    private string? GetCacheDir()
-    {
-        var workDir = _workspace.WorkingDirectory;
-        if (string.IsNullOrEmpty(workDir))
-            return null;
-
-        var dir = Path.Combine(workDir, ".polish");
-        Directory.CreateDirectory(dir);
-        return dir;
-    }
-
-    private PickupAssetCache? TryReadAssetCache()
-    {
-        var cacheDir = GetCacheDir();
-        if (cacheDir == null)
-            return null;
-
-        var cachePath = Path.Combine(cacheDir, "pickup-assets-cache.json");
-        if (!File.Exists(cachePath))
-            return null;
-
-        try
-        {
-            var json = File.ReadAllText(cachePath);
-            return JsonSerializer.Deserialize<PickupAssetCache>(json);
-        }
-        catch
-        {
-            return null;
-        }
-    }
-
-    private void WriteAssetCache(PickupAssetCache cache)
-    {
-        var cacheDir = GetCacheDir();
-        if (cacheDir == null)
-            return;
-
-        try
-        {
-            var cachePath = Path.Combine(cacheDir, "pickup-assets-cache.json");
-            var json = JsonSerializer.Serialize(cache, CacheJsonOptions);
-            File.WriteAllText(cachePath, json);
-        }
-        catch (Exception ex)
-        {
-            Log.Debug("Failed to write pickup asset cache: {Message}", ex.Message);
-        }
     }
 }

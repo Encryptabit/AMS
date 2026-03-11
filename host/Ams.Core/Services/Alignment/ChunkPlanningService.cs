@@ -99,7 +99,6 @@ public sealed class ChunkPlanningService
         var fingerprint = ComputeAudioFingerprint(buffer, sourceAudioPath);
 
         return new ChunkPlanDocument(
-            Version: ChunkPlanDocument.CurrentVersion,
             CreatedAtUtc: DateTime.UtcNow,
             SourceAudioPath: sourceAudioPath,
             SourceAudioFingerprint: fingerprint,
@@ -156,30 +155,11 @@ public sealed class ChunkPlanningService
 
         var effectivePolicy = policy ?? ChunkPlanningPolicy.Default;
 
-        if (existing.Version != ChunkPlanDocument.CurrentVersion)
-        {
-            return false;
-        }
+        var regenerated = GeneratePlan(buffer, sourceAudioPath, effectivePolicy);
 
-        // Check audio identity
-        var currentFingerprint = ComputeAudioFingerprint(buffer, sourceAudioPath);
-        if (!string.Equals(existing.SourceAudioFingerprint, currentFingerprint, StringComparison.Ordinal))
-        {
-            return false;
-        }
-
-        // Check policy match
-        var existingPolicy = existing.Policy;
-        if (existingPolicy.SilenceThresholdDb != effectivePolicy.SilenceThresholdDb ||
-            existingPolicy.MinSilenceDurationMs != effectivePolicy.MinSilenceDuration.TotalMilliseconds ||
-            existingPolicy.MinChunkDurationSec != effectivePolicy.MinChunkDuration.TotalSeconds ||
-            existingPolicy.MaxChunkDurationSec != effectivePolicy.MaxChunkDuration.TotalSeconds ||
-            existingPolicy.SampleRate != buffer.SampleRate)
-        {
-            return false;
-        }
-
-        return true;
+        return string.Equals(existing.SourceAudioFingerprint, regenerated.SourceAudioFingerprint, StringComparison.Ordinal) &&
+               existing.Policy == regenerated.Policy &&
+               existing.Chunks.SequenceEqual(regenerated.Chunks);
     }
 
     /// <summary>

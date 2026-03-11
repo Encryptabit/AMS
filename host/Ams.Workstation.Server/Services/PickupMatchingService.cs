@@ -26,7 +26,7 @@ namespace Ams.Workstation.Server.Services;
 public class PickupMatchingService
 {
     private const double MinSegmentDurationSec = 0.3;
-    private const double DefaultUtteranceGapSec = 2;
+    private const int MaxSegmentsPerTarget = 6;
 
     private static readonly Regex PunctuationRegex = new(@"[^\w\s]", RegexOptions.Compiled);
     private static readonly Regex WhitespaceRegex = new(@"\s+", RegexOptions.Compiled);
@@ -69,8 +69,8 @@ public class PickupMatchingService
         var asrReady = AsrAudioPreparer.PrepareForAsr(pickupBuffer);
         var chunkPlan = _chunkPlanning.GeneratePlan(asrReady, pickupFilePath, new ChunkPlanningPolicy()
         {
-            MaxChunkDuration = TimeSpan.FromSeconds(29.9),
-            MinChunkDuration = TimeSpan.FromSeconds(10),
+            MaxChunkDuration = TimeSpan.FromSeconds(15),
+            MinChunkDuration = TimeSpan.FromSeconds(5),
             MinSilenceDuration = TimeSpan.FromSeconds(2)
         });
 
@@ -94,22 +94,24 @@ public class PickupMatchingService
             ct).ConfigureAwait(false);
         WriteNamedMfaCache(asrResponse);
 
-        // 3. Use the standard ASR->MFA sentence-like segments as the single source of truth
-        //    for deterministic CRX pairing. If segment count does not match CRX count, fail fast.
+        var sortedTargets = crxTargets.OrderBy(t => t.ErrorNumber).ToList();
+
+        // 3. Collapse ASR/MFA segments back to CRX-target utterances. Whisper sentence
+        //    segments often split one pickup into multiple fragments, so deterministic
+        //    pairing needs a partitioning pass rather than a raw count equality check.
         if (asrResponse.Segments is not { Length: > 0 })
         {
             throw new InvalidOperationException(
                 "Pickup import could not derive any MFA-refined pickup segments from the session file.");
         }
 
-        var segments = ConvertAsrSegments(asrResponse.Segments);
+        var segments = BuildDeterministicSegments(asrResponse.Segments, sortedTargets);
         if (segments.Count != crxTargets.Count)
         {
             throw new InvalidOperationException(
                 $"Deterministic CRX pairing requires equal counts, but MFA produced {segments.Count} pickup segments for {crxTargets.Count} CRX targets.");
         }
 
-        var sortedTargets = crxTargets.OrderBy(t => t.ErrorNumber).ToList();
         return PairSegmentsToTargets(segments, sortedTargets);
     }
 
@@ -157,6 +159,29 @@ public class PickupMatchingService
         return matches;
     }
 
+    internal static List<PickupSegment> BuildDeterministicSegments(
+        IReadOnlyList<AsrSegment> segments,
+        IReadOnlyList<CrxPickupTarget> targets)
+    {
+        var result = ConvertAsrSegments(segments);
+        if (result.Count == 0 || targets.Count == 0)
+        {
+            return result;
+        }
+
+        if (result.Count == targets.Count)
+        {
+            return result;
+        }
+
+        if (result.Count < targets.Count)
+        {
+            return result;
+        }
+
+        return MergeSegmentsToTargets(result, targets);
+    }
+
     private static List<PickupSegment> ConvertAsrSegments(IReadOnlyList<AsrSegment> segments)
     {
         var result = new List<PickupSegment>(segments.Count);
@@ -177,6 +202,160 @@ public class PickupMatchingService
         }
 
         return result;
+    }
+
+    private static List<PickupSegment> MergeSegmentsToTargets(
+        IReadOnlyList<PickupSegment> segments,
+        IReadOnlyList<CrxPickupTarget> targets)
+    {
+        var segmentCount = segments.Count;
+        var targetCount = targets.Count;
+        var costs = new double[segmentCount + 1, targetCount + 1];
+        var previous = new int[segmentCount + 1, targetCount + 1];
+
+        for (var i = 0; i <= segmentCount; i++)
+        {
+            for (var j = 0; j <= targetCount; j++)
+            {
+                costs[i, j] = double.PositiveInfinity;
+                previous[i, j] = -1;
+            }
+        }
+
+        costs[0, 0] = 0;
+
+        for (var consumedSegments = 0; consumedSegments < segmentCount; consumedSegments++)
+        {
+            for (var consumedTargets = 0; consumedTargets < targetCount; consumedTargets++)
+            {
+                var baseCost = costs[consumedSegments, consumedTargets];
+                if (double.IsPositiveInfinity(baseCost))
+                {
+                    continue;
+                }
+
+                var remainingTargetsAfterCurrent = targetCount - consumedTargets - 1;
+                var maxEndExclusive = Math.Min(
+                    segmentCount - remainingTargetsAfterCurrent,
+                    consumedSegments + MaxSegmentsPerTarget);
+
+                for (var endExclusive = consumedSegments + 1; endExclusive <= maxEndExclusive; endExclusive++)
+                {
+                    var candidate = MergeSegmentRange(segments, consumedSegments, endExclusive);
+                    var assignmentCost = ComputeAssignmentCost(candidate.TranscribedText, targets[consumedTargets].ShouldBeText);
+                    var totalCost = baseCost + assignmentCost;
+
+                    if (totalCost < costs[endExclusive, consumedTargets + 1])
+                    {
+                        costs[endExclusive, consumedTargets + 1] = totalCost;
+                        previous[endExclusive, consumedTargets + 1] = consumedSegments;
+                    }
+                }
+            }
+        }
+
+        if (double.IsPositiveInfinity(costs[segmentCount, targetCount]))
+        {
+            return segments.ToList();
+        }
+
+        var merged = new List<PickupSegment>(targetCount);
+        var segmentIndex = segmentCount;
+        var targetIndex = targetCount;
+
+        while (targetIndex > 0)
+        {
+            var startIndex = previous[segmentIndex, targetIndex];
+            if (startIndex < 0)
+            {
+                return segments.ToList();
+            }
+
+            merged.Add(MergeSegmentRange(segments, startIndex, segmentIndex));
+            segmentIndex = startIndex;
+            targetIndex--;
+        }
+
+        merged.Reverse();
+        return merged;
+    }
+
+    private static PickupSegment MergeSegmentRange(
+        IReadOnlyList<PickupSegment> segments,
+        int startIndex,
+        int endExclusive)
+    {
+        var startSec = segments[startIndex].StartSec;
+        var endSec = segments[endExclusive - 1].EndSec;
+        var text = string.Join(" ", segments
+            .Skip(startIndex)
+            .Take(endExclusive - startIndex)
+            .Select(s => s.TranscribedText)
+            .Where(t => !string.IsNullOrWhiteSpace(t)))
+            .Trim();
+
+        return new PickupSegment(startSec, endSec, text);
+    }
+
+    private static double ComputeAssignmentCost(string candidateText, string targetText)
+    {
+        var candidateWords = SplitNormalizedWords(candidateText);
+        var targetWords = SplitNormalizedWords(targetText);
+        if (candidateWords.Count == 0 && targetWords.Count == 0)
+        {
+            return 0;
+        }
+
+        if (candidateWords.Count == 0 || targetWords.Count == 0)
+        {
+            return 1;
+        }
+
+        var distance = ComputeWordEditDistance(candidateWords, targetWords);
+        var maxWordCount = Math.Max(candidateWords.Count, targetWords.Count);
+        return distance / (double)maxWordCount;
+    }
+
+    private static IReadOnlyList<string> SplitNormalizedWords(string text)
+    {
+        var normalized = NormalizeForMatch(text);
+        if (string.IsNullOrWhiteSpace(normalized))
+        {
+            return Array.Empty<string>();
+        }
+
+        return normalized.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+    }
+
+    private static int ComputeWordEditDistance(IReadOnlyList<string> left, IReadOnlyList<string> right)
+    {
+        var dp = new int[left.Count + 1, right.Count + 1];
+
+        for (var i = 0; i <= left.Count; i++)
+        {
+            dp[i, 0] = i;
+        }
+
+        for (var j = 0; j <= right.Count; j++)
+        {
+            dp[0, j] = j;
+        }
+
+        for (var i = 1; i <= left.Count; i++)
+        {
+            for (var j = 1; j <= right.Count; j++)
+            {
+                var substitutionCost = string.Equals(left[i - 1], right[j - 1], StringComparison.Ordinal)
+                    ? 0
+                    : 1;
+
+                dp[i, j] = Math.Min(
+                    Math.Min(dp[i - 1, j] + 1, dp[i, j - 1] + 1),
+                    dp[i - 1, j - 1] + substitutionCost);
+            }
+        }
+
+        return dp[left.Count, right.Count];
     }
 
     /// <summary>

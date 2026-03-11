@@ -129,6 +129,32 @@ public class SilenceChunkerTests
     }
 
     [Fact]
+    public void EdgeSilence_DoesNotCreateRoomtoneOnlyChunks()
+    {
+        var totalLength = SampleRate * 60;
+        var leadingSilence = SampleRate * 3;
+        var trailingSilence = SampleRate * 3;
+        var interiorSilenceStart = SampleRate * 30;
+        var interiorSilenceLength = (int)(0.3 * SampleRate);
+
+        var buffer = CreateBuffer(totalLength);
+        FillAudio(buffer, 0, totalLength);
+        FillSilence(buffer, 0, leadingSilence);
+        FillSilence(buffer, interiorSilenceStart, interiorSilenceLength);
+        FillSilence(buffer, totalLength - trailingSilence, trailingSilence);
+
+        var chunks = SilenceChunker.FindChunkBoundaries(buffer,
+            maxChunkDuration: EffectivelyUnlimitedChunkDuration);
+
+        Assert.Equal(2, chunks.Count);
+
+        var expectedInteriorMidpoint = interiorSilenceStart + (interiorSilenceLength / 2);
+        Assert.InRange(chunks[0].Length, expectedInteriorMidpoint - 1024, expectedInteriorMidpoint + 1024);
+        Assert.Equal(chunks[0].StartSample + chunks[0].Length, chunks[1].StartSample);
+        Assert.Equal(totalLength, chunks.Sum(c => c.Length));
+    }
+
+    [Fact]
     public void ChunkBoundaries_CoverEntireBuffer()
     {
         // Verify no gaps or overlaps

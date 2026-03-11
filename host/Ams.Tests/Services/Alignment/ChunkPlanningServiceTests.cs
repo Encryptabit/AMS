@@ -132,13 +132,12 @@ public class ChunkPlanningServiceTests
     }
 
     [Fact]
-    public void GeneratePlan_StoresVersionAndMetadata()
+    public void GeneratePlan_StoresMetadata()
     {
         var buffer = CreateAudioBuffer(SampleRate * 60);
 
         var plan = _service.GeneratePlan(buffer, "/audio/chapter01.wav");
 
-        Assert.Equal(ChunkPlanDocument.CurrentVersion, plan.Version);
         Assert.Equal("/audio/chapter01.wav", plan.SourceAudioPath);
         Assert.True(plan.CreatedAtUtc <= DateTime.UtcNow);
         Assert.True(plan.CreatedAtUtc > DateTime.UtcNow.AddMinutes(-1));
@@ -212,10 +211,16 @@ public class ChunkPlanningServiceTests
     }
 
     [Fact]
-    public void IsValid_ReturnsFalseForOlderPlanVersion()
+    public void IsValid_ReturnsFalseWhenChunkBoundariesDiffer()
     {
         var buffer = CreateAudioBuffer(SampleRate * 60);
-        var plan = _service.GeneratePlan(buffer, "/audio/test.wav") with { Version = 1 };
+        var plan = _service.GeneratePlan(buffer, "/audio/test.wav") with
+        {
+            Chunks = new[]
+            {
+                new ChunkPlanEntry(0, 0, buffer.Length, 0.0, buffer.Length / (double)SampleRate)
+            }
+        };
 
         Assert.False(_service.IsValid(plan, buffer, "/audio/test.wav"));
     }

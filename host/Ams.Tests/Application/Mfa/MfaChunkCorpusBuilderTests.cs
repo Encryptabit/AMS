@@ -471,7 +471,6 @@ public class MfaChunkCorpusBuilderTests
     {
         var audio = new AudioBuffer(1, 16000, 16000);
         var chunkPlan = new ChunkPlanDocument(
-            Version: ChunkPlanDocument.CurrentVersion,
             CreatedAtUtc: DateTime.UtcNow,
             SourceAudioPath: "dummy.wav",
             SourceAudioFingerprint: "fp",
@@ -510,7 +509,6 @@ public class MfaChunkCorpusBuilderTests
     {
         var audio = new AudioBuffer(1, 16000, 16000);
         var chunkPlan = new ChunkPlanDocument(
-            Version: ChunkPlanDocument.CurrentVersion,
             CreatedAtUtc: DateTime.UtcNow,
             SourceAudioPath: "dummy.wav",
             SourceAudioFingerprint: "fp",

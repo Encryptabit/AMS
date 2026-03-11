@@ -85,16 +85,21 @@ public static class SilenceChunker
         var silenceRegions = DetectSilenceRegions(buffer, threshold, minSilenceSamples);
 
         // Extract midpoints as split candidates.
-        // Skip regions that span the entire buffer (all-silence) or sit at the
+        // Skip regions that span the entire buffer (all-silence) or touch the
         // very start/end with no audio on one side -- those aren't boundaries
-        // between audio segments.
+        // between speech segments and can otherwise create roomtone-only chunks.
         var splitCandidates = new List<int>(silenceRegions.Count);
         foreach (var (start, length) in silenceRegions)
         {
             var midpoint = start + length / 2;
-            // Skip if this silence region covers the full buffer
-            if (start == 0 && start + length >= buffer.Length)
+            var reachesStart = start <= 0;
+            var reachesEnd = start + length >= buffer.Length;
+
+            // Skip if this silence region covers the full buffer or only borders
+            // one side of the file instead of separating two speech regions.
+            if (reachesStart || reachesEnd)
                 continue;
+
             // Skip midpoints at the very edges (nothing useful to split)
             if (midpoint <= 0 || midpoint >= buffer.Length)
                 continue;

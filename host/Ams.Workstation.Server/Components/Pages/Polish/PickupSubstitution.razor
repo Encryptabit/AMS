@@ -308,7 +308,8 @@
                             Close
                         </BitButton>
                     </BitStack>
-                    <WaveformPlayer @ref="_pickupWaveform"
+                    <WaveformPlayer @key="_selectedPickup.Id"
+                                    @ref="_pickupWaveform"
                                     AudioUrl="@GetPickupAudioUrl(_selectedPickup)"
                                     Height="120"
                                     OnReady="HandlePickupWaveformReady"
@@ -434,9 +435,6 @@
     private const int PeakPxPerSec = 1200;
 
     private record ChapterCrxInfo(string ChapterName, string Stem, int CrxCount, bool AllCommitted);
-
-    // ── Regex helpers ─────────────────────────────────────────────
-    private static readonly Regex ChapterNumberRegex = new(@"\d+", RegexOptions.Compiled);
 
     // ── Computed properties ───────────────────────────────────────
     private bool CanGoNext => _currentChapterIndex >= 0 && _currentChapterIndex < _chaptersWithCrx.Count - 1;
@@ -744,8 +742,8 @@
                     if (sentence == null)
                         continue;
 
-                    var shouldBeText = CrxCommentParser.TryParseReadAs(entry.Comments)
-                        ?? CrxCommentParser.TryParseShouldBe(entry.Comments);
+                    var shouldBeText = CrxCommentParser.TryParseShouldBe(entry.Comments)
+                        ?? CrxCommentParser.TryParseReadAs(entry.Comments);
                     var bookText = sentence.BookText ?? string.Empty;
                     var originalStartSec = sentence.Timing?.StartSec ?? 0;
                     var originalEndSec = sentence.Timing?.EndSec ?? 0;
@@ -1449,13 +1447,7 @@
     // ── Pickup Detail Panel ──────────────────────────────────────
     private string GetPickupAudioUrl(PickupAsset asset)
     {
-        // For individual files, serve the file directly
-        // For session segments, serve with trim boundaries
-        if (asset.SourceType == PickupSourceType.IndividualFile)
-        {
-            return $"/api/audio/pickup?path={Uri.EscapeDataString(asset.SourceFilePath)}";
-        }
-        return $"/api/audio/pickup?path={Uri.EscapeDataString(asset.SourceFilePath)}&start={asset.TrimStartSec:F3}&end={asset.TrimEndSec:F3}";
+        return $"/api/audio?path={Uri.EscapeDataString(asset.SourceFilePath)}";
     }
 
     private async Task HandlePickupWaveformReady()
@@ -1545,39 +1537,7 @@
 
     // ── CRX Chapter Matching ─────────────────────────────────────
     private static bool ChapterMatches(string? crxChapter, string? currentChapter)
-    {
-        if (string.IsNullOrWhiteSpace(crxChapter) || string.IsNullOrWhiteSpace(currentChapter))
-            return false;
-
-        var crxNumber = TryExtractChapterNumber(crxChapter);
-        var currentNumber = TryExtractChapterNumber(currentChapter);
-        if (crxNumber.HasValue && currentNumber.HasValue)
-            return crxNumber.Value == currentNumber.Value;
-
-        return string.Equals(
-            NormalizeForCompare(crxChapter),
-            NormalizeForCompare(currentChapter),
-            StringComparison.Ordinal);
-    }
-
-    private static int? TryExtractChapterNumber(string chapterLabel)
-    {
-        var match = ChapterNumberRegex.Match(chapterLabel);
-        if (!match.Success)
-            return null;
-
-        return int.TryParse(match.Value, out var value) ? value : null;
-    }
-
-    private static string NormalizeForCompare(string? text)
-    {
-        if (string.IsNullOrWhiteSpace(text))
-            return string.Empty;
-
-        return Regex.Replace(
-            Regex.Replace(text.ToLowerInvariant().Trim(), @"[^\w\s]", " "),
-            @"\s+", " ").Trim();
-    }
+        => CrxChapterMatcher.Matches(crxChapter, currentChapter);
 
     // ── CRX Target Resolution ─────────────────────────────────────
     private static List<HydratedSentence> ResolveCrxTargets(

@@ -11,9 +11,6 @@ namespace Ams.Core.Artifacts.Alignment;
 /// </para>
 /// </summary>
 public sealed record ChunkPlanDocument(
-    [property: JsonPropertyName("version")]
-    int Version,
-
     [property: JsonPropertyName("createdAtUtc")]
     DateTime CreatedAtUtc,
 
@@ -27,14 +24,7 @@ public sealed record ChunkPlanDocument(
     ChunkPlanPolicy Policy,
 
     [property: JsonPropertyName("chunks")]
-    IReadOnlyList<ChunkPlanEntry> Chunks)
-{
-    /// <summary>
-    /// Current document schema version. Increment when making breaking changes
-    /// to the chunk plan format.
-    /// </summary>
-    public const int CurrentVersion = 2;
-}
+    IReadOnlyList<ChunkPlanEntry> Chunks);
 
 /// <summary>
 /// Policy metadata capturing the parameters used to generate the chunk plan.
