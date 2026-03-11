@@ -86,6 +86,67 @@ public class StagingQueueService
     }
 
     /// <summary>
+    /// Adds multiple replacements to the staging queue, saving once after all successful additions.
+    /// Items that fail validation are skipped and returned as error messages.
+    /// </summary>
+    public (int StagedCount, IReadOnlyList<string> Errors) TryStageMany(IReadOnlyList<StagedReplacement> items)
+    {
+        ArgumentNullException.ThrowIfNull(items);
+
+        if (items.Count == 0)
+        {
+            return (0, Array.Empty<string>());
+        }
+
+        lock (_lock)
+        {
+            EnsureLoaded();
+
+            var stagedCount = 0;
+            var errors = new List<string>();
+            var changed = false;
+
+            foreach (var item in items)
+            {
+                if (!_queue!.TryGetValue(item.ChapterStem, out var list))
+                {
+                    list = new List<StagedReplacement>();
+                    _queue[item.ChapterStem] = list;
+                }
+
+                if (!IsValidRange(item.OriginalStartSec, item.OriginalEndSec))
+                {
+                    errors.Add(
+                        $"Sentence {item.SentenceId}: replacement boundaries are invalid (end must be greater than start).");
+                    continue;
+                }
+
+                var conflicting = FindFirstOverlap(
+                    list,
+                    item.OriginalStartSec,
+                    item.OriginalEndSec,
+                    item.Id);
+                if (conflicting is not null)
+                {
+                    errors.Add($"Sentence {item.SentenceId}: {BuildOverlapError(conflicting)}");
+                    continue;
+                }
+
+                list.Add(item);
+                stagedCount++;
+                changed = true;
+            }
+
+            if (changed)
+            {
+                Save();
+            }
+
+            return (stagedCount, errors);
+        }
+    }
+
+    /// <summary>
     /// Removes a staged replacement by ID. Only removes items with <see cref="ReplacementStatus.Staged"/> status.
     /// </summary>
     /// <returns>True if the item was found and removed.</returns>

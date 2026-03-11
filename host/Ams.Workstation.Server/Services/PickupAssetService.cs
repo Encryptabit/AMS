@@ -1,55 +1,17 @@
-using System;
-using System.Collections.Generic;
-using System.IO;
-using System.Linq;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
-using System.Text.RegularExpressions;
-using System.Threading;
-using System.Threading.Tasks;
-using Ams.Core.Asr;
-using Ams.Core.Audio;
 using Ams.Core.Common;
-using Ams.Core.Processors;
 using Ams.Workstation.Server.Models;
 
 namespace Ams.Workstation.Server.Services;
 
 /// <summary>
-/// Unified pickup import service that normalizes both session-file segments
-/// and individual WAV files into <see cref="PickupAsset"/> records with disk caching.
-/// Auto-detects source type (directory of individual files vs single session file)
-/// and delegates to the appropriate import pipeline.
+/// Deterministic pickup import service for a single stitched session WAV.
+/// CRX targets define the required target order; no text-based disambiguation or fallback matching is allowed.
 /// </summary>
 public class PickupAssetService
 {
-    /// <summary>
-    /// Confidence threshold below which individual-file imports are considered unmatched.
-    /// </summary>
-    private const double IndividualFileUnmatchedThreshold = 0.2;
-
-    /// <summary>
-    /// Confidence threshold below which session-file segment imports are considered unmatched.
-    /// </summary>
-    private const double SessionSegmentUnmatchedThreshold = 0.3;
-
-    /// <summary>
-    /// MFA-aware gap threshold for utterance segmentation (seconds).
-    /// MFA phone boundaries give more precise word endpoints, so shorter silences
-    /// between them are legitimate utterance breaks.
-    /// </summary>
-    private const double MfaAwareGapThresholdSec = 0.4;
-
-    private static readonly Regex ErrorNumberPrefixRegex =
-        new(@"^(?:error|err)[_\-]?(\d+)", RegexOptions.Compiled | RegexOptions.IgnoreCase);
-
-    private static readonly Regex DirectNumberRegex =
-        new(@"^(\d+)$", RegexOptions.Compiled);
-
-    private static readonly Regex TrailingDigitsRegex =
-        new(@"(\d+)\s*$", RegexOptions.Compiled);
-
     private static readonly JsonSerializerOptions CacheJsonOptions = new()
     {
         WriteIndented = true
@@ -64,12 +26,6 @@ public class PickupAssetService
         _workspace = workspace;
     }
 
-    /// <summary>
-    /// Auto-detects source type and imports pickup assets accordingly.
-    /// If <paramref name="sourcePath"/> is a directory, delegates to <see cref="ImportFromFolderAsync"/>.
-    /// If it is a single WAV file, delegates to <see cref="ImportFromSessionFileAsync"/>.
-    /// </summary>
-    /// <returns>Tuple of (Matched, Unmatched) pickup assets.</returns>
     public async Task<(IReadOnlyList<PickupAsset> Matched, IReadOnlyList<PickupAsset> Unmatched)> ImportAsync(
         string sourcePath,
         IReadOnlyList<CrxPickupTarget> crxTargets,
@@ -79,129 +35,19 @@ public class PickupAssetService
         ArgumentNullException.ThrowIfNull(crxTargets);
 
         if (Directory.Exists(sourcePath))
-            return await ImportFromFolderAsync(sourcePath, crxTargets, ct).ConfigureAwait(false);
-
-        if (File.Exists(sourcePath))
-            return await ImportFromSessionFileAsync(sourcePath, crxTargets, ct).ConfigureAwait(false);
-
-        throw new FileNotFoundException($"Source path does not exist: '{sourcePath}'");
-    }
-
-    /// <summary>
-    /// Imports individual WAV files from a folder, matching each by filename pattern
-    /// to CRX error numbers. Runs ASR on each file for text confidence scoring.
-    /// </summary>
-    public async Task<(IReadOnlyList<PickupAsset> Matched, IReadOnlyList<PickupAsset> Unmatched)> ImportFromFolderAsync(
-        string folderPath,
-        IReadOnlyList<CrxPickupTarget> crxTargets,
-        CancellationToken ct)
-    {
-        ArgumentException.ThrowIfNullOrWhiteSpace(folderPath);
-        ArgumentNullException.ThrowIfNull(crxTargets);
-
-        if (!Directory.Exists(folderPath))
-            throw new DirectoryNotFoundException($"Folder does not exist: '{folderPath}'");
-
-        var wavFiles = Directory.GetFiles(folderPath, "*.wav")
-            .OrderBy(f => f, StringComparer.OrdinalIgnoreCase)
-            .ToList();
-
-        if (wavFiles.Count == 0)
-            return (Array.Empty<PickupAsset>(), Array.Empty<PickupAsset>());
-
-        // Build CRX lookup by error number — use a list per key because error numbers
-        // restart at 1 per chapter, so multiple targets can share the same number.
-        var targetsByErrorNumber = crxTargets
-            .GroupBy(t => t.ErrorNumber)
-            .ToDictionary(g => g.Key, g => g.ToList());
-
-        var matched = new List<PickupAsset>();
-        var unmatched = new List<PickupAsset>();
-        var now = DateTime.UtcNow;
-
-        foreach (var wavFile in wavFiles)
         {
-            ct.ThrowIfCancellationRequested();
-
-            var fileName = Path.GetFileNameWithoutExtension(wavFile);
-            var errorNumber = TryExtractErrorNumber(fileName);
-
-            // Determine file duration
-            var fileBuffer = AudioProcessor.Decode(wavFile);
-            var fileDuration = (double)fileBuffer.Length / fileBuffer.SampleRate;
-
-            // Run ASR for transcribed text
-            var asrReady = AsrAudioPreparer.PrepareForAsr(fileBuffer);
-            var asrOptions = await BuildAsrOptionsAsync(ct).ConfigureAwait(false);
-            var asrResponse = await AsrProcessor.TranscribeBufferAsync(asrReady, asrOptions, ct)
-                .ConfigureAwait(false);
-            var transcribedText = PickupMatchingService.ExtractFullText(asrResponse);
-
-            // Try to find matching CRX target — when multiple targets share an error number
-            // (across chapters), pick the one with the best text similarity.
-            CrxPickupTarget? matchedTarget = null;
-            double confidence = 0;
-            if (errorNumber.HasValue && targetsByErrorNumber.TryGetValue(errorNumber.Value, out var candidates))
-            {
-                if (candidates.Count == 1)
-                {
-                    matchedTarget = candidates[0];
-                    if (!string.IsNullOrWhiteSpace(transcribedText))
-                    {
-                        var normalizedAsr = PickupMatchingService.NormalizeForMatch(transcribedText);
-                        var normalizedShouldBe = PickupMatchingService.NormalizeForMatch(matchedTarget.ShouldBeText);
-                        confidence = LevenshteinMetrics.Similarity(normalizedAsr, normalizedShouldBe);
-                    }
-                }
-                else if (!string.IsNullOrWhiteSpace(transcribedText))
-                {
-                    // Multiple targets share this error number — disambiguate by text similarity
-                    var normalizedAsr = PickupMatchingService.NormalizeForMatch(transcribedText);
-                    foreach (var candidate in candidates)
-                    {
-                        var normalizedShouldBe = PickupMatchingService.NormalizeForMatch(candidate.ShouldBeText);
-                        var score = LevenshteinMetrics.Similarity(normalizedAsr, normalizedShouldBe);
-                        if (score > confidence)
-                        {
-                            confidence = score;
-                            matchedTarget = candidate;
-                        }
-                    }
-                }
-                else
-                {
-                    // No transcribed text to disambiguate — take the first candidate
-                    matchedTarget = candidates[0];
-                }
-            }
-
-            var asset = new PickupAsset(
-                Id: Guid.NewGuid().ToString("N"),
-                SourceType: PickupSourceType.IndividualFile,
-                SourceFilePath: wavFile,
-                TrimStartSec: 0,
-                TrimEndSec: fileDuration,
-                TranscribedText: transcribedText,
-                Confidence: confidence,
-                MatchedErrorNumber: matchedTarget != null ? errorNumber : null,
-                MatchedSentenceId: matchedTarget?.SentenceId,
-                MatchedChapterStem: matchedTarget?.ChapterStem,
-                ImportedAtUtc: now);
-
-            if (asset.MatchedErrorNumber == null || asset.Confidence < IndividualFileUnmatchedThreshold)
-                unmatched.Add(asset);
-            else
-                matched.Add(asset);
+            throw new InvalidOperationException(
+                "Folder-based pickup import is no longer supported. Provide a single stitched pickup WAV.");
         }
 
-        return (matched, unmatched);
+        if (!File.Exists(sourcePath))
+        {
+            throw new FileNotFoundException($"Source path does not exist: '{sourcePath}'");
+        }
+
+        return await ImportFromSessionFileAsync(sourcePath, crxTargets, ct).ConfigureAwait(false);
     }
 
-    /// <summary>
-    /// Imports a session recording file by running the enhanced matching pipeline
-    /// (ASR + MFA + segmentation) and wrapping results as <see cref="PickupAsset"/> records.
-    /// Uses disk cache to avoid redundant processing.
-    /// </summary>
     public async Task<(IReadOnlyList<PickupAsset> Matched, IReadOnlyList<PickupAsset> Unmatched)> ImportFromSessionFileAsync(
         string sessionFilePath,
         IReadOnlyList<CrxPickupTarget> crxTargets,
@@ -214,12 +60,14 @@ public class PickupAssetService
             throw new FileNotFoundException($"Session file does not exist: '{sessionFilePath}'");
 
         if (crxTargets.Count == 0)
-            return (Array.Empty<PickupAsset>(), Array.Empty<PickupAsset>());
+        {
+            throw new InvalidOperationException(
+                "Pickup import requires CRX targets. No CRX targets were resolved.");
+        }
 
         var fi = new FileInfo(sessionFilePath);
         var crxFingerprint = ComputeCrxFingerprint(crxTargets);
 
-        // Check cache
         var cached = TryReadAssetCache();
         if (cached != null &&
             cached.SourceFilePath == fi.FullName &&
@@ -227,26 +75,32 @@ public class PickupAssetService
             cached.SourceFileModifiedUtc == fi.LastWriteTimeUtc &&
             cached.CrxTargetsFingerprint == crxFingerprint)
         {
-            return SplitMatchedUnmatched(cached.Assets, SessionSegmentUnmatchedThreshold);
+            return (cached.Assets, Array.Empty<PickupAsset>());
         }
 
-        // Run the matching pipeline (delegates to PickupMatchingService)
         var matches = await _pickupMatching.MatchPickupCrxAsync(sessionFilePath, crxTargets, ct)
             .ConfigureAwait(false);
-
-        // MatchPickupCrxAsync returns matches in the same order as crxTargets sorted by ErrorNumber.
-        // Zip by index instead of looking up by ErrorNumber, because error numbers are NOT globally
-        // unique — they restart at 1 per chapter, so a dictionary keyed by ErrorNumber silently
-        // drops targets from all but one chapter sharing a given number.
         var sortedTargets = crxTargets.OrderBy(t => t.ErrorNumber).ToList();
 
-        var assets = new List<PickupAsset>();
+        if (matches.Count != sortedTargets.Count)
+        {
+            throw new InvalidOperationException(
+                $"Deterministic pickup import produced {matches.Count} matches for {sortedTargets.Count} CRX targets.");
+        }
+
+        var assets = new List<PickupAsset>(matches.Count);
         var now = DateTime.UtcNow;
 
-        for (int i = 0; i < matches.Count; i++)
+        for (var i = 0; i < matches.Count; i++)
         {
             var match = matches[i];
-            var target = i < sortedTargets.Count ? sortedTargets[i] : null;
+            var target = sortedTargets[i];
+
+            if (match.ErrorNumber != target.ErrorNumber)
+            {
+                throw new InvalidOperationException(
+                    $"Deterministic pickup import lost CRX ordering at index {i}: expected error #{target.ErrorNumber}, got #{match.ErrorNumber}.");
+            }
 
             assets.Add(new PickupAsset(
                 Id: Guid.NewGuid().ToString("N"),
@@ -255,14 +109,13 @@ public class PickupAssetService
                 TrimStartSec: match.PickupStartSec,
                 TrimEndSec: match.PickupEndSec,
                 TranscribedText: match.RecognizedText,
-                Confidence: match.Confidence,
-                MatchedErrorNumber: match.ErrorNumber,
-                MatchedSentenceId: target?.SentenceId ?? match.SentenceId,
-                MatchedChapterStem: target?.ChapterStem,
+                Confidence: 1.0,
+                MatchedErrorNumber: target.ErrorNumber,
+                MatchedSentenceId: target.SentenceId,
+                MatchedChapterStem: target.ChapterStem,
                 ImportedAtUtc: now));
         }
 
-        // Persist cache
         var cache = new PickupAssetCache(
             SourceFilePath: fi.FullName,
             SourceFileSizeBytes: fi.Length,
@@ -272,40 +125,8 @@ public class PickupAssetService
             ProcessedAtUtc: now);
         WriteAssetCache(cache);
 
-        return SplitMatchedUnmatched(assets, SessionSegmentUnmatchedThreshold);
+        return (assets, Array.Empty<PickupAsset>());
     }
-
-    /// <summary>
-    /// Extracts an error number from a pickup filename.
-    /// Supports patterns: "NNN" (direct), "error_NNN"/"err_NNN" (prefix),
-    /// trailing digits fallback (e.g., "Chapter3_Error001" → 1).
-    /// </summary>
-    internal static int? TryExtractErrorNumber(string fileNameWithoutExtension)
-    {
-        if (string.IsNullOrWhiteSpace(fileNameWithoutExtension))
-            return null;
-
-        var name = fileNameWithoutExtension.Trim();
-
-        // Direct number: "001", "42"
-        var directMatch = DirectNumberRegex.Match(name);
-        if (directMatch.Success && int.TryParse(directMatch.Groups[1].Value, out var directNum))
-            return directNum;
-
-        // Prefix: "error_5", "err_5", "error-5", "err-5", "error5"
-        var prefixMatch = ErrorNumberPrefixRegex.Match(name);
-        if (prefixMatch.Success && int.TryParse(prefixMatch.Groups[1].Value, out var prefixNum))
-            return prefixNum;
-
-        // Trailing digits fallback: "Chapter3_Error001" → 1
-        var trailingMatch = TrailingDigitsRegex.Match(name);
-        if (trailingMatch.Success && int.TryParse(trailingMatch.Groups[1].Value, out var trailingNum))
-            return trailingNum;
-
-        return null;
-    }
-
-    #region Cache
 
     private static string ComputeCrxFingerprint(IReadOnlyList<CrxPickupTarget> targets)
     {
@@ -331,10 +152,12 @@ public class PickupAssetService
     private PickupAssetCache? TryReadAssetCache()
     {
         var cacheDir = GetCacheDir();
-        if (cacheDir == null) return null;
+        if (cacheDir == null)
+            return null;
 
         var cachePath = Path.Combine(cacheDir, "pickup-assets-cache.json");
-        if (!File.Exists(cachePath)) return null;
+        if (!File.Exists(cachePath))
+            return null;
 
         try
         {
@@ -350,7 +173,8 @@ public class PickupAssetService
     private void WriteAssetCache(PickupAssetCache cache)
     {
         var cacheDir = GetCacheDir();
-        if (cacheDir == null) return;
+        if (cacheDir == null)
+            return;
 
         try
         {
@@ -363,38 +187,4 @@ public class PickupAssetService
             Log.Debug("Failed to write pickup asset cache: {Message}", ex.Message);
         }
     }
-
-    #endregion
-
-    #region Helpers
-
-    private static (IReadOnlyList<PickupAsset> Matched, IReadOnlyList<PickupAsset> Unmatched) SplitMatchedUnmatched(
-        IReadOnlyList<PickupAsset> assets,
-        double unmatchedThreshold)
-    {
-        var matched = new List<PickupAsset>();
-        var unmatched = new List<PickupAsset>();
-
-        foreach (var asset in assets)
-        {
-            if (asset.MatchedErrorNumber == null || asset.Confidence < unmatchedThreshold)
-                unmatched.Add(asset);
-            else
-                matched.Add(asset);
-        }
-
-        return (matched, unmatched);
-    }
-
-    private static async Task<AsrOptions> BuildAsrOptionsAsync(CancellationToken ct)
-    {
-        ct.ThrowIfCancellationRequested();
-        var (modelPath, _) = await AsrEngineConfig.ResolveModelPathAsync().ConfigureAwait(false);
-        return new AsrOptions(
-            ModelPath: modelPath,
-            Language: "en",
-            EnableWordTimestamps: true);
-    }
-
-    #endregion
 }

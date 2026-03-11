@@ -10,7 +10,7 @@ namespace Ams.Core.Services.Alignment;
 /// These values parameterize the SilenceChunker algorithm and are stored in
 /// the resulting <see cref="ChunkPlanDocument"/> for reproducibility.
 /// </summary>
-public sealed record ChunkPlanningPolicy
+public record ChunkPlanningPolicy
 {
     /// <summary>
     /// Silence threshold in decibels. Signals below this level are treated

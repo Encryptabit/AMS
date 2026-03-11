@@ -28,6 +28,10 @@ public class PickupMfaRefinementService
     {
         WriteIndented = false
     };
+    private static readonly JsonSerializerOptions ArtifactJsonOptions = new()
+    {
+        WriteIndented = true
+    };
 
     private readonly BlazorWorkspace _workspace;
     private readonly ChunkPlanningService _chunkPlanning = new();
@@ -79,43 +83,54 @@ public class PickupMfaRefinementService
                 return asrResponse;
             }
 
-            var cacheHash = ComputeMfaCacheKey(pickupFilePath, alignmentWords);
-            var pickupCacheDir = Path.Combine(workDir, ".polish", "pickups");
-            Directory.CreateDirectory(pickupCacheDir);
+            var artifactPaths = GetArtifactPaths(workDir);
+            var artifactState = BuildArtifactState(pickupFilePath, alignmentWords, chunkPlan);
+            var cachedState = TryReadArtifactState(artifactPaths.MetadataPath);
+            var artifactsCurrent = IsArtifactStateCurrent(cachedState, artifactState);
 
-            var refinedAsrCachePath = Path.Combine(pickupCacheDir, $"{cacheHash}.asr.mfa.json");
-            var cachedRefined = TryReadAsrResponseCache(refinedAsrCachePath);
-            if (cachedRefined?.Tokens is { Length: > 0 })
+            if (artifactsCurrent)
             {
-                Log.Debug("MFA pickup ASR cache hit ({Hash})", cacheHash);
-                return cachedRefined;
+                var cachedRefined = TryReadAsrResponseCache(artifactPaths.RefinedAsrPath);
+                if (cachedRefined?.Tokens is { Length: > 0 })
+                {
+                    Log.Debug("MFA pickup ASR cache hit ({Path})", artifactPaths.RefinedAsrPath);
+                    return cachedRefined;
+                }
+            }
+            else
+            {
+                ResetArtifactPaths(artifactPaths);
             }
 
-            var artifactRoot = Path.Combine(pickupCacheDir, "mfa", cacheHash);
-            Directory.CreateDirectory(artifactRoot);
-
-            var corpusDir = artifactRoot;
-            var outputDir = Path.Combine(artifactRoot, "output");
-            Directory.CreateDirectory(outputDir);
+            EnsureArtifactDirectories(artifactPaths);
+            WriteJsonArtifact(artifactPaths.ChunkPlanPath, chunkPlan);
 
             string? textGridPath;
             if (chunkPlan.Chunks.Count > 1)
             {
-                var chunkAudioDir = Path.Combine(artifactRoot, "chunk-audio");
-                corpusDir = Path.Combine(artifactRoot, "corpus");
-                var mfaCopyDir = Path.Combine(artifactRoot, "mfa");
-                Directory.CreateDirectory(chunkAudioDir);
-                Directory.CreateDirectory(corpusDir);
-                Directory.CreateDirectory(mfaCopyDir);
-
-                var utterances = BuildChunkCorpus(asrReadyBuffer, chunkPlan, asrResponse, chunkAudioDir, corpusDir);
-                if (utterances.Count == 0)
+                var corpus = BuildChunkCorpus(
+                    asrReadyBuffer,
+                    chunkPlan,
+                    asrResponse,
+                    artifactPaths.ChunkAudioDir,
+                    artifactPaths.CorpusDir);
+                if (corpus.Utterances.Count == 0)
                 {
                     Log.Warn("MFA pickup refinement skipped: chunked pickup corpus produced no utterances");
                     return asrResponse;
                 }
 
-                textGridPath = Path.Combine(mfaCopyDir, "pickup.TextGrid");
+                WriteJsonArtifact(
+                    artifactPaths.ChunkAudioPath,
+                    new ChunkAudioDocument(
+                        Version: ChunkAudioDocument.CurrentVersion,
+                        CreatedAtUtc: DateTime.UtcNow,
+                        SourceAudioFingerprint: chunkPlan.SourceAudioFingerprint,
+                        SampleRate: asrReadyBuffer.SampleRate,
+                        Channels: asrReadyBuffer.Channels,
+                        Chunks: corpus.ChunkAudioEntries));
+
+                textGridPath = artifactPaths.TextGridPath;
                 if (!File.Exists(textGridPath))
                 {
                     await MfaProcessSupervisor.EnsureReadyAsync(ct).ConfigureAwait(false);
@@ -123,9 +138,9 @@ public class PickupMfaRefinementService
                     var pickupBeam = MfaBeamSettings.Resolve(MfaBeamProfile.Strict);
                     var context = new MfaChapterContext
                     {
-                        CorpusDirectory = corpusDir,
-                        OutputDirectory = outputDir,
-                        WorkingDirectory = artifactRoot,
+                        CorpusDirectory = artifactPaths.CorpusDir,
+                        OutputDirectory = artifactPaths.OutputDir,
+                        WorkingDirectory = artifactPaths.RootDir,
                         DictionaryModel = MfaService.DefaultDictionaryModel,
                         AcousticModel = MfaService.DefaultAcousticModel,
                         G2pModel = MfaService.DefaultG2pModel,
@@ -144,8 +159,8 @@ public class PickupMfaRefinementService
                         return asrResponse;
                     }
 
-                    CollectChunkTextGrids(utterances, outputDir, mfaCopyDir);
-                    var aggregatedCount = AggregateChunkTextGrids(utterances, mfaCopyDir, textGridPath);
+                    CollectChunkTextGrids(corpus.Utterances, artifactPaths.OutputDir, artifactPaths.MfaDir);
+                    var aggregatedCount = AggregateChunkTextGrids(corpus.Utterances, artifactPaths.MfaDir, textGridPath);
                     if (aggregatedCount == 0)
                     {
                         Log.Warn("Chunked MFA pickup aggregation produced no intervals, using ASR timings");
@@ -154,16 +169,16 @@ public class PickupMfaRefinementService
                 }
                 else
                 {
-                    Log.Debug("MFA pickup chunked artifact reuse hit ({Hash})", cacheHash);
+                    Log.Debug("MFA pickup chunked artifact reuse hit ({Path})", textGridPath);
                 }
             }
             else
             {
                 // Always stage the full pickup WAV (never clip).
-                var stagedWavPath = Path.Combine(corpusDir, "pickup.wav");
+                var stagedWavPath = Path.Combine(artifactPaths.CorpusDir, "pickup.wav");
                 EnsureStagedPickupWav(pickupFilePath, stagedWavPath);
 
-                var labPath = Path.Combine(corpusDir, "pickup.lab");
+                var labPath = Path.Combine(artifactPaths.CorpusDir, "pickup.lab");
                 var labContent = string.Join(' ', alignmentWords);
                 if (string.IsNullOrWhiteSpace(labContent))
                 {
@@ -172,7 +187,9 @@ public class PickupMfaRefinementService
                 }
 
                 await EnsureLabContentAsync(labPath, labContent, ct).ConfigureAwait(false);
-                textGridPath = FindTextGridFile(outputDir);
+                textGridPath = File.Exists(artifactPaths.TextGridPath)
+                    ? artifactPaths.TextGridPath
+                    : FindTextGridFile(artifactPaths.OutputDir);
             }
 
             if (textGridPath == null)
@@ -185,9 +202,9 @@ public class PickupMfaRefinementService
 
                 var context = new MfaChapterContext
                 {
-                    CorpusDirectory = corpusDir,
-                    OutputDirectory = outputDir,
-                    WorkingDirectory = artifactRoot,
+                    CorpusDirectory = artifactPaths.CorpusDir,
+                    OutputDirectory = artifactPaths.OutputDir,
+                    WorkingDirectory = artifactPaths.RootDir,
                     DictionaryModel = MfaService.DefaultDictionaryModel,
                     AcousticModel = MfaService.DefaultAcousticModel,
                     G2pModel = MfaService.DefaultG2pModel,
@@ -207,17 +224,23 @@ public class PickupMfaRefinementService
                     return asrResponse;
                 }
 
-                textGridPath = FindTextGridFile(outputDir);
+                textGridPath = FindTextGridFile(artifactPaths.OutputDir);
             }
             else
             {
-                Log.Debug("MFA pickup artifact reuse hit ({Hash})", cacheHash);
+                Log.Debug("MFA pickup artifact reuse hit ({Path})", textGridPath);
             }
 
             if (textGridPath == null)
             {
                 Log.Warn("MFA TextGrid not found after alignment, using ASR timings");
                 return asrResponse;
+            }
+
+            if (!string.Equals(textGridPath, artifactPaths.TextGridPath, StringComparison.OrdinalIgnoreCase))
+            {
+                File.Copy(textGridPath, artifactPaths.TextGridPath, overwrite: true);
+                textGridPath = artifactPaths.TextGridPath;
             }
 
             var intervals = TextGridParser.ParseWordIntervals(textGridPath);
@@ -232,7 +255,8 @@ public class PickupMfaRefinementService
             var refinedTokens = ApplyRefinedTimings(asrResponse.Tokens, tokenTimings);
             var refinedResponse = asrResponse with { Tokens = refinedTokens };
 
-            WriteAsrResponseCache(refinedAsrCachePath, refinedResponse);
+            WriteAsrResponseCache(artifactPaths.RefinedAsrPath, refinedResponse);
+            WriteArtifactState(artifactPaths.MetadataPath, artifactState);
 
             Log.Debug(
                 "MFA pickup ASR refinement complete: {Updated}/{Total} token timings updated",
@@ -409,7 +433,7 @@ public class PickupMfaRefinementService
         return true;
     }
 
-    private static List<PickupChunkUtterance> BuildChunkCorpus(
+    private static PickupChunkCorpus BuildChunkCorpus(
         AudioBuffer asrReadyBuffer,
         ChunkPlanDocument chunkPlan,
         AsrResponse asrResponse,
@@ -420,6 +444,7 @@ public class PickupMfaRefinementService
         CleanDirectory(corpusDir, "*.wav", "*.lab");
 
         var utterances = new List<PickupChunkUtterance>(chunkPlan.Chunks.Count);
+        var chunkAudioEntries = new List<ChunkAudioEntry>(chunkPlan.Chunks.Count);
         for (var i = 0; i < chunkPlan.Chunks.Count; i++)
         {
             var chunk = chunkPlan.Chunks[i];
@@ -457,6 +482,13 @@ public class PickupMfaRefinementService
             File.Copy(chunkAudioPath, corpusAudioPath, overwrite: true);
             File.WriteAllText(labPath, string.Join(' ', labWords), Encoding.UTF8);
 
+            chunkAudioEntries.Add(new ChunkAudioEntry(
+                ChunkId: chunk.ChunkId,
+                UtteranceName: utteranceName,
+                StartSec: chunk.StartSec,
+                EndSec: chunk.EndSec,
+                WavPath: chunkAudioPath));
+
             utterances.Add(new PickupChunkUtterance(
                 chunk.ChunkId,
                 utteranceName,
@@ -469,7 +501,7 @@ public class PickupMfaRefinementService
             utterances.Count,
             chunkPlan.Chunks.Count);
 
-        return utterances;
+        return new PickupChunkCorpus(utterances, chunkAudioEntries);
     }
 
     private static List<string> ExtractChunkAlignmentWords(
@@ -666,23 +698,149 @@ public class PickupMfaRefinementService
         double ChunkStartSec,
         double ChunkEndSec);
 
+    private sealed record PickupChunkCorpus(
+        IReadOnlyList<PickupChunkUtterance> Utterances,
+        IReadOnlyList<ChunkAudioEntry> ChunkAudioEntries);
+
     #endregion
 
     #region Cache / Artifacts
 
-    private static string ComputeMfaCacheKey(string pickupFilePath, IReadOnlyList<string> alignmentWords)
+    private static PickupArtifactPaths GetArtifactPaths(string workDir)
+    {
+        var rootDir = Path.Combine(workDir, ".polish", "pickups");
+        var alignmentDir = Path.Combine(rootDir, "alignment");
+        var chunkAudioDir = Path.Combine(alignmentDir, "chunk-audio");
+        var corpusDir = Path.Combine(alignmentDir, "corpus");
+        var mfaDir = Path.Combine(alignmentDir, "mfa");
+        var outputDir = Path.Combine(alignmentDir, "output");
+
+        return new PickupArtifactPaths(
+            RootDir: rootDir,
+            AlignmentDir: alignmentDir,
+            ChunkAudioDir: chunkAudioDir,
+            CorpusDir: corpusDir,
+            MfaDir: mfaDir,
+            OutputDir: outputDir,
+            ChunkPlanPath: Path.Combine(rootDir, "pickups.align.chunks.json"),
+            ChunkAudioPath: Path.Combine(rootDir, "pickups.align.chunk-audio.json"),
+            RefinedAsrPath: Path.Combine(rootDir, "pickups.asr.mfa.json"),
+            MetadataPath: Path.Combine(rootDir, "pickups.meta.json"),
+            TextGridPath: Path.Combine(mfaDir, "pickups.TextGrid"));
+    }
+
+    private static PickupArtifactState BuildArtifactState(
+        string pickupFilePath,
+        IReadOnlyList<string> alignmentWords,
+        ChunkPlanDocument chunkPlan)
     {
         var fi = new FileInfo(pickupFilePath);
+        return new PickupArtifactState(
+            PickupFilePath: fi.FullName,
+            PickupFileSizeBytes: fi.Length,
+            PickupFileModifiedUtc: fi.LastWriteTimeUtc,
+            AlignmentWordsHash: ComputeAlignmentWordsHash(alignmentWords),
+            ChunkPlanHash: ComputeChunkPlanHash(chunkPlan));
+    }
+
+    private static string ComputeAlignmentWordsHash(IReadOnlyList<string> alignmentWords)
+    {
+        var joined = string.Join('|', alignmentWords);
+        var hashBytes = SHA256.HashData(Encoding.UTF8.GetBytes(joined));
+        return Convert.ToHexString(hashBytes)[..16].ToLowerInvariant();
+    }
+
+    private static string ComputeChunkPlanHash(ChunkPlanDocument chunkPlan)
+    {
         var sb = new StringBuilder();
-        sb.Append(fi.FullName).Append('|').Append(fi.Length).Append('|').Append(fi.LastWriteTimeUtc.ToString("O"));
-        sb.Append('|').Append(alignmentWords.Count);
-        foreach (var word in alignmentWords)
+        sb.Append(chunkPlan.SourceAudioPath).Append('|')
+            .Append(chunkPlan.SourceAudioFingerprint).Append('|')
+            .Append(chunkPlan.Policy.SilenceThresholdDb).Append('|')
+            .Append(chunkPlan.Policy.MinSilenceDurationMs).Append('|')
+            .Append(chunkPlan.Policy.MinChunkDurationSec).Append('|')
+            .Append(chunkPlan.Policy.MaxChunkDurationSec).Append('|')
+            .Append(chunkPlan.Policy.SampleRate);
+
+        foreach (var chunk in chunkPlan.Chunks)
         {
-            sb.Append('|').Append(word);
+            sb.Append('|')
+                .Append(chunk.ChunkId).Append(':')
+                .Append(chunk.StartSample).Append(':')
+                .Append(chunk.LengthSamples).Append(':')
+                .Append(chunk.StartSec).Append(':')
+                .Append(chunk.EndSec);
         }
 
         var hashBytes = SHA256.HashData(Encoding.UTF8.GetBytes(sb.ToString()));
         return Convert.ToHexString(hashBytes)[..16].ToLowerInvariant();
+    }
+
+    private static PickupArtifactState? TryReadArtifactState(string metadataPath)
+    {
+        if (!File.Exists(metadataPath))
+            return null;
+
+        try
+        {
+            var json = File.ReadAllText(metadataPath);
+            return JsonSerializer.Deserialize<PickupArtifactState>(json);
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static bool IsArtifactStateCurrent(PickupArtifactState? existing, PickupArtifactState current)
+    {
+        return existing != null &&
+               string.Equals(existing.PickupFilePath, current.PickupFilePath, StringComparison.OrdinalIgnoreCase) &&
+               existing.PickupFileSizeBytes == current.PickupFileSizeBytes &&
+               existing.PickupFileModifiedUtc == current.PickupFileModifiedUtc &&
+               string.Equals(existing.AlignmentWordsHash, current.AlignmentWordsHash, StringComparison.Ordinal) &&
+               string.Equals(existing.ChunkPlanHash, current.ChunkPlanHash, StringComparison.Ordinal);
+    }
+
+    private static void WriteArtifactState(string metadataPath, PickupArtifactState state)
+        => WriteJsonArtifact(metadataPath, state);
+
+    private static void EnsureArtifactDirectories(PickupArtifactPaths paths)
+    {
+        Directory.CreateDirectory(paths.RootDir);
+        Directory.CreateDirectory(paths.AlignmentDir);
+        Directory.CreateDirectory(paths.ChunkAudioDir);
+        Directory.CreateDirectory(paths.CorpusDir);
+        Directory.CreateDirectory(paths.MfaDir);
+        Directory.CreateDirectory(paths.OutputDir);
+    }
+
+    private static void ResetArtifactPaths(PickupArtifactPaths paths)
+    {
+        TryDeleteFile(paths.ChunkPlanPath);
+        TryDeleteFile(paths.ChunkAudioPath);
+        TryDeleteFile(paths.RefinedAsrPath);
+        TryDeleteFile(paths.MetadataPath);
+        TryDeleteFile(paths.TextGridPath);
+
+        CleanDirectory(paths.ChunkAudioDir, "*.wav");
+        CleanDirectory(paths.CorpusDir, "*.wav", "*.lab");
+        CleanDirectory(paths.MfaDir, "*.TextGrid");
+        CleanDirectory(paths.OutputDir, "*.TextGrid", "*.csv", "*.json");
+    }
+
+    private static void TryDeleteFile(string path)
+    {
+        if (!File.Exists(path))
+            return;
+
+        try
+        {
+            File.Delete(path);
+        }
+        catch (Exception ex)
+        {
+            Log.Debug("Failed to remove stale pickup artifact {Path}: {Message}", path, ex.Message);
+        }
     }
 
     private static AsrResponse? TryReadAsrResponseCache(string cachePath)
@@ -717,6 +875,43 @@ public class PickupMfaRefinementService
             Log.Debug("Failed to write MFA pickup ASR cache: {Message}", ex.Message);
         }
     }
+
+    private static void WriteJsonArtifact<T>(string path, T value)
+    {
+        try
+        {
+            var dir = Path.GetDirectoryName(path);
+            if (!string.IsNullOrWhiteSpace(dir))
+                Directory.CreateDirectory(dir);
+
+            var json = JsonSerializer.Serialize(value, ArtifactJsonOptions);
+            File.WriteAllText(path, json);
+        }
+        catch (Exception ex)
+        {
+            Log.Debug("Failed to write pickup artifact {Path}: {Message}", path, ex.Message);
+        }
+    }
+
+    private sealed record PickupArtifactPaths(
+        string RootDir,
+        string AlignmentDir,
+        string ChunkAudioDir,
+        string CorpusDir,
+        string MfaDir,
+        string OutputDir,
+        string ChunkPlanPath,
+        string ChunkAudioPath,
+        string RefinedAsrPath,
+        string MetadataPath,
+        string TextGridPath);
+
+    private sealed record PickupArtifactState(
+        string PickupFilePath,
+        long PickupFileSizeBytes,
+        DateTime PickupFileModifiedUtc,
+        string AlignmentWordsHash,
+        string ChunkPlanHash);
 
     #endregion
 

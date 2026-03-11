@@ -1,3 +1,5 @@
+using Ams.Core.Audio;
+
 namespace Ams.Workstation.Server.Models;
 
 /// <summary>
@@ -52,6 +54,19 @@ public sealed record PickupMatch(
     string RecognizedText,
     int? ErrorNumber = null,
     bool IsLowConfidence = false);
+
+/// <summary>
+/// Input required to stage a pickup replacement against a chapter sentence.
+/// Used by batch staging paths to avoid repeated UI-to-service calls.
+/// </summary>
+public sealed record PickupStageRequest(
+    PickupMatch Match,
+    string PickupFilePath,
+    double OriginalStartSec,
+    double OriginalEndSec,
+    double? CrossfadeSec = null,
+    string? Curve = null,
+    SpliceBoundaryOptions? BoundaryOptions = null);
 
 /// <summary>
 /// A discrete segment within a pickup recording, identified by its time boundaries

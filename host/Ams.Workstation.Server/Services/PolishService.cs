@@ -271,16 +271,140 @@ public class PolishService
         ArgumentNullException.ThrowIfNull(match);
         ArgumentException.ThrowIfNullOrWhiteSpace(pickupFilePath);
 
+        var operationHandle = GetActiveChapterHandleOrThrow();
+        var operationStem = operationHandle.Chapter.Descriptor.ChapterId;
+        if (!string.Equals(operationStem, chapterStem, StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException(
+                $"Cannot stage replacement for chapter '{chapterStem}' while active chapter is '{operationStem}'.");
+        }
+
+        operationHandle.Chapter.Book.Audio.RegisterPickup(pickupFilePath);
+        var chapterBuffer = GetChapterBuffer(operationHandle);
+        var hydrate = GetCurrentHydratedTranscript();
+        var sentenceIndexById = BuildSentenceIndexLookup(hydrate);
+
+        var replacement = BuildStagedReplacement(
+            operationHandle,
+            chapterStem,
+            match,
+            pickupFilePath,
+            originalStartSec,
+            originalEndSec,
+            chapterBuffer,
+            hydrate,
+            sentenceIndexById,
+            crossfadeSec,
+            curve,
+            boundaryOptions);
+
+        if (!_stagingQueue.TryStage(replacement, out var validationError))
+        {
+            throw new InvalidOperationException(
+                $"Failed to stage replacement for sentence {match.SentenceId}: {validationError}");
+        }
+
+        return replacement;
+    }
+
+    /// <summary>
+    /// Stages multiple replacements against the active chapter using one shared chapter buffer
+    /// and a single queue save, reducing the overhead of Stage All operations.
+    /// </summary>
+    public (int StagedCount, IReadOnlyList<string> Errors) StageReplacements(
+        string chapterStem,
+        IReadOnlyList<PickupStageRequest> requests)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(chapterStem);
+        ArgumentNullException.ThrowIfNull(requests);
+
+        if (requests.Count == 0)
+        {
+            return (0, Array.Empty<string>());
+        }
+
+        var operationHandle = GetActiveChapterHandleOrThrow();
+        var operationStem = operationHandle.Chapter.Descriptor.ChapterId;
+        if (!string.Equals(operationStem, chapterStem, StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException(
+                $"Cannot stage replacement for chapter '{chapterStem}' while active chapter is '{operationStem}'.");
+        }
+
+        foreach (var pickupPath in requests
+                     .Select(r => r.PickupFilePath)
+                     .Where(path => !string.IsNullOrWhiteSpace(path))
+                     .Distinct(StringComparer.OrdinalIgnoreCase))
+        {
+            operationHandle.Chapter.Book.Audio.RegisterPickup(pickupPath);
+        }
+
+        var chapterBuffer = GetChapterBuffer(operationHandle);
+        var hydrate = GetCurrentHydratedTranscript();
+        var sentenceIndexById = BuildSentenceIndexLookup(hydrate);
+        var replacements = new List<StagedReplacement>(requests.Count);
+        var errors = new List<string>();
+
+        foreach (var request in requests)
+        {
+            try
+            {
+                replacements.Add(BuildStagedReplacement(
+                    operationHandle,
+                    chapterStem,
+                    request.Match,
+                    request.PickupFilePath,
+                    request.OriginalStartSec,
+                    request.OriginalEndSec,
+                    chapterBuffer,
+                    hydrate,
+                    sentenceIndexById,
+                    request.CrossfadeSec,
+                    request.Curve,
+                    request.BoundaryOptions));
+            }
+            catch (Exception ex)
+            {
+                errors.Add($"Sentence {request.Match.SentenceId}: {ex.Message}");
+            }
+        }
+
+        var (stagedCount, stageErrors) = _stagingQueue.TryStageMany(replacements);
+        if (stageErrors.Count > 0)
+        {
+            errors.AddRange(stageErrors);
+        }
+
+        return (stagedCount, errors);
+    }
+
+    private StagedReplacement BuildStagedReplacement(
+        ChapterContextHandle operationHandle,
+        string chapterStem,
+        PickupMatch match,
+        string pickupFilePath,
+        double originalStartSec,
+        double originalEndSec,
+        AudioBuffer chapterBuffer,
+        HydratedTranscript? hydrate,
+        IReadOnlyDictionary<int, int>? sentenceIndexById,
+        double? crossfadeSec,
+        string? curve,
+        SpliceBoundaryOptions? boundaryOptions)
+    {
         var effectiveCrossfadeSec = crossfadeSec ?? SharedTuningDefaults.SpliceCrossfadeDurationSec;
         var effectiveCurve = string.IsNullOrWhiteSpace(curve)
             ? SharedTuningDefaults.SpliceCrossfadeCurve
             : curve;
         var effectiveBoundaryOptions = boundaryOptions ?? CreateBoundaryOptionsFromTreatmentDefaults();
 
-        // Map baseline transcript positions to current-time for boundary refinement.
-        // Boundary refinement must operate in current-time space (analyzing the current buffer),
-        // but the final stored coordinates MUST remain in baseline space for correct
-        // TimelineProjection and rebuild behavior.
+        var operationStem = operationHandle.Chapter.Descriptor.ChapterId;
+        if (!string.Equals(operationStem, chapterStem, StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException(
+                $"Cannot stage replacement for chapter '{chapterStem}' while active chapter is '{operationStem}'.");
+        }
+
         var rebasedStartSec = MapBaselineToCurrentTime(chapterStem, originalStartSec);
         var rebasedEndSec = MapBaselineToCurrentTime(chapterStem, originalEndSec);
         if (rebasedEndSec <= rebasedStartSec)
@@ -288,55 +412,40 @@ public class PolishService
             rebasedEndSec = rebasedStartSec + Math.Max(MinAuditionClipDurationSec, originalEndSec - originalStartSec);
         }
 
-        // Start with baseline coordinates — refinement deltas will be applied to these.
         var baselineRefinedStart = originalStartSec;
         var baselineRefinedEnd = originalEndSec;
         try
         {
-            var operationHandle = GetActiveChapterHandleOrThrow();
-            var operationStem = operationHandle.Chapter.Descriptor.ChapterId;
-            if (!string.Equals(operationStem, chapterStem, StringComparison.OrdinalIgnoreCase))
-            {
-                throw new InvalidOperationException(
-                    $"Cannot stage replacement for chapter '{chapterStem}' while active chapter is '{operationStem}'.");
-            }
-
-            operationHandle.Chapter.Book.Audio.RegisterPickup(pickupFilePath);
-
-            var chapterBuffer = GetChapterBuffer(operationHandle);
-            var hydrate = GetCurrentHydratedTranscript();
             double? prevEnd = null;
             double? nextStart = null;
 
-            if (hydrate is not null)
+            if (hydrate is not null && sentenceIndexById is not null && sentenceIndexById.TryGetValue(match.SentenceId, out var idx))
             {
                 var sentences = hydrate.Sentences;
-                int idx = -1;
-                for (int i = 0; i < sentences.Count; i++)
+                if (idx > 0)
                 {
-                    if (sentences[i].Id == match.SentenceId) { idx = i; break; }
+                    prevEnd = MapBaselineToCurrentTime(chapterStem, sentences[idx - 1].Timing?.EndSec);
                 }
 
-                if (idx > 0)
-                    prevEnd = MapBaselineToCurrentTime(chapterStem, sentences[idx - 1].Timing?.EndSec);
-                if (idx >= 0 && idx < sentences.Count - 1)
+                if (idx < sentences.Count - 1)
+                {
                     nextStart = MapBaselineToCurrentTime(chapterStem, sentences[idx + 1].Timing?.StartSec);
+                }
             }
 
-            // Refine in current-time space (boundary detection analyzes the current audio buffer)
             var result = SpliceBoundaryService.RefineBoundariesBreathAware(
-                chapterBuffer, rebasedStartSec, rebasedEndSec,
-                prevEnd, nextStart, effectiveBoundaryOptions);
+                chapterBuffer,
+                rebasedStartSec,
+                rebasedEndSec,
+                prevEnd,
+                nextStart,
+                effectiveBoundaryOptions);
 
-            // Compute refinement deltas in current-time space, then apply back to baseline.
-            // This preserves the baseline-coordinate invariant while allowing boundary
-            // refinement to operate on the actual (post-edit) audio buffer.
             var refinementDeltaStart = result.RefinedStartSec - rebasedStartSec;
             var refinementDeltaEnd = result.RefinedEndSec - rebasedEndSec;
             baselineRefinedStart = originalStartSec + refinementDeltaStart;
             baselineRefinedEnd = originalEndSec + refinementDeltaEnd;
 
-            // Sanity: ensure baseline coordinates are still valid
             if (baselineRefinedEnd <= baselineRefinedStart)
             {
                 baselineRefinedStart = originalStartSec;
@@ -356,8 +465,7 @@ public class PolishService
             Console.WriteLine($"[BoundaryRefinement] Failed, using original boundaries: {ex.Message}");
         }
 
-        // Store BASELINE coordinates — TimelineProjection and rebuild depend on this invariant.
-        var replacement = new StagedReplacement(
+        return new StagedReplacement(
             Id: Guid.NewGuid().ToString("N"),
             ChapterStem: chapterStem,
             SentenceId: match.SentenceId,
@@ -370,14 +478,22 @@ public class PolishService
             CrossfadeCurve: effectiveCurve,
             StagedAtUtc: DateTime.UtcNow,
             Status: ReplacementStatus.Staged);
+    }
 
-        if (!_stagingQueue.TryStage(replacement, out var validationError))
+    private static IReadOnlyDictionary<int, int>? BuildSentenceIndexLookup(HydratedTranscript? hydrate)
+    {
+        if (hydrate is null)
         {
-            throw new InvalidOperationException(
-                $"Failed to stage replacement for sentence {match.SentenceId}: {validationError}");
+            return null;
         }
 
-        return replacement;
+        var lookup = new Dictionary<int, int>(hydrate.Sentences.Count);
+        for (var i = 0; i < hydrate.Sentences.Count; i++)
+        {
+            lookup[hydrate.Sentences[i].Id] = i;
+        }
+
+        return lookup;
     }
 
     private static SpliceBoundaryOptions CreateBoundaryOptionsFromTreatmentDefaults()
@@ -666,6 +782,80 @@ public class PolishService
             PersistCorrectedBuffer(operationHandle, resultBuffer);
 
             return (resultBuffer, timingDelta);
+        }
+        finally
+        {
+            mutationLock.Release();
+        }
+    }
+
+    public async Task<(AudioBuffer? ResultBuffer, int AppliedCount)> ApplyReplacementsAsync(
+        IReadOnlyList<string> replacementIds,
+        CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(replacementIds);
+
+        if (replacementIds.Count == 0)
+            return (null, 0);
+
+        var operationHandle = GetActiveChapterHandleOrThrow();
+        var operationStem = operationHandle.Chapter.Descriptor.ChapterId;
+        var mutationLock = GetChapterMutationLock(operationStem);
+        await mutationLock.WaitAsync(ct).ConfigureAwait(false);
+        try
+        {
+            var chapterBuffer = GetChapterBuffer(operationHandle);
+            var appliedCount = 0;
+
+            foreach (var replacementId in replacementIds)
+            {
+                ct.ThrowIfCancellationRequested();
+
+                try
+                {
+                    var item = FindStagedItem(replacementId, operationStem);
+
+                    EnsureNoActiveOverlapOrThrow(operationStem, item.Id, item.OriginalStartSec, item.OriginalEndSec);
+
+                    var pickupTrimmed = LoadPickupSliceForReplacement(operationHandle, item);
+                    var pickupDuration = (double)pickupTrimmed.Length / pickupTrimmed.SampleRate;
+
+                    _undoService.SaveOriginalSegment(
+                        item.ChapterStem,
+                        item.SentenceId,
+                        replacementId,
+                        chapterBuffer,
+                        item.OriginalStartSec,
+                        item.OriginalEndSec,
+                        pickupDuration);
+
+                    await _undoService.SaveReplacementSegmentAsync(
+                        item.ChapterStem,
+                        replacementId,
+                        pickupTrimmed,
+                        ct).ConfigureAwait(false);
+
+                    _stagingQueue.UpdateStatus(replacementId, ReplacementStatus.Applied);
+                    appliedCount++;
+                }
+                catch (Exception ex)
+                {
+                    Log.Warn(
+                        "Batch pickup commit skipped replacement {ReplacementId} in chapter {ChapterStem}: {Message}",
+                        replacementId,
+                        operationStem,
+                        ex.Message);
+                }
+            }
+
+            if (appliedCount == 0)
+                return (null, 0);
+
+            var allEdits = _editListService.GetEdits(operationStem);
+            var resultBuffer = await RebuildChapterAsync(operationHandle, allEdits, ct).ConfigureAwait(false);
+            PersistCorrectedBuffer(operationHandle, resultBuffer);
+
+            return (resultBuffer, appliedCount);
         }
         finally
         {
