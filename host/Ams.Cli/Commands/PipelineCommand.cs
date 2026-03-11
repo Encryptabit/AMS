@@ -1708,6 +1708,7 @@ public static class PipelineCommand
                 TranscriptFile = txFile,
                 TextGridFile = textGridFile
             },
+            SkipTreatedCopy = true,
             TreatedCopyFile = treatedWav,
             Concurrency = concurrency
         };
