@@ -308,12 +308,15 @@
                             Close
                         </BitButton>
                     </BitStack>
-                    <WaveformPlayer @key="_selectedPickup.Id"
-                                    @ref="_pickupWaveform"
-                                    AudioUrl="@GetPickupAudioUrl(_selectedPickup)"
-                                    Height="120"
-                                    OnReady="HandlePickupWaveformReady"
-                                    OnRegionUpdated="HandleRegionUpdated" />
+                    <div style="width: 100%; min-width: 0; overflow: hidden;">
+                        <WaveformPlayer @key="_selectedPickup.Id"
+                                        @ref="_pickupWaveform"
+                                        AudioUrl="@GetPickupAudioUrl(_selectedPickup)"
+                                        PeaksUrl="@GetPickupPeaksUrl(_selectedPickup)"
+                                        Height="120"
+                                        OnReady="HandlePickupWaveformReady"
+                                        OnRegionUpdated="HandleRegionUpdated" />
+                    </div>
                 </BitStack>
             </BitCard>
         }
@@ -1450,6 +1453,11 @@
         return $"/api/audio?path={Uri.EscapeDataString(asset.SourceFilePath)}";
     }
 
+    private string GetPickupPeaksUrl(PickupAsset asset)
+    {
+        return $"/api/audio/peaks?path={Uri.EscapeDataString(asset.SourceFilePath)}&pxPerSec={PeakPxPerSec}";
+    }
+
     private async Task HandlePickupWaveformReady()
     {
         _isPickupWaveformReady = true;
@@ -1457,6 +1465,8 @@
         // Add trim region to pickup waveform (orange for pickup trim)
         if (_pickupWaveform != null && _selectedPickup != null)
         {
+            await _pickupWaveform.SeekTo(Math.Max(0, _selectedPickup.TrimStartSec - 0.25));
+
             await _pickupWaveform.AddEditableRegion(
                 "pickup-trim",
                 _selectedPickup.TrimStartSec,
