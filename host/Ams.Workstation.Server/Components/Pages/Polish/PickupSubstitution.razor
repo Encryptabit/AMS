@@ -292,13 +292,15 @@
         @* Row 3.5 - Pickup Detail Panel (shown when a pickup is selected) *@
         @if (_selectedPickup != null)
         {
-            <BitCard Style="padding: 0.75rem;">
-                <BitStack Horizontal="false" Gap="0.5rem" AutoHeight="true">
-                    <BitStack Horizontal="true" Gap="0.5rem" VerticalAlign="BitAlignment.Center" AutoHeight="true">
+                <BitStack Horizontal="false" Gap="0.5rem" AutoHeight="true"
+                          Style="min-width: 0; overflow: hidden;">
+                    <BitStack Horizontal="true" Gap="0.5rem" VerticalAlign="BitAlignment.Center" AutoHeight="true"
+                              Style="min-width: 0;">
                         <BitText Typography="BitTypography.Subtitle2">
                             Pickup Trim
                         </BitText>
-                        <BitText Typography="BitTypography.Caption1" Color="BitColor.SecondaryForeground">
+                        <BitText Typography="BitTypography.Caption1" Color="BitColor.SecondaryForeground"
+                                 Style="min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
                             @TruncateText(_selectedPickup.TranscribedText, 60)
                         </BitText>
                         <BitButton Variant="BitVariant.Text"
@@ -308,7 +310,7 @@
                             Close
                         </BitButton>
                     </BitStack>
-                    <div style="width: 100%; min-width: 0; overflow: hidden;">
+                    <div style="flex: 1;min-width: 0; overflow: hidden;">
                         <WaveformPlayer @key="_selectedPickup.Id"
                                         @ref="_pickupWaveform"
                                         AudioUrl="@GetPickupAudioUrl(_selectedPickup)"
@@ -318,7 +320,6 @@
                                         OnRegionUpdated="HandleRegionUpdated" />
                     </div>
                 </BitStack>
-            </BitCard>
         }
 
         @* Row 4 - Roomtone Operations (visible when roomtone file is set) *@
