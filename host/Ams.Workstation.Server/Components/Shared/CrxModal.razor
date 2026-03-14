@@ -69,23 +69,10 @@
                 </div>
             </div>
 
-            @* ── Full-width: Should Be / Read As / Comments ── *@
-            @if (!string.IsNullOrEmpty(_shouldBe) || !string.IsNullOrEmpty(_readAs))
-            {
-                <div class="crx-field-pair">
-                    <div class="crx-field">
-                        <BitText Typography="BitTypography.Body2">Should Be</BitText>
-                        <textarea rows="2" @bind="_shouldBe" class="crx-comments-textarea" />
-                    </div>
-                    <div class="crx-field">
-                        <BitText Typography="BitTypography.Body2">Read As</BitText>
-                        <textarea rows="2" @bind="_readAs" class="crx-comments-textarea" />
-                    </div>
-                </div>
-            }
+            @* ── Full-width: Comments ── *@
             <div class="crx-comments">
                 <BitText Typography="BitTypography.Body2">Comments</BitText>
-                <textarea rows="2" @bind="_comments" class="crx-comments-textarea" />
+                <textarea rows="4" @bind="_comments" class="crx-comments-textarea" />
             </div>
         </div>
 
@@ -109,8 +96,6 @@
     private string _excerpt = "";
     private string _errorType = "MR";
     private string _comments = "";
-    private string? _shouldBe;
-    private string? _readAs;
     private int _paddingMs = 50;
     private bool _submitting;
     private string _audioUrl = "";
@@ -243,7 +228,6 @@
                 else
                 {
                     shouldBeLine.Add(text);
-                    readAsLine.Add(text);
                 }
             }
             else if (op.Op == "insert")
@@ -255,22 +239,17 @@
                 }
                 else
                 {
-                    shouldBeLine.Add(text);
                     readAsLine.Add(text);
                 }
             }
         }
 
         if (!hasDifferences)
-        {
-            _shouldBe = null;
-            _readAs = null;
             return _sentenceReport.BookText;
-        }
 
-        _shouldBe = string.Join(" ", shouldBeLine);
-        _readAs = string.Join(" ", readAsLine);
-        return "";
+        var shouldBe = string.Join(" ", shouldBeLine);
+        var readAs = string.Join(" ", readAsLine);
+        return $"Should be: {shouldBe}{Environment.NewLine}{Environment.NewLine}Read as: {readAs}";
     }
 
     private void OnPaddingInput(ChangeEventArgs e)
@@ -318,8 +297,8 @@
                 Comments: _comments,
                 Excerpt: _excerpt,
                 PaddingMs: _paddingMs,
-                ShouldBe: _shouldBe,
-                ReadAs: _readAs
+                ShouldBe: CrxCommentParser.TryParseShouldBe(_comments),
+                ReadAs: CrxCommentParser.TryParseReadAs(_comments)
             );
 
             var result = CrxService.Submit(_chapterName, request);
@@ -445,17 +424,6 @@
     }
     .crx-ins {
         color: #69db7c;
-    }
-    .crx-field-pair {
-        display: grid;
-        grid-template-columns: 1fr 1fr;
-        gap: 0.75rem;
-        width: 100%;
-    }
-    .crx-field {
-        display: flex;
-        flex-direction: column;
-        gap: 0.25rem;
     }
     .crx-comments {
         width: 100%;
