@@ -76,15 +76,11 @@
     background-color: var(--bit-clr-err-bg);
     color: var(--bit-clr-err);
     text-decoration: line-through;
-    padding: 2px 4px;
-    border-radius: 3px;
 }
 
 .sentence-text ::deep .diff-inserted,
 .sentence-text ::deep .diff-insert {
     background-color: var(--bit-clr-suc-bg);
     color: var(--bit-clr-suc);
-    padding: 2px 4px;
-    border-radius: 3px;
     font-weight: 500;
 }
