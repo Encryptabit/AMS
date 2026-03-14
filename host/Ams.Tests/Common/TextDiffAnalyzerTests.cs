@@ -127,6 +127,19 @@ public sealed class TextDiffAnalyzerTests
         Assert.Equal(0, result.Metrics.ExtraRuns);
     }
 
+    [Theory]
+    [InlineData("Tell you the story", "Tell \u2018you the story")]
+    [InlineData("Tell you the story", "Tell 'you the story")]
+    [InlineData("how are you doing", "\u2018how are you doing")]
+    public void Analyze_SmartQuoteBeforeWord_NoFalsePositive(string reference, string hypothesis)
+    {
+        var result = TextDiffAnalyzer.Analyze(reference, hypothesis);
+
+        Assert.Equal(0.0, result.Metrics.Wer);
+        Assert.Equal(0, result.Diff.Stats.Insertions);
+        Assert.Equal(0, result.Diff.Stats.Deletions);
+    }
+
     [Fact]
     public void Analyze_DisplayDiff_DoesNotVerbalizeGroupedNumbers()
     {
