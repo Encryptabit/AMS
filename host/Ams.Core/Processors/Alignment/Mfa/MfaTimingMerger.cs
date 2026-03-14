@@ -57,7 +57,7 @@ namespace Ams.Core.Processors.Alignment.Mfa
             debugLog?.Invoke(
                 $"MFA alignment: TG tokens={tgTokens.Count}, Book tokens={bookTokens.Count}, " +
                 $"pairs={ar.Pairs.Count}, match={ar.Matches}, wild={ar.WildMatches}, " +
-                $"ins={ar.Insertions}, del={ar.Deletions}. " +
+                $"mismatch={ar.Mismatches}, ins={ar.Insertions}, del={ar.Deletions}. " +
                 $"Updated {sentencesUpdated} sentences and {wordsUpdated} words."
             );
 
@@ -68,6 +68,7 @@ namespace Ams.Core.Processors.Alignment.Mfa
                 Pairs = ar.Pairs.Count,
                 Matches = ar.Matches,
                 WildMatches = ar.WildMatches,
+                Mismatches = ar.Mismatches,
                 Insertions = ar.Insertions,
                 Deletions = ar.Deletions,
                 WordsUpdated = wordsUpdated,
@@ -196,7 +197,7 @@ namespace Ams.Core.Processors.Alignment.Mfa
             }
 
             var pairs = new List<Pair>(Math.Max(n, m));
-            int matches = 0, wildMatches = 0, insertions = 0, deletions = 0;
+            int matches = 0, wildMatches = 0, insertions = 0, deletions = 0, mismatches = 0;
 
             // Backtrace
             int ii = n, jj = m;
@@ -219,7 +220,16 @@ namespace Ams.Core.Processors.Alignment.Mfa
                         wildMatches++;
                         pairs.Add(new Pair(book[ii - 1].BookIdx, tg[jj - 1].TgSeq));
                     }
-                    // else diag mismatch: skip emitting a pair
+                    else
+                    {
+                        // Diagonal mismatch: still emit a pair so the positional timing
+                        // is captured. NW correctly identifies the correspondence even when
+                        // the text differs (e.g., book "reeze" vs TextGrid "breeze").
+                        // Without this, unmatched words get no timing and sentence
+                        // boundaries shrink to only the matched words.
+                        mismatches++;
+                        pairs.Add(new Pair(book[ii - 1].BookIdx, tg[jj - 1].TgSeq));
+                    }
 
                     ii--;
                     jj--;
@@ -239,7 +249,7 @@ namespace Ams.Core.Processors.Alignment.Mfa
 
             pairs.Reverse();
 
-            return new AlignmentResult(pairs, matches, wildMatches, insertions, deletions);
+            return new AlignmentResult(pairs, matches, wildMatches, mismatches, insertions, deletions);
         }
 
         // ---- Build timing map and apply ------------------------------------
@@ -438,6 +448,7 @@ namespace Ams.Core.Processors.Alignment.Mfa
         public int Pairs { get; init; }
         public int Matches { get; init; }
         public int WildMatches { get; init; }
+        public int Mismatches { get; init; }
         public int Insertions { get; init; }
         public int Deletions { get; init; }
         public int WordsUpdated { get; init; }
@@ -454,11 +465,12 @@ namespace Ams.Core.Processors.Alignment.Mfa
 
     internal sealed class AlignmentResult
     {
-        public AlignmentResult(List<Pair> pairs, int matches, int wildMatches, int insertions, int deletions)
+        public AlignmentResult(List<Pair> pairs, int matches, int wildMatches, int mismatches, int insertions, int deletions)
         {
             Pairs = pairs;
             Matches = matches;
             WildMatches = wildMatches;
+            Mismatches = mismatches;
             Insertions = insertions;
             Deletions = deletions;
         }
@@ -466,6 +478,7 @@ namespace Ams.Core.Processors.Alignment.Mfa
         public List<Pair> Pairs { get; }
         public int Matches { get; }
         public int WildMatches { get; }
+        public int Mismatches { get; }
         public int Insertions { get; }
         public int Deletions { get; }
     }
