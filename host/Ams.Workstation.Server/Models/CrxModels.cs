@@ -14,7 +14,9 @@ public record CrxEntry(
     double StartTime,
     double EndTime,
     string AudioFile,
-    DateTime CreatedAt
+    DateTime CreatedAt,
+    string? ShouldBe = null,
+    string? ReadAs = null
 );
 
 public record CrxSubmitRequest(
@@ -24,7 +26,9 @@ public record CrxSubmitRequest(
     string ErrorType,
     string Comments,
     string Excerpt,
-    int PaddingMs = 50
+    int PaddingMs = 50,
+    string? ShouldBe = null,
+    string? ReadAs = null
 );
 
 public record CrxSubmitResult(

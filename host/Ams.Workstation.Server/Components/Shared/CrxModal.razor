@@ -96,6 +96,8 @@
     private string _excerpt = "";
     private string _errorType = "MR";
     private string _comments = "";
+    private string? _shouldBe;
+    private string? _readAs;
     private int _paddingMs = 50;
     private bool _submitting;
     private string _audioUrl = "";
@@ -247,11 +249,15 @@
         }
 
         if (!hasDifferences)
+        {
+            _shouldBe = null;
+            _readAs = null;
             return _sentenceReport.BookText;
+        }
 
-        var shouldBe = string.Join(" ", shouldBeLine);
-        var readAs = string.Join(" ", readAsLine);
-        return $"Should be: {shouldBe}{Environment.NewLine}Read as: {readAs}";
+        _shouldBe = string.Join(" ", shouldBeLine);
+        _readAs = string.Join(" ", readAsLine);
+        return _excerpt;
     }
 
     private void OnPaddingInput(ChangeEventArgs e)
@@ -298,7 +304,9 @@
                 ErrorType: _errorType,
                 Comments: _comments,
                 Excerpt: _excerpt,
-                PaddingMs: _paddingMs
+                PaddingMs: _paddingMs,
+                ShouldBe: _shouldBe,
+                ReadAs: _readAs
             );
 
             var result = CrxService.Submit(_chapterName, request);

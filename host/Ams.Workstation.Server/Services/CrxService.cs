@@ -58,7 +58,9 @@ public class CrxService
                 StartTime: request.Start,
                 EndTime: request.End,
                 AudioFile: exportResult.Filename,
-                CreatedAt: DateTime.UtcNow
+                CreatedAt: DateTime.UtcNow,
+                ShouldBe: request.ShouldBe,
+                ReadAs: request.ReadAs
             );
 
             var jsonWritten = false;
@@ -526,8 +528,8 @@ public class CrxService
         worksheet.Cell(targetRow, 6).Value = entry.Timecode;
         // Column G (7): Error type
         worksheet.Cell(targetRow, 7).Value = entry.ErrorType;
-        // Column H (8): Comments
-        worksheet.Cell(targetRow, 8).Value = entry.Comments;
+        // Column H (8): Comments — include Should be/Read as for Excel readability
+        worksheet.Cell(targetRow, 8).Value = BuildExcelComments(entry);
 
         workbook.Save();
     }
@@ -569,6 +571,21 @@ public class CrxService
             Directory.CreateDirectory(crxFolder);
         var bookName = Path.GetFileName(_workspace.RootPath.TrimEnd(Path.DirectorySeparatorChar));
         return Path.Combine(crxFolder, $"{bookName}_CRX.json");
+    }
+
+    private static string BuildExcelComments(CrxEntry entry)
+    {
+        if (!string.IsNullOrWhiteSpace(entry.ShouldBe) || !string.IsNullOrWhiteSpace(entry.ReadAs))
+        {
+            var parts = new List<string>();
+            if (!string.IsNullOrWhiteSpace(entry.ShouldBe))
+                parts.Add($"Should be: {entry.ShouldBe}");
+            if (!string.IsNullOrWhiteSpace(entry.ReadAs))
+                parts.Add($"Read as: {entry.ReadAs}");
+            return string.Join(Environment.NewLine, parts);
+        }
+
+        return entry.Comments;
     }
 
     private static string FormatTimecode(double seconds)

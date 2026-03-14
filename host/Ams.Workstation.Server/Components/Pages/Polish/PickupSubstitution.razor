@@ -746,7 +746,9 @@
                     if (sentence == null)
                         continue;
 
-                    var shouldBeText = CrxCommentParser.TryParseShouldBe(entry.Comments)
+                    var shouldBeText = entry.ShouldBe
+                        ?? entry.ReadAs
+                        ?? CrxCommentParser.TryParseShouldBe(entry.Comments)
                         ?? CrxCommentParser.TryParseReadAs(entry.Comments);
                     var bookText = sentence.BookText ?? string.Empty;
                     var originalStartSec = sentence.Timing?.StartSec ?? 0;
