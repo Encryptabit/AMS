@@ -6,25 +6,17 @@
     {
         @if (op.Op == "equal")
         {
-            @foreach (var token in op.Tokens)
-            {
-                <span class="diff-token">@token</span>
-            }
+            <span class="diff-token">@(string.Join(" ", op.Tokens))</span>
         }
         else if (op.Op == "delete")
         {
-            @foreach (var token in op.Tokens)
-            {
-                <span class="diff-token diff-delete">@token</span>
-            }
+            <span class="diff-token diff-delete">@(string.Join(" ", op.Tokens))</span>
         }
         else if (op.Op == "insert")
         {
-            @foreach (var token in op.Tokens)
-            {
-                <span class="diff-token diff-insert">@token</span>
-            }
+            <span class="diff-token diff-insert">@(string.Join(" ", op.Tokens))</span>
         }
+        @(" ")
     }
 </div>
 
@@ -103,9 +95,6 @@
 <style>
     .diff-view {
         line-height: 1.8;
-        display: flex;
-        flex-wrap: wrap;
-        gap: 0.25rem;
     }
     .diff-token {
         padding: 2px 4px;

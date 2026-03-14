@@ -85,13 +85,13 @@ internal static class Program
     private static async Task StartRepl(RootCommand rootCommand)
     {
         var state = new ReplState();
+        var lineEditor = new ReplLineEditor();
         Console.WriteLine("AMS Interactive CLI - Type 'help' for CLI verbs, 'exit' to quit");
         Console.WriteLine("Built-ins: set-dir, list-wav, use, mode, run, state, clear");
 
         while (true)
         {
-            Console.Write(Prompt(state));
-            var input = Console.ReadLine();
+            var input = lineEditor.ReadLine(Prompt(state));
             if (input is null)
             {
                 Console.WriteLine();
