@@ -469,7 +469,12 @@ else
             if (_sentences.Count == 0) return;
 
             int currentIndex = _sentences.FindIndex(s => _currentTime >= s.StartTime && _currentTime < s.EndTime);
-            if (currentIndex < 0) currentIndex = 0;
+            if (currentIndex < 0)
+            {
+                // No exact match — find the last sentence that starts at or before _currentTime
+                currentIndex = _sentences.FindLastIndex(s => s.StartTime <= _currentTime);
+                if (currentIndex < 0) currentIndex = 0;
+            }
 
             if (direction == "prev")
                 currentIndex = Math.Max(0, currentIndex - 1);
