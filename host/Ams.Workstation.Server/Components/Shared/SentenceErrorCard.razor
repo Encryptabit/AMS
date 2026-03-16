@@ -3,27 +3,27 @@
 <BitCard Style="@GetBorderStyle()" FullWidth="true">
     <BitStack Horizontal="false" Gap="0.5rem" Style="padding: 1rem;">
         @* Header: ID + WER/CER + Status badge + metadata all horizontal *@
-        <BitStack Horizontal="true" Gap="1rem" VerticalAlign="BitAlignment.Center" Wrap="true">
-            <BitStack Horizontal="true" Gap="0.35rem" VerticalAlign="BitAlignment.Center">
+        <BitStack Horizontal="true" Gap="1rem" VerticalAlign="BitAlignment.Center" Wrap="true" Style="justify-content: space-between;">
+            <BitStack Horizontal="true" Gap="1rem" VerticalAlign="BitAlignment.Center" Wrap="true">
                 <BitText Typography="BitTypography.Body1" Style="font-weight: 600;">#@Sentence.Id</BitText>
-                @if (IsExported)
-                {
-                    <BitIcon IconName="@BitIconName.SkypeCircleCheck"
-                             Style="color: #4a9eff; font-size: 1rem;"
-                             Title="Exported to CRX" />
-                }
+                <BitText Typography="BitTypography.Caption1">
+                    WER: <span style="color: var(@GetWerColor());">@Sentence.Wer</span>
+                    &nbsp;&nbsp;CER: @Sentence.Cer
+                </BitText>
+                <BitTag Text="@Sentence.Status.ToUpper()"
+                        Color="GetStatusColor()"
+                        Size="BitSize.Small"
+                        Variant="BitVariant.Fill" />
+                <BitText Typography="BitTypography.Caption1" Color="BitColor.SecondaryForeground">Book range: @Sentence.BookRange</BitText>
+                <BitText Typography="BitTypography.Caption1" Color="BitColor.SecondaryForeground">Script range: @Sentence.ScriptRange</BitText>
+                <BitText Typography="BitTypography.Caption1" Color="BitColor.SecondaryForeground">Timing: @Sentence.Timing</BitText>
             </BitStack>
-            <BitText Typography="BitTypography.Caption1">
-                WER: <span style="color: var(@GetWerColor());">@Sentence.Wer</span>
-                &nbsp;&nbsp;CER: @Sentence.Cer
-            </BitText>
-            <BitTag Text="@Sentence.Status.ToUpper()"
-                    Color="GetStatusColor()"
-                    Size="BitSize.Small"
-                    Variant="BitVariant.Fill" />
-            <BitText Typography="BitTypography.Caption1" Color="BitColor.SecondaryForeground">Book range: @Sentence.BookRange</BitText>
-            <BitText Typography="BitTypography.Caption1" Color="BitColor.SecondaryForeground">Script range: @Sentence.ScriptRange</BitText>
-            <BitText Typography="BitTypography.Caption1" Color="BitColor.SecondaryForeground">Timing: @Sentence.Timing</BitText>
+            @if (IsExported)
+            {
+                <BitIcon IconName="@BitIconName.SkypeCircleCheck"
+                         Style="color: #4a9eff; font-size: 1rem;"
+                         Title="Exported to CRX" />
+            }
         </BitStack>
 
         @* Manuscript *@

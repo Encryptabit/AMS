@@ -575,16 +575,6 @@ public class CrxService
 
     private static string BuildExcelComments(CrxEntry entry)
     {
-        if (!string.IsNullOrWhiteSpace(entry.ShouldBe) || !string.IsNullOrWhiteSpace(entry.ReadAs))
-        {
-            var parts = new List<string>();
-            if (!string.IsNullOrWhiteSpace(entry.ShouldBe))
-                parts.Add($"Should be: {entry.ShouldBe}");
-            if (!string.IsNullOrWhiteSpace(entry.ReadAs))
-                parts.Add($"Read as: {entry.ReadAs}");
-            return string.Join(Environment.NewLine, parts);
-        }
-
         return entry.Comments;
     }
 
