@@ -185,8 +185,8 @@
         selectedSavedWorkspace = workingDirectory;
         WorkspaceHistory.RememberWorkspace(workingDirectory);
 
-        // Force full page reload so all components reinitialize with new workspace
-        NavigationManager.NavigateTo(NavigationManager.Uri, forceLoad: true);
+        // Force full page reload at root so stale chapter URLs don't persist
+        NavigationManager.NavigateTo("/", forceLoad: true);
     }
 
     private void RefreshSavedWorkspaceList()
