@@ -200,6 +200,7 @@ public sealed class BlazorWorkspace : IWorkspace, IDisposable
             _manager = null;
         }
 
+        LoadProjectPolishPaths();
         SavePersistedState();
         RestartBackgroundPeakPrecompute();
         return true;
@@ -369,15 +370,7 @@ public sealed class BlazorWorkspace : IWorkspace, IDisposable
             using var doc = JsonDocument.Parse(json);
             var root = doc.RootElement;
 
-            if (root.TryGetProperty("pickupSessionPath", out var pickupProp))
-            {
-                PickupSessionPath = NormalizeOptionalPath(pickupProp.GetString());
-            }
-
-            if (root.TryGetProperty("roomtoneFilePath", out var roomtoneProp))
-            {
-                RoomtoneFilePath = NormalizeOptionalPath(roomtoneProp.GetString());
-            }
+            // Legacy: ignore top-level pickupSessionPath/roomtoneFilePath (now per-project)
 
             if (root.TryGetProperty("precomputePeaksInBackground", out var precomputeProp) &&
                 (precomputeProp.ValueKind == JsonValueKind.True || precomputeProp.ValueKind == JsonValueKind.False))
@@ -422,8 +415,6 @@ public sealed class BlazorWorkspace : IWorkspace, IDisposable
             {
                 workingDirectory = _rootPath,
                 currentChapter = CurrentChapterName,
-                pickupSessionPath = PickupSessionPath,
-                roomtoneFilePath = RoomtoneFilePath,
                 precomputePeaksInBackground = PrecomputePeaksInBackground
             };
 
@@ -433,6 +424,60 @@ public sealed class BlazorWorkspace : IWorkspace, IDisposable
         catch (Exception ex)
         {
             Console.WriteLine($"Failed to save persisted state: {ex.Message}");
+        }
+
+        SaveProjectPolishPaths();
+    }
+
+    private void LoadProjectPolishPaths()
+    {
+        PickupSessionPath = null;
+        RoomtoneFilePath = null;
+
+        if (string.IsNullOrEmpty(_rootPath)) return;
+
+        try
+        {
+            var polishPathsFile = Path.Combine(_rootPath, ".polish", "polish-paths.json");
+            if (!File.Exists(polishPathsFile)) return;
+
+            var json = File.ReadAllText(polishPathsFile);
+            using var doc = JsonDocument.Parse(json);
+            var root = doc.RootElement;
+
+            if (root.TryGetProperty("pickupSessionPath", out var pickupProp))
+                PickupSessionPath = NormalizeOptionalPath(pickupProp.GetString());
+
+            if (root.TryGetProperty("roomtoneFilePath", out var roomtoneProp))
+                RoomtoneFilePath = NormalizeOptionalPath(roomtoneProp.GetString());
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Failed to load project polish paths: {ex.Message}");
+        }
+    }
+
+    private void SaveProjectPolishPaths()
+    {
+        if (string.IsNullOrEmpty(_rootPath)) return;
+
+        try
+        {
+            var polishDir = Path.Combine(_rootPath, ".polish");
+            Directory.CreateDirectory(polishDir);
+
+            var state = new
+            {
+                pickupSessionPath = PickupSessionPath,
+                roomtoneFilePath = RoomtoneFilePath
+            };
+
+            var json = JsonSerializer.Serialize(state, new JsonSerializerOptions { WriteIndented = true });
+            File.WriteAllText(Path.Combine(polishDir, "polish-paths.json"), json);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Failed to save project polish paths: {ex.Message}");
         }
     }
 

@@ -184,17 +184,45 @@
         workingDirectory = Path.GetFullPath(trimmedPath);
         selectedSavedWorkspace = workingDirectory;
         WorkspaceHistory.RememberWorkspace(workingDirectory);
-        RefreshSavedWorkspaceList();
-        RefreshChapterList();
-        StateHasChanged();
+
+        // Force full page reload so all components reinitialize with new workspace
+        NavigationManager.NavigateTo(NavigationManager.Uri, forceLoad: true);
     }
 
     private void RefreshSavedWorkspaceList()
     {
-        savedWorkspaceItems = WorkspaceHistory
-            .GetSavedWorkspaces(existingOnly: true)
-            .Select(path => new BitDropdownItem<string> { Text = path, Value = path })
-            .ToList();
+        var paths = WorkspaceHistory.GetSavedWorkspaces(existingOnly: true).ToList();
+
+        // Build display names from folder name, numbering duplicates
+        var nameCounts = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        var displayNames = new List<string>(paths.Count);
+
+        foreach (var path in paths)
+        {
+            var folderName = Path.GetFileName(path.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
+            if (string.IsNullOrEmpty(folderName)) folderName = path;
+
+            nameCounts.TryGetValue(folderName, out var count);
+            nameCounts[folderName] = count + 1;
+            displayNames.Add(folderName);
+        }
+
+        // Second pass: append (2), (3), etc. for duplicates
+        var emitted = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        savedWorkspaceItems = new List<BitDropdownItem<string>>(paths.Count);
+        for (int i = 0; i < paths.Count; i++)
+        {
+            var name = displayNames[i];
+            var text = name;
+            if (nameCounts[name] > 1)
+            {
+                emitted.TryGetValue(name, out var seq);
+                seq++;
+                emitted[name] = seq;
+                if (seq > 1) text = $"{name} ({seq})";
+            }
+            savedWorkspaceItems.Add(new BitDropdownItem<string> { Text = text, Value = paths[i] });
+        }
     }
 
     private void RefreshChapterList()
