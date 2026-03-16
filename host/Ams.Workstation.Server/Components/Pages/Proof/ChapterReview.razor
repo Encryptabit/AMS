@@ -69,6 +69,7 @@ else
 }
 
 <CrxModal @ref="_crxModal" OnSubmitted="HandleCrxSubmitted" />
+<IgnoreErrorModal @ref="_ignoreModal" OnSubmitted="HandleIgnoreModalSubmitted" />
 
 
 @code {
@@ -82,6 +83,7 @@ else
     private IReadOnlyList<ErrorPattern>? _chapterPatterns;
     private bool _isReviewed;
     private CrxModal? _crxModal;
+    private IgnoreErrorModal? _ignoreModal;
     private HashSet<int> _exportedSentenceIds = new();
     private IJSObjectReference? _snippetPlayer;
     private string? _lastRenderedChapter;
@@ -551,25 +553,107 @@ else
     [JSInvokable]
     public void OnOpenCrx()
     {
-        if (_currentView != "errors" || _errorSentencesList.Count == 0) return;
-        var sentence = _errorSentencesList[_selectedErrorIndex];
+        var sentence = GetActiveSentenceReport();
+        if (sentence == null) return;
         HandleCrxFromErrors(sentence);
+    }
+
+    [JSInvokable]
+    public async Task OnIgnoreError()
+    {
+        var sentence = GetActiveSentenceReport();
+        if (sentence == null) return;
+
+        // Count non-equal error groups (delete+insert = 1 sub, standalone del/ins = 1 each)
+        var errorCount = CountErrors(sentence);
+
+        if (errorCount <= 1)
+        {
+            // Single error: ignore directly
+            await HandleIgnoreFromErrors(sentence);
+        }
+        else
+        {
+            // Multiple errors: open selection dialog
+            _ignoreModal?.Open(sentence);
+        }
+    }
+
+    private SentenceReport? GetActiveSentenceReport()
+    {
+        if (_currentView == "errors")
+        {
+            if (_errorSentencesList.Count == 0) return null;
+            return _errorSentencesList[_selectedErrorIndex];
+        }
+
+        // Playback view: resolve from selected sentence or current time
+        if (_report == null) return null;
+
+        int? sentenceId = _selectedSentenceId;
+        if (!sentenceId.HasValue && _sentences.Count > 0)
+        {
+            var timeSentence = _sentences.FirstOrDefault(s => _currentTime >= s.StartTime && _currentTime < s.EndTime);
+            sentenceId = timeSentence?.Id;
+        }
+
+        if (!sentenceId.HasValue) return null;
+        return _report.Sentences.FirstOrDefault(s => s.Id == sentenceId.Value);
+    }
+
+    private static int CountErrors(SentenceReport sentence)
+    {
+        if (sentence.Diff?.Ops is null) return 0;
+        var ops = sentence.Diff.Ops.ToList();
+        var count = 0;
+        for (int i = 0; i < ops.Count; i++)
+        {
+            if (ops[i].Op == "delete")
+            {
+                count++;
+                if (i + 1 < ops.Count && ops[i + 1].Op == "insert")
+                    i++; // skip the insert half of a substitution
+            }
+            else if (ops[i].Op == "insert")
+            {
+                count++;
+            }
+        }
+        return count;
+    }
+
+    private async Task HandleIgnoreModalSubmitted(List<IgnoreErrorModal.IgnoreErrorItem> selectedItems)
+    {
+        foreach (var item in selectedItems)
+            IgnoredPatternsService.SetIgnored(item.Key, true);
+
+        if (selectedItems.Count > 0 && !string.IsNullOrEmpty(ChapterName))
+        {
+            var decoded = Uri.UnescapeDataString(ChapterName);
+            LoadReport(decoded);
+            await LoadSentencesAsync(decoded);
+            ToastService.Info($"Ignored {selectedItems.Count} error pattern{(selectedItems.Count == 1 ? "" : "s")} for entire book");
+        }
+        StateHasChanged();
     }
 
     [JSInvokable]
     public void OnModalClose()
     {
-        _crxModal?.Close();
+        if (_ignoreModal?.IsVisible == true)
+            _ignoreModal.Close();
+        else
+            _crxModal?.Close();
         StateHasChanged();
     }
 
     [JSInvokable]
     public async Task OnModalSubmit()
     {
-        if (_crxModal != null)
-        {
+        if (_ignoreModal?.IsVisible == true)
+            await _ignoreModal.SubmitAsync();
+        else if (_crxModal != null)
             await _crxModal.SubmitAsync();
-        }
     }
 
     // ── Error visibility logic (copied from ErrorsView for indexing) ──

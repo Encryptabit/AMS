@@ -5,7 +5,8 @@ let _dotNetRef = null;
 let _handler = null;
 
 function isModalOpen() {
-    return document.querySelector('.crx-modal-overlay.visible') !== null;
+    return document.querySelector('.crx-modal-overlay.visible') !== null
+        || document.querySelector('.ignore-modal-overlay.visible') !== null;
 }
 
 function isInputFocused() {
@@ -111,6 +112,12 @@ function handleKeydown(e) {
 
     if ((e.key === 'e' || e.key === 'E') && !e.ctrlKey && !e.metaKey && !e.altKey) {
         _dotNetRef.invokeMethodAsync('OnOpenCrx');
+        e.preventDefault();
+        return;
+    }
+
+    if ((e.key === 'i' || e.key === 'I') && !e.ctrlKey && !e.metaKey && !e.altKey) {
+        _dotNetRef.invokeMethodAsync('OnIgnoreError');
         e.preventDefault();
         return;
     }

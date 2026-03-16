@@ -1,0 +1,260 @@
+@using Ams.Workstation.Server.Models
+@using Ams.Workstation.Server.Services
+
+<div class="ignore-modal-overlay @(_isVisible ? "visible" : "")" @onclick="Close">
+    <div class="ignore-modal" @onclick:stopPropagation>
+        <div class="ignore-modal-header">
+            <BitText Typography="BitTypography.H5">Ignore Errors</BitText>
+            <BitButton Variant="BitVariant.Text" OnClick="Close" IconName="Cancel" />
+        </div>
+
+        <div class="ignore-modal-body">
+            <BitText Typography="BitTypography.Body2" Color="BitColor.SecondaryForeground">
+                Select errors to ignore for the entire book:
+            </BitText>
+
+            <div class="ignore-errors-section">
+                <div class="ignore-errors-header">
+                    <label class="ignore-select-all">
+                        <input type="checkbox" checked="@_allSelected"
+                               @onchange="ToggleSelectAll" />
+                        <BitText Typography="BitTypography.Caption1">Select All</BitText>
+                    </label>
+                </div>
+                <div class="ignore-errors-list">
+                    @for (var i = 0; i < _errorItems.Count; i++)
+                    {
+                        var idx = i;
+                        var item = _errorItems[idx];
+                        <label class="ignore-error-item">
+                            <input type="checkbox" checked="@item.Selected"
+                                   @onchange="@(() => ToggleError(idx))" />
+                            <span class="@GetErrorClass(item.Type)">
+                                @GetErrorLabel(item.Type): @item.DisplayText
+                            </span>
+                        </label>
+                    }
+                </div>
+            </div>
+        </div>
+
+        <div class="ignore-modal-footer">
+            <BitButton Variant="BitVariant.Outline" OnClick="Close">Cancel</BitButton>
+            <BitButton Variant="BitVariant.Fill" Color="BitColor.Primary"
+                       OnClick="Submit" IsEnabled="@HasSelection">
+                Ignore Selected
+            </BitButton>
+        </div>
+    </div>
+</div>
+
+@code {
+    private bool _isVisible;
+    private List<IgnoreErrorItem> _errorItems = new();
+    private bool _allSelected = true;
+
+    [Parameter] public EventCallback<List<IgnoreErrorItem>> OnSubmitted { get; set; }
+
+    private bool HasSelection => _errorItems.Any(e => e.Selected);
+
+    public bool IsVisible => _isVisible;
+
+    public void Open(SentenceReport sentence)
+    {
+        _errorItems.Clear();
+        if (sentence.Diff?.Ops is null) return;
+
+        var ops = sentence.Diff.Ops.ToList();
+        for (int i = 0; i < ops.Count; i++)
+        {
+            var op = ops[i];
+            if (op.Op == "delete")
+            {
+                var bookText = string.Join(" ", op.Tokens);
+                if (i + 1 < ops.Count && ops[i + 1].Op == "insert")
+                {
+                    var scriptText = string.Join(" ", ops[i + 1].Tokens);
+                    _errorItems.Add(new IgnoreErrorItem(
+                        Type: "sub",
+                        BookText: bookText,
+                        ScriptText: scriptText,
+                        DisplayText: $"{bookText} → {scriptText}",
+                        Key: ErrorPatternService.BuildKey("sub", bookText, scriptText),
+                        Selected: true));
+                    i++;
+                }
+                else
+                {
+                    _errorItems.Add(new IgnoreErrorItem(
+                        Type: "del",
+                        BookText: bookText,
+                        ScriptText: "",
+                        DisplayText: bookText,
+                        Key: ErrorPatternService.BuildKey("del", bookText, ""),
+                        Selected: true));
+                }
+            }
+            else if (op.Op == "insert")
+            {
+                var scriptText = string.Join(" ", op.Tokens);
+                _errorItems.Add(new IgnoreErrorItem(
+                    Type: "ins",
+                    BookText: "",
+                    ScriptText: scriptText,
+                    DisplayText: scriptText,
+                    Key: ErrorPatternService.BuildKey("ins", "", scriptText),
+                    Selected: true));
+            }
+        }
+
+        _allSelected = true;
+        _isVisible = true;
+        StateHasChanged();
+    }
+
+    public void Close()
+    {
+        _isVisible = false;
+        StateHasChanged();
+    }
+
+    private void ToggleError(int index)
+    {
+        var item = _errorItems[index];
+        _errorItems[index] = item with { Selected = !item.Selected };
+        _allSelected = _errorItems.All(e => e.Selected);
+        StateHasChanged();
+    }
+
+    private void ToggleSelectAll(ChangeEventArgs e)
+    {
+        var selectAll = (bool)(e.Value ?? false);
+        _allSelected = selectAll;
+        for (var i = 0; i < _errorItems.Count; i++)
+            _errorItems[i] = _errorItems[i] with { Selected = selectAll };
+        StateHasChanged();
+    }
+
+    private async Task Submit()
+    {
+        var selected = _errorItems.Where(e => e.Selected).ToList();
+        if (selected.Count > 0)
+            await OnSubmitted.InvokeAsync(selected);
+        Close();
+    }
+
+    public async Task SubmitAsync()
+    {
+        if (_isVisible)
+            await Submit();
+    }
+
+    private static string GetErrorClass(string type) => type switch
+    {
+        "del" => "ignore-del",
+        "ins" => "ignore-ins",
+        "sub" => "ignore-sub",
+        _ => ""
+    };
+
+    private static string GetErrorLabel(string type) => type switch
+    {
+        "del" => "DEL",
+        "ins" => "INS",
+        "sub" => "SUB",
+        _ => type.ToUpper()
+    };
+
+    public record IgnoreErrorItem(
+        string Type,
+        string BookText,
+        string ScriptText,
+        string DisplayText,
+        string Key,
+        bool Selected);
+}
+
+<style>
+    .ignore-modal-overlay {
+        position: fixed;
+        inset: 0;
+        background: rgba(0, 0, 0, 0.5);
+        display: none;
+        align-items: center;
+        justify-content: center;
+        z-index: 1000;
+    }
+    .ignore-modal-overlay.visible {
+        display: flex;
+    }
+    .ignore-modal {
+        background: var(--bit-clr-bg-pri);
+        border-radius: 8px;
+        width: fit-content;
+        min-width: 400px;
+        max-width: 600px;
+    }
+    .ignore-modal-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 1rem;
+        border-bottom: 1px solid var(--bit-clr-brd-sec);
+    }
+    .ignore-modal-body {
+        padding: 1rem;
+        display: flex;
+        flex-direction: column;
+        gap: 0.75rem;
+    }
+    .ignore-modal-footer {
+        display: flex;
+        justify-content: flex-end;
+        gap: 0.5rem;
+        padding: 1rem;
+        border-top: 1px solid var(--bit-clr-brd-sec);
+    }
+    .ignore-errors-section {
+        display: flex;
+        flex-direction: column;
+        gap: 0.25rem;
+    }
+    .ignore-errors-header {
+        display: flex;
+        justify-content: flex-end;
+        align-items: center;
+    }
+    .ignore-select-all {
+        display: flex;
+        align-items: center;
+        gap: 0.25rem;
+        cursor: pointer;
+    }
+    .ignore-errors-list {
+        display: flex;
+        flex-direction: column;
+        gap: 0.25rem;
+        max-height: 300px;
+        overflow-y: auto;
+        padding: 0.5rem;
+        background: var(--bit-clr-bg-sec);
+        border-radius: 4px;
+    }
+    .ignore-error-item {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        cursor: pointer;
+        font-size: 0.9rem;
+        padding: 0.25rem 0;
+    }
+    .ignore-del {
+        color: #ff6b6b;
+    }
+    .ignore-ins {
+        color: #69db7c;
+    }
+    .ignore-sub {
+        color: #ffd43b;
+    }
+</style>
