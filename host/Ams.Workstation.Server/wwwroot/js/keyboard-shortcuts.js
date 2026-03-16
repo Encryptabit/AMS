@@ -56,49 +56,54 @@ function handleKeydown(e) {
     }
 
     // Modal NOT open, NOT in input field
-    if (e.key === 'ArrowRight' && e.altKey) {
+    const isRight = e.key === 'ArrowRight' || e.key === 'l' || e.key === 'L';
+    const isLeft = e.key === 'ArrowLeft' || e.key === 'h' || e.key === 'H';
+    const isUp = e.key === 'ArrowUp' || e.key === 'k' || e.key === 'K';
+    const isDown = e.key === 'ArrowDown' || e.key === 'j' || e.key === 'J';
+
+    if (isRight && e.altKey) {
         _dotNetRef.invokeMethodAsync('OnChapterNav', 'next');
         e.preventDefault();
         return;
     }
 
-    if (e.key === 'ArrowLeft' && e.altKey) {
+    if (isLeft && e.altKey) {
         _dotNetRef.invokeMethodAsync('OnChapterNav', 'prev');
         e.preventDefault();
         return;
     }
 
-    if (e.key === 'ArrowRight' && (e.ctrlKey || e.metaKey)) {
+    if (isRight && (e.ctrlKey || e.metaKey)) {
         _dotNetRef.invokeMethodAsync('OnCrossNav', 'errors-to-playback');
         e.preventDefault();
         return;
     }
 
-    if (e.key === 'ArrowLeft' && (e.ctrlKey || e.metaKey)) {
+    if (isLeft && (e.ctrlKey || e.metaKey)) {
         _dotNetRef.invokeMethodAsync('OnCrossNav', 'playback-to-errors');
         e.preventDefault();
         return;
     }
 
-    if (e.key === 'ArrowLeft') {
+    if (isLeft && !e.ctrlKey && !e.metaKey && !e.altKey) {
         _dotNetRef.invokeMethodAsync('OnSwitchView', 'prev');
         e.preventDefault();
         return;
     }
 
-    if (e.key === 'ArrowRight') {
+    if (isRight && !e.ctrlKey && !e.metaKey && !e.altKey) {
         _dotNetRef.invokeMethodAsync('OnSwitchView', 'next');
         e.preventDefault();
         return;
     }
 
-    if (e.key === 'ArrowUp') {
+    if (isUp && !e.ctrlKey && !e.metaKey && !e.altKey) {
         _dotNetRef.invokeMethodAsync('OnNavigateItem', 'prev');
         e.preventDefault();
         return;
     }
 
-    if (e.key === 'ArrowDown') {
+    if (isDown && !e.ctrlKey && !e.metaKey && !e.altKey) {
         _dotNetRef.invokeMethodAsync('OnNavigateItem', 'next');
         e.preventDefault();
         return;
