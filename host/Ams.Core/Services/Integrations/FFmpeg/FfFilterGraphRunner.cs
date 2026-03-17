@@ -88,6 +88,7 @@ namespace Ams.Core.Services.Integrations.FFmpeg
 
             private readonly int _channels;
             private int _sampleRate;
+            private int _outputChannels;
 
             public FilterGraphExecutor(IReadOnlyList<GraphInput> inputs, string filterSpec, FilterExecutionMode mode,
                 IAudioFrameSink? frameSink)
@@ -111,6 +112,7 @@ namespace Ams.Core.Services.Integrations.FFmpeg
 
                 _channels = _inputs[0].Channels;
                 _sampleRate = _inputs[0].SampleRate;
+                _outputChannels = _channels; // fallback: assume output matches input
 
                 SetupSink();
                 ConfigureGraph();
@@ -120,13 +122,15 @@ namespace Ams.Core.Services.Integrations.FFmpeg
                 if (_outputFrame == null)
                     throw new InvalidOperationException("Failed to allocate FFmpeg frame.");
 
+                // Use _outputChannels (derived from sink after RefreshOutputFormat)
+                // instead of _channels (input-side) for accumulator and frameSink.
                 if (_frameSink != null)
                 {
-                    _frameSink.Initialize(_primaryMetadata, _sampleRate, _channels);
+                    _frameSink.Initialize(_primaryMetadata, _sampleRate, _outputChannels);
                 }
 
                 if (_mode == FilterExecutionMode.ReturnAudio && _frameSink is null)
-                    _accumulator = new AudioAccumulator(_channels, _sampleRate);
+                    _accumulator = new AudioAccumulator(_outputChannels, _sampleRate);
             }
 
             public void Process()
@@ -523,6 +527,15 @@ namespace Ams.Core.Services.Integrations.FFmpeg
                 if (sinkRate > 0)
                 {
                     _sampleRate = sinkRate;
+                }
+
+                // Derive output channel count from the negotiated sink output.
+                // When filters change channel topology (e.g., pan=mono on stereo input),
+                // this ensures the accumulator gets the correct channel count.
+                var sinkChannels = ffmpeg.av_buffersink_get_channels(_sink);
+                if (sinkChannels > 0)
+                {
+                    _outputChannels = sinkChannels;
                 }
             }
 

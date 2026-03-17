@@ -96,17 +96,39 @@ internal static class MfaChunkCorpusBuilder
         int nearestSentenceFallbackChunks = 0;
         IReadOnlyList<string>? previousLabTokens = null;
 
+        // Pre-index word midpoints sorted by time for O(W log W + C) lookup
+        // instead of O(C * W) rescanning per chunk.
+        List<PreIndexedWord>? preIndexedWords = null;
+        if (asr is not null && hydrate.Words.Count > 0 && asr.Tokens.Length > 0)
+        {
+            preIndexedWords = new List<PreIndexedWord>(hydrate.Words.Count);
+            foreach (var word in hydrate.Words)
+            {
+                if (word.AsrIdx is not int asrIdx || asrIdx < 0 || asrIdx >= asr.Tokens.Length)
+                    continue;
+
+                var lexemeParts = ResolveAlignmentLexemeParts(word);
+                if (lexemeParts.Count == 0)
+                    continue;
+
+                var token = asr.Tokens[asrIdx];
+                var midpoint = token.StartTime + Math.Max(0d, token.Duration) * 0.5d;
+                preIndexedWords.Add(new PreIndexedWord(midpoint, asrIdx, word.BookIdx, lexemeParts));
+            }
+
+            preIndexedWords.Sort((a, b) => a.MidpointSec.CompareTo(b.MidpointSec));
+        }
+
         for (int i = 0; i < chunkPlan.Chunks.Count; i++)
         {
             var chunk = chunkPlan.Chunks[i];
             var uttName = FormatUtteranceName(i);
             var usedFallback = false;
 
-            // Prefer word-level mapping using hydrate BookWord + ASR token timings.
-            // This avoids assigning full sentence text when only part of that sentence
-            // acoustically belongs to the current chunk.
-            var labText = asr is not null
-                ? BuildLabTextFromWordTiming(hydrate.Words, asr, chunk.StartSec, chunk.EndSec)
+            // Prefer word-level mapping using pre-indexed midpoints for O(log W + hits)
+            // per chunk instead of O(W) rescanning.
+            var labText = preIndexedWords is { Count: > 0 }
+                ? BuildLabTextFromPreIndexedWords(preIndexedWords, chunk.StartSec, chunk.EndSec)
                 : null;
 
             if (!string.IsNullOrWhiteSpace(labText))
@@ -402,6 +424,93 @@ internal static class MfaChunkCorpusBuilder
         int AsrIdx,
         int? BookIdx,
         IReadOnlyList<string> LexemeParts);
+
+    /// <summary>
+    /// Pre-computed word with its ASR token midpoint time, for sorted pre-indexing.
+    /// </summary>
+    private sealed record PreIndexedWord(
+        double MidpointSec,
+        int AsrIdx,
+        int? BookIdx,
+        IReadOnlyList<string> LexemeParts);
+
+    /// <summary>
+    /// Builds lab text from a pre-sorted list of word midpoints using binary search
+    /// to find the start index, then scanning forward until midpoint exceeds chunk end.
+    /// O(log W + hits) per chunk instead of O(W) rescanning.
+    /// </summary>
+    private static string? BuildLabTextFromPreIndexedWords(
+        List<PreIndexedWord> sortedWords,
+        double chunkStartSec,
+        double chunkEndSec)
+    {
+        if (sortedWords.Count == 0 || chunkEndSec <= chunkStartSec)
+        {
+            return null;
+        }
+
+        // Binary search for the first word with midpoint >= chunkStartSec - tolerance
+        double lowerBound = chunkStartSec - WordTimingEdgeToleranceSec;
+        int lo = 0, hi = sortedWords.Count - 1;
+        int startIndex = sortedWords.Count; // default: no match
+        while (lo <= hi)
+        {
+            int mid = lo + (hi - lo) / 2;
+            if (sortedWords[mid].MidpointSec >= lowerBound)
+            {
+                startIndex = mid;
+                hi = mid - 1;
+            }
+            else
+            {
+                lo = mid + 1;
+            }
+        }
+
+        double upperBound = chunkEndSec + WordTimingEdgeToleranceSec;
+        var candidates = new List<AlignmentWordCandidate>();
+
+        for (int i = startIndex; i < sortedWords.Count; i++)
+        {
+            var pw = sortedWords[i];
+            if (pw.MidpointSec >= upperBound)
+                break;
+
+            candidates.Add(new AlignmentWordCandidate(pw.AsrIdx, pw.BookIdx, pw.LexemeParts));
+        }
+
+        if (candidates.Count == 0)
+        {
+            return null;
+        }
+
+        candidates.Sort((a, b) => a.AsrIdx.CompareTo(b.AsrIdx));
+        var seenBookIdx = new HashSet<int>();
+        var parts = new List<string>(candidates.Count);
+
+        foreach (var candidate in candidates)
+        {
+            if (candidate.BookIdx is int bookIdx && !seenBookIdx.Add(bookIdx))
+            {
+                continue;
+            }
+
+            foreach (var part in candidate.LexemeParts)
+            {
+                if (!string.IsNullOrWhiteSpace(part))
+                {
+                    parts.Add(part);
+                }
+            }
+        }
+
+        if (parts.Count < MinLabTokenCount)
+        {
+            return null;
+        }
+
+        return string.Join(' ', parts);
+    }
 
     /// <summary>
     /// Fallback when no sentences overlap the chunk timing window.
