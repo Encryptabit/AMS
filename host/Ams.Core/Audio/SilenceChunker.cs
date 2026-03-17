@@ -1,3 +1,4 @@
+using System.Numerics;
 using Ams.Core.Artifacts;
 
 namespace Ams.Core.Audio;
@@ -81,7 +82,7 @@ public static class SilenceChunker
         // Convert dB threshold to linear RMS amplitude
         var threshold = Math.Pow(10, silenceThresholdDb / 20.0);
 
-        // Detect silence regions via single O(n) pass with sliding RMS window
+        // Detect silence regions via single O(n) pass with rolling sum-of-squares
         var silenceRegions = DetectSilenceRegions(buffer, threshold, minSilenceSamples);
 
         // Extract midpoints as split candidates.
@@ -120,6 +121,8 @@ public static class SilenceChunker
 
     /// <summary>
     /// Single O(n) pass: slides an RMS window across channel 0, tracking silence regions.
+    /// Uses rolling sum-of-squares to avoid recomputing the full window each hop.
+    /// Compares against squared threshold to avoid Math.Sqrt per hop.
     /// </summary>
     private static List<(int Start, int Length)> DetectSilenceRegions(
         AudioBuffer buffer,
@@ -133,7 +136,7 @@ public static class SilenceChunker
         // Handle edge case: buffer smaller than RMS window
         if (totalSamples < RmsWindowSize)
         {
-            // Compute single RMS for the entire buffer
+            // Compute single RMS for the entire buffer (edge-case-only path)
             var rms = ComputeRms(samples, 0, totalSamples);
             if (rms < threshold && totalSamples >= minSilenceSamples)
             {
@@ -142,13 +145,34 @@ public static class SilenceChunker
             return regions;
         }
 
+        // Pre-compute squared threshold: compare sumOfSquares/windowSize < thresholdSq
+        // instead of sqrt(sumOfSquares/windowSize) < threshold -- avoids sqrt per hop.
+        var thresholdSq = threshold * threshold;
+
+        // Compute initial sum-of-squares for samples[0..RmsWindowSize) using SIMD
+        var rollingSum = SumOfSquaresSimd(samples.Slice(0, RmsWindowSize));
+
         int silenceStart = -1; // -1 means not currently in a silence region
-
-        for (int pos = 0; pos + RmsWindowSize <= totalSamples; pos += RmsHopSize)
+        bool isSilent = (rollingSum / RmsWindowSize) < thresholdSq;
+        if (isSilent)
         {
-            var rms = ComputeRms(samples, pos, RmsWindowSize);
+            silenceStart = 0;
+        }
 
-            if (rms < threshold)
+        // Rolling update: on each hop, subtract outgoing samples and add incoming samples.
+        // This replaces the full-window recomputation with O(hopSize) work per step.
+        int lastPos = 0;
+        for (int pos = RmsHopSize; pos + RmsWindowSize <= totalSamples; pos += RmsHopSize)
+        {
+            // Subtract outgoing: samples[lastPos..lastPos+hopSize)
+            rollingSum -= SumOfSquaresSimd(samples.Slice(lastPos, RmsHopSize));
+
+            // Add incoming: samples[pos+windowSize-hopSize..pos+windowSize)
+            rollingSum += SumOfSquaresSimd(samples.Slice(pos + RmsWindowSize - RmsHopSize, RmsHopSize));
+
+            isSilent = (rollingSum / RmsWindowSize) < thresholdSq;
+
+            if (isSilent)
             {
                 // In silence
                 if (silenceStart == -1)
@@ -169,6 +193,46 @@ public static class SilenceChunker
                     silenceStart = -1;
                 }
             }
+
+            lastPos = pos;
+        }
+
+        // Handle tail: unexamined samples after the last hop end.
+        // The last hop position was lastPos (with window ending at lastPos + RmsWindowSize).
+        // If there are remaining samples beyond that, check them for silence.
+        int lastHopEnd = lastPos + RmsWindowSize;
+        if (lastHopEnd < totalSamples)
+        {
+            int tailLength = totalSamples - lastHopEnd;
+            // Only examine tail if it's meaningful (at least half a hop)
+            if (tailLength >= RmsHopSize / 2)
+            {
+                var tailRms = ComputeRms(samples, lastHopEnd, tailLength);
+                bool tailIsSilent = tailRms < threshold;
+
+                if (tailIsSilent)
+                {
+                    if (silenceStart == -1)
+                    {
+                        // New silence region starting in tail
+                        silenceStart = lastHopEnd;
+                    }
+                    // else: silence continues from main loop into tail -- handled below
+                }
+                else
+                {
+                    // Tail is not silence; close any open silence region at tail start
+                    if (silenceStart >= 0)
+                    {
+                        var silenceLength = lastHopEnd - silenceStart;
+                        if (silenceLength >= minSilenceSamples)
+                        {
+                            regions.Add((silenceStart, silenceLength));
+                        }
+                        silenceStart = -1;
+                    }
+                }
+            }
         }
 
         // Handle trailing silence (silence that extends to end of buffer)
@@ -185,24 +249,58 @@ public static class SilenceChunker
     }
 
     /// <summary>
+    /// Computes the sum of squares for a span of float samples using SIMD
+    /// Vector&lt;float&gt; accumulation. Processes Vector&lt;float&gt;.Count elements
+    /// at a time, then handles scalar remainder.
+    /// </summary>
+    private static double SumOfSquaresSimd(ReadOnlySpan<float> span)
+    {
+        int vectorSize = Vector<float>.Count;
+        int i = 0;
+        var accumulator = Vector<float>.Zero;
+
+        // SIMD loop: process vectorSize elements at a time
+        int vectorEnd = span.Length - vectorSize + 1;
+        for (; i < vectorEnd; i += vectorSize)
+        {
+            var v = new Vector<float>(span.Slice(i, vectorSize));
+            accumulator += v * v;
+        }
+
+        // Horizontal sum of SIMD accumulator
+        double sum = 0;
+        for (int j = 0; j < vectorSize; j++)
+        {
+            sum += accumulator[j];
+        }
+
+        // Scalar remainder
+        for (; i < span.Length; i++)
+        {
+            double s = span[i];
+            sum += s * s;
+        }
+
+        return sum;
+    }
+
+    /// <summary>
     /// Computes RMS amplitude for a window of samples.
+    /// Used only for edge cases where buffer is smaller than RmsWindowSize
+    /// or for tail partial windows.
     /// </summary>
     private static double ComputeRms(ReadOnlySpan<float> samples, int offset, int length)
     {
-        double sumSquares = 0;
-        var end = offset + length;
-        for (int i = offset; i < end; i++)
-        {
-            double s = samples[i];
-            sumSquares += s * s;
-        }
-        return Math.Sqrt(sumSquares / length);
+        var sum = SumOfSquaresSimd(samples.Slice(offset, length));
+        return Math.Sqrt(sum / length);
     }
 
     /// <summary>
     /// Greedily selects split points that keep chunks at or above minChunkSamples.
     /// Iterates through candidates in order, only accepting a split if both the
     /// preceding chunk and the remaining buffer would be large enough.
+    /// Pre-sizes the result list and guards against forced splits that would
+    /// emit a tail chunk below minChunkSamples.
     /// </summary>
     private static List<int> SelectSplitPoints(
         List<int> candidates,
@@ -210,7 +308,8 @@ public static class SilenceChunker
         int minChunkSamples,
         int maxChunkSamples)
     {
-        var selected = new List<int>();
+        // Pre-size list to avoid reallocation
+        var selected = new List<int>(candidates.Count + totalLength / maxChunkSamples + 1);
         int lastSplit = 0;
         int candidateIndex = 0;
 
@@ -223,6 +322,16 @@ public static class SilenceChunker
                 if (forcedSplit <= lastSplit)
                 {
                     forcedSplit = lastSplit + maxChunkSamples;
+                }
+
+                // Guard: ensure the remaining suffix after forcedSplit is partitionable
+                if (totalLength - forcedSplit < minChunkSamples && forcedSplit != totalLength)
+                {
+                    var clamped = totalLength - minChunkSamples;
+                    if (clamped > lastSplit)
+                    {
+                        forcedSplit = clamped;
+                    }
                 }
 
                 selected.Add(forcedSplit);
@@ -246,6 +355,16 @@ public static class SilenceChunker
             if (forcedSplit <= lastSplit)
             {
                 forcedSplit = lastSplit + maxChunkSamples;
+            }
+
+            // Guard: ensure the remaining suffix after forcedSplit is partitionable
+            if (totalLength - forcedSplit < minChunkSamples && forcedSplit != totalLength)
+            {
+                var clamped = totalLength - minChunkSamples;
+                if (clamped > lastSplit)
+                {
+                    forcedSplit = clamped;
+                }
             }
 
             selected.Add(forcedSplit);
