@@ -1,5 +1,6 @@
 @using Ams.Workstation.Server.Models
 @using Ams.Workstation.Server.Services
+@inject IJSRuntime JS
 
 <div class="ignore-modal-overlay @(_isVisible ? "visible" : "")" @onclick="Close">
     <div class="ignore-modal" @onclick:stopPropagation>
@@ -110,11 +111,19 @@
         _allSelected = true;
         _isVisible = true;
         StateHasChanged();
+        _ = ActivateFocusTrapAsync();
+    }
+
+    private async Task ActivateFocusTrapAsync()
+    {
+        await Task.Yield();
+        await JS.InvokeVoidAsync("window.modalFocusTrap.activate");
     }
 
     public void Close()
     {
         _isVisible = false;
+        JS.InvokeVoidAsync("window.modalFocusTrap.deactivate");
         StateHasChanged();
     }
 

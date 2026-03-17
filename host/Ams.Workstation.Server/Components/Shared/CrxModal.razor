@@ -86,6 +86,8 @@
     </div>
 </div>
 
+@inject IJSRuntime JS
+
 @code {
     private const int PeakPxPerSec = 1200;
     private bool _isVisible;
@@ -138,6 +140,13 @@
         _peaksUrl = BuildPeaksUrl();
 
         StateHasChanged();
+        _ = ActivateFocusTrapAsync();
+    }
+
+    private async Task ActivateFocusTrapAsync()
+    {
+        await Task.Yield();
+        await JS.InvokeVoidAsync("window.modalFocusTrap.activate");
     }
 
     public void Close()
@@ -145,6 +154,7 @@
         _isVisible = false;
         _audioUrl = "";
         _peaksUrl = null;
+        JS.InvokeVoidAsync("window.modalFocusTrap.deactivate");
         StateHasChanged();
     }
 
