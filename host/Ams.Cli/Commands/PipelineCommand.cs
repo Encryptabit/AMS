@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using System.CommandLine;
 using System.Diagnostics;
 using System.Globalization;
+using System.Numerics;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -2809,10 +2810,25 @@ public static class PipelineCommand
 
         var mono = new float[buffer.Length];
         float scale = 1f / buffer.Channels;
+        int vectorSize = Vector<float>.Count;
+        var scaleVec = new Vector<float>(scale);
+
         for (int ch = 0; ch < buffer.Channels; ch++)
         {
             var src = buffer.GetChannel(ch).Span;
-            for (int i = 0; i < mono.Length; i++)
+
+            // SIMD loop: process vectorSize samples at a time
+            int i = 0;
+            int vectorEnd = mono.Length - vectorSize + 1;
+            for (; i < vectorEnd; i += vectorSize)
+            {
+                var srcVec = new Vector<float>(src.Slice(i, vectorSize));
+                var dstVec = new Vector<float>(mono.AsSpan(i, vectorSize));
+                (dstVec + srcVec * scaleVec).CopyTo(mono, i);
+            }
+
+            // Scalar remainder
+            for (; i < mono.Length; i++)
             {
                 mono[i] += src[i] * scale;
             }

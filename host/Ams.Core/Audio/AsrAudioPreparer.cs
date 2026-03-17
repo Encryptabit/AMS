@@ -59,16 +59,24 @@ public static class AsrAudioPreparer
     /// </summary>
     private static AudioBuffer DownmixToMono(AudioBuffer buffer)
     {
-        if (buffer.Channels == 1)
+        int channels = buffer.Channels;
+        if (channels == 1)
         {
             return buffer;
         }
 
         FfSession.EnsureFiltersAvailable();
-        return FfFilterGraph
+        var result = FfFilterGraph
             .FromBuffer(buffer)
-            .Custom(BuildMonoPanClause(buffer.Channels))
+            .Custom(BuildMonoPanClause(channels))
             .ToBuffer();
+
+        // The FFmpeg filter graph output retains the input's metadata including
+        // CurrentChannelLayout. Since the output is now mono, correct it.
+        result.UpdateMetadata(
+            result.Metadata.WithCurrentStream(result.SampleRate, 1, "flt", "mono"));
+
+        return result;
     }
 
     /// <summary>

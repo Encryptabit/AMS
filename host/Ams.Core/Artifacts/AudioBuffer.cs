@@ -1,5 +1,4 @@
 using Ams.Core.Processors;
-using Ams.Core.Services.Integrations.FFmpeg;
 
 namespace Ams.Core.Artifacts;
 
@@ -148,6 +147,7 @@ public sealed class AudioBuffer
         var first = bufferList[0];
         int sampleRate = first.SampleRate;
         int channels = first.Channels;
+        int totalLength = first.Length;
 
         for (int i = 1; i < bufferList.Count; i++)
         {
@@ -164,31 +164,25 @@ public sealed class AudioBuffer
                     $"Buffer at index {i} has {buf.Channels} channels, expected {channels}. " +
                     "All buffers must have matching Channels for concatenation.");
             }
+            totalLength += buf.Length;
         }
 
-        var inputs = new List<FfFilterGraphRunner.GraphInput>(bufferList.Count);
-        var inputFormatClauses = new List<string>(bufferList.Count);
-        var concatInputRefs = new System.Text.StringBuilder(bufferList.Count * 8);
+        // Direct managed memory copy -- all samples are already float[] in managed memory,
+        // so FFmpeg filter graph overhead is unnecessary.
+        var result = new AudioBuffer(channels, sampleRate, totalLength, first.Metadata);
 
-        for (int i = 0; i < bufferList.Count; i++)
+        for (int ch = 0; ch < channels; ch++)
         {
-            var label = $"in{i}";
-            var formattedLabel = $"f{i}";
-            inputs.Add(new FfFilterGraphRunner.GraphInput(label, bufferList[i]));
-            inputFormatClauses.Add($"[{label}]aformat=sample_fmts=flt[{formattedLabel}]");
-            concatInputRefs.Append($"[{formattedLabel}]");
+            var dest = result.GetChannelSpan(ch);
+            int offset = 0;
+            for (int i = 0; i < bufferList.Count; i++)
+            {
+                var source = bufferList[i];
+                source.GetChannel(ch).Span.CopyTo(dest.Slice(offset, source.Length));
+                offset += source.Length;
+            }
         }
 
-        if (bufferList.Count == 1)
-        {
-            return FfFilterGraphRunner.Apply(inputs, inputFormatClauses[0] + ";[f0]anull[out]");
-        }
-
-        var filterSpec = string.Join(";", inputFormatClauses)
-                         + ";"
-                         + concatInputRefs
-                         + $"concat=n={bufferList.Count}:v=0:a=1[out]";
-
-        return FfFilterGraphRunner.Apply(inputs, filterSpec);
+        return result;
     }
 }
