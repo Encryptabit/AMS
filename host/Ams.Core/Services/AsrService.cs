@@ -50,31 +50,43 @@ public sealed class AsrService : IAsrService
             "ASR chunk-plan driven: {ChunkCount} chunks from {TotalDuration:F1}s audio",
             plan.Chunks.Count, totalDuration);
 
-        var chunkResults = new List<(AsrResponse Response, double OffsetSec)>(plan.Chunks.Count);
-        var chunkAudioEntries = new List<ChunkAudioEntry>(plan.Chunks.Count);
+        var chunkCount = plan.Chunks.Count;
         var chunkAudioDirectory = PrepareChunkAudioDirectory(chapter);
 
-        for (int i = 0; i < plan.Chunks.Count; i++)
+        // Pre-compute slices, names, and paths for all chunks
+        var chunkSlices = new AudioBuffer[chunkCount];
+        var chunkAudioEntries = new ChunkAudioEntry[chunkCount];
+        for (int i = 0; i < chunkCount; i++)
         {
             var entry = plan.Chunks[i];
-            cancellationToken.ThrowIfCancellationRequested();
-
-            var slice = buffer.Slice(entry.StartSample, entry.LengthSamples);
             var utteranceName = FormatChunkUtteranceName(i);
-            var chunkWavPath = Path.Combine(chunkAudioDirectory, utteranceName + ".wav");
-            AudioProcessor.EncodeWav(chunkWavPath, slice);
-
-            chunkAudioEntries.Add(new ChunkAudioEntry(
+            chunkSlices[i] = buffer.Slice(entry.StartSample, entry.LengthSamples);
+            chunkAudioEntries[i] = new ChunkAudioEntry(
                 ChunkId: entry.ChunkId,
                 UtteranceName: utteranceName,
                 StartSec: entry.StartSec,
                 EndSec: entry.EndSec,
-                WavPath: chunkWavPath));
+                WavPath: Path.Combine(chunkAudioDirectory, utteranceName + ".wav"));
+        }
 
-            var response = await AsrProcessor.TranscribeBufferAsync(slice, options, cancellationToken)
+        // Phase 1: encode all chunk WAVs in parallel (slices are zero-copy views)
+        Parallel.For(0, chunkCount,
+            new ParallelOptions
+            {
+                MaxDegreeOfParallelism = Environment.ProcessorCount,
+                CancellationToken = cancellationToken
+            },
+            i => AudioProcessor.EncodeWav(chunkAudioEntries[i].WavPath, chunkSlices[i]));
+        Log.Debug("ASR encoded {ChunkCount} chunk WAVs in parallel", chunkCount);
+
+        // Phase 2: transcribe sequentially (Whisper model context is single-threaded)
+        var chunkResults = new List<(AsrResponse Response, double OffsetSec)>(chunkCount);
+        for (int i = 0; i < chunkCount; i++)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var response = await AsrProcessor.TranscribeBufferAsync(chunkSlices[i], options, cancellationToken)
                 .ConfigureAwait(false);
-
-            chunkResults.Add((response, entry.StartSec));
+            chunkResults.Add((response, plan.Chunks[i].StartSec));
         }
 
         chapter.Documents.ChunkAudio = new ChunkAudioDocument(
@@ -85,7 +97,7 @@ public sealed class AsrService : IAsrService
             Channels: buffer.Channels,
             Chunks: chunkAudioEntries);
         Log.Debug("ASR persisted chunk audio artifact ({ChunkCount} chunks, dir={Directory})",
-            chunkAudioEntries.Count, chunkAudioDirectory);
+            chunkAudioEntries.Length, chunkAudioDirectory);
 
         return MergeChunkResponses(chunkResults);
     }
