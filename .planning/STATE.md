@@ -245,6 +245,7 @@ poc/VelloSharpPoc/     - Avalonia + VelloSharp (child window fails)
 | 6 | silence-based pre-chunking in AsrProcessor | 2026-03-02 | f76a5c3 | [6-silence-based-pre-chunking-in-asrprocess](./quick/6-silence-based-pre-chunking-in-asrprocess/) |
 | 8 | audiobook QC CLI command (ffmpeg silencedetect) | 2026-03-02 | a11fd4b | [8-add-audiobook-qc-cli-command-ffmpeg-base](./quick/8-add-audiobook-qc-cli-command-ffmpeg-base/) |
 | 9 | keyboard shortcuts for ChapterReview proof page | 2026-03-05 | 29ca378 | [9-add-workstation-keyboard-shortcuts-chapt](./quick/9-add-workstation-keyboard-shortcuts-chapt/) |
+| 260316-r3i | Audio hotpath improvements: rolling RMS, managed Concat, SIMD, metadata fixes | 2026-03-17 | 4d6e728 | [260316-r3i-audio-hotpath-improvements-rolling-rms-m](./quick/260316-r3i-audio-hotpath-improvements-rolling-rms-m/) |
 
 ### Pending Todos
 
@@ -269,4 +270,4 @@ None currently.
 
 ## Session Continuity
 
-Last activity: 2026-03-09 - Completed 15-06: PickupSubstitution UI refactor with unified import, unmatched bucket, reassignment, projection-mapped regions, pickup trim panel, migration detection
+Last activity: 2026-03-17 - Completed quick task 260316-r3i: Audio hotpath improvements: rolling RMS, managed Concat, SIMD, metadata fixes
