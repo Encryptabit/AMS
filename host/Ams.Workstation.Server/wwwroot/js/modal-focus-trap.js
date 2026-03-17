@@ -28,14 +28,16 @@ window.modalFocusTrap = (() => {
     }
 
     return {
-        activate() {
+        activate(focusSelector) {
             if (handler) return;
             handler = onKeyDown;
             document.addEventListener('keydown', handler, true);
             const overlay = document.querySelector('.crx-modal-overlay.visible, .ignore-modal-overlay.visible');
             if (overlay) {
-                const first = overlay.querySelector(SELECTOR);
-                if (first) first.focus();
+                const target = focusSelector
+                    ? overlay.querySelector(focusSelector)
+                    : overlay.querySelector(SELECTOR);
+                if (target) target.focus();
             }
         },
         deactivate() {

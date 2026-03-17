@@ -75,7 +75,6 @@ else
 @code {
     private const int PeakPxPerSec = 1200;
     private double _currentTime;
-    private bool _isWaveformReady;
     private WaveformPlayer? _waveformPlayer;
     private List<SentenceViewModel> _sentences = new();
     private string _currentView = "playback";
@@ -131,8 +130,6 @@ else
             _isReviewed = ReviewedStatusService.IsReviewed(decodedName);
         }
 
-        // Reset waveform ready state when chapter changes
-        _isWaveformReady = false;
         _currentTime = 0;
     }
 
@@ -276,8 +273,6 @@ else
 
     private async Task HandleWaveformReady()
     {
-        _isWaveformReady = true;
-
         if (_pendingSeekTime.HasValue && _waveformPlayer != null)
         {
             var seekTime = _pendingSeekTime.Value;

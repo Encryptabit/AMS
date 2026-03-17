@@ -61,7 +61,8 @@
                                     AudioUrl="@_audioUrl"
                                     PeaksUrl="@_peaksUrl"
                                     Title="Audio Preview"
-                                    Height="80" />
+                                    Height="80"
+                                    OnReady="FocusPlayButton" />
                     <BitText Typography="BitTypography.Caption2" Color="BitColor.SecondaryForeground"
                              Style="text-align: center;">
                         @FormatTime(_startTime) → @FormatTime(_endTime + _paddingMs / 1000.0)
@@ -147,6 +148,13 @@
     {
         await Task.Yield();
         await JS.InvokeVoidAsync("window.modalFocusTrap.activate");
+    }
+
+    private async Task FocusPlayButton()
+    {
+        // Waveform is ready — focus the play button so spacebar previews the cut
+        await JS.InvokeVoidAsync("eval",
+            "document.querySelector('.crx-modal-overlay.visible button[title=\"Play\"]')?.focus()");
     }
 
     public void Close()

@@ -419,7 +419,6 @@
     private PickupAsset? _selectedPickup;
     private StagedReplacement? _selectedReplacement;
     private WaveformPlayer? _pickupWaveform;
-    private bool _isPickupWaveformReady;
 
     // ── Migration state ───────────────────────────────────────────
     private bool _showMigrationWarning;
@@ -1240,7 +1239,6 @@
             _selectedReplacement = null;
         }
 
-        _isPickupWaveformReady = false;
         StateHasChanged();
     }
 
@@ -1463,8 +1461,6 @@
 
     private async Task HandlePickupWaveformReady()
     {
-        _isPickupWaveformReady = true;
-
         // Add trim region to pickup waveform (orange for pickup trim)
         if (_pickupWaveform != null && _selectedPickup != null)
         {
