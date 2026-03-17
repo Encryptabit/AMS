@@ -4,7 +4,7 @@
 <div class="waveform-player">
     <div class="waveform-header">
         <span class="waveform-title">@Title</span>
-        <span class="waveform-time">@FormatTime(CurrentTime) / @FormatTime(Duration)</span>
+        <span class="waveform-time" id="@(_elementId)-time">@FormatTime(CurrentTime) / @FormatTime(Duration)</span>
     </div>
     <div id="@_elementId" class="waveform-container" style="--wfp-height: @(Height)px;">
         @if (!_isReady)
@@ -468,7 +468,8 @@
     public async Task OnTimeUpdate(double currentTime)
     {
         CurrentTime = currentTime;
-        StateHasChanged();
+        // No StateHasChanged() — the time display is updated via JS (textContent)
+        // and the playhead moves entirely client-side in wavesurfer.
         await TimeUpdated.InvokeAsync(currentTime);
     }
 

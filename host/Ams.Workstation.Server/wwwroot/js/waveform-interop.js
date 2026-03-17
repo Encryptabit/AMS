@@ -305,10 +305,29 @@ export function registerCallbacks(elementId, dotNetRef) {
     instance.dotNetRef = dotNetRef;
     instance.lastTimeUpdate = 0;
     const ws = instance.wavesurfer;
+
+    // Update the time display directly via DOM instead of round-tripping through Blazor.
+    const timeEl = document.getElementById(elementId + '-time');
+    const formatTime = (secs) => {
+        if (!Number.isFinite(secs)) return '0:00';
+        const m = Math.floor(secs / 60);
+        const s = Math.floor(secs % 60);
+        return m + ':' + String(s).padStart(2, '0');
+    };
+    const updateTimeDisplay = (currentTime) => {
+        if (timeEl) {
+            const dur = ws.getDuration();
+            timeEl.textContent = formatTime(currentTime) + ' / ' + formatTime(dur);
+        }
+    };
+
     const notifyTimeUpdate = (currentTime, force = false) => {
         if (!Number.isFinite(currentTime)) {
             return;
         }
+
+        // Always update the time display client-side (no Blazor round-trip)
+        updateTimeDisplay(currentTime);
 
         if (!force && Math.abs(currentTime - instance.lastTimeUpdate) < 0.025) {
             return;

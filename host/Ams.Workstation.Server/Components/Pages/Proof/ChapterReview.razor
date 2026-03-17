@@ -92,6 +92,7 @@ else
     // Keyboard navigation state
     private int _selectedErrorIndex;
     private int? _selectedSentenceId;
+    private int? _lastTimeBasedSentenceId;
     private IJSObjectReference? _keyboardModule;
     private DotNetObjectReference<ChapterReview>? _dotNetRef;
     private List<SentenceReport> _errorSentencesList = new();
@@ -260,8 +261,17 @@ else
     private void HandleTimeUpdate(double time)
     {
         _currentTime = time;
-        _selectedSentenceId = null;
-        StateHasChanged();
+
+        // Only re-render when the active sentence changes, not on every time tick.
+        // This avoids flooding the Blazor render queue (~40 re-renders/sec).
+        var activeSentence = _sentences.FirstOrDefault(s => time >= s.StartTime && time < s.EndTime);
+        var newId = activeSentence?.Id;
+        if (newId != _lastTimeBasedSentenceId)
+        {
+            _lastTimeBasedSentenceId = newId;
+            _selectedSentenceId = null;
+            StateHasChanged();
+        }
     }
 
     private async Task HandleWaveformReady()
