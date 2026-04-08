@@ -46,7 +46,8 @@ public sealed class WorkspaceHistoryService
     {
         if (string.IsNullOrWhiteSpace(path)) return;
 
-        var normalized = Path.GetFullPath(path.Trim());
+        var normalized = AmsPathResolver.NormalizeOptionalPath(path);
+        if (string.IsNullOrWhiteSpace(normalized)) return;
 
         lock (_lock)
         {
@@ -79,7 +80,8 @@ public sealed class WorkspaceHistoryService
             foreach (var item in loaded)
             {
                 if (string.IsNullOrWhiteSpace(item)) continue;
-                var normalized = Path.GetFullPath(item.Trim());
+                var normalized = AmsPathResolver.NormalizeOptionalPath(item);
+                if (string.IsNullOrWhiteSpace(normalized)) continue;
                 if (_entries.Any(existing => PathComparer.Equals(existing, normalized))) continue;
                 _entries.Add(normalized);
             }

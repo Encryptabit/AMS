@@ -11,6 +11,7 @@ using Ams.Core.Application.Validation.Models;
 using Ams.Core.Prosody;
 using Ams.Cli.Repl;
 using Ams.Cli.Utilities;
+using Ams.Core.Common;
 using Ams.Core.Runtime.Workspace;
 using SentenceTiming = Ams.Core.Artifacts.SentenceTiming;
 
@@ -833,13 +834,16 @@ public static class ValidateCommand
             return path;
         }
 
-        if (Path.IsPathRooted(path))
+        var translated = AmsPathResolver.TranslatePath(path, AmsPathPlatform.Current);
+        if (Path.IsPathRooted(translated))
         {
-            return Path.GetFullPath(path);
+            return AmsPathResolver.NormalizePath(translated);
         }
 
-        var root = baseDirectory ?? Environment.CurrentDirectory;
-        return Path.GetFullPath(Path.Combine(root, path));
+        var root = string.IsNullOrWhiteSpace(baseDirectory)
+            ? Environment.CurrentDirectory
+            : AmsPathResolver.NormalizePath(baseDirectory);
+        return Path.GetFullPath(Path.Combine(root, translated));
     }
 
     private static readonly FrameBreathDetectorOptions BreathGuardOptions = new()

@@ -8,6 +8,7 @@ using System.Globalization;
 using Spectre.Console;
 using Ams.Cli.Utilities;
 using Ams.Core.Artifacts;
+using Ams.Core.Common;
 using Ams.Core.Processors;
 using Ams.Core.Services.Integrations.FFmpeg;
 
@@ -2118,12 +2119,13 @@ public static class DspCommand
             throw new ArgumentException("Path cannot be empty", nameof(path));
         }
 
-        if (Path.IsPathRooted(path))
+        var translated = AmsPathResolver.TranslatePath(path, AmsPathPlatform.Current);
+        if (Path.IsPathRooted(translated))
         {
-            return Path.GetFullPath(path);
+            return AmsPathResolver.NormalizePath(translated);
         }
 
-        var baseDir = string.IsNullOrWhiteSpace(baseDirectory) ? Directory.GetCurrentDirectory() : baseDirectory;
-        return Path.GetFullPath(Path.Combine(baseDir, path));
+        var baseDir = string.IsNullOrWhiteSpace(baseDirectory) ? Directory.GetCurrentDirectory() : AmsPathResolver.NormalizePath(baseDirectory);
+        return Path.GetFullPath(Path.Combine(baseDir, translated));
     }
 }

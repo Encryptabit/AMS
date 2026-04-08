@@ -201,7 +201,7 @@ internal static class MfaWorkspaceResolver
 
         try
         {
-            normalized = CanonicalizeWorkspacePath(Path.GetFullPath(path.Trim()));
+            normalized = CanonicalizeWorkspacePath(AmsPathResolver.NormalizePath(path));
             return true;
         }
         catch

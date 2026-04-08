@@ -324,7 +324,7 @@ internal static class WhisperFactoryPool
 
     private static string NormalizeModelPath(string modelPath)
     {
-        var fullPath = Path.GetFullPath(modelPath);
+        var fullPath = AmsPathResolver.NormalizePath(modelPath);
         return OperatingSystem.IsWindows() ? fullPath.ToUpperInvariant() : fullPath;
     }
 

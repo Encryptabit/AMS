@@ -53,13 +53,13 @@ public static class AsrEngineConfig
     {
         if (!string.IsNullOrWhiteSpace(optionValue))
         {
-            return Path.GetFullPath(optionValue);
+            return AmsPathResolver.NormalizePath(optionValue);
         }
 
         var env = Environment.GetEnvironmentVariable(WhisperModelPathEnvironmentVariable);
         if (!string.IsNullOrWhiteSpace(env))
         {
-            return Path.GetFullPath(env.Trim());
+            return AmsPathResolver.NormalizePath(env);
         }
 
         throw new InvalidOperationException(
@@ -81,7 +81,7 @@ public static class AsrEngineConfig
         // 1. Explicit file path
         if (modelPath is not null)
         {
-            var fullPath = Path.GetFullPath(modelPath.FullName);
+            var fullPath = AmsPathResolver.NormalizePath(modelPath);
             if (!File.Exists(fullPath))
             {
                 var type = ParseModelAlias(modelAlias) ?? ParseModelAlias(Path.GetFileName(fullPath)) ??
@@ -98,10 +98,11 @@ public static class AsrEngineConfig
         if (!string.IsNullOrWhiteSpace(modelAlias))
         {
             var trimmed = modelAlias.Trim();
-            if (File.Exists(trimmed))
+            var translatedAliasPath = AmsPathResolver.NormalizePath(trimmed);
+            if (File.Exists(translatedAliasPath))
             {
-                var inferred = ParseModelAlias(Path.GetFileName(trimmed)) ?? DefaultModelType;
-                return (Path.GetFullPath(trimmed), inferred);
+                var inferred = ParseModelAlias(Path.GetFileName(translatedAliasPath)) ?? DefaultModelType;
+                return (translatedAliasPath, inferred);
             }
 
             if (TryParseModelAlias(trimmed, out var aliasType))
@@ -115,7 +116,7 @@ public static class AsrEngineConfig
         var envModel = Environment.GetEnvironmentVariable(WhisperModelPathEnvironmentVariable);
         if (!string.IsNullOrWhiteSpace(envModel))
         {
-            var envPath = Path.GetFullPath(envModel);
+            var envPath = AmsPathResolver.NormalizePath(envModel);
             if (File.Exists(envPath))
             {
                 var inferred = ParseModelAlias(Path.GetFileName(envPath)) ?? DefaultModelType;
@@ -141,7 +142,7 @@ public static class AsrEngineConfig
     {
         var fileName = GetDefaultModelFileName(type);
         var targetPath = destinationPath ?? Path.Combine(AppContext.BaseDirectory, "models", fileName);
-        targetPath = Path.GetFullPath(targetPath);
+        targetPath = AmsPathResolver.NormalizePath(targetPath);
 
         if (File.Exists(targetPath))
         {

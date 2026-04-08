@@ -167,11 +167,9 @@ public sealed class BlazorWorkspace : IWorkspace, IDisposable
     /// <returns>True if successful, false if path is invalid.</returns>
     public bool SetWorkingDirectory(string path)
     {
-        if (string.IsNullOrWhiteSpace(path)) return false;
-
-        var trimmed = NormalizeOptionalPath(path);
-        if (string.IsNullOrWhiteSpace(trimmed)) return false;
-        if (!Directory.Exists(trimmed)) return false;
+        var normalizedPath = AmsPathResolver.NormalizeOptionalPath(path);
+        if (string.IsNullOrWhiteSpace(normalizedPath)) return false;
+        if (!Directory.Exists(normalizedPath)) return false;
 
         CancelBackgroundPeakPrecompute();
 
@@ -186,7 +184,7 @@ public sealed class BlazorWorkspace : IWorkspace, IDisposable
         AvailableChapters.Clear();
         CachedBookOverview = null; // Invalidate cached overview
 
-        _rootPath = Path.GetFullPath(trimmed);
+        _rootPath = normalizedPath;
 
         // Initialize book manager if book-index exists
         if (HasBookIndex)
@@ -483,23 +481,7 @@ public sealed class BlazorWorkspace : IWorkspace, IDisposable
     #endregion
 
     private static string? NormalizeOptionalPath(string? path)
-    {
-        if (string.IsNullOrWhiteSpace(path))
-            return null;
-
-        var trimmed = path.Trim().Trim('"', '\'').Trim();
-        if (string.IsNullOrWhiteSpace(trimmed))
-            return null;
-
-        try
-        {
-            return Path.GetFullPath(trimmed);
-        }
-        catch
-        {
-            return trimmed;
-        }
-    }
+        => AmsPathResolver.NormalizeOptionalPath(path);
 
     public void Dispose()
     {

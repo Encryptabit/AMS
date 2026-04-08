@@ -1622,13 +1622,7 @@
     }
 
     private static string? NormalizePathInput(string? path)
-    {
-        if (string.IsNullOrWhiteSpace(path))
-            return null;
-
-        var normalized = path.Trim().Trim('"', '\'').Trim();
-        return string.IsNullOrWhiteSpace(normalized) ? null : normalized;
-    }
+        => AmsPathResolver.NormalizeOptionalPath(path);
 
     // ── Disposal ──────────────────────────────────────────────────
     public async ValueTask DisposeAsync()
