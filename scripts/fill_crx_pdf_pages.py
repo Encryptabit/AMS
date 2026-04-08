@@ -34,8 +34,26 @@ from pypdf import PdfReader
 from rapidfuzz import fuzz
 
 
-CHAPTER_TITLE_RE = re.compile(r"(?i)^\s*chapter\s+(\d+)\s*:\s*(.+?)\s*$")
-CHAPTER_NUMBER_RE = re.compile(r"(?i)\bchapter\s+(\d+)\b")
+CHAPTER_TITLE_RE = re.compile(r"(?i)^\s*chapter\s+(\w+)\s*(?::\s*(.+?))?\s*$")
+CHAPTER_NUMBER_RE = re.compile(r"(?i)\bchapter\s+(\w+)\b")
+
+WORD_TO_NUM: Dict[str, int] = {
+    "one": 1, "two": 2, "three": 3, "four": 4, "five": 5,
+    "six": 6, "seven": 7, "eight": 8, "nine": 9, "ten": 10,
+    "eleven": 11, "twelve": 12, "thirteen": 13, "fourteen": 14,
+    "fifteen": 15, "sixteen": 16, "seventeen": 17, "eighteen": 18,
+    "nineteen": 19, "twenty": 20, "twenty-one": 21, "twenty-two": 22,
+    "twenty-three": 23, "twenty-four": 24, "twenty-five": 25,
+    "twenty-six": 26, "twenty-seven": 27, "twenty-eight": 28,
+    "twenty-nine": 29, "thirty": 30,
+}
+
+
+def word_or_digit_to_int(value: str) -> int | None:
+    """Convert a chapter number that may be a digit string or an English word."""
+    if value.isdigit():
+        return int(value)
+    return WORD_TO_NUM.get(value.lower().strip())
 SHOULD_BE_RE = re.compile(r"(?is)should\s+be:\s*(.*?)(?:\n\s*read\s+as:|\Z)")
 
 
@@ -100,8 +118,10 @@ def parse_chapter_title(title: str) -> ChapterTitle | None:
     match = CHAPTER_TITLE_RE.match(title or "")
     if not match:
         return None
-    number = int(match.group(1))
-    subtitle = match.group(2).strip()
+    number = word_or_digit_to_int(match.group(1))
+    if number is None:
+        return None
+    subtitle = (match.group(2) or "").strip()
     return ChapterTitle(number=number, title=title.strip(), subtitle=subtitle)
 
 
@@ -109,7 +129,7 @@ def parse_chapter_number(label: str) -> int | None:
     match = CHAPTER_NUMBER_RE.search(label or "")
     if not match:
         return None
-    return int(match.group(1))
+    return word_or_digit_to_int(match.group(1))
 
 
 def read_pdf_pages(pdf_path: Path) -> List[str]:
@@ -143,16 +163,28 @@ def collect_sheet_chapters(labels: Iterable[str]) -> Dict[int, ChapterTitle]:
     return chapters
 
 
+NUM_TO_WORD: Dict[int, str] = {v: k for k, v in WORD_TO_NUM.items()}
+
+
 def query_variants(chapter: ChapterTitle) -> List[str]:
     subtitle_norm = normalize_text(chapter.subtitle)
+
+    # Build the "chapter <word>" form for matching inside PDF text.
+    chapter_word = NUM_TO_WORD.get(chapter.number, str(chapter.number))
+    chapter_heading = normalize_text(f"chapter {chapter_word}")
+
     if not subtitle_norm:
-        return [normalize_text(f"{chapter.number}")]
+        # No subtitle — use the full "chapter <word>" heading so we don't
+        # false-match on bare page numbers.
+        return [chapter_heading]
 
     tokens = subtitle_norm.split()
     variants = [
+        normalize_text(f"chapter {chapter_word} {subtitle_norm}"),
         normalize_text(f"{chapter.number} {subtitle_norm}"),
+        normalize_text(f"chapter {chapter_word} {' '.join(tokens[:2])}"),
         normalize_text(f"{chapter.number} {' '.join(tokens[:2])}"),
-        normalize_text(f"{chapter.number} {tokens[0]}"),
+        chapter_heading,
     ]
     deduped: List[str] = []
     for item in variants:

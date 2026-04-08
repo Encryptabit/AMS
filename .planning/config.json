@@ -1,6 +1,5 @@
 {
   "mode": "yolo",
-  "depth": "standard",
   "parallelization": true,
   "commit_docs": true,
   "model_profile": "quality",
@@ -38,5 +37,6 @@
   },
   "execution": {
     "executor_runtime": "hybrid"
-  }
+  },
+  "granularity": "standard"
 }
