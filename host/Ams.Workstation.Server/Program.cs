@@ -1,6 +1,7 @@
 using Ams.Core.Application.Processes;
 using Ams.Workstation.Server.Components;
 using Ams.Workstation.Server.Services;
+using Ams.Workstation.Server.Services.Prep;
 using Toolbelt.Blazor.Extensions.DependencyInjection;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -53,6 +54,7 @@ builder.Services.AddTransient<BatchOperationService>();
 
 // Ams.Core processing graph for Prep and other shared execution flows.
 builder.Services.AddWorkstationProcessingServices();
+builder.Services.AddTransient<PrepRunSession>();
 
 var app = builder.Build();
 

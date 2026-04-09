@@ -22,7 +22,7 @@ namespace Ams.Workstation.Server.Services;
 /// </summary>
 public sealed class BlazorWorkspace : IWorkspace, IDisposable
 {
-    private static readonly string StateFilePath = AmsAppDataPaths.Resolve("workstation-state.json");
+    private static readonly string DefaultStateFilePath = AmsAppDataPaths.Resolve("workstation-state.json");
     private static readonly StringComparer PersistedPathComparer = OperatingSystem.IsWindows()
         ? StringComparer.OrdinalIgnoreCase
         : StringComparer.Ordinal;
@@ -32,6 +32,7 @@ public sealed class BlazorWorkspace : IWorkspace, IDisposable
     private BookManager? _manager;
     private ChapterContextHandle? _currentChapterHandle;
     private string? _rootPath;
+    private readonly string _stateFilePath;
     private bool _disposed;
     private CancellationTokenSource? _backgroundPeakPrecomputeCts;
     private Task? _backgroundPeakPrecomputeTask;
@@ -43,8 +44,20 @@ public sealed class BlazorWorkspace : IWorkspace, IDisposable
     private readonly Dictionary<string, ChapterContextHandle> _chapterHandles = new(StringComparer.OrdinalIgnoreCase);
 
     public BlazorWorkspace()
+        : this(stateFilePath: null, loadPersistedState: true)
     {
-        LoadPersistedState();
+    }
+
+    internal BlazorWorkspace(string? stateFilePath, bool loadPersistedState)
+    {
+        _stateFilePath = string.IsNullOrWhiteSpace(stateFilePath)
+            ? DefaultStateFilePath
+            : stateFilePath;
+
+        if (loadPersistedState)
+        {
+            LoadPersistedState();
+        }
     }
 
     #region IWorkspace Implementation
@@ -135,6 +148,46 @@ public sealed class BlazorWorkspace : IWorkspace, IDisposable
     public ChapterContextHandle? CurrentChapterHandle => _currentChapterHandle;
 
     /// <summary>
+    /// Count of explicit workspace refreshes performed after setup operations.
+    /// </summary>
+    public int WorkspaceRefreshCount { get; private set; }
+
+    /// <summary>
+    /// Reason string recorded for the last explicit workspace refresh.
+    /// </summary>
+    public string? LastWorkspaceRefreshReason { get; private set; }
+
+    /// <summary>
+    /// Timestamp for the last explicit workspace refresh.
+    /// </summary>
+    public DateTimeOffset? LastWorkspaceRefreshAtUtc { get; private set; }
+
+    /// <summary>
+    /// Count of explicit chapter-handle refreshes performed after prep operations.
+    /// </summary>
+    public int ChapterHandleRefreshCount { get; private set; }
+
+    /// <summary>
+    /// Reason string recorded for the last chapter-handle refresh.
+    /// </summary>
+    public string? LastChapterHandleRefreshReason { get; private set; }
+
+    /// <summary>
+    /// Stem/id of the last chapter whose cached handle was refreshed.
+    /// </summary>
+    public string? LastRefreshedChapterId { get; private set; }
+
+    /// <summary>
+    /// Whether the last chapter refresh reopened the current selection immediately.
+    /// </summary>
+    public bool LastChapterHandleRefreshReopenedCurrentSelection { get; private set; }
+
+    /// <summary>
+    /// Timestamp for the last explicit chapter-handle refresh.
+    /// </summary>
+    public DateTimeOffset? LastChapterHandleRefreshAtUtc { get; private set; }
+
+    /// <summary>
     /// Cached book overview metrics. Computed on first access, invalidated when working directory changes.
     /// </summary>
     public BookOverview? CachedBookOverview { get; private set; }
@@ -171,6 +224,8 @@ public sealed class BlazorWorkspace : IWorkspace, IDisposable
         if (string.IsNullOrWhiteSpace(normalizedPath)) return false;
         if (!Directory.Exists(normalizedPath)) return false;
 
+        var samePath = PersistedPathComparer.Equals(_rootPath ?? string.Empty, normalizedPath);
+
         CancelBackgroundPeakPrecompute();
 
         // Dispose previous state
@@ -183,6 +238,10 @@ public sealed class BlazorWorkspace : IWorkspace, IDisposable
         CurrentChapterName = null;
         AvailableChapters.Clear();
         CachedBookOverview = null; // Invalidate cached overview
+        if (!samePath)
+        {
+            ResetRefreshMarkers();
+        }
 
         _rootPath = normalizedPath;
 
@@ -281,6 +340,7 @@ public sealed class BlazorWorkspace : IWorkspace, IDisposable
         AvailableChapters.Clear();
         _stemByTitle.Clear();
         CachedBookOverview = null;
+        ResetRefreshMarkers();
         SavePersistedState();
     }
 
@@ -298,6 +358,69 @@ public sealed class BlazorWorkspace : IWorkspace, IDisposable
     public string? GetStemForChapter(string displayTitle)
     {
         return _stemByTitle.GetValueOrDefault(displayTitle);
+    }
+
+    /// <summary>
+    /// Re-reads the workspace from disk so newly created book-index/chapter discovery state becomes live.
+    /// </summary>
+    public bool RefreshWorkspaceFromDisk(string reason)
+    {
+        if (string.IsNullOrWhiteSpace(_rootPath))
+        {
+            return false;
+        }
+
+        var refreshed = SetWorkingDirectory(_rootPath);
+        if (refreshed)
+        {
+            WorkspaceRefreshCount++;
+            LastWorkspaceRefreshReason = NormalizeRefreshReason(reason, "workspace");
+            LastWorkspaceRefreshAtUtc = DateTimeOffset.UtcNow;
+        }
+
+        return refreshed;
+    }
+
+    /// <summary>
+    /// Retires any cached handle for the supplied chapter and reopens the current selection when needed.
+    /// </summary>
+    public bool RefreshChapterHandle(string chapterNameOrId, string reason)
+    {
+        if (_manager is null || string.IsNullOrWhiteSpace(_rootPath) || string.IsNullOrWhiteSpace(chapterNameOrId))
+        {
+            return false;
+        }
+
+        var chapterId = _stemByTitle.GetValueOrDefault(chapterNameOrId, chapterNameOrId);
+        var currentSelection = CurrentChapterName;
+        var currentStem = string.IsNullOrWhiteSpace(currentSelection)
+            ? null
+            : _stemByTitle.GetValueOrDefault(currentSelection, currentSelection);
+        var wasCurrentSelection = string.Equals(currentStem, chapterId, StringComparison.OrdinalIgnoreCase);
+
+        if (_chapterHandles.Remove(chapterId, out var cachedHandle))
+        {
+            cachedHandle.Dispose();
+        }
+
+        if (wasCurrentSelection)
+        {
+            _currentChapterHandle = null;
+        }
+
+        var reopenedCurrentSelection = false;
+        if (wasCurrentSelection && !string.IsNullOrWhiteSpace(currentSelection))
+        {
+            reopenedCurrentSelection = SelectChapter(currentSelection);
+        }
+
+        ChapterHandleRefreshCount++;
+        LastChapterHandleRefreshReason = NormalizeRefreshReason(reason, "chapter");
+        LastRefreshedChapterId = chapterId;
+        LastChapterHandleRefreshReopenedCurrentSelection = reopenedCurrentSelection;
+        LastChapterHandleRefreshAtUtc = DateTimeOffset.UtcNow;
+
+        return !wasCurrentSelection || reopenedCurrentSelection;
     }
 
     #endregion
@@ -362,9 +485,9 @@ public sealed class BlazorWorkspace : IWorkspace, IDisposable
     {
         try
         {
-            if (!File.Exists(StateFilePath)) return;
+            if (!File.Exists(_stateFilePath)) return;
 
-            var json = File.ReadAllText(StateFilePath);
+            var json = File.ReadAllText(_stateFilePath);
             using var doc = JsonDocument.Parse(json);
             var root = doc.RootElement;
 
@@ -395,7 +518,7 @@ public sealed class BlazorWorkspace : IWorkspace, IDisposable
     {
         try
         {
-            var dir = Path.GetDirectoryName(StateFilePath);
+            var dir = Path.GetDirectoryName(_stateFilePath);
             if (!string.IsNullOrEmpty(dir) && !Directory.Exists(dir))
             {
                 Directory.CreateDirectory(dir);
@@ -408,7 +531,7 @@ public sealed class BlazorWorkspace : IWorkspace, IDisposable
             };
 
             var json = JsonSerializer.Serialize(state, new JsonSerializerOptions { WriteIndented = true });
-            File.WriteAllText(StateFilePath, json);
+            File.WriteAllText(_stateFilePath, json);
         }
         catch (Exception ex)
         {
@@ -482,6 +605,21 @@ public sealed class BlazorWorkspace : IWorkspace, IDisposable
 
     private static string? NormalizeOptionalPath(string? path)
         => AmsPathResolver.NormalizeOptionalPath(path);
+
+    private static string NormalizeRefreshReason(string? reason, string fallback)
+        => string.IsNullOrWhiteSpace(reason) ? fallback : reason.Trim();
+
+    private void ResetRefreshMarkers()
+    {
+        WorkspaceRefreshCount = 0;
+        LastWorkspaceRefreshReason = null;
+        LastWorkspaceRefreshAtUtc = null;
+        ChapterHandleRefreshCount = 0;
+        LastChapterHandleRefreshReason = null;
+        LastRefreshedChapterId = null;
+        LastChapterHandleRefreshReopenedCurrentSelection = false;
+        LastChapterHandleRefreshAtUtc = null;
+    }
 
     public void Dispose()
     {
