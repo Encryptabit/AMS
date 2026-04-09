@@ -1,13 +1,17 @@
 {
   "provider": "codex",
   "model": "gpt-5.3-codex",
-  "reasoningEffort": "medium",
   "maxConcurrency": 8,
   "endpoints": [
-    "ws://127.0.0.1:8080",
-    "ws://127.0.0.1:8081",
-    "ws://127.0.0.1:8082",
-    "ws://127.0.0.1:8083",
-    "ws://127.0.0.1:8084"
-  ]
+    "ws://127.0.0.1:8090",
+    "ws://127.0.0.1:8091",
+    "ws://127.0.0.1:8092",
+    "ws://127.0.0.1:8093",
+    "ws://127.0.0.1:8094"
+  ],
+  "serena": {
+    "enabled": true
+  },
+  "skipOnboarding": true,
+  "reasoningEffort": "xhigh"
 }

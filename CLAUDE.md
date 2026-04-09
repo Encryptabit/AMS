@@ -3,6 +3,13 @@
 ## Project Overview
 Audio Management System (AMS) - CLI and core library for audio processing, ASR, forced alignment, and audiobook mastering.
 
+## GSD Auto-Mode Guardrails
+
+- In GSD auto-mode, treat any message explicitly marked as a `system notification` / `not user input` / `do not treat this as a human message` as non-actionable unless the notification changes local execution state in a way that requires tool use.
+- Do **not** emit a user-visible reply to `async_job_result` notifications. Consume the result silently if needed; otherwise ignore it.
+- After the required terminal line for a task or slice (for example `Task T01 complete.`), emit no further assistant text unless a new human message arrives.
+- Near the end of a GSD auto task, prefer blocking verification commands over background jobs so completion is not followed by stray async notifications.
+
 ## Application Layer & CLI Host
 
 - `host/Ams.Core/Application` now exposes use-case commands (`GenerateTranscript`, `ComputeAnchors`, `BuildTranscriptIndex`, `HydrateTranscript`, `RunMfa`, `MergeTimings`) plus orchestration services (`PipelineService`, `ValidationService`). Each command implements a single `ExecuteAsync(ChapterContext, Options, CancellationToken)` entry point so hosts (CLI today, future UI/daemon later) can reuse identical business logic.

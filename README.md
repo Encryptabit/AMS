@@ -1,5 +1,17 @@
 # AMS
-AudioBook Mastering Suite using Zig + AvaloniaUI
+
+AMS is an audio management system for audiobook processing, alignment, validation, and mastering.
+
+Today’s repo is organized around:
+- a CLI host for proving and debugging workflows
+- a Blazor Server Workstation as the long-term operator surface
+- shared Core/application services consumed by both hosts
+
+The repository also carries a future Zig engine and DSP track, but Zig is not the current host story.
+
+## Start Here
+
+- [`CODE-STYLE.md`](CODE-STYLE.md) — the repo-level engineering contract for how AMS applies Tiger-style rules to the current CLI + Workstation + shared Core architecture.
 
 ## FFmpeg Setup
 AMS expects FFmpeg shared libraries under:

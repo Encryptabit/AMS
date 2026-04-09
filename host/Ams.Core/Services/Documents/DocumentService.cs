@@ -17,40 +17,56 @@ public sealed class DocumentService : IDocumentService
         _cache = cache;
     }
 
-    public async Task<BookIndex> BuildIndexAsync(
-        string sourceFile,
-        BookIndexOptions? options = null,
-        bool forceRefresh = false,
+    public async Task<DocumentBuildIndexResult> BuildIndexAsync(
+        DocumentBuildIndexRequest request,
         CancellationToken cancellationToken = default)
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(sourceFile);
+        ArgumentNullException.ThrowIfNull(request);
 
-        if (!forceRefresh && _cache != null)
+        var sourceFile = request.SourceFile;
+
+        if (!DocumentProcessor.CanParseBook(sourceFile))
+        {
+            var supportedExts = string.Join(", ", DocumentProcessor.GetSupportedBookExtensions());
+            throw new InvalidOperationException($"Unsupported file format. Supported formats: {supportedExts}");
+        }
+
+        if (request.CacheMode == BookIndexCacheMode.PreferCache && _cache is not null)
         {
             var cached = await _cache.GetAsync(sourceFile, cancellationToken).ConfigureAwait(false);
-            if (cached != null)
+            if (cached is not null)
             {
-                return cached;
+                var (cachedIndex, phonemesBackfilled) = await EnsurePhonemesAsync(cached, cancellationToken)
+                    .ConfigureAwait(false);
+
+                if (phonemesBackfilled)
+                {
+                    await _cache.SetAsync(cachedIndex, cancellationToken).ConfigureAwait(false);
+                }
+
+                return new DocumentBuildIndexResult(
+                    cachedIndex,
+                    BookIndexCacheDisposition.CacheHit,
+                    phonemesBackfilled);
             }
         }
 
         var parseResult = await DocumentProcessor.ParseBookAsync(sourceFile, cancellationToken).ConfigureAwait(false);
         var index = await DocumentProcessor
-            .BuildBookIndexAsync(parseResult, sourceFile, options, cancellationToken: cancellationToken)
+            .BuildBookIndexAsync(
+                parseResult,
+                sourceFile,
+                request.Options,
+                _pronunciationProvider,
+                cancellationToken)
             .ConfigureAwait(false);
 
-        if (_pronunciationProvider != null)
-        {
-            index = await DocumentProcessor
-                .PopulateMissingPhonemesAsync(index, _pronunciationProvider, cancellationToken).ConfigureAwait(false);
-        }
-
-        if (_cache != null)
+        if (_cache is not null && request.CacheMode != BookIndexCacheMode.DisableCache)
         {
             await _cache.SetAsync(index, cancellationToken).ConfigureAwait(false);
         }
 
-        return index;
+        return new DocumentBuildIndexResult(index, MapDisposition(request.CacheMode), PhonemesBackfilled: false);
     }
 
     public Task<BookIndex> PopulateMissingPhonemesAsync(
@@ -66,7 +82,7 @@ public sealed class DocumentService : IDocumentService
         return DocumentProcessor.PopulateMissingPhonemesAsync(index, _pronunciationProvider, cancellationToken);
     }
 
-    public Task<BookIndex> ParseAndPopulatePhonemesAsync(
+    public async Task<BookIndex> ParseAndPopulatePhonemesAsync(
         string sourceFile,
         BookIndexOptions? options = null,
         CancellationToken cancellationToken = default)
@@ -77,6 +93,56 @@ public sealed class DocumentService : IDocumentService
                 "Pronunciation provider was not supplied when constructing DocumentService.");
         }
 
-        return BuildIndexAsync(sourceFile, options, forceRefresh: true, cancellationToken);
+        var result = await BuildIndexAsync(
+                new DocumentBuildIndexRequest(sourceFile, options, BookIndexCacheMode.Rebuild),
+                cancellationToken)
+            .ConfigureAwait(false);
+
+        return result.Index;
+    }
+
+    private async Task<(BookIndex Index, bool PhonemesBackfilled)> EnsurePhonemesAsync(
+        BookIndex index,
+        CancellationToken cancellationToken)
+    {
+        if (_pronunciationProvider == null)
+        {
+            return (index, false);
+        }
+
+        var missingBefore = CountMissingPhonemes(index);
+        if (missingBefore == 0)
+        {
+            return (index, false);
+        }
+
+        var enriched = await DocumentProcessor
+            .PopulateMissingPhonemesAsync(index, _pronunciationProvider, cancellationToken)
+            .ConfigureAwait(false);
+
+        var missingAfter = CountMissingPhonemes(enriched);
+        if (missingAfter < missingBefore)
+        {
+            return (enriched, true);
+        }
+
+        return (index, false);
+    }
+
+    private static int CountMissingPhonemes(BookIndex index)
+    {
+        return index.Words.Count(word =>
+            word.Phonemes is not { Length: > 0 } &&
+            !string.IsNullOrEmpty(PronunciationHelper.NormalizeForLookup(word.Text)));
+    }
+
+    private static BookIndexCacheDisposition MapDisposition(BookIndexCacheMode cacheMode)
+    {
+        return cacheMode switch
+        {
+            BookIndexCacheMode.Rebuild => BookIndexCacheDisposition.ForceRefresh,
+            BookIndexCacheMode.DisableCache => BookIndexCacheDisposition.CacheDisabled,
+            _ => BookIndexCacheDisposition.CacheMiss
+        };
     }
 }

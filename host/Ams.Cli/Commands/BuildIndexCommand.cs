@@ -1,15 +1,15 @@
 using System.CommandLine;
-using System.Text.Json;
 using Ams.Cli.Utilities;
-using Ams.Core.Processors.DocumentProcessor;
-using Ams.Core.Runtime.Book;
+using Ams.Core.Application.Commands;
 
 namespace Ams.Cli.Commands;
 
 public static class BuildIndexCommand
 {
-    public static Command Create()
+    public static Command Create(BuildBookIndexCommand buildBookIndex)
     {
+        ArgumentNullException.ThrowIfNull(buildBookIndex);
+
         var buildIndexCommand = new Command("build-index", "Build book index from document files");
 
         var bookFileOption = new Option<FileInfo?>("--book", "Path to the book file (DOCX, TXT, MD, RTF)");
@@ -46,15 +46,45 @@ public static class BuildIndexCommand
                 var averageWpm = context.ParseResult.GetValueForOption(averageWpmOption);
                 var noCache = context.ParseResult.GetValueForOption(noCacheOption);
 
-                await BuildBookIndexAsync(
+                var request = BuildBookIndexRequest.FromCliOptions(
                     bookFile,
                     outputFile,
                     forceRefresh,
-                    new BookIndexOptions
-                    {
-                        AverageWpm = averageWpm
-                    },
-                    noCache);
+                    noCache,
+                    averageWpm);
+
+                var result = await buildBookIndex.ExecuteAsync(request, context.GetCancellationToken())
+                    .ConfigureAwait(false);
+
+                Log.Debug(
+                    "Book index completed with {CacheDisposition} (Rebuilt={WasRebuilt}, PhonemesBackfilled={PhonemesBackfilled})",
+                    result.CacheDisposition,
+                    result.WasRebuilt,
+                    result.PhonemesBackfilled);
+
+                Log.Debug(
+                    "Book indexed: {SourceFile} (Words={WordCount:n0}, Sentences={SentenceCount:n0}, Paragraphs={ParagraphCount:n0}, Sections={SectionCount}, EstimatedDuration={EstimatedDuration})",
+                    result.Index.SourceFile,
+                    result.Index.Totals.Words,
+                    result.Index.Totals.Sentences,
+                    result.Index.Totals.Paragraphs,
+                    result.Index.Sections.Length,
+                    FormatDuration(result.Index.Totals.EstimatedDurationSec));
+
+                Log.Debug("Book index saved to {OutputFile}", result.Artifacts[0].Path);
+            }
+            catch (BuildBookIndexCommandException ex)
+            {
+                var outputArtifact = ex.Artifacts.FirstOrDefault();
+                Log.Error(
+                    ex,
+                    "build-index command failed (Module={ModuleId}, Stage={Stage}, Kind={Kind}, OutputExists={OutputExists}): {Message}",
+                    ex.ModuleId.Value,
+                    ex.Failure.Stage ?? "book_index",
+                    ex.Failure.Kind,
+                    outputArtifact?.Exists ?? false,
+                    ex.Failure.Message);
+                Environment.Exit(1);
             }
             catch (Exception ex)
             {
@@ -64,146 +94,6 @@ public static class BuildIndexCommand
         });
 
         return buildIndexCommand;
-    }
-
-    internal static async Task BuildBookIndexAsync(
-        FileInfo bookFile,
-        FileInfo outputFile,
-        bool forceRefresh,
-        BookIndexOptions options,
-        bool noCache)
-    {
-        Log.Debug("Building book index for {BookFile} -> {OutputFile}", bookFile.FullName, outputFile.FullName);
-
-        if (!bookFile.Exists)
-        {
-            throw new FileNotFoundException($"Book file not found: {bookFile.FullName}");
-        }
-
-        var cache = noCache ? null : DocumentProcessor.CreateBookCache();
-
-        if (!DocumentProcessor.CanParseBook(bookFile.FullName))
-        {
-            var supportedExts = string.Join(", ", DocumentProcessor.GetSupportedBookExtensions());
-            throw new InvalidOperationException($"Unsupported file format. Supported formats: {supportedExts}");
-        }
-
-        var pronunciationProvider = new MfaPronunciationProvider();
-        BookIndex bookIndex;
-
-        if (!forceRefresh && cache != null)
-        {
-            Log.Debug("Checking cache for {BookFile}", bookFile.FullName);
-            var cachedIndex = await cache.GetAsync(bookFile.FullName);
-            if (cachedIndex != null)
-            {
-                Log.Debug("Cache hit for {BookFile}", bookFile.FullName);
-                bookIndex = await EnsurePhonemesAsync(cachedIndex, pronunciationProvider);
-                if (!ReferenceEquals(bookIndex, cachedIndex))
-                {
-                    await cache.SetAsync(bookIndex);
-                    Log.Debug("Cache backfilled with phonemes for {BookFile}", bookFile.FullName);
-                }
-            }
-            else
-            {
-                Log.Debug("Cache miss for {BookFile}; rebuilding", bookFile.FullName);
-                bookIndex = await ProcessBookFromScratch(cache, pronunciationProvider, bookFile.FullName, options);
-            }
-        }
-        else
-        {
-            if (forceRefresh)
-            {
-                Log.Debug("Force refresh requested for {BookFile}", bookFile.FullName);
-            }
-            else if (noCache)
-            {
-                Log.Debug("Cache disabled for {BookFile}", bookFile.FullName);
-            }
-
-            bookIndex = await ProcessBookFromScratch(cache, pronunciationProvider, bookFile.FullName, options);
-        }
-
-        var jsonOptions = new JsonSerializerOptions
-        {
-            WriteIndented = true,
-            PropertyNamingPolicy = JsonNamingPolicy.CamelCase
-        };
-
-        var json = JsonSerializer.Serialize(bookIndex, jsonOptions);
-        await File.WriteAllTextAsync(outputFile.FullName, json);
-
-        Log.Debug(
-            "Book indexed: {SourceFile} (Words={WordCount:n0}, Sentences={SentenceCount:n0}, Paragraphs={ParagraphCount:n0}, Sections={SectionCount}, EstimatedDuration={EstimatedDuration})",
-            bookIndex.SourceFile,
-            bookIndex.Totals.Words,
-            bookIndex.Totals.Sentences,
-            bookIndex.Totals.Paragraphs,
-            bookIndex.Sections.Length,
-            FormatDuration(bookIndex.Totals.EstimatedDurationSec));
-
-        Log.Debug("Book index saved to {OutputFile}", outputFile.FullName);
-    }
-
-    private static async Task<BookIndex> ProcessBookFromScratch(
-        IBookCache? cache,
-        IPronunciationProvider pronunciationProvider,
-        string bookFilePath,
-        BookIndexOptions options,
-        CancellationToken cancellationToken = default)
-    {
-        Log.Debug("Parsing book file {BookFile}", bookFilePath);
-        var parseResult = await DocumentProcessor.ParseBookAsync(bookFilePath, cancellationToken);
-        Log.Debug("Parsed {CharacterCount:n0} characters from {BookFile}", parseResult.Text.Length, bookFilePath);
-
-        Log.Debug("Building index for {BookFile}", bookFilePath);
-        var bookIndex = await DocumentProcessor.BuildBookIndexAsync(parseResult, bookFilePath, options,
-            pronunciationProvider: pronunciationProvider,
-            cancellationToken: cancellationToken);
-        Log.Debug("Index build complete for {BookFile}", bookFilePath);
-
-        if (cache != null)
-        {
-            Log.Debug("Caching index for {BookFile}", bookFilePath);
-            await cache.SetAsync(bookIndex, cancellationToken);
-            Log.Debug("Cache updated for {BookFile}", bookFilePath);
-        }
-
-        return bookIndex;
-    }
-
-    private static async Task<BookIndex> EnsurePhonemesAsync(
-        BookIndex index,
-        IPronunciationProvider pronunciationProvider,
-        CancellationToken cancellationToken = default)
-    {
-        var missingBefore = CountMissingPhonemes(index);
-        if (missingBefore == 0)
-        {
-            return index;
-        }
-
-        var enriched = await DocumentProcessor
-            .PopulateMissingPhonemesAsync(index, pronunciationProvider, cancellationToken)
-            .ConfigureAwait(false);
-
-        var missingAfter = CountMissingPhonemes(enriched);
-        if (missingAfter < missingBefore)
-        {
-            Log.Debug("Backfilled phonemes for {Added} words (remaining missing: {Remaining})",
-                missingBefore - missingAfter, missingAfter);
-            return enriched;
-        }
-
-        return index;
-    }
-
-    private static int CountMissingPhonemes(BookIndex index)
-    {
-        return index.Words.Count(word =>
-            word.Phonemes is not { Length: > 0 } &&
-            !string.IsNullOrEmpty(PronunciationHelper.NormalizeForLookup(word.Text)));
     }
 
     private static string FormatDuration(double totalSeconds)

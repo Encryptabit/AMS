@@ -9,6 +9,7 @@ using Ams.Core.Asr;
 using Ams.Core.Runtime.Book;
 using Ams.Core.Services;
 using Ams.Core.Services.Alignment;
+using Ams.Core.Services.Documents;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Ams.Core.Services.Interfaces;
@@ -22,6 +23,8 @@ internal static class Program
         HostApplicationBuilder builder = Host.CreateApplicationBuilder(args);
 
         builder.Services.AddSingleton<IPronunciationProvider>(_ => new MfaPronunciationProvider());
+        builder.Services.AddSingleton<IBookCache>(_ => Ams.Core.Processors.DocumentProcessor.DocumentProcessor.CreateBookCache());
+        builder.Services.AddSingleton<IDocumentService, DocumentService>();
         builder.Services.AddSingleton<IAsrService, AsrService>();
         builder.Services.AddSingleton<IAnchorComputeService, AnchorComputeService>();
         builder.Services.AddSingleton<ITranscriptIndexService, TranscriptIndexService>();
@@ -29,6 +32,7 @@ internal static class Program
         builder.Services.AddSingleton<IAlignmentService, AlignmentService>();
         builder.Services.AddSingleton<GenerateTranscriptCommand>();
         builder.Services.AddSingleton<ComputeAnchorsCommand>();
+        builder.Services.AddSingleton<BuildBookIndexCommand>();
         builder.Services.AddSingleton<BuildTranscriptIndexCommand>();
         builder.Services.AddSingleton<HydrateTranscriptCommand>();
         builder.Services.AddSingleton<RunMfaCommand>();
@@ -38,6 +42,7 @@ internal static class Program
         using IHost host = builder.Build();
         var generateTranscript = host.Services.GetRequiredService<GenerateTranscriptCommand>();
         var computeAnchors = host.Services.GetRequiredService<ComputeAnchorsCommand>();
+        var buildBookIndex = host.Services.GetRequiredService<BuildBookIndexCommand>();
         var transcriptIndexCommand = host.Services.GetRequiredService<BuildTranscriptIndexCommand>();
         var hydrateCommand = host.Services.GetRequiredService<HydrateTranscriptCommand>();
         var pipelineService = host.Services.GetRequiredService<PipelineService>();
@@ -58,7 +63,7 @@ internal static class Program
         rootCommand.AddCommand(AsrCommand.Create(generateTranscript));
         rootCommand.AddCommand(ValidateCommand.Create(validationService));
         rootCommand.AddCommand(TextCommand.Create());
-        rootCommand.AddCommand(BuildIndexCommand.Create());
+        rootCommand.AddCommand(BuildIndexCommand.Create(buildBookIndex));
         rootCommand.AddCommand(BookCommand.Create());
         rootCommand.AddCommand(AlignCommand.Create(computeAnchors, transcriptIndexCommand, hydrateCommand));
         rootCommand.AddCommand(RefineSentencesCommand.Create());

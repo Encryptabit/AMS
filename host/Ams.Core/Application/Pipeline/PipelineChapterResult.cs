@@ -1,3 +1,5 @@
+using Ams.Core.Application.Commands;
+
 namespace Ams.Core.Application.Pipeline;
 
 public sealed record PipelineChapterResult(
@@ -15,4 +17,5 @@ public sealed record PipelineChapterResult(
     FileInfo HydrateFile,
     FileInfo TextGridFile,
     FileInfo TreatedAudioFile,
-    bool PromptlessAsrRecoveryRequested = false);
+    bool PromptlessAsrRecoveryRequested = false,
+    BuildBookIndexResult? BookIndexResult = null);

@@ -1,42 +1,39 @@
-using System.Text.Json;
 using Ams.Core.Application.Commands;
 using Ams.Core.Application.Mfa;
 using Ams.Core.Application.Pipeline;
 using Ams.Core.Application.Processes;
-using Ams.Core.Processors.DocumentProcessor;
 using Ams.Core.Runtime.Workspace;
 using Ams.Core.Services.Alignment;
 using Ams.Core.Runtime.Chapter;
-using Ams.Core.Runtime.Book;
 
 namespace Ams.Core.Services;
 
 public sealed class PipelineService
 {
+    private readonly BuildBookIndexCommand _buildBookIndex;
     private readonly GenerateTranscriptCommand _generateTranscript;
     private readonly ComputeAnchorsCommand _computeAnchors;
     private readonly BuildTranscriptIndexCommand _buildTranscriptIndex;
     private readonly HydrateTranscriptCommand _hydrateTranscript;
     private readonly RunMfaCommand _runMfa;
     private readonly MergeTimingsCommand _mergeTimings;
-    private readonly IPronunciationProvider _pronunciationProvider;
 
     public PipelineService(
+        BuildBookIndexCommand buildBookIndex,
         GenerateTranscriptCommand generateTranscript,
         ComputeAnchorsCommand computeAnchors,
         BuildTranscriptIndexCommand buildTranscriptIndex,
         HydrateTranscriptCommand hydrateTranscript,
         RunMfaCommand runMfa,
-        MergeTimingsCommand mergeTimings,
-        IPronunciationProvider? pronunciationProvider = null)
+        MergeTimingsCommand mergeTimings)
     {
+        _buildBookIndex = buildBookIndex ?? throw new ArgumentNullException(nameof(buildBookIndex));
         _generateTranscript = generateTranscript ?? throw new ArgumentNullException(nameof(generateTranscript));
         _computeAnchors = computeAnchors ?? throw new ArgumentNullException(nameof(computeAnchors));
         _buildTranscriptIndex = buildTranscriptIndex ?? throw new ArgumentNullException(nameof(buildTranscriptIndex));
         _hydrateTranscript = hydrateTranscript ?? throw new ArgumentNullException(nameof(hydrateTranscript));
         _runMfa = runMfa ?? throw new ArgumentNullException(nameof(runMfa));
         _mergeTimings = mergeTimings ?? throw new ArgumentNullException(nameof(mergeTimings));
-        _pronunciationProvider = pronunciationProvider ?? NullPronunciationProvider.Instance;
     }
 
     public async Task<PipelineChapterResult> RunChapterAsync(
@@ -52,7 +49,8 @@ public sealed class PipelineService
         Directory.CreateDirectory(options.BookIndexFile.Directory?.FullName ??
                                   options.BookIndexFile.DirectoryName ?? ".");
 
-        var bookIndexBuilt = await EnsureBookIndexAsync(options, cancellationToken).ConfigureAwait(false);
+        var bookIndexResult = await EnsureBookIndexAsync(options, cancellationToken).ConfigureAwait(false);
+        var bookIndexBuilt = bookIndexResult?.WasRebuilt ?? false;
 
         var openOptions = new ChapterOpenOptions
         {
@@ -263,7 +261,8 @@ public sealed class PipelineService
             ResolveHydrateFile(),
             TextGridFile(),
             ResolveTreatedFile(),
-            promptlessAsrRecoveryRequested);
+            promptlessAsrRecoveryRequested,
+            bookIndexResult);
     }
 
     private static bool IsStageEnabled(PipelineStage stage, PipelineRunOptions options)
@@ -288,7 +287,9 @@ public sealed class PipelineService
         };
     }
 
-    private async Task<bool> EnsureBookIndexAsync(PipelineRunOptions options, CancellationToken cancellationToken)
+    private async Task<BuildBookIndexResult?> EnsureBookIndexAsync(
+        PipelineRunOptions options,
+        CancellationToken cancellationToken)
     {
         options.BookIndexFile.Refresh();
         var requestRebuild = options.ForceIndex || options.Force;
@@ -297,12 +298,12 @@ public sealed class PipelineService
 
         if (requestRebuild && concurrency is not null && !concurrency.TryClaimBookIndexForce())
         {
-            return false;
+            return null;
         }
 
         if (!requestRebuild && exists)
         {
-            return false;
+            return null;
         }
 
         await WaitAsync(concurrency?.BookIndexSemaphore, cancellationToken).ConfigureAwait(false);
@@ -311,124 +312,27 @@ public sealed class PipelineService
             options.BookIndexFile.Refresh();
             if (!requestRebuild && options.BookIndexFile.Exists)
             {
-                return false;
+                return null;
             }
 
-            await BuildBookIndexAsync(options, cancellationToken).ConfigureAwait(false);
-            return true;
+            var result = await _buildBookIndex.ExecuteAsync(
+                    BuildBookIndexRequest.FromPipelineOptions(options),
+                    cancellationToken)
+                .ConfigureAwait(false);
+
+            Log.Debug(
+                "Book index prepared for {Book}: {CacheDisposition} (Rebuilt={WasRebuilt}, PhonemesBackfilled={PhonemesBackfilled})",
+                options.BookFile.FullName,
+                result.CacheDisposition,
+                result.WasRebuilt,
+                result.PhonemesBackfilled);
+
+            return result;
         }
         finally
         {
             Release(concurrency?.BookIndexSemaphore);
         }
-    }
-
-    private async Task BuildBookIndexAsync(PipelineRunOptions options, CancellationToken cancellationToken)
-    {
-        var bookFile = options.BookFile;
-        if (bookFile is null)
-        {
-            throw new InvalidOperationException("Book file must be specified.");
-        }
-
-        if (!bookFile.Exists)
-        {
-            throw new FileNotFoundException("Book file not found.", bookFile.FullName);
-        }
-
-        Log.Debug("Building book index for {Book} -> {Output}", bookFile.FullName, options.BookIndexFile.FullName);
-
-        var cache = DocumentProcessor.CreateBookCache();
-        BookIndex bookIndex;
-
-        if (!options.ForceIndex && cache is not null)
-        {
-            var cachedIndex = await cache.GetAsync(bookFile.FullName, cancellationToken).ConfigureAwait(false);
-            if (cachedIndex is not null)
-            {
-                Log.Debug("Book index cache hit for {Book}", bookFile.FullName);
-                bookIndex = await EnsurePhonemesAsync(cachedIndex, cancellationToken).ConfigureAwait(false);
-                if (!ReferenceEquals(bookIndex, cachedIndex))
-                {
-                    await cache.SetAsync(bookIndex, cancellationToken).ConfigureAwait(false);
-                    Log.Debug("Book index cache backfilled with phonemes for {Book}", bookFile.FullName);
-                }
-            }
-            else
-            {
-                Log.Debug("Book index cache miss for {Book}", bookFile.FullName);
-                bookIndex = await BuildBookIndexInternal(bookFile, options.AverageWordsPerMinute, cancellationToken)
-                    .ConfigureAwait(false);
-                await cache.SetAsync(bookIndex, cancellationToken).ConfigureAwait(false);
-            }
-        }
-        else
-        {
-            if (options.ForceIndex)
-            {
-                Log.Debug("Force rebuilding book index for {Book}", bookFile.FullName);
-            }
-
-            bookIndex = await BuildBookIndexInternal(bookFile, options.AverageWordsPerMinute, cancellationToken)
-                .ConfigureAwait(false);
-            if (cache is not null)
-            {
-                await cache.SetAsync(bookIndex, cancellationToken).ConfigureAwait(false);
-            }
-        }
-
-        var jsonOptions = new JsonSerializerOptions
-        {
-            WriteIndented = true,
-            PropertyNamingPolicy = JsonNamingPolicy.CamelCase
-        };
-
-        var json = JsonSerializer.Serialize(bookIndex, jsonOptions);
-        await File.WriteAllTextAsync(options.BookIndexFile.FullName, json, cancellationToken).ConfigureAwait(false);
-    }
-
-    private async Task<BookIndex> BuildBookIndexInternal(FileInfo bookFile, double averageWpm,
-        CancellationToken cancellationToken)
-    {
-        var parseResult = await DocumentProcessor.ParseBookAsync(bookFile.FullName, cancellationToken)
-            .ConfigureAwait(false);
-        var built = await DocumentProcessor.BuildBookIndexAsync(
-            parseResult,
-            bookFile.FullName,
-            new BookIndexOptions { AverageWpm = averageWpm },
-            pronunciationProvider: _pronunciationProvider,
-            cancellationToken).ConfigureAwait(false);
-        return await EnsurePhonemesAsync(built, cancellationToken).ConfigureAwait(false);
-    }
-
-    private async Task<BookIndex> EnsurePhonemesAsync(BookIndex index, CancellationToken cancellationToken)
-    {
-        var missingBefore = CountMissingPhonemes(index);
-        if (missingBefore == 0)
-        {
-            return index;
-        }
-
-        var enriched = await DocumentProcessor
-            .PopulateMissingPhonemesAsync(index, _pronunciationProvider, cancellationToken)
-            .ConfigureAwait(false);
-
-        var missingAfter = CountMissingPhonemes(enriched);
-        if (missingAfter < missingBefore)
-        {
-            Log.Debug("Book index phonemes backfilled: +{Added} words (remaining missing: {Remaining})",
-                missingBefore - missingAfter, missingAfter);
-            return enriched;
-        }
-
-        return index;
-    }
-
-    private static int CountMissingPhonemes(BookIndex index)
-    {
-        return index.Words.Count(word =>
-            word.Phonemes is not { Length: > 0 } &&
-            !string.IsNullOrEmpty(PronunciationHelper.NormalizeForLookup(word.Text)));
     }
 
     private static FileInfo ResolveTextGridFile(string chapterRoot, string chapterId)
