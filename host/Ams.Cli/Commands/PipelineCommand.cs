@@ -12,6 +12,7 @@ using Ams.Cli.Repl;
 using Ams.Core.Application.Commands;
 using Ams.Core.Application.Pipeline;
 using Ams.Core.Application.Mfa.Models;
+using Ams.Core.Application.Runs;
 using Ams.Core.Asr;
 using Ams.Core.Artifacts;
 using Ams.Core.Processors;
@@ -96,13 +97,8 @@ public static class PipelineCommand
         [PipelineStage.Complete] = ("Done", "green")
     };
 
-    private interface IPipelineProgressReporter
+    private interface IPipelineProgressReporter : IProgress<RunProgressUpdate>
     {
-        void SetQueued(string chapterId);
-        void MarkRunning(string chapterId);
-        void ReportStage(string chapterId, PipelineStage stage, string message);
-        void MarkComplete(string chapterId);
-        void MarkFailed(string chapterId, string message);
     }
 
     private static Command CreatePrepCommand()
@@ -112,6 +108,96 @@ public static class PipelineCommand
         cmd.AddCommand(CreatePrepRenameCommand());
         cmd.AddCommand(CreatePrepResetCommand());
         return cmd;
+    }
+
+    private static RunProgressUpdate CreateRecoveryQueuedUpdate(string chapterId)
+    {
+        return RunProgressUpdate.CreateStatus(
+            ModuleIds.PipelineRun,
+            RunState.Pending,
+            "Queued for promptless ASR recovery pass",
+            PipelineRunContract.StageProgress(PipelineStage.Mfa),
+            PipelineRunContract.PipelineStageName,
+            itemId: chapterId);
+    }
+
+    private static RunProgressUpdate CreateCompletionUpdate(string chapterId, string message)
+    {
+        return RunProgressUpdate.CreateStatus(
+            ModuleIds.PipelineRun,
+            RunState.Completed,
+            message,
+            1d,
+            PipelineRunContract.PipelineStageName,
+            itemId: chapterId);
+    }
+
+    private static RunProgressUpdate CreateFailureUpdate(string chapterId, Exception exception)
+    {
+        if (exception is PipelineRunException pipelineRunException)
+        {
+            return RunProgressUpdate.CreateFailure(
+                pipelineRunException.ModuleId,
+                pipelineRunException.Failure,
+                progress: pipelineRunException.ProgressUpdates.LastOrDefault()?.Progress,
+                artifacts: pipelineRunException.Artifacts,
+                itemId: chapterId);
+        }
+
+        if (exception is OperationCanceledException)
+        {
+            return RunProgressUpdate.CreateFailure(
+                ModuleIds.PipelineRun,
+                new RunFailure(RunFailureKind.Cancelled, "Pipeline cancelled.", PipelineRunContract.PipelineStageName),
+                itemId: chapterId);
+        }
+
+        return RunProgressUpdate.CreateFailure(
+            ModuleIds.PipelineRun,
+            new RunFailure(RunFailureKind.Execution, exception.Message, PipelineRunContract.PipelineStageName),
+            itemId: chapterId);
+    }
+
+    private static string ResolveProgressItemId(RunProgressUpdate update)
+    {
+        return string.IsNullOrWhiteSpace(update.ItemId)
+            ? update.ModuleId.Value
+            : update.ItemId;
+    }
+
+    private static PipelineStage ResolveReporterStage(RunProgressUpdate update)
+    {
+        if (string.Equals(update.Stage, PipelineRunContract.PipelineStageName, StringComparison.OrdinalIgnoreCase))
+        {
+            return update.State == RunState.Completed ? PipelineStage.Complete : PipelineStage.Pending;
+        }
+
+        return PipelineRunContract.TryParseStage(update.Stage, out var stage)
+            ? stage
+            : update.State == RunState.Completed
+                ? PipelineStage.Complete
+                : PipelineStage.Pending;
+    }
+
+    private static double ResolveReporterValue(RunProgressUpdate update, PipelineStage stage)
+    {
+        if (update.State == RunState.Failed)
+        {
+            return PipelineStageCount;
+        }
+
+        if (update.Progress is double progress)
+        {
+            return Math.Clamp(progress * PipelineStageCount, 0d, PipelineStageCount);
+        }
+
+        return update.State switch
+        {
+            RunState.Pending => 0d,
+            RunState.Running => Math.Max(0d, (int)stage - 1),
+            RunState.Completed => stage == PipelineStage.Complete ? PipelineStageCount : Math.Min((int)stage, PipelineStageCount),
+            _ => 0d
+        };
     }
 
     private sealed class PipelineProgressReporter : IPipelineProgressReporter
@@ -133,60 +219,33 @@ public static class PipelineCommand
             }
         }
 
-        public void SetQueued(string chapterId)
+        public void Report(RunProgressUpdate update)
         {
-            Update(chapterId, PipelineStage.Pending, "Queued");
-        }
-
-        public void MarkRunning(string chapterId)
-        {
-            Update(chapterId, PipelineStage.Pending, "Running...");
-        }
-
-        public void ReportStage(string chapterId, PipelineStage stage, string message)
-        {
-            Update(chapterId, stage, message);
-        }
-
-        public void MarkComplete(string chapterId)
-        {
-            Update(chapterId, PipelineStage.Complete, "Complete");
-            if (_tasks.TryGetValue(chapterId, out var task))
+            var chapterId = ResolveProgressItemId(update);
+            if (!_tasks.TryGetValue(chapterId, out var task))
             {
-                lock (_sync)
+                return;
+            }
+
+            var stage = ResolveReporterStage(update);
+
+            lock (_sync)
+            {
+                if (update.State == RunState.Failed)
+                {
+                    task.Value = PipelineStageCount;
+                    task.Description = $"{chapterId,-20} [red]Failed[/] {update.Message}";
+                    task.StopTask();
+                    return;
+                }
+
+                task.Value = ResolveReporterValue(update, stage);
+                task.Description = BuildDescription(chapterId, stage, update.Message);
+
+                if (update.State == RunState.Completed && stage == PipelineStage.Complete)
                 {
                     task.StopTask();
                 }
-            }
-        }
-
-        public void MarkFailed(string chapterId, string message)
-        {
-            if (!_tasks.TryGetValue(chapterId, out var task))
-            {
-                return;
-            }
-
-            lock (_sync)
-            {
-                task.Value = PipelineStageCount;
-                task.Description = $"{chapterId,-20} [red]Failed[/] {message}";
-                task.StopTask();
-            }
-        }
-
-        private void Update(string chapterId, PipelineStage stage, string message)
-        {
-            if (!_tasks.TryGetValue(chapterId, out var task))
-            {
-                return;
-            }
-
-            lock (_sync)
-            {
-                var clamped = Math.Min((int)stage, PipelineStageCount);
-                task.Value = clamped;
-                task.Description = BuildDescription(chapterId, stage, message);
             }
         }
 
@@ -268,57 +327,17 @@ public static class PipelineCommand
             _liveContext = context;
         }
 
-        public void SetQueued(string chapterId)
+        public void Report(RunProgressUpdate update)
         {
+            var chapterId = ResolveProgressItemId(update);
             UpdateChapter(chapterId, status =>
             {
-                status.Stage = PipelineStage.Pending;
-                status.Message = "Queued";
-                status.IsRunning = false;
-                status.Failed = false;
-            });
-        }
-
-        public void MarkRunning(string chapterId)
-        {
-            UpdateChapter(chapterId, status =>
-            {
-                status.IsRunning = true;
-                if (status.Stage == PipelineStage.Pending)
-                {
-                    status.Message = "In progress...";
-                }
-            });
-        }
-
-        public void ReportStage(string chapterId, PipelineStage stage, string message)
-        {
-            UpdateChapter(chapterId, status =>
-            {
-                status.Stage = stage;
-                status.Message = message;
-            });
-        }
-
-        public void MarkComplete(string chapterId)
-        {
-            UpdateChapter(chapterId, status =>
-            {
-                status.Stage = PipelineStage.Complete;
-                status.Message = "Complete";
-                status.IsRunning = false;
-                status.Failed = false;
-            });
-        }
-
-        public void MarkFailed(string chapterId, string message)
-        {
-            UpdateChapter(chapterId, status =>
-            {
-                status.Stage = PipelineStage.Complete;
-                status.Message = string.IsNullOrWhiteSpace(message) ? "Failed" : $"Failed: {message}";
-                status.IsRunning = false;
-                status.Failed = true;
+                status.Stage = ResolveReporterStage(update);
+                status.Message = update.State == RunState.Failed && !string.IsNullOrWhiteSpace(update.Message)
+                    ? $"Failed: {update.Message}"
+                    : update.Message;
+                status.IsRunning = update.State == RunState.Running;
+                status.Failed = update.State == RunState.Failed;
             });
         }
 
@@ -414,23 +433,7 @@ public static class PipelineCommand
 
         private sealed class NullProgressReporter : IPipelineProgressReporter
         {
-            public void SetQueued(string chapterId)
-            {
-            }
-
-            public void MarkRunning(string chapterId)
-            {
-            }
-
-            public void ReportStage(string chapterId, PipelineStage stage, string message)
-            {
-            }
-
-            public void MarkComplete(string chapterId)
-            {
-            }
-
-            public void MarkFailed(string chapterId, string message)
+            public void Report(RunProgressUpdate value)
             {
             }
         }
@@ -512,7 +515,6 @@ public static class PipelineCommand
         var tasks = existingChapters.Select(async chapter =>
         {
             var chapterId = Path.GetFileNameWithoutExtension(chapter.Name);
-            reporter?.SetQueued(chapterId);
 
             try
             {
@@ -520,7 +522,7 @@ public static class PipelineCommand
             }
             catch (OperationCanceledException oce)
             {
-                reporter?.MarkFailed(chapterId, "Cancelled");
+                reporter?.Report(CreateFailureUpdate(chapterId, oce));
                 errors.Add(new InvalidOperationException($"Pipeline cancelled before starting {chapter.FullName}",
                     oce));
                 return;
@@ -529,7 +531,6 @@ public static class PipelineCommand
             try
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                reporter?.MarkRunning(chapterId);
 
                 var result = await RunPipelineAsync(
                     pipelineService,
@@ -565,31 +566,23 @@ public static class PipelineCommand
                         Log.Warn(
                             "Promptless ASR recovery pass still reported low-coverage MFA chunks for {Chapter}; keeping best-effort output",
                             chapterId);
-                        reporter?.MarkComplete(chapterId);
+                        reporter?.Report(CreateCompletionUpdate(chapterId, "Complete (best effort)"));
                     }
                     else
                     {
-                        reporter?.ReportStage(
-                            chapterId,
-                            PipelineStage.Mfa,
-                            "Queued for promptless ASR recovery pass");
-                        reporter?.SetQueued(chapterId);
+                        reporter?.Report(CreateRecoveryQueuedUpdate(chapterId));
                         promptlessRecoveryQueue.Add(chapter);
                     }
-                }
-                else
-                {
-                    reporter?.MarkComplete(chapterId);
                 }
             }
             catch (OperationCanceledException oce)
             {
-                reporter?.MarkFailed(chapterId, "Cancelled");
+                reporter?.Report(CreateFailureUpdate(chapterId, oce));
                 errors.Add(new InvalidOperationException($"Pipeline cancelled for {chapter.FullName}", oce));
             }
             catch (Exception ex)
             {
-                reporter?.MarkFailed(chapterId, ex.Message);
+                reporter?.Report(CreateFailureUpdate(chapterId, ex));
                 errors.Add(new InvalidOperationException($"Pipeline failed for {chapter.FullName}: {ex.Message}", ex));
             }
             finally
@@ -1391,13 +1384,11 @@ public static class PipelineCommand
                         .StartAsync(async progressContext =>
                         {
                             var reporter = new PipelineProgressReporter(progressContext, new[] { audioFile });
-                            reporter.SetQueued(chapterId);
 
                             using var concurrency = PipelineConcurrencyControl.CreateSingle();
 
                             try
                             {
-                                reporter.MarkRunning(chapterId);
                                 var result = await RunPipelineAsync(
                                     pipelineService,
                                     bookFile,
@@ -1426,12 +1417,7 @@ public static class PipelineCommand
 
                                 if (result.PromptlessAsrRecoveryRequested)
                                 {
-                                    reporter.ReportStage(
-                                        chapterId,
-                                        PipelineStage.Mfa,
-                                        "Queued for promptless ASR recovery pass");
-                                    reporter.SetQueued(chapterId);
-                                    reporter.MarkRunning(chapterId);
+                                    reporter.Report(CreateRecoveryQueuedUpdate(chapterId));
 
                                     var recoveryResult = await RunPipelineAsync(
                                         pipelineService,
@@ -1465,19 +1451,18 @@ public static class PipelineCommand
                                         Log.Warn(
                                             "Promptless ASR recovery pass still reported low-coverage MFA chunks for {Chapter}; keeping best-effort output",
                                             chapterId);
+                                        reporter.Report(CreateCompletionUpdate(chapterId, "Complete (best effort)"));
                                     }
                                 }
-
-                                reporter.MarkComplete(chapterId);
                             }
-                            catch (OperationCanceledException)
+                            catch (OperationCanceledException oce)
                             {
-                                reporter.MarkFailed(chapterId, "Cancelled");
+                                reporter.Report(CreateFailureUpdate(chapterId, oce));
                                 throw;
                             }
                             catch (Exception ex)
                             {
-                                reporter.MarkFailed(chapterId, ex.Message);
+                                reporter.Report(CreateFailureUpdate(chapterId, ex));
                                 throw;
                             }
                         }).ConfigureAwait(false);
@@ -1673,6 +1658,8 @@ public static class PipelineCommand
             AudioFile = audioFile,
             ChapterDirectory = chapterDirInfo,
             ChapterId = chapterStem,
+            ModuleId = ModuleIds.PipelineRun,
+            Progress = progress,
             Force = force || promptlessRecoveryPass,
             ForceIndex = forceIndex,
             StartStage = promptlessRecoveryPass ? PipelineStage.Asr : PipelineStage.BookIndex,
@@ -1718,27 +1705,12 @@ public static class PipelineCommand
         var result = await pipelineService.RunChapterAsync(workspace, pipelineOptions, cancellationToken)
             .ConfigureAwait(false);
 
-        var bookIndexMessage = result.BookIndexBuilt ? "Index built" : "Index ready";
-        progress?.ReportStage(chapterStem, PipelineStage.BookIndex, bookIndexMessage);
-        progress?.ReportStage(chapterStem, PipelineStage.Asr, result.AsrRan ? "ASR complete" : "ASR cached");
-        progress?.ReportStage(chapterStem, PipelineStage.Anchors,
-            result.AnchorsRan ? "Anchors generated" : "Anchors cached");
-        progress?.ReportStage(chapterStem, PipelineStage.Transcript,
-            result.TranscriptRan ? "Transcript indexed" : "Transcript cached");
-        progress?.ReportStage(chapterStem, PipelineStage.Hydrate,
-            result.HydrateRan ? "Hydrate complete" : "Hydrate cached");
-
-        var textGridStatus = result.TextGridFile.Exists
-            ? (result.MfaRan ? "MFA aligned" : "MFA cached")
-            : "MFA missing";
-        progress?.ReportStage(chapterStem, PipelineStage.Mfa, textGridStatus);
-
-        LogStageInfo(logInfo, "Book index : {Status}", result.BookIndexBuilt ? "Rebuilt" : "Cached");
-        LogStageInfo(logInfo, "ASR        : {Status}", result.AsrRan ? "Executed" : "Cached");
-        LogStageInfo(logInfo, "Anchors    : {Status}", result.AnchorsRan ? "Executed" : "Cached");
-        LogStageInfo(logInfo, "Transcript : {Status}", result.TranscriptRan ? "Executed" : "Cached");
-        LogStageInfo(logInfo, "Hydrate    : {Status}", result.HydrateRan ? "Executed" : "Cached");
-        LogStageInfo(logInfo, "MFA        : {Status}", textGridStatus);
+        LogStageInfo(logInfo, "Book index : {Status}", PipelineRunContract.DescribeStageStatus(result.GetStageResult(PipelineStage.BookIndex), "Skipped"));
+        LogStageInfo(logInfo, "ASR        : {Status}", PipelineRunContract.DescribeStageStatus(result.GetStageResult(PipelineStage.Asr), "Skipped"));
+        LogStageInfo(logInfo, "Anchors    : {Status}", PipelineRunContract.DescribeStageStatus(result.GetStageResult(PipelineStage.Anchors), "Skipped"));
+        LogStageInfo(logInfo, "Transcript : {Status}", PipelineRunContract.DescribeStageStatus(result.GetStageResult(PipelineStage.Transcript), "Skipped"));
+        LogStageInfo(logInfo, "Hydrate    : {Status}", PipelineRunContract.DescribeStageStatus(result.GetStageResult(PipelineStage.Hydrate), "Skipped"));
+        LogStageInfo(logInfo, "MFA        : {Status}", PipelineRunContract.DescribeStageStatus(result.GetStageResult(PipelineStage.Mfa), "Skipped"));
 
         bookIndexFile = result.BookIndexFile;
         asrFile = result.AsrFile;

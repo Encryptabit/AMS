@@ -1,4 +1,5 @@
 using Ams.Core.Application.Commands;
+using Ams.Core.Application.Runs;
 using Ams.Core.Services.Alignment;
 
 namespace Ams.Core.Application.Pipeline;
@@ -10,6 +11,15 @@ public sealed record PipelineRunOptions
     public FileInfo AudioFile { get; init; } = null!;
     public DirectoryInfo? ChapterDirectory { get; init; }
     public string ChapterId { get; init; } = string.Empty;
+    public ModuleId ModuleId { get; init; } = ModuleIds.PipelineRun;
+
+    /// <summary>
+    /// Optional shared progress sink for pipeline execution. Hosts should translate these
+    /// Core-owned updates into UI affordances rather than inventing their own transport.
+    /// The update ItemId carries the chapter id for multi-item reporters.
+    /// </summary>
+    public IProgress<RunProgressUpdate>? Progress { get; init; }
+
     public bool Force { get; init; }
     public bool ForceIndex { get; init; }
     public PipelineStage StartStage { get; init; } = PipelineStage.BookIndex;
