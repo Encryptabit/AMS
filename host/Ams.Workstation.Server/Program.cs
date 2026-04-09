@@ -1,9 +1,4 @@
-using Ams.Core.Services;
-using Ams.Core.Application.Mfa;
 using Ams.Core.Application.Processes;
-using Ams.Core.Runtime.Book;
-using Ams.Core.Services.Alignment;
-using Ams.Core.Services.Interfaces;
 using Ams.Workstation.Server.Components;
 using Ams.Workstation.Server.Services;
 using Toolbelt.Blazor.Extensions.DependencyInjection;
@@ -56,15 +51,8 @@ builder.Services.AddTransient<PolishService>();
 builder.Services.AddTransient<PolishVerificationService>();
 builder.Services.AddTransient<BatchOperationService>();
 
-// Ams.Core services - stateless services for alignment/ASR operations
-// Note: PipelineService and ValidationService require command dependencies
-// that are CLI-specific. Add them when needed with proper command registration.
-builder.Services.AddSingleton<IPronunciationProvider>(_ => new MfaPronunciationProvider());
-builder.Services.AddSingleton<IAsrService, AsrService>();
-builder.Services.AddSingleton<IAnchorComputeService, AnchorComputeService>();
-builder.Services.AddSingleton<ITranscriptIndexService, TranscriptIndexService>();
-builder.Services.AddSingleton<ITranscriptHydrationService, TranscriptHydrationService>();
-builder.Services.AddSingleton<IAlignmentService, AlignmentService>();
+// Ams.Core processing graph for Prep and other shared execution flows.
+builder.Services.AddWorkstationProcessingServices();
 
 var app = builder.Build();
 

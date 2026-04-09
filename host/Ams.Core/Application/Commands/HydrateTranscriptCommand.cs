@@ -20,10 +20,11 @@ public sealed class HydrateTranscriptCommand
     {
         ArgumentNullException.ThrowIfNull(chapter);
 
-        await _alignmentService
+        var hydrated = await _alignmentService
             .HydrateTranscriptAsync(chapter, options, cancellationToken)
             .ConfigureAwait(false);
 
+        chapter.Documents.HydratedTranscript = hydrated;
         chapter.Save();
     }
 }

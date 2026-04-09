@@ -581,6 +581,8 @@ public sealed class PipelineService
                     cancellationToken)
                 .ConfigureAwait(false);
 
+            options.BookIndexFile.Refresh();
+
             Log.Debug(
                 "Book index prepared for {Book}: {CacheDisposition} (Rebuilt={WasRebuilt}, PhonemesBackfilled={PhonemesBackfilled})",
                 options.BookFile.FullName,
