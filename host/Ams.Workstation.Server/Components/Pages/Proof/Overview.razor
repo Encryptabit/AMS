@@ -1,4 +1,5 @@
 @page "/proof/overview"
+@using Ams.Workstation.Server.Components.Navigation
 @inject Ams.Workstation.Server.Services.BlazorWorkspace Workspace
 @inject Ams.Workstation.Server.Services.ValidationMetricsService MetricsService
 @inject NavigationManager Navigation
@@ -132,7 +133,7 @@
 
     private void NavigateToChapter(string chapterName)
     {
-        Navigation.NavigateTo($"/proof/{Uri.EscapeDataString(chapterName)}");
+        Navigation.NavigateTo(StageRouteCatalog.BuildProofChapterCompatibilityPath(chapterName));
     }
 }
 

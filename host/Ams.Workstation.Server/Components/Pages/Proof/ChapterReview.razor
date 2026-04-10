@@ -11,6 +11,7 @@
 @inject Ams.Workstation.Server.Services.CrxService CrxService
 @inject NavigationManager Navigation
 @inject IJSRuntime JS
+@using Ams.Workstation.Server.Components.Navigation
 @using Ams.Workstation.Server.Models
 @implements IAsyncDisposable
 
@@ -444,7 +445,7 @@ else
         var next = direction == "next" ? index + 1 : index - 1;
         if (next < 0 || next >= chapters.Count) return;
 
-        Navigation.NavigateTo($"/proof/{Uri.EscapeDataString(chapters[next])}");
+        Navigation.NavigateTo(StageRouteCatalog.BuildProofChapterCompatibilityPath(chapters[next]));
     }
 
     [JSInvokable]
