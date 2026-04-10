@@ -16,7 +16,11 @@
 <SectionContent SectionName="header-extra">
     @if (HasWorkingDirectory)
     {
-        <div class="prep-header-extra">
+        <BitStack Horizontal="true"
+                  Gap="0.5rem"
+                  VerticalAlign="BitAlignment.Center"
+                  Wrap="true"
+                  Class="prep-header-extra">
             <BitTag Color="@GetPhaseColor(Session.CurrentPhase)">@FormatPhase(Session.CurrentPhase)</BitTag>
 
             @if (!string.IsNullOrWhiteSpace(Session.CurrentStage))
@@ -33,18 +37,18 @@
                        IsEnabled="@(Session.IsRunning && !Session.IsCancellationRequested)">
                 Cancel
             </BitButton>
-        </div>
+        </BitStack>
     }
 </SectionContent>
 
 <div class="prep-page">
     <BitStack Horizontal="false" Gap="1rem">
-        <div class="prep-header">
+        <BitStack Horizontal="false" Gap="0.25rem">
             <BitText Typography="BitTypography.H4">Prep Area</BitText>
             <BitText Typography="BitTypography.Body1" Color="BitColor.SecondaryForeground">
                 Build a missing book index and run single-chapter prep through the shared Core pipeline contracts.
             </BitText>
-        </div>
+        </BitStack>
 
         <BitCard>
             <BitStack Horizontal="false" Gap="0.75rem">
@@ -154,17 +158,21 @@
         }
         else if (!Workspace.HasBookIndex)
         {
-            <BitCard Class="prep-flow-card">
+            <BitCard>
                 <BitStack Horizontal="false" Gap="1rem">
-                    <div class="prep-flow-header">
-                        <div>
+                    <BitStack Horizontal="true"
+                              HorizontalAlign="BitAlignment.SpaceBetween"
+                              VerticalAlign="BitAlignment.Start"
+                              Gap="1rem"
+                              Wrap="true">
+                        <BitStack Horizontal="false" Gap="0.25rem">
                             <BitText Typography="BitTypography.Subtitle1">Build book index</BitText>
                             <BitText Typography="BitTypography.Body2" Color="BitColor.SecondaryForeground">
                                 book-index.json is missing, so Prep needs an explicit manuscript path before chapter prep can run.
                             </BitText>
-                        </div>
+                        </BitStack>
                         <BitTag Color="BitColor.Warning">Index required</BitTag>
-                    </div>
+                    </BitStack>
 
                     <BitTextField @bind-Value="_manuscriptPath"
                                   Immediate="true"
@@ -209,17 +217,21 @@
         }
         else
         {
-            <BitCard Class="prep-flow-card">
+            <BitCard>
                 <BitStack Horizontal="false" Gap="1rem">
-                    <div class="prep-flow-header">
-                        <div>
+                    <BitStack Horizontal="true"
+                              HorizontalAlign="BitAlignment.SpaceBetween"
+                              VerticalAlign="BitAlignment.Start"
+                              Gap="1rem"
+                              Wrap="true">
+                        <BitStack Horizontal="false" Gap="0.25rem">
                             <BitText Typography="BitTypography.Subtitle1">Run chapter prep</BitText>
                             <BitText Typography="BitTypography.Body2" Color="BitColor.SecondaryForeground">
                                 Run the selected chapter through the shared pipeline service and keep Workstation state synchronized after the run.
                             </BitText>
-                        </div>
+                        </BitStack>
                         <BitTag Color="BitColor.Success">Index ready</BitTag>
-                    </div>
+                    </BitStack>
 
                     <BitDropdown TItem="BitDropdownItem<string>"
                                  TValue="string"
@@ -227,7 +239,7 @@
                                  @bind-Value="_selectedChapter"
                                  Placeholder="Select chapter"
                                  OnChange="HandleChapterChange"
-                                 Style="min-width: 260px;"
+                                 Class="prep-field-min prep-field-min--wide"
                                  IsEnabled="@(!Session.IsRunning)" />
 
                     <div class="prep-grid">
@@ -264,7 +276,7 @@
                                                  Items="@EndStageItems"
                                                  Value="@_operatorControls.EndStageKey"
                                                  OnChange="HandleEndStageChange"
-                                                 Style="min-width: 220px;"
+                                                 Class="prep-field-min"
                                                  IsEnabled="@(!Session.IsRunning)" />
                                 </div>
                                 <div class="prep-kv">
@@ -292,7 +304,7 @@
                                                  Items="@AsrEngineItems"
                                                  Value="@_operatorControls.AsrEngineKey"
                                                  OnChange="HandleAsrEngineChange"
-                                                 Style="min-width: 220px;"
+                                                 Class="prep-field-min"
                                                  IsEnabled="@(!Session.IsRunning)" />
                                 </div>
                                 <div class="prep-kv">
@@ -346,7 +358,7 @@
                                                  Items="@MfaBeamProfileItems"
                                                  Value="@_operatorControls.MfaBeamProfileKey"
                                                  OnChange="HandleMfaBeamProfileChange"
-                                                 Style="min-width: 220px;"
+                                                 Class="prep-field-min"
                                                  IsEnabled="@(!Session.IsRunning)" />
                                 </div>
                                 <div class="prep-kv">
@@ -508,17 +520,21 @@
 
             <BitCard>
                 <BitStack Horizontal="false" Gap="0.75rem">
-                    <div class="prep-flow-header">
-                        <div>
+                    <BitStack Horizontal="true"
+                              HorizontalAlign="BitAlignment.SpaceBetween"
+                              VerticalAlign="BitAlignment.Start"
+                              Gap="1rem"
+                              Wrap="true">
+                        <BitStack Horizontal="false" Gap="0.25rem">
                             <BitText Typography="BitTypography.Subtitle1">Runtime readiness snapshot</BitText>
                             <BitText Typography="BitTypography.Body2" Color="BitColor.SecondaryForeground">
                                 Captured before pipeline dispatch so Prep failures can be triaged with deterministic runtime provenance.
                             </BitText>
-                        </div>
+                        </BitStack>
                         <BitTag Color="@(readiness.IsReady ? BitColor.Success : BitColor.Warning)">
                             @(readiness.IsReady ? "Ready" : "Needs attention")
                         </BitTag>
-                    </div>
+                    </BitStack>
 
                     <div class="prep-grid prep-grid--compact">
                         <div class="prep-kv">
@@ -807,119 +823,6 @@
         }
     </BitStack>
 </div>
-
-<style>
-    .prep-page {
-        max-width: 1080px;
-        margin: 0 auto;
-    }
-
-    .prep-header {
-        display: flex;
-        flex-direction: column;
-        gap: 0.25rem;
-    }
-
-    .prep-header-extra {
-        display: flex;
-        align-items: center;
-        gap: 0.5rem;
-        flex-wrap: wrap;
-        min-width: 0;
-    }
-
-    .prep-flow-card {
-        border: 1px solid var(--bit-clr-brd-sec);
-    }
-
-    .prep-flow-header {
-        display: flex;
-        justify-content: space-between;
-        align-items: flex-start;
-        gap: 1rem;
-    }
-
-    .prep-control-sections {
-        display: flex;
-        flex-direction: column;
-        gap: 0.75rem;
-    }
-
-    .prep-control-section {
-        border: 1px solid var(--bit-clr-brd-sec);
-        border-radius: 0.5rem;
-        padding: 0.75rem;
-        display: flex;
-        flex-direction: column;
-        gap: 0.5rem;
-    }
-
-    .prep-running-status {
-        display: flex;
-        align-items: center;
-        gap: 0.75rem;
-    }
-
-    .prep-grid {
-        display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-        gap: 0.75rem 1rem;
-    }
-
-    .prep-grid--compact {
-        grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-    }
-
-    .prep-kv {
-        display: flex;
-        flex-direction: column;
-        gap: 0.2rem;
-    }
-
-    .prep-mono {
-        font-family: ui-monospace, SFMono-Regular, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
-    }
-
-    .prep-wrap {
-        overflow-wrap: anywhere;
-    }
-
-    .prep-warning-list {
-        margin: 0;
-        padding-left: 1.25rem;
-    }
-
-    .prep-warning-list li {
-        margin: 0.125rem 0;
-    }
-
-    .prep-table {
-        width: 100%;
-        border-collapse: collapse;
-        font-size: 0.95rem;
-    }
-
-    .prep-table th,
-    .prep-table td {
-        text-align: left;
-        vertical-align: top;
-        padding: 0.75rem;
-        border-bottom: 1px solid var(--bit-clr-brd-sec);
-    }
-
-    .prep-table th {
-        color: var(--bit-clr-fg-secondary);
-        font-size: 0.8rem;
-        text-transform: uppercase;
-        letter-spacing: 0.05em;
-    }
-
-    .prep-inline-note {
-        margin-top: 0.25rem;
-        color: var(--bit-clr-fg-secondary);
-        font-size: 0.85rem;
-    }
-</style>
 
 @code {
     private string _manuscriptPath = string.Empty;
