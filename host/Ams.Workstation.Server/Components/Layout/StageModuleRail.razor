@@ -11,33 +11,47 @@
          data-stage-shell-module="@_state.ActiveModuleId"
          data-stage-shell-path="@_state.NormalizedPath"
          data-stage-shell-marker="@_state.DiagnosticMarker">
-        <div class="stage-module-rail__meta">
-            <span class="stage-module-rail__meta-label">Stage</span>
-            <span class="stage-module-rail__meta-value"
-                  data-stage-active-stage="@_state.ActiveStageId">
-                @_state.ActiveStageName
-            </span>
-            <span class="stage-module-rail__meta-divider">•</span>
-            <span class="stage-module-rail__meta-label">Module</span>
-            <span class="stage-module-rail__meta-value"
-                  data-stage-active-module="@_state.ActiveModuleId">
-                @_state.ActiveModuleName
-            </span>
+        <div class="stage-module-rail__section" data-stage-shell-nav="stages">
+            <span class="stage-module-rail__section-label">Stages</span>
+            <ul class="stage-module-rail__stage-list" role="list">
+                @foreach (var stage in StageRouteCatalog.Stages)
+                {
+                    var isStageActive = string.Equals(stage.Id, _state.ActiveStageId, StringComparison.OrdinalIgnoreCase);
+                    <li>
+                        <a href="@stage.EntryPath"
+                           class="@(isStageActive ? "stage-module-rail__stage-link stage-module-rail__stage-link--active" : "stage-module-rail__stage-link")"
+                           data-stage-id="@stage.Id"
+                           data-stage-active="@(isStageActive ? "true" : "false")">
+                            @stage.DisplayName
+                        </a>
+                    </li>
+                }
+            </ul>
         </div>
 
-        <ul class="stage-module-rail__list" role="list">
-            @foreach (var module in _state.Modules)
-            {
-                <li>
-                    <a href="@module.Path"
-                       class="@(module.IsActive ? "stage-module-rail__link stage-module-rail__link--active" : "stage-module-rail__link")"
-                       data-stage-module-id="@module.Id"
-                       data-stage-module-active="@(module.IsActive ? "true" : "false")">
-                        @module.DisplayName
-                    </a>
-                </li>
-            }
-        </ul>
+        <div class="stage-module-rail__section" data-stage-shell-nav="modules">
+            <span class="stage-module-rail__section-label">Modules</span>
+            <ul class="stage-module-rail__module-list" role="list">
+                @foreach (var module in _state.Modules)
+                {
+                    <li>
+                        <a href="@module.Path"
+                           class="@(module.IsActive ? "stage-module-rail__module-link stage-module-rail__module-link--active" : "stage-module-rail__module-link")"
+                           data-stage-module-id="@module.Id"
+                           data-stage-module-active="@(module.IsActive ? "true" : "false")">
+                            @module.DisplayName
+                        </a>
+                    </li>
+                }
+            </ul>
+        </div>
+
+        <div class="stage-module-rail__diagnostic">
+            <span class="stage-module-rail__diagnostic-label">Path</span>
+            <span class="stage-module-rail__diagnostic-value">@_state.NormalizedPath</span>
+            <span class="stage-module-rail__diagnostic-label">Marker</span>
+            <span class="stage-module-rail__diagnostic-value">@_state.DiagnosticMarker</span>
+        </div>
     </nav>
 }
 else

@@ -3,14 +3,9 @@
 .header-controls {
     display: flex;
     align-items: center;
-    gap: 1.5rem;
+    gap: 1rem;
     flex: 1;
-}
-
-.header-nav {
-    display: flex;
-    gap: 0.25rem;
-    flex-shrink: 0;
+    min-width: 0;
 }
 
 .header-chapter {
