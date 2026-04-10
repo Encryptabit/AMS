@@ -25,6 +25,10 @@
     flex-shrink: 0;
 }
 
+.workstation-shell-rail {
+    flex-shrink: 0;
+}
+
 .workstation-body {
     display: flex;
     flex: 1;
