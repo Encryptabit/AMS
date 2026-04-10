@@ -1,5 +1,6 @@
 @page "/prep"
 @page "/prep/pipeline"
+@using System.Globalization
 @using System.IO
 @using System.Linq
 @using Ams.Core.Application.Pipeline
@@ -536,7 +537,7 @@
 
                     @if (Session.LastPipelineRequest is not null)
                     {
-                        <BitText Typography="BitTypography.Subtitle2">Applied options</BitText>
+                        <BitText Typography="BitTypography.Subtitle2">Last typed request snapshot</BitText>
 
                         <div class="prep-grid prep-grid--compact">
                             <div class="prep-kv">
@@ -556,29 +557,46 @@
                                 <BitText Typography="BitTypography.Body2">@DisplayOrPlaceholder(Session.LastPipelineRequest.Asr.Model, "Default model") / @DisplayOrPlaceholder(Session.LastPipelineRequest.Asr.Language, "Default language")</BitText>
                             </div>
                             <div class="prep-kv">
+                                <BitText Typography="BitTypography.Caption1" Color="BitColor.SecondaryForeground">ASR feature flags</BitText>
+                                <BitText Typography="BitTypography.Body2">Word timestamps: @FormatEnabled(Session.LastPipelineRequest.Asr.EnableWordTimestamps) | FlashAttention: @FormatEnabled(Session.LastPipelineRequest.Asr.EnableFlashAttention) | DTW: @FormatEnabled(Session.LastPipelineRequest.Asr.EnableDtwTimestamps) | Prompt: @FormatEnabled(!Session.LastPipelineRequest.Asr.DisablePrompt, enabledLabel: "Enabled", disabledLabel: "Disabled")</BitText>
+                            </div>
+                            <div class="prep-kv">
                                 <BitText Typography="BitTypography.Caption1" Color="BitColor.SecondaryForeground">MFA profile/beam</BitText>
-                                <BitText Typography="BitTypography.Body2">@DisplayOrPlaceholder(Session.LastPipelineRequest.Mfa.BeamProfile?.ToString(), "Default") / @DisplayOrPlaceholder(Session.LastPipelineRequest.Mfa.Beam?.ToString(), "auto") / @DisplayOrPlaceholder(Session.LastPipelineRequest.Mfa.RetryBeam?.ToString(), "auto")</BitText>
+                                <BitText Typography="BitTypography.Body2">@DisplayOrPlaceholder(Session.LastPipelineRequest.Mfa.BeamProfile?.ToString(), "Default") / @FormatOptionalInt(Session.LastPipelineRequest.Mfa.Beam, "auto") / @FormatOptionalInt(Session.LastPipelineRequest.Mfa.RetryBeam, "auto")</BitText>
                             </div>
                             <div class="prep-kv">
                                 <BitText Typography="BitTypography.Caption1" Color="BitColor.SecondaryForeground">Chunk controls</BitText>
-                                <BitText Typography="BitTypography.Body2">Disable plan: @(Session.LastPipelineRequest.Chunking.DisableChunkPlan ? "Yes" : "No") | Disable MFA chunking: @(Session.LastPipelineRequest.Chunking.DisableChunkedMfa ? "Yes" : "No") | Require ASR chunk audio: @(Session.LastPipelineRequest.Chunking.RequireAsrChunkAudio ? "Yes" : "No")</BitText>
+                                <BitText Typography="BitTypography.Body2">Disable plan: @FormatYesNo(Session.LastPipelineRequest.Chunking.DisableChunkPlan) | Disable MFA chunking: @FormatYesNo(Session.LastPipelineRequest.Chunking.DisableChunkedMfa) | Require ASR chunk audio: @FormatYesNo(Session.LastPipelineRequest.Chunking.RequireAsrChunkAudio)</BitText>
+                            </div>
+                            <div class="prep-kv">
+                                <BitText Typography="BitTypography.Caption1" Color="BitColor.SecondaryForeground">Chunk policy overrides</BitText>
+                                <BitText Typography="BitTypography.Body2">Silence threshold: @FormatOptionalDouble(Session.LastPipelineRequest.Chunking.Policy.SilenceThresholdDb, "default") dB | Min silence: @FormatOptionalDouble(Session.LastPipelineRequest.Chunking.Policy.MinSilenceDurationMs, "default") ms | Min chunk: @FormatOptionalDouble(Session.LastPipelineRequest.Chunking.Policy.MinChunkDurationSec, "default") sec | Max chunk: @FormatOptionalDouble(Session.LastPipelineRequest.Chunking.Policy.MaxChunkDurationSec, "default") sec</BitText>
                             </div>
                         </div>
                     }
 
-                    @if (Session.LastPipelineOptionWarnings.Count > 0)
+                    @if (Session.LastPipelineRequest is not null)
                     {
-                        <BitMessage Color="BitColor.Warning">
-                            <BitStack Horizontal="false" Gap="0.25rem">
-                                <BitText Typography="BitTypography.Body2">Option normalization warnings</BitText>
-                                <ul class="prep-warning-list">
-                                    @foreach (var warning in Session.LastPipelineOptionWarnings)
-                                    {
-                                        <li>@warning</li>
-                                    }
-                                </ul>
-                            </BitStack>
-                        </BitMessage>
+                        if (Session.LastPipelineOptionWarnings.Count > 0)
+                        {
+                            <BitMessage Color="BitColor.Warning">
+                                <BitStack Horizontal="false" Gap="0.25rem">
+                                    <BitText Typography="BitTypography.Body2">Option normalization warnings</BitText>
+                                    <ul class="prep-warning-list">
+                                        @foreach (var warning in Session.LastPipelineOptionWarnings)
+                                        {
+                                            <li>@warning</li>
+                                        }
+                                    </ul>
+                                </BitStack>
+                            </BitMessage>
+                        }
+                        else
+                        {
+                            <BitText Typography="BitTypography.Caption1" Color="BitColor.SecondaryForeground">
+                                Option normalization warnings: none
+                            </BitText>
+                        }
                     }
 
                     @if (Session.LastPipelineResult is not null)
@@ -1136,6 +1154,20 @@
 
     private static string FormatProgress(double? progress)
         => progress is double value ? $"{value:P0}" : "n/a";
+
+    private static string FormatEnabled(bool value, string enabledLabel = "Enabled", string disabledLabel = "Disabled")
+        => value ? enabledLabel : disabledLabel;
+
+    private static string FormatYesNo(bool value)
+        => value ? "Yes" : "No";
+
+    private static string FormatOptionalInt(int? value, string fallback)
+        => value?.ToString(CultureInfo.InvariantCulture) ?? fallback;
+
+    private static string FormatOptionalDouble(double? value, string fallback)
+        => value.HasValue
+            ? value.Value.ToString("0.###", CultureInfo.InvariantCulture)
+            : fallback;
 
     private static string DisplayOrPlaceholder(string? value, string placeholder)
         => string.IsNullOrWhiteSpace(value) ? placeholder : value;
