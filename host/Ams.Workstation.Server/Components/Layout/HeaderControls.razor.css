@@ -8,6 +8,13 @@
     min-width: 0;
 }
 
+.header-nav {
+    display: flex;
+    align-items: center;
+    gap: 0.25rem;
+    flex-shrink: 0;
+}
+
 .header-chapter {
     flex-shrink: 0;
 }

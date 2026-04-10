@@ -19,7 +19,7 @@ public sealed class StageRouteCatalogTests
             ],
             stageIds);
 
-        AssertModuleExists(StageRouteCatalog.StageIds.Prep, StageRouteCatalog.ModuleIds.PrepPipeline, expectedSupportsBatching: false);
+        AssertModuleExists(StageRouteCatalog.StageIds.Prep, StageRouteCatalog.ModuleIds.PrepPipeline, expectedSupportsBatching: true);
         AssertModuleExists(StageRouteCatalog.StageIds.Proof, StageRouteCatalog.ModuleIds.ProofEditing, expectedSupportsBatching: false);
         AssertModuleExists(StageRouteCatalog.StageIds.Proof, StageRouteCatalog.ModuleIds.ProofOverview, expectedSupportsBatching: false);
         AssertModuleExists(StageRouteCatalog.StageIds.Proof, StageRouteCatalog.ModuleIds.ProofPatterns, expectedSupportsBatching: false);

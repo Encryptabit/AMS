@@ -59,6 +59,9 @@ public sealed class WorkstationPrepDesignContractTests
 
         var requiredDiagnosticsAnchors = new[]
         {
+            "Pipeline Dashboard",
+            "Run batch prep",
+            "Queue Builder + Pipeline Throughput",
             "Runtime readiness snapshot",
             "Last typed request snapshot",
             "Option normalization warnings",

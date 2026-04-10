@@ -7,7 +7,7 @@ namespace Ams.Tests.Workstation.Shell;
 public sealed class StageShellBatchingContractTests
 {
     [Fact]
-    public void Catalog_BatchingSupportIsDisabledForAllShellVisibleModules()
+    public void Catalog_BatchingSupportIsDeclaredOnlyForPrepPipelineModule()
     {
         var batchEnabledModules = StageRouteCatalog.Stages
             .SelectMany(stage => stage.Modules.Select(module => (StageId: stage.Id, Module: module)))
@@ -15,13 +15,15 @@ public sealed class StageShellBatchingContractTests
             .Select(entry => $"{entry.StageId}/{entry.Module.Id}")
             .ToArray();
 
-        Assert.True(
-            batchEnabledModules.Length == 0,
-            $"Batching contract drift detected. Expected no shell-visible batching modules, but found: {string.Join(", ", batchEnabledModules)}.");
+        Assert.Equal(
+            [
+                $"{StageRouteCatalog.StageIds.Prep}/{StageRouteCatalog.ModuleIds.PrepPipeline}"
+            ],
+            batchEnabledModules);
     }
 
     [Theory]
-    [InlineData("/prep/pipeline", StageRouteCatalog.StageIds.Prep, StageRouteCatalog.ModuleIds.PrepPipeline, false)]
+    [InlineData("/prep/pipeline", StageRouteCatalog.StageIds.Prep, StageRouteCatalog.ModuleIds.PrepPipeline, true)]
     [InlineData("/proof", StageRouteCatalog.StageIds.Proof, StageRouteCatalog.ModuleIds.ProofEditing, false)]
     [InlineData("/proof/overview", StageRouteCatalog.StageIds.Proof, StageRouteCatalog.ModuleIds.ProofOverview, false)]
     [InlineData("/proof/patterns", StageRouteCatalog.StageIds.Proof, StageRouteCatalog.ModuleIds.ProofPatterns, false)]

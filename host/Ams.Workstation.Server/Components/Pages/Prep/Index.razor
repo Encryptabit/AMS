@@ -41,14 +41,207 @@
     }
 </SectionContent>
 
+<SectionContent SectionName="module-inspector">
+    @if (HasWorkingDirectory && Workspace.HasBookIndex)
+    {
+        <BitStack Horizontal="false" Gap="0.75rem" Class="prep-header-extra">
+            <BitText Typography="BitTypography.Subtitle2">Pipeline Inspector</BitText>
+            @if (SelectedQueueItem is not null)
+            {
+                <BitCard>
+                    <BitStack Horizontal="false" Gap="0.5rem">
+                        <BitText Typography="BitTypography.Body1">@SelectedQueueItem.Chapter</BitText>
+                        <BitText Typography="BitTypography.Caption1" Color="BitColor.SecondaryForeground">
+                            State: @SelectedQueueItem.State • Stage: @DisplayOrPlaceholder(SelectedQueueItem.Stage, "n/a")
+                        </BitText>
+                        <BitText Typography="BitTypography.Caption1" Color="BitColor.SecondaryForeground">
+                            Last message: @DisplayOrPlaceholder(SelectedQueueItem.Message, "n/a")
+                        </BitText>
+                        <BitText Typography="BitTypography.Caption1" Color="BitColor.SecondaryForeground">
+                            Artifacts: @SelectedQueueItem.ArtifactCount
+                        </BitText>
+                    </BitStack>
+                </BitCard>
+            }
+            else
+            {
+                <BitMessage Color="BitColor.Info">
+                    Select a queue row to inspect run diagnostics.
+                </BitMessage>
+            }
+
+            <BitCard>
+                <BitStack Horizontal="false" Gap="0.4rem">
+                    <BitText Typography="BitTypography.Caption1" Color="BitColor.SecondaryForeground">Batch throughput</BitText>
+                    <BitText Typography="BitTypography.Body2">Queued: @BatchQueuedCount</BitText>
+                    <BitText Typography="BitTypography.Body2">Running: @BatchRunningCount</BitText>
+                    <BitText Typography="BitTypography.Body2">Completed: @BatchCompletedCount</BitText>
+                    <BitText Typography="BitTypography.Body2">Failed: @BatchFailedCount</BitText>
+                </BitStack>
+            </BitCard>
+        </BitStack>
+    }
+</SectionContent>
+
 <div class="prep-page">
     <BitStack Horizontal="false" Gap="1rem">
         <BitStack Horizontal="false" Gap="0.25rem">
             <BitText Typography="BitTypography.H4">Prep Area</BitText>
             <BitText Typography="BitTypography.Body1" Color="BitColor.SecondaryForeground">
-                Build a missing book index and run single-chapter prep through the shared Core pipeline contracts.
+                Pipeline Dashboard: build queues, execute batch prep, and inspect chapter-level pipeline outcomes without leaving Workstation.
             </BitText>
         </BitStack>
+
+        @if (HasWorkingDirectory && Workspace.HasBookIndex)
+        {
+            <BitCard>
+                <BitStack Horizontal="false" Gap="0.75rem">
+                    <BitStack Horizontal="true" HorizontalAlign="BitAlignment.SpaceBetween" VerticalAlign="BitAlignment.Start" Gap="1rem" Wrap="true">
+                        <BitStack Horizontal="false" Gap="0.25rem">
+                            <BitText Typography="BitTypography.Subtitle1">Pipeline Dashboard</BitText>
+                            <BitText Typography="BitTypography.Body2" Color="BitColor.SecondaryForeground">
+                                Queue Builder + Pipeline Throughput surfaces are mapped to BitUI controls and execute module-scoped batch processing.
+                            </BitText>
+                        </BitStack>
+                        <BitTag Color="BitColor.Primary">Batch queue enabled</BitTag>
+                    </BitStack>
+
+                    <div class="prep-grid prep-grid--compact">
+                        <div class="prep-kv">
+                            <BitText Typography="BitTypography.Caption1" Color="BitColor.SecondaryForeground">Queue start</BitText>
+                            <BitDropdown TItem="BitDropdownItem<string>"
+                                         TValue="string"
+                                         Items="@ChapterItems"
+                                         Value="@_queueStartChapter"
+                                         OnChange="HandleQueueStartChange"
+                                         Placeholder="Start chapter"
+                                         IsEnabled="@(!Session.IsRunning && !_isBatchRunning)" />
+                        </div>
+                        <div class="prep-kv">
+                            <BitText Typography="BitTypography.Caption1" Color="BitColor.SecondaryForeground">Queue end</BitText>
+                            <BitDropdown TItem="BitDropdownItem<string>"
+                                         TValue="string"
+                                         Items="@ChapterItems"
+                                         Value="@_queueEndChapter"
+                                         OnChange="HandleQueueEndChange"
+                                         Placeholder="End chapter"
+                                         IsEnabled="@(!Session.IsRunning && !_isBatchRunning)" />
+                        </div>
+                        <div class="prep-kv">
+                            <BitText Typography="BitTypography.Caption1" Color="BitColor.SecondaryForeground">Selected chapter</BitText>
+                            <BitText Typography="BitTypography.Body2">@DisplayOrPlaceholder(_selectedChapter, "Select a chapter")</BitText>
+                        </div>
+                        <div class="prep-kv">
+                            <BitText Typography="BitTypography.Caption1" Color="BitColor.SecondaryForeground">Batch state</BitText>
+                            <BitTag Color="@(_isBatchRunning ? BitColor.Primary : BitColor.Secondary)">@(_isBatchRunning ? "Running" : "Idle")</BitTag>
+                        </div>
+                    </div>
+
+                    <BitStack Horizontal="true" Gap="0.5rem" Wrap="true">
+                        <BitButton Variant="BitVariant.Outline"
+                                   Color="BitColor.Primary"
+                                   OnClick="HandleAddSelectedChapterToQueue"
+                                   IsEnabled="@CanAddSelectedChapterToQueue">
+                            Add selected chapter
+                        </BitButton>
+                        <BitButton Variant="BitVariant.Outline"
+                                   Color="BitColor.Primary"
+                                   OnClick="HandleAddRangeToQueue"
+                                   IsEnabled="@CanAddRangeToQueue">
+                            Add range to queue
+                        </BitButton>
+                        <BitButton Variant="BitVariant.Outline"
+                                   Color="BitColor.Secondary"
+                                   OnClick="HandleClearQueue"
+                                   IsEnabled="@CanClearQueue">
+                            Clear queue
+                        </BitButton>
+                        <BitButton Variant="BitVariant.Fill"
+                                   Color="BitColor.Primary"
+                                   OnClick="HandleRunBatchPrepAsync"
+                                   IsEnabled="@CanRunBatchQueue">
+                            Run batch prep
+                        </BitButton>
+                        <BitButton Variant="BitVariant.Outline"
+                                   Color="BitColor.Warning"
+                                   OnClick="HandleCancelBatch"
+                                   IsEnabled="@(_isBatchRunning || (Session.IsRunning && !Session.IsCancellationRequested))">
+                            Cancel batch
+                        </BitButton>
+                    </BitStack>
+
+                    <div class="prep-grid prep-grid--compact">
+                        <div class="prep-kv">
+                            <BitText Typography="BitTypography.Caption1" Color="BitColor.SecondaryForeground">Queued</BitText>
+                            <BitText Typography="BitTypography.Body1">@BatchQueuedCount</BitText>
+                        </div>
+                        <div class="prep-kv">
+                            <BitText Typography="BitTypography.Caption1" Color="BitColor.SecondaryForeground">Running</BitText>
+                            <BitText Typography="BitTypography.Body1">@BatchRunningCount</BitText>
+                        </div>
+                        <div class="prep-kv">
+                            <BitText Typography="BitTypography.Caption1" Color="BitColor.SecondaryForeground">Succeeded</BitText>
+                            <BitText Typography="BitTypography.Body1">@BatchCompletedCount</BitText>
+                        </div>
+                        <div class="prep-kv">
+                            <BitText Typography="BitTypography.Caption1" Color="BitColor.SecondaryForeground">Failed</BitText>
+                            <BitText Typography="BitTypography.Body1">@BatchFailedCount</BitText>
+                        </div>
+                    </div>
+
+                    <table class="prep-table">
+                        <thead>
+                            <tr>
+                                <th>Chapter</th>
+                                <th>State</th>
+                                <th>Stage</th>
+                                <th>Message</th>
+                                <th>Artifacts</th>
+                                <th>Action</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @if (_batchQueue.Count == 0)
+                            {
+                                <tr>
+                                    <td colspan="6">Queue is empty. Add chapters to start batch processing.</td>
+                                </tr>
+                            }
+                            else
+                            {
+                                @foreach (var item in _batchQueue)
+                                {
+                                    <tr>
+                                        <td>@item.Chapter</td>
+                                        <td><BitTag Color="@GetRunStateColor(item.State)">@item.State</BitTag></td>
+                                        <td>@DisplayOrPlaceholder(item.Stage, "n/a")</td>
+                                        <td>@DisplayOrPlaceholder(item.Message, "—")</td>
+                                        <td>@item.ArtifactCount</td>
+                                        <td>
+                                            <BitStack Horizontal="true" Gap="0.4rem">
+                                                <BitButton Variant="BitVariant.Text"
+                                                           Size="BitSize.Small"
+                                                           Color="BitColor.Primary"
+                                                           OnClick="@(() => SelectQueueItem(item.Chapter))">
+                                                    Inspect
+                                                </BitButton>
+                                                <BitButton Variant="BitVariant.Text"
+                                                           Size="BitSize.Small"
+                                                           Color="BitColor.Secondary"
+                                                           OnClick="@(() => RemoveQueueItem(item.Chapter))"
+                                                           IsEnabled="@(!_isBatchRunning)">
+                                                    Remove
+                                                </BitButton>
+                                            </BitStack>
+                                        </td>
+                                    </tr>
+                                }
+                            }
+                        </tbody>
+                    </table>
+                </BitStack>
+            </BitCard>
+        }
 
         <BitCard>
             <BitStack Horizontal="false" Gap="0.75rem">
@@ -827,6 +1020,12 @@
 @code {
     private string _manuscriptPath = string.Empty;
     private string? _selectedChapter;
+    private string? _queueStartChapter;
+    private string? _queueEndChapter;
+    private string? _selectedQueueChapter;
+    private bool _isBatchRunning;
+    private bool _batchCancelRequested;
+    private readonly List<PipelineBatchQueueItem> _batchQueue = [];
     private readonly PrepPipelineOperatorControls _operatorControls = new();
 
     private static List<BitDropdownItem<string>> EndStageItems { get; } = PrepPipelineOperatorControls.EndStageOptions
@@ -855,7 +1054,38 @@
     private bool CanRunSelectedChapter => Workspace.HasBookIndex
         && Workspace.IsInitialized
         && !Session.IsRunning
+        && !_isBatchRunning
         && string.IsNullOrWhiteSpace(RunValidationMessage);
+
+    private bool CanAddSelectedChapterToQueue => Workspace.HasBookIndex
+        && !Session.IsRunning
+        && !_isBatchRunning
+        && !string.IsNullOrWhiteSpace(_selectedChapter);
+
+    private bool CanAddRangeToQueue => Workspace.HasBookIndex
+        && !Session.IsRunning
+        && !_isBatchRunning
+        && !string.IsNullOrWhiteSpace(_queueStartChapter)
+        && !string.IsNullOrWhiteSpace(_queueEndChapter);
+
+    private bool CanClearQueue => _batchQueue.Count > 0 && !_isBatchRunning;
+
+    private bool CanRunBatchQueue => Workspace.HasBookIndex
+        && Workspace.IsInitialized
+        && !Session.IsRunning
+        && !_isBatchRunning
+        && _batchQueue.Any(item => item.State is RunState.Pending or RunState.Failed);
+
+    private int BatchQueuedCount => _batchQueue.Count(item => item.State == RunState.Pending);
+
+    private int BatchRunningCount => _batchQueue.Count(item => item.State == RunState.Running);
+
+    private int BatchCompletedCount => _batchQueue.Count(item => item.State == RunState.Completed);
+
+    private int BatchFailedCount => _batchQueue.Count(item => item.State == RunState.Failed);
+
+    private PipelineBatchQueueItem? SelectedQueueItem
+        => _batchQueue.FirstOrDefault(item => string.Equals(item.Chapter, _selectedQueueChapter, StringComparison.OrdinalIgnoreCase));
 
     private List<BitDropdownItem<string>> ChapterItems => Workspace.AvailableChapters
         .Select(chapter => new BitDropdownItem<string> { Text = chapter, Value = chapter })
@@ -871,6 +1101,7 @@
         }
 
         SyncSelectedChapter(preferFirstAvailable: true);
+        SyncQueueRangeDefaults();
     }
 
     private async Task HandleBuildBookIndexAsync()
@@ -930,6 +1161,167 @@
         {
             Workspace.SelectChapter(_selectedChapter);
         }
+
+        SyncQueueRangeDefaults();
+    }
+
+    private void HandleQueueStartChange(string? chapter)
+    {
+        _queueStartChapter = string.IsNullOrWhiteSpace(chapter) ? null : chapter;
+    }
+
+    private void HandleQueueEndChange(string? chapter)
+    {
+        _queueEndChapter = string.IsNullOrWhiteSpace(chapter) ? null : chapter;
+    }
+
+    private void HandleAddSelectedChapterToQueue()
+    {
+        if (!CanAddSelectedChapterToQueue || string.IsNullOrWhiteSpace(_selectedChapter))
+        {
+            return;
+        }
+
+        QueueChapter(_selectedChapter);
+    }
+
+    private void HandleAddRangeToQueue()
+    {
+        if (!CanAddRangeToQueue || string.IsNullOrWhiteSpace(_queueStartChapter) || string.IsNullOrWhiteSpace(_queueEndChapter))
+        {
+            return;
+        }
+
+        var chapters = Workspace.AvailableChapters;
+        var startIndex = chapters.FindIndex(chapter => string.Equals(chapter, _queueStartChapter, StringComparison.OrdinalIgnoreCase));
+        var endIndex = chapters.FindIndex(chapter => string.Equals(chapter, _queueEndChapter, StringComparison.OrdinalIgnoreCase));
+
+        if (startIndex < 0 || endIndex < 0)
+        {
+            return;
+        }
+
+        var from = Math.Min(startIndex, endIndex);
+        var to = Math.Max(startIndex, endIndex);
+
+        for (var i = from; i <= to; i++)
+        {
+            QueueChapter(chapters[i]);
+        }
+    }
+
+    private void HandleClearQueue()
+    {
+        if (!CanClearQueue)
+        {
+            return;
+        }
+
+        _batchQueue.Clear();
+        _selectedQueueChapter = null;
+    }
+
+    private void SelectQueueItem(string chapter)
+    {
+        _selectedQueueChapter = chapter;
+    }
+
+    private void RemoveQueueItem(string chapter)
+    {
+        if (_isBatchRunning)
+        {
+            return;
+        }
+
+        var index = _batchQueue.FindIndex(item => string.Equals(item.Chapter, chapter, StringComparison.OrdinalIgnoreCase));
+        if (index < 0)
+        {
+            return;
+        }
+
+        _batchQueue.RemoveAt(index);
+        if (string.Equals(_selectedQueueChapter, chapter, StringComparison.OrdinalIgnoreCase))
+        {
+            _selectedQueueChapter = _batchQueue.FirstOrDefault()?.Chapter;
+        }
+    }
+
+    private async Task HandleRunBatchPrepAsync()
+    {
+        if (!CanRunBatchQueue)
+        {
+            return;
+        }
+
+        if (!_operatorControls.TryBuildRequest(out var request))
+        {
+            return;
+        }
+
+        _isBatchRunning = true;
+        _batchCancelRequested = false;
+
+        try
+        {
+            foreach (var queueItem in _batchQueue.Where(item => item.State is RunState.Pending or RunState.Failed).ToArray())
+            {
+                if (_batchCancelRequested)
+                {
+                    break;
+                }
+
+                queueItem.State = RunState.Running;
+                queueItem.Stage = Session.CurrentStage;
+                queueItem.Message = "Running";
+                _selectedQueueChapter = queueItem.Chapter;
+                await InvokeAsync(StateHasChanged);
+
+                if (Workspace.IsInitialized)
+                {
+                    Workspace.SelectChapter(queueItem.Chapter);
+                }
+
+                var success = await Session.RunChapterPrepAsync(queueItem.Chapter, request);
+
+                queueItem.State = success ? RunState.Completed : RunState.Failed;
+                queueItem.Stage = Session.LastFailureStage ?? Session.LastCompletedStage ?? Session.CurrentStage;
+                queueItem.Message = success
+                    ? DisplayOrPlaceholder(Session.LastMessage, "Completed")
+                    : DisplayOrPlaceholder(Session.LastFailure?.Message ?? Session.LastMessage, "Failed");
+                queueItem.ArtifactCount = Session.LastArtifacts.Count;
+                queueItem.LastUpdatedUtc = DateTimeOffset.UtcNow;
+
+                if (Session.WasCancelled)
+                {
+                    _batchCancelRequested = true;
+                    break;
+                }
+
+                await InvokeAsync(StateHasChanged);
+            }
+        }
+        finally
+        {
+            _isBatchRunning = false;
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+
+    private void HandleCancelBatch()
+    {
+        _batchCancelRequested = true;
+        Session.Cancel();
+    }
+
+    private void QueueChapter(string chapter)
+    {
+        if (_batchQueue.Any(item => string.Equals(item.Chapter, chapter, StringComparison.OrdinalIgnoreCase)))
+        {
+            return;
+        }
+
+        _batchQueue.Add(new PipelineBatchQueueItem(chapter));
+        _selectedQueueChapter ??= chapter;
     }
 
     private void HandleEndStageChange(string? value)
@@ -1046,6 +1438,7 @@
             }
 
             SyncSelectedChapter(preferFirstAvailable: true);
+            SyncQueueRangeDefaults();
             StateHasChanged();
         });
     }
@@ -1067,6 +1460,28 @@
         _selectedChapter = preferFirstAvailable
             ? Workspace.AvailableChapters.FirstOrDefault()
             : null;
+    }
+
+    private void SyncQueueRangeDefaults()
+    {
+        if (Workspace.AvailableChapters.Count == 0)
+        {
+            _queueStartChapter = null;
+            _queueEndChapter = null;
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(_queueStartChapter)
+            || !Workspace.AvailableChapters.Contains(_queueStartChapter, StringComparer.OrdinalIgnoreCase))
+        {
+            _queueStartChapter = Workspace.AvailableChapters.First();
+        }
+
+        if (string.IsNullOrWhiteSpace(_queueEndChapter)
+            || !Workspace.AvailableChapters.Contains(_queueEndChapter, StringComparer.OrdinalIgnoreCase))
+        {
+            _queueEndChapter = Workspace.AvailableChapters.Last();
+        }
     }
 
     private string GetWorkingDirectoryDisplay()
@@ -1187,6 +1602,26 @@
 
     private static string DisplayOrPlaceholder(string? value, string placeholder)
         => string.IsNullOrWhiteSpace(value) ? placeholder : value;
+
+    private sealed class PipelineBatchQueueItem
+    {
+        public PipelineBatchQueueItem(string chapter)
+        {
+            Chapter = chapter;
+        }
+
+        public string Chapter { get; }
+
+        public RunState State { get; set; } = RunState.Pending;
+
+        public string? Stage { get; set; }
+
+        public string? Message { get; set; }
+
+        public int ArtifactCount { get; set; }
+
+        public DateTimeOffset? LastUpdatedUtc { get; set; }
+    }
 
     public void Dispose()
     {

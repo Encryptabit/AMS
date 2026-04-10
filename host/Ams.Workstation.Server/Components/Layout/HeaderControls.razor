@@ -8,6 +8,27 @@
 @inject Ams.Workstation.Server.Services.BookMetadataResetService MetadataReset
 
 <div class="header-controls">
+    <div class="header-nav">
+        <BitButton Variant="@(IsActive(StageRouteCatalog.StageIds.Prep) ? BitVariant.Fill : BitVariant.Text)"
+                   Color="BitColor.Primary"
+                   Size="BitSize.Small"
+                   OnClick="@(() => NavigateToStage(StageRouteCatalog.StageIds.Prep))">
+            Prep
+        </BitButton>
+        <BitButton Variant="@(IsActive(StageRouteCatalog.StageIds.Proof) ? BitVariant.Fill : BitVariant.Text)"
+                   Color="BitColor.Primary"
+                   Size="BitSize.Small"
+                   OnClick="@(() => NavigateToStage(StageRouteCatalog.StageIds.Proof))">
+            Proof
+        </BitButton>
+        <BitButton Variant="@(IsActive(StageRouteCatalog.StageIds.Polish) ? BitVariant.Fill : BitVariant.Text)"
+                   Color="BitColor.Primary"
+                   Size="BitSize.Small"
+                   OnClick="@(() => NavigateToStage(StageRouteCatalog.StageIds.Polish))">
+            Polish
+        </BitButton>
+    </div>
+
     <div class="header-chapter">
         @if (Workspace.AvailableChapters.Count > 0)
         {
@@ -80,6 +101,7 @@
     private string? selectedSavedWorkspace;
     private string? message;
     private BitColor messageColor = BitColor.Error;
+    private StageRouteMatch? currentRoute;
     private List<BitDropdownItem<string>> chapterItems = new();
     private List<BitDropdownItem<string>> savedWorkspaceItems = new();
     private bool isResetDialogOpen;
@@ -87,6 +109,7 @@
 
     protected override void OnInitialized()
     {
+        UpdateCurrentPath();
         NavigationManager.LocationChanged += OnLocationChanged;
 
         // Restore state
@@ -108,6 +131,7 @@
 
     private void OnLocationChanged(object? sender, LocationChangedEventArgs e)
     {
+        UpdateCurrentPath();
         SyncSelectedChapter();
         StateHasChanged();
     }
@@ -116,6 +140,26 @@
     {
         if (!string.IsNullOrEmpty(Workspace.CurrentChapterName))
             selectedChapter = Workspace.CurrentChapterName;
+    }
+
+    private void UpdateCurrentPath()
+    {
+        var uri = new Uri(NavigationManager.Uri);
+        currentRoute = StageRouteCatalog.Resolve(uri.AbsolutePath);
+    }
+
+    private bool IsActive(string stageId)
+        => currentRoute is not null
+           && string.Equals(currentRoute.Stage.Id, stageId, StringComparison.OrdinalIgnoreCase);
+
+    private void NavigateToStage(string stageId)
+    {
+        if (!StageRouteCatalog.TryGetStage(stageId, out _))
+        {
+            return;
+        }
+
+        NavigationManager.NavigateTo(StageRouteCatalog.GetStageEntryPath(stageId));
     }
 
     private void OnDirectoryKeyDown(KeyboardEventArgs e)

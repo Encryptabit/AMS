@@ -58,7 +58,7 @@ public static class StageRouteCatalog
                 ModuleIds.PrepPipeline,
                 "Pipeline",
                 "/prep/pipeline",
-                SupportsBatching: false,
+                SupportsBatching: true,
                 CompatibilityPaths:
                 [
                     "/prep"

@@ -55,14 +55,18 @@ public sealed class StageShellCompositionContractTests
     }
 
     [Fact]
-    public void HeaderControls_NoLongerOwnsPrimaryStageButtonRow()
+    public void HeaderControls_PreservesStageTopNavWhileSidebarOwnsModuleLinks()
     {
         var source = ReadRepoFile(HeaderControlsRelativePath);
         var css = ReadRepoFile(HeaderControlsCssRelativePath);
 
-        AssertDoesNotContain(source, HeaderControlsRelativePath, "<div class=\"header-nav\"", "legacy header stage button row");
-        AssertDoesNotContain(source, HeaderControlsRelativePath, "NavigateToStage(", "legacy header stage navigation callback");
-        AssertDoesNotContain(css, HeaderControlsCssRelativePath, ".header-nav", "legacy header-nav style block");
+        AssertContains(source, HeaderControlsRelativePath, "<div class=\"header-nav\"", "top-header stage nav row");
+        AssertContains(source, HeaderControlsRelativePath, "NavigateToStage(StageRouteCatalog.StageIds.Prep)", "prep stage nav callback");
+        AssertContains(source, HeaderControlsRelativePath, "NavigateToStage(StageRouteCatalog.StageIds.Proof)", "proof stage nav callback");
+        AssertContains(source, HeaderControlsRelativePath, "NavigateToStage(StageRouteCatalog.StageIds.Polish)", "polish stage nav callback");
+        AssertContains(css, HeaderControlsCssRelativePath, ".header-nav", "header stage nav style block");
+
+        AssertDoesNotContain(source, HeaderControlsRelativePath, "data-stage-module-id", "module links should remain in sidebar rail, not header");
     }
 
     private static void AssertContains(string source, string relativePath, string anchor, string anchorDescription)
