@@ -502,6 +502,101 @@
             </BitCard>
         }
 
+        @if (Session.LastRuntimeReadiness is not null)
+        {
+            var readiness = Session.LastRuntimeReadiness;
+
+            <BitCard>
+                <BitStack Horizontal="false" Gap="0.75rem">
+                    <div class="prep-flow-header">
+                        <div>
+                            <BitText Typography="BitTypography.Subtitle1">Runtime readiness snapshot</BitText>
+                            <BitText Typography="BitTypography.Body2" Color="BitColor.SecondaryForeground">
+                                Captured before pipeline dispatch so Prep failures can be triaged with deterministic runtime provenance.
+                            </BitText>
+                        </div>
+                        <BitTag Color="@(readiness.IsReady ? BitColor.Success : BitColor.Warning)">
+                            @(readiness.IsReady ? "Ready" : "Needs attention")
+                        </BitTag>
+                    </div>
+
+                    <div class="prep-grid prep-grid--compact">
+                        <div class="prep-kv">
+                            <BitText Typography="BitTypography.Caption1" Color="BitColor.SecondaryForeground">Captured</BitText>
+                            <BitText Typography="BitTypography.Body2">@FormatCapturedAt(readiness.CapturedAtUtc)</BitText>
+                        </div>
+                        <div class="prep-kv">
+                            <BitText Typography="BitTypography.Caption1" Color="BitColor.SecondaryForeground">Chapter</BitText>
+                            <BitText Typography="BitTypography.Body2">@DisplayOrPlaceholder(readiness.ChapterDisplayTitle, "n/a") (@DisplayOrPlaceholder(readiness.ChapterId, "n/a"))</BitText>
+                        </div>
+                        <div class="prep-kv">
+                            <BitText Typography="BitTypography.Caption1" Color="BitColor.SecondaryForeground">Deterministic</BitText>
+                            <BitText Typography="BitTypography.Body2">@FormatYesNo(readiness.IsDeterministic)</BitText>
+                        </div>
+                        <div class="prep-kv">
+                            <BitText Typography="BitTypography.Caption1" Color="BitColor.SecondaryForeground">Probe source</BitText>
+                            <BitText Typography="BitTypography.Body2">@(readiness.ReusedCachedProbe ? "Cached snapshot reuse" : "Fresh probe")</BitText>
+                        </div>
+                    </div>
+
+                    <div class="prep-grid prep-grid--compact">
+                        <div class="prep-kv">
+                            <BitText Typography="BitTypography.Caption1" Color="BitColor.SecondaryForeground">ASR model provenance</BitText>
+                            <BitTag Color="@GetRuntimeReadinessColor(readiness.ModelProvenance.State)">@readiness.ModelProvenance.State</BitTag>
+                            <BitText Typography="BitTypography.Body2">@readiness.ModelProvenance.Summary</BitText>
+                            <BitText Typography="BitTypography.Caption1" Color="BitColor.SecondaryForeground">@readiness.ModelProvenance.Guidance</BitText>
+                            <BitText Typography="BitTypography.Caption1" Color="BitColor.SecondaryForeground">
+                                Source: @readiness.ModelProvenance.SourceKind | Requested: @DisplayOrPlaceholder(readiness.ModelProvenance.RequestedModel, "default/implicit")
+                            </BitText>
+                            @if (!string.IsNullOrWhiteSpace(readiness.ModelProvenance.NormalizedModelPath))
+                            {
+                                <BitText Typography="BitTypography.Caption1" Class="prep-mono prep-wrap">@readiness.ModelProvenance.NormalizedModelPath</BitText>
+                            }
+                        </div>
+                        <div class="prep-kv">
+                            <BitText Typography="BitTypography.Caption1" Color="BitColor.SecondaryForeground">FFmpeg readiness</BitText>
+                            <BitTag Color="@GetRuntimeReadinessColor(readiness.Ffmpeg.State)">@readiness.Ffmpeg.State</BitTag>
+                            <BitText Typography="BitTypography.Body2">@readiness.Ffmpeg.Summary</BitText>
+                            @if (!string.IsNullOrWhiteSpace(readiness.Ffmpeg.Detail))
+                            {
+                                <BitText Typography="BitTypography.Caption1" Color="BitColor.SecondaryForeground">@readiness.Ffmpeg.Detail</BitText>
+                            }
+                            <BitText Typography="BitTypography.Caption1" Color="BitColor.SecondaryForeground">
+                                Exit: @FormatNullableInt(readiness.Ffmpeg.ExitCode) | Duration: @FormatDuration(readiness.Ffmpeg.DurationMs)
+                            </BitText>
+                        </div>
+                        <div class="prep-kv">
+                            <BitText Typography="BitTypography.Caption1" Color="BitColor.SecondaryForeground">MFA readiness</BitText>
+                            <BitTag Color="@GetRuntimeReadinessColor(readiness.Mfa.State)">@readiness.Mfa.State</BitTag>
+                            <BitText Typography="BitTypography.Body2">@readiness.Mfa.Summary</BitText>
+                            @if (!string.IsNullOrWhiteSpace(readiness.Mfa.Detail))
+                            {
+                                <BitText Typography="BitTypography.Caption1" Color="BitColor.SecondaryForeground">@readiness.Mfa.Detail</BitText>
+                            }
+                            <BitText Typography="BitTypography.Caption1" Color="BitColor.SecondaryForeground">
+                                Duration: @FormatDuration(readiness.Mfa.DurationMs)
+                            </BitText>
+                        </div>
+                    </div>
+
+                    @if (readiness.Notes.Count > 0)
+                    {
+                        <BitMessage Color="BitColor.Info">
+                            <BitStack Horizontal="false" Gap="0.25rem">
+                                <BitText Typography="BitTypography.Body2">Readiness notes</BitText>
+                                <ul class="prep-warning-list">
+                                    @foreach (var note in readiness.Notes)
+                                    {
+                                        <li>@note</li>
+                                    }
+                                </ul>
+                            </BitStack>
+                        </BitMessage>
+                    }
+                </BitStack>
+            </BitCard>
+        }
+
         @if (Session.LastPipelineOptions is not null || Session.LastPipelineResult is not null)
         {
             <BitCard>
@@ -1141,6 +1236,24 @@
             RunState.Running => BitColor.Primary,
             _ => BitColor.Info
         };
+
+    private static BitColor GetRuntimeReadinessColor(PrepRuntimeReadinessState state)
+        => state switch
+        {
+            PrepRuntimeReadinessState.Ready => BitColor.Success,
+            PrepRuntimeReadinessState.Warning => BitColor.Warning,
+            PrepRuntimeReadinessState.Failed => BitColor.Error,
+            _ => BitColor.Info
+        };
+
+    private static string FormatCapturedAt(DateTimeOffset timestamp)
+        => timestamp.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss zzz", CultureInfo.InvariantCulture);
+
+    private static string FormatNullableInt(int? value)
+        => value?.ToString(CultureInfo.InvariantCulture) ?? "n/a";
+
+    private static string FormatDuration(long? durationMs)
+        => durationMs.HasValue ? $"{durationMs.Value}ms" : "n/a";
 
     private static string FormatPhase(PrepRunPhase phase)
         => phase switch
