@@ -1,0 +1,235 @@
+using System.Reflection;
+using Ams.Workstation.Server.Components.Navigation;
+using Microsoft.AspNetCore.Components;
+using PolishLegacyBatchEditorPage = Ams.Workstation.Server.Components.Pages.Polish.BatchEditor;
+using PolishScaffoldPage = Ams.Workstation.Server.Components.Pages.Polish.Index;
+using ProofChapterReviewPage = Ams.Workstation.Server.Components.Pages.Proof.ChapterReview;
+using ProofPatternsPage = Ams.Workstation.Server.Components.Pages.Proof.ErrorPatterns;
+using ProofIndexPage = Ams.Workstation.Server.Components.Pages.Proof.Index;
+using ProofOverviewPage = Ams.Workstation.Server.Components.Pages.Proof.Overview;
+
+namespace Ams.Tests.Workstation.Shell;
+
+public sealed class ProofRouteCompatibilityTests
+{
+    [Theory]
+    [InlineData("/proof", StageRouteCatalog.StageIds.Proof, StageRouteCatalog.ModuleIds.ProofEditing, true)]
+    [InlineData("/proof/", StageRouteCatalog.StageIds.Proof, StageRouteCatalog.ModuleIds.ProofEditing, true)]
+    [InlineData("/proof/overview", StageRouteCatalog.StageIds.Proof, StageRouteCatalog.ModuleIds.ProofOverview, true)]
+    [InlineData("/proof/patterns", StageRouteCatalog.StageIds.Proof, StageRouteCatalog.ModuleIds.ProofPatterns, true)]
+    [InlineData("/proof/Chapter%201", StageRouteCatalog.StageIds.Proof, StageRouteCatalog.ModuleIds.ProofEditing, true)]
+    [InlineData("/proof/Chapter%2F01", StageRouteCatalog.StageIds.Proof, StageRouteCatalog.ModuleIds.ProofEditing, true)]
+    [InlineData("/proof/editing", StageRouteCatalog.StageIds.Proof, StageRouteCatalog.ModuleIds.ProofEditing, false)]
+    [InlineData("/proof/editing/Chapter%201", StageRouteCatalog.StageIds.Proof, StageRouteCatalog.ModuleIds.ProofEditing, true)]
+    [InlineData("/PrOoF/PaTtErNs", StageRouteCatalog.StageIds.Proof, StageRouteCatalog.ModuleIds.ProofPatterns, true)]
+    [InlineData("/proof//", StageRouteCatalog.StageIds.Proof, StageRouteCatalog.ModuleIds.ProofEditing, true)]
+    [InlineData("/proof/%20", StageRouteCatalog.StageIds.Proof, StageRouteCatalog.ModuleIds.ProofEditing, true)]
+    public void Resolve_ProofCompatibilityAndCanonicalAliases_ReturnExpectedContract(
+        string path,
+        string expectedStageId,
+        string expectedModuleId,
+        bool expectedCompatibilityAlias)
+    {
+        _ = AssertResolves(path, expectedStageId, expectedModuleId, expectedCompatibilityAlias);
+    }
+
+    [Theory]
+    [InlineData("Chapter 01 - Intro")]
+    [InlineData("Chapter 02: Punctuation!?,;")]
+    [InlineData("Chapter 03 / Finale")]
+    public void CompatibilityAndCanonicalChapterAliases_ResolveToSameStageModuleContract(string chapterName)
+    {
+        var compatibilityPath = StageRouteCatalog.BuildProofChapterCompatibilityPath(chapterName);
+        var canonicalAliasPath = StageRouteCatalog.BuildProofChapterCanonicalPath(chapterName);
+
+        var compatibility = AssertResolves(
+            compatibilityPath,
+            StageRouteCatalog.StageIds.Proof,
+            StageRouteCatalog.ModuleIds.ProofEditing,
+            expectedCompatibilityAlias: true);
+
+        var canonicalAlias = AssertResolves(
+            canonicalAliasPath,
+            StageRouteCatalog.StageIds.Proof,
+            StageRouteCatalog.ModuleIds.ProofEditing,
+            expectedCompatibilityAlias: true);
+
+        Assert.True(
+            string.Equals(compatibility.Stage.Id, canonicalAlias.Stage.Id, StringComparison.OrdinalIgnoreCase)
+            && string.Equals(compatibility.Module.Id, canonicalAlias.Module.Id, StringComparison.OrdinalIgnoreCase),
+            $"Compatibility/canonical transition mismatch for chapter '{chapterName}'. Compatibility path='{compatibilityPath}' => {compatibility.DiagnosticContext}. Canonical alias path='{canonicalAliasPath}' => {canonicalAlias.DiagnosticContext}.");
+    }
+
+    [Theory]
+    [InlineData("overview", StageRouteCatalog.ModuleIds.ProofOverview, true, StageRouteCatalog.ModuleIds.ProofEditing, true)]
+    [InlineData("patterns", StageRouteCatalog.ModuleIds.ProofPatterns, true, StageRouteCatalog.ModuleIds.ProofEditing, true)]
+    [InlineData("editing", StageRouteCatalog.ModuleIds.ProofEditing, false, StageRouteCatalog.ModuleIds.ProofEditing, true)]
+    public void ReservedChapterSlugs_ResolveToExpectedCompatibilityAndCanonicalTargets(
+        string chapterName,
+        string expectedCompatibilityModuleId,
+        bool expectedCompatibilityAlias,
+        string expectedCanonicalModuleId,
+        bool expectedCanonicalAlias)
+    {
+        var compatibilityPath = StageRouteCatalog.BuildProofChapterCompatibilityPath(chapterName);
+        var canonicalAliasPath = StageRouteCatalog.BuildProofChapterCanonicalPath(chapterName);
+
+        _ = AssertResolves(
+            compatibilityPath,
+            StageRouteCatalog.StageIds.Proof,
+            expectedCompatibilityModuleId,
+            expectedCompatibilityAlias);
+
+        _ = AssertResolves(
+            canonicalAliasPath,
+            StageRouteCatalog.StageIds.Proof,
+            expectedCanonicalModuleId,
+            expectedCanonicalAlias);
+    }
+
+    [Fact]
+    public void ProofAndPolishPages_DeclareExpectedCanonicalAndCompatibilityTemplates()
+    {
+        AssertRoutes(typeof(ProofIndexPage), "/proof", "/proof/editing");
+        AssertRoutes(typeof(ProofOverviewPage), "/proof/overview");
+        AssertRoutes(typeof(ProofPatternsPage), "/proof/patterns");
+        AssertRoutes(typeof(ProofChapterReviewPage), "/proof/{ChapterName}", "/proof/editing/{ChapterName}");
+        AssertRoutes(typeof(PolishScaffoldPage), "/polish", "/polish/scaffold", "/polish/pickups", "/polish/batch");
+        AssertRoutes(typeof(PolishLegacyBatchEditorPage), "/polish/legacy/batch");
+    }
+
+    [Fact]
+    public void ProofCompatibilityAliasCatalog_IncludesLegacyDeepLinksAndCanonicalChapterAlias()
+    {
+        var expectedAliases = new[]
+        {
+            "/proof",
+            "/proof/overview",
+            "/proof/patterns",
+            StageRouteCatalog.ProofChapterCompatibilityTemplate,
+            StageRouteCatalog.ProofChapterCanonicalTemplate
+        };
+
+        var declaredAliases = StageRouteCatalog.GetCompatibilityPaths(StageRouteCatalog.StageIds.Proof);
+
+        var missingAliases = expectedAliases
+            .Where(expectedAlias => !declaredAliases.Contains(expectedAlias, StringComparer.OrdinalIgnoreCase))
+            .ToArray();
+
+        Assert.True(
+            missingAliases.Length == 0,
+            $"Missing proof compatibility aliases: {string.Join(", ", missingAliases)}. Declared aliases: {string.Join(", ", declaredAliases)}.");
+    }
+
+    [Fact]
+    public void ProofAndPolishPageRouteTemplates_AreValidWithComponentContext()
+    {
+        var malformedTemplates = EnumerateRouteTemplates(
+                typeof(ProofIndexPage),
+                typeof(ProofOverviewPage),
+                typeof(ProofPatternsPage),
+                typeof(ProofChapterReviewPage),
+                typeof(PolishScaffoldPage),
+                typeof(PolishLegacyBatchEditorPage))
+            .Select(entry =>
+            {
+                var isValid = StageRouteCatalog.IsValidTemplate(entry.Template, out var reason);
+                return new
+                {
+                    entry.ComponentType,
+                    entry.Template,
+                    IsValid = isValid,
+                    Reason = reason
+                };
+            })
+            .Where(entry => !entry.IsValid)
+            .Select(entry => $"component='{entry.ComponentType.FullName}', template='{entry.Template}', reason='{entry.Reason}'")
+            .ToArray();
+
+        Assert.True(
+            malformedTemplates.Length == 0,
+            $"Malformed route template contract failure(s): {string.Join(" | ", malformedTemplates)}.");
+    }
+
+    [Theory]
+    [InlineData("polish")]
+    [InlineData("polish%2Fscaffold")]
+    [InlineData("polish%2Flegacy%2Fbatch")]
+    public void ProofCompatibilityPaths_WithPolishLikeChapterSlugs_RemainProofBound(string chapterSlug)
+    {
+        var path = $"/proof/{chapterSlug}";
+        _ = AssertResolves(
+            path,
+            StageRouteCatalog.StageIds.Proof,
+            StageRouteCatalog.ModuleIds.ProofEditing,
+            expectedCompatibilityAlias: true);
+    }
+
+    [Fact]
+    public void ProofCompatibilityAliases_DoNotCollideWithPolishScaffoldAliases()
+    {
+        var proofAliases = StageRouteCatalog.GetCompatibilityPaths(StageRouteCatalog.StageIds.Proof);
+        var polishAliases = StageRouteCatalog.GetCompatibilityPaths(StageRouteCatalog.StageIds.Polish);
+
+        var collisions = proofAliases
+            .Intersect(polishAliases, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+
+        Assert.True(
+            collisions.Length == 0,
+            $"Proof compatibility aliases collided with polish scaffold aliases: {string.Join(", ", collisions)}. Proof aliases: {string.Join(", ", proofAliases)}. Polish aliases: {string.Join(", ", polishAliases)}.");
+    }
+
+    private static StageRouteMatch AssertResolves(
+        string path,
+        string expectedStageId,
+        string expectedModuleId,
+        bool expectedCompatibilityAlias)
+    {
+        var match = StageRouteCatalog.Resolve(path);
+
+        var resolvedStageId = match?.Stage.Id ?? "(none)";
+        var resolvedModuleId = match?.Module.Id ?? "(none)";
+        var resolvedTemplate = match?.MatchedTemplate ?? "(none)";
+        var resolvedCompatibility = match?.IsCompatibilityAlias.ToString() ?? "(none)";
+
+        Assert.True(
+            match is not null
+            && string.Equals(match.Stage.Id, expectedStageId, StringComparison.OrdinalIgnoreCase)
+            && string.Equals(match.Module.Id, expectedModuleId, StringComparison.OrdinalIgnoreCase)
+            && match.IsCompatibilityAlias == expectedCompatibilityAlias,
+            $"Proof route contract mismatch for path '{path}'. Expected stage='{expectedStageId}', module='{expectedModuleId}', compatibility='{expectedCompatibilityAlias}'. Resolved stage='{resolvedStageId}', module='{resolvedModuleId}', template='{resolvedTemplate}', compatibility='{resolvedCompatibility}'.");
+
+        return match!;
+    }
+
+    private static void AssertRoutes(Type componentType, params string[] expectedTemplates)
+    {
+        var declaredTemplates = componentType
+            .GetCustomAttributes<RouteAttribute>(inherit: true)
+            .Select(route => route.Template)
+            .ToArray();
+
+        foreach (var expectedTemplate in expectedTemplates)
+        {
+            Assert.True(
+                declaredTemplates.Contains(expectedTemplate, StringComparer.OrdinalIgnoreCase),
+                $"Missing route template '{expectedTemplate}' on component '{componentType.FullName}'. Declared templates: {string.Join(", ", declaredTemplates)}.");
+        }
+    }
+
+    private static IEnumerable<(Type ComponentType, string Template)> EnumerateRouteTemplates(params Type[] componentTypes)
+    {
+        foreach (var componentType in componentTypes)
+        {
+            var templates = componentType
+                .GetCustomAttributes<RouteAttribute>(inherit: true)
+                .Select(route => route.Template);
+
+            foreach (var template in templates)
+            {
+                yield return (componentType, template);
+            }
+        }
+    }
+}

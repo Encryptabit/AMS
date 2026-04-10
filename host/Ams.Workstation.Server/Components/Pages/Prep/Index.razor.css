@@ -1,0 +1,96 @@
+.prep-page {
+    max-width: 1080px;
+    margin: 0 auto;
+}
+
+.prep-header-extra {
+    min-width: 0;
+}
+
+.prep-running-status {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+}
+
+.prep-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 0.75rem 1rem;
+}
+
+.prep-grid--compact {
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+}
+
+.prep-kv {
+    display: flex;
+    flex-direction: column;
+    gap: 0.2rem;
+}
+
+.prep-control-sections {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+}
+
+.prep-control-section {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    padding: 0.75rem;
+    background: var(--bit-clr-bg-sec);
+}
+
+.prep-field-min {
+    min-width: 220px;
+}
+
+.prep-field-min--wide {
+    min-width: 260px;
+}
+
+.prep-mono {
+    font-family: ui-monospace, SFMono-Regular, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+}
+
+.prep-wrap {
+    overflow-wrap: anywhere;
+}
+
+.prep-warning-list {
+    margin: 0;
+    padding-left: 1.25rem;
+}
+
+.prep-warning-list li {
+    margin: 0.125rem 0;
+}
+
+.prep-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.95rem;
+}
+
+.prep-table th,
+.prep-table td {
+    text-align: left;
+    vertical-align: top;
+    padding: 0.75rem;
+    border-bottom: 1px solid var(--bit-clr-brd-sec);
+}
+
+.prep-table th {
+    color: var(--bit-clr-fg-secondary);
+    font-size: 0.8rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+
+.prep-inline-note {
+    margin-top: 0.25rem;
+    color: var(--bit-clr-fg-secondary);
+    font-size: 0.85rem;
+}
