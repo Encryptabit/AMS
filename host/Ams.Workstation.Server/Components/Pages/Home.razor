@@ -1,4 +1,5 @@
 @page "/"
+@using Ams.Workstation.Server.Components.Navigation
 @inject Ams.Workstation.Server.Services.BlazorWorkspace Workspace
 @inject NavigationManager Navigation
 
@@ -97,15 +98,15 @@
                 Quick Links
             </BitText>
             <BitStack Horizontal="true" Gap="1rem" Wrap="true">
-                <BitButton Variant="BitVariant.Outline" Href="/prep">
+                <BitButton Variant="BitVariant.Outline" Href="@StageRouteCatalog.GetStageEntryPath(StageRouteCatalog.StageIds.Prep)">
                     <BitIcon IconName="Processing" Style="margin-right: 0.5rem;" />
                     Prep Area
                 </BitButton>
-                <BitButton Variant="BitVariant.Outline" Href="/proof">
+                <BitButton Variant="BitVariant.Outline" Href="@StageRouteCatalog.GetStageEntryPath(StageRouteCatalog.StageIds.Proof)">
                     <BitIcon IconName="CheckList" Style="margin-right: 0.5rem;" />
                     Proof Area
                 </BitButton>
-                <BitButton Variant="BitVariant.Outline" Href="/polish">
+                <BitButton Variant="BitVariant.Outline" Href="@StageRouteCatalog.GetStageEntryPath(StageRouteCatalog.StageIds.Polish)">
                     <BitIcon IconName="Equalizer" Style="margin-right: 0.5rem;" />
                     Polish Area
                 </BitButton>
@@ -117,6 +118,6 @@
 @code {
     private void NavigateToPrep()
     {
-        Navigation.NavigateTo("/prep");
+        Navigation.NavigateTo(StageRouteCatalog.GetStageEntryPath(StageRouteCatalog.StageIds.Prep));
     }
 }
