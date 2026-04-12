@@ -164,17 +164,7 @@ public class PickupMatchingService
         IReadOnlyList<CrxPickupTarget> targets)
     {
         var result = ConvertAsrSegments(segments);
-        if (result.Count == 0 || targets.Count == 0)
-        {
-            return result;
-        }
-
-        if (result.Count == targets.Count)
-        {
-            return result;
-        }
-
-        if (result.Count < targets.Count)
+        if (result.Count == 0 || targets.Count == 0 || result.Count == targets.Count || result.Count < targets.Count)
         {
             return result;
         }
@@ -242,7 +232,8 @@ public class PickupMatchingService
                 for (var endExclusive = consumedSegments + 1; endExclusive <= maxEndExclusive; endExclusive++)
                 {
                     var candidate = MergeSegmentRange(segments, consumedSegments, endExclusive);
-                    var assignmentCost = ComputeAssignmentCost(candidate.TranscribedText, targets[consumedTargets].ShouldBeText);
+                    var assignmentCost =
+                        ComputeAssignmentCost(candidate.TranscribedText, targets[consumedTargets].ShouldBeText);
                     var totalCost = baseCost + assignmentCost;
 
                     if (totalCost < costs[endExclusive, consumedTargets + 1])
@@ -288,10 +279,10 @@ public class PickupMatchingService
         var startSec = segments[startIndex].StartSec;
         var endSec = segments[endExclusive - 1].EndSec;
         var text = string.Join(" ", segments
-            .Skip(startIndex)
-            .Take(endExclusive - startIndex)
-            .Select(s => s.TranscribedText)
-            .Where(t => !string.IsNullOrWhiteSpace(t)))
+                .Skip(startIndex)
+                .Take(endExclusive - startIndex)
+                .Select(s => s.TranscribedText)
+                .Where(t => !string.IsNullOrWhiteSpace(t)))
             .Trim();
 
         return new PickupSegment(startSec, endSec, text);
@@ -490,7 +481,7 @@ public class PickupMatchingService
     private string GetPickupsDir()
     {
         var workDir = _workspace.WorkingDirectory
-            ?? throw new InvalidOperationException("No working directory set.");
+                      ?? throw new InvalidOperationException("No working directory set.");
         var dir = Path.Combine(workDir, ".polish", "pickups");
         Directory.CreateDirectory(dir);
         return dir;

@@ -94,3 +94,120 @@
     color: var(--bit-clr-fg-secondary);
     font-size: 0.85rem;
 }
+
+/* Pipeline dashboard layout */
+
+.pipeline-stats-bar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    padding: 0.5rem 0;
+}
+
+.pipeline-dash-grid {
+    display: grid;
+    grid-template-columns: 1fr 2fr;
+    gap: 1rem;
+}
+
+.pipeline-throughput-row {
+    display: flex;
+    gap: 2px;
+}
+
+.pipeline-throughput-box {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 0.75rem 0.5rem;
+    position: relative;
+    background: var(--bit-clr-bg-sec);
+}
+
+.pipeline-throughput-box--wide {
+    flex: 3;
+}
+
+.pipeline-throughput-indicator {
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    width: 100%;
+    height: 2px;
+}
+
+.pipeline-throughput-indicator--primary {
+    background: var(--bit-clr-pri-main, currentColor);
+}
+
+.pipeline-throughput-indicator--error {
+    background: var(--bit-clr-err, currentColor);
+}
+
+.pipeline-throughput-indicator--success {
+    background: var(--bit-clr-suc, currentColor);
+}
+
+.pipeline-throughput-indicator--secondary {
+    background: var(--bit-clr-fg-secondary, currentColor);
+}
+
+.pipeline-throughput-indicator--info {
+    background: var(--bit-clr-inf, currentColor);
+}
+
+.pipeline-row--selected {
+    background: var(--bit-clr-bg-sec-hover, var(--bit-clr-bg-sec));
+    border-left: 2px solid var(--bit-clr-pri-main, currentColor);
+}
+
+/* Inspector panel */
+
+.inspector-header {
+    padding: 0.75rem;
+    border-bottom: 1px solid var(--bit-clr-brd-sec);
+    background: var(--bit-clr-bg-sec);
+}
+
+.inspector-section {
+    padding: 0.75rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+}
+
+.inspector-error-log {
+    padding: 0.75rem;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    font-size: 0.75rem;
+    line-height: 1.6;
+    background: var(--bit-clr-bg-sec);
+    border-left: 2px solid var(--bit-clr-err, currentColor);
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+}
+
+.inspector-asset-row {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.4rem 0.5rem;
+    background: var(--bit-clr-bg-sec);
+}
+
+@media (max-width: 960px) {
+    .pipeline-dash-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .pipeline-throughput-row {
+        flex-wrap: wrap;
+    }
+
+    .pipeline-throughput-box--wide {
+        flex-basis: 100%;
+    }
+}
