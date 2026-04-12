@@ -354,7 +354,8 @@ public sealed class AudioTreatmentService
         AudioBuffer buffer,
         IReadOnlyList<SilenceInterval> silenceIntervals,
         double gapThreshold,
-        IReadOnlyList<HydratedSentence>? hydratedSentences = null)
+        IReadOnlyList<HydratedSentence>? hydratedSentences = null,
+        string? sectionTitle = null)
     {
         double audioDuration = buffer.Length / (double)buffer.SampleRate;
         double contentEnd = FindContentEnd(audioDuration, silenceIntervals);
@@ -362,6 +363,7 @@ public sealed class AudioTreatmentService
 
         if (TryFindBoundariesFromHydrate(
                 hydratedSentences,
+                sectionTitle,
                 speechStart,
                 contentEnd,
                 audioDuration,
@@ -485,7 +487,8 @@ public sealed class AudioTreatmentService
             buffer,
             silenceIntervals,
             gapThreshold,
-            hydratedTranscript?.Sentences);
+            hydratedTranscript?.Sentences,
+            sectionTitle);
 
         return (boundaries.TitleStart, boundaries.TitleEnd, boundaries.ContentStart, boundaries.ContentEnd, null, null);
     }
@@ -536,6 +539,7 @@ public sealed class AudioTreatmentService
 
     private static bool TryFindBoundariesFromHydrate(
         IReadOnlyList<HydratedSentence>? hydratedSentences,
+        string? sectionTitle,
         double speechStart,
         double contentEnd,
         double audioDuration,
@@ -562,6 +566,11 @@ public sealed class AudioTreatmentService
         if (titleSentence.Equals(default(TimedSentence)))
         {
             titleSentence = timedSentences[0];
+        }
+
+        if (!IsLikelyHeadingSentence(titleSentence.Sentence.BookText, sectionTitle))
+        {
+            return false;
         }
 
         TimedSentence? nextSentence = null;
@@ -883,6 +892,33 @@ public sealed class AudioTreatmentService
         var tokens = new List<string>(8);
         TextNormalizer.TokenizeWords(normalized, tokens);
         return string.Join(' ', tokens);
+    }
+
+    private static bool IsLikelyHeadingSentence(string sentenceText, string? sectionTitle)
+    {
+        var normalizedSentence = NormalizeHeadingText(sentenceText);
+        if (string.IsNullOrWhiteSpace(normalizedSentence))
+        {
+            return false;
+        }
+
+        if (!string.IsNullOrWhiteSpace(sectionTitle))
+        {
+            var normalizedSectionTitle = NormalizeHeadingText(sectionTitle);
+            if (normalizedSentence == normalizedSectionTitle)
+            {
+                return true;
+            }
+
+            if (TryParseChapterDecoratorTitle(sectionTitle, out _, out var headingTitleText))
+            {
+                return normalizedSentence == NormalizeHeadingText(headingTitleText);
+            }
+
+            return false;
+        }
+
+        return normalizedSentence.StartsWith("chapter ", StringComparison.OrdinalIgnoreCase);
     }
 
     private readonly record struct TimedSentence(HydratedSentence Sentence, double StartSec, double EndSec, int? ScriptStart);

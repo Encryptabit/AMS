@@ -38,6 +38,48 @@ public sealed class AudioTreatmentServiceTests
     }
 
     [Fact]
+    public void FindTreatmentLayout_FallsBackToSilenceBoundaries_WhenHydrateOmitsHeadingSentence()
+    {
+        var buffer = new AudioBuffer(channels: 1, sampleRate: 1000, length: 10_000); // 10s
+        var silences = new[]
+        {
+            new SilenceInterval(TimeSpan.FromSeconds(0.0), TimeSpan.FromSeconds(0.30), TimeSpan.FromSeconds(0.30)),
+            new SilenceInterval(TimeSpan.FromSeconds(2.00), TimeSpan.FromSeconds(3.50), TimeSpan.FromSeconds(1.50)),
+            new SilenceInterval(TimeSpan.FromSeconds(9.0), TimeSpan.FromSeconds(10.0), TimeSpan.FromSeconds(1.0))
+        };
+
+        // Heading speech exists before the 2.0-3.5 gap, but hydrate starts at first body sentence.
+        var hydrate = BuildTranscript(
+            words:
+            [
+                BuildWord(0, "The", 3.50, 3.72),
+                BuildWord(1, "first", 3.74, 4.05),
+                BuildWord(2, "line", 4.06, 4.35),
+                BuildWord(3, "More", 4.60, 4.90),
+                BuildWord(4, "content", 4.92, 5.40)
+            ],
+            sentences:
+            [
+                BuildSentence(0, 3.50, 4.35, 0, 2, 0, 2, "The first line", "The first line."),
+                BuildSentence(1, 4.60, 5.40, 3, 4, 3, 4, "More content", "More content.")
+            ]);
+
+        var result = AudioTreatmentService.FindTreatmentLayout(
+            buffer,
+            silences,
+            gapThreshold: 1.0,
+            hydrate,
+            sectionTitle: "Chapter 12: Squad Kill");
+
+        Assert.Equal(0.30, result.TitleStart, precision: 2);
+        Assert.Equal(2.00, result.TitleEnd, precision: 2);
+        Assert.Equal(3.50, result.ContentStart, precision: 2);
+        Assert.Equal(9.0, result.ContentEnd, precision: 2);
+        Assert.Null(result.DecoratorEnd);
+        Assert.Null(result.TitleResumeStart);
+    }
+
+    [Fact]
     public void FindSpeechBoundaries_FallsBackToNoTitle_WhenOnlyLateGapExists()
     {
         var buffer = new AudioBuffer(channels: 1, sampleRate: 1000, length: 460_000); // 460s
