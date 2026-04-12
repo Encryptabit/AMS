@@ -289,6 +289,9 @@ public static class QcCommand
         table.AddColumn(new TableColumn("File") { NoWrap = true });
         table.AddColumn(new TableColumn("Duration") { Alignment = Justify.Right });
         table.AddColumn(new TableColumn("Delta") { Alignment = Justify.Right });
+        table.AddColumn(new TableColumn("RMS") { Alignment = Justify.Right });
+        table.AddColumn(new TableColumn("Peak") { Alignment = Justify.Right });
+        table.AddColumn(new TableColumn("LUFS") { Alignment = Justify.Right });
         table.AddColumn(new TableColumn("Head") { Alignment = Justify.Right });
         table.AddColumn(new TableColumn("Heading") { Alignment = Justify.Right });
         table.AddColumn(new TableColumn("DecGap") { Alignment = Justify.Right });
@@ -300,6 +303,9 @@ public static class QcCommand
         {
             var duration = FormatDuration(r.DurationSec);
             var delta = r.RuntimeDeltaSec.HasValue ? FormatSignedDuration(r.RuntimeDeltaSec.Value) : "-";
+            var rms = FormatDbFs(r.OverallRmsDbFs);
+            var peak = FormatDbFs(r.TruePeakDbFs ?? r.SamplePeakDbFs);
+            var lufs = FormatLufs(r.IntegratedLufs);
             var head = FormatSeconds(r.HeadSilenceSec);
             var title = r.TitleDurationSec.HasValue ? FormatSeconds(r.TitleDurationSec.Value) : "-";
             var decoratorGap = r.DecoratorGapSec.HasValue ? FormatSeconds(r.DecoratorGapSec.Value) : "-";
@@ -314,6 +320,9 @@ public static class QcCommand
                 Markup.Escape(r.FileName),
                 duration,
                 delta,
+                rms,
+                peak,
+                lufs,
                 head,
                 title,
                 decoratorGap,
@@ -364,6 +373,20 @@ public static class QcCommand
     private static string FormatSeconds(double seconds)
     {
         return seconds.ToString("F2", CultureInfo.InvariantCulture) + "s";
+    }
+
+    private static string FormatDbFs(double? dbFs)
+    {
+        return dbFs.HasValue
+            ? dbFs.Value.ToString("F1", CultureInfo.InvariantCulture)
+            : "-";
+    }
+
+    private static string FormatLufs(double? lufs)
+    {
+        return lufs.HasValue
+            ? lufs.Value.ToString("F1", CultureInfo.InvariantCulture)
+            : "-";
     }
 
     private static string FormatSignedDuration(double seconds)

@@ -254,8 +254,9 @@ public static class AudioQcAnalyzer
         var info = AudioProcessor.Probe(filePath);
         var durationSec = info.Duration.TotalSeconds;
 
-        // Decode and run silence detection via in-process libavfilter
+        // Decode and run silence/loudness analysis via in-process libavfilter
         var buffer = AudioProcessor.Decode(filePath);
+        var loudness = AudioProcessor.AnalyzeLoudness(buffer);
         var intervals = AudioProcessor.DetectSilence(buffer, new SilenceDetectOptions
         {
             NoiseDb = noiseDb,
@@ -281,6 +282,10 @@ public static class AudioQcAnalyzer
             DurationSec = durationSec,
             Channels = info.Channels,
             SampleRate = info.SampleRate,
+            OverallRmsDbFs = loudness.OverallRmsDbFs,
+            SamplePeakDbFs = loudness.SamplePeakDbFs,
+            TruePeakDbFs = loudness.TruePeakDbFs,
+            IntegratedLufs = loudness.IntegratedLufs,
             HeadSilenceSec = headSilence,
             TitleDurationSec = titleDuration,
             DecoratorGapSec = decoratorGap,

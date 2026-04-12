@@ -1,9 +1,17 @@
+using System.Globalization;
+using System.Text.RegularExpressions;
 using Ams.Core.Artifacts;
+using Ams.Core.Common;
+using Ams.Core.Services.Integrations.FFmpeg;
 
 namespace Ams.Core.Processors;
 
 public static partial class AudioProcessor
 {
+    private static readonly Regex IntegratedLufsRegex = new(
+        @"\bI:\s*(?<value>[+-]?(?:\d+(?:\.\d+)?|\d*\.\d+))\s*LUFS\b",
+        RegexOptions.Compiled | RegexOptions.CultureInvariant | RegexOptions.IgnoreCase);
+
     public static TimingRange SnapToEnergy(
         AudioBuffer buffer,
         TimingRange seed,
@@ -245,6 +253,228 @@ public static partial class AudioProcessor
         return ToDecibels(CalculateRms(buffer, s, e - s));
     }
 
+    public static AudioLoudnessMetrics AnalyzeLoudness(
+        string filePath,
+        AudioDecodeOptions? decodeOptions = null,
+        AudioLoudnessAnalysisOptions? options = null)
+    {
+        var buffer = Decode(filePath, decodeOptions);
+        return AnalyzeLoudness(buffer, options);
+    }
+
+    public static AudioLoudnessMetrics AnalyzeLoudness(
+        AudioBuffer buffer,
+        AudioLoudnessAnalysisOptions? options = null)
+    {
+        if (buffer is null)
+        {
+            throw new ArgumentNullException(nameof(buffer));
+        }
+
+        var effectiveOptions = options ?? new AudioLoudnessAnalysisOptions();
+        var windowDurationSec = Math.Max(0.01, effectiveOptions.WindowDuration.TotalSeconds);
+
+        var totalSamples = buffer.Length;
+        var channels = buffer.Channels;
+        if (totalSamples == 0 || channels == 0)
+        {
+            return new AudioLoudnessMetrics(
+                DurationSec: 0,
+                SamplePeakLinear: 0,
+                SamplePeakDbFs: null,
+                TruePeakLinear: 0,
+                TruePeakDbFs: null,
+                OverallRmsLinear: 0,
+                OverallRmsDbFs: null,
+                MinWindowRmsLinear: 0,
+                MinWindowRmsDbFs: null,
+                MaxWindowRmsLinear: 0,
+                MaxWindowRmsDbFs: null,
+                WindowDurationSec: windowDurationSec,
+                IntegratedLufs: null);
+        }
+
+        var sampleRate = buffer.SampleRate;
+        var perSampleMeanSquare = new double[totalSamples];
+        double totalSquares = 0;
+        double samplePeak = 0;
+        double truePeak = 0;
+
+        for (int ch = 0; ch < channels; ch++)
+        {
+            var samples = buffer.GetChannel(ch).Span;
+            double previous = 0;
+            for (int i = 0; i < totalSamples; i++)
+            {
+                double sample = samples[i];
+                double abs = Math.Abs(sample);
+                if (abs > samplePeak)
+                {
+                    samplePeak = abs;
+                }
+
+                double square = sample * sample;
+                perSampleMeanSquare[i] += square;
+                totalSquares += square;
+
+                if (i > 0)
+                {
+                    var s0 = previous;
+                    var s1 = sample;
+                    for (int step = 1; step <= 3; step++)
+                    {
+                        double t = step / 4.0;
+                        double interpolated = s0 + (s1 - s0) * t;
+                        double interpolatedAbs = Math.Abs(interpolated);
+                        if (interpolatedAbs > truePeak)
+                        {
+                            truePeak = interpolatedAbs;
+                        }
+                    }
+                }
+
+                previous = sample;
+            }
+        }
+
+        truePeak = Math.Max(truePeak, samplePeak);
+
+        for (int i = 0; i < totalSamples; i++)
+        {
+            perSampleMeanSquare[i] /= channels;
+        }
+
+        var overallRms = Math.Sqrt(totalSquares / (channels * (double)totalSamples));
+
+        int windowSamples = Math.Max(1, (int)Math.Round(sampleRate * windowDurationSec));
+        if (windowSamples > totalSamples)
+        {
+            windowSamples = totalSamples;
+        }
+
+        double minWindowRms = double.PositiveInfinity;
+        double maxWindowRms = double.NegativeInfinity;
+
+        for (int start = 0; start < totalSamples; start += windowSamples)
+        {
+            int end = Math.Min(totalSamples, start + windowSamples);
+            if (end <= start)
+            {
+                continue;
+            }
+
+            double sum = 0;
+            for (int i = start; i < end; i++)
+            {
+                sum += perSampleMeanSquare[i];
+            }
+
+            double meanSquare = sum / (end - start);
+            double rms = Math.Sqrt(meanSquare);
+
+            if (rms < minWindowRms)
+            {
+                minWindowRms = rms;
+            }
+
+            if (rms > maxWindowRms)
+            {
+                maxWindowRms = rms;
+            }
+        }
+
+        if (double.IsPositiveInfinity(minWindowRms))
+        {
+            minWindowRms = overallRms;
+        }
+
+        if (double.IsNegativeInfinity(maxWindowRms))
+        {
+            maxWindowRms = overallRms;
+        }
+
+        var durationSec = totalSamples / (double)sampleRate;
+        var integratedLufs = effectiveOptions.ComputeIntegratedLufs ? TryMeasureIntegratedLufs(buffer) : null;
+
+        return new AudioLoudnessMetrics(
+            DurationSec: durationSec,
+            SamplePeakLinear: samplePeak,
+            SamplePeakDbFs: ToDecibelsOrNull(samplePeak),
+            TruePeakLinear: truePeak,
+            TruePeakDbFs: ToDecibelsOrNull(truePeak),
+            OverallRmsLinear: overallRms,
+            OverallRmsDbFs: ToDecibelsOrNull(overallRms),
+            MinWindowRmsLinear: minWindowRms,
+            MinWindowRmsDbFs: ToDecibelsOrNull(minWindowRms),
+            MaxWindowRmsLinear: maxWindowRms,
+            MaxWindowRmsDbFs: ToDecibelsOrNull(maxWindowRms),
+            WindowDurationSec: windowDurationSec,
+            IntegratedLufs: integratedLufs);
+    }
+
+    internal static bool TryParseIntegratedLufs(IReadOnlyList<string> logs, out double integratedLufs)
+    {
+        integratedLufs = 0;
+        if (logs.Count == 0)
+        {
+            return false;
+        }
+
+        for (int i = logs.Count - 1; i >= 0; i--)
+        {
+            var match = IntegratedLufsRegex.Match(logs[i]);
+            if (!match.Success)
+            {
+                continue;
+            }
+
+            if (!double.TryParse(
+                    match.Groups["value"].Value,
+                    NumberStyles.Float,
+                    CultureInfo.InvariantCulture,
+                    out var parsed))
+            {
+                continue;
+            }
+
+            if (double.IsNaN(parsed) || double.IsInfinity(parsed))
+            {
+                continue;
+            }
+
+            integratedLufs = parsed;
+            return true;
+        }
+
+        return false;
+    }
+
+    private static double? TryMeasureIntegratedLufs(AudioBuffer buffer)
+    {
+        try
+        {
+            var logs = FfFilterGraph
+                .FromBuffer(buffer)
+                .EbuR128(new EbuR128FilterParams("verbose"))
+                .CaptureLogs();
+
+            return TryParseIntegratedLufs(logs, out var integratedLufs)
+                ? integratedLufs
+                : null;
+        }
+        catch (Exception ex)
+        {
+            Log.Debug("Unable to compute integrated LUFS from ebur128 logs: {Message}", ex.Message);
+            return null;
+        }
+    }
+
+    private static double? ToDecibelsOrNull(double linear)
+    {
+        var db = ToDecibels(linear);
+        return double.IsFinite(db) ? db : null;
+    }
+
     private static double CalculateRms(AudioBuffer buffer, int startSample, int length)
     {
         if (length <= 0) return 0.0;
@@ -279,3 +509,24 @@ public static partial class AudioProcessor
     private static double DbToLinear(double db) =>
         db <= -120 ? 0.0 : Math.Pow(10.0, db / 20.0);
 }
+
+public sealed record AudioLoudnessAnalysisOptions
+{
+    public TimeSpan WindowDuration { get; init; } = TimeSpan.FromMilliseconds(500);
+    public bool ComputeIntegratedLufs { get; init; } = true;
+}
+
+public sealed record AudioLoudnessMetrics(
+    double DurationSec,
+    double SamplePeakLinear,
+    double? SamplePeakDbFs,
+    double TruePeakLinear,
+    double? TruePeakDbFs,
+    double OverallRmsLinear,
+    double? OverallRmsDbFs,
+    double MinWindowRmsLinear,
+    double? MinWindowRmsDbFs,
+    double MaxWindowRmsLinear,
+    double? MaxWindowRmsDbFs,
+    double WindowDurationSec,
+    double? IntegratedLufs);

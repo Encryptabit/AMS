@@ -27,6 +27,10 @@ public sealed record ChapterQcResult
     public required double DurationSec { get; init; }
     public int Channels { get; init; }
     public int SampleRate { get; init; }
+    public double? OverallRmsDbFs { get; init; }
+    public double? SamplePeakDbFs { get; init; }
+    public double? TruePeakDbFs { get; init; }
+    public double? IntegratedLufs { get; init; }
     public double HeadSilenceSec { get; init; }
     public double? TitleDurationSec { get; init; }
     public double? DecoratorGapSec { get; init; }
