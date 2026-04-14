@@ -1,16 +1,10 @@
 .prep-page {
-    max-width: 1080px;
-    margin: 0 auto;
+    width: 100%;
+    min-width: 0;
 }
 
 .prep-header-extra {
     min-width: 0;
-}
-
-.prep-running-status {
-    display: flex;
-    align-items: center;
-    gap: 0.75rem;
 }
 
 .prep-grid {
@@ -72,6 +66,7 @@
     width: 100%;
     border-collapse: collapse;
     font-size: 0.95rem;
+    table-layout: fixed;
 }
 
 .prep-table th,
@@ -80,6 +75,8 @@
     vertical-align: top;
     padding: 0.75rem;
     border-bottom: 1px solid var(--bit-clr-brd-sec);
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 
 .prep-table th {
@@ -95,25 +92,81 @@
     font-size: 0.85rem;
 }
 
-/* Pipeline dashboard layout */
+/* Pipeline action bar */
 
-.pipeline-stats-bar {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 1rem;
+.pipeline-action-bar {
     padding: 0.5rem 0;
 }
 
-.pipeline-dash-grid {
-    display: grid;
-    grid-template-columns: 1fr 2fr;
-    gap: 1rem;
+/* Pipeline dashboard layout */
+
+.prep-page::deep .pipeline-layout-grid.bit-grd {
+    align-items: stretch;
+}
+
+.prep-page::deep .pipeline-layout-grid > .bit-grd-itm {
+    min-width: 0;
+}
+
+.prep-page::deep .pipeline-layout-grid > .pipeline-grid-item--top {
+    display: flex;
+}
+
+.prep-page::deep .pipeline-layout-grid > .pipeline-grid-item--top > .pipeline-card--top {
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+}
+
+.prep-page::deep .pipeline-card {
+    width: 100%;
+}
+
+/* Pipeline Dashboard card - force full width on inner content */
+
+.prep-page::deep .pipeline-card > .bit-crd-cnt {
+    width: 100%;
+    box-sizing: border-box;
+}
+
+.prep-page::deep .pipeline-card .bit-stk {
+    width: 100%;
+}
+
+.prep-page::deep .pipeline-card .bit-pvt {
+    width: 100%;
+}
+
+.prep-page::deep .pipeline-card .bit-pvt-bdy {
+    width: 100%;
+}
+
+/* Queue Builder */
+
+.prep-page::deep .queue-builder-stack {
+    height: 100%;
+    justify-content: space-between;
+}
+
+.queue-builder-range {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+    flex: 1;
+}
+
+/* Pipeline Throughput - fill container */
+
+.prep-page::deep .pipeline-card--top > .bit-stk {
+    width: 100%;
+    height: 100%;
 }
 
 .pipeline-throughput-row {
     display: flex;
     gap: 2px;
+    width: 100%;
+    flex: 1;
 }
 
 .pipeline-throughput-box {
@@ -180,10 +233,10 @@
 }
 
 .inspector-error-log {
-    padding: 0.75rem;
+    padding: 0.5rem;
     font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-    font-size: 0.75rem;
-    line-height: 1.6;
+    font-size: 0.7rem;
+    line-height: 1.5;
     background: var(--bit-clr-bg-sec);
     border-left: 2px solid var(--bit-clr-err, currentColor);
     white-space: pre-wrap;
@@ -194,15 +247,25 @@
     display: flex;
     align-items: center;
     gap: 0.5rem;
-    padding: 0.4rem 0.5rem;
+    padding: 0.3rem 0.5rem;
     background: var(--bit-clr-bg-sec);
 }
 
-@media (max-width: 960px) {
-    .pipeline-dash-grid {
-        grid-template-columns: 1fr;
-    }
+.inspector-stage-row {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.2rem 0;
+}
 
+.inspector-runtime-row {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.15rem 0;
+}
+
+@media (max-width: 960px) {
     .pipeline-throughput-row {
         flex-wrap: wrap;
     }

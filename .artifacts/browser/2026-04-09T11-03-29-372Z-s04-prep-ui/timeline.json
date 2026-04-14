@@ -1,0 +1,44 @@
+{
+  "entries": [
+    {
+      "id": 1,
+      "tool": "browser_navigate",
+      "status": "success",
+      "durationMs": 1507,
+      "beforeUrl": "about:blank",
+      "afterUrl": "http://127.0.0.1:8081/prep",
+      "line": "#1 | browser_navigate | success | 1507ms | screenshot=false, url=\"http://127.0.0.1:8081/prep\" | URL changed to http://127.0.0.1:8081/prep; landmarks 0→3; buttons 0→13; links 0→1"
+    },
+    {
+      "id": 2,
+      "tool": "browser_navigate",
+      "status": "success",
+      "durationMs": 900,
+      "beforeUrl": "http://127.0.0.1:8081/",
+      "afterUrl": "http://127.0.0.1:8081/prep",
+      "line": "#2 | browser_navigate | success | 900ms | screenshot=false, url=\"http://127.0.0.1:8081/prep\" | URL changed to http://127.0.0.1:8081/prep; landmarks 4→3; buttons 10→12; links 4→1"
+    },
+    {
+      "id": 3,
+      "tool": "browser_click",
+      "status": "success",
+      "durationMs": 200,
+      "beforeUrl": "http://127.0.0.1:8081/prep",
+      "afterUrl": "http://127.0.0.1:8081/prep",
+      "line": "#3 | browser_click | success | 200ms | selector=\"button\" | SOFT-FAIL (no observable state change) | focus changed"
+    },
+    {
+      "id": 4,
+      "tool": "browser_click",
+      "status": "success",
+      "durationMs": 200,
+      "beforeUrl": "http://127.0.0.1:8081/prep",
+      "afterUrl": "http://127.0.0.1:8081/prep",
+      "line": "#4 | browser_click | success | 200ms | selector=\"button#knrzjj\" | SOFT-FAIL (no observable state change) | focus changed; visible text changed"
+    }
+  ],
+  "retained": 4,
+  "totalRecorded": 4,
+  "bounded": false,
+  "summary": "Timeline: 4 browser actions recorded."
+}

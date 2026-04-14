@@ -1,0 +1,118 @@
+{
+  "sourceFile": "/mnt/c/Projects/AMS.test/.tmp/s04-prep-ui/book.md",
+  "sourceFileHash": "32BB7304C101075291B30554E46148CDEA95376879C249C798477D8AD63D264E",
+  "indexedAt": "2026-04-09T11:03:02.3386102Z",
+  "title": "Test Book",
+  "author": null,
+  "totals": {
+    "words": 6,
+    "sentences": 3,
+    "paragraphs": 3,
+    "estimatedDurationSec": 1.7999999999999998
+  },
+  "words": [
+    {
+      "text": "Test",
+      "wordIndex": 0,
+      "sentenceIndex": 0,
+      "paragraphIndex": 0,
+      "sectionIndex": -1,
+      "phonemes": [
+        "t\u02B0 \u025B s t"
+      ]
+    },
+    {
+      "text": "Book",
+      "wordIndex": 1,
+      "sentenceIndex": 0,
+      "paragraphIndex": 0,
+      "sectionIndex": -1,
+      "phonemes": [
+        "b \u028A k"
+      ]
+    },
+    {
+      "text": "Chapter",
+      "wordIndex": 2,
+      "sentenceIndex": 1,
+      "paragraphIndex": 1,
+      "sectionIndex": -1,
+      "phonemes": [
+        "t\u0283 \u00E6 p t \u025A"
+      ]
+    },
+    {
+      "text": "1",
+      "wordIndex": 3,
+      "sentenceIndex": 1,
+      "paragraphIndex": 1,
+      "sectionIndex": -1,
+      "phonemes": [
+        "ow n",
+        "w \u0250 n"
+      ]
+    },
+    {
+      "text": "Hello",
+      "wordIndex": 4,
+      "sentenceIndex": 2,
+      "paragraphIndex": 2,
+      "sectionIndex": -1,
+      "phonemes": [
+        "h \u025B l ow"
+      ]
+    },
+    {
+      "text": "world.",
+      "wordIndex": 5,
+      "sentenceIndex": 2,
+      "paragraphIndex": 2,
+      "sectionIndex": -1,
+      "phonemes": [
+        "w \u025D \u026B d"
+      ]
+    }
+  ],
+  "sentences": [
+    {
+      "index": 0,
+      "start": 0,
+      "end": 1
+    },
+    {
+      "index": 1,
+      "start": 2,
+      "end": 3
+    },
+    {
+      "index": 2,
+      "start": 4,
+      "end": 5
+    }
+  ],
+  "paragraphs": [
+    {
+      "index": 0,
+      "start": 0,
+      "end": 1,
+      "kind": "Body",
+      "style": "Unknown"
+    },
+    {
+      "index": 1,
+      "start": 2,
+      "end": 3,
+      "kind": "Body",
+      "style": "Unknown"
+    },
+    {
+      "index": 2,
+      "start": 4,
+      "end": 5,
+      "kind": "Body",
+      "style": "Unknown"
+    }
+  ],
+  "sections": [],
+  "buildWarnings": []
+}

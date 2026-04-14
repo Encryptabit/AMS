@@ -1,0 +1,336 @@
+[
+  {
+    "method": "GET",
+    "url": "http://127.0.0.1:8081/prep",
+    "status": 200,
+    "resourceType": "document",
+    "timestamp": 1775734489646,
+    "failed": false,
+    "pageId": 1
+  },
+  {
+    "method": "GET",
+    "url": "http://127.0.0.1:8081/_content/Bit.BlazorUI/scripts/bit.blazorui.js",
+    "status": 200,
+    "resourceType": "script",
+    "timestamp": 1775734489666,
+    "failed": false,
+    "pageId": 1
+  },
+  {
+    "method": "GET",
+    "url": "http://127.0.0.1:8081/css/app.27ds602pik.css",
+    "status": 200,
+    "resourceType": "stylesheet",
+    "timestamp": 1775734489667,
+    "failed": false,
+    "pageId": 1
+  },
+  {
+    "method": "GET",
+    "url": "http://127.0.0.1:8081/Ams.Workstation.Server.xlw6ca48iv.styles.css",
+    "status": 200,
+    "resourceType": "stylesheet",
+    "timestamp": 1775734489667,
+    "failed": false,
+    "pageId": 1
+  },
+  {
+    "method": "GET",
+    "url": "http://127.0.0.1:8081/_content/Bit.BlazorUI.Icons/styles/bit.blazorui.icons.css",
+    "status": 200,
+    "resourceType": "stylesheet",
+    "timestamp": 1775734489667,
+    "failed": false,
+    "pageId": 1
+  },
+  {
+    "method": "GET",
+    "url": "http://127.0.0.1:8081/_content/Bit.BlazorUI/styles/bit.blazorui.css",
+    "status": 200,
+    "resourceType": "stylesheet",
+    "timestamp": 1775734489671,
+    "failed": false,
+    "pageId": 1
+  },
+  {
+    "method": "GET",
+    "url": "http://127.0.0.1:8081/Components/Layout/ReconnectModal.w97mql0d9w.razor.js",
+    "status": 200,
+    "resourceType": "script",
+    "timestamp": 1775734489671,
+    "failed": false,
+    "pageId": 1
+  },
+  {
+    "method": "GET",
+    "url": "http://127.0.0.1:8081/js/modal-focus-trap.js",
+    "status": 200,
+    "resourceType": "script",
+    "timestamp": 1775734489681,
+    "failed": false,
+    "pageId": 1
+  },
+  {
+    "method": "GET",
+    "url": "http://127.0.0.1:8081/_framework/blazor.web.mgww215af1.js",
+    "status": 200,
+    "resourceType": "script",
+    "timestamp": 1775734489701,
+    "failed": false,
+    "pageId": 1
+  },
+  {
+    "method": "GET",
+    "url": "https://unpkg.com/wavesurfer.js@7/dist/wavesurfer.min.js",
+    "status": 302,
+    "resourceType": "script",
+    "timestamp": 1775734489701,
+    "failed": false,
+    "pageId": 1
+  },
+  {
+    "method": "GET",
+    "url": "https://unpkg.com/wavesurfer.js@7/dist/plugins/zoom.min.js",
+    "status": 302,
+    "resourceType": "script",
+    "timestamp": 1775734489701,
+    "failed": false,
+    "pageId": 1
+  },
+  {
+    "method": "GET",
+    "url": "https://unpkg.com/wavesurfer.js@7/dist/plugins/regions.min.js",
+    "status": 302,
+    "resourceType": "script",
+    "timestamp": 1775734489721,
+    "failed": false,
+    "pageId": 1
+  },
+  {
+    "method": "GET",
+    "url": "https://unpkg.com/wavesurfer.js@7.12.5/dist/plugins/zoom.min.js",
+    "status": 200,
+    "resourceType": "script",
+    "timestamp": 1775734489727,
+    "failed": false,
+    "pageId": 1
+  },
+  {
+    "method": "GET",
+    "url": "https://unpkg.com/wavesurfer.js@7.12.5/dist/wavesurfer.min.js",
+    "status": 200,
+    "resourceType": "script",
+    "timestamp": 1775734489730,
+    "failed": false,
+    "pageId": 1
+  },
+  {
+    "method": "GET",
+    "url": "https://unpkg.com/wavesurfer.js@7.12.5/dist/plugins/regions.min.js",
+    "status": 200,
+    "resourceType": "script",
+    "timestamp": 1775734489740,
+    "failed": false,
+    "pageId": 1
+  },
+  {
+    "method": "GET",
+    "url": "http://127.0.0.1:8081/_blazor/initializers",
+    "status": 200,
+    "resourceType": "fetch",
+    "timestamp": 1775734489764,
+    "failed": false,
+    "pageId": 1
+  },
+  {
+    "method": "GET",
+    "url": "http://127.0.0.1:8081/favicon.png",
+    "status": 200,
+    "resourceType": "other",
+    "timestamp": 1775734489772,
+    "failed": false,
+    "pageId": 1
+  },
+  {
+    "method": "POST",
+    "url": "http://127.0.0.1:8081/_blazor/negotiate?negotiateVersion=1",
+    "status": 200,
+    "resourceType": "fetch",
+    "timestamp": 1775734489777,
+    "failed": false,
+    "pageId": 1
+  },
+  {
+    "method": "GET",
+    "url": "http://127.0.0.1:8081/_content/Bit.BlazorUI.Icons/fonts/FabMDL2.4.66.woff2",
+    "status": 200,
+    "resourceType": "font",
+    "timestamp": 1775734490168,
+    "failed": false,
+    "pageId": 1
+  },
+  {
+    "method": "POST",
+    "url": "http://127.0.0.1:8081/_blazor/disconnect",
+    "status": null,
+    "resourceType": "ping",
+    "timestamp": 1775734511668,
+    "failed": true,
+    "failureText": "net::ERR_ABORTED",
+    "pageId": 1
+  },
+  {
+    "method": "GET",
+    "url": "https://unpkg.com/wavesurfer.js@7/dist/wavesurfer.min.js",
+    "status": 200,
+    "resourceType": "script",
+    "timestamp": 1775734511681,
+    "failed": false,
+    "pageId": 1
+  },
+  {
+    "method": "GET",
+    "url": "https://unpkg.com/wavesurfer.js@7/dist/plugins/zoom.min.js",
+    "status": 200,
+    "resourceType": "script",
+    "timestamp": 1775734511683,
+    "failed": false,
+    "pageId": 1
+  },
+  {
+    "method": "GET",
+    "url": "https://unpkg.com/wavesurfer.js@7/dist/plugins/regions.min.js",
+    "status": 200,
+    "resourceType": "script",
+    "timestamp": 1775734511683,
+    "failed": false,
+    "pageId": 1
+  },
+  {
+    "method": "GET",
+    "url": "http://127.0.0.1:8081/",
+    "status": 200,
+    "resourceType": "document",
+    "timestamp": 1775734511683,
+    "failed": false,
+    "pageId": 1
+  },
+  {
+    "method": "GET",
+    "url": "http://127.0.0.1:8081/_content/Bit.BlazorUI.Icons/styles/bit.blazorui.icons.css",
+    "status": 200,
+    "resourceType": "stylesheet",
+    "timestamp": 1775734511684,
+    "failed": false,
+    "pageId": 1
+  },
+  {
+    "method": "GET",
+    "url": "http://127.0.0.1:8081/_content/Bit.BlazorUI/scripts/bit.blazorui.js",
+    "status": 304,
+    "resourceType": "script",
+    "timestamp": 1775734511684,
+    "failed": false,
+    "pageId": 1
+  },
+  {
+    "method": "GET",
+    "url": "http://127.0.0.1:8081/css/app.27ds602pik.css",
+    "status": 200,
+    "resourceType": "stylesheet",
+    "timestamp": 1775734511690,
+    "failed": false,
+    "pageId": 1
+  },
+  {
+    "method": "GET",
+    "url": "http://127.0.0.1:8081/Components/Layout/ReconnectModal.w97mql0d9w.razor.js",
+    "status": 200,
+    "resourceType": "script",
+    "timestamp": 1775734511690,
+    "failed": false,
+    "pageId": 1
+  },
+  {
+    "method": "GET",
+    "url": "http://127.0.0.1:8081/_content/Bit.BlazorUI/styles/bit.blazorui.css",
+    "status": 200,
+    "resourceType": "stylesheet",
+    "timestamp": 1775734511710,
+    "failed": false,
+    "pageId": 1
+  },
+  {
+    "method": "GET",
+    "url": "http://127.0.0.1:8081/_framework/blazor.web.mgww215af1.js",
+    "status": 304,
+    "resourceType": "script",
+    "timestamp": 1775734511710,
+    "failed": false,
+    "pageId": 1
+  },
+  {
+    "method": "GET",
+    "url": "http://127.0.0.1:8081/Ams.Workstation.Server.xlw6ca48iv.styles.css",
+    "status": 200,
+    "resourceType": "stylesheet",
+    "timestamp": 1775734511726,
+    "failed": false,
+    "pageId": 1
+  },
+  {
+    "method": "GET",
+    "url": "http://127.0.0.1:8081/js/modal-focus-trap.js",
+    "status": 200,
+    "resourceType": "script",
+    "timestamp": 1775734511728,
+    "failed": false,
+    "pageId": 1
+  },
+  {
+    "method": "GET",
+    "url": "http://127.0.0.1:8081/_blazor/initializers",
+    "status": 200,
+    "resourceType": "fetch",
+    "timestamp": 1775734511739,
+    "failed": false,
+    "pageId": 1
+  },
+  {
+    "method": "GET",
+    "url": "http://127.0.0.1:8081/favicon.png",
+    "status": 200,
+    "resourceType": "other",
+    "timestamp": 1775734511743,
+    "failed": false,
+    "pageId": 1
+  },
+  {
+    "method": "POST",
+    "url": "http://127.0.0.1:8081/_blazor/negotiate?negotiateVersion=1",
+    "status": 200,
+    "resourceType": "fetch",
+    "timestamp": 1775734511743,
+    "failed": false,
+    "pageId": 1
+  },
+  {
+    "method": "GET",
+    "url": "http://127.0.0.1:8081/_content/Bit.BlazorUI.Icons/fonts/FabMDL2.4.66.woff2",
+    "status": 304,
+    "resourceType": "font",
+    "timestamp": 1775734511801,
+    "failed": false,
+    "pageId": 1
+  },
+  {
+    "method": "GET",
+    "url": "http://127.0.0.1:8081/favicon.png",
+    "status": 200,
+    "resourceType": "other",
+    "timestamp": 1775734515303,
+    "failed": false,
+    "pageId": 1
+  }
+]
