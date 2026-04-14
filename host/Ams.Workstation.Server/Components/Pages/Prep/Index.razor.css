@@ -24,8 +24,8 @@
 }
 
 .prep-control-sections {
-    display: flex;
-    flex-direction: column;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
     gap: 0.75rem;
 }
 
@@ -112,11 +112,6 @@
     display: flex;
 }
 
-.prep-page::deep .pipeline-layout-grid > .pipeline-grid-item--top > .pipeline-card--top {
-    height: 100%;
-    display: flex;
-    flex-direction: column;
-}
 
 .prep-page::deep .pipeline-card {
     width: 100%;
@@ -157,9 +152,9 @@
 
 /* Pipeline Throughput - fill container */
 
-.prep-page::deep .pipeline-card--top > .bit-stk {
-    width: 100%;
+.prep-page::deep .throughput-stack {
     height: 100%;
+    justify-content: space-between;
 }
 
 .pipeline-throughput-row {
@@ -265,6 +260,21 @@
     padding: 0.15rem 0;
 }
 
+/* Pipeline settings dialog - wider layout */
+
+.prep-page::deep .pipeline-settings-dialog .bit-dlg-cnt {
+    max-width: 720px;
+    width: 90vw;
+}
+
+/* History pager */
+
+.history-pager {
+    padding: 0.5rem 0;
+    border-bottom: 1px solid var(--bit-clr-brd-sec);
+    margin-bottom: 0.25rem;
+}
+
 @media (max-width: 960px) {
     .pipeline-throughput-row {
         flex-wrap: wrap;
@@ -272,5 +282,9 @@
 
     .pipeline-throughput-box--wide {
         flex-basis: 100%;
+    }
+
+    .prep-control-sections {
+        grid-template-columns: 1fr;
     }
 }

@@ -371,9 +371,19 @@ public sealed class PrepRunSession : IDisposable
         return null;
     }
 
-    private void ResetRunState()
+    /// <summary>
+    /// Clears accumulated progress history. Call explicitly when the UI wants a fresh history
+    /// (e.g. "Clear queue"). Progress is intentionally preserved across sequential batch runs
+    /// so the History tab can paginate by chapter.
+    /// </summary>
+    public void ClearHistory()
     {
         _progressUpdates.Clear();
+        NotifyStateChanged();
+    }
+
+    private void ResetRunState()
+    {
         CurrentProgress = null;
         CurrentPhase = PrepRunPhase.Idle;
         CurrentStage = null;

@@ -249,7 +249,7 @@
             <BitGrid Columns="12" Gap="1rem" Class="pipeline-layout-grid">
 
                 <BitGridItem ColumnSpan="4" Class="pipeline-grid-item--top">
-                    <BitCard FullWidth="true" Class="pipeline-card pipeline-card--top">
+                    <BitCard FullWidth="true" Class="pipeline-card pipeline-card--top" Style="height:100%;display:flex;flex-direction:column">
                         <BitStack Horizontal="false" Gap="0.75rem" Class="queue-builder-stack">
                             <BitText Typography="BitTypography.Overline">Queue Builder</BitText>
                             <div class="queue-builder-range">
@@ -265,8 +265,8 @@
                                     </BitText>
                                 </BitStack>
                                 <BitSlider IsRanged="true"
-                                           Min="0"
-                                           Max="@((double)(Math.Max(Workspace.AvailableChapters.Count - 1, 0)))"
+                                           Min="1"
+                                           Max="@((double)(Math.Max(Workspace.AvailableChapters.Count, 1)))"
                                            @bind-LowerValue="_queueRangeStart"
                                            @bind-UpperValue="_queueRangeEnd"
                                            Step="1"
@@ -294,8 +294,8 @@
                 </BitGridItem>
 
                 <BitGridItem ColumnSpan="8" Class="pipeline-grid-item--top">
-                    <BitCard FullWidth="true" Class="pipeline-card pipeline-card--top">
-                        <BitStack Horizontal="false" Gap="0.75rem">
+                    <BitCard FullWidth="true" Class="pipeline-card pipeline-card--top" Style="height:100%;display:flex;flex-direction:column">
+                        <BitStack Horizontal="false" Gap="0.75rem" Class="throughput-stack">
                             <BitStack Horizontal="true" HorizontalAlign="BitAlignment.SpaceBetween" VerticalAlign="BitAlignment.Center">
                                 <BitText Typography="BitTypography.Overline">Pipeline Throughput</BitText>
                                 <BitTag Color="@(_isBatchRunning ? BitColor.Primary : BitColor.Secondary)">@(_isBatchRunning ? "Running" : "Idle")</BitTag>
@@ -409,6 +409,33 @@
                                 <BitPivotItem HeaderText="History" IconName="@BitIconName.History">
                                     @if (Session.ProgressUpdates.Count > 0)
                                     {
+                                        var chapters = HistoryChapterKeys;
+                                        var currentChapter = HistoryCurrentChapter;
+                                        var pageUpdates = HistoryPageUpdates;
+
+                                        <BitStack Horizontal="true"
+                                                  VerticalAlign="BitAlignment.Center"
+                                                  HorizontalAlign="BitAlignment.SpaceBetween"
+                                                  Gap="0.5rem"
+                                                  Class="history-pager">
+                                            <BitButton Variant="BitVariant.Text"
+                                                       Size="BitSize.Small"
+                                                       IconName="@BitIconName.ChevronLeft"
+                                                       OnClick="@(() => _historyPageIndex = Math.Max(0, _historyPageIndex - 1))"
+                                                       IsEnabled="@(_historyPageIndex > 0)" />
+                                            <BitText Typography="BitTypography.Body2">
+                                                <strong>@(currentChapter == "__global__" ? "Global" : currentChapter)</strong>
+                                                <BitText Typography="BitTypography.Caption1" Color="BitColor.SecondaryForeground">
+                                                    (@(_historyPageIndex + 1) of @chapters.Count)
+                                                </BitText>
+                                            </BitText>
+                                            <BitButton Variant="BitVariant.Text"
+                                                       Size="BitSize.Small"
+                                                       IconName="@BitIconName.ChevronRight"
+                                                       OnClick="@(() => _historyPageIndex = Math.Min(chapters.Count - 1, _historyPageIndex + 1))"
+                                                       IsEnabled="@(_historyPageIndex < chapters.Count - 1)" />
+                                        </BitStack>
+
                                         <table class="prep-table">
                                             <thead>
                                                 <tr>
@@ -420,7 +447,7 @@
                                                 </tr>
                                             </thead>
                                             <tbody>
-                                                @foreach (var update in Session.ProgressUpdates.Reverse().Take(20))
+                                                @foreach (var update in pageUpdates)
                                                 {
                                                     <tr>
                                                         <td>@update.ModuleId.Value</td>
@@ -433,10 +460,6 @@
                                                             @if (update.Failure is not null)
                                                             {
                                                                 <div class="prep-inline-note">@update.Failure.Kind: @update.Failure.Message</div>
-                                                            }
-                                                            @if (!string.IsNullOrWhiteSpace(update.ItemId))
-                                                            {
-                                                                <div class="prep-inline-note">Item: @update.ItemId</div>
                                                             }
                                                         </td>
                                                         <td>@FormatProgress(update.Progress)</td>
@@ -584,7 +607,8 @@
                Title="Pipeline settings"
                IsBlocking="true"
                ShowOkButton="false"
-               ShowCancelButton="false">
+               ShowCancelButton="false"
+               Class="pipeline-settings-dialog">
         <BitStack Horizontal="false" Gap="0.75rem">
             <BitText Typography="BitTypography.Body2" Color="BitColor.SecondaryForeground">
                 Configure pipeline execution options. Changes apply immediately to the next run.
@@ -782,6 +806,7 @@
     private bool _isBatchRunning;
     private bool _batchCancelRequested;
     private bool _isPipelineSettingsOpen;
+    private int _historyPageIndex;
     private readonly List<PipelineBatchQueueItem> _batchQueue = [];
     private readonly PrepPipelineOperatorControls _operatorControls = new();
 
@@ -829,6 +854,22 @@
 
     private int PendingReadyCount => Workspace.AvailableChapters.Count - _batchQueue.Count;
 
+    private IReadOnlyList<string> HistoryChapterKeys => Session.ProgressUpdates
+        .Select(u => u.ItemId ?? "__global__")
+        .Distinct()
+        .ToArray();
+
+    private string? HistoryCurrentChapter => HistoryChapterKeys.Count > 0
+        ? HistoryChapterKeys[Math.Clamp(_historyPageIndex, 0, HistoryChapterKeys.Count - 1)]
+        : null;
+
+    private IReadOnlyList<RunProgressUpdate> HistoryPageUpdates => HistoryCurrentChapter is null
+        ? []
+        : Session.ProgressUpdates
+            .Where(u => string.Equals(u.ItemId ?? "__global__", HistoryCurrentChapter, StringComparison.Ordinal))
+            .Reverse()
+            .ToArray();
+
     private PipelineBatchQueueItem? SelectedQueueItem
         => _batchQueue.FirstOrDefault(item => string.Equals(item.Chapter, _selectedQueueChapter, StringComparison.OrdinalIgnoreCase));
 
@@ -867,8 +908,8 @@
         }
 
         var chapters = Workspace.AvailableChapters;
-        var from = Math.Min((int)_queueRangeStart, (int)_queueRangeEnd);
-        var to = Math.Max((int)_queueRangeStart, (int)_queueRangeEnd);
+        var from = Math.Min((int)_queueRangeStart, (int)_queueRangeEnd) - 1;
+        var to = Math.Max((int)_queueRangeStart, (int)_queueRangeEnd) - 1;
         from = Math.Max(0, Math.Min(from, chapters.Count - 1));
         to = Math.Max(0, Math.Min(to, chapters.Count - 1));
 
@@ -887,6 +928,8 @@
 
         _batchQueue.Clear();
         _selectedQueueChapter = null;
+        _historyPageIndex = 0;
+        Session.ClearHistory();
     }
 
     private void SelectQueueItem(string chapter)
@@ -928,6 +971,7 @@
 
         _isBatchRunning = true;
         _batchCancelRequested = false;
+        var chapterBeforeBatch = Workspace.CurrentChapterName;
 
         try
         {
@@ -971,6 +1015,14 @@
         finally
         {
             _isBatchRunning = false;
+
+            var restoreChapter = chapterBeforeBatch
+                ?? Workspace.AvailableChapters.FirstOrDefault();
+            if (restoreChapter is not null && Workspace.IsInitialized)
+            {
+                Workspace.SelectChapter(restoreChapter);
+            }
+
             await InvokeAsync(StateHasChanged);
         }
     }
@@ -1114,32 +1166,33 @@
     {
         if (Workspace.AvailableChapters.Count == 0)
         {
-            _queueRangeStart = 0;
-            _queueRangeEnd = 0;
+            _queueRangeStart = 1;
+            _queueRangeEnd = 1;
             return;
         }
 
-        var maxIndex = (double)(Workspace.AvailableChapters.Count - 1);
+        var maxValue = (double)Workspace.AvailableChapters.Count;
 
-        // On first load both are 0; set end to last chapter
-        if (_queueRangeEnd == 0 && _queueRangeStart == 0 && maxIndex > 0)
+        // On first load both are 0 (or 1 after reset); set full range
+        if (_queueRangeEnd <= 1 && _queueRangeStart <= 1 && maxValue > 1)
         {
-            _queueRangeEnd = maxIndex;
+            _queueRangeStart = 1;
+            _queueRangeEnd = maxValue;
             return;
         }
 
-        if (_queueRangeEnd > maxIndex)
+        if (_queueRangeEnd > maxValue)
         {
-            _queueRangeEnd = maxIndex;
+            _queueRangeEnd = maxValue;
         }
 
-        if (_queueRangeStart > maxIndex)
+        if (_queueRangeStart < 1 || _queueRangeStart > maxValue)
         {
-            _queueRangeStart = 0;
+            _queueRangeStart = 1;
         }
     }
 
-    private string GetChapterAtIndex(int index)
+    private string GetChapterAtIndex(int oneBasedIndex)
     {
         var chapters = Workspace.AvailableChapters;
         if (chapters.Count == 0)
@@ -1147,8 +1200,8 @@
             return "—";
         }
 
-        var clamped = Math.Max(0, Math.Min(index, chapters.Count - 1));
-        return chapters[clamped];
+        var arrayIndex = Math.Max(0, Math.Min(oneBasedIndex - 1, chapters.Count - 1));
+        return chapters[arrayIndex];
     }
 
     private string GetBookIndexOutputPath()
