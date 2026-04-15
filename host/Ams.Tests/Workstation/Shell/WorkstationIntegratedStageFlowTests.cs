@@ -123,6 +123,24 @@ public sealed class WorkstationIntegratedStageFlowTests
     }
 
     [Fact]
+    public void ResolveStateForPath_ProofPickupsOwnership_RemainsProofModuleContract()
+    {
+        const string path = "/proof/pickups";
+
+        var state = StageModuleRail.ResolveStateForPath(path);
+        AssertVisibleState(
+            state,
+            path,
+            StageRouteCatalog.StageIds.Proof,
+            StageRouteCatalog.ModuleIds.ProofPickups);
+
+        var match = StageRouteCatalog.Resolve(path);
+        Assert.True(match is not null, "Expected '/proof/pickups' to resolve after lifecycle/ledger UI expansion.");
+        Assert.Equal(StageRouteCatalog.StageIds.Proof, match!.Stage.Id, ignoreCase: true);
+        Assert.Equal(StageRouteCatalog.ModuleIds.ProofPickups, match.Module.Id, ignoreCase: true);
+    }
+
+    [Fact]
     public void ResolveStateForPath_LegacyPolishRoutesStayOutOfShellContract_WithoutBreakingProofDeepLinks()
     {
         var proofPath = StageRouteCatalog.BuildProofChapterCompatibilityPath("Chapter 02 / Review");
