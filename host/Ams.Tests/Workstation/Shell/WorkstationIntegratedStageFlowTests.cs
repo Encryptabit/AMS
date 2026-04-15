@@ -170,6 +170,104 @@ public sealed class WorkstationIntegratedStageFlowTests
         }
     }
 
+    [Theory]
+    [InlineData("Chapter 09 - Round Trip")]
+    [InlineData("Chapter 03 / Finale")]
+    [InlineData("Chapter 02: Punctuation!?,;")]
+    public void ResolveStateForPath_EditingPickupsEditingRoundTrip_PreservesChapterContinuity(string chapterName)
+    {
+        var editingEntryPath = StageRouteCatalog.BuildProofChapterCompatibilityPath(chapterName);
+        var pickupsPath = StageRouteCatalog.GetProofPickupsHandoffPath();
+        var editingReturnPath = ComposeProofEditingRoundTripPath(chapterName);
+
+        var entryMatch = StageRouteCatalog.Resolve(editingEntryPath);
+        Assert.True(
+            entryMatch is not null
+            && string.Equals(entryMatch.Stage.Id, StageRouteCatalog.StageIds.Proof, StringComparison.OrdinalIgnoreCase)
+            && string.Equals(entryMatch.Module.Id, StageRouteCatalog.ModuleIds.ProofEditing, StringComparison.OrdinalIgnoreCase),
+            $"Expected editing entry path '{editingEntryPath}' to resolve to proof-editing. Diagnostics: {entryMatch?.DiagnosticContext ?? "(none)"}.");
+
+        AssertVisibleState(
+            StageModuleRail.ResolveStateForPath(editingEntryPath),
+            editingEntryPath,
+            StageRouteCatalog.StageIds.Proof,
+            StageRouteCatalog.ModuleIds.ProofEditing);
+
+        AssertVisibleState(
+            StageModuleRail.ResolveStateForPath(pickupsPath),
+            pickupsPath,
+            StageRouteCatalog.StageIds.Proof,
+            StageRouteCatalog.ModuleIds.ProofPickups);
+
+        AssertVisibleState(
+            StageModuleRail.ResolveStateForPath(editingReturnPath),
+            editingReturnPath,
+            StageRouteCatalog.StageIds.Proof,
+            StageRouteCatalog.ModuleIds.ProofEditing);
+
+        Assert.Equal(editingEntryPath, editingReturnPath);
+
+        var returnMatch = StageRouteCatalog.Resolve(editingReturnPath);
+        Assert.True(
+            returnMatch is not null
+            && string.Equals(returnMatch.Stage.Id, StageRouteCatalog.StageIds.Proof, StringComparison.OrdinalIgnoreCase)
+            && string.Equals(returnMatch.Module.Id, StageRouteCatalog.ModuleIds.ProofEditing, StringComparison.OrdinalIgnoreCase),
+            $"Expected editing return path '{editingReturnPath}' to resolve to proof-editing. Diagnostics: {returnMatch?.DiagnosticContext ?? "(none)"}.");
+    }
+
+    [Theory]
+    [InlineData("pickups")]
+    [InlineData("overview")]
+    [InlineData("patterns")]
+    public void ResolveStateForPath_EditingRoundTripFallback_PreventsReservedSlugOwnershipDrift(string chapterName)
+    {
+        var pickupsPath = StageRouteCatalog.GetProofPickupsHandoffPath();
+        var editingReturnPath = ComposeProofEditingRoundTripPath(chapterName);
+        var expectedCanonicalChapterPath = StageRouteCatalog.BuildProofChapterCanonicalPath(chapterName);
+
+        Assert.Equal(expectedCanonicalChapterPath, editingReturnPath);
+
+        AssertVisibleState(
+            StageModuleRail.ResolveStateForPath(pickupsPath),
+            pickupsPath,
+            StageRouteCatalog.StageIds.Proof,
+            StageRouteCatalog.ModuleIds.ProofPickups);
+
+        AssertVisibleState(
+            StageModuleRail.ResolveStateForPath(editingReturnPath),
+            editingReturnPath,
+            StageRouteCatalog.StageIds.Proof,
+            StageRouteCatalog.ModuleIds.ProofEditing);
+
+        var returnMatch = StageRouteCatalog.Resolve(editingReturnPath);
+        Assert.True(
+            returnMatch is not null
+            && string.Equals(returnMatch.Stage.Id, StageRouteCatalog.StageIds.Proof, StringComparison.OrdinalIgnoreCase)
+            && string.Equals(returnMatch.Module.Id, StageRouteCatalog.ModuleIds.ProofEditing, StringComparison.OrdinalIgnoreCase),
+            $"Expected reserved slug return path '{editingReturnPath}' to resolve to proof-editing. Diagnostics: {returnMatch?.DiagnosticContext ?? "(none)"}.");
+
+        Assert.Contains("template='/proof/editing/{chapter}'", returnMatch!.DiagnosticContext, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string ComposeProofEditingRoundTripPath(string? activeChapterName)
+    {
+        var handoffPath = StageRouteCatalog.GetProofEditingHandoffPath(activeChapterName);
+
+        if (string.IsNullOrWhiteSpace(activeChapterName))
+        {
+            return handoffPath;
+        }
+
+        var handoffMatch = StageRouteCatalog.Resolve(handoffPath);
+        var resolvesToEditing = handoffMatch is not null
+            && string.Equals(handoffMatch.Stage.Id, StageRouteCatalog.StageIds.Proof, StringComparison.OrdinalIgnoreCase)
+            && string.Equals(handoffMatch.Module.Id, StageRouteCatalog.ModuleIds.ProofEditing, StringComparison.OrdinalIgnoreCase);
+
+        return resolvesToEditing
+            ? handoffPath
+            : StageRouteCatalog.BuildProofChapterCanonicalPath(activeChapterName);
+    }
+
     private static void AssertVisibleState(
         StageModuleRail.StageModuleRailState state,
         string path,

@@ -160,6 +160,39 @@ public sealed class ProofRouteCompatibilityTests
             expectedCompatibilityAlias);
     }
 
+    [Theory]
+    [InlineData(null, "/proof/editing", StageRouteCatalog.ModuleIds.ProofEditing, false)]
+    [InlineData("", "/proof/editing", StageRouteCatalog.ModuleIds.ProofEditing, false)]
+    [InlineData("   ", "/proof/editing", StageRouteCatalog.ModuleIds.ProofEditing, false)]
+    [InlineData("Chapter 01 - Intro", "/proof/chapter%2001%20-%20intro", StageRouteCatalog.ModuleIds.ProofEditing, true)]
+    [InlineData("Chapter 03 / Finale", "/proof/chapter%2003%20%2f%20finale", StageRouteCatalog.ModuleIds.ProofEditing, true)]
+    [InlineData("pickups", "/proof/editing/pickups", StageRouteCatalog.ModuleIds.ProofEditing, true)]
+    [InlineData("overview", "/proof/editing/overview", StageRouteCatalog.ModuleIds.ProofEditing, true)]
+    [InlineData("patterns", "/proof/editing/patterns", StageRouteCatalog.ModuleIds.ProofEditing, true)]
+    public void ProofEditingRoundTripComposePath_PreventsRouteOwnershipDrift(
+        string? activeChapterName,
+        string expectedPath,
+        string expectedModuleId,
+        bool expectedCompatibilityAlias)
+    {
+        var returnPath = ComposeProofEditingRoundTripPath(activeChapterName);
+
+        Assert.Equal(expectedPath, returnPath, ignoreCase: true);
+
+        _ = AssertResolves(
+            returnPath,
+            StageRouteCatalog.StageIds.Proof,
+            expectedModuleId,
+            expectedCompatibilityAlias);
+
+        var pickupsPath = StageRouteCatalog.GetProofPickupsHandoffPath();
+        _ = AssertResolves(
+            pickupsPath,
+            StageRouteCatalog.StageIds.Proof,
+            StageRouteCatalog.ModuleIds.ProofPickups,
+            expectedCompatibilityAlias: true);
+    }
+
     [Fact]
     public void ProofAndPolishPages_DeclareExpectedCanonicalAndCompatibilityTemplates()
     {
@@ -268,6 +301,25 @@ public sealed class ProofRouteCompatibilityTests
         Assert.True(
             collisions.Length == 0,
             $"Proof compatibility aliases collided with polish scaffold aliases: {string.Join(", ", collisions)}. Proof aliases: {string.Join(", ", proofAliases)}. Polish aliases: {string.Join(", ", polishAliases)}.");
+    }
+
+    private static string ComposeProofEditingRoundTripPath(string? activeChapterName)
+    {
+        var handoffPath = StageRouteCatalog.GetProofEditingHandoffPath(activeChapterName);
+
+        if (string.IsNullOrWhiteSpace(activeChapterName))
+        {
+            return handoffPath;
+        }
+
+        var handoffMatch = StageRouteCatalog.Resolve(handoffPath);
+        var resolvesToEditing = handoffMatch is not null
+            && string.Equals(handoffMatch.Stage.Id, StageRouteCatalog.StageIds.Proof, StringComparison.OrdinalIgnoreCase)
+            && string.Equals(handoffMatch.Module.Id, StageRouteCatalog.ModuleIds.ProofEditing, StringComparison.OrdinalIgnoreCase);
+
+        return resolvesToEditing
+            ? handoffPath
+            : StageRouteCatalog.BuildProofChapterCanonicalPath(activeChapterName);
     }
 
     private static StageRouteMatch AssertResolves(
