@@ -132,6 +132,30 @@ public sealed class ProofEditingContinuityTests
             "Navigation.NavigateTo(StageRouteCatalog.BuildProofChapterCompatibilityPath(chapters[next]));",
             "chapter keyboard navigation compatibility path generation");
 
+        AssertContainsAnchor(
+            source,
+            ChapterReviewRelativePath,
+            "data-proof-editing-handoff=\"pickups\"",
+            "editing-to-pickups continuity marker");
+
+        AssertContainsAnchor(
+            source,
+            ChapterReviewRelativePath,
+            "private void NavigateToPickups()",
+            "editing command-bar pickups handoff method declaration");
+
+        AssertContainsAnchor(
+            source,
+            ChapterReviewRelativePath,
+            "Navigation.NavigateTo(StageRouteCatalog.GetProofPickupsHandoffPath());",
+            "editing command-bar pickups handoff helper usage");
+
+        AssertDoesNotContainAnchor(
+            source,
+            ChapterReviewRelativePath,
+            "Navigation.NavigateTo(\"/proof/pickups\")",
+            "legacy hardcoded pickups navigation path literal");
+
         AssertDoesNotContainAnchor(
             source,
             ChapterReviewRelativePath,

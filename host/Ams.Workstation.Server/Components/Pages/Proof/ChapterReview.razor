@@ -31,6 +31,12 @@
                OnClick="ToggleReviewed">
         @(_isReviewed ? "Reviewed" : "Mark as Reviewed")
     </BitButton>
+    <span data-proof-editing-handoff="pickups">
+        <BitButton Variant="BitVariant.Outline"
+                   OnClick="NavigateToPickups">
+            Pickups
+        </BitButton>
+    </span>
 </BitStack>
 
 @if (_currentView == "playback")
@@ -211,6 +217,11 @@ else
 
         _currentView = view;
         StateHasChanged();
+    }
+
+    private void NavigateToPickups()
+    {
+        Navigation.NavigateTo(StageRouteCatalog.GetProofPickupsHandoffPath());
     }
 
     private void SnapshotPlaybackPosition()
