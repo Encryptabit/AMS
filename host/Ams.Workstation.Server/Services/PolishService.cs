@@ -120,56 +120,56 @@ public class PolishService
             {
                 case EditOperation.PickupReplace:
                 case EditOperation.RoomtoneReplace:
-                {
-                    var replacement = _undoService.LoadReplacementSegment(chapterStem, edit.Id);
-                    if (replacement is null)
                     {
-                        throw new InvalidOperationException(
-                            $"[RebuildChapter] Replacement segment missing for edit '{edit.Id}' " +
-                            $"({edit.Operation}). Cannot rebuild without all replacement segments. " +
-                            $"Remove the edit or restore the missing segment file before retrying.");
-                    }
+                        var replacement = _undoService.LoadReplacementSegment(chapterStem, edit.Id);
+                        if (replacement is null)
+                        {
+                            throw new InvalidOperationException(
+                                $"[RebuildChapter] Replacement segment missing for edit '{edit.Id}' " +
+                                $"({edit.Operation}). Cannot rebuild without all replacement segments. " +
+                                $"Remove the edit or restore the missing segment file before retrying.");
+                        }
 
-                    buffer = AudioSpliceService.ReplaceSegment(
-                        buffer,
-                        edit.BaselineStartSec,
-                        edit.BaselineEndSec,
-                        replacement,
-                        edit.CrossfadeDurationSec,
-                        edit.CrossfadeCurve);
-                    break;
-                }
+                        buffer = AudioSpliceService.ReplaceSegment(
+                            buffer,
+                            edit.BaselineStartSec,
+                            edit.BaselineEndSec,
+                            replacement,
+                            edit.CrossfadeDurationSec,
+                            edit.CrossfadeCurve);
+                        break;
+                    }
 
                 case EditOperation.RoomtoneInsert:
-                {
-                    var replacement = _undoService.LoadReplacementSegment(chapterStem, edit.Id);
-                    if (replacement is null)
                     {
-                        throw new InvalidOperationException(
-                            $"[RebuildChapter] Replacement segment missing for edit '{edit.Id}' " +
-                            $"(RoomtoneInsert). Cannot rebuild without all replacement segments. " +
-                            $"Remove the edit or restore the missing segment file before retrying.");
+                        var replacement = _undoService.LoadReplacementSegment(chapterStem, edit.Id);
+                        if (replacement is null)
+                        {
+                            throw new InvalidOperationException(
+                                $"[RebuildChapter] Replacement segment missing for edit '{edit.Id}' " +
+                                $"(RoomtoneInsert). Cannot rebuild without all replacement segments. " +
+                                $"Remove the edit or restore the missing segment file before retrying.");
+                        }
+
+                        buffer = AudioSpliceService.InsertAtPoint(
+                            buffer,
+                            edit.BaselineStartSec,
+                            replacement,
+                            edit.CrossfadeDurationSec,
+                            edit.CrossfadeCurve);
+                        break;
                     }
 
-                    buffer = AudioSpliceService.InsertAtPoint(
-                        buffer,
-                        edit.BaselineStartSec,
-                        replacement,
-                        edit.CrossfadeDurationSec,
-                        edit.CrossfadeCurve);
-                    break;
-                }
-
                 case EditOperation.RoomtoneDelete:
-                {
-                    buffer = AudioSpliceService.DeleteRegion(
-                        buffer,
-                        edit.BaselineStartSec,
-                        edit.BaselineEndSec,
-                        edit.CrossfadeDurationSec,
-                        edit.CrossfadeCurve);
-                    break;
-                }
+                    {
+                        buffer = AudioSpliceService.DeleteRegion(
+                            buffer,
+                            edit.BaselineStartSec,
+                            edit.BaselineEndSec,
+                            edit.CrossfadeDurationSec,
+                            edit.CrossfadeCurve);
+                        break;
+                    }
 
                 default:
                     Console.WriteLine(
@@ -818,6 +818,7 @@ public class PolishService
         try
         {
             item = FindStagedItem(replacementId, operationStem);
+            EnsureReplacementStatusForApply(item, operationStem);
             knownSentenceIds = BuildKnownSentenceIdSet(GetCurrentHydratedTranscript());
 
             EnsureNoActiveOverlapOrThrow(operationStem, item.Id, item.OriginalStartSec, item.OriginalEndSec);
@@ -859,7 +860,12 @@ public class PolishService
                 ct);
             transitionedToApplied = true;
 
-            _stagingQueue.UpdateStatus(replacementId, ReplacementStatus.Applied, syncEditList: false);
+            if (!_stagingQueue.UpdateStatus(replacementId, ReplacementStatus.Applied, syncEditList: false))
+            {
+                throw new InvalidOperationException(
+                    $"Pickup commit failed to update queue status for chapter '{operationStem}', op '{replacementId}'.");
+            }
+
             SyncPickupEditsFromEdl(operationStem, appliedDocument);
 
             var allEdits = _editListService.GetEdits(operationStem);
@@ -869,28 +875,22 @@ public class PolishService
             PersistCorrectedBuffer(operationHandle, resultBuffer);
             return (resultBuffer, timingDelta);
         }
-        catch (OperationCanceledException)
+        catch (OperationCanceledException cancelEx)
         {
             if (transitionedToApplied && item is not null && source is not null)
             {
-                try
+                var rollbackSucceeded = TryRollbackPickupTransition(
+                    operationStem,
+                    source,
+                    replacementId,
+                    rollbackEdlState: PickupEdlOperationState.Staged,
+                    rollbackQueueStatus: ReplacementStatus.Staged,
+                    phase: "apply-cancel",
+                    trigger: cancelEx);
+
+                if (!rollbackSucceeded)
                 {
-                    var revertedDocument = TransitionPickupEdlOperationState(
-                        operationStem,
-                        source,
-                        replacementId,
-                        PickupEdlOperationState.Staged,
-                        CancellationToken.None);
-                    _stagingQueue.UpdateStatus(replacementId, ReplacementStatus.Staged, syncEditList: false);
-                    SyncPickupEditsFromEdl(operationStem, revertedDocument);
-                }
-                catch (Exception rollbackEx)
-                {
-                    Log.Warn(
-                        "Pickup apply cancel rollback failed for op {OperationId} in chapter {ChapterStem}: {Message}",
-                        replacementId,
-                        operationStem,
-                        rollbackEx.Message);
+                    PersistFailedPickupState(operationStem, item, knownSentenceIds, cancelEx, CancellationToken.None);
                 }
             }
 
@@ -898,7 +898,23 @@ public class PolishService
         }
         catch (Exception ex)
         {
-            if (item is not null)
+            if (transitionedToApplied && item is not null && source is not null)
+            {
+                var rollbackSucceeded = TryRollbackPickupTransition(
+                    operationStem,
+                    source,
+                    replacementId,
+                    rollbackEdlState: PickupEdlOperationState.Staged,
+                    rollbackQueueStatus: ReplacementStatus.Staged,
+                    phase: "apply-failure",
+                    trigger: ex);
+
+                if (!rollbackSucceeded)
+                {
+                    PersistFailedPickupState(operationStem, item, knownSentenceIds, ex, CancellationToken.None);
+                }
+            }
+            else if (item is not null)
             {
                 PersistFailedPickupState(operationStem, item, knownSentenceIds, ex, ct);
             }
@@ -925,10 +941,13 @@ public class PolishService
         var mutationLock = GetChapterMutationLock(operationStem);
         await mutationLock.WaitAsync(ct).ConfigureAwait(false);
 
+        IReadOnlySet<int>? knownSentenceIds = null;
+        var transitionedToApplied = new List<(StagedReplacement Item, PickupEdlSourceReference Source)>();
+
         try
         {
             var chapterBuffer = GetChapterBuffer(operationHandle);
-            var knownSentenceIds = BuildKnownSentenceIdSet(GetCurrentHydratedTranscript());
+            knownSentenceIds = BuildKnownSentenceIdSet(GetCurrentHydratedTranscript());
             var appliedCount = 0;
             PickupEdlDocument? latestDocument = _pickupEdlStore.TryRead(operationStem, ct);
 
@@ -939,6 +958,7 @@ public class PolishService
                 try
                 {
                     var item = FindStagedItem(replacementId, operationStem);
+                    EnsureReplacementStatusForApply(item, operationStem);
                     EnsureNoActiveOverlapOrThrow(operationStem, item.Id, item.OriginalStartSec, item.OriginalEndSec);
 
                     var (seededDocument, source) = EnsurePickupEdlOperationSeeded(
@@ -973,7 +993,13 @@ public class PolishService
                         PickupEdlOperationState.Applied,
                         ct);
 
-                    _stagingQueue.UpdateStatus(replacementId, ReplacementStatus.Applied, syncEditList: false);
+                    if (!_stagingQueue.UpdateStatus(replacementId, ReplacementStatus.Applied, syncEditList: false))
+                    {
+                        throw new InvalidOperationException(
+                            $"Batch pickup commit failed to update queue status for chapter '{operationStem}', op '{replacementId}'.");
+                    }
+
+                    transitionedToApplied.Add((item, source));
                     appliedCount++;
                 }
                 catch (OperationCanceledException)
@@ -1013,6 +1039,52 @@ public class PolishService
 
             return (resultBuffer, appliedCount);
         }
+        catch (OperationCanceledException cancelEx)
+        {
+            if (transitionedToApplied.Count > 0)
+            {
+                var rollbackSucceeded = TryRollbackBatchPickupTransitions(
+                    operationStem,
+                    transitionedToApplied,
+                    rollbackEdlState: PickupEdlOperationState.Staged,
+                    rollbackQueueStatus: ReplacementStatus.Staged,
+                    phase: "batch-apply-cancel",
+                    trigger: cancelEx);
+
+                if (!rollbackSucceeded)
+                {
+                    foreach (var (item, _) in transitionedToApplied)
+                    {
+                        PersistFailedPickupState(operationStem, item, knownSentenceIds, cancelEx, CancellationToken.None);
+                    }
+                }
+            }
+
+            throw;
+        }
+        catch (Exception ex)
+        {
+            if (transitionedToApplied.Count > 0)
+            {
+                var rollbackSucceeded = TryRollbackBatchPickupTransitions(
+                    operationStem,
+                    transitionedToApplied,
+                    rollbackEdlState: PickupEdlOperationState.Staged,
+                    rollbackQueueStatus: ReplacementStatus.Staged,
+                    phase: "batch-apply-failure",
+                    trigger: ex);
+
+                if (!rollbackSucceeded)
+                {
+                    foreach (var (item, _) in transitionedToApplied)
+                    {
+                        PersistFailedPickupState(operationStem, item, knownSentenceIds, ex, CancellationToken.None);
+                    }
+                }
+            }
+
+            throw;
+        }
         finally
         {
             mutationLock.Release();
@@ -1040,30 +1112,54 @@ public class PolishService
 
         StagedReplacement? item = null;
         IReadOnlySet<int>? knownSentenceIds = null;
+        PickupEdlSourceReference? source = null;
+        PickupEdlOperation? operationBeforeRevert = null;
+        var transitionedToReverted = false;
 
         try
         {
             var undoRecord = _undoService.GetUndoRecord(replacementId)
-                ?? throw new InvalidOperationException($"No undo record found for replacement '{replacementId}'.");
+                ?? throw new InvalidOperationException(
+                    $"Pickup revert rejected for chapter '{operationStem}', op '{replacementId}': undo record is missing or malformed.");
             if (!string.Equals(undoRecord.ChapterStem, operationStem, StringComparison.OrdinalIgnoreCase))
             {
                 throw new InvalidOperationException(
-                    $"Replacement '{replacementId}' belongs to chapter '{undoRecord.ChapterStem}', " +
-                    $"but active chapter is '{operationStem}'.");
+                    $"Pickup revert rejected for op '{replacementId}': undo chapter='{undoRecord.ChapterStem}', active chapter='{operationStem}'.");
             }
 
             item = FindStagedItem(replacementId, operationStem);
+            EnsureReplacementStatusForRevert(item, operationStem);
             knownSentenceIds = BuildKnownSentenceIdSet(GetCurrentHydratedTranscript());
 
-            var source = ResolveSourceReferenceForReplacement(operationStem, item);
+            var current = _pickupEdlStore.TryRead(operationStem, ct)
+                ?? throw new InvalidOperationException(
+                    $"Pickup revert rejected for chapter '{operationStem}', op '{replacementId}': pickup EDL document not found.");
+
+            operationBeforeRevert = _pickupEdlEngine.TryGetOperation(current, replacementId)
+                ?? throw new InvalidOperationException(
+                    $"Pickup revert rejected for chapter '{operationStem}', op '{replacementId}': operation is missing from pickup EDL.");
+
+            if (operationBeforeRevert.State != PickupEdlOperationState.Applied)
+            {
+                throw new InvalidOperationException(
+                    $"Pickup revert rejected for chapter '{operationStem}', op '{replacementId}': EDL state is '{operationBeforeRevert.State}', expected 'Applied'.");
+            }
+
+            source = current.Source;
             var revertedDocument = TransitionPickupEdlOperationState(
                 operationStem,
                 source,
                 replacementId,
                 PickupEdlOperationState.Reverted,
                 ct);
+            transitionedToReverted = true;
 
-            _stagingQueue.UpdateStatus(replacementId, ReplacementStatus.Reverted, syncEditList: false);
+            if (!_stagingQueue.UpdateStatus(replacementId, ReplacementStatus.Reverted, syncEditList: false))
+            {
+                throw new InvalidOperationException(
+                    $"Pickup revert failed to update queue status for chapter '{operationStem}', op '{replacementId}'.");
+            }
+
             SyncPickupEditsFromEdl(operationStem, revertedDocument);
 
             var remainingEdits = _editListService.GetEdits(operationStem);
@@ -1085,15 +1181,42 @@ public class PolishService
 
             return (resultBuffer, timingDelta);
         }
-        catch (OperationCanceledException)
+        catch (OperationCanceledException cancelEx)
         {
+            if (transitionedToReverted && item is not null && source is not null && operationBeforeRevert is not null)
+            {
+                var rollbackSucceeded = TryRestorePickupOperationSnapshot(
+                    operationStem,
+                    source,
+                    operationBeforeRevert,
+                    rollbackQueueStatus: ReplacementStatus.Applied,
+                    phase: "revert-cancel",
+                    trigger: cancelEx);
+
+                if (!rollbackSucceeded)
+                {
+                    PersistFailedPickupState(operationStem, item, knownSentenceIds, cancelEx, CancellationToken.None);
+                }
+            }
+
             throw;
         }
         catch (Exception ex)
         {
-            if (item is not null)
+            if (transitionedToReverted && item is not null && source is not null && operationBeforeRevert is not null)
             {
-                PersistFailedPickupState(operationStem, item, knownSentenceIds, ex, ct);
+                var rollbackSucceeded = TryRestorePickupOperationSnapshot(
+                    operationStem,
+                    source,
+                    operationBeforeRevert,
+                    rollbackQueueStatus: ReplacementStatus.Applied,
+                    phase: "revert-failure",
+                    trigger: ex);
+
+                if (!rollbackSucceeded)
+                {
+                    PersistFailedPickupState(operationStem, item, knownSentenceIds, ex, CancellationToken.None);
+                }
             }
 
             throw;
@@ -1152,31 +1275,31 @@ public class PolishService
             switch (request.Operation)
             {
                 case RoomtoneOperation.Insert:
-                {
-                    var insertDuration = request.EndSec - request.StartSec;
-                    replacementAudio = insertDuration > 0.001
-                        ? AudioSpliceService.GenerateRoomtoneFill(roomtoneBuffer, insertDuration)
-                        : roomtoneBuffer;
-                    replacementDurationSec = (double)replacementAudio.Length / replacementAudio.SampleRate;
-                    editOp = EditOperation.RoomtoneInsert;
-                    break;
-                }
+                    {
+                        var insertDuration = request.EndSec - request.StartSec;
+                        replacementAudio = insertDuration > 0.001
+                            ? AudioSpliceService.GenerateRoomtoneFill(roomtoneBuffer, insertDuration)
+                            : roomtoneBuffer;
+                        replacementDurationSec = (double)replacementAudio.Length / replacementAudio.SampleRate;
+                        editOp = EditOperation.RoomtoneInsert;
+                        break;
+                    }
 
                 case RoomtoneOperation.Replace:
-                {
-                    var regionDuration = request.EndSec - request.StartSec;
-                    replacementAudio = AudioSpliceService.GenerateRoomtoneFill(roomtoneBuffer, regionDuration);
-                    replacementDurationSec = regionDuration;
-                    editOp = EditOperation.RoomtoneReplace;
-                    break;
-                }
+                    {
+                        var regionDuration = request.EndSec - request.StartSec;
+                        replacementAudio = AudioSpliceService.GenerateRoomtoneFill(roomtoneBuffer, regionDuration);
+                        replacementDurationSec = regionDuration;
+                        editOp = EditOperation.RoomtoneReplace;
+                        break;
+                    }
 
                 case RoomtoneOperation.Delete:
-                {
-                    replacementDurationSec = 0;
-                    editOp = EditOperation.RoomtoneDelete;
-                    break;
-                }
+                    {
+                        replacementDurationSec = 0;
+                        editOp = EditOperation.RoomtoneDelete;
+                        break;
+                    }
 
                 default:
                     throw new ArgumentOutOfRangeException(nameof(request.Operation));
@@ -1414,11 +1537,42 @@ public class PolishService
         if (current is not null)
         {
             var existing = _pickupEdlEngine.TryGetOperation(current, replacement.Id);
-            if (existing is not null &&
-                existing.State == PickupEdlOperationState.Staged &&
-                OperationMatchesReplacement(existing, replacement))
+            if (existing is not null)
             {
-                return (current, current.Source);
+                if (!OperationMatchesReplacement(existing, replacement))
+                {
+                    throw new InvalidOperationException(
+                        $"Pickup commit rejected for chapter '{chapterStem}', op '{replacement.Id}': " +
+                        "existing pickup EDL operation payload differs from staged queue payload.");
+                }
+
+                if (existing.State == PickupEdlOperationState.Staged)
+                {
+                    return (current, current.Source);
+                }
+
+                if (existing.State == PickupEdlOperationState.Failed)
+                {
+                    var restaged = TransitionPickupEdlOperationState(
+                        chapterStem,
+                        current.Source,
+                        replacement.Id,
+                        PickupEdlOperationState.Staged,
+                        ct);
+
+                    if (!_stagingQueue.UpdateStatus(replacement.Id, ReplacementStatus.Staged, syncEditList: false))
+                    {
+                        throw new InvalidOperationException(
+                            $"Pickup commit failed to restage queue status for chapter '{chapterStem}', op '{replacement.Id}'.");
+                    }
+
+                    SyncPickupEditsFromEdl(chapterStem, restaged);
+                    return (restaged, restaged.Source);
+                }
+
+                throw new InvalidOperationException(
+                    $"Pickup commit rejected for chapter '{chapterStem}', op '{replacement.Id}': " +
+                    $"existing pickup EDL state is '{existing.State}', expected 'Staged'.");
             }
         }
 
@@ -1565,6 +1719,191 @@ public class PolishService
             state,
             reason,
             _pickupEdlEngine.BuildDeterministicOrderingDiagnostics(document));
+    }
+
+    private static void EnsureReplacementStatusForApply(StagedReplacement replacement, string chapterStem)
+    {
+        if (replacement.Status != ReplacementStatus.Staged)
+        {
+            throw new InvalidOperationException(
+                $"Pickup commit rejected for chapter '{chapterStem}', op '{replacement.Id}': " +
+                $"queue state is '{replacement.Status}', expected 'Staged'.");
+        }
+    }
+
+    private static void EnsureReplacementStatusForRevert(StagedReplacement replacement, string chapterStem)
+    {
+        if (replacement.Status != ReplacementStatus.Applied)
+        {
+            throw new InvalidOperationException(
+                $"Pickup revert rejected for chapter '{chapterStem}', op '{replacement.Id}': " +
+                $"queue state is '{replacement.Status}', expected 'Applied'.");
+        }
+    }
+
+    internal bool TryRollbackPickupTransition(
+        string chapterStem,
+        PickupEdlSourceReference source,
+        string replacementId,
+        PickupEdlOperationState rollbackEdlState,
+        ReplacementStatus rollbackQueueStatus,
+        string phase,
+        Exception trigger)
+    {
+        try
+        {
+            var rolledBack = TransitionPickupEdlOperationState(
+                chapterStem,
+                source,
+                replacementId,
+                rollbackEdlState,
+                CancellationToken.None);
+
+            if (!_stagingQueue.UpdateStatus(replacementId, rollbackQueueStatus, syncEditList: false))
+            {
+                throw new InvalidOperationException(
+                    $"Pickup rollback failed to update queue status for chapter '{chapterStem}', op '{replacementId}'.");
+            }
+
+            SyncPickupEditsFromEdl(chapterStem, rolledBack);
+
+            Log.Warn(
+                "Pickup lifecycle rollback succeeded: chapter={ChapterStem}, op={OperationId}, phase={Phase}, rollbackState={RollbackState}, revision={Revision}, trigger={Trigger}",
+                chapterStem,
+                replacementId,
+                phase,
+                rollbackEdlState,
+                rolledBack.Revision,
+                trigger.Message);
+            return true;
+        }
+        catch (Exception rollbackEx)
+        {
+            Log.Warn(
+                "Pickup lifecycle rollback failed: chapter={ChapterStem}, op={OperationId}, phase={Phase}, rollbackState={RollbackState}, trigger={Trigger}, message={Message}",
+                chapterStem,
+                replacementId,
+                phase,
+                rollbackEdlState,
+                trigger.Message,
+                rollbackEx.Message);
+            return false;
+        }
+    }
+
+    internal bool TryRollbackBatchPickupTransitions(
+        string chapterStem,
+        IReadOnlyList<(StagedReplacement Item, PickupEdlSourceReference Source)> transitioned,
+        PickupEdlOperationState rollbackEdlState,
+        ReplacementStatus rollbackQueueStatus,
+        string phase,
+        Exception trigger)
+    {
+        if (transitioned.Count == 0)
+        {
+            return true;
+        }
+
+        try
+        {
+            PickupEdlDocument? latest = null;
+
+            for (var i = transitioned.Count - 1; i >= 0; i--)
+            {
+                var (item, source) = transitioned[i];
+
+                latest = TransitionPickupEdlOperationState(
+                    chapterStem,
+                    source,
+                    item.Id,
+                    rollbackEdlState,
+                    CancellationToken.None);
+
+                if (!_stagingQueue.UpdateStatus(item.Id, rollbackQueueStatus, syncEditList: false))
+                {
+                    throw new InvalidOperationException(
+                        $"Batch pickup rollback failed to update queue status for chapter '{chapterStem}', op '{item.Id}'.");
+                }
+            }
+
+            if (latest is not null)
+            {
+                SyncPickupEditsFromEdl(chapterStem, latest);
+            }
+
+            Log.Warn(
+                "Batch pickup lifecycle rollback succeeded: chapter={ChapterStem}, phase={Phase}, rollbackState={RollbackState}, opCount={OperationCount}, revision={Revision}, trigger={Trigger}",
+                chapterStem,
+                phase,
+                rollbackEdlState,
+                transitioned.Count,
+                latest?.Revision ?? -1,
+                trigger.Message);
+            return true;
+        }
+        catch (Exception rollbackEx)
+        {
+            Log.Warn(
+                "Batch pickup lifecycle rollback failed: chapter={ChapterStem}, phase={Phase}, rollbackState={RollbackState}, opCount={OperationCount}, trigger={Trigger}, message={Message}",
+                chapterStem,
+                phase,
+                rollbackEdlState,
+                transitioned.Count,
+                trigger.Message,
+                rollbackEx.Message);
+            return false;
+        }
+    }
+
+    internal bool TryRestorePickupOperationSnapshot(
+        string chapterStem,
+        PickupEdlSourceReference source,
+        PickupEdlOperation operationSnapshot,
+        ReplacementStatus rollbackQueueStatus,
+        string phase,
+        Exception trigger)
+    {
+        try
+        {
+            var restoredOperation = operationSnapshot;
+            var restored = _pickupEdlStore.Mutate(
+                chapterStem,
+                source,
+                document => _pickupEdlEngine.UpsertOperation(document, restoredOperation),
+                CancellationToken.None);
+
+            LogPickupEdlTransition(restored, restoredOperation.Id, restoredOperation.State, reason: $"{phase}-snapshot-restore");
+
+            if (!_stagingQueue.UpdateStatus(restoredOperation.Id, rollbackQueueStatus, syncEditList: false))
+            {
+                throw new InvalidOperationException(
+                    $"Pickup snapshot rollback failed to update queue status for chapter '{chapterStem}', op '{restoredOperation.Id}'.");
+            }
+
+            SyncPickupEditsFromEdl(chapterStem, restored);
+
+            Log.Warn(
+                "Pickup snapshot rollback succeeded: chapter={ChapterStem}, op={OperationId}, phase={Phase}, rollbackState={RollbackState}, revision={Revision}, trigger={Trigger}",
+                chapterStem,
+                restoredOperation.Id,
+                phase,
+                restoredOperation.State,
+                restored.Revision,
+                trigger.Message);
+            return true;
+        }
+        catch (Exception rollbackEx)
+        {
+            Log.Warn(
+                "Pickup snapshot rollback failed: chapter={ChapterStem}, op={OperationId}, phase={Phase}, rollbackState={RollbackState}, trigger={Trigger}, message={Message}",
+                chapterStem,
+                operationSnapshot.Id,
+                phase,
+                operationSnapshot.State,
+                trigger.Message,
+                rollbackEx.Message);
+            return false;
+        }
     }
 
     /// <summary>
