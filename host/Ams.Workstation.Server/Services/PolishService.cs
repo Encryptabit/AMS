@@ -49,6 +49,7 @@ public class PolishService
     private readonly PreviewBufferService _previewBuffer;
     private readonly EditListService _editListService;
     private readonly PickupEdlStore _pickupEdlStore;
+    private readonly PickupArtifactLedgerStore _pickupArtifactLedgerStore;
     private readonly PickupEdlEngine _pickupEdlEngine;
     private readonly PickupSourceBufferCache _pickupSourceBufferCache;
 
@@ -60,6 +61,7 @@ public class PolishService
         PreviewBufferService previewBuffer,
         EditListService editListService,
         PickupEdlStore pickupEdlStore,
+        PickupArtifactLedgerStore pickupArtifactLedgerStore,
         PickupEdlEngine pickupEdlEngine,
         PickupSourceBufferCache pickupSourceBufferCache)
     {
@@ -70,6 +72,7 @@ public class PolishService
         _previewBuffer = previewBuffer;
         _editListService = editListService;
         _pickupEdlStore = pickupEdlStore;
+        _pickupArtifactLedgerStore = pickupArtifactLedgerStore;
         _pickupEdlEngine = pickupEdlEngine;
         _pickupSourceBufferCache = pickupSourceBufferCache;
     }
@@ -828,8 +831,19 @@ public class PolishService
                 item,
                 knownSentenceIds,
                 ct);
-            _ = seededDocument;
             source = seededSource;
+
+            TryAppendPickupArtifactLedgerEntry(
+                chapterStem: operationStem,
+                operationId: replacementId,
+                transition: PickupArtifactLedgerTransitions.CommitAttempt,
+                phase: "apply",
+                edlRevision: seededDocument.Revision,
+                queueStatus: ReplacementStatus.Staged,
+                edlState: PickupEdlOperationState.Staged,
+                rollbackVerdict: PickupArtifactLedgerRollbackVerdict.NotRequired,
+                failureReason: null,
+                ct);
 
             var chapterBuffer = GetChapterBuffer(operationHandle);
             var pickupTrimmed = LoadPickupSliceForReplacement(operationStem, item, source, ct);
@@ -873,10 +887,27 @@ public class PolishService
             var timingDelta = pickupDuration - originalDuration;
 
             PersistCorrectedBuffer(operationHandle, resultBuffer);
+
+            TryAppendPickupArtifactLedgerEntry(
+                chapterStem: operationStem,
+                operationId: replacementId,
+                transition: PickupArtifactLedgerTransitions.CommitSuccess,
+                phase: "apply",
+                edlRevision: appliedDocument.Revision,
+                queueStatus: ReplacementStatus.Applied,
+                edlState: PickupEdlOperationState.Applied,
+                rollbackVerdict: PickupArtifactLedgerRollbackVerdict.NotRequired,
+                failureReason: null,
+                CancellationToken.None);
+
             return (resultBuffer, timingDelta);
         }
         catch (OperationCanceledException cancelEx)
         {
+            var rollbackVerdict = PickupArtifactLedgerRollbackVerdict.NotAttempted;
+            var terminalQueueStatus = ReplacementStatus.Failed;
+            var terminalEdlState = PickupEdlOperationState.Failed;
+
             if (transitionedToApplied && item is not null && source is not null)
             {
                 var rollbackSucceeded = TryRollbackPickupTransition(
@@ -888,16 +919,43 @@ public class PolishService
                     phase: "apply-cancel",
                     trigger: cancelEx);
 
+                rollbackVerdict = rollbackSucceeded
+                    ? PickupArtifactLedgerRollbackVerdict.Succeeded
+                    : PickupArtifactLedgerRollbackVerdict.Failed;
+                terminalQueueStatus = rollbackSucceeded ? ReplacementStatus.Staged : ReplacementStatus.Failed;
+                terminalEdlState = rollbackSucceeded ? PickupEdlOperationState.Staged : PickupEdlOperationState.Failed;
+
                 if (!rollbackSucceeded)
                 {
                     PersistFailedPickupState(operationStem, item, knownSentenceIds, cancelEx, CancellationToken.None);
                 }
             }
+            else if (item is not null)
+            {
+                terminalQueueStatus = item.Status;
+                terminalEdlState = PickupEdlOperationState.Staged;
+            }
+
+            TryAppendPickupArtifactLedgerEntry(
+                chapterStem: operationStem,
+                operationId: replacementId,
+                transition: PickupArtifactLedgerTransitions.CommitCancelled,
+                phase: "apply-cancel",
+                edlRevision: ResolveCurrentPickupEdlRevision(operationStem, CancellationToken.None),
+                queueStatus: terminalQueueStatus,
+                edlState: terminalEdlState,
+                rollbackVerdict: rollbackVerdict,
+                failureReason: cancelEx.Message,
+                CancellationToken.None);
 
             throw;
         }
         catch (Exception ex)
         {
+            var rollbackVerdict = PickupArtifactLedgerRollbackVerdict.NotAttempted;
+            var terminalQueueStatus = ReplacementStatus.Failed;
+            var terminalEdlState = PickupEdlOperationState.Failed;
+
             if (transitionedToApplied && item is not null && source is not null)
             {
                 var rollbackSucceeded = TryRollbackPickupTransition(
@@ -909,6 +967,12 @@ public class PolishService
                     phase: "apply-failure",
                     trigger: ex);
 
+                rollbackVerdict = rollbackSucceeded
+                    ? PickupArtifactLedgerRollbackVerdict.Succeeded
+                    : PickupArtifactLedgerRollbackVerdict.Failed;
+                terminalQueueStatus = rollbackSucceeded ? ReplacementStatus.Staged : ReplacementStatus.Failed;
+                terminalEdlState = rollbackSucceeded ? PickupEdlOperationState.Staged : PickupEdlOperationState.Failed;
+
                 if (!rollbackSucceeded)
                 {
                     PersistFailedPickupState(operationStem, item, knownSentenceIds, ex, CancellationToken.None);
@@ -917,7 +981,21 @@ public class PolishService
             else if (item is not null)
             {
                 PersistFailedPickupState(operationStem, item, knownSentenceIds, ex, ct);
+                terminalQueueStatus = ReplacementStatus.Failed;
+                terminalEdlState = PickupEdlOperationState.Failed;
             }
+
+            TryAppendPickupArtifactLedgerEntry(
+                chapterStem: operationStem,
+                operationId: replacementId,
+                transition: PickupArtifactLedgerTransitions.CommitFailure,
+                phase: "apply-failure",
+                edlRevision: ResolveCurrentPickupEdlRevision(operationStem, CancellationToken.None),
+                queueStatus: terminalQueueStatus,
+                edlState: terminalEdlState,
+                rollbackVerdict: rollbackVerdict,
+                failureReason: ex.Message,
+                CancellationToken.None);
 
             throw;
         }
@@ -968,6 +1046,18 @@ public class PolishService
                         ct);
                     latestDocument = seededDocument;
 
+                    TryAppendPickupArtifactLedgerEntry(
+                        chapterStem: operationStem,
+                        operationId: replacementId,
+                        transition: PickupArtifactLedgerTransitions.CommitAttempt,
+                        phase: "batch-apply",
+                        edlRevision: seededDocument.Revision,
+                        queueStatus: ReplacementStatus.Staged,
+                        edlState: PickupEdlOperationState.Staged,
+                        rollbackVerdict: PickupArtifactLedgerRollbackVerdict.NotRequired,
+                        failureReason: null,
+                        ct);
+
                     var pickupTrimmed = LoadPickupSliceForReplacement(operationStem, item, source, ct);
                     var pickupDuration = (double)pickupTrimmed.Length / pickupTrimmed.SampleRate;
 
@@ -1001,6 +1091,18 @@ public class PolishService
 
                     transitionedToApplied.Add((item, source));
                     appliedCount++;
+
+                    TryAppendPickupArtifactLedgerEntry(
+                        chapterStem: operationStem,
+                        operationId: replacementId,
+                        transition: PickupArtifactLedgerTransitions.CommitSuccess,
+                        phase: "batch-apply",
+                        edlRevision: latestDocument.Revision,
+                        queueStatus: ReplacementStatus.Applied,
+                        edlState: PickupEdlOperationState.Applied,
+                        rollbackVerdict: PickupArtifactLedgerRollbackVerdict.NotRequired,
+                        failureReason: null,
+                        CancellationToken.None);
                 }
                 catch (OperationCanceledException)
                 {
@@ -1013,6 +1115,18 @@ public class PolishService
                     {
                         PersistFailedPickupState(operationStem, failedItem, knownSentenceIds, ex, ct);
                     }
+
+                    TryAppendPickupArtifactLedgerEntry(
+                        chapterStem: operationStem,
+                        operationId: replacementId,
+                        transition: PickupArtifactLedgerTransitions.CommitFailure,
+                        phase: "batch-apply-item",
+                        edlRevision: ResolveCurrentPickupEdlRevision(operationStem, CancellationToken.None),
+                        queueStatus: failedItem?.Status ?? ReplacementStatus.Failed,
+                        edlState: PickupEdlOperationState.Failed,
+                        rollbackVerdict: PickupArtifactLedgerRollbackVerdict.NotAttempted,
+                        failureReason: ex.Message,
+                        CancellationToken.None);
 
                     Log.Warn(
                         "Batch pickup commit skipped replacement {ReplacementId} in chapter {ChapterStem}: {Message}",
@@ -1058,6 +1172,23 @@ public class PolishService
                         PersistFailedPickupState(operationStem, item, knownSentenceIds, cancelEx, CancellationToken.None);
                     }
                 }
+
+                foreach (var (item, _) in transitionedToApplied)
+                {
+                    TryAppendPickupArtifactLedgerEntry(
+                        chapterStem: operationStem,
+                        operationId: item.Id,
+                        transition: PickupArtifactLedgerTransitions.CommitCancelled,
+                        phase: "batch-apply-cancel",
+                        edlRevision: ResolveCurrentPickupEdlRevision(operationStem, CancellationToken.None),
+                        queueStatus: rollbackSucceeded ? ReplacementStatus.Staged : ReplacementStatus.Failed,
+                        edlState: rollbackSucceeded ? PickupEdlOperationState.Staged : PickupEdlOperationState.Failed,
+                        rollbackVerdict: rollbackSucceeded
+                            ? PickupArtifactLedgerRollbackVerdict.Succeeded
+                            : PickupArtifactLedgerRollbackVerdict.Failed,
+                        failureReason: cancelEx.Message,
+                        CancellationToken.None);
+                }
             }
 
             throw;
@@ -1080,6 +1211,23 @@ public class PolishService
                     {
                         PersistFailedPickupState(operationStem, item, knownSentenceIds, ex, CancellationToken.None);
                     }
+                }
+
+                foreach (var (item, _) in transitionedToApplied)
+                {
+                    TryAppendPickupArtifactLedgerEntry(
+                        chapterStem: operationStem,
+                        operationId: item.Id,
+                        transition: PickupArtifactLedgerTransitions.CommitFailure,
+                        phase: "batch-apply-failure",
+                        edlRevision: ResolveCurrentPickupEdlRevision(operationStem, CancellationToken.None),
+                        queueStatus: rollbackSucceeded ? ReplacementStatus.Staged : ReplacementStatus.Failed,
+                        edlState: rollbackSucceeded ? PickupEdlOperationState.Staged : PickupEdlOperationState.Failed,
+                        rollbackVerdict: rollbackSucceeded
+                            ? PickupArtifactLedgerRollbackVerdict.Succeeded
+                            : PickupArtifactLedgerRollbackVerdict.Failed,
+                        failureReason: ex.Message,
+                        CancellationToken.None);
                 }
             }
 
@@ -1145,6 +1293,18 @@ public class PolishService
                     $"Pickup revert rejected for chapter '{operationStem}', op '{replacementId}': EDL state is '{operationBeforeRevert.State}', expected 'Applied'.");
             }
 
+            TryAppendPickupArtifactLedgerEntry(
+                chapterStem: operationStem,
+                operationId: replacementId,
+                transition: PickupArtifactLedgerTransitions.RevertAttempt,
+                phase: "revert",
+                edlRevision: current.Revision,
+                queueStatus: ReplacementStatus.Applied,
+                edlState: PickupEdlOperationState.Applied,
+                rollbackVerdict: PickupArtifactLedgerRollbackVerdict.NotRequired,
+                failureReason: null,
+                ct);
+
             source = current.Source;
             var revertedDocument = TransitionPickupEdlOperationState(
                 operationStem,
@@ -1179,10 +1339,26 @@ public class PolishService
             var timingDelta = undoRecord.OriginalDurationSec - undoRecord.ReplacementDurationSec;
             PersistCorrectedBuffer(operationHandle, resultBuffer);
 
+            TryAppendPickupArtifactLedgerEntry(
+                chapterStem: operationStem,
+                operationId: replacementId,
+                transition: PickupArtifactLedgerTransitions.RevertSuccess,
+                phase: "revert",
+                edlRevision: revertedDocument.Revision,
+                queueStatus: ReplacementStatus.Reverted,
+                edlState: PickupEdlOperationState.Reverted,
+                rollbackVerdict: PickupArtifactLedgerRollbackVerdict.NotRequired,
+                failureReason: null,
+                CancellationToken.None);
+
             return (resultBuffer, timingDelta);
         }
         catch (OperationCanceledException cancelEx)
         {
+            var rollbackVerdict = PickupArtifactLedgerRollbackVerdict.NotAttempted;
+            var terminalQueueStatus = item?.Status ?? ReplacementStatus.Failed;
+            var terminalEdlState = operationBeforeRevert?.State ?? PickupEdlOperationState.Failed;
+
             if (transitionedToReverted && item is not null && source is not null && operationBeforeRevert is not null)
             {
                 var rollbackSucceeded = TryRestorePickupOperationSnapshot(
@@ -1193,16 +1369,38 @@ public class PolishService
                     phase: "revert-cancel",
                     trigger: cancelEx);
 
+                rollbackVerdict = rollbackSucceeded
+                    ? PickupArtifactLedgerRollbackVerdict.Succeeded
+                    : PickupArtifactLedgerRollbackVerdict.Failed;
+                terminalQueueStatus = rollbackSucceeded ? ReplacementStatus.Applied : ReplacementStatus.Failed;
+                terminalEdlState = rollbackSucceeded ? PickupEdlOperationState.Applied : PickupEdlOperationState.Failed;
+
                 if (!rollbackSucceeded)
                 {
                     PersistFailedPickupState(operationStem, item, knownSentenceIds, cancelEx, CancellationToken.None);
                 }
             }
 
+            TryAppendPickupArtifactLedgerEntry(
+                chapterStem: operationStem,
+                operationId: replacementId,
+                transition: PickupArtifactLedgerTransitions.RevertCancelled,
+                phase: "revert-cancel",
+                edlRevision: ResolveCurrentPickupEdlRevision(operationStem, CancellationToken.None),
+                queueStatus: terminalQueueStatus,
+                edlState: terminalEdlState,
+                rollbackVerdict: rollbackVerdict,
+                failureReason: cancelEx.Message,
+                CancellationToken.None);
+
             throw;
         }
         catch (Exception ex)
         {
+            var rollbackVerdict = PickupArtifactLedgerRollbackVerdict.NotAttempted;
+            var terminalQueueStatus = item?.Status ?? ReplacementStatus.Failed;
+            var terminalEdlState = operationBeforeRevert?.State ?? PickupEdlOperationState.Failed;
+
             if (transitionedToReverted && item is not null && source is not null && operationBeforeRevert is not null)
             {
                 var rollbackSucceeded = TryRestorePickupOperationSnapshot(
@@ -1213,11 +1411,29 @@ public class PolishService
                     phase: "revert-failure",
                     trigger: ex);
 
+                rollbackVerdict = rollbackSucceeded
+                    ? PickupArtifactLedgerRollbackVerdict.Succeeded
+                    : PickupArtifactLedgerRollbackVerdict.Failed;
+                terminalQueueStatus = rollbackSucceeded ? ReplacementStatus.Applied : ReplacementStatus.Failed;
+                terminalEdlState = rollbackSucceeded ? PickupEdlOperationState.Applied : PickupEdlOperationState.Failed;
+
                 if (!rollbackSucceeded)
                 {
                     PersistFailedPickupState(operationStem, item, knownSentenceIds, ex, CancellationToken.None);
                 }
             }
+
+            TryAppendPickupArtifactLedgerEntry(
+                chapterStem: operationStem,
+                operationId: replacementId,
+                transition: PickupArtifactLedgerTransitions.RevertFailure,
+                phase: "revert-failure",
+                edlRevision: ResolveCurrentPickupEdlRevision(operationStem, CancellationToken.None),
+                queueStatus: terminalQueueStatus,
+                edlState: terminalEdlState,
+                rollbackVerdict: rollbackVerdict,
+                failureReason: ex.Message,
+                CancellationToken.None);
 
             throw;
         }
@@ -1721,6 +1937,89 @@ public class PolishService
             _pickupEdlEngine.BuildDeterministicOrderingDiagnostics(document));
     }
 
+    private bool TryAppendPickupArtifactLedgerEntry(
+        string chapterStem,
+        string operationId,
+        string transition,
+        string phase,
+        int edlRevision,
+        ReplacementStatus queueStatus,
+        PickupEdlOperationState edlState,
+        PickupArtifactLedgerRollbackVerdict rollbackVerdict,
+        string? failureReason,
+        CancellationToken ct)
+    {
+        try
+        {
+            var artifactRefs = BuildPickupArtifactRefs(chapterStem);
+            var updated = _pickupArtifactLedgerStore.Append(
+                chapterStem,
+                new PickupArtifactLedgerEntryDraft(
+                    operationId: operationId,
+                    transition: transition,
+                    phase: phase,
+                    edlRevision: edlRevision,
+                    queueStatus: queueStatus,
+                    edlState: edlState,
+                    rollbackVerdict: rollbackVerdict,
+                    artifactRefs: artifactRefs,
+                    failureReason: failureReason,
+                    occurredAtUtc: DateTime.UtcNow),
+                ct);
+
+            Log.Info(
+                "Pickup artifact ledger transition: chapter={ChapterStem}, revision={Revision}, op={OperationId}, transition={Transition}, phase={Phase}, rollback={RollbackVerdict}",
+                chapterStem,
+                updated.Revision,
+                operationId,
+                transition,
+                phase,
+                rollbackVerdict);
+            return true;
+        }
+        catch (Exception ex)
+        {
+            Log.Warn(
+                "Pickup artifact ledger append failed: chapter={ChapterStem}, op={OperationId}, transition={Transition}, phase={Phase}, message={Message}",
+                chapterStem,
+                operationId,
+                transition,
+                phase,
+                ex.Message);
+            return false;
+        }
+    }
+
+    private static IReadOnlyList<string> BuildPickupArtifactRefs(string chapterStem)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(chapterStem);
+
+        return
+        [
+            $".polish/edl/{chapterStem}.artifact-ledger.json",
+            $".polish/edl/{chapterStem}.edl.json"
+        ];
+    }
+
+    private int ResolveCurrentPickupEdlRevision(string chapterStem, CancellationToken ct)
+    {
+        try
+        {
+            var current = _pickupEdlStore.TryRead(chapterStem, ct);
+            return current?.Revision ?? 0;
+        }
+        catch
+        {
+            return 0;
+        }
+    }
+
+    private ReplacementStatus ResolveQueueStatus(string chapterStem, string replacementId, ReplacementStatus fallback)
+    {
+        var item = TryFindStagedItem(replacementId, chapterStem);
+        return item?.Status ?? fallback;
+    }
+
     private static void EnsureReplacementStatusForApply(StagedReplacement replacement, string chapterStem)
     {
         if (replacement.Status != ReplacementStatus.Staged)
@@ -1767,6 +2066,18 @@ public class PolishService
 
             SyncPickupEditsFromEdl(chapterStem, rolledBack);
 
+            TryAppendPickupArtifactLedgerEntry(
+                chapterStem: chapterStem,
+                operationId: replacementId,
+                transition: PickupArtifactLedgerTransitions.RollbackSucceeded,
+                phase: phase,
+                edlRevision: rolledBack.Revision,
+                queueStatus: rollbackQueueStatus,
+                edlState: rollbackEdlState,
+                rollbackVerdict: PickupArtifactLedgerRollbackVerdict.Succeeded,
+                failureReason: trigger.Message,
+                CancellationToken.None);
+
             Log.Warn(
                 "Pickup lifecycle rollback succeeded: chapter={ChapterStem}, op={OperationId}, phase={Phase}, rollbackState={RollbackState}, revision={Revision}, trigger={Trigger}",
                 chapterStem,
@@ -1779,6 +2090,18 @@ public class PolishService
         }
         catch (Exception rollbackEx)
         {
+            TryAppendPickupArtifactLedgerEntry(
+                chapterStem: chapterStem,
+                operationId: replacementId,
+                transition: PickupArtifactLedgerTransitions.RollbackFailed,
+                phase: phase,
+                edlRevision: ResolveCurrentPickupEdlRevision(chapterStem, CancellationToken.None),
+                queueStatus: ResolveQueueStatus(chapterStem, replacementId, ReplacementStatus.Failed),
+                edlState: PickupEdlOperationState.Failed,
+                rollbackVerdict: PickupArtifactLedgerRollbackVerdict.Failed,
+                failureReason: rollbackEx.Message,
+                CancellationToken.None);
+
             Log.Warn(
                 "Pickup lifecycle rollback failed: chapter={ChapterStem}, op={OperationId}, phase={Phase}, rollbackState={RollbackState}, trigger={Trigger}, message={Message}",
                 chapterStem,
@@ -1824,6 +2147,18 @@ public class PolishService
                     throw new InvalidOperationException(
                         $"Batch pickup rollback failed to update queue status for chapter '{chapterStem}', op '{item.Id}'.");
                 }
+
+                TryAppendPickupArtifactLedgerEntry(
+                    chapterStem: chapterStem,
+                    operationId: item.Id,
+                    transition: PickupArtifactLedgerTransitions.RollbackSucceeded,
+                    phase: phase,
+                    edlRevision: latest.Revision,
+                    queueStatus: rollbackQueueStatus,
+                    edlState: rollbackEdlState,
+                    rollbackVerdict: PickupArtifactLedgerRollbackVerdict.Succeeded,
+                    failureReason: trigger.Message,
+                    CancellationToken.None);
             }
 
             if (latest is not null)
@@ -1843,6 +2178,21 @@ public class PolishService
         }
         catch (Exception rollbackEx)
         {
+            foreach (var (item, _) in transitioned)
+            {
+                TryAppendPickupArtifactLedgerEntry(
+                    chapterStem: chapterStem,
+                    operationId: item.Id,
+                    transition: PickupArtifactLedgerTransitions.RollbackFailed,
+                    phase: phase,
+                    edlRevision: ResolveCurrentPickupEdlRevision(chapterStem, CancellationToken.None),
+                    queueStatus: ResolveQueueStatus(chapterStem, item.Id, ReplacementStatus.Failed),
+                    edlState: PickupEdlOperationState.Failed,
+                    rollbackVerdict: PickupArtifactLedgerRollbackVerdict.Failed,
+                    failureReason: rollbackEx.Message,
+                    CancellationToken.None);
+            }
+
             Log.Warn(
                 "Batch pickup lifecycle rollback failed: chapter={ChapterStem}, phase={Phase}, rollbackState={RollbackState}, opCount={OperationCount}, trigger={Trigger}, message={Message}",
                 chapterStem,
@@ -1882,6 +2232,18 @@ public class PolishService
 
             SyncPickupEditsFromEdl(chapterStem, restored);
 
+            TryAppendPickupArtifactLedgerEntry(
+                chapterStem: chapterStem,
+                operationId: restoredOperation.Id,
+                transition: PickupArtifactLedgerTransitions.RollbackSucceeded,
+                phase: phase,
+                edlRevision: restored.Revision,
+                queueStatus: rollbackQueueStatus,
+                edlState: restoredOperation.State,
+                rollbackVerdict: PickupArtifactLedgerRollbackVerdict.Succeeded,
+                failureReason: trigger.Message,
+                CancellationToken.None);
+
             Log.Warn(
                 "Pickup snapshot rollback succeeded: chapter={ChapterStem}, op={OperationId}, phase={Phase}, rollbackState={RollbackState}, revision={Revision}, trigger={Trigger}",
                 chapterStem,
@@ -1894,6 +2256,18 @@ public class PolishService
         }
         catch (Exception rollbackEx)
         {
+            TryAppendPickupArtifactLedgerEntry(
+                chapterStem: chapterStem,
+                operationId: operationSnapshot.Id,
+                transition: PickupArtifactLedgerTransitions.RollbackFailed,
+                phase: phase,
+                edlRevision: ResolveCurrentPickupEdlRevision(chapterStem, CancellationToken.None),
+                queueStatus: ResolveQueueStatus(chapterStem, operationSnapshot.Id, ReplacementStatus.Failed),
+                edlState: PickupEdlOperationState.Failed,
+                rollbackVerdict: PickupArtifactLedgerRollbackVerdict.Failed,
+                failureReason: rollbackEx.Message,
+                CancellationToken.None);
+
             Log.Warn(
                 "Pickup snapshot rollback failed: chapter={ChapterStem}, op={OperationId}, phase={Phase}, rollbackState={RollbackState}, trigger={Trigger}, message={Message}",
                 chapterStem,

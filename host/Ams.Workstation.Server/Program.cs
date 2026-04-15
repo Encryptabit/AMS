@@ -45,6 +45,7 @@ builder.Services.AddSingleton<UndoService>();
 builder.Services.AddSingleton<PreviewBufferService>();
 builder.Services.AddSingleton<EditListService>();
 builder.Services.AddSingleton<PickupEdlStore>();
+builder.Services.AddSingleton<PickupArtifactLedgerStore>();
 builder.Services.AddSingleton<PickupEdlEngine>();
 builder.Services.AddSingleton<PickupSourceBufferCache>();
 
