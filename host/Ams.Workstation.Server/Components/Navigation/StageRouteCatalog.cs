@@ -40,6 +40,7 @@ public static class StageRouteCatalog
     {
         public const string PrepPipeline = "prep-pipeline";
         public const string ProofEditing = "proof-editing";
+        public const string ProofPickups = "proof-pickups";
         public const string ProofOverview = "proof-overview";
         public const string ProofPatterns = "proof-patterns";
         public const string PolishScaffold = "polish-scaffold";
@@ -80,6 +81,15 @@ public static class StageRouteCatalog
                     "/proof",
                     ProofChapterCompatibilityTemplate,
                     ProofChapterCanonicalTemplate
+                ]),
+            new StageModuleRouteDescriptor(
+                ModuleIds.ProofPickups,
+                "Pickups",
+                "/proof/pickups",
+                SupportsBatching: false,
+                CompatibilityPaths:
+                [
+                    "/proof/pickups"
                 ]),
             new StageModuleRouteDescriptor(
                 ModuleIds.ProofOverview,

@@ -38,6 +38,17 @@
                 </BitLink>
             </BitCard>
 
+            @* Pickups Link *@
+            <BitCard Class="overview-link" Style="margin-bottom: 1rem;" data-proof-index-link="pickups">
+                <BitLink Href="@GetProofPickupsPath()" Style="display: flex; align-items: center; gap: 0.5rem; text-decoration: none;">
+                    <BitIcon IconName="MicOff" />
+                    <BitText Typography="BitTypography.Subtitle2">Pickups</BitText>
+                    <BitText Typography="BitTypography.Caption2" Color="BitColor.SecondaryForeground">
+                        Import stitched pickups and stage replacements
+                    </BitText>
+                </BitLink>
+            </BitCard>
+
             <BitCard>
                 <BitText Typography="BitTypography.Subtitle2" Color="BitColor.SecondaryForeground"
                          Style="margin-bottom: 1rem; text-transform: uppercase; letter-spacing: 0.05em;">
@@ -95,6 +106,11 @@
         => StageRouteCatalog.GetModuleCanonicalPath(
             StageRouteCatalog.StageIds.Proof,
             StageRouteCatalog.ModuleIds.ProofPatterns);
+
+    private static string GetProofPickupsPath()
+        => StageRouteCatalog.GetModuleCanonicalPath(
+            StageRouteCatalog.StageIds.Proof,
+            StageRouteCatalog.ModuleIds.ProofPickups);
 
     private static string GetProofChapterPath(string chapterName)
         => StageRouteCatalog.BuildProofChapterCompatibilityPath(chapterName);

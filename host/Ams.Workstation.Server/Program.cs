@@ -55,6 +55,7 @@ builder.Services.AddTransient<PickupAssetService>();
 builder.Services.AddTransient<PolishService>();
 builder.Services.AddTransient<PolishVerificationService>();
 builder.Services.AddTransient<BatchOperationService>();
+builder.Services.AddScoped<ProofPickupsSessionService>();
 
 // Ams.Core processing graph for Prep and other shared execution flows.
 builder.Services.AddWorkstationProcessingServices();
