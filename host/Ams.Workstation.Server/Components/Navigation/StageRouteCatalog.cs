@@ -271,6 +271,16 @@ public static class StageRouteCatalog
     public static bool IsPathInStage(string? path, string stageId)
         => IsPathInStage(path, stageId, out _);
 
+    public static string GetProofPickupsHandoffPath()
+        => GetModuleCanonicalPath(StageIds.Proof, ModuleIds.ProofPickups);
+
+    public static string GetProofEditingHandoffPath(string? chapterName)
+    {
+        return string.IsNullOrWhiteSpace(chapterName)
+            ? GetModuleCanonicalPath(StageIds.Proof, ModuleIds.ProofEditing)
+            : BuildProofChapterCompatibilityPath(chapterName);
+    }
+
     public static string BuildProofChapterCompatibilityPath(string chapterName)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(chapterName);

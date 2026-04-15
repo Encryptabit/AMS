@@ -147,6 +147,89 @@ public sealed class StageRouteCatalogTests
     }
 
     [Fact]
+    public void GetProofPickupsHandoffPath_DelegatesToProofModuleCanonicalLookup()
+    {
+        var expectedPath = StageRouteCatalog.GetModuleCanonicalPath(
+            StageRouteCatalog.StageIds.Proof,
+            StageRouteCatalog.ModuleIds.ProofPickups);
+
+        var handoffPath = StageRouteCatalog.GetProofPickupsHandoffPath();
+
+        Assert.True(
+            string.Equals(handoffPath, expectedPath, StringComparison.OrdinalIgnoreCase),
+            $"Expected proof pickups handoff helper to resolve canonical module path '{expectedPath}', but got '{handoffPath}'.");
+
+        AssertResolves(
+            handoffPath,
+            StageRouteCatalog.StageIds.Proof,
+            StageRouteCatalog.ModuleIds.ProofPickups,
+            expectedCompatibilityAlias: true);
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("   ")]
+    public void GetProofEditingHandoffPath_MalformedChapterInput_FallsBackToCanonicalEditingPath(string? chapterName)
+    {
+        var expectedCanonicalPath = StageRouteCatalog.GetModuleCanonicalPath(
+            StageRouteCatalog.StageIds.Proof,
+            StageRouteCatalog.ModuleIds.ProofEditing);
+
+        var handoffPath = StageRouteCatalog.GetProofEditingHandoffPath(chapterName);
+
+        Assert.True(
+            string.Equals(handoffPath, expectedCanonicalPath, StringComparison.OrdinalIgnoreCase),
+            $"Expected malformed chapter input '{chapterName ?? "(null)"}' to fallback to canonical editing path '{expectedCanonicalPath}', but got '{handoffPath}'.");
+
+        AssertResolves(
+            handoffPath,
+            StageRouteCatalog.StageIds.Proof,
+            StageRouteCatalog.ModuleIds.ProofEditing,
+            expectedCompatibilityAlias: false);
+    }
+
+    [Theory]
+    [InlineData("Chapter 01 - Intro")]
+    [InlineData("Chapter 02: Punctuation!?,;")]
+    [InlineData("Chapter 03 / Finale")]
+    [InlineData("MiXeD CaSe / EnCoDeD")]
+    public void GetProofEditingHandoffPath_WithKnownChapter_UsesCompatibilityAlias(string chapterName)
+    {
+        var expectedPath = StageRouteCatalog.BuildProofChapterCompatibilityPath(chapterName);
+        var handoffPath = StageRouteCatalog.GetProofEditingHandoffPath(chapterName);
+
+        Assert.True(
+            string.Equals(handoffPath, expectedPath, StringComparison.Ordinal),
+            $"Expected chapter-aware editing handoff helper to return compatibility path '{expectedPath}' for chapter '{chapterName}', but got '{handoffPath}'.");
+
+        AssertResolves(
+            handoffPath,
+            StageRouteCatalog.StageIds.Proof,
+            StageRouteCatalog.ModuleIds.ProofEditing,
+            expectedCompatibilityAlias: true);
+    }
+
+    [Fact]
+    public void GetProofEditingHandoffPath_ReservedPickupsSlug_PreservesExactRoutePrecedence()
+    {
+        var handoffPath = StageRouteCatalog.GetProofEditingHandoffPath("pickups");
+
+        Assert.True(
+            string.Equals(handoffPath, "/proof/pickups", StringComparison.OrdinalIgnoreCase),
+            $"Expected reserved chapter slug 'pickups' to produce '/proof/pickups', but got '{handoffPath}'.");
+
+        var match = StageRouteCatalog.Resolve(handoffPath);
+
+        Assert.True(
+            match is not null
+            && string.Equals(match.Stage.Id, StageRouteCatalog.StageIds.Proof, StringComparison.OrdinalIgnoreCase)
+            && string.Equals(match.Module.Id, StageRouteCatalog.ModuleIds.ProofPickups, StringComparison.OrdinalIgnoreCase)
+            && string.Equals(match.MatchedTemplate, "/proof/pickups", StringComparison.OrdinalIgnoreCase),
+            $"Expected proof pickups exact route to win for reserved handoff path '{handoffPath}', but got {match?.DiagnosticContext ?? "(null)"}.");
+    }
+
+    [Fact]
     public void RouteTemplatesAreValidatedForLeadingSlashAndTokenShape()
     {
         var malformedTemplates = EnumerateTemplates()
@@ -182,6 +265,7 @@ public sealed class StageRouteCatalogTests
     [InlineData("/proof/patterns", StageRouteCatalog.StageIds.Proof, StageRouteCatalog.ModuleIds.ProofPatterns, true)]
     [InlineData("/proof/Chapter%201", StageRouteCatalog.StageIds.Proof, StageRouteCatalog.ModuleIds.ProofEditing, true)]
     [InlineData("/proof/Chapter%2F01", StageRouteCatalog.StageIds.Proof, StageRouteCatalog.ModuleIds.ProofEditing, true)]
+    [InlineData("/proof/Chapter%2f01", StageRouteCatalog.StageIds.Proof, StageRouteCatalog.ModuleIds.ProofEditing, true)]
     [InlineData("/PrOoF/Overview", StageRouteCatalog.StageIds.Proof, StageRouteCatalog.ModuleIds.ProofOverview, true)]
     [InlineData("/prep", StageRouteCatalog.StageIds.Prep, StageRouteCatalog.ModuleIds.PrepPipeline, true)]
     [InlineData("/prep/pipeline", StageRouteCatalog.StageIds.Prep, StageRouteCatalog.ModuleIds.PrepPipeline, false)]

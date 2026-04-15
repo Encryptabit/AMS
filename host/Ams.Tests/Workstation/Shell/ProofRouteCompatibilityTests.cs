@@ -22,6 +22,7 @@ public sealed class ProofRouteCompatibilityTests
     [InlineData("/proof/patterns", StageRouteCatalog.StageIds.Proof, StageRouteCatalog.ModuleIds.ProofPatterns, true)]
     [InlineData("/proof/Chapter%201", StageRouteCatalog.StageIds.Proof, StageRouteCatalog.ModuleIds.ProofEditing, true)]
     [InlineData("/proof/Chapter%2F01", StageRouteCatalog.StageIds.Proof, StageRouteCatalog.ModuleIds.ProofEditing, true)]
+    [InlineData("/proof/Chapter%2f01", StageRouteCatalog.StageIds.Proof, StageRouteCatalog.ModuleIds.ProofEditing, true)]
     [InlineData("/proof/editing", StageRouteCatalog.StageIds.Proof, StageRouteCatalog.ModuleIds.ProofEditing, false)]
     [InlineData("/proof/editing/Chapter%201", StageRouteCatalog.StageIds.Proof, StageRouteCatalog.ModuleIds.ProofEditing, true)]
     [InlineData("/PrOoF/PaTtErNs", StageRouteCatalog.StageIds.Proof, StageRouteCatalog.ModuleIds.ProofPatterns, true)]
@@ -90,6 +91,73 @@ public sealed class ProofRouteCompatibilityTests
             StageRouteCatalog.StageIds.Proof,
             expectedCanonicalModuleId,
             expectedCanonicalAlias);
+    }
+
+    [Fact]
+    public void ProofPickupsHandoffHelper_ComposesWithProofRouteContracts()
+    {
+        var expectedCanonicalPath = StageRouteCatalog.GetModuleCanonicalPath(
+            StageRouteCatalog.StageIds.Proof,
+            StageRouteCatalog.ModuleIds.ProofPickups);
+
+        var handoffPath = StageRouteCatalog.GetProofPickupsHandoffPath();
+
+        Assert.True(
+            string.Equals(handoffPath, expectedCanonicalPath, StringComparison.OrdinalIgnoreCase),
+            $"Expected proof pickups handoff helper to return canonical module path '{expectedCanonicalPath}', but got '{handoffPath}'.");
+
+        _ = AssertResolves(
+            handoffPath,
+            StageRouteCatalog.StageIds.Proof,
+            StageRouteCatalog.ModuleIds.ProofPickups,
+            expectedCompatibilityAlias: true);
+    }
+
+    [Theory]
+    [InlineData(null, StageRouteCatalog.ModuleIds.ProofEditing, false)]
+    [InlineData("", StageRouteCatalog.ModuleIds.ProofEditing, false)]
+    [InlineData("   ", StageRouteCatalog.ModuleIds.ProofEditing, false)]
+    [InlineData("Chapter 01 - Intro", StageRouteCatalog.ModuleIds.ProofEditing, true)]
+    [InlineData("Chapter 03 / Finale", StageRouteCatalog.ModuleIds.ProofEditing, true)]
+    [InlineData("pickups", StageRouteCatalog.ModuleIds.ProofPickups, true)]
+    public void ProofEditingHandoffHelper_ComposesWithCompatibilityAndCanonicalAliasContracts(
+        string? chapterName,
+        string expectedCompatibilityModuleId,
+        bool expectedCompatibilityAlias)
+    {
+        var handoffPath = StageRouteCatalog.GetProofEditingHandoffPath(chapterName);
+
+        if (string.IsNullOrWhiteSpace(chapterName))
+        {
+            var expectedCanonicalPath = StageRouteCatalog.GetModuleCanonicalPath(
+                StageRouteCatalog.StageIds.Proof,
+                StageRouteCatalog.ModuleIds.ProofEditing);
+
+            Assert.True(
+                string.Equals(handoffPath, expectedCanonicalPath, StringComparison.OrdinalIgnoreCase),
+                $"Expected null/whitespace editing handoff input '{chapterName ?? "(null)"}' to return canonical path '{expectedCanonicalPath}', but got '{handoffPath}'.");
+        }
+        else
+        {
+            var expectedCompatibilityPath = StageRouteCatalog.BuildProofChapterCompatibilityPath(chapterName);
+            var expectedCanonicalAliasPath = StageRouteCatalog.BuildProofChapterCanonicalPath(chapterName);
+
+            Assert.True(
+                string.Equals(handoffPath, expectedCompatibilityPath, StringComparison.Ordinal),
+                $"Expected chapter-aware editing handoff helper to return compatibility path '{expectedCompatibilityPath}' for chapter '{chapterName}', but got '{handoffPath}'.");
+
+            _ = AssertResolves(
+                expectedCanonicalAliasPath,
+                StageRouteCatalog.StageIds.Proof,
+                StageRouteCatalog.ModuleIds.ProofEditing,
+                expectedCompatibilityAlias: true);
+        }
+
+        _ = AssertResolves(
+            handoffPath,
+            StageRouteCatalog.StageIds.Proof,
+            expectedCompatibilityModuleId,
+            expectedCompatibilityAlias);
     }
 
     [Fact]
