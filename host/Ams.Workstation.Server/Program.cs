@@ -1,6 +1,7 @@
 using Ams.Core.Application.Processes;
 using Ams.Workstation.Server.Components;
 using Ams.Workstation.Server.Services;
+using Ams.Workstation.Server.Services.Pickups.Edl;
 using Ams.Workstation.Server.Services.Prep;
 using Toolbelt.Blazor.Extensions.DependencyInjection;
 
@@ -43,6 +44,9 @@ builder.Services.AddSingleton<StagingQueueService>();
 builder.Services.AddSingleton<UndoService>();
 builder.Services.AddSingleton<PreviewBufferService>();
 builder.Services.AddSingleton<EditListService>();
+builder.Services.AddSingleton<PickupEdlStore>();
+builder.Services.AddSingleton<PickupEdlEngine>();
+builder.Services.AddSingleton<PickupSourceBufferCache>();
 
 // Polish area services - transient (stateless matching and orchestration)
 builder.Services.AddTransient<PickupMfaRefinementService>();

@@ -114,6 +114,35 @@ public class EditListService
     }
 
     /// <summary>
+    /// Replaces the full edit list for a chapter in one atomic in-memory update.
+    /// </summary>
+    public void ReplaceChapterEdits(string chapterStem, IReadOnlyList<ChapterEdit> edits)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(chapterStem);
+        ArgumentNullException.ThrowIfNull(edits);
+
+        lock (_lock)
+        {
+            EnsureLoaded();
+
+            if (edits.Count == 0)
+            {
+                _edits!.Remove(chapterStem);
+            }
+            else
+            {
+                _edits![chapterStem] = edits
+                    .OrderBy(e => e.BaselineStartSec)
+                    .ThenBy(e => e.BaselineEndSec)
+                    .ThenBy(e => e.Id, StringComparer.Ordinal)
+                    .ToList();
+            }
+
+            Save();
+        }
+    }
+
+    /// <summary>
     /// Removes all edits for a specific chapter and persists immediately.
     /// </summary>
     public void Clear(string chapterStem)

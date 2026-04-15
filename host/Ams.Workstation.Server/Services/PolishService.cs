@@ -15,6 +15,7 @@ using Ams.Core.Common;
 using Ams.Core.Processors;
 using Ams.Core.Runtime.Chapter;
 using Ams.Workstation.Server.Models;
+using Ams.Workstation.Server.Services.Pickups.Edl;
 
 namespace Ams.Workstation.Server.Services;
 
@@ -47,6 +48,9 @@ public class PolishService
     private readonly PickupMatchingService _pickupMatching;
     private readonly PreviewBufferService _previewBuffer;
     private readonly EditListService _editListService;
+    private readonly PickupEdlStore _pickupEdlStore;
+    private readonly PickupEdlEngine _pickupEdlEngine;
+    private readonly PickupSourceBufferCache _pickupSourceBufferCache;
 
     public PolishService(
         BlazorWorkspace workspace,
@@ -54,7 +58,10 @@ public class PolishService
         UndoService undoService,
         PickupMatchingService pickupMatching,
         PreviewBufferService previewBuffer,
-        EditListService editListService)
+        EditListService editListService,
+        PickupEdlStore pickupEdlStore,
+        PickupEdlEngine pickupEdlEngine,
+        PickupSourceBufferCache pickupSourceBufferCache)
     {
         _workspace = workspace;
         _stagingQueue = stagingQueue;
@@ -62,6 +69,9 @@ public class PolishService
         _pickupMatching = pickupMatching;
         _previewBuffer = previewBuffer;
         _editListService = editListService;
+        _pickupEdlStore = pickupEdlStore;
+        _pickupEdlEngine = pickupEdlEngine;
+        _pickupSourceBufferCache = pickupSourceBufferCache;
     }
 
     /// <summary>
@@ -283,6 +293,7 @@ public class PolishService
         var chapterBuffer = GetChapterBuffer(operationHandle);
         var hydrate = GetCurrentHydratedTranscript();
         var sentenceIndexById = BuildSentenceIndexLookup(hydrate);
+        var knownSentenceIds = BuildKnownSentenceIdSet(hydrate);
 
         var replacement = BuildStagedReplacement(
             operationHandle,
@@ -302,6 +313,22 @@ public class PolishService
         {
             throw new InvalidOperationException(
                 $"Failed to stage replacement for sentence {match.SentenceId}: {validationError}");
+        }
+
+        try
+        {
+            UpsertPickupEdlOperation(
+                chapterStem,
+                replacement,
+                PickupEdlOperationState.Staged,
+                knownSentenceIds,
+                CancellationToken.None);
+        }
+        catch
+        {
+            // Keep queue/EDL authoritative state aligned.
+            _stagingQueue.Unstage(replacement.Id);
+            throw;
         }
 
         return replacement;
@@ -342,6 +369,7 @@ public class PolishService
         var chapterBuffer = GetChapterBuffer(operationHandle);
         var hydrate = GetCurrentHydratedTranscript();
         var sentenceIndexById = BuildSentenceIndexLookup(hydrate);
+        var knownSentenceIds = BuildKnownSentenceIdSet(hydrate);
         var replacements = new List<StagedReplacement>(requests.Count);
         var errors = new List<string>();
 
@@ -375,7 +403,41 @@ public class PolishService
             errors.AddRange(stageErrors);
         }
 
-        return (stagedCount, errors);
+        if (stagedCount == 0)
+        {
+            return (0, errors);
+        }
+
+        var stagedById = _stagingQueue.GetQueue(chapterStem)
+            .Where(item => item.Status == ReplacementStatus.Staged)
+            .ToDictionary(item => item.Id, StringComparer.Ordinal);
+
+        var rolledBack = 0;
+        foreach (var replacement in replacements)
+        {
+            if (!stagedById.ContainsKey(replacement.Id))
+            {
+                continue;
+            }
+
+            try
+            {
+                UpsertPickupEdlOperation(
+                    chapterStem,
+                    replacement,
+                    PickupEdlOperationState.Staged,
+                    knownSentenceIds,
+                    CancellationToken.None);
+            }
+            catch (Exception ex)
+            {
+                rolledBack++;
+                _stagingQueue.Unstage(replacement.Id);
+                errors.Add($"Sentence {replacement.SentenceId}: EDL stage failed: {ex.Message}");
+            }
+        }
+
+        return (Math.Max(0, stagedCount - rolledBack), errors);
     }
 
     private StagedReplacement BuildStagedReplacement(
@@ -403,6 +465,12 @@ public class PolishService
         {
             throw new InvalidOperationException(
                 $"Cannot stage replacement for chapter '{chapterStem}' while active chapter is '{operationStem}'.");
+        }
+
+        if (sentenceIndexById is not null && !sentenceIndexById.ContainsKey(match.SentenceId))
+        {
+            throw new InvalidOperationException(
+                $"Cannot stage replacement for unknown sentence '{match.SentenceId}' in chapter '{chapterStem}'.");
         }
 
         var rebasedStartSec = MapBaselineToCurrentTime(chapterStem, originalStartSec);
@@ -520,8 +588,9 @@ public class PolishService
         var operationStem = operationHandle.Chapter.Descriptor.ChapterId;
         var item = FindStagedItem(replacementId, operationStem);
         var chapterBuffer = GetChapterBuffer(operationHandle);
+        var source = ResolveSourceReferenceForReplacement(operationStem, item);
 
-        var pickupTrimmed = LoadPickupSliceForReplacement(operationHandle, item);
+        var pickupTrimmed = LoadPickupSliceForReplacement(operationStem, item, source, CancellationToken.None);
 
         var resultBuffer = AudioSpliceService.ReplaceSegment(
             chapterBuffer,
@@ -558,7 +627,8 @@ public class PolishService
         var operationStem = operationHandle.Chapter.Descriptor.ChapterId;
         var item = FindStagedItem(replacementId, operationStem);
         var chapterBuffer = GetChapterBuffer(operationHandle);
-        var pickupTrimmed = LoadPickupSliceForReplacement(operationHandle, item);
+        var source = ResolveSourceReferenceForReplacement(operationStem, item);
+        var pickupTrimmed = LoadPickupSliceForReplacement(operationStem, item, source, CancellationToken.None);
 
         var chapterDurationSec = (double)chapterBuffer.Length / chapterBuffer.SampleRate;
         var maxClipStartSec = Math.Max(0, chapterDurationSec - MinAuditionClipDurationSec);
@@ -669,7 +739,8 @@ public class PolishService
         var operationStem = operationHandle.Chapter.Descriptor.ChapterId;
         var item = FindStagedItem(replacementId, operationStem);
         var chapterBuffer = GetChapterBuffer(operationHandle);
-        var pickupTrimmed = LoadPickupSliceForReplacement(operationHandle, item);
+        var source = ResolveSourceReferenceForReplacement(operationStem, item);
+        var pickupTrimmed = LoadPickupSliceForReplacement(operationStem, item, source, CancellationToken.None);
 
         var chapterDurationSec = (double)chapterBuffer.Length / chapterBuffer.SampleRate;
 
@@ -738,23 +809,33 @@ public class PolishService
         var operationStem = operationHandle.Chapter.Descriptor.ChapterId;
         var mutationLock = GetChapterMutationLock(operationStem);
         await mutationLock.WaitAsync(ct).ConfigureAwait(false);
+
+        StagedReplacement? item = null;
+        IReadOnlySet<int>? knownSentenceIds = null;
+        PickupEdlSourceReference? source = null;
+        var transitionedToApplied = false;
+
         try
         {
-            // 1. Get staged item
-            var item = FindStagedItem(replacementId, operationStem);
+            item = FindStagedItem(replacementId, operationStem);
+            knownSentenceIds = BuildKnownSentenceIdSet(GetCurrentHydratedTranscript());
 
             EnsureNoActiveOverlapOrThrow(operationStem, item.Id, item.OriginalStartSec, item.OriginalEndSec);
 
-            // 2. Load chapter audio from workspace (corrected > treated > raw)
-            var chapterBuffer = GetChapterBuffer(operationHandle);
+            var (seededDocument, seededSource) = EnsurePickupEdlOperationSeeded(
+                operationStem,
+                item,
+                knownSentenceIds,
+                ct);
+            _ = seededDocument;
+            source = seededSource;
 
-            // 3. Decode and trim pickup audio
-            var pickupTrimmed = LoadPickupSliceForReplacement(operationHandle, item);
+            var chapterBuffer = GetChapterBuffer(operationHandle);
+            var pickupTrimmed = LoadPickupSliceForReplacement(operationStem, item, source, ct);
 
             var pickupDuration = (double)pickupTrimmed.Length / pickupTrimmed.SampleRate;
             var originalDuration = item.OriginalEndSec - item.OriginalStartSec;
 
-            // 4. Save original segment via UndoService BEFORE splice
             _undoService.SaveOriginalSegment(
                 item.ChapterStem,
                 item.SentenceId,
@@ -764,24 +845,65 @@ public class PolishService
                 item.OriginalEndSec,
                 pickupDuration);
 
-            // 5. Save replacement (pickup) audio for rebuild-based revert
             await _undoService.SaveReplacementSegmentAsync(
-                item.ChapterStem, replacementId, pickupTrimmed, ct).ConfigureAwait(false);
+                item.ChapterStem,
+                replacementId,
+                pickupTrimmed,
+                ct).ConfigureAwait(false);
 
-            // 6. Update status to Applied (also creates ChapterEdit in edit list for timeline projection)
-            _stagingQueue.UpdateStatus(replacementId, ReplacementStatus.Applied);
+            var appliedDocument = TransitionPickupEdlOperationState(
+                operationStem,
+                source,
+                replacementId,
+                PickupEdlOperationState.Applied,
+                ct);
+            transitionedToApplied = true;
 
-            // 7. Rebuild chapter from treated baseline with ALL current edits
+            _stagingQueue.UpdateStatus(replacementId, ReplacementStatus.Applied, syncEditList: false);
+            SyncPickupEditsFromEdl(operationStem, appliedDocument);
+
             var allEdits = _editListService.GetEdits(operationStem);
             var resultBuffer = await RebuildChapterAsync(operationHandle, allEdits, ct).ConfigureAwait(false);
-
-            // 8. Calculate timing delta
             var timingDelta = pickupDuration - originalDuration;
 
-            // 9. Persist corrected.wav to disk
             PersistCorrectedBuffer(operationHandle, resultBuffer);
-
             return (resultBuffer, timingDelta);
+        }
+        catch (OperationCanceledException)
+        {
+            if (transitionedToApplied && item is not null && source is not null)
+            {
+                try
+                {
+                    var revertedDocument = TransitionPickupEdlOperationState(
+                        operationStem,
+                        source,
+                        replacementId,
+                        PickupEdlOperationState.Staged,
+                        CancellationToken.None);
+                    _stagingQueue.UpdateStatus(replacementId, ReplacementStatus.Staged, syncEditList: false);
+                    SyncPickupEditsFromEdl(operationStem, revertedDocument);
+                }
+                catch (Exception rollbackEx)
+                {
+                    Log.Warn(
+                        "Pickup apply cancel rollback failed for op {OperationId} in chapter {ChapterStem}: {Message}",
+                        replacementId,
+                        operationStem,
+                        rollbackEx.Message);
+                }
+            }
+
+            throw;
+        }
+        catch (Exception ex)
+        {
+            if (item is not null)
+            {
+                PersistFailedPickupState(operationStem, item, knownSentenceIds, ex, ct);
+            }
+
+            throw;
         }
         finally
         {
@@ -802,10 +924,13 @@ public class PolishService
         var operationStem = operationHandle.Chapter.Descriptor.ChapterId;
         var mutationLock = GetChapterMutationLock(operationStem);
         await mutationLock.WaitAsync(ct).ConfigureAwait(false);
+
         try
         {
             var chapterBuffer = GetChapterBuffer(operationHandle);
+            var knownSentenceIds = BuildKnownSentenceIdSet(GetCurrentHydratedTranscript());
             var appliedCount = 0;
+            PickupEdlDocument? latestDocument = _pickupEdlStore.TryRead(operationStem, ct);
 
             foreach (var replacementId in replacementIds)
             {
@@ -814,10 +939,16 @@ public class PolishService
                 try
                 {
                     var item = FindStagedItem(replacementId, operationStem);
-
                     EnsureNoActiveOverlapOrThrow(operationStem, item.Id, item.OriginalStartSec, item.OriginalEndSec);
 
-                    var pickupTrimmed = LoadPickupSliceForReplacement(operationHandle, item);
+                    var (seededDocument, source) = EnsurePickupEdlOperationSeeded(
+                        operationStem,
+                        item,
+                        knownSentenceIds,
+                        ct);
+                    latestDocument = seededDocument;
+
+                    var pickupTrimmed = LoadPickupSliceForReplacement(operationStem, item, source, ct);
                     var pickupDuration = (double)pickupTrimmed.Length / pickupTrimmed.SampleRate;
 
                     _undoService.SaveOriginalSegment(
@@ -835,11 +966,28 @@ public class PolishService
                         pickupTrimmed,
                         ct).ConfigureAwait(false);
 
-                    _stagingQueue.UpdateStatus(replacementId, ReplacementStatus.Applied);
+                    latestDocument = TransitionPickupEdlOperationState(
+                        operationStem,
+                        source,
+                        replacementId,
+                        PickupEdlOperationState.Applied,
+                        ct);
+
+                    _stagingQueue.UpdateStatus(replacementId, ReplacementStatus.Applied, syncEditList: false);
                     appliedCount++;
+                }
+                catch (OperationCanceledException)
+                {
+                    throw;
                 }
                 catch (Exception ex)
                 {
+                    var failedItem = TryFindStagedItem(replacementId, operationStem);
+                    if (failedItem is not null)
+                    {
+                        PersistFailedPickupState(operationStem, failedItem, knownSentenceIds, ex, ct);
+                    }
+
                     Log.Warn(
                         "Batch pickup commit skipped replacement {ReplacementId} in chapter {ChapterStem}: {Message}",
                         replacementId,
@@ -849,7 +997,15 @@ public class PolishService
             }
 
             if (appliedCount == 0)
+            {
                 return (null, 0);
+            }
+
+            latestDocument ??= _pickupEdlStore.TryRead(operationStem, ct);
+            if (latestDocument is not null)
+            {
+                SyncPickupEditsFromEdl(operationStem, latestDocument);
+            }
 
             var allEdits = _editListService.GetEdits(operationStem);
             var resultBuffer = await RebuildChapterAsync(operationHandle, allEdits, ct).ConfigureAwait(false);
@@ -881,9 +1037,12 @@ public class PolishService
         var operationStem = operationHandle.Chapter.Descriptor.ChapterId;
         var mutationLock = GetChapterMutationLock(operationStem);
         await mutationLock.WaitAsync(ct).ConfigureAwait(false);
+
+        StagedReplacement? item = null;
+        IReadOnlySet<int>? knownSentenceIds = null;
+
         try
         {
-            // 1. Get undo record for timing delta calculation
             var undoRecord = _undoService.GetUndoRecord(replacementId)
                 ?? throw new InvalidOperationException($"No undo record found for replacement '{replacementId}'.");
             if (!string.Equals(undoRecord.ChapterStem, operationStem, StringComparison.OrdinalIgnoreCase))
@@ -893,33 +1052,51 @@ public class PolishService
                     $"but active chapter is '{operationStem}'.");
             }
 
-            // 2. Update status to Reverted (removes ChapterEdit from edit list)
-            _stagingQueue.UpdateStatus(replacementId, ReplacementStatus.Reverted);
+            item = FindStagedItem(replacementId, operationStem);
+            knownSentenceIds = BuildKnownSentenceIdSet(GetCurrentHydratedTranscript());
 
-            // 3. Get remaining edits and rebuild
+            var source = ResolveSourceReferenceForReplacement(operationStem, item);
+            var revertedDocument = TransitionPickupEdlOperationState(
+                operationStem,
+                source,
+                replacementId,
+                PickupEdlOperationState.Reverted,
+                ct);
+
+            _stagingQueue.UpdateStatus(replacementId, ReplacementStatus.Reverted, syncEditList: false);
+            SyncPickupEditsFromEdl(operationStem, revertedDocument);
+
             var remainingEdits = _editListService.GetEdits(operationStem);
             AudioBuffer resultBuffer;
 
             if (remainingEdits.Count > 0)
             {
-                // Rebuild from treated baseline with remaining edits
                 resultBuffer = await RebuildChapterAsync(operationHandle, remainingEdits, ct).ConfigureAwait(false);
             }
             else
             {
-                // No edits remain — restore to original treated audio
                 resultBuffer = operationHandle.Chapter.Audio.Treated?.Buffer
                     ?? throw new InvalidOperationException(
                         $"Treated audio buffer is unavailable for chapter '{operationStem}'.");
             }
 
-            // 4. Timing delta is negative of original delta
             var timingDelta = undoRecord.OriginalDurationSec - undoRecord.ReplacementDurationSec;
-
-            // 5. Persist corrected.wav to disk
             PersistCorrectedBuffer(operationHandle, resultBuffer);
 
             return (resultBuffer, timingDelta);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            if (item is not null)
+            {
+                PersistFailedPickupState(operationStem, item, knownSentenceIds, ex, ct);
+            }
+
+            throw;
         }
         finally
         {
@@ -1132,6 +1309,264 @@ public class PolishService
             $"Replacement '{replacementId}' was not found in active chapter '{chapterStem}'.");
     }
 
+    private StagedReplacement? TryFindStagedItem(string replacementId, string chapterStem)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(replacementId);
+        ArgumentException.ThrowIfNullOrWhiteSpace(chapterStem);
+
+        var chapterQueue = _stagingQueue.GetQueue(chapterStem);
+        foreach (var item in chapterQueue)
+        {
+            if (item.Id == replacementId)
+            {
+                return item;
+            }
+        }
+
+        return null;
+    }
+
+    private static IReadOnlySet<int>? BuildKnownSentenceIdSet(HydratedTranscript? hydrate)
+    {
+        if (hydrate is null)
+        {
+            return null;
+        }
+
+        var set = new HashSet<int>();
+        foreach (var sentence in hydrate.Sentences)
+        {
+            set.Add(sentence.Id);
+        }
+
+        return set;
+    }
+
+    private PickupEdlSourceReference ResolveSourceReferenceForReplacement(string chapterStem, StagedReplacement replacement)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(chapterStem);
+        ArgumentNullException.ThrowIfNull(replacement);
+
+        var document = _pickupEdlStore.TryRead(chapterStem, CancellationToken.None);
+        if (document is not null)
+        {
+            var requestedPath = Path.GetFullPath(replacement.PickupSourcePath.Trim());
+            if (!string.Equals(document.Source.Path, requestedPath, StringComparison.OrdinalIgnoreCase))
+            {
+                throw new InvalidOperationException(
+                    $"Pickup source path mismatch for chapter '{chapterStem}', op '{replacement.Id}': " +
+                    $"document='{document.Source.Path}', requested='{requestedPath}', " +
+                    $"fingerprint='{document.Source.Fingerprint}'.");
+            }
+
+            // Single-source chapter contract: once a document exists, source affinity is document-owned.
+            return document.Source;
+        }
+
+        return _pickupSourceBufferCache.DescribeSource(replacement.PickupSourcePath);
+    }
+
+    private PickupEdlDocument UpsertPickupEdlOperation(
+        string chapterStem,
+        StagedReplacement replacement,
+        PickupEdlOperationState state,
+        IReadOnlySet<int>? knownSentenceIds,
+        CancellationToken ct,
+        bool validateSourceRange = true)
+    {
+        var source = ResolveSourceReferenceForReplacement(chapterStem, replacement);
+
+        if (validateSourceRange)
+        {
+            _ = _pickupSourceBufferCache.GetSliceByTime(
+                source,
+                replacement.PickupStartSec,
+                replacement.PickupEndSec,
+                chapterStem,
+                replacement.Id,
+                ct);
+        }
+
+        var operation = _pickupEdlEngine.BuildOperation(
+            replacement,
+            source,
+            state,
+            knownSentenceIds,
+            DateTime.UtcNow);
+
+        var updated = _pickupEdlStore.Mutate(
+            chapterStem,
+            source,
+            document => _pickupEdlEngine.UpsertOperation(document, operation),
+            ct);
+
+        LogPickupEdlTransition(updated, operation.Id, state, reason: "upsert");
+        return updated;
+    }
+
+    private (PickupEdlDocument Document, PickupEdlSourceReference Source) EnsurePickupEdlOperationSeeded(
+        string chapterStem,
+        StagedReplacement replacement,
+        IReadOnlySet<int>? knownSentenceIds,
+        CancellationToken ct)
+    {
+        var current = _pickupEdlStore.TryRead(chapterStem, ct);
+        if (current is not null)
+        {
+            var existing = _pickupEdlEngine.TryGetOperation(current, replacement.Id);
+            if (existing is not null &&
+                existing.State == PickupEdlOperationState.Staged &&
+                OperationMatchesReplacement(existing, replacement))
+            {
+                return (current, current.Source);
+            }
+        }
+
+        var seeded = UpsertPickupEdlOperation(
+            chapterStem,
+            replacement,
+            PickupEdlOperationState.Staged,
+            knownSentenceIds,
+            ct,
+            validateSourceRange: true);
+
+        return (seeded, seeded.Source);
+    }
+
+    private PickupEdlDocument TransitionPickupEdlOperationState(
+        string chapterStem,
+        PickupEdlSourceReference source,
+        string replacementId,
+        PickupEdlOperationState nextState,
+        CancellationToken ct)
+    {
+        var updated = _pickupEdlStore.Mutate(
+            chapterStem,
+            source,
+            document => _pickupEdlEngine.TransitionOperationState(document, replacementId, nextState, DateTime.UtcNow),
+            ct);
+
+        LogPickupEdlTransition(updated, replacementId, nextState, reason: "transition");
+        return updated;
+    }
+
+    private void PersistFailedPickupState(
+        string chapterStem,
+        StagedReplacement replacement,
+        IReadOnlySet<int>? knownSentenceIds,
+        Exception error,
+        CancellationToken ct)
+    {
+        try
+        {
+            var current = _pickupEdlStore.TryRead(chapterStem, ct);
+            PickupEdlDocument failedDocument;
+
+            if (current is not null && _pickupEdlEngine.TryGetOperation(current, replacement.Id) is not null)
+            {
+                failedDocument = TransitionPickupEdlOperationState(
+                    chapterStem,
+                    current.Source,
+                    replacement.Id,
+                    PickupEdlOperationState.Failed,
+                    CancellationToken.None);
+            }
+            else
+            {
+                failedDocument = UpsertPickupEdlOperation(
+                    chapterStem,
+                    replacement,
+                    PickupEdlOperationState.Failed,
+                    knownSentenceIds,
+                    CancellationToken.None,
+                    validateSourceRange: false);
+            }
+
+            _stagingQueue.UpdateStatus(replacement.Id, ReplacementStatus.Failed, syncEditList: false);
+            SyncPickupEditsFromEdl(chapterStem, failedDocument);
+
+            Log.Warn(
+                "Pickup operation failed: chapter={ChapterStem}, op={OperationId}, state=failed, message={Message}",
+                chapterStem,
+                replacement.Id,
+                error.Message);
+        }
+        catch (Exception persistEx)
+        {
+            _stagingQueue.UpdateStatus(replacement.Id, ReplacementStatus.Failed, syncEditList: false);
+            Log.Warn(
+                "Failed to persist pickup failure state for chapter={ChapterStem}, op={OperationId}: {Message}",
+                chapterStem,
+                replacement.Id,
+                persistEx.Message);
+        }
+    }
+
+    private void SyncPickupEditsFromEdl(string chapterStem, PickupEdlDocument document)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(chapterStem);
+        ArgumentNullException.ThrowIfNull(document);
+
+        var existing = _editListService.GetEdits(chapterStem);
+        var nonPickupEdits = existing
+            .Where(edit => edit.Operation != EditOperation.PickupReplace)
+            .ToArray();
+
+        var pickupEdits = _pickupEdlEngine.BuildAppliedProjectionEdits(document);
+        var merged = nonPickupEdits
+            .Concat(pickupEdits)
+            .OrderBy(edit => edit.BaselineStartSec)
+            .ThenBy(edit => edit.BaselineEndSec)
+            .ThenBy(edit => edit.Id, StringComparer.Ordinal)
+            .ToArray();
+
+        _editListService.ReplaceChapterEdits(chapterStem, merged);
+
+        var lastValidationError = document.Operations
+            .Where(op => op.State == PickupEdlOperationState.Failed)
+            .OrderByDescending(op => op.UpdatedAtUtc)
+            .Select(op => op.Id)
+            .FirstOrDefault();
+
+        Log.Info(
+            "Pickup EDL sync: chapter={ChapterStem}, revision={Revision}, appliedOps={AppliedOps}, totalEdits={TotalEdits}, diagnostics={Diagnostics}, lastValidationError={LastValidationError}",
+            document.ChapterStem,
+            document.Revision,
+            pickupEdits.Count,
+            merged.Length,
+            _pickupEdlEngine.BuildDeterministicOrderingDiagnostics(document),
+            lastValidationError ?? "<none>");
+    }
+
+    private static bool OperationMatchesReplacement(PickupEdlOperation operation, StagedReplacement replacement)
+    {
+        const double epsilon = 0.000_001;
+
+        return Math.Abs(operation.BaselineStartSec - replacement.OriginalStartSec) <= epsilon
+               && Math.Abs(operation.BaselineEndSec - replacement.OriginalEndSec) <= epsilon
+               && Math.Abs(operation.SourceStartSec - replacement.PickupStartSec) <= epsilon
+               && Math.Abs(operation.SourceEndSec - replacement.PickupEndSec) <= epsilon
+               && Math.Abs(operation.CrossfadeDurationSec - replacement.CrossfadeDurationSec) <= epsilon
+               && string.Equals(operation.CrossfadeCurve, replacement.CrossfadeCurve, StringComparison.Ordinal)
+               && operation.SentenceId == replacement.SentenceId;
+    }
+
+    private void LogPickupEdlTransition(
+        PickupEdlDocument document,
+        string operationId,
+        PickupEdlOperationState state,
+        string reason)
+    {
+        Log.Info(
+            "Pickup EDL transition: chapter={ChapterStem}, revision={Revision}, op={OperationId}, state={State}, reason={Reason}, diagnostics={Diagnostics}",
+            document.ChapterStem,
+            document.Revision,
+            operationId,
+            state,
+            reason,
+            _pickupEdlEngine.BuildDeterministicOrderingDiagnostics(document));
+    }
+
     /// <summary>
     /// Loads the hydrated transcript for the current chapter, if available.
     /// </summary>
@@ -1197,17 +1632,22 @@ public class PolishService
 
     /// <summary>
     /// Trims the pickup audio for a replacement with content-aware handle sizing.
-    /// The handle zone extends <c>crossfadeDuration + HandleGuardSec</c> beyond
-    /// the speech edges so the crossfade fits entirely inside non-speech audio.
+    /// Uses the pickup source cache so one decoded buffer can serve many slice views.
     /// </summary>
-    private static AudioBuffer LoadPickupSliceForReplacement(
-        ChapterContextHandle handle,
-        StagedReplacement item)
+    private AudioBuffer LoadPickupSliceForReplacement(
+        string chapterStem,
+        StagedReplacement item,
+        PickupEdlSourceReference source,
+        CancellationToken ct)
     {
-        var pickupBuffer = handle.Chapter.Book.Audio.LoadPickupByPath(item.PickupSourcePath);
+        ArgumentException.ThrowIfNullOrWhiteSpace(chapterStem);
+        ArgumentNullException.ThrowIfNull(item);
+        ArgumentNullException.ThrowIfNull(source);
+
+        var pickupBuffer = _pickupSourceBufferCache.GetSourceBuffer(source, chapterStem, item.Id, ct);
         var pickupDurationSec = (double)pickupBuffer.Length / pickupBuffer.SampleRate;
 
-        // Content-aware handle: crossfade + guard ensures crossfade fits outside speech
+        // Content-aware handle: crossfade + guard ensures crossfade fits outside speech.
         var handlePaddingSec = item.CrossfadeDurationSec + HandleGuardSec;
         var paddedStartSec = Math.Max(0, item.PickupStartSec - handlePaddingSec);
         var paddedEndSec = Math.Min(pickupDurationSec, item.PickupEndSec + handlePaddingSec);
@@ -1217,13 +1657,18 @@ public class PolishService
             paddedStartSec = Math.Max(0, item.PickupStartSec);
             paddedEndSec = Math.Min(pickupDurationSec, item.PickupEndSec);
             if (paddedEndSec <= paddedStartSec)
+            {
                 paddedEndSec = Math.Min(pickupDurationSec, paddedStartSec + 0.010);
+            }
         }
 
-        return AudioProcessor.Trim(
-            pickupBuffer,
-            TimeSpan.FromSeconds(paddedStartSec),
-            TimeSpan.FromSeconds(paddedEndSec));
+        return _pickupSourceBufferCache.GetSliceByTime(
+            source,
+            paddedStartSec,
+            paddedEndSec,
+            chapterStem,
+            item.Id,
+            ct);
     }
 
     /// <summary>

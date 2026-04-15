@@ -206,11 +206,16 @@ public class StagingQueueService
 
     /// <summary>
     /// Transitions the status of a replacement (e.g., Staged -> Applied, Applied -> Reverted).
-    /// When transitioning to Applied, creates a <see cref="ChapterEdit"/> record in the edit list.
-    /// When transitioning to Reverted, removes the corresponding edit record.
+    /// Optionally updates <see cref="EditListService"/> to keep timeline projection in sync.
     /// </summary>
+    /// <param name="replacementId">Replacement identifier.</param>
+    /// <param name="newStatus">New lifecycle state.</param>
+    /// <param name="syncEditList">
+    /// When true (default), applies legacy pickup edit-list mutations.
+    /// When false, caller owns edit-list synchronization.
+    /// </param>
     /// <returns>True if the item was found and updated.</returns>
-    public bool UpdateStatus(string replacementId, ReplacementStatus newStatus)
+    public bool UpdateStatus(string replacementId, ReplacementStatus newStatus, bool syncEditList = true)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(replacementId);
 
@@ -225,6 +230,11 @@ public class StagingQueueService
                     var replacement = list[index];
                     list[index] = replacement with { Status = newStatus };
                     Save();
+
+                    if (!syncEditList)
+                    {
+                        return true;
+                    }
 
                     // Track in edit list for timeline projection
                     if (newStatus == ReplacementStatus.Applied)
