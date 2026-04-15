@@ -3,6 +3,7 @@ using System.Text;
 using System.Threading;
 using Ams.Cli.Repl;
 using Ams.Cli.Commands;
+using Ams.Core.Application.Benchmark;
 using Ams.Core.Application.Mfa;
 using Ams.Core.Application.Validation;
 using Ams.Core.Asr;
@@ -16,37 +17,12 @@ using Ams.Core.Services.Interfaces;
 
 namespace Ams.Cli;
 
-internal static class Program
+public static class Program
 {
     private static async Task<int> Main(string[] args)
     {
-        HostApplicationBuilder builder = Host.CreateApplicationBuilder(args);
-
-        builder.Services.AddSingleton<IPronunciationProvider>(_ => new MfaPronunciationProvider());
-        builder.Services.AddSingleton<IBookCache>(_ => Ams.Core.Processors.DocumentProcessor.DocumentProcessor.CreateBookCache());
-        builder.Services.AddSingleton<IDocumentService, DocumentService>();
-        builder.Services.AddSingleton<IAsrService, AsrService>();
-        builder.Services.AddSingleton<IAnchorComputeService, AnchorComputeService>();
-        builder.Services.AddSingleton<ITranscriptIndexService, TranscriptIndexService>();
-        builder.Services.AddSingleton<ITranscriptHydrationService, TranscriptHydrationService>();
-        builder.Services.AddSingleton<IAlignmentService, AlignmentService>();
-        builder.Services.AddSingleton<GenerateTranscriptCommand>();
-        builder.Services.AddSingleton<ComputeAnchorsCommand>();
-        builder.Services.AddSingleton<BuildBookIndexCommand>();
-        builder.Services.AddSingleton<BuildTranscriptIndexCommand>();
-        builder.Services.AddSingleton<HydrateTranscriptCommand>();
-        builder.Services.AddSingleton<RunMfaCommand>();
-        builder.Services.AddSingleton<MergeTimingsCommand>();
-        builder.Services.AddSingleton<PipelineService>();
-        builder.Services.AddSingleton<ValidationService>();
-        using IHost host = builder.Build();
-        var generateTranscript = host.Services.GetRequiredService<GenerateTranscriptCommand>();
-        var computeAnchors = host.Services.GetRequiredService<ComputeAnchorsCommand>();
-        var buildBookIndex = host.Services.GetRequiredService<BuildBookIndexCommand>();
-        var transcriptIndexCommand = host.Services.GetRequiredService<BuildTranscriptIndexCommand>();
-        var hydrateCommand = host.Services.GetRequiredService<HydrateTranscriptCommand>();
-        var pipelineService = host.Services.GetRequiredService<PipelineService>();
-        var validationService = host.Services.GetRequiredService<ValidationService>();
+        using IHost host = BuildHost(args);
+        var rootCommand = BuildRootCommand(host.Services);
 
         using var loggerFactory = Log.ConfigureDefaults(logFileName: "ams-log.txt");
         Log.Debug("Structured logging initialized. Console + file at {LogFile}", Log.LogFilePath ?? "(unknown)");
@@ -58,23 +34,6 @@ internal static class Program
         MfaProcessSupervisor.RegisterForShutdown();
         MfaProcessSupervisor.TriggerBackgroundWarmup();
 
-        var rootCommand = new RootCommand("AMS - Audio Management System CLI");
-
-        rootCommand.AddCommand(AsrCommand.Create(generateTranscript));
-        rootCommand.AddCommand(ValidateCommand.Create(validationService));
-        rootCommand.AddCommand(TextCommand.Create());
-        rootCommand.AddCommand(BuildIndexCommand.Create(buildBookIndex));
-        rootCommand.AddCommand(BookCommand.Create());
-        rootCommand.AddCommand(AlignCommand.Create(computeAnchors, transcriptIndexCommand, hydrateCommand));
-        rootCommand.AddCommand(RefineSentencesCommand.Create());
-        rootCommand.AddCommand(PipelineCommand.Create(pipelineService));
-        rootCommand.AddCommand(DspCommand.Create());
-        rootCommand.AddCommand(TreatCommand.Create());
-        rootCommand.AddCommand(QcCommand.Create());
-
-        var replCommand = new Command("repl", "Start interactive REPL");
-        replCommand.SetHandler(async () => await StartRepl(rootCommand));
-        rootCommand.AddCommand(replCommand);
         await host.StartAsync();
 
         // if no args , repl by default
@@ -85,6 +44,76 @@ internal static class Program
         }
 
         return await rootCommand.InvokeAsync(args);
+    }
+
+    public static IHost BuildHost(string[] args)
+    {
+        HostApplicationBuilder builder = Host.CreateApplicationBuilder(args);
+        ConfigureServices(builder.Services);
+        return builder.Build();
+    }
+
+    public static RootCommand BuildRootCommand(IServiceProvider services)
+    {
+        ArgumentNullException.ThrowIfNull(services);
+
+        var generateTranscript = services.GetRequiredService<GenerateTranscriptCommand>();
+        var computeAnchors = services.GetRequiredService<ComputeAnchorsCommand>();
+        var buildBookIndex = services.GetRequiredService<BuildBookIndexCommand>();
+        var transcriptIndexCommand = services.GetRequiredService<BuildTranscriptIndexCommand>();
+        var hydrateCommand = services.GetRequiredService<HydrateTranscriptCommand>();
+        var pipelineService = services.GetRequiredService<PipelineService>();
+        var validationService = services.GetRequiredService<ValidationService>();
+        var benchmarkRunService = services.GetRequiredService<BenchmarkRunService>();
+
+        var rootCommand = new RootCommand("AMS - Audio Management System CLI");
+
+        rootCommand.AddCommand(AsrCommand.Create(generateTranscript));
+        rootCommand.AddCommand(ValidateCommand.Create(validationService));
+        rootCommand.AddCommand(TextCommand.Create());
+        rootCommand.AddCommand(BuildIndexCommand.Create(buildBookIndex));
+        rootCommand.AddCommand(BookCommand.Create());
+        rootCommand.AddCommand(AlignCommand.Create(computeAnchors, transcriptIndexCommand, hydrateCommand));
+        rootCommand.AddCommand(RefineSentencesCommand.Create());
+        rootCommand.AddCommand(PipelineCommand.Create(pipelineService));
+        rootCommand.AddCommand(BenchmarkCommand.Create(benchmarkRunService));
+        rootCommand.AddCommand(DspCommand.Create());
+        rootCommand.AddCommand(TreatCommand.Create());
+        rootCommand.AddCommand(QcCommand.Create());
+
+        var replCommand = new Command("repl", "Start interactive REPL");
+        replCommand.SetHandler(async () => await StartRepl(rootCommand));
+        rootCommand.AddCommand(replCommand);
+
+        return rootCommand;
+    }
+
+    private static void ConfigureServices(IServiceCollection services)
+    {
+        ArgumentNullException.ThrowIfNull(services);
+
+        services.AddSingleton<IPronunciationProvider>(_ => new MfaPronunciationProvider());
+        services.AddSingleton<IBookCache>(_ => Ams.Core.Processors.DocumentProcessor.DocumentProcessor.CreateBookCache());
+        services.AddSingleton<IDocumentService, DocumentService>();
+        services.AddSingleton<IAsrService, AsrService>();
+        services.AddSingleton<IAnchorComputeService, AnchorComputeService>();
+        services.AddSingleton<ITranscriptIndexService, TranscriptIndexService>();
+        services.AddSingleton<ITranscriptHydrationService, TranscriptHydrationService>();
+        services.AddSingleton<IAlignmentService, AlignmentService>();
+        services.AddSingleton<GenerateTranscriptCommand>();
+        services.AddSingleton<ComputeAnchorsCommand>();
+        services.AddSingleton<BuildBookIndexCommand>();
+        services.AddSingleton<BuildTranscriptIndexCommand>();
+        services.AddSingleton<HydrateTranscriptCommand>();
+        services.AddSingleton<RunMfaCommand>();
+        services.AddSingleton<MergeTimingsCommand>();
+        services.AddSingleton<PipelineService>();
+        services.AddSingleton<ValidationService>();
+
+        services.AddSingleton<IBenchmarkDependencyReadinessProbe, BenchmarkDependencyReadinessProbe>();
+        services.AddSingleton<BenchmarkDeterminismGate>();
+        services.AddSingleton<BenchmarkRunArtifactStore>();
+        services.AddSingleton<BenchmarkRunService>();
     }
 
     private static async Task StartRepl(RootCommand rootCommand)

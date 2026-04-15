@@ -27,6 +27,7 @@
 
     <ItemGroup>
         <ProjectReference Include="..\Ams.Core\Ams.Core.csproj"/>
+        <ProjectReference Include="..\Ams.Cli\Ams.Cli.csproj"/>
         <ProjectReference Include="..\Ams.Workstation.Server\Ams.Workstation.Server.csproj"/>
     </ItemGroup>
 
