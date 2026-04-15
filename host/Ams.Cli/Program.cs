@@ -113,6 +113,7 @@ public static class Program
         services.AddSingleton<IBenchmarkDependencyReadinessProbe, BenchmarkDependencyReadinessProbe>();
         services.AddSingleton<BenchmarkDeterminismGate>();
         services.AddSingleton<BenchmarkRunArtifactStore>();
+        services.AddSingleton<IBenchmarkMetricsCollector, BenchmarkMetricsCollector>();
         services.AddSingleton<BenchmarkRunService>();
     }
 
