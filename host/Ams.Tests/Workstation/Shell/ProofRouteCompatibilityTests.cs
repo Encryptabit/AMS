@@ -1,12 +1,12 @@
 using System.Reflection;
 using Ams.Workstation.Server.Components.Navigation;
 using Microsoft.AspNetCore.Components;
-using PolishLegacyBatchEditorPage = Ams.Workstation.Server.Components.Pages.Polish.BatchEditor;
 using PolishScaffoldPage = Ams.Workstation.Server.Components.Pages.Polish.Index;
 using ProofChapterReviewPage = Ams.Workstation.Server.Components.Pages.Proof.ChapterReview;
 using ProofPatternsPage = Ams.Workstation.Server.Components.Pages.Proof.ErrorPatterns;
 using ProofIndexPage = Ams.Workstation.Server.Components.Pages.Proof.Index;
 using ProofOverviewPage = Ams.Workstation.Server.Components.Pages.Proof.Overview;
+using ProofPickupsPage = Ams.Workstation.Server.Components.Pages.Proof.Pickups;
 
 namespace Ams.Tests.Workstation.Shell;
 
@@ -15,6 +15,9 @@ public sealed class ProofRouteCompatibilityTests
     [Theory]
     [InlineData("/proof", StageRouteCatalog.StageIds.Proof, StageRouteCatalog.ModuleIds.ProofEditing, true)]
     [InlineData("/proof/", StageRouteCatalog.StageIds.Proof, StageRouteCatalog.ModuleIds.ProofEditing, true)]
+    [InlineData("/proof/pickups", StageRouteCatalog.StageIds.Proof, StageRouteCatalog.ModuleIds.ProofPickups, true)]
+    [InlineData("/proof/pickups/", StageRouteCatalog.StageIds.Proof, StageRouteCatalog.ModuleIds.ProofPickups, true)]
+    [InlineData("/proof/pickups?sort=asc#top", StageRouteCatalog.StageIds.Proof, StageRouteCatalog.ModuleIds.ProofPickups, true)]
     [InlineData("/proof/overview", StageRouteCatalog.StageIds.Proof, StageRouteCatalog.ModuleIds.ProofOverview, true)]
     [InlineData("/proof/patterns", StageRouteCatalog.StageIds.Proof, StageRouteCatalog.ModuleIds.ProofPatterns, true)]
     [InlineData("/proof/Chapter%201", StageRouteCatalog.StageIds.Proof, StageRouteCatalog.ModuleIds.ProofEditing, true)]
@@ -22,6 +25,7 @@ public sealed class ProofRouteCompatibilityTests
     [InlineData("/proof/editing", StageRouteCatalog.StageIds.Proof, StageRouteCatalog.ModuleIds.ProofEditing, false)]
     [InlineData("/proof/editing/Chapter%201", StageRouteCatalog.StageIds.Proof, StageRouteCatalog.ModuleIds.ProofEditing, true)]
     [InlineData("/PrOoF/PaTtErNs", StageRouteCatalog.StageIds.Proof, StageRouteCatalog.ModuleIds.ProofPatterns, true)]
+    [InlineData("/PrOoF/PiCkUpS", StageRouteCatalog.StageIds.Proof, StageRouteCatalog.ModuleIds.ProofPickups, true)]
     [InlineData("/proof//", StageRouteCatalog.StageIds.Proof, StageRouteCatalog.ModuleIds.ProofEditing, true)]
     [InlineData("/proof/%20", StageRouteCatalog.StageIds.Proof, StageRouteCatalog.ModuleIds.ProofEditing, true)]
     public void Resolve_ProofCompatibilityAndCanonicalAliases_ReturnExpectedContract(
@@ -63,6 +67,7 @@ public sealed class ProofRouteCompatibilityTests
     [Theory]
     [InlineData("overview", StageRouteCatalog.ModuleIds.ProofOverview, true, StageRouteCatalog.ModuleIds.ProofEditing, true)]
     [InlineData("patterns", StageRouteCatalog.ModuleIds.ProofPatterns, true, StageRouteCatalog.ModuleIds.ProofEditing, true)]
+    [InlineData("pickups", StageRouteCatalog.ModuleIds.ProofPickups, true, StageRouteCatalog.ModuleIds.ProofEditing, true)]
     [InlineData("editing", StageRouteCatalog.ModuleIds.ProofEditing, false, StageRouteCatalog.ModuleIds.ProofEditing, true)]
     public void ReservedChapterSlugs_ResolveToExpectedCompatibilityAndCanonicalTargets(
         string chapterName,
@@ -91,11 +96,27 @@ public sealed class ProofRouteCompatibilityTests
     public void ProofAndPolishPages_DeclareExpectedCanonicalAndCompatibilityTemplates()
     {
         AssertRoutes(typeof(ProofIndexPage), "/proof", "/proof/editing");
+        AssertRoutes(typeof(ProofPickupsPage), "/proof/pickups");
         AssertRoutes(typeof(ProofOverviewPage), "/proof/overview");
         AssertRoutes(typeof(ProofPatternsPage), "/proof/patterns");
         AssertRoutes(typeof(ProofChapterReviewPage), "/proof/{ChapterName}", "/proof/editing/{ChapterName}");
         AssertRoutes(typeof(PolishScaffoldPage), "/polish", "/polish/scaffold", "/polish/pickups", "/polish/batch");
-        AssertRoutes(typeof(PolishLegacyBatchEditorPage), "/polish/legacy/batch");
+    }
+
+    [Fact]
+    public void LegacyPolishPickupRoutes_AreNotResolvedByStageRouteCatalog()
+    {
+        var legacyPaths = new[]
+        {
+            "/polish/legacy/pickups",
+            "/polish/legacy/batch"
+        };
+
+        foreach (var legacyPath in legacyPaths)
+        {
+            var match = StageRouteCatalog.Resolve(legacyPath);
+            Assert.True(match is null, $"Expected legacy path '{legacyPath}' to be removed, but resolver returned: {match?.DiagnosticContext}.");
+        }
     }
 
     [Fact]
@@ -104,6 +125,7 @@ public sealed class ProofRouteCompatibilityTests
         var expectedAliases = new[]
         {
             "/proof",
+            "/proof/pickups",
             "/proof/overview",
             "/proof/patterns",
             StageRouteCatalog.ProofChapterCompatibilityTemplate,
@@ -126,11 +148,11 @@ public sealed class ProofRouteCompatibilityTests
     {
         var malformedTemplates = EnumerateRouteTemplates(
                 typeof(ProofIndexPage),
+                typeof(ProofPickupsPage),
                 typeof(ProofOverviewPage),
                 typeof(ProofPatternsPage),
                 typeof(ProofChapterReviewPage),
-                typeof(PolishScaffoldPage),
-                typeof(PolishLegacyBatchEditorPage))
+                typeof(PolishScaffoldPage))
             .Select(entry =>
             {
                 var isValid = StageRouteCatalog.IsValidTemplate(entry.Template, out var reason);

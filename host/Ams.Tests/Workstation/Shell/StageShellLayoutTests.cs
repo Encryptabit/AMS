@@ -3,10 +3,9 @@ using Ams.Workstation.Server.Components.Layout;
 using Ams.Workstation.Server.Components.Navigation;
 using Microsoft.AspNetCore.Components;
 using PolishIndexPage = Ams.Workstation.Server.Components.Pages.Polish.Index;
-using PolishLegacyBatchPage = Ams.Workstation.Server.Components.Pages.Polish.BatchEditor;
-using PolishLegacyPickupsPage = Ams.Workstation.Server.Components.Pages.Polish.PickupSubstitution;
 using PrepIndexPage = Ams.Workstation.Server.Components.Pages.Prep.Index;
 using ProofIndexPage = Ams.Workstation.Server.Components.Pages.Proof.Index;
+using ProofPickupsPage = Ams.Workstation.Server.Components.Pages.Proof.Pickups;
 
 namespace Ams.Tests.Workstation.Shell;
 
@@ -18,6 +17,7 @@ public sealed class StageShellLayoutTests
     [InlineData("/prep/pipeline", StageRouteCatalog.StageIds.Prep, StageRouteCatalog.ModuleIds.PrepPipeline)]
     [InlineData("/proof", StageRouteCatalog.StageIds.Proof, StageRouteCatalog.ModuleIds.ProofEditing)]
     [InlineData("/proof/editing", StageRouteCatalog.StageIds.Proof, StageRouteCatalog.ModuleIds.ProofEditing)]
+    [InlineData("/proof/pickups", StageRouteCatalog.StageIds.Proof, StageRouteCatalog.ModuleIds.ProofPickups)]
     [InlineData("/proof/overview", StageRouteCatalog.StageIds.Proof, StageRouteCatalog.ModuleIds.ProofOverview)]
     [InlineData("/proof/patterns", StageRouteCatalog.StageIds.Proof, StageRouteCatalog.ModuleIds.ProofPatterns)]
     [InlineData("/proof/Chapter%201", StageRouteCatalog.StageIds.Proof, StageRouteCatalog.ModuleIds.ProofEditing)]
@@ -78,6 +78,7 @@ public sealed class StageShellLayoutTests
         var expectedByPath = new Dictionary<string, (string StageId, string ModuleId)>
         {
             ["/proof/overview"] = (StageRouteCatalog.StageIds.Proof, StageRouteCatalog.ModuleIds.ProofOverview),
+            ["/proof/pickups"] = (StageRouteCatalog.StageIds.Proof, StageRouteCatalog.ModuleIds.ProofPickups),
             ["/polish/batch"] = (StageRouteCatalog.StageIds.Polish, StageRouteCatalog.ModuleIds.PolishScaffold),
             ["/prep/pipeline"] = (StageRouteCatalog.StageIds.Prep, StageRouteCatalog.ModuleIds.PrepPipeline),
             ["/proof/patterns"] = (StageRouteCatalog.StageIds.Proof, StageRouteCatalog.ModuleIds.ProofPatterns),
@@ -96,7 +97,7 @@ public sealed class StageShellLayoutTests
     }
 
     [Fact]
-    public void StageEntryPages_DeclareCanonicalAliasesWithoutRemovingLegacyRoutes()
+    public void StageEntryPages_DeclareCanonicalAliasesAndExcludeLegacyPolishPickupRoutes()
     {
         AssertRoutes(
             typeof(PrepIndexPage),
@@ -109,19 +110,28 @@ public sealed class StageShellLayoutTests
             "/proof/editing");
 
         AssertRoutes(
+            typeof(ProofPickupsPage),
+            "/proof/pickups");
+
+        AssertRoutes(
             typeof(PolishIndexPage),
             "/polish",
             "/polish/scaffold",
             "/polish/pickups",
             "/polish/batch");
 
-        AssertRoutes(
-            typeof(PolishLegacyPickupsPage),
-            "/polish/legacy/pickups");
+        var polishDeclaredTemplates = typeof(PolishIndexPage)
+            .GetCustomAttributes<RouteAttribute>(inherit: true)
+            .Select(route => route.Template)
+            .ToArray();
 
-        AssertRoutes(
-            typeof(PolishLegacyBatchPage),
-            "/polish/legacy/batch");
+        Assert.DoesNotContain(
+            polishDeclaredTemplates,
+            template => string.Equals(template, "/polish/legacy/pickups", StringComparison.OrdinalIgnoreCase));
+
+        Assert.DoesNotContain(
+            polishDeclaredTemplates,
+            template => string.Equals(template, "/polish/legacy/batch", StringComparison.OrdinalIgnoreCase));
     }
 
     [Fact]

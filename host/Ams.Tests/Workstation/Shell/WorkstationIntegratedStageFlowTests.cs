@@ -27,6 +27,10 @@ public sealed class WorkstationIntegratedStageFlowTests
                 StageId: StageRouteCatalog.StageIds.Proof,
                 ModuleId: StageRouteCatalog.ModuleIds.ProofEditing),
             (
+                Path: "/proof/pickups",
+                StageId: StageRouteCatalog.StageIds.Proof,
+                ModuleId: StageRouteCatalog.ModuleIds.ProofPickups),
+            (
                 Path: "/polish",
                 StageId: StageRouteCatalog.StageIds.Polish,
                 ModuleId: StageRouteCatalog.ModuleIds.PolishScaffold),
@@ -83,6 +87,39 @@ public sealed class WorkstationIntegratedStageFlowTests
             path,
             StageRouteCatalog.StageIds.Polish,
             StageRouteCatalog.ModuleIds.PolishScaffold);
+    }
+
+    [Theory]
+    [InlineData("/proof/pickups", "/proof/pickups", true)]
+    [InlineData("/proof/pickups/", "/proof/pickups", true)]
+    [InlineData("/PrOoF/PiCkUpS?source=legacy#now", "/proof/pickups", true)]
+    public void Resolve_ProofPickupsPaths_EmitExpectedRouteDiagnostics(
+        string path,
+        string expectedTemplate,
+        bool expectedCompatibilityAlias)
+    {
+        var routeMatch = StageRouteCatalog.Resolve(path);
+
+        Assert.True(
+            routeMatch is not null,
+            $"Expected proof pickups path '{path}' to resolve, but no match was returned.");
+
+        Assert.True(
+            string.Equals(routeMatch!.Stage.Id, StageRouteCatalog.StageIds.Proof, StringComparison.OrdinalIgnoreCase)
+            && string.Equals(routeMatch.Module.Id, StageRouteCatalog.ModuleIds.ProofPickups, StringComparison.OrdinalIgnoreCase)
+            && string.Equals(routeMatch.MatchedTemplate, expectedTemplate, StringComparison.OrdinalIgnoreCase)
+            && routeMatch.IsCompatibilityAlias == expectedCompatibilityAlias,
+            $"Unexpected proof pickups route diagnostics for path '{path}'. {routeMatch.DiagnosticContext}");
+
+        Assert.Contains($"template='{expectedTemplate}'", routeMatch.DiagnosticContext, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains($"compatibility='{expectedCompatibilityAlias}'", routeMatch.DiagnosticContext, StringComparison.OrdinalIgnoreCase);
+
+        var railState = StageModuleRail.ResolveStateForPath(path);
+        AssertVisibleState(
+            railState,
+            path,
+            StageRouteCatalog.StageIds.Proof,
+            StageRouteCatalog.ModuleIds.ProofPickups);
     }
 
     [Fact]

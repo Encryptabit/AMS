@@ -8,6 +8,7 @@ public sealed class StageShellPathResolutionTests
 {
     [Theory]
     [InlineData("/proof", StageRouteCatalog.StageIds.Proof, StageRouteCatalog.ModuleIds.ProofEditing)]
+    [InlineData("/proof/pickups", StageRouteCatalog.StageIds.Proof, StageRouteCatalog.ModuleIds.ProofPickups)]
     [InlineData("/proof/overview", StageRouteCatalog.StageIds.Proof, StageRouteCatalog.ModuleIds.ProofOverview)]
     [InlineData("/proof/patterns", StageRouteCatalog.StageIds.Proof, StageRouteCatalog.ModuleIds.ProofPatterns)]
     [InlineData("/proof/Chapter%201", StageRouteCatalog.StageIds.Proof, StageRouteCatalog.ModuleIds.ProofEditing)]
@@ -61,7 +62,9 @@ public sealed class StageShellPathResolutionTests
 
     [Theory]
     [InlineData("/PrOoF/Overview?sort=asc#top", true, StageRouteCatalog.StageIds.Proof, StageRouteCatalog.ModuleIds.ProofOverview)]
+    [InlineData("/PrOoF/PiCkUpS?sort=asc#top", true, StageRouteCatalog.StageIds.Proof, StageRouteCatalog.ModuleIds.ProofPickups)]
     [InlineData("/proof//", true, StageRouteCatalog.StageIds.Proof, StageRouteCatalog.ModuleIds.ProofEditing)]
+    [InlineData("/proof/pickups/", true, StageRouteCatalog.StageIds.Proof, StageRouteCatalog.ModuleIds.ProofPickups)]
     [InlineData("/proof/editing//", true, StageRouteCatalog.StageIds.Proof, StageRouteCatalog.ModuleIds.ProofEditing)]
     [InlineData("/proof/%2F", true, StageRouteCatalog.StageIds.Proof, StageRouteCatalog.ModuleIds.ProofEditing)]
     [InlineData("/polish//", true, StageRouteCatalog.StageIds.Polish, StageRouteCatalog.ModuleIds.PolishScaffold)]
@@ -72,6 +75,7 @@ public sealed class StageShellPathResolutionTests
     [InlineData("/unknown/path", false, "", "")]
     [InlineData("/polish/unknown", false, "", "")]
     [InlineData("/polish/legacy/pickups", false, "", "")]
+    [InlineData("/polish/legacy/batch", false, "", "")]
     public void ResolveStateForPath_NormalizesMalformedInputs_WithoutThrowing(
         string path,
         bool expectedVisible,

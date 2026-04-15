@@ -2,6 +2,7 @@
 @page "/polish/scaffold"
 @page "/polish/pickups"
 @page "/polish/batch"
+@using Ams.Workstation.Server.Components.Navigation
 
 <PageTitle>Polish - AMS Workstation</PageTitle>
 
@@ -10,7 +11,7 @@
         <div class="polish-header">
             <BitText Typography="BitTypography.H4">Polish Area</BitText>
             <BitText Typography="BitTypography.Body1" Color="BitColor.SecondaryForeground">
-                Polish is intentionally scaffold-only in the shared stage shell for M002/S04.
+                Polish remains scaffold-only in shared shell. Pickup workflow now owned by Proof module.
             </BitText>
         </div>
 
@@ -18,39 +19,27 @@
             <BitStack Horizontal="false" Gap="0.75rem">
                 <BitTag Color="BitColor.Info">Scaffold</BitTag>
                 <BitText Typography="BitTypography.Body2">
-                    Use this page to confirm stage continuity while the shell contract remains focused on Prep and Proof handoff behavior.
+                    Use this page to confirm stage continuity while Prep → Proof → Polish transitions remain stable.
                 </BitText>
                 <BitText Typography="BitTypography.Caption1" Color="BitColor.SecondaryForeground">
-                    Existing pickup and batch tooling remains available through explicit legacy routes.
+                    Legacy pickup pages were removed. Use Proof Pickups for import/match/stage.
                 </BitText>
-            </BitStack>
-        </BitCard>
-
-        <BitCard>
-            <BitStack Horizontal="false" Gap="0.75rem">
-                <BitText Typography="BitTypography.Subtitle2" Style="text-transform: uppercase; letter-spacing: 0.05em;">
-                    Legacy workflows
-                </BitText>
-                <BitText Typography="BitTypography.Body2" Color="BitColor.SecondaryForeground">
-                    These routes are preserved for compatibility but are not part of the stage shell module contract.
-                </BitText>
-
-                <BitStack Horizontal="true" Gap="0.75rem" Wrap="true">
-                    <BitButton Variant="BitVariant.Outline" Color="BitColor.Primary" Href="@LegacyPickupsPath">
-                        Open Legacy Pickup Substitution
-                    </BitButton>
-                    <BitButton Variant="BitVariant.Outline" Color="BitColor.Primary" Href="@LegacyBatchPath">
-                        Open Legacy Batch Editor
-                    </BitButton>
-                </BitStack>
+                <BitButton Variant="BitVariant.Outline"
+                           Color="BitColor.Primary"
+                           Href="@GetProofPickupsPath()"
+                           data-polish-scaffold-link="proof-pickups">
+                    Open Proof Pickups
+                </BitButton>
             </BitStack>
         </BitCard>
     </BitStack>
 </div>
 
 @code {
-    private const string LegacyPickupsPath = "/polish/legacy/pickups";
-    private const string LegacyBatchPath = "/polish/legacy/batch";
+    private static string GetProofPickupsPath()
+        => StageRouteCatalog.GetModuleCanonicalPath(
+            StageRouteCatalog.StageIds.Proof,
+            StageRouteCatalog.ModuleIds.ProofPickups);
 }
 
 <style>

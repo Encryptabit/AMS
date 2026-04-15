@@ -21,6 +21,7 @@ public sealed class StageRouteCatalogTests
 
         AssertModuleExists(StageRouteCatalog.StageIds.Prep, StageRouteCatalog.ModuleIds.PrepPipeline, expectedSupportsBatching: true);
         AssertModuleExists(StageRouteCatalog.StageIds.Proof, StageRouteCatalog.ModuleIds.ProofEditing, expectedSupportsBatching: false);
+        AssertModuleExists(StageRouteCatalog.StageIds.Proof, StageRouteCatalog.ModuleIds.ProofPickups, expectedSupportsBatching: false);
         AssertModuleExists(StageRouteCatalog.StageIds.Proof, StageRouteCatalog.ModuleIds.ProofOverview, expectedSupportsBatching: false);
         AssertModuleExists(StageRouteCatalog.StageIds.Proof, StageRouteCatalog.ModuleIds.ProofPatterns, expectedSupportsBatching: false);
         AssertModuleExists(StageRouteCatalog.StageIds.Polish, StageRouteCatalog.ModuleIds.PolishScaffold, expectedSupportsBatching: false);
@@ -32,6 +33,7 @@ public sealed class StageRouteCatalogTests
         var requiredAliases = new[]
         {
             "/proof",
+            "/proof/pickups",
             "/proof/overview",
             "/proof/patterns",
             StageRouteCatalog.ProofChapterCompatibilityTemplate
@@ -77,6 +79,7 @@ public sealed class StageRouteCatalogTests
 
     [Theory]
     [InlineData(StageRouteCatalog.StageIds.Proof, StageRouteCatalog.ModuleIds.ProofEditing, "/proof/editing")]
+    [InlineData(StageRouteCatalog.StageIds.Proof, StageRouteCatalog.ModuleIds.ProofPickups, "/proof/pickups")]
     [InlineData(StageRouteCatalog.StageIds.Proof, StageRouteCatalog.ModuleIds.ProofOverview, "/proof/overview")]
     [InlineData(StageRouteCatalog.StageIds.Proof, StageRouteCatalog.ModuleIds.ProofPatterns, "/proof/patterns")]
     [InlineData(StageRouteCatalog.StageIds.Prep, StageRouteCatalog.ModuleIds.PrepPipeline, "/prep/pipeline")]
@@ -172,6 +175,9 @@ public sealed class StageRouteCatalogTests
     [Theory]
     [InlineData("/proof", StageRouteCatalog.StageIds.Proof, StageRouteCatalog.ModuleIds.ProofEditing, true)]
     [InlineData("/proof/", StageRouteCatalog.StageIds.Proof, StageRouteCatalog.ModuleIds.ProofEditing, true)]
+    [InlineData("/proof/pickups", StageRouteCatalog.StageIds.Proof, StageRouteCatalog.ModuleIds.ProofPickups, true)]
+    [InlineData("/proof/pickups/", StageRouteCatalog.StageIds.Proof, StageRouteCatalog.ModuleIds.ProofPickups, true)]
+    [InlineData("/PrOoF/PiCkUpS?sort=asc#top", StageRouteCatalog.StageIds.Proof, StageRouteCatalog.ModuleIds.ProofPickups, true)]
     [InlineData("/proof/overview", StageRouteCatalog.StageIds.Proof, StageRouteCatalog.ModuleIds.ProofOverview, true)]
     [InlineData("/proof/patterns", StageRouteCatalog.StageIds.Proof, StageRouteCatalog.ModuleIds.ProofPatterns, true)]
     [InlineData("/proof/Chapter%201", StageRouteCatalog.StageIds.Proof, StageRouteCatalog.ModuleIds.ProofEditing, true)]
@@ -191,6 +197,23 @@ public sealed class StageRouteCatalogTests
         bool expectedCompatibilityAlias)
     {
         AssertResolves(path, expectedStage, expectedModule, expectedCompatibilityAlias);
+    }
+
+    [Fact]
+    public void Resolve_ProofPickupsPath_WinsOverProofChapterTemplateCollision()
+    {
+        var chapterSlugPath = StageRouteCatalog.BuildProofChapterCompatibilityPath("pickups");
+        var match = StageRouteCatalog.Resolve(chapterSlugPath);
+
+        Assert.True(
+            match is not null,
+            $"Expected chapter-compatible path '{chapterSlugPath}' to resolve, but no match returned.");
+
+        Assert.True(
+            string.Equals(match!.Stage.Id, StageRouteCatalog.StageIds.Proof, StringComparison.OrdinalIgnoreCase)
+            && string.Equals(match.Module.Id, StageRouteCatalog.ModuleIds.ProofPickups, StringComparison.OrdinalIgnoreCase)
+            && string.Equals(match.MatchedTemplate, "/proof/pickups", StringComparison.OrdinalIgnoreCase),
+            $"Expected proof pickups exact route to win over chapter template for '{chapterSlugPath}', but got {match.DiagnosticContext}.");
     }
 
     [Theory]
@@ -229,6 +252,7 @@ public sealed class StageRouteCatalogTests
     [InlineData("/proof/overview/extra")]
     [InlineData("/polish/unknown")]
     [InlineData("/polish/legacy/pickups")]
+    [InlineData("/polish/legacy/batch")]
     public void Resolve_MalformedOrUnknownPaths_ReturnsNoMatch(string path)
     {
         var match = StageRouteCatalog.Resolve(path);
