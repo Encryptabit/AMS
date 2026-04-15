@@ -9,6 +9,7 @@ using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
 using Ams.Cli.Utilities;
 using Ams.Cli.Repl;
+using Ams.Core.Application.Benchmark;
 using Ams.Core.Application.Commands;
 using Ams.Core.Application.Pipeline;
 using Ams.Core.Application.Mfa.Models;
@@ -2442,7 +2443,7 @@ public static class PipelineCommand
                             var rawBuffer = AudioProcessor.Decode(raw.FullName);
                             rawSampleRate = rawBuffer.SampleRate;
                             rawMono = ToMono(rawBuffer);
-                            rawTimings = LoadSentenceTimings(referenceHydratePath);
+                            rawTimings = BenchmarkHydrateTimingReader.ReadLenient(referenceHydratePath);
                         }
                         catch (Exception ex)
                         {
@@ -2475,7 +2476,7 @@ public static class PipelineCommand
                                 var variantTimings = string.Equals(variant.HydratePath, referenceHydratePath,
                                     StringComparison.OrdinalIgnoreCase)
                                     ? rawTimings
-                                    : LoadSentenceTimings(variant.HydratePath);
+                                    : BenchmarkHydrateTimingReader.ReadLenient(variant.HydratePath);
 
                                 result = AudioIntegrityVerifier.Verify(
                                     rawMono,
@@ -2807,113 +2808,6 @@ public static class PipelineCommand
         }
 
         return mono;
-    }
-
-    private static IReadOnlyDictionary<int, AudioSentenceTiming> LoadSentenceTimings(string hydratePath)
-    {
-        using var stream = File.OpenRead(hydratePath);
-        using var doc = JsonDocument.Parse(stream);
-
-        if (!doc.RootElement.TryGetProperty("sentences", out var sentences) ||
-            sentences.ValueKind != JsonValueKind.Array)
-        {
-            return new Dictionary<int, SentenceTiming>();
-        }
-
-        var timings = new Dictionary<int, AudioSentenceTiming>();
-        foreach (var sentence in sentences.EnumerateArray())
-        {
-            if (!TryGetInt(sentence, "id", out var id))
-            {
-                continue;
-            }
-
-            if (!TryReadTiming(sentence, out var start, out var end))
-            {
-                continue;
-            }
-
-            timings[id] = new AudioSentenceTiming(start, end);
-        }
-
-        return timings;
-    }
-
-    private static bool TryReadTiming(JsonElement sentence, out double start, out double end)
-    {
-        start = double.NaN;
-        end = double.NaN;
-
-        if (sentence.TryGetProperty("timing", out var timingObj) && timingObj.ValueKind == JsonValueKind.Object)
-        {
-            if (TryGetDouble(timingObj, "startSec", out start) && TryGetDouble(timingObj, "endSec", out end))
-            {
-                return true;
-            }
-
-            if (TryGetDouble(timingObj, "start", out start) && TryGetDouble(timingObj, "end", out end))
-            {
-                return true;
-            }
-        }
-
-        if (TryGetDouble(sentence, "startSec", out start) && TryGetDouble(sentence, "endSec", out end))
-        {
-            return true;
-        }
-
-        if (TryGetDouble(sentence, "start", out start) && TryGetDouble(sentence, "end", out end))
-        {
-            return true;
-        }
-
-        start = double.NaN;
-        end = double.NaN;
-        return false;
-    }
-
-    private static bool TryGetDouble(JsonElement element, string propertyName, out double value)
-    {
-        value = double.NaN;
-        if (!element.TryGetProperty(propertyName, out var prop))
-        {
-            return false;
-        }
-
-        if (prop.ValueKind == JsonValueKind.Number)
-        {
-            value = prop.GetDouble();
-            return true;
-        }
-
-        if (prop.ValueKind == JsonValueKind.String && double.TryParse(prop.GetString(), out var parsed))
-        {
-            value = parsed;
-            return true;
-        }
-
-        return false;
-    }
-
-    private static bool TryGetInt(JsonElement element, string propertyName, out int value)
-    {
-        value = 0;
-        if (!element.TryGetProperty(propertyName, out var prop))
-        {
-            return false;
-        }
-
-        if (prop.ValueKind == JsonValueKind.Number && prop.TryGetInt32(out value))
-        {
-            return true;
-        }
-
-        if (prop.ValueKind == JsonValueKind.String && int.TryParse(prop.GetString(), out value))
-        {
-            return true;
-        }
-
-        return false;
     }
 
     private static void WriteVerificationCsv(string path, string chapterLabel, string variantLabel,
