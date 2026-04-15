@@ -164,6 +164,36 @@ public sealed class ProofEditingContinuityTests
     }
 
     [Fact]
+    public void ChapterReview_PlaybackViewUsesCorrectedEndpointContracts()
+    {
+        var source = ReadRepoFile(ChapterReviewRelativePath);
+
+        AssertContainsAnchor(
+            source,
+            ChapterReviewRelativePath,
+            "return $\"/api/audio/chapter/{Uri.EscapeDataString(ChapterName)}/corrected\";",
+            "editing waveform playback uses corrected endpoint");
+
+        AssertContainsAnchor(
+            source,
+            ChapterReviewRelativePath,
+            "return $\"/api/audio/chapter/{Uri.EscapeDataString(ChapterName)}/corrected/peaks?pxPerSec={PeakPxPerSec}\";",
+            "editing waveform peaks uses corrected endpoint");
+
+        AssertDoesNotContainAnchor(
+            source,
+            ChapterReviewRelativePath,
+            "return $\"/api/audio/chapter/{Uri.EscapeDataString(ChapterName)}\";",
+            "legacy generic chapter playback endpoint literal");
+
+        AssertDoesNotContainAnchor(
+            source,
+            ChapterReviewRelativePath,
+            "return $\"/api/audio/chapter/{Uri.EscapeDataString(ChapterName)}/peaks?pxPerSec={PeakPxPerSec}\";",
+            "legacy generic chapter peaks endpoint literal");
+    }
+
+    [Fact]
     public void KeyboardShortcuts_DispatchesRequiredProofNavigationHooks()
     {
         var source = ReadRepoFile(KeyboardShortcutsRelativePath);

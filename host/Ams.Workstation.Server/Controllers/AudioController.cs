@@ -4,6 +4,7 @@ using Ams.Core.Artifacts;
 using Ams.Core.Audio;
 using Ams.Core.Processors;
 using Ams.Core.Runtime.Audio;
+using Ams.Core.Runtime.Book;
 using Ams.Workstation.Server.Services;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc;
@@ -274,73 +275,49 @@ public class AudioController : ControllerBase
     }
 
     /// <summary>
-    /// Serves the corrected chapter audio from disk.
-    /// Falls back to treated.wav, then raw audio if corrected.wav does not exist.
+    /// Serves corrected chapter audio using deterministic corrected→treated→current fallback.
     /// </summary>
     [HttpGet("chapter/{chapterName}/corrected")]
     public IActionResult GetCorrectedChapterAudio(string chapterName)
     {
-        if (_workspace.CurrentChapterHandle is null)
+        if (!TryResolveCorrectedPlayback(chapterName, out var resolved, out var failureResult))
         {
-            return NotFound("No chapter loaded");
+            return failureResult!;
         }
 
-        var descriptor = _workspace.CurrentChapterHandle.Chapter.Descriptor;
-        var correctedPath = Path.Combine(descriptor.RootPath, $"{descriptor.ChapterId}.corrected.wav");
+        _logger.LogDebug(
+            "Serving corrected playback audio for chapter '{RequestedChapter}' from source '{Source}'",
+            resolved.RequestedChapter,
+            resolved.Source);
 
-        if (System.IO.File.Exists(correctedPath))
-        {
-            _logger.LogDebug("Serving corrected audio for chapter '{ChapterName}'", chapterName);
-            return ServeAudioFile(correctedPath);
-        }
-
-        var treatedPath = Path.Combine(descriptor.RootPath, $"{descriptor.ChapterId}.treated.wav");
-        if (System.IO.File.Exists(treatedPath))
-        {
-            _logger.LogDebug("Corrected not found, falling back to treated for chapter '{ChapterName}'", chapterName);
-            return ServeAudioFile(treatedPath);
-        }
-
-        // Fall back to raw buffer
-        try
-        {
-            var buffer = _workspace.CurrentChapterHandle.Chapter.Audio.Current.Buffer;
-            if (buffer is null)
-                return NotFound("No audio available");
-
-            var stream = buffer.ToWavStream();
-            return File(stream, "audio/wav", enableRangeProcessing: true);
-        }
-        catch (InvalidOperationException)
-        {
-            return NotFound("No audio available");
-        }
+        var stream = resolved.Buffer.ToWavStream();
+        return File(stream, "audio/wav", enableRangeProcessing: true);
     }
 
     /// <summary>
     /// Returns precomputed min/max waveform peaks for corrected chapter audio.
-    /// Falls back to treated/current audio using the same resolution logic as playback.
+    /// Uses same corrected→treated→current fallback resolution as playback.
     /// </summary>
     [HttpGet("chapter/{chapterName}/corrected/peaks")]
     public IActionResult GetCorrectedChapterPeaks(string chapterName, [FromQuery] int pxPerSec = DefaultPeakPxPerSec)
     {
-        if (_workspace.CurrentChapterHandle is null)
+        if (!TryResolveCorrectedPlayback(chapterName, out var resolved, out var failureResult))
         {
-            return NotFound("No chapter loaded");
+            return failureResult!;
         }
 
-        var audioContext = ResolveCorrectedPlaybackContext();
-        var buffer = audioContext?.Buffer;
-        if (audioContext is null || buffer is null)
-        {
-            return NotFound("No audio available");
-        }
-
-        var bucketCount = ResolveWaveformBucketCount(buffer, pxPerSec, $"corrected chapter '{chapterName}'");
-        var peaks = audioContext.GetOrCreateWaveformPeaks(bucketCount);
+        var bucketCount = ResolveWaveformBucketCount(
+            resolved.Buffer,
+            pxPerSec,
+            $"corrected chapter '{resolved.RequestedChapter}' source '{resolved.Source}'");
+        var peaks = resolved.Context.GetOrCreateWaveformPeaks(bucketCount);
         if (peaks is null)
         {
-            return NotFound("No audio available");
+            _logger.LogWarning(
+                "Waveform peaks unavailable for chapter '{RequestedChapter}' from source '{Source}'",
+                resolved.RequestedChapter,
+                resolved.Source);
+            return NotFound($"No audio available for chapter '{resolved.RequestedChapter}' (source '{resolved.Source}').");
         }
 
         return Ok(ToWaveformResponse(peaks));
@@ -596,22 +573,124 @@ public class AudioController : ControllerBase
             TimeSpan.FromSeconds(clampedEnd));
     }
 
-    private AudioBufferContext? ResolveCorrectedPlaybackContext()
+    private sealed record CorrectedPlaybackResolution(
+        string RequestedChapter,
+        string ActiveChapter,
+        string ChapterId,
+        string Source,
+        AudioBufferContext Context,
+        AudioBuffer Buffer);
+
+    private bool TryResolveCorrectedPlayback(
+        string chapterName,
+        out CorrectedPlaybackResolution resolved,
+        out IActionResult? failureResult)
     {
+        resolved = null!;
+        failureResult = null;
+
         if (_workspace.CurrentChapterHandle is null)
         {
-            return null;
+            failureResult = NotFound("No chapter loaded");
+            return false;
         }
 
-        var audio = _workspace.CurrentChapterHandle.Chapter.Audio;
-        foreach (var candidate in new[] { audio.Corrected, audio.Treated, audio.Current })
+        var requestedChapter = Uri.UnescapeDataString(chapterName ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(requestedChapter))
         {
-            if (candidate?.Buffer is not null)
+            _logger.LogWarning(
+                "Corrected playback request rejected due to blank chapter token. Raw token='{ChapterToken}'",
+                chapterName);
+            failureResult = BadRequest("Chapter name is required");
+            return false;
+        }
+
+        var handle = _workspace.CurrentChapterHandle;
+        var descriptor = handle.Chapter.Descriptor;
+        var activeChapter = string.IsNullOrWhiteSpace(_workspace.CurrentChapterName)
+            ? descriptor.ChapterId
+            : _workspace.CurrentChapterName!.Trim();
+
+        if (!MatchesRequestedChapter(requestedChapter, activeChapter, descriptor))
+        {
+            _logger.LogWarning(
+                "Corrected playback request rejected for chapter '{RequestedChapter}'. Active chapter='{ActiveChapter}', stem='{ChapterId}'.",
+                requestedChapter,
+                activeChapter,
+                descriptor.ChapterId);
+            failureResult = NotFound($"Chapter '{requestedChapter}' is not active (active chapter '{activeChapter}').");
+            return false;
+        }
+
+        var audio = handle.Chapter.Audio;
+        AudioBufferContext? currentContext;
+        try
+        {
+            currentContext = audio.Current;
+        }
+        catch (InvalidOperationException ex)
+        {
+            _logger.LogWarning(
+                ex,
+                "Corrected playback request failed because current audio context is unavailable for chapter '{RequestedChapter}'",
+                requestedChapter);
+            currentContext = null;
+        }
+
+        foreach (var candidate in new[] { ("corrected", audio.Corrected), ("treated", audio.Treated), ("current", currentContext) })
+        {
+            var context = candidate.Item2;
+            var buffer = context?.Buffer;
+            if (context is null || buffer is null)
             {
-                return candidate;
+                continue;
+            }
+
+            resolved = new CorrectedPlaybackResolution(
+                RequestedChapter: requestedChapter,
+                ActiveChapter: activeChapter,
+                ChapterId: descriptor.ChapterId,
+                Source: candidate.Item1,
+                Context: context,
+                Buffer: buffer);
+
+            _logger.LogDebug(
+                "Resolved corrected playback source '{Source}' for chapter '{RequestedChapter}' (active '{ActiveChapter}', stem '{ChapterId}')",
+                resolved.Source,
+                resolved.RequestedChapter,
+                resolved.ActiveChapter,
+                resolved.ChapterId);
+            return true;
+        }
+
+        _logger.LogWarning(
+            "No corrected playback source available for chapter '{RequestedChapter}' (active '{ActiveChapter}', stem '{ChapterId}'). Checked corrected, treated, current.",
+            requestedChapter,
+            activeChapter,
+            descriptor.ChapterId);
+        failureResult = NotFound($"No audio available for chapter '{requestedChapter}' (checked corrected, treated, current).");
+        return false;
+    }
+
+    private static bool MatchesRequestedChapter(
+        string requestedChapter,
+        string activeChapter,
+        ChapterDescriptor descriptor)
+    {
+        if (string.Equals(requestedChapter, activeChapter, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(requestedChapter, descriptor.ChapterId, StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        foreach (var alias in descriptor.Aliases)
+        {
+            if (string.Equals(requestedChapter, alias, StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
             }
         }
 
-        return null;
+        return false;
     }
 }

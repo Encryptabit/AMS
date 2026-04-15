@@ -244,10 +244,10 @@ else
 
     private string GetAudioUrl()
     {
-        // Use the chapter endpoint to stream from AudioBuffer
-        if (!string.IsNullOrEmpty(ChapterName))
+        // Playback view must resolve through corrected-aware endpoint (corrected → treated → current).
+        if (!string.IsNullOrWhiteSpace(ChapterName))
         {
-            return $"/api/audio/chapter/{Uri.EscapeDataString(ChapterName)}";
+            return $"/api/audio/chapter/{Uri.EscapeDataString(ChapterName)}/corrected";
         }
 
         return "/api/audio"; // Falls back to sample audio
@@ -255,12 +255,12 @@ else
 
     private string? GetPeaksUrl()
     {
-        if (string.IsNullOrEmpty(ChapterName))
+        if (string.IsNullOrWhiteSpace(ChapterName))
         {
             return null;
         }
 
-        return $"/api/audio/chapter/{Uri.EscapeDataString(ChapterName)}/peaks?pxPerSec={PeakPxPerSec}";
+        return $"/api/audio/chapter/{Uri.EscapeDataString(ChapterName)}/corrected/peaks?pxPerSec={PeakPxPerSec}";
     }
 
     private string GetDisplayTitle()
