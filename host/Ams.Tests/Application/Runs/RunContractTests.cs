@@ -36,6 +36,7 @@ public class RunContractTests
     {
         Assert.Equal("prep.book_index.build", ModuleIds.BuildBookIndex.Value);
         Assert.Equal("prep.pipeline.run", ModuleIds.PipelineRun.Value);
+        Assert.Equal("prep.benchmark.run", ModuleIds.BenchmarkRun.Value);
     }
 
     [Theory]
