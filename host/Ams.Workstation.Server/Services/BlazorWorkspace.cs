@@ -137,6 +137,16 @@ public sealed class BlazorWorkspace : IWorkspace, IDisposable
     public string? RoomtoneFilePath { get; private set; }
 
     /// <summary>
+    /// Last persisted workstation-state load failure message, including file path context.
+    /// </summary>
+    public string? LastWorkspaceStateLoadError { get; private set; }
+
+    /// <summary>
+    /// Last persisted project-state load failure message, including file path context.
+    /// </summary>
+    public string? LastProjectStateLoadError { get; private set; }
+
+    /// <summary>
     /// Whether waveform peaks should be computed for all chapters in the background after loading a workspace.
     /// </summary>
     public bool PrecomputePeaksInBackground { get; private set; }
@@ -483,9 +493,14 @@ public sealed class BlazorWorkspace : IWorkspace, IDisposable
 
     private void LoadPersistedState()
     {
+        LastWorkspaceStateLoadError = null;
+
         try
         {
-            if (!File.Exists(_stateFilePath)) return;
+            if (!File.Exists(_stateFilePath))
+            {
+                return;
+            }
 
             var json = File.ReadAllText(_stateFilePath);
             using var doc = JsonDocument.Parse(json);
@@ -510,6 +525,8 @@ public sealed class BlazorWorkspace : IWorkspace, IDisposable
         }
         catch (Exception ex)
         {
+            LastWorkspaceStateLoadError =
+                $"Failed to load persisted workstation state '{_stateFilePath}': {ex.Message}";
             Console.WriteLine($"Failed to load persisted state: {ex.Message}");
         }
     }
@@ -545,12 +562,14 @@ public sealed class BlazorWorkspace : IWorkspace, IDisposable
     {
         PickupSessionPath = null;
         RoomtoneFilePath = null;
+        LastProjectStateLoadError = null;
 
         if (string.IsNullOrEmpty(_rootPath)) return;
 
+        var stateFile = Path.Combine(_rootPath, ".polish", "project-state.json");
+
         try
         {
-            var stateFile = Path.Combine(_rootPath, ".polish", "project-state.json");
             if (!File.Exists(stateFile)) return;
 
             var json = File.ReadAllText(stateFile);
@@ -572,6 +591,8 @@ public sealed class BlazorWorkspace : IWorkspace, IDisposable
         }
         catch (Exception ex)
         {
+            LastProjectStateLoadError =
+                $"Failed to load persisted project state '{stateFile}': {ex.Message}";
             Console.WriteLine($"Failed to load project state: {ex.Message}");
         }
     }
