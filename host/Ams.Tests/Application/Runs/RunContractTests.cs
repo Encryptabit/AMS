@@ -9,6 +9,7 @@ public class RunContractTests
     [InlineData("prep.book_index.build")]
     [InlineData("prep.pipeline.run")]
     [InlineData("prep.stage_2.verify")]
+    [InlineData("prep.benchmark.compare")]
     public void ModuleId_AcceptsStableLowerCaseDottedIds(string value)
     {
         var moduleId = new ModuleId(value);
@@ -37,6 +38,7 @@ public class RunContractTests
         Assert.Equal("prep.book_index.build", ModuleIds.BuildBookIndex.Value);
         Assert.Equal("prep.pipeline.run", ModuleIds.PipelineRun.Value);
         Assert.Equal("prep.benchmark.run", ModuleIds.BenchmarkRun.Value);
+        Assert.Equal("prep.benchmark.compare", ModuleIds.BenchmarkCompare.Value);
     }
 
     [Theory]

@@ -65,6 +65,7 @@ public static class Program
         var pipelineService = services.GetRequiredService<PipelineService>();
         var validationService = services.GetRequiredService<ValidationService>();
         var benchmarkRunService = services.GetRequiredService<BenchmarkRunService>();
+        var benchmarkCompareService = services.GetRequiredService<BenchmarkCompareService>();
 
         var rootCommand = new RootCommand("AMS - Audio Management System CLI");
 
@@ -76,7 +77,7 @@ public static class Program
         rootCommand.AddCommand(AlignCommand.Create(computeAnchors, transcriptIndexCommand, hydrateCommand));
         rootCommand.AddCommand(RefineSentencesCommand.Create());
         rootCommand.AddCommand(PipelineCommand.Create(pipelineService));
-        rootCommand.AddCommand(BenchmarkCommand.Create(benchmarkRunService));
+        rootCommand.AddCommand(BenchmarkCommand.Create(benchmarkRunService, benchmarkCompareService));
         rootCommand.AddCommand(DspCommand.Create());
         rootCommand.AddCommand(TreatCommand.Create());
         rootCommand.AddCommand(QcCommand.Create());
@@ -113,8 +114,10 @@ public static class Program
         services.AddSingleton<IBenchmarkDependencyReadinessProbe, BenchmarkDependencyReadinessProbe>();
         services.AddSingleton<BenchmarkDeterminismGate>();
         services.AddSingleton<BenchmarkRunArtifactStore>();
+        services.AddSingleton<BenchmarkRunManifestValidator>();
         services.AddSingleton<IBenchmarkMetricsCollector, BenchmarkMetricsCollector>();
         services.AddSingleton<BenchmarkRunService>();
+        services.AddSingleton<BenchmarkCompareService>();
     }
 
     private static async Task StartRepl(RootCommand rootCommand)
