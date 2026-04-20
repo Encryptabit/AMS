@@ -26,7 +26,7 @@ namespace Ams.Workstation.Server.Services;
 public class PickupMatchingService
 {
     private const double MinSegmentDurationSec = 0.3;
-    private const int MaxSegmentsPerTarget = 6;
+    private const int MaxSegmentsPerTarget = 24;
 
     private static readonly Regex PunctuationRegex = new(@"[^\w\s]", RegexOptions.Compiled);
     private static readonly Regex WhitespaceRegex = new(@"\s+", RegexOptions.Compiled);
@@ -201,45 +201,69 @@ public class PickupMatchingService
         var segmentCount = segments.Count;
         var targetCount = targets.Count;
         var costs = new double[segmentCount + 1, targetCount + 1];
-        var previous = new int[segmentCount + 1, targetCount + 1];
+        var previousSegment = new int[segmentCount + 1, targetCount + 1];
+        var previousTarget = new int[segmentCount + 1, targetCount + 1];
 
-        for (var i = 0; i <= segmentCount; i++)
+        for (var segmentIndex = 0; segmentIndex <= segmentCount; segmentIndex++)
         {
-            for (var j = 0; j <= targetCount; j++)
+            for (var targetIndex = 0; targetIndex <= targetCount; targetIndex++)
             {
-                costs[i, j] = double.PositiveInfinity;
-                previous[i, j] = -1;
+                costs[segmentIndex, targetIndex] = double.PositiveInfinity;
+                previousSegment[segmentIndex, targetIndex] = -1;
+                previousTarget[segmentIndex, targetIndex] = -1;
             }
         }
 
         costs[0, 0] = 0;
+        previousSegment[0, 0] = 0;
+        previousTarget[0, 0] = 0;
 
-        for (var consumedSegments = 0; consumedSegments < segmentCount; consumedSegments++)
+        for (var segmentIndex = 0; segmentIndex <= segmentCount; segmentIndex++)
         {
-            for (var consumedTargets = 0; consumedTargets < targetCount; consumedTargets++)
+            for (var targetIndex = 0; targetIndex <= targetCount; targetIndex++)
             {
-                var baseCost = costs[consumedSegments, consumedTargets];
+                var baseCost = costs[segmentIndex, targetIndex];
                 if (double.IsPositiveInfinity(baseCost))
                 {
                     continue;
                 }
 
-                var remainingTargetsAfterCurrent = targetCount - consumedTargets - 1;
+                // Allow skipping unrelated utterances in stitched session WAVs while still
+                // preserving CRX-order determinism for the targets that belong to the
+                // active chapter.
+                if (segmentIndex < segmentCount)
+                {
+                    var skipCost = baseCost + ComputeSkipPenalty(segments[segmentIndex]);
+                    if (skipCost < costs[segmentIndex + 1, targetIndex])
+                    {
+                        costs[segmentIndex + 1, targetIndex] = skipCost;
+                        previousSegment[segmentIndex + 1, targetIndex] = segmentIndex;
+                        previousTarget[segmentIndex + 1, targetIndex] = targetIndex;
+                    }
+                }
+
+                if (segmentIndex >= segmentCount || targetIndex >= targetCount)
+                {
+                    continue;
+                }
+
+                var remainingTargetsAfterCurrent = targetCount - targetIndex - 1;
                 var maxEndExclusive = Math.Min(
                     segmentCount - remainingTargetsAfterCurrent,
-                    consumedSegments + MaxSegmentsPerTarget);
+                    segmentIndex + MaxSegmentsPerTarget);
 
-                for (var endExclusive = consumedSegments + 1; endExclusive <= maxEndExclusive; endExclusive++)
+                for (var endExclusive = segmentIndex + 1; endExclusive <= maxEndExclusive; endExclusive++)
                 {
-                    var candidate = MergeSegmentRange(segments, consumedSegments, endExclusive);
+                    var candidate = MergeSegmentRange(segments, segmentIndex, endExclusive);
                     var assignmentCost =
-                        ComputeAssignmentCost(candidate.TranscribedText, targets[consumedTargets].ShouldBeText);
+                        ComputeAssignmentCost(candidate.TranscribedText, targets[targetIndex].ShouldBeText);
                     var totalCost = baseCost + assignmentCost;
 
-                    if (totalCost < costs[endExclusive, consumedTargets + 1])
+                    if (totalCost < costs[endExclusive, targetIndex + 1])
                     {
-                        costs[endExclusive, consumedTargets + 1] = totalCost;
-                        previous[endExclusive, consumedTargets + 1] = consumedSegments;
+                        costs[endExclusive, targetIndex + 1] = totalCost;
+                        previousSegment[endExclusive, targetIndex + 1] = segmentIndex;
+                        previousTarget[endExclusive, targetIndex + 1] = targetIndex;
                     }
                 }
             }
@@ -250,25 +274,35 @@ public class PickupMatchingService
             return segments.ToList();
         }
 
-        var merged = new List<PickupSegment>(targetCount);
-        var segmentIndex = segmentCount;
-        var targetIndex = targetCount;
+        var merged = new PickupSegment?[targetCount];
+        var currentSegment = segmentCount;
+        var currentTarget = targetCount;
 
-        while (targetIndex > 0)
+        while (currentSegment > 0 || currentTarget > 0)
         {
-            var startIndex = previous[segmentIndex, targetIndex];
-            if (startIndex < 0)
+            var priorSegment = previousSegment[currentSegment, currentTarget];
+            var priorTarget = previousTarget[currentSegment, currentTarget];
+            if (priorSegment < 0 || priorTarget < 0)
             {
                 return segments.ToList();
             }
 
-            merged.Add(MergeSegmentRange(segments, startIndex, segmentIndex));
-            segmentIndex = startIndex;
-            targetIndex--;
+            // Target index only advances when a contiguous segment span is assigned.
+            if (priorTarget == currentTarget - 1)
+            {
+                merged[priorTarget] = MergeSegmentRange(segments, priorSegment, currentSegment);
+            }
+
+            currentSegment = priorSegment;
+            currentTarget = priorTarget;
         }
 
-        merged.Reverse();
-        return merged;
+        if (merged.Any(segment => segment is null))
+        {
+            return segments.ToList();
+        }
+
+        return merged.Select(segment => segment!).ToList();
     }
 
     private static PickupSegment MergeSegmentRange(
@@ -286,6 +320,13 @@ public class PickupMatchingService
             .Trim();
 
         return new PickupSegment(startSec, endSec, text);
+    }
+
+    private static double ComputeSkipPenalty(PickupSegment segment)
+    {
+        var duration = Math.Max(0, segment.EndSec - segment.StartSec);
+        var durationPenalty = Math.Min(0.020, Math.Max(0, duration - MinSegmentDurationSec) * 0.005);
+        return 0.010 + durationPenalty;
     }
 
     private static double ComputeAssignmentCost(string candidateText, string targetText)

@@ -42,6 +42,58 @@ public class PickupMatchingServiceTests
         Assert.Equal("As long as they stayed on human-occupied areas and didn't push too far, they would slowly grow.", merged[4].TranscribedText);
     }
 
+    [Fact]
+    public void BuildDeterministicSegments_SkipsSegmentsOutsideSelectedChapterTargets()
+    {
+        var segments = new[]
+        {
+            new AsrSegment(0.0, 0.8, "chapter one correction"),
+            new AsrSegment(0.9, 1.6, "the old gate was barred shut"),
+            new AsrSegment(1.7, 2.4, "they turned north toward camp"),
+            new AsrSegment(2.5, 3.2, "epilogue correction")
+        };
+
+        var targets = new[]
+        {
+            MakeTarget(21, "the old gate was barred shut"),
+            MakeTarget(22, "they turned north toward camp")
+        };
+
+        var merged = PickupMatchingService.BuildDeterministicSegments(segments, targets);
+
+        Assert.Equal(2, merged.Count);
+        Assert.Equal(0.9, merged[0].StartSec);
+        Assert.Equal(1.6, merged[0].EndSec);
+        Assert.Equal("the old gate was barred shut", merged[0].TranscribedText);
+        Assert.Equal(1.7, merged[1].StartSec);
+        Assert.Equal(2.4, merged[1].EndSec);
+        Assert.Equal("they turned north toward camp", merged[1].TranscribedText);
+    }
+
+    [Fact]
+    public void BuildDeterministicSegments_SingleTarget_SelectsBestRangeFromCombinedSessionFile()
+    {
+        var segments = new[]
+        {
+            new AsrSegment(0.0, 0.8, "chapter one correction"),
+            new AsrSegment(1.0, 1.7, "the scout crossed the frozen"),
+            new AsrSegment(1.7, 2.3, "river at dusk"),
+            new AsrSegment(2.4, 3.1, "chapter five correction")
+        };
+
+        var targets = new[]
+        {
+            MakeTarget(31, "the scout crossed the frozen river at dusk")
+        };
+
+        var merged = PickupMatchingService.BuildDeterministicSegments(segments, targets);
+
+        var selected = Assert.Single(merged);
+        Assert.Equal(1.0, selected.StartSec);
+        Assert.Equal(2.3, selected.EndSec);
+        Assert.Equal("the scout crossed the frozen river at dusk", selected.TranscribedText);
+    }
+
     private static CrxPickupTarget MakeTarget(int errorNumber, string shouldBeText) =>
         new(
             ErrorNumber: errorNumber,

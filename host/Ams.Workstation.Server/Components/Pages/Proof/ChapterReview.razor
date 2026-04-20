@@ -131,6 +131,7 @@ else
     private int _selectedErrorIndex;
     private int? _selectedSentenceId;
     private int? _lastTimeBasedSentenceId;
+    private int? _lastPlaybackAlertSentenceId;
     private IJSObjectReference? _keyboardModule;
     private DotNetObjectReference<ChapterReview>? _dotNetRef;
     private List<SentenceReport> _errorSentencesList = new();
@@ -151,6 +152,7 @@ else
                 _selectedErrorIndex = 0;
                 _selectedSentenceId = null;
                 _lastTimeBasedSentenceId = null;
+                _lastPlaybackAlertSentenceId = null;
             }
             if (Workspace.CurrentChapterName != decodedName)
             {
@@ -236,8 +238,7 @@ else
 
         _errorSentencesList = _report.Sentences
             .Where(HasVisibleError)
-            .OrderByDescending(s => ParseWer(s.Wer))
-            .ThenBy(s => s.Id)
+            .OrderBy(s => s.Id)
             .ToList();
         _visibleErrorSentenceIds = _errorSentencesList
             .Select(sentence => sentence.Id)
@@ -324,11 +325,22 @@ else
             _lastTimeBasedSentenceId = newId;
             _selectedSentenceId = null;
 
+            // Only allow one alert per sentence while playback remains in (or jitters around)
+            // that sentence. Reset once playback has clearly advanced to a different sentence.
+            if (newId.HasValue
+                && _lastPlaybackAlertSentenceId.HasValue
+                && newId.Value != _lastPlaybackAlertSentenceId.Value)
+            {
+                _lastPlaybackAlertSentenceId = null;
+            }
+
             if (_currentView == "playback"
                 && activeSentence is not null
-                && _visibleErrorSentenceIds.Contains(activeSentence.Id))
+                && _visibleErrorSentenceIds.Contains(activeSentence.Id)
+                && _lastPlaybackAlertSentenceId != activeSentence.Id)
             {
                 await TryPlayPlaybackErrorAlertAsync();
+                _lastPlaybackAlertSentenceId = activeSentence.Id;
             }
 
             StateHasChanged();
