@@ -24,6 +24,35 @@ public static partial class AudioProcessor
         double postRollMs = 10.0,
         double hangoverMs = 90.0)
     {
+        return MeasureActivity(
+            nameof(SnapToEnergy),
+            () => SnapToEnergyCore(
+                buffer,
+                seed,
+                enterThresholdDb,
+                exitThresholdDb,
+                searchWindowSec,
+                windowMs,
+                stepMs,
+                preRollMs,
+                postRollMs,
+                hangoverMs),
+            detail: FormattableString.Invariant(
+                $"enterDb={enterThresholdDb:F2},exitDb={exitThresholdDb:F2},searchWindowSec={searchWindowSec:F3}"));
+    }
+
+    private static TimingRange SnapToEnergyCore(
+        AudioBuffer buffer,
+        TimingRange seed,
+        double enterThresholdDb,
+        double exitThresholdDb,
+        double searchWindowSec,
+        double windowMs,
+        double stepMs,
+        double preRollMs,
+        double postRollMs,
+        double hangoverMs)
+    {
         if (buffer is null) throw new ArgumentNullException(nameof(buffer));
 
         int sr = buffer.SampleRate;
@@ -244,6 +273,14 @@ public static partial class AudioProcessor
 
     public static double MeasureRms(AudioBuffer buffer, double startSec, double endSec)
     {
+        return MeasureActivity(
+            nameof(MeasureRms),
+            () => MeasureRmsCore(buffer, startSec, endSec),
+            detail: FormattableString.Invariant($"startSec={startSec:F3},endSec={endSec:F3}"));
+    }
+
+    private static double MeasureRmsCore(AudioBuffer buffer, double startSec, double endSec)
+    {
         if (buffer is null) throw new ArgumentNullException(nameof(buffer));
         double lo = Math.Min(startSec, endSec);
         double hi = Math.Max(startSec, endSec);
@@ -258,13 +295,30 @@ public static partial class AudioProcessor
         AudioDecodeOptions? decodeOptions = null,
         AudioLoudnessAnalysisOptions? options = null)
     {
-        var buffer = Decode(filePath, decodeOptions);
-        return AnalyzeLoudness(buffer, options);
+        return MeasureActivity(
+            nameof(AnalyzeLoudness),
+            () =>
+            {
+                var buffer = Decode(filePath, decodeOptions);
+                return AnalyzeLoudness(buffer, options);
+            },
+            detail: Path.GetFileName(filePath));
     }
 
     public static AudioLoudnessMetrics AnalyzeLoudness(
         AudioBuffer buffer,
         AudioLoudnessAnalysisOptions? options = null)
+    {
+        return MeasureActivity(
+            nameof(AnalyzeLoudness),
+            () => AnalyzeLoudnessCore(buffer, options),
+            detail: FormattableString.Invariant(
+                $"sampleRate={buffer?.SampleRate ?? 0},channels={buffer?.Channels ?? 0},length={buffer?.Length ?? 0}"));
+    }
+
+    private static AudioLoudnessMetrics AnalyzeLoudnessCore(
+        AudioBuffer buffer,
+        AudioLoudnessAnalysisOptions? options)
     {
         if (buffer is null)
         {

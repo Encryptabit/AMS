@@ -6,6 +6,70 @@ namespace Ams.Tests.Audio;
 public class AudioProcessorAnalysisTests
 {
     [Fact]
+    public void MeasureRms_EmitsStopwatchActivity()
+    {
+        var buffer = CreateConstantBuffer(amplitude: 0.5f, sampleRate: 16_000, durationSec: 0.5);
+        var activities = new List<AudioProcessorActivity>();
+
+        using (AudioProcessor.BeginActivityCapture(activity => activities.Add(activity)))
+        {
+            _ = AudioProcessor.MeasureRms(buffer, 0.0, 0.25);
+        }
+
+        var rmsActivity = Assert.Single(
+            activities,
+            activity => string.Equals(activity.Function, nameof(AudioProcessor.MeasureRms), StringComparison.Ordinal));
+
+        Assert.True(rmsActivity.Succeeded);
+        Assert.True(rmsActivity.DurationMs >= 0);
+        Assert.True(rmsActivity.DurationUs >= 0);
+        Assert.True(rmsActivity.DurationUs >= rmsActivity.DurationMs * 1000L);
+    }
+
+    [Fact]
+    public void EncodeWavToStream_RepeatedFastCalls_AccumulateMicrosecondRuntime()
+    {
+        var buffer = CreateConstantBuffer(amplitude: 0.4f, sampleRate: 16_000, durationSec: 0.05);
+        var activities = new List<AudioProcessorActivity>();
+
+        using (AudioProcessor.BeginActivityCapture(activity => activities.Add(activity)))
+        {
+            for (var index = 0; index < 32; index++)
+            {
+                using var _ = AudioProcessor.EncodeWavToStream(buffer);
+            }
+        }
+
+        var encodeActivities = activities
+            .Where(activity => string.Equals(activity.Function, nameof(AudioProcessor.EncodeWavToStream), StringComparison.Ordinal))
+            .ToArray();
+
+        Assert.NotEmpty(encodeActivities);
+        Assert.All(encodeActivities, activity => Assert.True(activity.DurationUs >= activity.DurationMs * 1000L));
+        Assert.True(encodeActivities.Sum(activity => activity.DurationUs) > 0);
+    }
+
+    [Fact]
+    public void AnalyzeLoudness_BufferOverload_EmitsStopwatchActivity()
+    {
+        var buffer = CreateConstantBuffer(amplitude: 0.25f, sampleRate: 16_000, durationSec: 0.25);
+        var activities = new List<AudioProcessorActivity>();
+
+        using (AudioProcessor.BeginActivityCapture(activity => activities.Add(activity)))
+        {
+            _ = AudioProcessor.AnalyzeLoudness(buffer, new AudioLoudnessAnalysisOptions
+            {
+                ComputeIntegratedLufs = false,
+                WindowDuration = TimeSpan.FromMilliseconds(125)
+            });
+        }
+
+        Assert.Contains(
+            activities,
+            activity => string.Equals(activity.Function, nameof(AudioProcessor.AnalyzeLoudness), StringComparison.Ordinal));
+    }
+
+    [Fact]
     public void AnalyzeLoudness_ConstantSignal_ComputesExpectedDbValues()
     {
         var buffer = CreateConstantBuffer(amplitude: 0.5f, sampleRate: 16_000, durationSec: 1.0);
