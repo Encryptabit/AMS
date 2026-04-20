@@ -1,0 +1,707 @@
+@page "/proof/pickups"
+@inject Ams.Workstation.Server.Services.BlazorWorkspace Workspace
+@inject Ams.Workstation.Server.Services.ProofPickupsSessionService Session
+@inject NavigationManager Navigation
+@using Ams.Core.Common
+@using Ams.Workstation.Server.Components.Navigation
+@using Ams.Workstation.Server.Models
+@using Ams.Workstation.Server.Services
+@implements IDisposable
+
+<PageTitle>Pickups - Proof - AMS Workstation</PageTitle>
+
+<div class="proof-pickups-page" data-proof-pickups-page="true">
+    <BitStack Horizontal="false" Gap="1rem">
+        <BitStack Horizontal="false" Gap="0.25rem">
+            <BitText Typography="BitTypography.H4">Proof Pickups</BitText>
+            <BitText Typography="BitTypography.Body1" Color="BitColor.SecondaryForeground">
+                Import stitched pickup source, match CRX targets, stage replacements, and commit/revert lifecycle ops for active chapter.
+            </BitText>
+        </BitStack>
+
+        <span data-proof-pickups-handoff="editing">
+            <BitButton Variant="BitVariant.Outline"
+                       OnClick="NavigateToEditing"
+                       data-proof-pickups-action="return-editing">
+                Return to Editing
+            </BitButton>
+        </span>
+
+        @if (!Workspace.IsInitialized || !Workspace.HasBookIndex)
+        {
+            <BitMessage Color="BitColor.Info">
+                Workspace with book-index is required before pickup workflow can run.
+            </BitMessage>
+        }
+        else
+        {
+            <BitCard>
+                <BitStack Horizontal="false" Gap="0.75rem">
+                    <BitStack Horizontal="true" Gap="0.75rem" VerticalAlign="BitAlignment.End" Wrap="true">
+                        <div class="proof-pickups-field">
+                            <BitText Typography="BitTypography.Caption1">Chapter</BitText>
+                            <BitDropdown TItem="BitDropdownItem<string>"
+                                         TValue="string"
+                                         Items="@ChapterItems"
+                                         @bind-Value="_selectedChapter"
+                                         Placeholder="Select chapter"
+                                         OnChange="HandleChapterChange"
+                                         IsEnabled="@(!_snapshot.IsBusy)" />
+                        </div>
+
+                        <div class="proof-pickups-field proof-pickups-field--source">
+                            <BitText Typography="BitTypography.Caption1">Stitched pickup WAV</BitText>
+                            <BitTextField @bind-Value="_pickupSourcePath"
+                                          Placeholder="C:\\path\\chapter_pickups.wav"
+                                          IsEnabled="@(!_snapshot.IsBusy)" />
+                        </div>
+
+                        <BitButton Variant="BitVariant.Fill"
+                                   Color="BitColor.Primary"
+                                   OnClick="HandleImportAsync"
+                                   IsEnabled="@CanImport"
+                                   data-proof-pickups-action="import">
+                            Import + Match
+                        </BitButton>
+
+                        <BitButton Variant="BitVariant.Outline"
+                                   Color="BitColor.Warning"
+                                   OnClick="HandleCancelActiveAction"
+                                   IsEnabled="@_snapshot.IsBusy"
+                                   data-proof-pickups-action="cancel">
+                            Cancel
+                        </BitButton>
+                    </BitStack>
+
+                    @if (!_snapshot.HasActiveChapter)
+                    {
+                        <BitMessage Color="BitColor.Warning">
+                            Active chapter required before import/stage actions.
+                        </BitMessage>
+                    }
+                </BitStack>
+            </BitCard>
+
+            @if (_snapshot.IsBusy)
+            {
+                <BitProgress Percent="@(_snapshot.Progress * 100)"
+                             Label="@GetProgressLabel()"
+                             ShowPercentNumber="true" />
+            }
+
+            @if (!string.IsNullOrWhiteSpace(_snapshot.LastError))
+            {
+                <BitMessage Color="BitColor.Error" data-proof-pickups-last-error="true">
+                    @_snapshot.LastError
+                </BitMessage>
+            }
+
+            <BitGrid Columns="3" Gap="1rem">
+                <BitGridItem>
+                    <BitCard data-proof-pickups-queue="matched">
+                        <BitStack Horizontal="false" Gap="0.5rem">
+                            <BitStack Horizontal="true" Gap="0.5rem" VerticalAlign="BitAlignment.Center">
+                                <BitText Typography="BitTypography.Subtitle2">Matched</BitText>
+                                <BitTag Color="BitColor.Info">@VisibleMatchedAssets.Count</BitTag>
+                            </BitStack>
+
+                            @if (VisibleMatchedAssets.Count == 0)
+                            {
+                                <BitText Typography="BitTypography.Caption1" Color="BitColor.SecondaryForeground">
+                                    No matched pickups ready for staging.
+                                </BitText>
+                            }
+                            else
+                            {
+                                @foreach (var asset in VisibleMatchedAssets)
+                                {
+                                    var target = ResolveTarget(asset);
+                                    <BitCard Class="proof-pickups-item">
+                                        <BitStack Horizontal="false" Gap="0.25rem">
+                                            <BitText Typography="BitTypography.Body2">
+                                                @DescribeMatchedAsset(asset, target)
+                                            </BitText>
+                                            <BitText Typography="BitTypography.Caption1" Color="BitColor.SecondaryForeground">
+                                                Pickup range: @FormatRange(asset.TrimStartSec, asset.TrimEndSec)
+                                            </BitText>
+                                            <BitButton Variant="BitVariant.Outline"
+                                                       Size="BitSize.Small"
+                                                       Color="BitColor.Primary"
+                                                       OnClick="() => HandleStageAsync(asset.Id)"
+                                                       IsEnabled="@(!_snapshot.IsBusy)">
+                                                Stage
+                                            </BitButton>
+                                        </BitStack>
+                                    </BitCard>
+                                }
+                            }
+                        </BitStack>
+                    </BitCard>
+                </BitGridItem>
+
+                <BitGridItem>
+                    <BitCard data-proof-pickups-queue="unmatched">
+                        <BitStack Horizontal="false" Gap="0.5rem">
+                            <BitStack Horizontal="true" Gap="0.5rem" VerticalAlign="BitAlignment.Center">
+                                <BitText Typography="BitTypography.Subtitle2">Unmatched</BitText>
+                                <BitTag Color="BitColor.Warning">@_snapshot.Unmatched.Count</BitTag>
+                            </BitStack>
+
+                            @if (_snapshot.Unmatched.Count == 0)
+                            {
+                                <BitText Typography="BitTypography.Caption1" Color="BitColor.SecondaryForeground">
+                                    No unmatched pickup segments.
+                                </BitText>
+                            }
+                            else
+                            {
+                                @foreach (var asset in _snapshot.Unmatched)
+                                {
+                                    <BitCard Class="proof-pickups-item">
+                                        <BitStack Horizontal="false" Gap="0.25rem">
+                                            <BitText Typography="BitTypography.Body2">
+                                                Asset @asset.Id[..Math.Min(8, asset.Id.Length)]
+                                            </BitText>
+                                            <BitText Typography="BitTypography.Caption1" Color="BitColor.SecondaryForeground">
+                                                Pickup range: @FormatRange(asset.TrimStartSec, asset.TrimEndSec)
+                                            </BitText>
+                                        </BitStack>
+                                    </BitCard>
+                                }
+                            }
+                        </BitStack>
+                    </BitCard>
+                </BitGridItem>
+
+                <BitGridItem>
+                    <BitCard data-proof-pickups-queue="staged">
+                        <BitStack Horizontal="false" Gap="0.5rem">
+                            <BitStack Horizontal="true" Gap="0.5rem" VerticalAlign="BitAlignment.Center">
+                                <BitText Typography="BitTypography.Subtitle2">Staged</BitText>
+                                <BitTag Color="BitColor.Success">@_snapshot.Staged.Count</BitTag>
+                            </BitStack>
+
+                            @if (_snapshot.Staged.Count == 0)
+                            {
+                                <BitText Typography="BitTypography.Caption1" Color="BitColor.SecondaryForeground">
+                                    No staged replacements.
+                                </BitText>
+                            }
+                            else
+                            {
+                                @foreach (var staged in _snapshot.Staged)
+                                {
+                                    <BitCard Class="proof-pickups-item">
+                                        <BitStack Horizontal="false" Gap="0.25rem">
+                                            <BitText Typography="BitTypography.Body2">
+                                                Op @staged.Id[..Math.Min(8, staged.Id.Length)] — sentence @staged.SentenceId
+                                            </BitText>
+                                            <BitText Typography="BitTypography.Caption1" Color="BitColor.SecondaryForeground">
+                                                Chapter range: @FormatRange(staged.OriginalStartSec, staged.OriginalEndSec)
+                                            </BitText>
+                                            <BitStack Horizontal="true" Gap="0.4rem" Wrap="true">
+                                                <BitButton Variant="BitVariant.Fill"
+                                                           Size="BitSize.Small"
+                                                           Color="BitColor.Success"
+                                                           OnClick="() => HandleCommitAsync(staged.Id)"
+                                                           IsEnabled="@(!_snapshot.IsBusy)"
+                                                           data-proof-pickups-action="commit">
+                                                    Commit
+                                                </BitButton>
+                                                <BitButton Variant="BitVariant.Outline"
+                                                           Size="BitSize.Small"
+                                                           Color="BitColor.Warning"
+                                                           OnClick="() => HandleUnstageAsync(staged.Id)"
+                                                           IsEnabled="@(!_snapshot.IsBusy)"
+                                                           data-proof-pickups-action="unstage">
+                                                    Unstage
+                                                </BitButton>
+                                            </BitStack>
+                                        </BitStack>
+                                    </BitCard>
+                                }
+                            }
+                        </BitStack>
+                    </BitCard>
+                </BitGridItem>
+            </BitGrid>
+
+            <BitGrid Columns="3" Gap="1rem" data-proof-pickups-lifecycle="true">
+                <BitGridItem>
+                    <BitCard data-proof-pickups-queue="applied">
+                        <BitStack Horizontal="false" Gap="0.5rem">
+                            <BitStack Horizontal="true" Gap="0.5rem" VerticalAlign="BitAlignment.Center">
+                                <BitText Typography="BitTypography.Subtitle2">Applied</BitText>
+                                <BitTag Color="BitColor.Success">@_snapshot.Applied.Count</BitTag>
+                            </BitStack>
+
+                            @if (_snapshot.Applied.Count == 0)
+                            {
+                                <BitText Typography="BitTypography.Caption1" Color="BitColor.SecondaryForeground">
+                                    No applied replacements.
+                                </BitText>
+                            }
+                            else
+                            {
+                                @foreach (var applied in _snapshot.Applied)
+                                {
+                                    <BitCard Class="proof-pickups-item">
+                                        <BitStack Horizontal="false" Gap="0.25rem">
+                                            <BitText Typography="BitTypography.Body2">
+                                                Op @applied.Id[..Math.Min(8, applied.Id.Length)] — sentence @applied.SentenceId
+                                            </BitText>
+                                            <BitText Typography="BitTypography.Caption1" Color="BitColor.SecondaryForeground">
+                                                Chapter range: @FormatRange(applied.OriginalStartSec, applied.OriginalEndSec)
+                                            </BitText>
+                                            <BitButton Variant="BitVariant.Outline"
+                                                       Size="BitSize.Small"
+                                                       Color="BitColor.Secondary"
+                                                       OnClick="() => HandleRevertAsync(applied.Id)"
+                                                       IsEnabled="@(!_snapshot.IsBusy)"
+                                                       data-proof-pickups-action="revert">
+                                                Revert
+                                            </BitButton>
+                                        </BitStack>
+                                    </BitCard>
+                                }
+                            }
+                        </BitStack>
+                    </BitCard>
+                </BitGridItem>
+
+                <BitGridItem>
+                    <BitCard data-proof-pickups-queue="reverted">
+                        <BitStack Horizontal="false" Gap="0.5rem">
+                            <BitStack Horizontal="true" Gap="0.5rem" VerticalAlign="BitAlignment.Center">
+                                <BitText Typography="BitTypography.Subtitle2">Reverted</BitText>
+                                <BitTag Color="BitColor.Warning">@_snapshot.Reverted.Count</BitTag>
+                            </BitStack>
+
+                            @if (_snapshot.Reverted.Count == 0)
+                            {
+                                <BitText Typography="BitTypography.Caption1" Color="BitColor.SecondaryForeground">
+                                    No reverted replacements.
+                                </BitText>
+                            }
+                            else
+                            {
+                                @foreach (var reverted in _snapshot.Reverted)
+                                {
+                                    <BitCard Class="proof-pickups-item">
+                                        <BitStack Horizontal="false" Gap="0.25rem">
+                                            <BitText Typography="BitTypography.Body2">
+                                                Op @reverted.Id[..Math.Min(8, reverted.Id.Length)] — sentence @reverted.SentenceId
+                                            </BitText>
+                                            <BitText Typography="BitTypography.Caption1" Color="BitColor.SecondaryForeground">
+                                                Chapter range: @FormatRange(reverted.OriginalStartSec, reverted.OriginalEndSec)
+                                            </BitText>
+                                        </BitStack>
+                                    </BitCard>
+                                }
+                            }
+                        </BitStack>
+                    </BitCard>
+                </BitGridItem>
+
+                <BitGridItem>
+                    <BitCard data-proof-pickups-queue="failed">
+                        <BitStack Horizontal="false" Gap="0.5rem">
+                            <BitStack Horizontal="true" Gap="0.5rem" VerticalAlign="BitAlignment.Center">
+                                <BitText Typography="BitTypography.Subtitle2">Failed</BitText>
+                                <BitTag Color="BitColor.Error">@_snapshot.Failed.Count</BitTag>
+                            </BitStack>
+
+                            @if (_snapshot.Failed.Count == 0)
+                            {
+                                <BitText Typography="BitTypography.Caption1" Color="BitColor.SecondaryForeground">
+                                    No failed replacements.
+                                </BitText>
+                            }
+                            else
+                            {
+                                @foreach (var failed in _snapshot.Failed)
+                                {
+                                    <BitCard Class="proof-pickups-item">
+                                        <BitStack Horizontal="false" Gap="0.25rem">
+                                            <BitText Typography="BitTypography.Body2">
+                                                Op @failed.Id[..Math.Min(8, failed.Id.Length)] — sentence @failed.SentenceId
+                                            </BitText>
+                                            <BitText Typography="BitTypography.Caption1" Color="BitColor.SecondaryForeground">
+                                                Chapter range: @FormatRange(failed.OriginalStartSec, failed.OriginalEndSec)
+                                            </BitText>
+                                        </BitStack>
+                                    </BitCard>
+                                }
+                            }
+                        </BitStack>
+                    </BitCard>
+                </BitGridItem>
+            </BitGrid>
+
+            <BitCard data-proof-pickups-diagnostics="true">
+                <BitStack Horizontal="false" Gap="0.5rem">
+                    <BitText Typography="BitTypography.Subtitle2">Diagnostics</BitText>
+
+                    <BitGrid Columns="2" Gap="0.5rem">
+                        <BitGridItem>
+                            <BitText Typography="BitTypography.Caption1" Color="BitColor.SecondaryForeground">Phase</BitText>
+                            <BitText Typography="BitTypography.Body2" data-proof-pickups-phase="true">@_snapshot.Phase</BitText>
+                        </BitGridItem>
+                        <BitGridItem>
+                            <BitText Typography="BitTypography.Caption1" Color="BitColor.SecondaryForeground">Progress</BitText>
+                            <BitText Typography="BitTypography.Body2">@($"{_snapshot.Progress * 100:F0}%")</BitText>
+                        </BitGridItem>
+                        <BitGridItem>
+                            <BitText Typography="BitTypography.Caption1" Color="BitColor.SecondaryForeground">Active chapter stem</BitText>
+                            <BitText Typography="BitTypography.Body2">@(_snapshot.ActiveChapterStem ?? "(none)")</BitText>
+                        </BitGridItem>
+                        <BitGridItem>
+                            <BitText Typography="BitTypography.Caption1" Color="BitColor.SecondaryForeground">EDL revision</BitText>
+                            <BitText Typography="BitTypography.Body2">@(_snapshot.EdlRevision?.ToString() ?? "(none)")</BitText>
+                        </BitGridItem>
+                        <BitGridItem>
+                            <BitText Typography="BitTypography.Caption1" Color="BitColor.SecondaryForeground">Last op id</BitText>
+                            <BitText Typography="BitTypography.Body2" data-proof-pickups-last-op="true">@(_snapshot.LastOperationId ?? "(none)")</BitText>
+                        </BitGridItem>
+                        <BitGridItem>
+                            <BitText Typography="BitTypography.Caption1" Color="BitColor.SecondaryForeground">Last validation error</BitText>
+                            <BitText Typography="BitTypography.Body2">@(_snapshot.LastValidationError ?? "(none)")</BitText>
+                        </BitGridItem>
+                    </BitGrid>
+
+                    @if (!string.IsNullOrWhiteSpace(_snapshot.DeterministicOrderingDiagnostics))
+                    {
+                        <BitText Typography="BitTypography.Caption1" Color="BitColor.SecondaryForeground">Deterministic ordering</BitText>
+                        <pre class="proof-pickups-diagnostics-text">@_snapshot.DeterministicOrderingDiagnostics</pre>
+                    }
+                </BitStack>
+            </BitCard>
+
+            <BitCard data-proof-pickups-ledger="true">
+                <BitStack Horizontal="false" Gap="0.5rem">
+                    <BitStack Horizontal="true" Gap="0.5rem" VerticalAlign="BitAlignment.Center">
+                        <BitText Typography="BitTypography.Subtitle2">Artifact ledger</BitText>
+                        <BitTag Color="BitColor.Info">@(_snapshot.ArtifactLedgerRevision?.ToString() ?? "(none)")</BitTag>
+                    </BitStack>
+
+                    @if (!string.IsNullOrWhiteSpace(_snapshot.ArtifactLedgerReadError))
+                    {
+                        <BitMessage Color="BitColor.Error" data-proof-pickups-ledger-read-error="true">
+                            @_snapshot.ArtifactLedgerReadError
+                        </BitMessage>
+                    }
+
+                    @if (_snapshot.ArtifactLedgerEntries.Count == 0)
+                    {
+                        <BitText Typography="BitTypography.Caption1" Color="BitColor.SecondaryForeground" data-proof-pickups-ledger-empty="true">
+                            No artifact ledger entries for active chapter.
+                        </BitText>
+                    }
+                    else
+                    {
+                        @foreach (var entry in _snapshot.ArtifactLedgerEntries.OrderByDescending(item => item.Sequence).Take(20))
+                        {
+                            <BitCard Class="proof-pickups-item" data-proof-pickups-ledger-row="true">
+                                <BitStack Horizontal="false" Gap="0.2rem">
+                                    <BitText Typography="BitTypography.Body2">
+                                        #@entry.Sequence — @entry.Transition — op @entry.OperationId
+                                    </BitText>
+                                    <BitText Typography="BitTypography.Caption1" Color="BitColor.SecondaryForeground">
+                                        phase=@entry.Phase, queue=@entry.QueueStatus, edl=@entry.EdlState, rollback=@entry.RollbackVerdict
+                                    </BitText>
+                                    @if (!string.IsNullOrWhiteSpace(entry.FailureReason))
+                                    {
+                                        <BitText Typography="BitTypography.Caption1" Color="BitColor.Error">
+                                            failure: @entry.FailureReason
+                                        </BitText>
+                                    }
+                                </BitStack>
+                            </BitCard>
+                        }
+                    }
+                </BitStack>
+            </BitCard>
+        }
+    </BitStack>
+</div>
+
+@code {
+    private string? _pickupSourcePath;
+    private string? _selectedChapter;
+    private ProofPickupsSessionSnapshot _snapshot = ProofPickupsSessionSnapshot.Empty;
+    private CancellationTokenSource? _actionCts;
+
+    private ICollection<BitDropdownItem<string>> ChapterItems
+        => Workspace.AvailableChapters
+            .Select(chapter => new BitDropdownItem<string> { Text = chapter, Value = chapter })
+            .ToList();
+
+    private IReadOnlyList<PickupAsset> VisibleMatchedAssets
+    {
+        get
+        {
+            if (_snapshot.Matched.Count == 0)
+            {
+                return Array.Empty<PickupAsset>();
+            }
+
+            var lifecycleSentenceIds = _snapshot.Staged
+                .Concat(_snapshot.Applied)
+                .Concat(_snapshot.Reverted)
+                .Concat(_snapshot.Failed)
+                .Select(item => item.SentenceId)
+                .ToHashSet();
+
+            return _snapshot.Matched
+                .Where(asset => !asset.MatchedSentenceId.HasValue || !lifecycleSentenceIds.Contains(asset.MatchedSentenceId.Value))
+                .ToArray();
+        }
+    }
+
+    private bool CanImport
+        => !_snapshot.IsBusy
+           && _snapshot.HasActiveChapter
+           && !string.IsNullOrWhiteSpace(_pickupSourcePath);
+
+    protected override void OnInitialized()
+    {
+        _pickupSourcePath = AmsPathResolver.NormalizeOptionalPath(Workspace.PickupSessionPath);
+        _selectedChapter = Workspace.CurrentChapterName;
+        _snapshot = Session.SyncToWorkspace();
+
+        if (string.IsNullOrWhiteSpace(_pickupSourcePath))
+        {
+            _pickupSourcePath = _snapshot.SourcePath;
+        }
+
+        if (string.IsNullOrWhiteSpace(_selectedChapter))
+        {
+            _selectedChapter = _snapshot.ActiveChapterName;
+        }
+    }
+
+    private void NavigateToEditing()
+    {
+        var handoffPath = StageRouteCatalog.GetProofEditingHandoffPath(_snapshot.ActiveChapterName);
+
+        if (!string.IsNullOrWhiteSpace(_snapshot.ActiveChapterName))
+        {
+            var handoffMatch = StageRouteCatalog.Resolve(handoffPath);
+            var resolvesToEditing = handoffMatch is not null
+                && string.Equals(handoffMatch.Stage.Id, StageRouteCatalog.StageIds.Proof, StringComparison.OrdinalIgnoreCase)
+                && string.Equals(handoffMatch.Module.Id, StageRouteCatalog.ModuleIds.ProofEditing, StringComparison.OrdinalIgnoreCase);
+
+            if (!resolvesToEditing)
+            {
+                handoffPath = StageRouteCatalog.BuildProofChapterCanonicalPath(_snapshot.ActiveChapterName);
+            }
+        }
+
+        Navigation.NavigateTo(handoffPath);
+    }
+
+    private Task HandleChapterChange(string? chapterName)
+    {
+        if (string.IsNullOrWhiteSpace(chapterName))
+        {
+            return Task.CompletedTask;
+        }
+
+        if (!Workspace.SelectChapter(chapterName))
+        {
+            return Task.CompletedTask;
+        }
+
+        _selectedChapter = chapterName;
+        _snapshot = Session.SyncToWorkspace();
+
+        if (string.IsNullOrWhiteSpace(_pickupSourcePath))
+        {
+            _pickupSourcePath = _snapshot.SourcePath;
+        }
+
+        StateHasChanged();
+        return Task.CompletedTask;
+    }
+
+    private async Task HandleImportAsync()
+    {
+        if (!CanImport)
+        {
+            return;
+        }
+
+        ReplaceActionCts();
+        _snapshot = await Session
+            .ImportAsync(_pickupSourcePath ?? string.Empty, _actionCts!.Token)
+            .ConfigureAwait(false);
+
+        if (!string.IsNullOrWhiteSpace(_snapshot.SourcePath))
+        {
+            _pickupSourcePath = _snapshot.SourcePath;
+        }
+
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private async Task HandleStageAsync(string assetId)
+    {
+        _snapshot = await Session
+            .StageAsync(assetId)
+            .ConfigureAwait(false);
+
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private async Task HandleUnstageAsync(string replacementId)
+    {
+        _snapshot = await Session
+            .UnstageAsync(replacementId)
+            .ConfigureAwait(false);
+
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private async Task HandleCommitAsync(string replacementId)
+    {
+        ReplaceActionCts();
+        _snapshot = await Session
+            .CommitAsync(replacementId, _actionCts!.Token)
+            .ConfigureAwait(false);
+
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private async Task HandleRevertAsync(string replacementId)
+    {
+        ReplaceActionCts();
+        _snapshot = await Session
+            .RevertAsync(replacementId, _actionCts!.Token)
+            .ConfigureAwait(false);
+
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private void HandleCancelActiveAction()
+    {
+        _actionCts?.Cancel();
+    }
+
+    private void ReplaceActionCts()
+    {
+        if (_actionCts is not null)
+        {
+            try
+            {
+                _actionCts.Cancel();
+            }
+            catch
+            {
+                // best effort
+            }
+
+            _actionCts.Dispose();
+        }
+
+        _actionCts = new CancellationTokenSource();
+    }
+
+    private CrxPickupTarget? ResolveTarget(PickupAsset asset)
+    {
+        if (asset.MatchedErrorNumber is int errorNumber)
+        {
+            var byError = _snapshot.Targets.FirstOrDefault(target => target.ErrorNumber == errorNumber);
+            if (byError is not null)
+            {
+                return byError;
+            }
+        }
+
+        if (asset.MatchedSentenceId is int sentenceId)
+        {
+            var bySentence = _snapshot.Targets.FirstOrDefault(target => target.SentenceId == sentenceId);
+            if (bySentence is not null)
+            {
+                return bySentence;
+            }
+        }
+
+        return null;
+    }
+
+    private static string DescribeMatchedAsset(PickupAsset asset, CrxPickupTarget? target)
+    {
+        var error = asset.MatchedErrorNumber?.ToString() ?? target?.ErrorNumber.ToString() ?? "?";
+        var sentenceId = asset.MatchedSentenceId?.ToString() ?? target?.SentenceId.ToString() ?? "?";
+        return $"Error #{error} — sentence {sentenceId}";
+    }
+
+    private static string FormatRange(double startSec, double endSec)
+        => $"{startSec:F3}s to {endSec:F3}s";
+
+    private string GetProgressLabel()
+        => _snapshot.Phase switch
+        {
+            ProofPickupsSessionPhase.ResolvingTargets => "Resolving CRX targets",
+            ProofPickupsSessionPhase.Importing => "Matching stitched pickups",
+            ProofPickupsSessionPhase.Staging => "Staging pickup operation",
+            ProofPickupsSessionPhase.Unstaging => "Unstaging pickup operation",
+            ProofPickupsSessionPhase.Committing => "Committing staged pickup",
+            ProofPickupsSessionPhase.Reverting => "Reverting committed pickup",
+            _ => "Processing"
+        };
+
+    public void Dispose()
+    {
+        if (_actionCts is null)
+        {
+            return;
+        }
+
+        try
+        {
+            _actionCts.Cancel();
+        }
+        catch
+        {
+            // best effort
+        }
+        finally
+        {
+            _actionCts.Dispose();
+            _actionCts = null;
+        }
+    }
+}
+
+<style>
+    .proof-pickups-page {
+        display: flex;
+        flex-direction: column;
+        gap: 1rem;
+    }
+
+    .proof-pickups-field {
+        min-width: 14rem;
+        display: flex;
+        flex-direction: column;
+        gap: 0.2rem;
+    }
+
+    .proof-pickups-field--source {
+        min-width: min(34rem, 100%);
+        flex: 1;
+    }
+
+    .proof-pickups-item {
+        border: 1px solid var(--bit-clr-brd-sec);
+    }
+
+    .proof-pickups-diagnostics-text {
+        margin: 0;
+        white-space: pre-wrap;
+        overflow-wrap: anywhere;
+        font-size: 0.78rem;
+        color: var(--bit-clr-fg-sec);
+    }
+</style>

@@ -15,124 +15,168 @@ public static partial class AudioProcessor
     public static AudioInfo Probe(string path)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(path);
-        return FfDecoder.Probe(path);
+        return MeasureActivity(
+            nameof(Probe),
+            () => FfDecoder.Probe(path),
+            detail: Path.GetFileName(path));
     }
 
     public static AudioBuffer Decode(string path, AudioDecodeOptions? options = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(path);
         var effective = options ?? new AudioDecodeOptions();
-        return FfDecoder.Decode(path, effective);
+        return MeasureActivity(
+            nameof(Decode),
+            () => FfDecoder.Decode(path, effective),
+            detail: Path.GetFileName(path));
     }
 
     public static void EncodeWav(string path, AudioBuffer buffer, AudioEncodeOptions? options = null)
     {
-        if (buffer is null)
-        {
-            throw new ArgumentNullException(nameof(buffer));
-        }
+        MeasureActivity(
+            nameof(EncodeWav),
+            () =>
+            {
+                if (buffer is null)
+                {
+                    throw new ArgumentNullException(nameof(buffer));
+                }
 
-        var effective = options ?? new AudioEncodeOptions();
+                var effective = options ?? new AudioEncodeOptions();
 
-        var directory = Path.GetDirectoryName(Path.GetFullPath(path));
-        if (!string.IsNullOrEmpty(directory))
-        {
-            Directory.CreateDirectory(directory);
-        }
+                var directory = Path.GetDirectoryName(Path.GetFullPath(path));
+                if (!string.IsNullOrEmpty(directory))
+                {
+                    Directory.CreateDirectory(directory);
+                }
 
-        using var stream = File.Create(path);
-        FfEncoder.EncodeToCustomStream(buffer, stream, effective);
-        stream.Flush();
+                using var stream = File.Create(path);
+                FfEncoder.EncodeToCustomStream(buffer, stream, effective);
+                stream.Flush();
+            },
+            detail: Path.GetFileName(path));
     }
 
     public static MemoryStream EncodeWavToStream(AudioBuffer buffer, AudioEncodeOptions? options = null)
     {
-        if (buffer is null)
-        {
-            throw new ArgumentNullException(nameof(buffer));
-        }
+        return MeasureActivity(
+            nameof(EncodeWavToStream),
+            () =>
+            {
+                if (buffer is null)
+                {
+                    throw new ArgumentNullException(nameof(buffer));
+                }
 
-        var effective = options ?? new AudioEncodeOptions();
+                var effective = options ?? new AudioEncodeOptions();
 
-        var ms = new MemoryStream();
-        FfEncoder.EncodeToCustomStream(buffer, ms, effective);
-        ms.Position = 0;
-        return ms;
+                var ms = new MemoryStream();
+                FfEncoder.EncodeToCustomStream(buffer, ms, effective);
+                ms.Position = 0;
+                return ms;
+            });
     }
 
     public static AudioBuffer Resample(AudioBuffer buffer, ulong targetSampleRate)
     {
-        if (buffer is null)
-        {
-            throw new ArgumentNullException(nameof(buffer));
-        }
+        return MeasureActivity(
+            nameof(Resample),
+            () =>
+            {
+                if (buffer is null)
+                {
+                    throw new ArgumentNullException(nameof(buffer));
+                }
 
-        if (targetSampleRate <= 0)
-        {
-            throw new ArgumentOutOfRangeException(nameof(targetSampleRate));
-        }
+                if (targetSampleRate <= 0)
+                {
+                    throw new ArgumentOutOfRangeException(nameof(targetSampleRate));
+                }
 
-        if (buffer.SampleRate == (int)targetSampleRate)
-        {
-            return buffer;
-        }
+                if (buffer.SampleRate == (int)targetSampleRate)
+                {
+                    return buffer;
+                }
 
-        var graph = FfFilterGraph.FromBuffer(buffer);
+                var graph = FfFilterGraph.FromBuffer(buffer);
 
-        graph.Resample(new ResampleFilterParams(targetSampleRate));
+                graph.Resample(new ResampleFilterParams(targetSampleRate));
 
-        return graph.ToBuffer();
+                return graph.ToBuffer();
+            },
+            detail: FormattableString.Invariant($"{buffer?.SampleRate ?? 0}->{targetSampleRate}"));
     }
 
     public static IReadOnlyList<SilenceInterval> DetectSilence(AudioBuffer buffer, SilenceDetectOptions? options = null)
     {
-        if (buffer is null)
-        {
-            throw new ArgumentNullException(nameof(buffer));
-        }
-
         var opts = options ?? new SilenceDetectOptions();
-        var filter =
-            FormattableString.Invariant(
-                $"silencedetect=noise={opts.NoiseDb:F2}dB:d={opts.MinimumDuration.TotalSeconds:F3}");
 
-        var logs = FfFilterGraph.FromBuffer(buffer)
-            .Custom(filter)
-            .CaptureLogs();
+        return MeasureActivity(
+            nameof(DetectSilence),
+            () =>
+            {
+                if (buffer is null)
+                {
+                    throw new ArgumentNullException(nameof(buffer));
+                }
 
-        return SilenceLogParser.Parse(logs);
+                var filter =
+                    FormattableString.Invariant(
+                        $"silencedetect=noise={opts.NoiseDb:F2}dB:d={opts.MinimumDuration.TotalSeconds:F3}");
+
+                var logs = FfFilterGraph.FromBuffer(buffer)
+                    .Custom(filter)
+                    .CaptureLogs();
+
+                return SilenceLogParser.Parse(logs);
+            },
+            detail: FormattableString.Invariant(
+                $"noiseDb={opts.NoiseDb:F2},minDurationSec={opts.MinimumDuration.TotalSeconds:F3}"));
     }
 
     public static AudioBuffer Trim(AudioBuffer buffer, TimeSpan start, TimeSpan? end = null)
     {
-        if (buffer is null)
-        {
-            throw new ArgumentNullException(nameof(buffer));
-        }
+        return MeasureActivity(
+            nameof(Trim),
+            () =>
+            {
+                if (buffer is null)
+                {
+                    throw new ArgumentNullException(nameof(buffer));
+                }
 
-        double startSeconds = Math.Max(0, start.TotalSeconds);
-        string filter = end.HasValue
-            ? FormattableString.Invariant(
-                $"atrim=start={startSeconds:F6}:end={Math.Max(startSeconds, end.Value.TotalSeconds):F6},asetpts=PTS-STARTPTS")
-            : FormattableString.Invariant($"atrim=start={startSeconds:F6},asetpts=PTS-STARTPTS");
+                double startSeconds = Math.Max(0, start.TotalSeconds);
+                string filter = end.HasValue
+                    ? FormattableString.Invariant(
+                        $"atrim=start={startSeconds:F6}:end={Math.Max(startSeconds, end.Value.TotalSeconds):F6},asetpts=PTS-STARTPTS")
+                    : FormattableString.Invariant($"atrim=start={startSeconds:F6},asetpts=PTS-STARTPTS");
 
-        return FfFilterGraph.FromBuffer(buffer).Custom(filter).ToBuffer();
+                return FfFilterGraph.FromBuffer(buffer).Custom(filter).ToBuffer();
+            },
+            detail: FormattableString.Invariant(
+                $"startSec={start.TotalSeconds:F3},endSec={(end?.TotalSeconds ?? -1):F3}"));
     }
 
     public static AudioBuffer FadeIn(AudioBuffer buffer, TimeSpan duration)
     {
-        if (buffer is null)
-        {
-            throw new ArgumentNullException(nameof(buffer));
-        }
+        return MeasureActivity(
+            nameof(FadeIn),
+            () =>
+            {
+                if (buffer is null)
+                {
+                    throw new ArgumentNullException(nameof(buffer));
+                }
 
-        if (duration <= TimeSpan.Zero)
-        {
-            return buffer;
-        }
+                if (duration <= TimeSpan.Zero)
+                {
+                    return buffer;
+                }
 
-        var filter = FormattableString.Invariant($"afade=t=in:st=0:d={duration.TotalSeconds:F6}");
-        return FfFilterGraph.FromBuffer(buffer).Custom(filter).ToBuffer();
+                var filter = FormattableString.Invariant($"afade=t=in:st=0:d={duration.TotalSeconds:F6}");
+                return FfFilterGraph.FromBuffer(buffer).Custom(filter).ToBuffer();
+            },
+            detail: FormattableString.Invariant($"durationSec={duration.TotalSeconds:F3}"));
     }
 
     private static class SilenceLogParser
