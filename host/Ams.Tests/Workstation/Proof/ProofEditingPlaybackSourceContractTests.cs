@@ -61,6 +61,54 @@ public sealed class ProofEditingPlaybackSourceContractTests
     }
 
     [Fact]
+    public void ChapterReview_PlaybackNavigation_UsesStableSentenceCursorForKeyboardStepping()
+    {
+        var source = ReadRepoFile(ChapterReviewRelativePath);
+
+        AssertContains(
+            source,
+            ChapterReviewRelativePath,
+            "private int ResolvePlaybackNavigationIndex()",
+            "playback keyboard navigation cursor resolver");
+
+        AssertContains(
+            source,
+            ChapterReviewRelativePath,
+            "var currentIndex = ResolvePlaybackNavigationIndex();",
+            "playback keyboard navigation uses cursor resolver");
+
+        AssertContains(
+            source,
+            ChapterReviewRelativePath,
+            "_playbackNavigationIndex = currentIndex;",
+            "playback keyboard navigation persists cursor index");
+    }
+
+    [Fact]
+    public void ChapterReview_PlaybackErrorAlert_IsGatedToActiveAudioPlayback()
+    {
+        var source = ReadRepoFile(ChapterReviewRelativePath);
+
+        AssertContains(
+            source,
+            ChapterReviewRelativePath,
+            "var isPlaying = _waveformPlayer?.IsPlaying == true;",
+            "playback alert gating reads waveform play state");
+
+        AssertContains(
+            source,
+            ChapterReviewRelativePath,
+            "if (isPlaying\n                && _currentView == \"playback\"",
+            "playback alert is emitted only while actively playing in playback view");
+
+        AssertContains(
+            source,
+            ChapterReviewRelativePath,
+            "Manual keyboard seeking should stay silent.",
+            "playback alert contract notes silent manual navigation");
+    }
+
+    [Fact]
     public void AudioController_CorrectedEndpoints_UseSharedResolutionPath()
     {
         var source = ReadRepoFile(AudioControllerRelativePath);
