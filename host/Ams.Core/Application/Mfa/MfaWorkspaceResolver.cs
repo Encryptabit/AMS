@@ -7,6 +7,7 @@ internal static class MfaWorkspaceResolver
     private const string MfaRootEnvVar = "MFA_ROOT_DIR";
     private const string WorkspaceEnvVar = "AMS_MFA_WORKSPACE";
     private const string WorkspacesEnvVar = "AMS_MFA_WORKSPACES";
+    private const string CommandHistoryFileName = "command_history.yaml";
     private const string LegacyWorkspaceName = "MFA";
     private const string PrimaryWorkspaceName = "MFA_1";
 
@@ -101,6 +102,28 @@ internal static class MfaWorkspaceResolver
             .ToList();
     }
 
+    public static void ResetCommandHistoryFile(string? workspaceRoot)
+    {
+        if (!TryNormalizePath(workspaceRoot, out var normalized))
+        {
+            return;
+        }
+
+        var workspace = EnsureWorkspace(normalized);
+        var historyPath = Path.Combine(workspace, CommandHistoryFileName);
+
+        try
+        {
+            // MFA's command history can become malformed (for example after interrupted writes).
+            // Reset to a valid empty YAML sequence so subsequent commands do not fail to parse history.
+            File.WriteAllText(historyPath, "[]\n");
+        }
+        catch (Exception ex)
+        {
+            Log.Debug("Unable to reset MFA command history at {Path}: {Message}", historyPath, ex.Message);
+        }
+    }
+
     private static IReadOnlyList<string> ParseWorkspaceList(string? raw)
     {
         if (string.IsNullOrWhiteSpace(raw))
@@ -178,7 +201,7 @@ internal static class MfaWorkspaceResolver
 
         try
         {
-            normalized = CanonicalizeWorkspacePath(Path.GetFullPath(path.Trim()));
+            normalized = CanonicalizeWorkspacePath(AmsPathResolver.NormalizePath(path));
             return true;
         }
         catch
@@ -192,6 +215,7 @@ internal static class MfaWorkspaceResolver
         var normalized = CanonicalizeWorkspacePath(path);
         SeedPrimaryWorkspaceFromLegacy(normalized);
         Directory.CreateDirectory(normalized);
+        SeedWorkspaceFromPrimary(normalized);
         return Path.GetFullPath(normalized);
     }
 
@@ -239,6 +263,34 @@ internal static class MfaWorkspaceResolver
             Path.Combine(canonicalPath, "global_config.yaml"));
         CopyDirectoryContentsIfMissing(
             Path.Combine(legacyPath, "pretrained_models"),
+            Path.Combine(canonicalPath, "pretrained_models"));
+    }
+
+    private static void SeedWorkspaceFromPrimary(string canonicalPath)
+    {
+        var name = Path.GetFileName(canonicalPath);
+        if (name.Equals(PrimaryWorkspaceName, StringComparison.OrdinalIgnoreCase))
+        {
+            return;
+        }
+
+        var parent = Path.GetDirectoryName(canonicalPath);
+        if (string.IsNullOrWhiteSpace(parent))
+        {
+            return;
+        }
+
+        var primaryPath = Path.Combine(parent, PrimaryWorkspaceName);
+        if (!Directory.Exists(primaryPath))
+        {
+            return;
+        }
+
+        CopyFileIfMissing(
+            Path.Combine(primaryPath, "global_config.yaml"),
+            Path.Combine(canonicalPath, "global_config.yaml"));
+        CopyDirectoryContentsIfMissing(
+            Path.Combine(primaryPath, "pretrained_models"),
             Path.Combine(canonicalPath, "pretrained_models"));
     }
 

@@ -1,0 +1,30 @@
+[
+  {
+    "type": "info",
+    "text": "[2026-04-09T11:34:49.763Z] Information: Normalizing '_blazor' to 'http://127.0.0.1:8081/_blazor'.",
+    "timestamp": 1775734489766,
+    "url": "http://127.0.0.1:8081/prep",
+    "pageId": 1
+  },
+  {
+    "type": "info",
+    "text": "[2026-04-09T11:34:49.788Z] Information: WebSocket connected to ws://127.0.0.1:8081/_blazor?id=fU97C0Rnzebc9faetyF-Lg.",
+    "timestamp": 1775734489789,
+    "url": "http://127.0.0.1:8081/prep",
+    "pageId": 1
+  },
+  {
+    "type": "info",
+    "text": "[2026-04-09T11:35:11.738Z] Information: Normalizing '_blazor' to 'http://127.0.0.1:8081/_blazor'.",
+    "timestamp": 1775734511739,
+    "url": "http://127.0.0.1:8081/",
+    "pageId": 1
+  },
+  {
+    "type": "info",
+    "text": "[2026-04-09T11:35:11.746Z] Information: WebSocket connected to ws://127.0.0.1:8081/_blazor?id=KDDOmsU6HslbAwjtkAjbDg.",
+    "timestamp": 1775734511746,
+    "url": "http://127.0.0.1:8081/",
+    "pageId": 1
+  }
+]

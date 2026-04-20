@@ -143,22 +143,11 @@ public sealed class AudioBuffer
             throw new ArgumentException("At least one buffer is required for concatenation.", nameof(buffers));
         }
 
-        // Single buffer: return a clone
-        if (bufferList.Count == 1)
-        {
-            var source = bufferList[0];
-            var clone = new AudioBuffer(source.Channels, source.SampleRate, source.Length, source.Metadata);
-            for (int ch = 0; ch < source.Channels; ch++)
-            {
-                source.GetChannel(ch).Span.CopyTo(clone.GetChannelSpan(ch));
-            }
-            return clone;
-        }
-
         // Validate all buffers have matching format
         var first = bufferList[0];
         int sampleRate = first.SampleRate;
         int channels = first.Channels;
+        int totalLength = first.Length;
 
         for (int i = 1; i < bufferList.Count; i++)
         {
@@ -175,33 +164,23 @@ public sealed class AudioBuffer
                     $"Buffer at index {i} has {buf.Channels} channels, expected {channels}. " +
                     "All buffers must have matching Channels for concatenation.");
             }
-        }
-
-        // Calculate total length
-        long totalLength = 0;
-        foreach (var buf in bufferList)
-        {
             totalLength += buf.Length;
         }
 
-        if (totalLength > int.MaxValue)
-        {
-            throw new InvalidOperationException(
-                $"Combined buffer length ({totalLength} samples) exceeds maximum ({int.MaxValue}).");
-        }
+        // Direct managed memory copy -- all samples are already float[] in managed memory,
+        // so FFmpeg filter graph overhead is unnecessary.
+        var result = new AudioBuffer(channels, sampleRate, totalLength, first.Metadata);
 
-        // Allocate result buffer with metadata from first buffer
-        var result = new AudioBuffer(channels, sampleRate, (int)totalLength, first.Metadata);
-
-        // Copy samples from each buffer using span-based copies
-        int offset = 0;
-        foreach (var buf in bufferList)
+        for (int ch = 0; ch < channels; ch++)
         {
-            for (int ch = 0; ch < channels; ch++)
+            var dest = result.GetChannelSpan(ch);
+            int offset = 0;
+            for (int i = 0; i < bufferList.Count; i++)
             {
-                buf.GetChannel(ch).Span.CopyTo(result.GetChannelSpan(ch).Slice(offset, buf.Length));
+                var source = bufferList[i];
+                source.GetChannel(ch).Span.CopyTo(dest.Slice(offset, source.Length));
+                offset += source.Length;
             }
-            offset += buf.Length;
         }
 
         return result;

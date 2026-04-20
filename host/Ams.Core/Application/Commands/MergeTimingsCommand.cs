@@ -200,12 +200,13 @@ public sealed class MergeTimingsCommand
         }
 
         Log.Debug(
-            "MFA merge report: tgTokens={TgTokens}, bookTokens={BookTokens}, pairs={Pairs}, matches={Matches}, wildMatches={Wild}, ins={Insertions}, del={Deletions}, wordsUpdated={WordsUpdated}, sentencesUpdated={SentencesUpdated}",
+            "MFA merge report: tgTokens={TgTokens}, bookTokens={BookTokens}, pairs={Pairs}, matches={Matches}, wildMatches={Wild}, mismatch={Mismatches}, ins={Insertions}, del={Deletions}, wordsUpdated={WordsUpdated}, sentencesUpdated={SentencesUpdated}",
             report.TextGridTokenCount,
             report.BookTokenCount,
             report.Pairs,
             report.Matches,
             report.WildMatches,
+            report.Mismatches,
             report.Insertions,
             report.Deletions,
             report.WordsUpdated,

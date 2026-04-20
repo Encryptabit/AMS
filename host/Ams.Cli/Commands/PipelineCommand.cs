@@ -2,12 +2,19 @@ using System.Collections.Concurrent;
 using System.CommandLine;
 using System.Diagnostics;
 using System.Globalization;
+using System.Numerics;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
 using Ams.Cli.Utilities;
 using Ams.Cli.Repl;
+using Ams.Core.Application.Benchmark;
+using Ams.Core.Application.Commands;
+using Ams.Core.Application.Pipeline;
+using Ams.Core.Application.Mfa.Models;
+using Ams.Core.Application.Runs;
+using Ams.Core.Asr;
 using Ams.Core.Artifacts;
 using Ams.Core.Processors;
 using Ams.Core.Artifacts.Hydrate;
@@ -91,13 +98,8 @@ public static class PipelineCommand
         [PipelineStage.Complete] = ("Done", "green")
     };
 
-    private interface IPipelineProgressReporter
+    private interface IPipelineProgressReporter : IProgress<RunProgressUpdate>
     {
-        void SetQueued(string chapterId);
-        void MarkRunning(string chapterId);
-        void ReportStage(string chapterId, PipelineStage stage, string message);
-        void MarkComplete(string chapterId);
-        void MarkFailed(string chapterId, string message);
     }
 
     private static Command CreatePrepCommand()
@@ -107,6 +109,96 @@ public static class PipelineCommand
         cmd.AddCommand(CreatePrepRenameCommand());
         cmd.AddCommand(CreatePrepResetCommand());
         return cmd;
+    }
+
+    private static RunProgressUpdate CreateRecoveryQueuedUpdate(string chapterId)
+    {
+        return RunProgressUpdate.CreateStatus(
+            ModuleIds.PipelineRun,
+            RunState.Pending,
+            "Queued for promptless ASR recovery pass",
+            PipelineRunContract.StageProgress(PipelineStage.Mfa),
+            PipelineRunContract.PipelineStageName,
+            itemId: chapterId);
+    }
+
+    private static RunProgressUpdate CreateCompletionUpdate(string chapterId, string message)
+    {
+        return RunProgressUpdate.CreateStatus(
+            ModuleIds.PipelineRun,
+            RunState.Completed,
+            message,
+            1d,
+            PipelineRunContract.PipelineStageName,
+            itemId: chapterId);
+    }
+
+    private static RunProgressUpdate CreateFailureUpdate(string chapterId, Exception exception)
+    {
+        if (exception is PipelineRunException pipelineRunException)
+        {
+            return RunProgressUpdate.CreateFailure(
+                pipelineRunException.ModuleId,
+                pipelineRunException.Failure,
+                progress: pipelineRunException.ProgressUpdates.LastOrDefault()?.Progress,
+                artifacts: pipelineRunException.Artifacts,
+                itemId: chapterId);
+        }
+
+        if (exception is OperationCanceledException)
+        {
+            return RunProgressUpdate.CreateFailure(
+                ModuleIds.PipelineRun,
+                new RunFailure(RunFailureKind.Cancelled, "Pipeline cancelled.", PipelineRunContract.PipelineStageName),
+                itemId: chapterId);
+        }
+
+        return RunProgressUpdate.CreateFailure(
+            ModuleIds.PipelineRun,
+            new RunFailure(RunFailureKind.Execution, exception.Message, PipelineRunContract.PipelineStageName),
+            itemId: chapterId);
+    }
+
+    private static string ResolveProgressItemId(RunProgressUpdate update)
+    {
+        return string.IsNullOrWhiteSpace(update.ItemId)
+            ? update.ModuleId.Value
+            : update.ItemId;
+    }
+
+    private static PipelineStage ResolveReporterStage(RunProgressUpdate update)
+    {
+        if (string.Equals(update.Stage, PipelineRunContract.PipelineStageName, StringComparison.OrdinalIgnoreCase))
+        {
+            return update.State == RunState.Completed ? PipelineStage.Complete : PipelineStage.Pending;
+        }
+
+        return PipelineRunContract.TryParseStage(update.Stage, out var stage)
+            ? stage
+            : update.State == RunState.Completed
+                ? PipelineStage.Complete
+                : PipelineStage.Pending;
+    }
+
+    private static double ResolveReporterValue(RunProgressUpdate update, PipelineStage stage)
+    {
+        if (update.State == RunState.Failed)
+        {
+            return PipelineStageCount;
+        }
+
+        if (update.Progress is double progress)
+        {
+            return Math.Clamp(progress * PipelineStageCount, 0d, PipelineStageCount);
+        }
+
+        return update.State switch
+        {
+            RunState.Pending => 0d,
+            RunState.Running => Math.Max(0d, (int)stage - 1),
+            RunState.Completed => stage == PipelineStage.Complete ? PipelineStageCount : Math.Min((int)stage, PipelineStageCount),
+            _ => 0d
+        };
     }
 
     private sealed class PipelineProgressReporter : IPipelineProgressReporter
@@ -128,60 +220,33 @@ public static class PipelineCommand
             }
         }
 
-        public void SetQueued(string chapterId)
+        public void Report(RunProgressUpdate update)
         {
-            Update(chapterId, PipelineStage.Pending, "Queued");
-        }
-
-        public void MarkRunning(string chapterId)
-        {
-            Update(chapterId, PipelineStage.Pending, "Running...");
-        }
-
-        public void ReportStage(string chapterId, PipelineStage stage, string message)
-        {
-            Update(chapterId, stage, message);
-        }
-
-        public void MarkComplete(string chapterId)
-        {
-            Update(chapterId, PipelineStage.Complete, "Complete");
-            if (_tasks.TryGetValue(chapterId, out var task))
+            var chapterId = ResolveProgressItemId(update);
+            if (!_tasks.TryGetValue(chapterId, out var task))
             {
-                lock (_sync)
+                return;
+            }
+
+            var stage = ResolveReporterStage(update);
+
+            lock (_sync)
+            {
+                if (update.State == RunState.Failed)
+                {
+                    task.Value = PipelineStageCount;
+                    task.Description = $"{chapterId,-20} [red]Failed[/] {update.Message}";
+                    task.StopTask();
+                    return;
+                }
+
+                task.Value = ResolveReporterValue(update, stage);
+                task.Description = BuildDescription(chapterId, stage, update.Message);
+
+                if (update.State == RunState.Completed && stage == PipelineStage.Complete)
                 {
                     task.StopTask();
                 }
-            }
-        }
-
-        public void MarkFailed(string chapterId, string message)
-        {
-            if (!_tasks.TryGetValue(chapterId, out var task))
-            {
-                return;
-            }
-
-            lock (_sync)
-            {
-                task.Value = PipelineStageCount;
-                task.Description = $"{chapterId,-20} [red]Failed[/] {message}";
-                task.StopTask();
-            }
-        }
-
-        private void Update(string chapterId, PipelineStage stage, string message)
-        {
-            if (!_tasks.TryGetValue(chapterId, out var task))
-            {
-                return;
-            }
-
-            lock (_sync)
-            {
-                var clamped = Math.Min((int)stage, PipelineStageCount);
-                task.Value = clamped;
-                task.Description = BuildDescription(chapterId, stage, message);
             }
         }
 
@@ -263,57 +328,17 @@ public static class PipelineCommand
             _liveContext = context;
         }
 
-        public void SetQueued(string chapterId)
+        public void Report(RunProgressUpdate update)
         {
+            var chapterId = ResolveProgressItemId(update);
             UpdateChapter(chapterId, status =>
             {
-                status.Stage = PipelineStage.Pending;
-                status.Message = "Queued";
-                status.IsRunning = false;
-                status.Failed = false;
-            });
-        }
-
-        public void MarkRunning(string chapterId)
-        {
-            UpdateChapter(chapterId, status =>
-            {
-                status.IsRunning = true;
-                if (status.Stage == PipelineStage.Pending)
-                {
-                    status.Message = "In progress...";
-                }
-            });
-        }
-
-        public void ReportStage(string chapterId, PipelineStage stage, string message)
-        {
-            UpdateChapter(chapterId, status =>
-            {
-                status.Stage = stage;
-                status.Message = message;
-            });
-        }
-
-        public void MarkComplete(string chapterId)
-        {
-            UpdateChapter(chapterId, status =>
-            {
-                status.Stage = PipelineStage.Complete;
-                status.Message = "Complete";
-                status.IsRunning = false;
-                status.Failed = false;
-            });
-        }
-
-        public void MarkFailed(string chapterId, string message)
-        {
-            UpdateChapter(chapterId, status =>
-            {
-                status.Stage = PipelineStage.Complete;
-                status.Message = string.IsNullOrWhiteSpace(message) ? "Failed" : $"Failed: {message}";
-                status.IsRunning = false;
-                status.Failed = true;
+                status.Stage = ResolveReporterStage(update);
+                status.Message = update.State == RunState.Failed && !string.IsNullOrWhiteSpace(update.Message)
+                    ? $"Failed: {update.Message}"
+                    : update.Message;
+                status.IsRunning = update.State == RunState.Running;
+                status.Failed = update.State == RunState.Failed;
             });
         }
 
@@ -409,23 +434,7 @@ public static class PipelineCommand
 
         private sealed class NullProgressReporter : IPipelineProgressReporter
         {
-            public void SetQueued(string chapterId)
-            {
-            }
-
-            public void MarkRunning(string chapterId)
-            {
-            }
-
-            public void ReportStage(string chapterId, PipelineStage stage, string message)
-            {
-            }
-
-            public void MarkComplete(string chapterId)
-            {
-            }
-
-            public void MarkFailed(string chapterId, string message)
+            public void Report(RunProgressUpdate value)
             {
             }
         }
@@ -439,8 +448,10 @@ public static class PipelineCommand
         bool forceIndex,
         bool force,
         double avgWpm,
-        string asrServiceUrl,
+        AsrEngine asrEngine,
         string? asrModel,
+        bool asrDtwTimestamps,
+        bool asrFlashAttention,
         string asrLanguage,
         bool verbose,
         IReadOnlyList<FileInfo> chapterFiles,
@@ -448,7 +459,14 @@ public static class PipelineCommand
         int maxAsrParallelism,
         int maxMfaParallelism,
         IPipelineProgressReporter? reporter,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        MfaBeamProfile? mfaProfile = null,
+        int? mfaBeam = null,
+        int? mfaRetryBeam = null,
+        bool disableChunkPlan = false,
+        bool disableChunkedMfa = false,
+        bool requireAsrChunkAudio = false,
+        bool promptlessRecoveryPass = false)
     {
         ArgumentNullException.ThrowIfNull(pipelineService);
 
@@ -493,11 +511,11 @@ public static class PipelineCommand
         using var concurrency = PipelineConcurrencyControl.CreateShared(maxAsrParallelism, maxMfaParallelism);
         using var workerSemaphore = new SemaphoreSlim(maxWorkers, maxWorkers);
         var errors = new ConcurrentBag<Exception>();
+        var promptlessRecoveryQueue = new ConcurrentBag<FileInfo>();
 
         var tasks = existingChapters.Select(async chapter =>
         {
             var chapterId = Path.GetFileNameWithoutExtension(chapter.Name);
-            reporter?.SetQueued(chapterId);
 
             try
             {
@@ -505,7 +523,7 @@ public static class PipelineCommand
             }
             catch (OperationCanceledException oce)
             {
-                reporter?.MarkFailed(chapterId, "Cancelled");
+                reporter?.Report(CreateFailureUpdate(chapterId, oce));
                 errors.Add(new InvalidOperationException($"Pipeline cancelled before starting {chapter.FullName}",
                     oce));
                 return;
@@ -514,9 +532,8 @@ public static class PipelineCommand
             try
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                reporter?.MarkRunning(chapterId);
 
-                await RunPipelineAsync(
+                var result = await RunPipelineAsync(
                     pipelineService,
                     bookFile,
                     chapter,
@@ -526,24 +543,47 @@ public static class PipelineCommand
                     forceIndex,
                     force,
                     avgWpm,
-                    asrServiceUrl,
+                    asrEngine,
                     asrModel,
+                    asrDtwTimestamps,
+                    asrFlashAttention,
                     asrLanguage,
                     verbose,
                     reporter,
                     concurrency,
-                    cancellationToken).ConfigureAwait(false);
+                    cancellationToken,
+                    mfaProfile,
+                    mfaBeam,
+                    mfaRetryBeam,
+                    disableChunkPlan,
+                    disableChunkedMfa,
+                    requireAsrChunkAudio,
+                    promptlessRecoveryPass).ConfigureAwait(false);
 
-                reporter?.MarkComplete(chapterId);
+                if (result.PromptlessAsrRecoveryRequested)
+                {
+                    if (promptlessRecoveryPass)
+                    {
+                        Log.Warn(
+                            "Promptless ASR recovery pass still reported low-coverage MFA chunks for {Chapter}; keeping best-effort output",
+                            chapterId);
+                        reporter?.Report(CreateCompletionUpdate(chapterId, "Complete (best effort)"));
+                    }
+                    else
+                    {
+                        reporter?.Report(CreateRecoveryQueuedUpdate(chapterId));
+                        promptlessRecoveryQueue.Add(chapter);
+                    }
+                }
             }
             catch (OperationCanceledException oce)
             {
-                reporter?.MarkFailed(chapterId, "Cancelled");
+                reporter?.Report(CreateFailureUpdate(chapterId, oce));
                 errors.Add(new InvalidOperationException($"Pipeline cancelled for {chapter.FullName}", oce));
             }
             catch (Exception ex)
             {
-                reporter?.MarkFailed(chapterId, ex.Message);
+                reporter?.Report(CreateFailureUpdate(chapterId, ex));
                 errors.Add(new InvalidOperationException($"Pipeline failed for {chapter.FullName}: {ex.Message}", ex));
             }
             finally
@@ -557,6 +597,45 @@ public static class PipelineCommand
         if (!errors.IsEmpty)
         {
             throw new AggregateException(errors);
+        }
+
+        if (!promptlessRecoveryPass && !promptlessRecoveryQueue.IsEmpty)
+        {
+            var recoveryChapters = promptlessRecoveryQueue
+                .DistinctBy(file => file.FullName, PathComparer)
+                .ToList();
+
+            Log.Info(
+                "Starting promptless ASR recovery pass for {Count} chapter(s).",
+                recoveryChapters.Count);
+
+            await RunPipelineForMultipleChaptersAsync(
+                pipelineService,
+                bookFile,
+                workDirOption,
+                bookIndexOverride,
+                forceIndex,
+                force,
+                avgWpm,
+                asrEngine,
+                asrModel,
+                asrDtwTimestamps,
+                asrFlashAttention,
+                asrLanguage,
+                verbose,
+                recoveryChapters,
+                maxWorkers,
+                maxAsrParallelism,
+                maxMfaParallelism,
+                reporter,
+                cancellationToken,
+                mfaProfile,
+                mfaBeam,
+                mfaRetryBeam,
+                disableChunkPlan,
+                disableChunkedMfa,
+                requireAsrChunkAudio,
+                promptlessRecoveryPass: true).ConfigureAwait(false);
         }
 
         Log.Debug("Parallel pipeline run complete.");
@@ -1118,10 +1197,20 @@ public static class PipelineCommand
         var avgWpmOption = new Option<double>("--avg-wpm", () => 200.0,
             "Average WPM used for duration estimation when indexing");
 
-        var asrServiceOption = new Option<string>("--asr-service", () => "http://localhost:8000", "ASR service URL");
-        asrServiceOption.AddAlias("-s");
         var asrModelOption = new Option<string?>("--asr-model", () => null, "Optional ASR model identifier");
         asrModelOption.AddAlias("-m");
+        var asrEngineOption = new Option<string>(
+            "--asr-engine",
+            () => AsrEngineConfig.Resolve().ToString().ToLowerInvariant(),
+            "ASR engine to use for pipeline transcription (whisper or whisperx)");
+        var asrDtwOption = new Option<bool>(
+            "--dtw-timestamps",
+            () => false,
+            "Enable DTW timestamp refinement for Whisper ASR during pipeline transcription");
+        var asrFlashAttentionOption = new Option<bool>(
+            "--flash-attention",
+            () => false,
+            "Enable FlashAttention for Whisper ASR during pipeline transcription");
         var asrLanguageOption = new Option<string>("--language", () => "en", "ASR language code");
         asrLanguageOption.AddAlias("-l");
 
@@ -1130,10 +1219,24 @@ public static class PipelineCommand
             "Maximum number of chapters to process in parallel");
         var maxAsrOption = new Option<int>("--max-asr", () => 1,
             "Maximum number of concurrent ASR jobs (use 1 for large Whisper GPU models)");
-        var maxMfaOption = new Option<int>("--max-mfa", () => Math.Max(1, Environment.ProcessorCount),
-            "Maximum number of concurrent MFA alignment jobs");
+        var maxMfaOption = new Option<int>("--max-mfa", () => Math.Max(1, Environment.ProcessorCount / 2),
+            "Maximum number of concurrent MFA alignment jobs (default: CPU cores / 2)");
         var progressOption =
             new Option<bool>("--progress", () => true, "Display live progress UI while running the pipeline");
+
+        var mfaProfileOption = new Option<string?>("--mfa-profile", () => null,
+            "MFA beam search profile: fast (beam 20/retry 80), balanced (beam 40/retry 120), strict (beam 80/retry 200)");
+        var mfaBeamOption = new Option<int?>("--mfa-beam", () => null,
+            "Explicit MFA beam width (overrides profile default)");
+        var mfaRetryBeamOption = new Option<int?>("--mfa-retry-beam", () => null,
+            "Explicit MFA retry beam width (overrides profile default)");
+
+        var noChunkPlanOption = new Option<bool>("--no-chunk-plan", () => false,
+            "Disable shared chunk plan generation; ASR processes the full audio as a single pass (legacy behavior)");
+        var noChunkedMfaOption = new Option<bool>("--no-chunked-mfa", () => false,
+            "Force MFA to use single-utterance corpus even when a chunk plan exists");
+        var requireAsrChunkAudioOption = new Option<bool>("--require-asr-chunk-audio", () => false,
+            "Require chunked MFA to reuse ASR-emitted chunk audio; fail if missing or incompatible");
 
         cmd.AddOption(bookOption);
         cmd.AddOption(audioOption);
@@ -1143,14 +1246,22 @@ public static class PipelineCommand
         cmd.AddOption(forceOption);
         cmd.AddOption(forceIndexOption);
         cmd.AddOption(avgWpmOption);
-        cmd.AddOption(asrServiceOption);
         cmd.AddOption(asrModelOption);
+        cmd.AddOption(asrEngineOption);
+        cmd.AddOption(asrDtwOption);
+        cmd.AddOption(asrFlashAttentionOption);
         cmd.AddOption(asrLanguageOption);
         cmd.AddOption(verboseOption);
         cmd.AddOption(maxWorkersOption);
         cmd.AddOption(maxAsrOption);
         cmd.AddOption(maxMfaOption);
         cmd.AddOption(progressOption);
+        cmd.AddOption(mfaProfileOption);
+        cmd.AddOption(mfaBeamOption);
+        cmd.AddOption(mfaRetryBeamOption);
+        cmd.AddOption(noChunkPlanOption);
+        cmd.AddOption(noChunkedMfaOption);
+        cmd.AddOption(requireAsrChunkAudioOption);
 
         cmd.SetHandler(async context =>
         {
@@ -1162,14 +1273,23 @@ public static class PipelineCommand
             var forceAll = context.ParseResult.GetValueForOption(forceOption);
             var forceIndex = context.ParseResult.GetValueForOption(forceIndexOption);
             var avgWpm = context.ParseResult.GetValueForOption(avgWpmOption);
-            var asrServiceUrl = context.ParseResult.GetValueForOption(asrServiceOption) ?? "http://localhost:8000";
             var asrModel = context.ParseResult.GetValueForOption(asrModelOption);
+            var asrEngine = AsrEngineConfig.Resolve(context.ParseResult.GetValueForOption(asrEngineOption));
+            var asrDtwTimestamps = context.ParseResult.GetValueForOption(asrDtwOption);
+            var asrFlashAttention = context.ParseResult.GetValueForOption(asrFlashAttentionOption);
             var asrLanguage = context.ParseResult.GetValueForOption(asrLanguageOption) ?? "en";
             var verbose = context.ParseResult.GetValueForOption(verboseOption);
             var maxWorkers = context.ParseResult.GetValueForOption(maxWorkersOption);
             var maxAsr = context.ParseResult.GetValueForOption(maxAsrOption);
             var maxMfa = context.ParseResult.GetValueForOption(maxMfaOption);
             var showProgress = context.ParseResult.GetValueForOption(progressOption);
+            var mfaProfileRaw = context.ParseResult.GetValueForOption(mfaProfileOption);
+            var mfaBeam = context.ParseResult.GetValueForOption(mfaBeamOption);
+            var mfaRetryBeam = context.ParseResult.GetValueForOption(mfaRetryBeamOption);
+            var mfaProfile = ParseMfaProfile(mfaProfileRaw);
+            var noChunkPlan = context.ParseResult.GetValueForOption(noChunkPlanOption);
+            var noChunkedMfa = context.ParseResult.GetValueForOption(noChunkedMfaOption);
+            var requireAsrChunkAudio = context.ParseResult.GetValueForOption(requireAsrChunkAudioOption);
             if (showProgress && Log.IsDebugLoggingEnabled())
             {
                 Log.Debug("Progress UI disabled while AMS_LOG_LEVEL requests Debug-level logging.");
@@ -1193,8 +1313,10 @@ public static class PipelineCommand
                                 forceIndex,
                                 forceAll,
                                 avgWpm,
-                                asrServiceUrl,
+                                asrEngine,
                                 asrModel,
+                                asrDtwTimestamps,
+                                asrFlashAttention,
                                 asrLanguage,
                                 verbose,
                                 repl.Chapters,
@@ -1202,7 +1324,13 @@ public static class PipelineCommand
                                 maxAsr,
                                 maxMfa,
                                 reporter,
-                                cancellationToken));
+                                cancellationToken,
+                                mfaProfile,
+                                mfaBeam,
+                                mfaRetryBeam,
+                                noChunkPlan,
+                                noChunkedMfa,
+                                requireAsrChunkAudio));
                     }
                     else
                     {
@@ -1214,8 +1342,10 @@ public static class PipelineCommand
                             forceIndex,
                             forceAll,
                             avgWpm,
-                            asrServiceUrl,
+                            asrEngine,
                             asrModel,
+                            asrDtwTimestamps,
+                            asrFlashAttention,
                             asrLanguage,
                             verbose,
                             repl.Chapters,
@@ -1223,7 +1353,13 @@ public static class PipelineCommand
                             maxAsr,
                             maxMfa,
                             reporter: null,
-                            cancellationToken).ConfigureAwait(false);
+                            cancellationToken,
+                            mfaProfile,
+                            mfaBeam,
+                            mfaRetryBeam,
+                            noChunkPlan,
+                            noChunkedMfa,
+                            requireAsrChunkAudio).ConfigureAwait(false);
                     }
                 }
                 catch (Exception ex)
@@ -1249,14 +1385,12 @@ public static class PipelineCommand
                         .StartAsync(async progressContext =>
                         {
                             var reporter = new PipelineProgressReporter(progressContext, new[] { audioFile });
-                            reporter.SetQueued(chapterId);
 
                             using var concurrency = PipelineConcurrencyControl.CreateSingle();
 
                             try
                             {
-                                reporter.MarkRunning(chapterId);
-                                await RunPipelineAsync(
+                                var result = await RunPipelineAsync(
                                     pipelineService,
                                     bookFile,
                                     audioFile,
@@ -1266,24 +1400,70 @@ public static class PipelineCommand
                                     forceIndex,
                                     forceAll,
                                     avgWpm,
-                                    asrServiceUrl,
+                                    asrEngine,
                                     asrModel,
+                                    asrDtwTimestamps,
+                                    asrFlashAttention,
                                     asrLanguage,
                                     verbose,
                                     reporter,
                                     concurrency,
-                                    cancellationToken).ConfigureAwait(false);
+                                    cancellationToken,
+                                    mfaProfile,
+                                    mfaBeam,
+                                    mfaRetryBeam,
+                                    noChunkPlan,
+                                    noChunkedMfa,
+                                    requireAsrChunkAudio).ConfigureAwait(false);
 
-                                reporter.MarkComplete(chapterId);
+                                if (result.PromptlessAsrRecoveryRequested)
+                                {
+                                    reporter.Report(CreateRecoveryQueuedUpdate(chapterId));
+
+                                    var recoveryResult = await RunPipelineAsync(
+                                        pipelineService,
+                                        bookFile,
+                                        audioFile,
+                                        workDir,
+                                        bookIndex,
+                                        chapterId,
+                                        forceIndex,
+                                        forceAll,
+                                        avgWpm,
+                                        asrEngine,
+                                        asrModel,
+                                        asrDtwTimestamps,
+                                        asrFlashAttention,
+                                        asrLanguage,
+                                        verbose,
+                                        reporter,
+                                        concurrency,
+                                        cancellationToken,
+                                        mfaProfile,
+                                        mfaBeam,
+                                        mfaRetryBeam,
+                                        noChunkPlan,
+                                        noChunkedMfa,
+                                        requireAsrChunkAudio,
+                                        promptlessRecoveryPass: true).ConfigureAwait(false);
+
+                                    if (recoveryResult.PromptlessAsrRecoveryRequested)
+                                    {
+                                        Log.Warn(
+                                            "Promptless ASR recovery pass still reported low-coverage MFA chunks for {Chapter}; keeping best-effort output",
+                                            chapterId);
+                                        reporter.Report(CreateCompletionUpdate(chapterId, "Complete (best effort)"));
+                                    }
+                                }
                             }
-                            catch (OperationCanceledException)
+                            catch (OperationCanceledException oce)
                             {
-                                reporter.MarkFailed(chapterId, "Cancelled");
+                                reporter.Report(CreateFailureUpdate(chapterId, oce));
                                 throw;
                             }
                             catch (Exception ex)
                             {
-                                reporter.MarkFailed(chapterId, ex.Message);
+                                reporter.Report(CreateFailureUpdate(chapterId, ex));
                                 throw;
                             }
                         }).ConfigureAwait(false);
@@ -1291,7 +1471,7 @@ public static class PipelineCommand
                 else
                 {
                     using var concurrency = PipelineConcurrencyControl.CreateSingle();
-                    await RunPipelineAsync(
+                    var result = await RunPipelineAsync(
                         pipelineService,
                         bookFile,
                         audioFile,
@@ -1301,13 +1481,58 @@ public static class PipelineCommand
                         forceIndex,
                         forceAll,
                         avgWpm,
-                        asrServiceUrl,
+                        asrEngine,
                         asrModel,
+                        asrDtwTimestamps,
+                        asrFlashAttention,
                         asrLanguage,
                         verbose,
                         progress: null,
                         concurrency,
-                        cancellationToken).ConfigureAwait(false);
+                        cancellationToken,
+                        mfaProfile,
+                        mfaBeam,
+                        mfaRetryBeam,
+                        noChunkPlan,
+                        noChunkedMfa,
+                        requireAsrChunkAudio).ConfigureAwait(false);
+
+                    if (result.PromptlessAsrRecoveryRequested)
+                    {
+                        var recoveryResult = await RunPipelineAsync(
+                            pipelineService,
+                            bookFile,
+                            audioFile,
+                            workDir,
+                            bookIndex,
+                            chapterId,
+                            forceIndex,
+                            forceAll,
+                            avgWpm,
+                            asrEngine,
+                            asrModel,
+                            asrDtwTimestamps,
+                            asrFlashAttention,
+                            asrLanguage,
+                            verbose,
+                            progress: null,
+                            concurrency,
+                            cancellationToken,
+                            mfaProfile,
+                            mfaBeam,
+                            mfaRetryBeam,
+                            noChunkPlan,
+                            noChunkedMfa,
+                            requireAsrChunkAudio,
+                            promptlessRecoveryPass: true).ConfigureAwait(false);
+
+                        if (recoveryResult.PromptlessAsrRecoveryRequested)
+                        {
+                            Log.Warn(
+                                "Promptless ASR recovery pass still reported low-coverage MFA chunks for {Chapter}; keeping best-effort output",
+                                chapterId);
+                        }
+                    }
                 }
             }
             catch (OperationCanceledException)
@@ -1324,7 +1549,7 @@ public static class PipelineCommand
         return cmd;
     }
 
-    private static async Task RunPipelineAsync(
+    private static async Task<PipelineChapterResult> RunPipelineAsync(
         PipelineService pipelineService,
         FileInfo bookFile,
         FileInfo audioFile,
@@ -1334,13 +1559,22 @@ public static class PipelineCommand
         bool forceIndex,
         bool force,
         double avgWpm,
-        string asrServiceUrl,
+        AsrEngine asrEngine,
         string? asrModel,
+        bool asrDtwTimestamps,
+        bool asrFlashAttention,
         string asrLanguage,
         bool verbose,
         IPipelineProgressReporter? progress,
         PipelineConcurrencyControl concurrency,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        MfaBeamProfile? mfaProfile = null,
+        int? mfaBeam = null,
+        int? mfaRetryBeam = null,
+        bool disableChunkPlan = false,
+        bool disableChunkedMfa = false,
+        bool requireAsrChunkAudio = false,
+        bool promptlessRecoveryPass = false)
     {
         ArgumentNullException.ThrowIfNull(pipelineService);
 
@@ -1383,6 +1617,16 @@ public static class PipelineCommand
         LogStageInfo(logInfo, "Chapter={Chapter}", chapterStem);
         LogStageInfo(logInfo, "ChapterDir={ChapterDir}", chapterDir);
 
+        if (asrDtwTimestamps && asrEngine == AsrEngine.WhisperX)
+        {
+            Log.Warn("DTW timestamps were requested for pipeline ASR, but WhisperX does not consume DTW. The flag is ignored unless --asr-engine whisper is used.");
+        }
+
+        if (asrFlashAttention && asrEngine == AsrEngine.WhisperX)
+        {
+            Log.Warn("FlashAttention was requested for pipeline ASR, but WhisperX does not consume the Whisper.NET FlashAttention setting. The flag is ignored unless --asr-engine whisper is used.");
+        }
+
         var defaultAnchorOptions = new AnchorComputationOptions
         {
             DetectSection = true,
@@ -1396,11 +1640,14 @@ public static class PipelineCommand
 
         var transcriptOptions = new GenerateTranscriptOptions
         {
-            Engine = AsrEngineConfig.Resolve(),
-            ServiceUrl = asrServiceUrl,
+            Engine = asrEngine,
             Model = asrModel,
             Language = asrLanguage,
-            EnableWordTimestamps = true
+            EnableWordTimestamps = true,
+            EnableFlashAttention = asrFlashAttention,
+            EnableDtwTimestamps = asrDtwTimestamps,
+            DisableChunkPlan = disableChunkPlan,
+            DisablePrompt = promptlessRecoveryPass
         };
 
         var useDedicatedMfaProcess = concurrency?.MfaDegree > 1;
@@ -1412,8 +1659,12 @@ public static class PipelineCommand
             AudioFile = audioFile,
             ChapterDirectory = chapterDirInfo,
             ChapterId = chapterStem,
-            Force = force,
+            ModuleId = ModuleIds.PipelineRun,
+            Progress = progress,
+            Force = force || promptlessRecoveryPass,
             ForceIndex = forceIndex,
+            StartStage = promptlessRecoveryPass ? PipelineStage.Asr : PipelineStage.BookIndex,
+            EndStage = PipelineStage.Mfa,
             AverageWordsPerMinute = avgWpm,
             TranscriptOptions = transcriptOptions,
             AnchorOptions = defaultAnchorOptions with { EmitWindows = false },
@@ -1425,13 +1676,20 @@ public static class PipelineCommand
                 AnchorOptions = defaultAnchorOptions with { EmitWindows = true }
             },
             HydrationOptions = null,
+            DisableChunkPlan = disableChunkPlan,
+            DisableChunkedMfa = disableChunkedMfa,
             MfaOptions = new RunMfaOptions
             {
                 AudioFile = audioFile,
                 HydrateFile = hydrateFile,
                 TextGridFile = textGridFile,
                 AlignmentRootDirectory = new DirectoryInfo(Path.Combine(chapterDir, "alignment")),
-                UseDedicatedProcess = useDedicatedMfaProcess
+                UseDedicatedProcess = useDedicatedMfaProcess,
+                BeamProfile = mfaProfile,
+                Beam = mfaBeam,
+                RetryBeam = mfaRetryBeam,
+                DisableChunkedMfa = disableChunkedMfa,
+                RequireAsrChunkAudio = requireAsrChunkAudio
             },
             MergeOptions = new MergeTimingsOptions
             {
@@ -1439,6 +1697,7 @@ public static class PipelineCommand
                 TranscriptFile = txFile,
                 TextGridFile = textGridFile
             },
+            SkipTreatedCopy = true,
             TreatedCopyFile = treatedWav,
             Concurrency = concurrency
         };
@@ -1447,27 +1706,12 @@ public static class PipelineCommand
         var result = await pipelineService.RunChapterAsync(workspace, pipelineOptions, cancellationToken)
             .ConfigureAwait(false);
 
-        var bookIndexMessage = result.BookIndexBuilt ? "Index built" : "Index ready";
-        progress?.ReportStage(chapterStem, PipelineStage.BookIndex, bookIndexMessage);
-        progress?.ReportStage(chapterStem, PipelineStage.Asr, result.AsrRan ? "ASR complete" : "ASR cached");
-        progress?.ReportStage(chapterStem, PipelineStage.Anchors,
-            result.AnchorsRan ? "Anchors generated" : "Anchors cached");
-        progress?.ReportStage(chapterStem, PipelineStage.Transcript,
-            result.TranscriptRan ? "Transcript indexed" : "Transcript cached");
-        progress?.ReportStage(chapterStem, PipelineStage.Hydrate,
-            result.HydrateRan ? "Hydrate complete" : "Hydrate cached");
-
-        var textGridStatus = result.TextGridFile.Exists
-            ? (result.MfaRan ? "MFA aligned" : "MFA cached")
-            : "MFA missing";
-        progress?.ReportStage(chapterStem, PipelineStage.Mfa, textGridStatus);
-
-        LogStageInfo(logInfo, "Book index : {Status}", result.BookIndexBuilt ? "Rebuilt" : "Cached");
-        LogStageInfo(logInfo, "ASR        : {Status}", result.AsrRan ? "Executed" : "Cached");
-        LogStageInfo(logInfo, "Anchors    : {Status}", result.AnchorsRan ? "Executed" : "Cached");
-        LogStageInfo(logInfo, "Transcript : {Status}", result.TranscriptRan ? "Executed" : "Cached");
-        LogStageInfo(logInfo, "Hydrate    : {Status}", result.HydrateRan ? "Executed" : "Cached");
-        LogStageInfo(logInfo, "MFA        : {Status}", textGridStatus);
+        LogStageInfo(logInfo, "Book index : {Status}", PipelineRunContract.DescribeStageStatus(result.GetStageResult(PipelineStage.BookIndex), "Skipped"));
+        LogStageInfo(logInfo, "ASR        : {Status}", PipelineRunContract.DescribeStageStatus(result.GetStageResult(PipelineStage.Asr), "Skipped"));
+        LogStageInfo(logInfo, "Anchors    : {Status}", PipelineRunContract.DescribeStageStatus(result.GetStageResult(PipelineStage.Anchors), "Skipped"));
+        LogStageInfo(logInfo, "Transcript : {Status}", PipelineRunContract.DescribeStageStatus(result.GetStageResult(PipelineStage.Transcript), "Skipped"));
+        LogStageInfo(logInfo, "Hydrate    : {Status}", PipelineRunContract.DescribeStageStatus(result.GetStageResult(PipelineStage.Hydrate), "Skipped"));
+        LogStageInfo(logInfo, "MFA        : {Status}", PipelineRunContract.DescribeStageStatus(result.GetStageResult(PipelineStage.Mfa), "Skipped"));
 
         bookIndexFile = result.BookIndexFile;
         asrFile = result.AsrFile;
@@ -1484,6 +1728,8 @@ public static class PipelineCommand
         LogStageInfo(logInfo, "Transcript : {TranscriptFile}", txFile.FullName);
         LogStageInfo(logInfo, "Hydrated   : {HydratedFile}", hydrateFile.FullName);
         LogStageInfo(logInfo, "Treated    : {TreatedFile}", treatedWav.FullName);
+
+        return result;
     }
 
     private static void PerformSoftReset(DirectoryInfo root, CancellationToken cancellationToken)
@@ -2197,7 +2443,7 @@ public static class PipelineCommand
                             var rawBuffer = AudioProcessor.Decode(raw.FullName);
                             rawSampleRate = rawBuffer.SampleRate;
                             rawMono = ToMono(rawBuffer);
-                            rawTimings = LoadSentenceTimings(referenceHydratePath);
+                            rawTimings = BenchmarkHydrateTimingReader.ReadLenient(referenceHydratePath);
                         }
                         catch (Exception ex)
                         {
@@ -2230,7 +2476,7 @@ public static class PipelineCommand
                                 var variantTimings = string.Equals(variant.HydratePath, referenceHydratePath,
                                     StringComparison.OrdinalIgnoreCase)
                                     ? rawTimings
-                                    : LoadSentenceTimings(variant.HydratePath);
+                                    : BenchmarkHydrateTimingReader.ReadLenient(variant.HydratePath);
 
                                 result = AudioIntegrityVerifier.Verify(
                                     rawMono,
@@ -2537,123 +2783,31 @@ public static class PipelineCommand
 
         var mono = new float[buffer.Length];
         float scale = 1f / buffer.Channels;
+        int vectorSize = Vector<float>.Count;
+        var scaleVec = new Vector<float>(scale);
+
         for (int ch = 0; ch < buffer.Channels; ch++)
         {
             var src = buffer.GetChannel(ch).Span;
-            for (int i = 0; i < mono.Length; i++)
+
+            // SIMD loop: process vectorSize samples at a time
+            int i = 0;
+            int vectorEnd = mono.Length - vectorSize + 1;
+            for (; i < vectorEnd; i += vectorSize)
+            {
+                var srcVec = new Vector<float>(src.Slice(i, vectorSize));
+                var dstVec = new Vector<float>(mono.AsSpan(i, vectorSize));
+                (dstVec + srcVec * scaleVec).CopyTo(mono, i);
+            }
+
+            // Scalar remainder
+            for (; i < mono.Length; i++)
             {
                 mono[i] += src[i] * scale;
             }
         }
 
         return mono;
-    }
-
-    private static IReadOnlyDictionary<int, AudioSentenceTiming> LoadSentenceTimings(string hydratePath)
-    {
-        using var stream = File.OpenRead(hydratePath);
-        using var doc = JsonDocument.Parse(stream);
-
-        if (!doc.RootElement.TryGetProperty("sentences", out var sentences) ||
-            sentences.ValueKind != JsonValueKind.Array)
-        {
-            return new Dictionary<int, SentenceTiming>();
-        }
-
-        var timings = new Dictionary<int, AudioSentenceTiming>();
-        foreach (var sentence in sentences.EnumerateArray())
-        {
-            if (!TryGetInt(sentence, "id", out var id))
-            {
-                continue;
-            }
-
-            if (!TryReadTiming(sentence, out var start, out var end))
-            {
-                continue;
-            }
-
-            timings[id] = new AudioSentenceTiming(start, end);
-        }
-
-        return timings;
-    }
-
-    private static bool TryReadTiming(JsonElement sentence, out double start, out double end)
-    {
-        start = double.NaN;
-        end = double.NaN;
-
-        if (sentence.TryGetProperty("timing", out var timingObj) && timingObj.ValueKind == JsonValueKind.Object)
-        {
-            if (TryGetDouble(timingObj, "startSec", out start) && TryGetDouble(timingObj, "endSec", out end))
-            {
-                return true;
-            }
-
-            if (TryGetDouble(timingObj, "start", out start) && TryGetDouble(timingObj, "end", out end))
-            {
-                return true;
-            }
-        }
-
-        if (TryGetDouble(sentence, "startSec", out start) && TryGetDouble(sentence, "endSec", out end))
-        {
-            return true;
-        }
-
-        if (TryGetDouble(sentence, "start", out start) && TryGetDouble(sentence, "end", out end))
-        {
-            return true;
-        }
-
-        start = double.NaN;
-        end = double.NaN;
-        return false;
-    }
-
-    private static bool TryGetDouble(JsonElement element, string propertyName, out double value)
-    {
-        value = double.NaN;
-        if (!element.TryGetProperty(propertyName, out var prop))
-        {
-            return false;
-        }
-
-        if (prop.ValueKind == JsonValueKind.Number)
-        {
-            value = prop.GetDouble();
-            return true;
-        }
-
-        if (prop.ValueKind == JsonValueKind.String && double.TryParse(prop.GetString(), out var parsed))
-        {
-            value = parsed;
-            return true;
-        }
-
-        return false;
-    }
-
-    private static bool TryGetInt(JsonElement element, string propertyName, out int value)
-    {
-        value = 0;
-        if (!element.TryGetProperty(propertyName, out var prop))
-        {
-            return false;
-        }
-
-        if (prop.ValueKind == JsonValueKind.Number && prop.TryGetInt32(out value))
-        {
-            return true;
-        }
-
-        if (prop.ValueKind == JsonValueKind.String && int.TryParse(prop.GetString(), out value))
-        {
-            return true;
-        }
-
-        return false;
     }
 
     private static void WriteVerificationCsv(string path, string chapterLabel, string variantLabel,
@@ -2977,6 +3131,21 @@ public static class PipelineCommand
         {
             Directory.CreateDirectory(dir);
         }
+    }
+
+    private static MfaBeamProfile? ParseMfaProfile(string? raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw))
+            return null;
+
+        return raw.Trim().ToLowerInvariant() switch
+        {
+            "fast" => MfaBeamProfile.Fast,
+            "balanced" => MfaBeamProfile.Balanced,
+            "strict" => MfaBeamProfile.Strict,
+            _ => throw new ArgumentException(
+                $"Unknown MFA profile '{raw}'. Valid options: fast, balanced, strict.")
+        };
     }
 
     private static string MakeSafeFileStem(string? value)

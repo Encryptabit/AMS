@@ -1,0 +1,148 @@
+- banner:
+  - text: AMS Workstation
+  - button "Prep"
+  - button "Proof"
+  - button "Polish"
+  - combobox "1"
+  - listbox:
+    - option "1" [selected]
+  - text: "Failed Stage: asr"
+  - button "Cancel" [disabled]
+  - combobox "s04-prep-ui"
+  - listbox:
+    - option "s04-prep-ui" [selected]
+  - textbox "Working directory...": /mnt/c/Projects/AMS.test/.tmp/s04-prep-ui
+  - button "Set"
+  - button "Reset Metadata"
+  - text: Precompute Peaks In Background
+- main:
+  - heading "Prep Area" [level=4]
+  - paragraph: Build a missing book index and run single-chapter prep through the shared Core pipeline contracts.
+  - heading "Workspace status" [level=6]
+  - text: Working directory
+  - paragraph: /mnt/c/Projects/AMS.test/.tmp/s04-prep-ui
+  - text: Book index
+  - paragraph: Present
+  - text: Workspace initialized
+  - paragraph: "Yes"
+  - text: Current chapter
+  - paragraph: "1"
+  - text: Workspace reloads
+  - paragraph: 0 (none yet)
+  - text: Chapter reloads
+  - paragraph: 1 (prep-pipeline-failed)
+  - alert:
+    - paragraph: Prep run failed
+    - paragraph: Audio buffer could not be loaded.
+    - text: "Failure kind: Execution | Stage: asr"
+  - heading "Run chapter prep" [level=6]
+  - paragraph: Run the selected chapter through the shared pipeline service and keep Workstation state synchronized after the run.
+  - text: Index ready
+  - combobox "1"
+  - listbox:
+    - option "1" [selected]
+  - text: Book source
+  - paragraph: /mnt/c/Projects/AMS.test/.tmp/s04-prep-ui/book.md
+  - text: Selected chapter
+  - paragraph: "1"
+  - text: Chapter id
+  - paragraph: "1"
+  - text: Pipeline end stage
+  - paragraph: Mfa
+  - text: Average WPM
+  - paragraph: "200"
+  - text: Chapter handle refresh
+  - paragraph: Automatic after success, failure, or cancellation
+  - button "Run chapter prep"
+  - button "Cancel" [disabled]
+  - heading "Last chapter prep result" [level=6]
+  - text: Chapter id
+  - paragraph: "1"
+  - text: State
+  - paragraph: Failed
+  - text: Last completed stage
+  - paragraph: book_index
+  - text: Failure stage
+  - paragraph: asr
+  - text: Chapter handle reloaded
+  - paragraph: "Yes"
+  - text: Reopened current selection
+  - paragraph: "Yes"
+  - table:
+    - rowgroup:
+      - row "Stage State Mode Message":
+        - columnheader "Stage"
+        - columnheader "State"
+        - columnheader "Mode"
+        - columnheader "Message"
+    - rowgroup:
+      - row "book_index Completed Cached Index ready":
+        - cell "book_index"
+        - cell "Completed"
+        - cell "Cached"
+        - cell "Index ready"
+      - 'row "asr Failed Cached Audio buffer could not be loaded. Execution: Audio buffer could not be loaded."':
+        - cell "asr"
+        - cell "Failed"
+        - cell "Cached"
+        - 'cell "Audio buffer could not be loaded. Execution: Audio buffer could not be loaded."'
+  - heading "Progress timeline" [level=6]
+  - table:
+    - rowgroup:
+      - row "Module Stage State Message Progress":
+        - columnheader "Module"
+        - columnheader "Stage"
+        - columnheader "State"
+        - columnheader "Message"
+        - columnheader "Progress"
+    - rowgroup:
+      - 'row "prep.pipeline.run asr Failed Audio buffer could not be loaded. Execution: Audio buffer could not be loaded. Item: 1 14 %"':
+        - cell "prep.pipeline.run"
+        - cell "asr"
+        - cell "Failed"
+        - 'cell "Audio buffer could not be loaded. Execution: Audio buffer could not be loaded. Item: 1"'
+        - cell "14 %"
+      - 'row "prep.pipeline.run asr Running Running ASR Item: 1 14 %"':
+        - cell "prep.pipeline.run"
+        - cell "asr"
+        - cell "Running"
+        - 'cell "Running ASR Item: 1"'
+        - cell "14 %"
+      - 'row "prep.pipeline.run book_index Completed Index ready Item: 1 14 %"':
+        - cell "prep.pipeline.run"
+        - cell "book_index"
+        - cell "Completed"
+        - 'cell "Index ready Item: 1"'
+        - cell "14 %"
+      - 'row "prep.pipeline.run book_index Running Preparing book index Item: 1 0 %"':
+        - cell "prep.pipeline.run"
+        - cell "book_index"
+        - cell "Running"
+        - 'cell "Preparing book index Item: 1"'
+        - cell "0 %"
+      - 'row "prep.pipeline.run pipeline Running Running pipeline Item: 1 0 %"':
+        - cell "prep.pipeline.run"
+        - cell "pipeline"
+        - cell "Running"
+        - 'cell "Running pipeline Item: 1"'
+        - cell "0 %"
+      - 'row "prep.pipeline.run pipeline Pending Queued Item: 1 0 %"':
+        - cell "prep.pipeline.run"
+        - cell "pipeline"
+        - cell "Pending"
+        - 'cell "Queued Item: 1"'
+        - cell "0 %"
+  - heading "Last artifact set" [level=6]
+  - table:
+    - rowgroup:
+      - row "Name Kind Exists Path":
+        - columnheader "Name"
+        - columnheader "Kind"
+        - columnheader "Exists"
+        - columnheader "Path"
+    - rowgroup:
+      - row "asr Output No /mnt/c/Projects/AMS.test/.tmp/s04-prep-ui/1/1.asr.json":
+        - cell "asr"
+        - cell "Output"
+        - cell "No"
+        - cell "/mnt/c/Projects/AMS.test/.tmp/s04-prep-ui/1/1.asr.json"

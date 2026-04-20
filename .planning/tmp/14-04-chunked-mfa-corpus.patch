@@ -1,0 +1,1410 @@
+diff --git a/.planning/STATE.md b/.planning/STATE.md
+index 1fc7628..bb478f4 100644
+--- a/.planning/STATE.md
++++ b/.planning/STATE.md
+@@ -8,8 +8,8 @@ Audio Management System - CLI and core library for audio processing, ASR, forced
+ 
+ **Milestone**: v2.0 Blazor Workstation
+ **Phase**: 14 - Shared Chunked ASR/MFA
+-**Plan**: 2/7
+-**Status**: Plan 14-02 complete; ChunkPlanningService with deterministic generation, policy controls, and 15 unit tests
++**Plan**: 4/7
++**Status**: Plan 14-04 complete; MfaChunkCorpusBuilder generates per-chunk wav/lab corpus from shared chunk plan with BookText-driven labs and 17 unit tests
+ 
+ ## Progress
+ 
+@@ -25,8 +25,8 @@ v2.0 Blazor Workstation[██████████████████
+ |------|------|-------|--------|
+ | 14-01 | Chunk Plan Artifact Model | 2 | Complete |
+ | 14-02 | Chunk Planning Service | 2 | Complete |
+-| 14-03 | TBD | - | Pending |
+-| 14-04 | TBD | - | Pending |
++| 14-03 | ASR Chunk-Plan Integration | 2 | Complete |
++| 14-04 | Chunked MFA Corpus Builder | 2 | Complete |
+ | 14-05 | TBD | - | Pending |
+ | 14-06 | TBD | - | Pending |
+ | 14-07 | TBD | - | Pending |
+@@ -162,6 +162,10 @@ v2.0 Blazor Workstation[██████████████████
+ | ChunkPlanningPolicy vs ChunkPlanPolicy | Separate input/persisted types | Service resolves defaults; persisted record stores exact values used |
+ | Audio fingerprint strategy | path+length+sampleRate+channels | Lightweight identity for invalidation; avoids content hashing overhead |
+ | Path separator normalization | Backslash to forward slash in fingerprint | Cross-platform consistency between Windows and Linux |
++| Chunk corpus activation threshold | >1 chunks in plan | Single-chunk plans use legacy single-utterance path to avoid overhead |
++| Chunked MFA fallback strategy | Omit ASR corpus retry | ASR corpus fallback only applies to legacy single-utterance lab failures |
++| MinLabTokenCount | 2 | Prevents empty/trivial lab files that cause MFA alignment errors |
++| Nearest-sentence fallback | Timing midpoint proximity | Deterministic fallback for chunks with no direct sentence timing overlap |
+ 
+ ## Phase 8/8.1 Conclusions (Archived)
+ 
+@@ -208,7 +212,7 @@ poc/VelloSharpPoc/     - Avalonia + VelloSharp (child window fails)
+ 
+ ## Next Action
+ 
+-Plan 14-02 complete. ChunkPlanningService with deterministic generation, policy controls, and 15 unit tests. Continue with plan 14-03.
++Plan 14-04 complete. MfaChunkCorpusBuilder generates per-chunk wav/lab corpus from shared chunk plan. Continue with plan 14-05.
+ 
+ ## Deferred UI Refinements (for Plan 10-04)
+ 
+@@ -225,4 +229,4 @@ None currently.
+ 
+ ## Session Continuity
+ 
+-Last activity: 2026-03-05 - Completed plan 14-02: ChunkPlanningService with deterministic generation and 15 unit tests
++Last activity: 2026-03-05 - Completed plan 14-04: Chunked MFA corpus builder with BookText-driven labs and 17 tests
+diff --git a/.planning/phases/14-shared-chunked-asr-mfa/14-04-SUMMARY.md b/.planning/phases/14-shared-chunked-asr-mfa/14-04-SUMMARY.md
+new file mode 100644
+index 0000000..656679b
+--- /dev/null
++++ b/.planning/phases/14-shared-chunked-asr-mfa/14-04-SUMMARY.md
+@@ -0,0 +1,102 @@
++---
++phase: 14-shared-chunked-asr-mfa
++plan: 04
++subsystem: alignment
++tags: [mfa, chunking, corpus, forced-alignment, audio-slicing]
++
++# Dependency graph
++requires:
++  - phase: 14-01
++    provides: ChunkPlanDocument and ChunkPlanEntry models
++  - phase: 14-02
++    provides: ChunkPlanningService with deterministic silence-based boundary detection
++provides:
++  - MfaChunkCorpusBuilder for per-chunk wav/lab corpus generation from shared plan
++  - Chunked corpus path in MfaWorkflow with automatic fallback to legacy single-utterance
++  - Per-utterance TextGrid collection for chunked alignment output
++affects: [14-05, 14-06, 14-07]
++
++# Tech tracking
++tech-stack:
++  added: []
++  patterns: [chunk-to-sentence timing overlap mapping, nearest-sentence fallback for sparse timing windows]
++
++key-files:
++  created:
++    - host/Ams.Core/Application/Mfa/MfaChunkCorpusBuilder.cs
++    - host/Ams.Tests/Application/Mfa/MfaChunkCorpusBuilderTests.cs
++  modified:
++    - host/Ams.Core/Application/Mfa/MfaWorkflow.cs
++
++key-decisions:
++  - "Chunk corpus only activates when chunk plan has >1 chunks; single-chunk plans use legacy path"
++  - "Chunked MFA path omits ASR corpus fallback (only applies to legacy single-utterance)"
++  - "MinLabTokenCount=2 ensures chunks with very short text (single word) are skipped"
++  - "Nearest-sentence fallback uses timing midpoint proximity; untimed transcripts use proportional index"
++
++patterns-established:
++  - "Chunk-to-text mapping: interval overlap [a,b) intersects [c,d) iff a<d && c<b"
++  - "Utterance naming: utt-NNNN (4-digit zero-padded) for deterministic ordering"
++  - "Corpus directory cleaned before chunk build to prevent stale artifacts"
++
++requirements-completed: [CHUNK-MFA]
++
++# Metrics
++duration: 4min
++completed: 2026-03-05
++---
++
++# Phase 14 Plan 04: Chunked MFA Corpus Summary
++
++**MfaChunkCorpusBuilder generates per-chunk wav/lab corpus from shared chunk plan with BookText-driven labs and nearest-sentence fallback for sparse timing windows**
++
++## Performance
++
++- **Duration:** 4 min
++- **Started:** 2026-03-05T06:26:06Z
++- **Completed:** 2026-03-05T06:30:54Z
++- **Tasks:** 2
++- **Files modified:** 3
++
++## Accomplishments
++- MfaChunkCorpusBuilder slices chapter audio into per-chunk wav files using AudioBuffer.Slice + AudioProcessor.EncodeWav
++- Lab files derived exclusively from HydratedSentence.BookText via PronunciationHelper normalization (never ASR words)
++- MfaWorkflow automatically branches to chunked corpus when chunk plan has multiple chunks, preserving legacy path
++- 17 unit tests cover overlap mapping, sparse fallback, boundary conditions, and deterministic output
++
++## Task Commits
++
++Each task was committed atomically:
++
++1. **Task 1: Build chunked MFA corpus from shared plan** - `334c7a2` (feat)
++2. **Task 2: Add robust chunk-text fallback behavior** - `a60d33b` (feat)
++
++## Files Created/Modified
++- `host/Ams.Core/Application/Mfa/MfaChunkCorpusBuilder.cs` - Per-chunk corpus builder with overlap mapping and fallback
++- `host/Ams.Core/Application/Mfa/MfaWorkflow.cs` - Chunked/legacy branching, clean corpus directory, per-utterance TextGrid collection
++- `host/Ams.Tests/Application/Mfa/MfaChunkCorpusBuilderTests.cs` - 17 tests for corpus builder logic
++
++## Decisions Made
++- Chunk corpus only activates when chunk plan has >1 chunks to avoid unnecessary overhead for single-chunk chapters
++- Chunked MFA path skips the ASR corpus fallback retry loop (only relevant for legacy single-utterance where the whole-chapter lab might fail)
++- MinLabTokenCount of 2 prevents empty/trivial lab files that would cause MFA alignment errors
++- Nearest-sentence fallback computes timing midpoint proximity to chunk midpoint; for fully untimed transcripts, uses proportional index mapping
++
++## Deviations from Plan
++
++None - plan executed exactly as written.
++
++## Issues Encountered
++None
++
++## User Setup Required
++None - no external service configuration required.
++
++## Next Phase Readiness
++- Chunked MFA corpus builder is ready for integration with the full pipeline
++- Per-utterance TextGrids are collected in the mfa copy directory for downstream timing merge
++- TextGrid aggregation (combining per-chunk TextGrids back to chapter-level timings) will be needed in a subsequent plan
++
++---
++*Phase: 14-shared-chunked-asr-mfa*
++*Completed: 2026-03-05*
+diff --git a/host/Ams.Core/Application/Mfa/MfaChunkCorpusBuilder.cs b/host/Ams.Core/Application/Mfa/MfaChunkCorpusBuilder.cs
+new file mode 100644
+index 0000000..13d97ea
+--- /dev/null
++++ b/host/Ams.Core/Application/Mfa/MfaChunkCorpusBuilder.cs
+@@ -0,0 +1,284 @@
++using System.Text;
++using Ams.Core.Artifacts;
++using Ams.Core.Artifacts.Alignment;
++using Ams.Core.Artifacts.Hydrate;
++using Ams.Core.Common;
++using Ams.Core.Processors;
++using Ams.Core.Runtime.Book;
++
++namespace Ams.Core.Application.Mfa;
++
++/// <summary>
++/// Builds a per-chunk MFA corpus (wav + lab files) from a shared chunk plan,
++/// hydrated transcript, and chapter audio. Each chunk produces a deterministic
++/// <c>utt-NNNN.wav</c> / <c>utt-NNNN.lab</c> pair under the corpus directory.
++/// <para>
++/// Lab content is always derived from <see cref="HydratedSentence.BookText"/>
++/// to maintain book-text lexical truth. The builder maps chunk time ranges to
++/// overlapping hydrated sentences and never falls back to raw ASR words.
++/// </para>
++/// </summary>
++internal static class MfaChunkCorpusBuilder
++{
++    /// <summary>
++    /// Result of a chunk corpus build, containing the list of utterance entries
++    /// and the corpus directory path.
++    /// </summary>
++    internal sealed record ChunkCorpusResult(
++        string CorpusDirectory,
++        IReadOnlyList<UtteranceEntry> Utterances);
++
++    /// <summary>
++    /// A single utterance in the chunk corpus with its file paths and
++    /// the source chunk offset (for later TextGrid aggregation).
++    /// </summary>
++    internal sealed record UtteranceEntry(
++        int ChunkId,
++        string UtteranceName,
++        string WavPath,
++        string LabPath,
++        double ChunkStartSec,
++        double ChunkEndSec);
++
++    /// <summary>
++    /// Minimum number of pronunciation tokens per utterance lab. Chunks that
++    /// produce fewer tokens after fallback expansion are logged and skipped.
++    /// </summary>
++    private const int MinLabTokenCount = 2;
++
++    /// <summary>
++    /// Builds per-chunk wav and lab files under <paramref name="corpusDirectory"/>.
++    /// </summary>
++    /// <param name="audioBuffer">Full chapter audio buffer.</param>
++    /// <param name="chunkPlan">Shared chunk plan document from ChunkPlanningService.</param>
++    /// <param name="hydrate">Hydrated transcript with sentence-level BookText and timing.</param>
++    /// <param name="corpusDirectory">Target directory for utterance corpus assets.</param>
++    /// <returns>A <see cref="ChunkCorpusResult"/> with the list of emitted utterances.</returns>
++    internal static ChunkCorpusResult Build(
++        AudioBuffer audioBuffer,
++        ChunkPlanDocument chunkPlan,
++        HydratedTranscript hydrate,
++        string corpusDirectory)
++    {
++        ArgumentNullException.ThrowIfNull(audioBuffer);
++        ArgumentNullException.ThrowIfNull(chunkPlan);
++        ArgumentNullException.ThrowIfNull(hydrate);
++        ArgumentException.ThrowIfNullOrWhiteSpace(corpusDirectory);
++
++        Directory.CreateDirectory(corpusDirectory);
++
++        var sentences = hydrate.Sentences;
++        var utterances = new List<UtteranceEntry>(chunkPlan.Chunks.Count);
++        int skippedNoText = 0;
++        int skippedNoAudio = 0;
++        int expandedChunks = 0;
++
++        for (int i = 0; i < chunkPlan.Chunks.Count; i++)
++        {
++            var chunk = chunkPlan.Chunks[i];
++            var uttName = FormatUtteranceName(i);
++            var usedFallback = false;
++
++            // Find overlapping sentences for this chunk
++            var labText = BuildLabText(sentences, chunk.StartSec, chunk.EndSec);
++
++            if (string.IsNullOrWhiteSpace(labText))
++            {
++                // Fallback: expand to nearest sentence window
++                labText = BuildLabTextWithFallback(sentences, chunk.StartSec, chunk.EndSec, i);
++                usedFallback = labText is not null;
++                if (usedFallback)
++                {
++                    expandedChunks++;
++                }
++            }
++
++            if (string.IsNullOrWhiteSpace(labText))
++            {
++                skippedNoText++;
++                Log.Debug(
++                    "Chunk {ChunkId} ({StartSec:F2}s-{EndSec:F2}s) produced no usable lab text after fallback; skipping",
++                    chunk.ChunkId, chunk.StartSec, chunk.EndSec);
++                continue;
++            }
++
++            // Write WAV: slice the audio buffer to this chunk's sample range
++            var wavPath = Path.Combine(corpusDirectory, uttName + ".wav");
++            var sliceLength = Math.Min(chunk.LengthSamples, audioBuffer.Length - chunk.StartSample);
++            if (sliceLength <= 0)
++            {
++                skippedNoAudio++;
++                Log.Debug(
++                    "Chunk {ChunkId} has no audio samples (start={StartSample}, bufLen={BufLen}); skipping",
++                    chunk.ChunkId, chunk.StartSample, audioBuffer.Length);
++                continue;
++            }
++
++            var slice = audioBuffer.Slice(chunk.StartSample, sliceLength);
++            AudioProcessor.EncodeWav(wavPath, slice);
++
++            // Write LAB
++            var labPath = Path.Combine(corpusDirectory, uttName + ".lab");
++            File.WriteAllText(labPath, labText, Encoding.UTF8);
++
++            utterances.Add(new UtteranceEntry(
++                ChunkId: chunk.ChunkId,
++                UtteranceName: uttName,
++                WavPath: wavPath,
++                LabPath: labPath,
++                ChunkStartSec: chunk.StartSec,
++                ChunkEndSec: chunk.EndSec));
++        }
++
++        Log.Info(
++            "Built chunk corpus: {Count} utterances from {Total} chunks " +
++            "(skipped: {SkippedText} no-text, {SkippedAudio} no-audio; expanded: {Expanded})",
++            utterances.Count, chunkPlan.Chunks.Count, skippedNoText, skippedNoAudio, expandedChunks);
++
++        return new ChunkCorpusResult(corpusDirectory, utterances);
++    }
++
++    /// <summary>
++    /// Builds lab text from hydrated sentences whose timing overlaps
++    /// the chunk time range [chunkStart, chunkEnd).
++    /// </summary>
++    internal static string? BuildLabText(
++        IReadOnlyList<HydratedSentence> sentences,
++        double chunkStartSec,
++        double chunkEndSec)
++    {
++        var overlapping = FindOverlappingSentences(sentences, chunkStartSec, chunkEndSec);
++        if (overlapping.Count == 0)
++        {
++            return null;
++        }
++
++        return PrepareLabFromSentences(overlapping);
++    }
++
++    /// <summary>
++    /// Fallback when no sentences overlap the chunk timing window.
++    /// Expands to the nearest sentence(s) by proximity, ensuring at least
++    /// one sentence is included. Never switches to raw ASR words.
++    /// </summary>
++    internal static string? BuildLabTextWithFallback(
++        IReadOnlyList<HydratedSentence> sentences,
++        double chunkStartSec,
++        double chunkEndSec,
++        int chunkIndex)
++    {
++        if (sentences.Count == 0)
++        {
++            return null;
++        }
++
++        var chunkMidpoint = (chunkStartSec + chunkEndSec) / 2.0;
++
++        // Find the sentence with the closest timing to the chunk midpoint
++        HydratedSentence? closest = null;
++        double closestDistance = double.MaxValue;
++
++        foreach (var sentence in sentences)
++        {
++            if (sentence.Timing is null)
++            {
++                continue;
++            }
++
++            var sentMid = (sentence.Timing.StartSec + sentence.Timing.EndSec) / 2.0;
++            var distance = Math.Abs(sentMid - chunkMidpoint);
++            if (distance < closestDistance)
++            {
++                closestDistance = distance;
++                closest = sentence;
++            }
++        }
++
++        if (closest is null)
++        {
++            // No timed sentences at all: use positional fallback based on chunk index
++            // Map chunk index proportionally to sentence list
++            var proportionalIndex = sentences.Count > 1
++                ? (int)Math.Round((double)chunkIndex / Math.Max(1, chunkIndex + 1) * (sentences.Count - 1))
++                : 0;
++            proportionalIndex = Math.Clamp(proportionalIndex, 0, sentences.Count - 1);
++            closest = sentences[proportionalIndex];
++        }
++
++        Log.Debug(
++            "Chunk {ChunkIndex} ({StartSec:F2}s-{EndSec:F2}s) expanded to nearest sentence {SentenceId}",
++            chunkIndex, chunkStartSec, chunkEndSec, closest.Id);
++
++        var labText = PrepareLabFromSentences(new[] { closest });
++        return string.IsNullOrWhiteSpace(labText) ? null : labText;
++    }
++
++    /// <summary>
++    /// Finds sentences whose timing overlaps [chunkStart, chunkEnd).
++    /// A sentence overlaps if its timing range intersects the chunk range.
++    /// </summary>
++    internal static List<HydratedSentence> FindOverlappingSentences(
++        IReadOnlyList<HydratedSentence> sentences,
++        double chunkStartSec,
++        double chunkEndSec)
++    {
++        var result = new List<HydratedSentence>();
++
++        foreach (var sentence in sentences)
++        {
++            if (sentence.Timing is null)
++            {
++                continue;
++            }
++
++            // Standard interval overlap: [a, b) intersects [c, d) iff a < d && c < b
++            if (sentence.Timing.StartSec < chunkEndSec &&
++                chunkStartSec < sentence.Timing.EndSec)
++            {
++                result.Add(sentence);
++            }
++        }
++
++        return result;
++    }
++
++    /// <summary>
++    /// Prepares a single lab line from the BookText of the given sentences.
++    /// Uses PronunciationHelper to normalize text for MFA consumption.
++    /// </summary>
++    private static string? PrepareLabFromSentences(IEnumerable<HydratedSentence> sentences)
++    {
++        var parts = new List<string>();
++
++        foreach (var sentence in sentences)
++        {
++            var bookText = sentence.BookText;
++            if (string.IsNullOrWhiteSpace(bookText))
++            {
++                continue;
++            }
++
++            var pronunciationParts = PronunciationHelper.ExtractPronunciationParts(bookText);
++            foreach (var part in pronunciationParts)
++            {
++                if (!string.IsNullOrWhiteSpace(part))
++                {
++                    parts.Add(part);
++                }
++            }
++        }
++
++        if (parts.Count < MinLabTokenCount)
++        {
++            return null;
++        }
++
++        return string.Join(' ', parts);
++    }
++
++    /// <summary>
++    /// Formats a zero-padded utterance name for deterministic ordering.
++    /// </summary>
++    internal static string FormatUtteranceName(int index)
++        => $"utt-{index:D4}";
++}
+diff --git a/host/Ams.Core/Application/Mfa/MfaWorkflow.cs b/host/Ams.Core/Application/Mfa/MfaWorkflow.cs
+index 38807c6..4e40ab0 100644
+--- a/host/Ams.Core/Application/Mfa/MfaWorkflow.cs
++++ b/host/Ams.Core/Application/Mfa/MfaWorkflow.cs
+@@ -2,6 +2,10 @@ using System.IO;
+ using System.Text;
+ using Ams.Core.Application.Processes;
+ using Ams.Core.Application.Mfa.Models;
++using Ams.Core.Artifacts;
++using Ams.Core.Artifacts.Alignment;
++using Ams.Core.Artifacts.Hydrate;
++using Ams.Core.Processors;
+ using Ams.Core.Runtime.Book;
+ using Ams.Core.Runtime.Chapter;
+ 
+@@ -54,12 +58,36 @@ public static class MfaWorkflow
+             }
+         }
+ 
+-        var stagedAudioPath = Path.Combine(corpusDir, chapterStem + ".wav");
+-        StageAudio(audioFile, stagedAudioPath);
++        // Determine whether to use chunked or single-utterance corpus
++        var chunkPlan = chapterContext.Documents.ChunkPlan;
++        var hydrate = chapterContext.Documents.HydratedTranscript;
++        MfaChunkCorpusBuilder.ChunkCorpusResult? chunkCorpus = null;
+ 
+-        var corpusSource = new FileInfo(Path.Combine(chapterDirectory.FullName, chapterStem + ".asr.corpus.txt"));
+-        var labPath = Path.Combine(corpusDir, chapterStem + ".lab");
+-        await WriteLabFileAsync(hydrateFile, chapterContext, labPath, null, cancellationToken).ConfigureAwait(false);
++        if (chunkPlan is not null && hydrate is not null && chunkPlan.Chunks.Count > 1)
++        {
++            // Clean the corpus directory for fresh chunk output
++            CleanCorpusDirectory(corpusDir);
++
++            var audioBuffer = AudioProcessor.Decode(audioFile.FullName);
++            chunkCorpus = MfaChunkCorpusBuilder.Build(audioBuffer, chunkPlan, hydrate, corpusDir);
++
++            Log.Info("Using chunked MFA corpus: {Count} utterances from shared chunk plan", chunkCorpus.Utterances.Count);
++        }
++        else
++        {
++            // Legacy single-utterance path
++            var stagedAudioPath = Path.Combine(corpusDir, chapterStem + ".wav");
++            StageAudio(audioFile, stagedAudioPath);
++
++            var corpusSource = new FileInfo(Path.Combine(chapterDirectory.FullName, chapterStem + ".asr.corpus.txt"));
++            var labPath = Path.Combine(corpusDir, chapterStem + ".lab");
++            await WriteLabFileAsync(hydrateFile, chapterContext, labPath, null, cancellationToken).ConfigureAwait(false);
++
++            if (chunkPlan is not null && chunkPlan.Chunks.Count <= 1)
++            {
++                Log.Debug("Chunk plan has {Count} chunk(s); using single-utterance corpus path", chunkPlan.Chunks.Count);
++            }
++        }
+ 
+         var dictionaryModel = MfaService.DefaultDictionaryModel;
+         var acousticModel = MfaService.DefaultAcousticModel;
+@@ -132,25 +160,39 @@ public static class MfaWorkflow
+             ? baseContext
+             : baseContext with { CustomDictionaryPath = null };
+ 
+-        Log.Debug("Running MFA align for chapter {Chapter}", chapterStem);
+-        var alignUsingCorpus = false;
++        Log.Debug("Running MFA align for chapter {Chapter} ({Mode})", chapterStem,
++            chunkCorpus is not null ? $"chunked, {chunkCorpus.Utterances.Count} utterances" : "single-utterance");
+ 
+-        while (true)
++        if (chunkCorpus is not null)
+         {
+-            try
+-            {
+-                var alignResult = await service.AlignAsync(alignContext, cancellationToken).ConfigureAwait(false);
+-                EnsureSuccess("mfa align", alignResult);
+-                break;
+-            }
+-            catch (InvalidOperationException ex) when (!alignUsingCorpus && corpusSource.Exists)
++            // Chunked path: straightforward alignment (no ASR corpus fallback)
++            var alignResult = await service.AlignAsync(alignContext, cancellationToken).ConfigureAwait(false);
++            EnsureSuccess("mfa align", alignResult);
++        }
++        else
++        {
++            // Legacy single-utterance path with ASR corpus fallback
++            var corpusSource = new FileInfo(Path.Combine(chapterDirectory.FullName, chapterStem + ".asr.corpus.txt"));
++            var labPath = Path.Combine(corpusDir, chapterStem + ".lab");
++            var alignUsingCorpus = false;
++
++            while (true)
+             {
+-                alignUsingCorpus = true;
+-                Log.Warn("MFA align failed using hydrate transcript ({Message}). Retrying with ASR corpus {Corpus}.",
+-                    ex.Message, corpusSource.FullName);
+-                await WriteLabFileAsync(hydrateFile, chapterContext, labPath, corpusSource, cancellationToken)
+-                    .ConfigureAwait(false);
+-                continue;
++                try
++                {
++                    var alignResult = await service.AlignAsync(alignContext, cancellationToken).ConfigureAwait(false);
++                    EnsureSuccess("mfa align", alignResult);
++                    break;
++                }
++                catch (InvalidOperationException ex) when (!alignUsingCorpus && corpusSource.Exists)
++                {
++                    alignUsingCorpus = true;
++                    Log.Warn("MFA align failed using hydrate transcript ({Message}). Retrying with ASR corpus {Corpus}.",
++                        ex.Message, corpusSource.FullName);
++                    await WriteLabFileAsync(hydrateFile, chapterContext, labPath, corpusSource, cancellationToken)
++                        .ConfigureAwait(false);
++                    continue;
++                }
+             }
+         }
+ 
+@@ -161,17 +203,56 @@ public static class MfaWorkflow
+         CopyIfExists(Path.Combine(mfaRoot, chapterStem + ".dictionary.zip"),
+             Path.Combine(mfaCopyDir, chapterStem + ".dictionary.zip"));
+ 
+-        var textGridCandidates = new[]
++        if (chunkCorpus is not null)
+         {
+-            Path.Combine(alignOutputDir, "alignment", "mfa", chapterStem + ".TextGrid"),
+-            Path.Combine(alignOutputDir, chapterStem + ".TextGrid")
+-        };
+-        foreach (var candidate in textGridCandidates)
++            // Chunked path: collect per-utterance TextGrids
++            foreach (var utt in chunkCorpus.Utterances)
++            {
++                var uttTextGridCandidates = new[]
++                {
++                    Path.Combine(alignOutputDir, "alignment", "mfa", utt.UtteranceName + ".TextGrid"),
++                    Path.Combine(alignOutputDir, utt.UtteranceName + ".TextGrid")
++                };
++                foreach (var candidate in uttTextGridCandidates)
++                {
++                    if (File.Exists(candidate))
++                    {
++                        CopyIfExists(candidate, Path.Combine(mfaCopyDir, utt.UtteranceName + ".TextGrid"));
++                        break;
++                    }
++                }
++            }
++
++            // Also copy the chapter-level TextGrid if MFA produced one
++            var chapterTextGridCandidates = new[]
++            {
++                Path.Combine(alignOutputDir, "alignment", "mfa", chapterStem + ".TextGrid"),
++                Path.Combine(alignOutputDir, chapterStem + ".TextGrid")
++            };
++            foreach (var candidate in chapterTextGridCandidates)
++            {
++                if (File.Exists(candidate))
++                {
++                    CopyIfExists(candidate, textGridCopyPath);
++                    break;
++                }
++            }
++        }
++        else
+         {
+-            if (File.Exists(candidate))
++            // Legacy single-utterance TextGrid collection
++            var textGridCandidates = new[]
++            {
++                Path.Combine(alignOutputDir, "alignment", "mfa", chapterStem + ".TextGrid"),
++                Path.Combine(alignOutputDir, chapterStem + ".TextGrid")
++            };
++            foreach (var candidate in textGridCandidates)
+             {
+-                CopyIfExists(candidate, textGridCopyPath);
+-                break;
++                if (File.Exists(candidate))
++                {
++                    CopyIfExists(candidate, textGridCopyPath);
++                    break;
++                }
+             }
+         }
+ 
+@@ -185,6 +266,29 @@ public static class MfaWorkflow
+         return path;
+     }
+ 
++    /// <summary>
++    /// Removes all files from the corpus directory to prepare for fresh chunk output.
++    /// </summary>
++    private static void CleanCorpusDirectory(string corpusDir)
++    {
++        if (!Directory.Exists(corpusDir))
++        {
++            return;
++        }
++
++        foreach (var file in Directory.EnumerateFiles(corpusDir))
++        {
++            try
++            {
++                File.Delete(file);
++            }
++            catch (Exception ex)
++            {
++                Log.Debug("Failed to clean corpus file {Path}: {Message}", file, ex.Message);
++            }
++        }
++    }
++
+     private static void StageAudio(FileInfo source, string destination)
+     {
+         var copyRequired = !File.Exists(destination);
+diff --git a/host/Ams.Core/Services/AsrService.cs b/host/Ams.Core/Services/AsrService.cs
+index 19086b8..94c5528 100644
+--- a/host/Ams.Core/Services/AsrService.cs
++++ b/host/Ams.Core/Services/AsrService.cs
+@@ -99,6 +99,15 @@ public sealed class AsrService : IAsrService
+     /// offset timestamps. Tokens and segments from each chunk are adjusted
+     /// by the chunk's start time offset to produce monotonically increasing timestamps.
+     /// </summary>
++    /// <remarks>
++    /// Guardrails enforced:
++    /// <list type="bullet">
++    ///   <item>Chunks are processed in offset order (deterministic ordering).</item>
++    ///   <item>Token timestamps are clamped to maintain monotonic non-decreasing order.</item>
++    ///   <item>Segment timestamps are clamped to maintain monotonic non-decreasing order.</item>
++    ///   <item>Each chunk's offset is applied exactly once (no duplicate offset application).</item>
++    /// </list>
++    /// </remarks>
+     internal static AsrResponse MergeChunkResponses(
+         IReadOnlyList<(AsrResponse Response, double OffsetSec)> chunks)
+     {
+@@ -106,7 +115,16 @@ public sealed class AsrService : IAsrService
+         var allSegments = new List<AsrSegment>();
+         string? modelVersion = null;
+ 
+-        foreach (var (response, offsetSec) in chunks)
++        // Track high-water marks for monotonicity enforcement
++        double lastTokenEnd = 0;
++        double lastSegmentEnd = 0;
++
++        // Process chunks in offset order to guarantee deterministic ordering
++        var ordered = chunks.Count <= 1
++            ? chunks
++            : chunks.OrderBy(c => c.OffsetSec).ToList();
++
++        foreach (var (response, offsetSec) in ordered)
+         {
+             modelVersion ??= response.ModelVersion;
+ 
+@@ -114,10 +132,10 @@ public sealed class AsrService : IAsrService
+             {
+                 foreach (var token in response.Tokens)
+                 {
+-                    allTokens.Add(new AsrToken(
+-                        token.StartTime + offsetSec,
+-                        token.Duration,
+-                        token.Word));
++                    var adjustedStart = Math.Max(token.StartTime + offsetSec, lastTokenEnd);
++                    var adjustedDuration = token.Duration;
++                    allTokens.Add(new AsrToken(adjustedStart, adjustedDuration, token.Word));
++                    lastTokenEnd = adjustedStart + Math.Max(0, adjustedDuration);
+                 }
+             }
+ 
+@@ -125,10 +143,10 @@ public sealed class AsrService : IAsrService
+             {
+                 foreach (var segment in response.Segments)
+                 {
+-                    allSegments.Add(new AsrSegment(
+-                        segment.StartSec + offsetSec,
+-                        segment.EndSec + offsetSec,
+-                        segment.Text));
++                    var adjustedStart = Math.Max(segment.StartSec + offsetSec, lastSegmentEnd);
++                    var adjustedEnd = Math.Max(segment.EndSec + offsetSec, adjustedStart);
++                    allSegments.Add(new AsrSegment(adjustedStart, adjustedEnd, segment.Text));
++                    lastSegmentEnd = adjustedEnd;
+                 }
+             }
+         }
+diff --git a/host/Ams.Tests/Application/Mfa/MfaChunkCorpusBuilderTests.cs b/host/Ams.Tests/Application/Mfa/MfaChunkCorpusBuilderTests.cs
+new file mode 100644
+index 0000000..b95fb04
+--- /dev/null
++++ b/host/Ams.Tests/Application/Mfa/MfaChunkCorpusBuilderTests.cs
+@@ -0,0 +1,301 @@
++using Ams.Core.Application.Mfa;
++using Ams.Core.Artifacts;
++using Ams.Core.Artifacts.Alignment;
++using Ams.Core.Artifacts.Hydrate;
++
++namespace Ams.Tests.Application.Mfa;
++
++public class MfaChunkCorpusBuilderTests
++{
++    // ----------------------------------------------------------------
++    // Helpers
++    // ----------------------------------------------------------------
++
++    private static HydratedSentence MakeSentence(int id, string bookText, double startSec, double endSec)
++    {
++        return new HydratedSentence(
++            Id: id,
++            BookRange: new HydratedRange(0, 1),
++            ScriptRange: null,
++            BookText: bookText,
++            ScriptText: bookText,
++            Metrics: new SentenceMetrics(1.0, 1.0, 1.0, 0, 0),
++            Status: "ok",
++            Timing: new TimingRange(startSec, endSec),
++            Diff: null);
++    }
++
++    private static HydratedSentence MakeUntimedSentence(int id, string bookText)
++    {
++        return new HydratedSentence(
++            Id: id,
++            BookRange: new HydratedRange(0, 1),
++            ScriptRange: null,
++            BookText: bookText,
++            ScriptText: bookText,
++            Metrics: new SentenceMetrics(1.0, 1.0, 1.0, 0, 0),
++            Status: "ok",
++            Timing: null,
++            Diff: null);
++    }
++
++    // ----------------------------------------------------------------
++    // FindOverlappingSentences tests
++    // ----------------------------------------------------------------
++
++    [Fact]
++    public void FindOverlappingSentences_ReturnsOverlapping_WhenTimingsIntersect()
++    {
++        var sentences = new[]
++        {
++            MakeSentence(0, "First sentence about the world.", 0.0, 5.0),
++            MakeSentence(1, "Second sentence about the town.", 5.0, 10.0),
++            MakeSentence(2, "Third sentence about the country.", 10.0, 15.0)
++        };
++
++        // Chunk [4.0, 11.0) should overlap sentences 0, 1, 2
++        var result = MfaChunkCorpusBuilder.FindOverlappingSentences(sentences, 4.0, 11.0);
++
++        Assert.Equal(3, result.Count);
++        Assert.Contains(result, s => s.Id == 0);
++        Assert.Contains(result, s => s.Id == 1);
++        Assert.Contains(result, s => s.Id == 2);
++    }
++
++    [Fact]
++    public void FindOverlappingSentences_ReturnsEmpty_WhenNoTimingOverlap()
++    {
++        var sentences = new[]
++        {
++            MakeSentence(0, "First sentence about the world.", 0.0, 5.0),
++            MakeSentence(1, "Second sentence about the town.", 5.0, 10.0)
++        };
++
++        // Chunk [15.0, 20.0) has no overlap
++        var result = MfaChunkCorpusBuilder.FindOverlappingSentences(sentences, 15.0, 20.0);
++
++        Assert.Empty(result);
++    }
++
++    [Fact]
++    public void FindOverlappingSentences_SkipsUntimedSentences()
++    {
++        var sentences = new HydratedSentence[]
++        {
++            MakeSentence(0, "Timed sentence about the world.", 0.0, 5.0),
++            MakeUntimedSentence(1, "Untimed sentence in the middle."),
++            MakeSentence(2, "Another timed sentence here.", 5.0, 10.0)
++        };
++
++        var result = MfaChunkCorpusBuilder.FindOverlappingSentences(sentences, 0.0, 10.0);
++
++        Assert.Equal(2, result.Count);
++        Assert.All(result, s => Assert.NotNull(s.Timing));
++    }
++
++    [Fact]
++    public void FindOverlappingSentences_ExactBoundary_IsNotOverlap()
++    {
++        // Sentence ends exactly at chunk start: [0,5) and [5,10) do not overlap
++        var sentences = new[]
++        {
++            MakeSentence(0, "First sentence about the world.", 0.0, 5.0)
++        };
++
++        var result = MfaChunkCorpusBuilder.FindOverlappingSentences(sentences, 5.0, 10.0);
++
++        Assert.Empty(result);
++    }
++
++    // ----------------------------------------------------------------
++    // BuildLabText tests (normal overlap mapping)
++    // ----------------------------------------------------------------
++
++    [Fact]
++    public void BuildLabText_CombinesOverlappingSentenceBookText()
++    {
++        var sentences = new[]
++        {
++            MakeSentence(0, "The quick brown fox.", 0.0, 5.0),
++            MakeSentence(1, "Jumps over the lazy dog.", 4.5, 10.0)
++        };
++
++        var labText = MfaChunkCorpusBuilder.BuildLabText(sentences, 0.0, 10.0);
++
++        Assert.NotNull(labText);
++        Assert.Contains("the", labText);
++        Assert.Contains("quick", labText);
++        Assert.Contains("brown", labText);
++        Assert.Contains("fox", labText);
++        Assert.Contains("jumps", labText);
++        Assert.Contains("over", labText);
++        Assert.Contains("lazy", labText);
++        Assert.Contains("dog", labText);
++    }
++
++    [Fact]
++    public void BuildLabText_ReturnsNull_WhenNoOverlap()
++    {
++        var sentences = new[]
++        {
++            MakeSentence(0, "Some sentence text here.", 0.0, 5.0)
++        };
++
++        var result = MfaChunkCorpusBuilder.BuildLabText(sentences, 10.0, 20.0);
++
++        Assert.Null(result);
++    }
++
++    [Fact]
++    public void BuildLabText_NormalizesViaBookTextOnly_NeverUsesAsrWords()
++    {
++        // BookText contains book words; the lab should reflect book text, not ASR output
++        var sentences = new[]
++        {
++            MakeSentence(0, "Mr. Smith went to Washington.", 0.0, 5.0)
++        };
++
++        var labText = MfaChunkCorpusBuilder.BuildLabText(sentences, 0.0, 5.0);
++
++        Assert.NotNull(labText);
++        // PronunciationHelper normalizes "Mr." to "mister"
++        Assert.Contains("smith", labText);
++        Assert.Contains("went", labText);
++        Assert.Contains("washington", labText);
++    }
++
++    // ----------------------------------------------------------------
++    // BuildLabTextWithFallback tests (sparse overlap)
++    // ----------------------------------------------------------------
++
++    [Fact]
++    public void BuildLabTextWithFallback_ExpandsToNearestSentence_WhenNoDirectOverlap()
++    {
++        var sentences = new[]
++        {
++            MakeSentence(0, "The beginning of the chapter in the story.", 0.0, 5.0),
++            MakeSentence(1, "Something in the very middle section.", 10.0, 15.0),
++            MakeSentence(2, "The ending of the chapter comes now.", 20.0, 25.0)
++        };
++
++        // Chunk [7.0, 9.0) overlaps nothing, but sentence 1 (mid=12.5) is closest to chunk mid (8.0)
++        var result = MfaChunkCorpusBuilder.BuildLabTextWithFallback(sentences, 7.0, 9.0, 1);
++
++        Assert.NotNull(result);
++        // Sentence 0 (mid=2.5) is actually closer to 8.0 than sentence 1 (mid=12.5)?
++        // Let's check: |2.5-8.0|=5.5, |12.5-8.0|=4.5 => sentence 1 is closer
++        Assert.Contains("middle", result);
++    }
++
++    [Fact]
++    public void BuildLabTextWithFallback_ReturnsNull_WhenNoSentencesAtAll()
++    {
++        var sentences = Array.Empty<HydratedSentence>();
++
++        var result = MfaChunkCorpusBuilder.BuildLabTextWithFallback(sentences, 0.0, 5.0, 0);
++
++        Assert.Null(result);
++    }
++
++    [Fact]
++    public void BuildLabTextWithFallback_UsesPositionalIndex_WhenAllSentencesUntimed()
++    {
++        var sentences = new[]
++        {
++            MakeUntimedSentence(0, "Very first untimed sentence here."),
++            MakeUntimedSentence(1, "Second untimed sentence goes here."),
++            MakeUntimedSentence(2, "Third untimed sentence in list.")
++        };
++
++        // With all untimed, should use positional fallback
++        var result = MfaChunkCorpusBuilder.BuildLabTextWithFallback(sentences, 0.0, 5.0, 0);
++
++        Assert.NotNull(result);
++        // Should pick sentence[0] for chunk index 0
++        Assert.Contains("first", result);
++    }
++
++    // ----------------------------------------------------------------
++    // FormatUtteranceName tests
++    // ----------------------------------------------------------------
++
++    [Theory]
++    [InlineData(0, "utt-0000")]
++    [InlineData(1, "utt-0001")]
++    [InlineData(42, "utt-0042")]
++    [InlineData(9999, "utt-9999")]
++    public void FormatUtteranceName_ProducesDeterministicPaddedNames(int index, string expected)
++    {
++        var result = MfaChunkCorpusBuilder.FormatUtteranceName(index);
++        Assert.Equal(expected, result);
++    }
++
++    // ----------------------------------------------------------------
++    // Deterministic corpus file list test
++    // ----------------------------------------------------------------
++
++    [Fact]
++    public void Build_ProducesDeterministicUtteranceList_ForGivenInputs()
++    {
++        // We cannot call Build() directly in unit tests because it requires FFmpeg
++        // for AudioProcessor.EncodeWav. Instead, verify the text mapping logic
++        // produces deterministic results by calling BuildLabText twice.
++        var sentences = new[]
++        {
++            MakeSentence(0, "Alpha bravo charlie delta echo foxtrot.", 0.0, 30.0),
++            MakeSentence(1, "Golf hotel india juliet kilo lima.", 30.0, 60.0),
++            MakeSentence(2, "Mike november oscar papa quebec romeo.", 60.0, 90.0)
++        };
++
++        var chunks = new[]
++        {
++            new ChunkPlanEntry(0, 0, 480000, 0.0, 30.0),
++            new ChunkPlanEntry(1, 480000, 480000, 30.0, 60.0),
++            new ChunkPlanEntry(2, 960000, 480000, 60.0, 90.0)
++        };
++
++        // Run twice and verify identical output
++        var results1 = chunks.Select(c => MfaChunkCorpusBuilder.BuildLabText(sentences, c.StartSec, c.EndSec)).ToList();
++        var results2 = chunks.Select(c => MfaChunkCorpusBuilder.BuildLabText(sentences, c.StartSec, c.EndSec)).ToList();
++
++        Assert.Equal(results1.Count, results2.Count);
++        for (int i = 0; i < results1.Count; i++)
++        {
++            Assert.Equal(results1[i], results2[i]);
++        }
++
++        // Verify each chunk maps to the expected sentence
++        Assert.Contains("alpha", results1[0]!);
++        Assert.Contains("golf", results1[1]!);
++        Assert.Contains("mike", results1[2]!);
++    }
++
++    [Fact]
++    public void BuildLabText_ReturnsNull_WhenBookTextTooShort()
++    {
++        // MinLabTokenCount is 2; a single word should not produce a valid lab
++        var sentences = new[]
++        {
++            MakeSentence(0, "I", 0.0, 5.0) // single word produces <2 tokens
++        };
++
++        var result = MfaChunkCorpusBuilder.BuildLabText(sentences, 0.0, 5.0);
++
++        Assert.Null(result);
++    }
++
++    [Fact]
++    public void FindOverlappingSentences_PartialOverlap_IncludesSentence()
++    {
++        var sentences = new[]
++        {
++            MakeSentence(0, "This is a long sentence that spans time.", 3.0, 8.0)
++        };
++
++        // Chunk [0, 4) partially overlaps sentence [3, 8)
++        var result = MfaChunkCorpusBuilder.FindOverlappingSentences(sentences, 0.0, 4.0);
++
++        Assert.Single(result);
++        Assert.Equal(0, result[0].Id);
++    }
++}
+diff --git a/host/Ams.Tests/Services/AsrServiceMergeTests.cs b/host/Ams.Tests/Services/AsrServiceMergeTests.cs
+new file mode 100644
+index 0000000..4dbe1cc
+--- /dev/null
++++ b/host/Ams.Tests/Services/AsrServiceMergeTests.cs
+@@ -0,0 +1,371 @@
++using Ams.Core.Services;
++
++namespace Ams.Tests.Services;
++
++/// <summary>
++/// Tests for <see cref="AsrService.MergeChunkResponses"/> verifying
++/// plan-driven multi-chunk merge semantics, monotonic timestamp ordering,
++/// and non-overlap duplicate prevention at chunk boundaries.
++/// </summary>
++public class AsrServiceMergeTests
++{
++    [Fact]
++    public void MergeChunkResponses_SingleChunk_PreservesTimestamps()
++    {
++        var response = new AsrResponse("whisper-v1", new[]
++        {
++            new AsrToken(0.0, 0.5, "hello"),
++            new AsrToken(0.5, 0.3, "world")
++        }, new[]
++        {
++            new AsrSegment(0.0, 0.8, "hello world")
++        });
++
++        var chunks = new List<(AsrResponse Response, double OffsetSec)>
++        {
++            (response, 0.0)
++        };
++
++        var merged = AsrService.MergeChunkResponses(chunks);
++
++        Assert.Equal(2, merged.Tokens.Length);
++        Assert.Equal(0.0, merged.Tokens[0].StartTime);
++        Assert.Equal(0.5, merged.Tokens[1].StartTime);
++        Assert.Single(merged.Segments);
++        Assert.Equal(0.0, merged.Segments[0].StartSec);
++        Assert.Equal(0.8, merged.Segments[0].EndSec);
++    }
++
++    [Fact]
++    public void MergeChunkResponses_MultiChunk_AppliesOffsetsCorrectly()
++    {
++        var chunk1 = new AsrResponse("whisper-v1", new[]
++        {
++            new AsrToken(0.0, 0.5, "hello"),
++            new AsrToken(0.5, 0.3, "world")
++        }, new[]
++        {
++            new AsrSegment(0.0, 0.8, "hello world")
++        });
++
++        var chunk2 = new AsrResponse("whisper-v1", new[]
++        {
++            new AsrToken(0.0, 0.4, "foo"),
++            new AsrToken(0.4, 0.3, "bar")
++        }, new[]
++        {
++            new AsrSegment(0.0, 0.7, "foo bar")
++        });
++
++        var chunks = new List<(AsrResponse Response, double OffsetSec)>
++        {
++            (chunk1, 0.0),
++            (chunk2, 60.0)
++        };
++
++        var merged = AsrService.MergeChunkResponses(chunks);
++
++        Assert.Equal(4, merged.Tokens.Length);
++        // Chunk 1 tokens at original timestamps
++        Assert.Equal(0.0, merged.Tokens[0].StartTime);
++        Assert.Equal(0.5, merged.Tokens[1].StartTime);
++        // Chunk 2 tokens offset by 60.0
++        Assert.Equal(60.0, merged.Tokens[2].StartTime);
++        Assert.Equal(60.4, merged.Tokens[3].StartTime);
++
++        Assert.Equal(2, merged.Segments.Length);
++        Assert.Equal(0.0, merged.Segments[0].StartSec);
++        Assert.Equal(0.8, merged.Segments[0].EndSec);
++        Assert.Equal(60.0, merged.Segments[1].StartSec);
++        Assert.Equal(60.7, merged.Segments[1].EndSec);
++    }
++
++    [Fact]
++    public void MergeChunkResponses_TokenTimestampsAreMonotonicallyNonDecreasing()
++    {
++        // Simulate a boundary overlap scenario where chunk2's first token
++        // after offset would have a timestamp before chunk1's last token end
++        var chunk1 = new AsrResponse("whisper-v1", new[]
++        {
++            new AsrToken(0.0, 0.5, "hello"),
++            new AsrToken(0.5, 1.0, "world") // ends at 1.5
++        });
++
++        var chunk2 = new AsrResponse("whisper-v1", new[]
++        {
++            new AsrToken(0.0, 0.4, "foo") // after 1.0 offset: starts at 1.0, which is < 1.5
++        });
++
++        var chunks = new List<(AsrResponse Response, double OffsetSec)>
++        {
++            (chunk1, 0.0),
++            (chunk2, 1.0) // intentionally tight offset to test clamping
++        };
++
++        var merged = AsrService.MergeChunkResponses(chunks);
++
++        // Verify monotonic non-decreasing token timestamps
++        for (int i = 1; i < merged.Tokens.Length; i++)
++        {
++            Assert.True(merged.Tokens[i].StartTime >= merged.Tokens[i - 1].StartTime,
++                $"Token {i} start ({merged.Tokens[i].StartTime:F3}) should be >= " +
++                $"token {i - 1} start ({merged.Tokens[i - 1].StartTime:F3})");
++        }
++
++        // The clamped token should be at high-water mark (1.5), not raw 1.0
++        Assert.True(merged.Tokens[2].StartTime >= 1.5,
++            $"Clamped token start ({merged.Tokens[2].StartTime:F3}) should be >= 1.5");
++    }
++
++    [Fact]
++    public void MergeChunkResponses_SegmentTimestampsAreMonotonicallyNonDecreasing()
++    {
++        var chunk1 = new AsrResponse("whisper-v1", segments: new[]
++        {
++            new AsrSegment(0.0, 10.0, "first segment")
++        });
++
++        var chunk2 = new AsrResponse("whisper-v1", segments: new[]
++        {
++            new AsrSegment(0.0, 5.0, "second segment") // after 9.0 offset: 9.0-14.0
++        });
++
++        var chunks = new List<(AsrResponse Response, double OffsetSec)>
++        {
++            (chunk1, 0.0),
++            (chunk2, 9.0) // overlaps with chunk1's end
++        };
++
++        var merged = AsrService.MergeChunkResponses(chunks);
++
++        Assert.Equal(2, merged.Segments.Length);
++        // Second segment start clamped to at least chunk1's end
++        Assert.True(merged.Segments[1].StartSec >= merged.Segments[0].EndSec,
++            $"Segment 1 start ({merged.Segments[1].StartSec:F3}) should be >= " +
++            $"segment 0 end ({merged.Segments[0].EndSec:F3})");
++    }
++
++    [Fact]
++    public void MergeChunkResponses_DeterministicOrdering_ChunksProcessedByOffset()
++    {
++        // Supply chunks in reverse offset order to verify sorting
++        var chunk1 = new AsrResponse("whisper-v1", new[]
++        {
++            new AsrToken(0.0, 0.5, "first")
++        });
++
++        var chunk2 = new AsrResponse("whisper-v1", new[]
++        {
++            new AsrToken(0.0, 0.5, "second")
++        });
++
++        var chunks = new List<(AsrResponse Response, double OffsetSec)>
++        {
++            (chunk2, 60.0), // later chunk listed first
++            (chunk1, 0.0)   // earlier chunk listed second
++        };
++
++        var merged = AsrService.MergeChunkResponses(chunks);
++
++        Assert.Equal(2, merged.Tokens.Length);
++        Assert.Equal("first", merged.Tokens[0].Word);
++        Assert.Equal("second", merged.Tokens[1].Word);
++        Assert.True(merged.Tokens[0].StartTime < merged.Tokens[1].StartTime);
++    }
++
++    [Fact]
++    public void MergeChunkResponses_PreservesModelVersion()
++    {
++        var chunk1 = new AsrResponse("ggml-base.en.bin", new[]
++        {
++            new AsrToken(0.0, 0.5, "hello")
++        });
++
++        var chunk2 = new AsrResponse("ggml-base.en.bin", new[]
++        {
++            new AsrToken(0.0, 0.5, "world")
++        });
++
++        var merged = AsrService.MergeChunkResponses(new List<(AsrResponse, double)>
++        {
++            (chunk1, 0.0),
++            (chunk2, 30.0)
++        });
++
++        Assert.Equal("ggml-base.en.bin", merged.ModelVersion);
++    }
++
++    [Fact]
++    public void MergeChunkResponses_EmptyChunks_ReturnsDefaultResponse()
++    {
++        var merged = AsrService.MergeChunkResponses(
++            Array.Empty<(AsrResponse Response, double OffsetSec)>());
++
++        Assert.Equal("whisper", merged.ModelVersion);
++        Assert.Empty(merged.Tokens);
++        Assert.Empty(merged.Segments);
++    }
++
++    [Fact]
++    public void MergeChunkResponses_ChunkWithNoTokens_HandledGracefully()
++    {
++        var chunk1 = new AsrResponse("whisper-v1", new[]
++        {
++            new AsrToken(0.0, 0.5, "hello")
++        });
++
++        // Empty response (e.g., silence chunk with no speech)
++        var chunk2 = new AsrResponse("whisper-v1",
++            Array.Empty<AsrToken>(),
++            Array.Empty<AsrSegment>());
++
++        var chunk3 = new AsrResponse("whisper-v1", new[]
++        {
++            new AsrToken(0.0, 0.5, "world")
++        });
++
++        var chunks = new List<(AsrResponse Response, double OffsetSec)>
++        {
++            (chunk1, 0.0),
++            (chunk2, 30.0),
++            (chunk3, 60.0)
++        };
++
++        var merged = AsrService.MergeChunkResponses(chunks);
++
++        Assert.Equal(2, merged.Tokens.Length);
++        Assert.Equal("hello", merged.Tokens[0].Word);
++        Assert.Equal("world", merged.Tokens[1].Word);
++        Assert.Equal(60.0, merged.Tokens[1].StartTime);
++    }
++
++    [Fact]
++    public void MergeChunkResponses_NoDuplicateOffsetApplication()
++    {
++        // Verify the offset is applied exactly once, not compounded
++        var response = new AsrResponse("whisper-v1", new[]
++        {
++            new AsrToken(1.0, 0.5, "test")
++        }, new[]
++        {
++            new AsrSegment(1.0, 1.5, "test")
++        });
++
++        var chunks = new List<(AsrResponse Response, double OffsetSec)>
++        {
++            (response, 10.0)
++        };
++
++        var merged = AsrService.MergeChunkResponses(chunks);
++
++        Assert.Equal(11.0, merged.Tokens[0].StartTime); // 1.0 + 10.0 = 11.0, not 21.0
++        Assert.Equal(11.0, merged.Segments[0].StartSec);
++        Assert.Equal(11.5, merged.Segments[0].EndSec);
++    }
++
++    [Fact]
++    public void MergeChunkResponses_ThreeChunks_AllTokensMonotonic()
++    {
++        var chunk1 = new AsrResponse("whisper-v1", new[]
++        {
++            new AsrToken(0.0, 0.5, "a"),
++            new AsrToken(0.5, 0.5, "b"),
++            new AsrToken(1.0, 0.5, "c")
++        });
++
++        var chunk2 = new AsrResponse("whisper-v1", new[]
++        {
++            new AsrToken(0.0, 0.5, "d"),
++            new AsrToken(0.5, 0.5, "e")
++        });
++
++        var chunk3 = new AsrResponse("whisper-v1", new[]
++        {
++            new AsrToken(0.0, 0.5, "f"),
++            new AsrToken(0.5, 0.5, "g"),
++            new AsrToken(1.0, 0.5, "h")
++        });
++
++        var chunks = new List<(AsrResponse Response, double OffsetSec)>
++        {
++            (chunk1, 0.0),
++            (chunk2, 30.0),
++            (chunk3, 60.0)
++        };
++
++        var merged = AsrService.MergeChunkResponses(chunks);
++
++        Assert.Equal(8, merged.Tokens.Length);
++        for (int i = 1; i < merged.Tokens.Length; i++)
++        {
++            Assert.True(merged.Tokens[i].StartTime >= merged.Tokens[i - 1].StartTime,
++                $"Token {i} ('{merged.Tokens[i].Word}' at {merged.Tokens[i].StartTime:F3}) " +
++                $"should be >= token {i - 1} ('{merged.Tokens[i - 1].Word}' at {merged.Tokens[i - 1].StartTime:F3})");
++        }
++
++        // Verify words are in correct order
++        Assert.Equal("a", merged.Tokens[0].Word);
++        Assert.Equal("h", merged.Tokens[7].Word);
++    }
++
++    [Fact]
++    public void MergeChunkResponses_PreservesTokenDuration()
++    {
++        var chunk1 = new AsrResponse("whisper-v1", new[]
++        {
++            new AsrToken(0.0, 0.75, "hello")
++        });
++
++        var chunks = new List<(AsrResponse Response, double OffsetSec)>
++        {
++            (chunk1, 10.0)
++        };
++
++        var merged = AsrService.MergeChunkResponses(chunks);
++
++        Assert.Equal(0.75, merged.Tokens[0].Duration);
++    }
++
++    [Fact]
++    public void MergeChunkResponses_PreservesSegmentText()
++    {
++        var chunk1 = new AsrResponse("whisper-v1", segments: new[]
++        {
++            new AsrSegment(0.0, 5.0, "Hello world, this is a test.")
++        });
++
++        var chunks = new List<(AsrResponse Response, double OffsetSec)>
++        {
++            (chunk1, 0.0)
++        };
++
++        var merged = AsrService.MergeChunkResponses(chunks);
++
++        Assert.Equal("Hello world, this is a test.", merged.Segments[0].Text);
++    }
++
++    [Fact]
++    public void MergeChunkResponses_OutputShapeMatchesAsrResponseContract()
++    {
++        var chunk = new AsrResponse("whisper-v1", new[]
++        {
++            new AsrToken(0.0, 0.5, "hello")
++        }, new[]
++        {
++            new AsrSegment(0.0, 0.5, "hello")
++        });
++
++        var merged = AsrService.MergeChunkResponses(new List<(AsrResponse, double)>
++        {
++            (chunk, 0.0)
++        });
++
++        // Verify the merged response maintains the same contract
++        Assert.NotNull(merged.ModelVersion);
++        Assert.NotNull(merged.Tokens);
++        Assert.NotNull(merged.Segments);
++        Assert.True(merged.HasWords);
++        Assert.Equal(1, merged.WordCount);
++        Assert.Equal("hello", merged.GetWord(0));
++    }
++}

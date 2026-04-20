@@ -7,9 +7,9 @@ Audio Management System - CLI and core library for audio processing, ASR, forced
 ## Current Position
 
 **Milestone**: v2.0 Blazor Workstation
-**Phase**: 13 - Pickup Substitution
-**Plan**: 7/8
-**Status**: Plan 13-07 complete; old Polish pages decommissioned, /polish route migrated to PickupSubstitution, memory-safe flipper navigation
+**Phase**: 15 - Pickup Flow Redesign
+**Plan**: 6/7
+**Status**: Plan 15-06 complete; PickupSubstitution UI refactored with unified import, unmatched bucket, reassignment, projection-mapped regions, pickup trim panel, migration detection
 
 ## Progress
 
@@ -18,6 +18,30 @@ v1.0 Codebase Audit    [██████████████████�
 v1.1 Execute Refactor  [████████████████████] 100% - SHIPPED
 v2.0 Blazor Workstation[████████████████████] 100% - Phase 10 complete
 ```
+
+## Phase 15 Plans (Pickup Flow Redesign)
+
+| Plan | Name | Tasks | Status |
+|------|------|-------|--------|
+| 15-01 | Domain Models & Timeline Projection | 2 | Complete |
+| 15-02 | Breath-Aware Splice Boundaries | 2 | Complete |
+| 15-03 | Pickup Asset Import & Text-Similarity Matching | 2 | Complete |
+| 15-04 | StagingQueue & UndoService Refactor | 2 | Complete |
+| 15-05 | Dual-Side Handle Editing | 2 | Complete |
+| 15-06 | Context Playback & Audition | 3 | Complete |
+| 15-07 | Integration & Cleanup | 2 | Pending |
+
+## Phase 14 Plans (Shared Chunked ASR/MFA)
+
+| Plan | Name | Tasks | Status |
+|------|------|-------|--------|
+| 14-01 | Chunk Plan Artifact Model | 2 | Complete |
+| 14-02 | Chunk Planning Service | 2 | Complete |
+| 14-03 | ASR Chunk-Plan Integration | 2 | Complete |
+| 14-04 | Chunked MFA Corpus Builder | 2 | Complete |
+| 14-05 | TextGrid Chunk Aggregation | 2 | Complete |
+| 14-06 | MFA Beam Profiles & Adaptive Retry | 2 | Complete |
+| 14-07 | Rollout Controls & Verification | 2 | Complete |
 
 ## Phase 13 Plans (Pickup Substitution)
 
@@ -144,6 +168,39 @@ v2.0 Blazor Workstation[██████████████████�
 | Completion auto-advance | Wrap-around search with 500ms delay | Searches forward then wraps; delay provides visual feedback before flip |
 | Old Polish page decommission | Delete entirely (Index.razor, ChapterPolish.razor) | PickupSubstitution replaces them per locked decision; shared components also deleted |
 | Audio deallocation on chapter flip | Deallocate corrected buffer via CurrentChapterHandle | Prevents memory pressure during multi-chapter navigation |
+| Chunk plan artifact naming | {chapterStem}.align.chunks.json | Follows existing align.tx/hydrate/anchors convention |
+| ChunkPlanPolicy fields | threshold, min silence, min chunk, sample rate | Enables downstream plan validity checking |
+| ChunkPlanEntry dual fields | Sample-precise + time-domain | StartSample/LengthSamples for slicing, StartSec/EndSec for offsets |
+| ChunkPlanningPolicy vs ChunkPlanPolicy | Separate input/persisted types | Service resolves defaults; persisted record stores exact values used |
+| Audio fingerprint strategy | path+length+sampleRate+channels | Lightweight identity for invalidation; avoids content hashing overhead |
+| Path separator normalization | Backslash to forward slash in fingerprint | Cross-platform consistency between Windows and Linux |
+| ASR chunk-plan sourcing | ChunkPlanningService.GeneratePlan + chapter.Documents.ChunkPlan | ASR generates/persists plan when missing/stale, reuses when valid |
+| Monotonic merge timestamps | High-water-mark clamping in MergeChunkResponses | Prevents boundary overlap regression in merged ASR output |
+| Merge chunk ordering | Sort by OffsetSec before merge | Deterministic token/segment ordering regardless of input order |
+| MergeChunkResponses visibility | internal (was private) | Enables direct unit testing without integration complexity |
+| Chunk corpus activation threshold | >1 chunks in plan | Single-chunk plans use legacy single-utterance path to avoid overhead |
+| Chunked MFA fallback strategy | Omit ASR corpus retry | ASR corpus fallback only applies to legacy single-utterance lab failures |
+| TextGrid aggregation format | Standard Praat full-text | Compatible with existing TextGridParser; includes words+phones tiers |
+| Aggregation source directory | mfaCopyDir (post-collection) | Consistent file resolution after per-chunk TextGrids are collected |
+| Interval ordering strategy | Sort by start time after offset | Guaranteed monotonic ordering for downstream MergeTimingsCommand |
+| MinLabTokenCount | 2 | Prevents empty/trivial lab files that cause MFA alignment errors |
+| Nearest-sentence fallback | Timing midpoint proximity | Deterministic fallback for chunks with no direct sentence timing overlap |
+| MFA beam profile defaults | Fast=20/80, Balanced=40/120, Strict=80/200 | Configurable presets with explicit override precedence |
+| Coverage heuristic threshold | 0.15 ratio (words / expected at 3.3 words/sec) | Low enough to catch real failures, avoids false positives on natural speech variation |
+| Adaptive retry strategy | Re-align full corpus with strict beam, collect only failed chunks | Simpler than subset corpus; MFA handles utterance-level recovery internally |
+| Rollout flag defaults | Both flags false (chunking enabled) | New behavior is default; flags revert to legacy without code changes |
+| DisableChunkPlan scope | Skips chunk plan in AsrService + MFA has no plan to use | Single flag reverts both stages to legacy behavior |
+| DisableChunkedMfa scope | MFA-only; ASR chunking unaffected | Allows isolating MFA chunking behavior independently |
+| ChapterEdit placement | Ams.Core.Audio | Domain model with no UI deps; enables TimelineProjection to reference without circular dependency |
+| PickupAsset/Cache placement | Workstation PolishModels | Import-workflow specific, not needed by Core |
+| EditListService pattern | Singleton + lazy-load + JSON to .polish/ | Consistent with StagingQueueService; coexists during transition |
+| Rebuild edit order | Back-to-front (descending BaselineStartSec) | Each edit only affects content after itself; preserves upstream positions |
+| Roomtone ChapterEdit creation | Direct in PolishService, not StagingQueueService | Roomtone ops lack staging lifecycle; unified pipeline still produces ChapterEdit records |
+| Handle sizing | CrossfadeDuration + 30ms guard | Replaces fixed 80ms; ensures crossfade fits entirely in non-speech audio |
+| Unmatched bucket placement | Within Matches column | Below matched items rather than 4th column for layout efficiency |
+| Region baseline conversion | oldBaseline + (newCurrent - oldCurrent) | Preserves baseline-coordinate invariant while allowing current-time user adjustments |
+| Context playback on staged | GenerateContextPlaybackPreview | ±2.0s surrounding chapter audio spliced with pickup for in-context audition |
+| Migration detection | Old queue items + no edit list | Read-only check; no auto-migration of incompatible coordinate systems |
 
 ## Phase 8/8.1 Conclusions (Archived)
 
@@ -187,10 +244,16 @@ poc/VelloSharpPoc/     - Avalonia + VelloSharp (child window fails)
 | 5 | AudioBuffer contiguous backing + Memory<float> slicing | 2026-03-02 | 7ddc99c | [5-audiobuffer-contiguous-backing-memory-slice](./quick/5-audiobuffer-contiguous-backing-memory-slice/) |
 | 6 | silence-based pre-chunking in AsrProcessor | 2026-03-02 | f76a5c3 | [6-silence-based-pre-chunking-in-asrprocess](./quick/6-silence-based-pre-chunking-in-asrprocess/) |
 | 8 | audiobook QC CLI command (ffmpeg silencedetect) | 2026-03-02 | a11fd4b | [8-add-audiobook-qc-cli-command-ffmpeg-base](./quick/8-add-audiobook-qc-cli-command-ffmpeg-base/) |
+| 9 | keyboard shortcuts for ChapterReview proof page | 2026-03-05 | 29ca378 | [9-add-workstation-keyboard-shortcuts-chapt](./quick/9-add-workstation-keyboard-shortcuts-chapt/) |
+| 260316-r3i | Audio hotpath improvements: rolling RMS, managed Concat, SIMD, metadata fixes | 2026-03-17 | 4d6e728 | [260316-r3i-audio-hotpath-improvements-rolling-rms-m](./quick/260316-r3i-audio-hotpath-improvements-rolling-rms-m/) |
+
+### Pending Todos
+
+- 0 pending todos in `.planning/todos/pending`
 
 ## Next Action
 
-Quick task 8 complete. `qc analyze --dir` CLI command added for audiobook structural QC (head/tail silence, title-body gap analysis). Continue with plan 13-08 or next quick task.
+Phase 15, Plan 06 complete. Ready for Plan 15-07 (Integration & Cleanup).
 
 ## Deferred UI Refinements (for Plan 10-04)
 
@@ -207,4 +270,4 @@ None currently.
 
 ## Session Continuity
 
-Last activity: 2026-03-02 - Completed quick task 8: audiobook QC CLI command (ffmpeg silencedetect)
+Last activity: 2026-03-17 - Completed quick task 260316-r3i: Audio hotpath improvements: rolling RMS, managed Concat, SIMD, metadata fixes

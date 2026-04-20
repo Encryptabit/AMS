@@ -1,0 +1,166 @@
+@using Ams.Workstation.Server.Components.Navigation
+@implements IDisposable
+@inject NavigationManager NavigationManager
+
+@if (_state.IsVisible)
+{
+    <BitStack Class="stage-module-rail"
+              Horizontal="false"
+              Gap="1rem"
+              Style="width: 100%;"
+              AriaLabel="Stage module navigation"
+              data-stage-shell="active"
+              data-stage-shell-stage="@_state.ActiveStageId"
+              data-stage-shell-module="@_state.ActiveModuleId"
+              data-stage-shell-path="@_state.NormalizedPath"
+              data-stage-shell-marker="@_state.DiagnosticMarker">
+
+        <BitStack Class="stage-module-rail__section" Horizontal="false" Gap="0.45rem" data-stage-shell-nav="modules">
+            <BitText Class="stage-module-rail__section-label">Modules</BitText>
+            <BitStack Class="stage-module-rail__module-list" Horizontal="false" Gap="0.35rem">
+                @foreach (var module in _state.Modules)
+                {
+                    <BitButton Href="@module.Path"
+                               Variant="@(module.IsActive ? BitVariant.Fill : BitVariant.Text)"
+                               Color="BitColor.Primary"
+                               FullWidth="true"
+                               Style="justify-content: center;"
+                               Class="@(module.IsActive ? "stage-module-rail__module-link stage-module-rail__module-link--active bit-btn-flw" : "stage-module-rail__module-link bit-btn-flw")"
+                               data-stage-module-id="@module.Id"
+                               data-stage-module-active="@(module.IsActive ? "true" : "false")">
+                        @module.DisplayName
+                    </BitButton>
+                }
+            </BitStack>
+        </BitStack>
+    </BitStack>
+}
+else
+{
+    <BitStack Class="stage-module-rail stage-module-rail--hidden"
+              Horizontal="false"
+              AriaHidden="true"
+              data-stage-shell="inactive"
+              data-stage-shell-path="@_state.NormalizedPath"
+              data-stage-shell-warning="@_state.WarningMessage">
+        <BitText Class="stage-module-rail__fallback-text">@_state.WarningMessage</BitText>
+    </BitStack>
+}
+
+@code {
+    private StageModuleRailState _state = StageModuleRailState.Hidden(StageRouteCatalog.RootPath, "Stage module rail unavailable.");
+
+    protected override void OnInitialized()
+    {
+        UpdateState(NavigationManager.Uri);
+        NavigationManager.LocationChanged += HandleLocationChanged;
+    }
+
+    private void HandleLocationChanged(object? sender, LocationChangedEventArgs args)
+    {
+        UpdateState(args.Location);
+        _ = InvokeAsync(StateHasChanged);
+    }
+
+    private void UpdateState(string location)
+    {
+        _state = ResolveStateFromLocation(location);
+    }
+
+    private static StageModuleRailState ResolveStateFromLocation(string location)
+    {
+        if (Uri.TryCreate(location, UriKind.Absolute, out var absoluteUri))
+        {
+            return ResolveStateForPath(absoluteUri.AbsolutePath);
+        }
+
+        return ResolveStateForPath(location);
+    }
+
+    public static StageModuleRailState ResolveStateForPath(string? path)
+    {
+        try
+        {
+            var requestedPath = string.IsNullOrWhiteSpace(path) ? StageRouteCatalog.RootPath : path;
+            var match = StageRouteCatalog.Resolve(path);
+
+            if (match is null)
+            {
+                return StageModuleRailState.Hidden(
+                    requestedPath,
+                    $"No stage-module rail mapping for path '{requestedPath}'.");
+            }
+
+            var modules = match.Stage.Modules
+                .Select(module => new StageModuleRailItem(
+                    Id: module.Id,
+                    DisplayName: module.DisplayName,
+                    Path: module.CanonicalPath,
+                    SupportsBatching: module.SupportsBatching,
+                    IsActive: string.Equals(module.Id, match.Module.Id, StringComparison.OrdinalIgnoreCase)))
+                .ToArray();
+
+            var activeModule = modules.FirstOrDefault(module => module.IsActive);
+            if (activeModule is null)
+            {
+                return StageModuleRailState.Hidden(
+                    match.NormalizedPath,
+                    $"Route resolved without active module for {match.DiagnosticContext}.");
+            }
+
+            return new StageModuleRailState(
+                IsVisible: true,
+                NormalizedPath: match.NormalizedPath,
+                ActiveStageId: match.Stage.Id,
+                ActiveStageName: match.Stage.DisplayName,
+                ActiveModuleId: activeModule.Id,
+                ActiveModuleName: activeModule.DisplayName,
+                Modules: modules,
+                WarningMessage: string.Empty,
+                DiagnosticMarker: $"{match.Stage.Id}:{activeModule.Id}");
+        }
+        catch (Exception ex)
+        {
+            var requestedPath = string.IsNullOrWhiteSpace(path) ? StageRouteCatalog.RootPath : path;
+            return StageModuleRailState.Hidden(
+                requestedPath,
+                $"Stage-module rail fallback for path '{requestedPath}': {ex.Message}");
+        }
+    }
+
+    public void Dispose()
+    {
+        NavigationManager.LocationChanged -= HandleLocationChanged;
+    }
+
+    public sealed record StageModuleRailItem(
+        string Id,
+        string DisplayName,
+        string Path,
+        bool SupportsBatching,
+        bool IsActive);
+
+    public sealed record StageModuleRailState(
+        bool IsVisible,
+        string NormalizedPath,
+        string ActiveStageId,
+        string ActiveStageName,
+        string ActiveModuleId,
+        string ActiveModuleName,
+        IReadOnlyList<StageModuleRailItem> Modules,
+        string WarningMessage,
+        string DiagnosticMarker)
+    {
+        public static StageModuleRailState Hidden(string path, string warning)
+            => new(
+                IsVisible: false,
+                NormalizedPath: path,
+                ActiveStageId: string.Empty,
+                ActiveStageName: string.Empty,
+                ActiveModuleId: string.Empty,
+                ActiveModuleName: string.Empty,
+                Modules: Array.Empty<StageModuleRailItem>(),
+                WarningMessage: warning,
+                DiagnosticMarker: "none");
+    }
+}

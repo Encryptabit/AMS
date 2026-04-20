@@ -172,7 +172,7 @@ public partial class BookIndexer : IBookIndexer
                         EndWord: endWord,
                         StartParagraph: currentSection.StartParagraph,
                         EndParagraph: endParagraph,
-                        ProperNouns: sectionProperNouns.Count > 0 ? sectionProperNouns.Order().ToArray() : null
+                        ProperNouns: FinalizeProperNouns(sectionProperNouns)
                     ));
                     sectionProperNouns = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
                 }
@@ -334,7 +334,7 @@ public partial class BookIndexer : IBookIndexer
                 EndWord: endWord,
                 StartParagraph: currentSection.StartParagraph,
                 EndParagraph: endParagraph,
-                ProperNouns: sectionProperNouns.Count > 0 ? sectionProperNouns.Order().ToArray() : null
+                ProperNouns: FinalizeProperNouns(sectionProperNouns)
             ));
         }
 
@@ -876,6 +876,17 @@ public partial class BookIndexer : IBookIndexer
         }
 
         return LooksLikeTableOfContentsEntry(trimmed);
+    }
+
+    private static string[]? FinalizeProperNouns(HashSet<string> sectionProperNouns)
+    {
+        if (sectionProperNouns.Count == 0)
+        {
+            return null;
+        }
+
+        var filtered = ProperNounPromptFilter.Filter(sectionProperNouns);
+        return filtered.Length == 0 ? null : filtered;
     }
 
     private static string ComputeFileHash(string filePath)

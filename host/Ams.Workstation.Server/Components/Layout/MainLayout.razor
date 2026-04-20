@@ -1,4 +1,5 @@
 @inherits LayoutComponentBase
+@using Ams.Workstation.Server.Components.Shared
 
 <div class="workstation-layout">
     <header class="workstation-header">
@@ -6,12 +7,22 @@
         <HeaderControls />
     </header>
 
-    <div class="workstation-body">
-        <main class="workstation-content">
-            @Body
-        </main>
+    <div class="workstation-shell">
+        <aside class="workstation-sidebar" data-stage-shell-region="left">
+            <StageModuleRail />
+        </aside>
+
+        <div class="workstation-body" data-stage-shell-region="center">
+            <main class="workstation-content">
+                @Body
+            </main>
+        </div>
+
+        <aside class="workstation-inspector" data-stage-shell-region="right"><SectionOutlet SectionName="module-inspector" /></aside>
     </div>
 </div>
+
+<ToastContainer />
 
 <div id="blazor-error-ui" data-nosnippet>
     An unhandled error has occurred.

@@ -1,4 +1,5 @@
 using Ams.Core.Application.Mfa;
+using Ams.Core.Application.Mfa.Models;
 using Ams.Core.Runtime.Chapter;
 
 namespace Ams.Core.Application.Commands;
@@ -32,15 +33,23 @@ public sealed class RunMfaCommand
             throw new FileNotFoundException("Audio file not found.", audioFile.FullName);
         }
 
-        await MfaWorkflow.RunChapterAsync(
+        var beamSettings = MfaBeamSettings.Resolve(
+            options?.BeamProfile,
+            options?.Beam,
+            options?.RetryBeam);
+
+        var outcome = await MfaWorkflow.RunChapterAsync(
                 chapter,
                 audioFile,
                 hydrateFile,
                 chapterStem,
                 chapterDirectory,
                 cancellationToken,
-                options?.UseDedicatedProcess ?? false,
-                options?.WorkspaceRoot)
+                useDedicatedProcess: options?.UseDedicatedProcess ?? false,
+                workspaceRoot: options?.WorkspaceRoot,
+                beamSettings: beamSettings,
+                disableChunkedMfa: options?.DisableChunkedMfa ?? false,
+                requireAsrChunkAudio: options?.RequireAsrChunkAudio ?? false)
             .ConfigureAwait(false);
 
         var alignmentRoot =
@@ -51,7 +60,7 @@ public sealed class RunMfaCommand
 
         chapter.Documents.InvalidateTextGrid();
 
-        return new RunMfaResult(textGridFile);
+        return new RunMfaResult(textGridFile, outcome.PromptlessAsrRetryRecommended);
     }
 
     private static FileInfo ResolveAudioFile(ChapterContext chapter, RunMfaOptions? options)
@@ -80,6 +89,32 @@ public sealed record RunMfaOptions
     public DirectoryInfo? ChapterDirectory { get; init; }
     public bool UseDedicatedProcess { get; init; }
     public string? WorkspaceRoot { get; init; }
+
+    /// <summary>
+    /// Beam search profile preset. When null, defaults to <see cref="MfaBeamProfile.Balanced"/>.
+    /// Explicit <see cref="Beam"/>/<see cref="RetryBeam"/> values override profile defaults.
+    /// </summary>
+    public MfaBeamProfile? BeamProfile { get; init; }
+
+    /// <summary>Explicit beam width override (supersedes profile default).</summary>
+    public int? Beam { get; init; }
+
+    /// <summary>Explicit retry beam width override (supersedes profile default).</summary>
+    public int? RetryBeam { get; init; }
+
+    /// <summary>
+    /// When true, forces MFA to use the legacy single-utterance corpus path even
+    /// when a shared chunk plan exists. Use for rollout control to isolate MFA
+    /// chunking behavior independently from ASR chunk planning.
+    /// </summary>
+    public bool DisableChunkedMfa { get; init; }
+
+    /// <summary>
+    /// When true, chunked MFA requires pre-sliced chunk audio emitted by ASR.
+    /// If chunk-audio artifacts are missing or incompatible, MFA fails instead
+    /// of silently regenerating chunk slices.
+    /// </summary>
+    public bool RequireAsrChunkAudio { get; init; }
 }
 
-public sealed record RunMfaResult(FileInfo TextGridFile);
+public sealed record RunMfaResult(FileInfo TextGridFile, bool PromptlessAsrRetryRecommended = false);

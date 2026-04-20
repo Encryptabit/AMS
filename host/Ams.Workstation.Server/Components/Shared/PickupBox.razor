@@ -1,14 +1,21 @@
 @using Ams.Workstation.Server.Models
 @using Ams.Core.Artifacts.Hydrate
 
-<div class="pickup-box @(_isDragging ? "pickup-box--dragging" : "")"
+<div class="pickup-box @(_isDragging ? "pickup-box--dragging" : "") @GetStateClass()"
      draggable="@(State == PickupBoxState.Matched ? "true" : "false")"
      @ondragstart="HandleDragStart"
-     @ondragend="HandleDragEnd">
-    <BitCard Style="padding: 0.5rem;">
+     @ondragend="HandleDragEnd"
+     @onclick="HandleSelect">
+    <BitCard Style="@GetCardStyle()">
         <BitStack Horizontal="false" Gap="0.25rem" AutoHeight="true">
-            @* Matched sentence text *@
-            @if (Sentence != null)
+            @* Matched sentence text or transcribed text for unmatched *@
+            @if (State == PickupBoxState.Unmatched && Asset != null)
+            {
+                <BitText Typography="BitTypography.Body2" Style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
+                    @TruncateText(Asset.TranscribedText, 80)
+                </BitText>
+            }
+            else if (Sentence != null)
             {
                 <BitText Typography="BitTypography.Body2" Style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
                     @TruncateText(Sentence.BookText, 80)
@@ -17,7 +24,11 @@
 
             @* Confidence badge + time range *@
             <BitStack Horizontal="true" Gap="0.5rem" VerticalAlign="BitAlignment.Center" AutoHeight="true">
-                @if (Match != null)
+                @if (Asset != null && State == PickupBoxState.Unmatched)
+                {
+                    <BitTag Color="BitColor.Warning">Unmatched</BitTag>
+                }
+                else if (Match != null)
                 {
                     <BitTag Color="@GetConfidenceColor(Match.Confidence)">
                         @($"{Match.Confidence:P0}")
@@ -32,6 +43,18 @@
             <BitStack Horizontal="true" Gap="0.25rem" AutoHeight="true">
                 @switch (State)
                 {
+                    case PickupBoxState.Unmatched:
+                        @if (AvailableTargets != null && AvailableTargets.Count > 0 && !_showTargetSelector)
+                        {
+                            <BitButton Variant="BitVariant.Outline"
+                                       Color="BitColor.Warning"
+                                       Size="BitSize.Small"
+                                       OnClick="() => _showTargetSelector = true">
+                                Assign
+                            </BitButton>
+                        }
+                        break;
+
                     case PickupBoxState.Matched:
                         <BitButton Variant="BitVariant.Outline"
                                    Color="BitColor.Success"
@@ -39,6 +62,14 @@
                                    OnClick="HandleStage">
                             Stage
                         </BitButton>
+                        @if (AvailableTargets != null && AvailableTargets.Count > 0)
+                        {
+                            <BitButton Variant="BitVariant.Text"
+                                       Size="BitSize.Small"
+                                       OnClick="() => _showTargetSelector = !_showTargetSelector">
+                                Reassign
+                            </BitButton>
+                        }
                         break;
 
                     case PickupBoxState.Staged:
@@ -56,7 +87,7 @@
                         </BitButton>
                         <BitButton Variant="BitVariant.Text"
                                    Size="BitSize.Small"
-                                   OnClick="HandleAudition">
+                                   OnClick="HandleAuditionContext">
                             Audition
                         </BitButton>
                         break;
@@ -76,22 +107,49 @@
                         break;
                 }
             </BitStack>
+
+            @* Target selector for assign/reassign *@
+            @if (_showTargetSelector && AvailableTargets != null)
+            {
+                <BitStack Horizontal="false" Gap="0.25rem" AutoHeight="true"
+                          Style="border-top: 1px solid var(--bit-clr-bg-sec); padding-top: 0.25rem;">
+                    <BitText Typography="BitTypography.Caption1" Color="BitColor.SecondaryForeground">
+                        Select CRX target:
+                    </BitText>
+                    <select @onchange="HandleTargetSelected" class="pickup-target-select">
+                        <option value="">-- Choose target --</option>
+                        @foreach (var target in AvailableTargets)
+                        {
+                            <option value="@target.ErrorNumber">
+                                #@target.ErrorNumber - @TruncateText(target.ShouldBeText, 40)
+                            </option>
+                        }
+                    </select>
+                </BitStack>
+            }
         </BitStack>
     </BitCard>
 </div>
 
 @code {
     private bool _isDragging;
+    private bool _showTargetSelector;
 
     [Parameter] public PickupMatch? Match { get; set; }
     [Parameter] public StagedReplacement? Replacement { get; set; }
+    [Parameter] public PickupAsset? Asset { get; set; }
     [Parameter] public PickupBoxState State { get; set; }
     [Parameter] public HydratedSentence? Sentence { get; set; }
+    [Parameter] public IReadOnlyList<CrxPickupTarget>? AvailableTargets { get; set; }
     [Parameter] public EventCallback<PickupMatch> OnStage { get; set; }
     [Parameter] public EventCallback<string> OnUnstage { get; set; }
     [Parameter] public EventCallback<string> OnCommit { get; set; }
     [Parameter] public EventCallback<string> OnRevert { get; set; }
     [Parameter] public EventCallback<string> OnAudition { get; set; }
+    [Parameter] public EventCallback<(PickupAsset Asset, CrxPickupTarget Target)> OnAssign { get; set; }
+    [Parameter] public EventCallback<(PickupAsset Asset, CrxPickupTarget Target)> OnReassign { get; set; }
+    [Parameter] public EventCallback<string> OnSelect { get; set; }
+    [Parameter] public EventCallback<string> OnAuditionContext { get; set; }
 
     private string GetTimeRange()
     {
@@ -101,6 +159,9 @@
 
     private (double Start, double End) GetTimeRangeValues()
     {
+        if (Asset != null)
+            return (Asset.TrimStartSec, Asset.TrimEndSec);
+
         if (Match != null)
             return (Match.PickupStartSec, Match.PickupEndSec);
 
@@ -122,6 +183,20 @@
         if (string.IsNullOrEmpty(text)) return "";
         return text.Length <= maxLength ? text : text[..maxLength] + "...";
     }
+
+    private string GetStateClass() => State switch
+    {
+        PickupBoxState.Unmatched => "pickup-box--unmatched",
+        PickupBoxState.Staged => "pickup-box--staged",
+        PickupBoxState.Committed => "pickup-box--committed",
+        _ => ""
+    };
+
+    private string GetCardStyle() => State switch
+    {
+        PickupBoxState.Unmatched => "padding: 0.5rem; border-left: 3px solid var(--bit-clr-wrn-dark);",
+        _ => "padding: 0.5rem;"
+    };
 
     // ── Action handlers ───────────────────────────────────────────
     private async Task HandleStage()
@@ -158,6 +233,50 @@
             await OnAudition.InvokeAsync(id);
     }
 
+    private async Task HandleAuditionContext()
+    {
+        var id = Replacement?.Id;
+        if (!string.IsNullOrEmpty(id))
+        {
+            if (OnAuditionContext.HasDelegate)
+                await OnAuditionContext.InvokeAsync(id);
+            else
+                await OnAudition.InvokeAsync(id);
+        }
+    }
+
+    private async Task HandleSelect()
+    {
+        var id = Asset?.Id ?? Replacement?.Id ?? (Match != null ? $"match-{Match.SentenceId}" : null);
+        if (!string.IsNullOrEmpty(id) && OnSelect.HasDelegate)
+            await OnSelect.InvokeAsync(id);
+    }
+
+    private async Task HandleTargetSelected(ChangeEventArgs e)
+    {
+        var selectedValue = e.Value?.ToString();
+        if (string.IsNullOrEmpty(selectedValue) || AvailableTargets == null)
+            return;
+
+        if (!int.TryParse(selectedValue, out var errorNumber))
+            return;
+
+        var target = AvailableTargets.FirstOrDefault(t => t.ErrorNumber == errorNumber);
+        if (target == null)
+            return;
+
+        _showTargetSelector = false;
+
+        if (State == PickupBoxState.Unmatched && Asset != null)
+        {
+            await OnAssign.InvokeAsync((Asset, target));
+        }
+        else if (Asset != null)
+        {
+            await OnReassign.InvokeAsync((Asset, target));
+        }
+    }
+
     // ── Drag support ──────────────────────────────────────────────
     private void HandleDragStart()
     {
@@ -173,5 +292,19 @@
 <style>
     .pickup-box--dragging {
         opacity: 0.5;
+    }
+
+    .pickup-box--unmatched {
+        opacity: 0.85;
+    }
+
+    .pickup-target-select {
+        width: 100%;
+        padding: 0.25rem 0.5rem;
+        border: 1px solid var(--bit-clr-bg-sec);
+        border-radius: 4px;
+        background: var(--bit-clr-bg-pri);
+        color: var(--bit-clr-fg-pri);
+        font-size: 0.75rem;
     }
 </style>

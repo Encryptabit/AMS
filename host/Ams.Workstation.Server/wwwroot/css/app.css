@@ -79,3 +79,10 @@ input, button, select, textarea {
     font-size: 0.875rem;
     margin-top: 0.25rem;
 }
+
+/* Pipeline top-row cards: stretch BitCard content wrapper to fill card height */
+.pipeline-card--top > .bit-crd-cnt {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+}

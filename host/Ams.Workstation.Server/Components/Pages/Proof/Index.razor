@@ -1,4 +1,6 @@
 @page "/proof"
+@page "/proof/editing"
+@using Ams.Workstation.Server.Components.Navigation
 @inject Ams.Workstation.Server.Services.BlazorWorkspace Workspace
 
 <PageTitle>Proof - AMS Workstation</PageTitle>
@@ -16,7 +18,7 @@
         {
             @* Book Overview Link *@
             <BitCard Class="overview-link" Style="margin-bottom: 1rem;">
-                <BitLink Href="/proof/overview" Style="display: flex; align-items: center; gap: 0.5rem; text-decoration: none;">
+                <BitLink Href="@GetProofOverviewPath()" Style="display: flex; align-items: center; gap: 0.5rem; text-decoration: none;">
                     <BitIcon IconName="ViewDashboard" />
                     <BitText Typography="BitTypography.Subtitle2">Book Overview</BitText>
                     <BitText Typography="BitTypography.Caption2" Color="BitColor.SecondaryForeground">
@@ -27,11 +29,22 @@
 
             @* Error Patterns Link *@
             <BitCard Class="overview-link" Style="margin-bottom: 1rem;">
-                <BitLink Href="/proof/patterns" Style="display: flex; align-items: center; gap: 0.5rem; text-decoration: none;">
+                <BitLink Href="@GetProofPatternsPath()" Style="display: flex; align-items: center; gap: 0.5rem; text-decoration: none;">
                     <BitIcon IconName="Warning" />
                     <BitText Typography="BitTypography.Subtitle2">Error Patterns</BitText>
                     <BitText Typography="BitTypography.Caption2" Color="BitColor.SecondaryForeground">
                         Recurring differences
+                    </BitText>
+                </BitLink>
+            </BitCard>
+
+            @* Pickups Link *@
+            <BitCard Class="overview-link" Style="margin-bottom: 1rem;" data-proof-index-link="pickups">
+                <BitLink Href="@GetProofPickupsPath()" Style="display: flex; align-items: center; gap: 0.5rem; text-decoration: none;">
+                    <BitIcon IconName="MicOff" />
+                    <BitText Typography="BitTypography.Subtitle2">Pickups</BitText>
+                    <BitText Typography="BitTypography.Caption2" Color="BitColor.SecondaryForeground">
+                        Import stitched pickups and stage replacements
                     </BitText>
                 </BitLink>
             </BitCard>
@@ -52,7 +65,7 @@
                                   Items="Workspace.AvailableChapters"
                                   Class="chapters">
                         <RowTemplate Context="chapter">
-                            <BitLink Href="@($"/proof/{Uri.EscapeDataString(chapter)}")"
+                            <BitLink Href="@GetProofChapterPath(chapter)"
                                      Class="chapter-link">
                                 <BitStack Horizontal="true" Gap="0.5rem" VerticalAlign="BitAlignment.Center">
                                     <BitIcon IconName="TextDocument" />
@@ -82,6 +95,26 @@
         }
     </BitStack>
 </div>
+
+@code {
+    private static string GetProofOverviewPath()
+        => StageRouteCatalog.GetModuleCanonicalPath(
+            StageRouteCatalog.StageIds.Proof,
+            StageRouteCatalog.ModuleIds.ProofOverview);
+
+    private static string GetProofPatternsPath()
+        => StageRouteCatalog.GetModuleCanonicalPath(
+            StageRouteCatalog.StageIds.Proof,
+            StageRouteCatalog.ModuleIds.ProofPatterns);
+
+    private static string GetProofPickupsPath()
+        => StageRouteCatalog.GetModuleCanonicalPath(
+            StageRouteCatalog.StageIds.Proof,
+            StageRouteCatalog.ModuleIds.ProofPickups);
+
+    private static string GetProofChapterPath(string chapterName)
+        => StageRouteCatalog.BuildProofChapterCompatibilityPath(chapterName);
+}
 
 <style>
     .proof-index {

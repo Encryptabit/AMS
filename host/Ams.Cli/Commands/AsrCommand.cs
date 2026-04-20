@@ -7,8 +7,6 @@ namespace Ams.Cli.Commands;
 
 public static class AsrCommand
 {
-    internal const string DefaultServiceUrl = "http://localhost:8000";
-
     public static Command Create(GenerateTranscriptCommand transcriptCommand)
     {
         ArgumentNullException.ThrowIfNull(transcriptCommand);
@@ -23,15 +21,11 @@ public static class AsrCommand
         var outputOption = new Option<FileInfo?>("--out", "Optional output ASR JSON file");
         outputOption.AddAlias("-o");
 
-        var engineOption = new Option<string>("--engine", () => "whisper", "ASR engine to use (whisper or nemo)");
+        var engineOption = new Option<string>("--engine", () => "whisper", "ASR engine to use (whisper or whisperx)");
         engineOption.AddAlias("-e");
 
-        var serviceUrlOption =
-            new Option<string>("--service", () => DefaultServiceUrl, "ASR service URL (Nemo engine)");
-        serviceUrlOption.AddAlias("-s");
-
         var modelOption =
-            new Option<string>("--model", () => "ASR model identifier (Nemo) or fallback model path (Whisper)");
+            new Option<string>("--model", () => "ASR model identifier (WhisperX) or model alias/path hint (Whisper)");
         modelOption.AddAlias("-m");
 
         var modelPathOption = new Option<FileInfo?>("--model-path",
@@ -67,7 +61,6 @@ public static class AsrCommand
         runCommand.AddOption(audioOption);
         runCommand.AddOption(outputOption);
         runCommand.AddOption(engineOption);
-        runCommand.AddOption(serviceUrlOption);
         runCommand.AddOption(modelOption);
         runCommand.AddOption(modelPathOption);
         runCommand.AddOption(languageOption);
@@ -92,7 +85,6 @@ public static class AsrCommand
                 var audio = CommandInputResolver.RequireAudio(parse.GetValueForOption(audioOption));
                 var output = parse.GetValueForOption(outputOption);
                 var engineText = parse.GetValueForOption(engineOption);
-                var serviceUrl = parse.GetValueForOption(serviceUrlOption) ?? DefaultServiceUrl;
                 var model = parse.GetValueForOption(modelOption);
                 var modelPath = parse.GetValueForOption(modelPathOption);
                 var language = parse.GetValueForOption(languageOption) ?? "en";
@@ -132,7 +124,6 @@ public static class AsrCommand
                 var transcriptOptions = new GenerateTranscriptOptions
                 {
                     Engine = engine,
-                    ServiceUrl = serviceUrl,
                     Model = model,
                     ModelPath = modelPath,
                     Language = language,

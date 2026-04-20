@@ -1,0 +1,60 @@
+@page "/polish"
+@page "/polish/scaffold"
+@page "/polish/pickups"
+@page "/polish/batch"
+@using Ams.Workstation.Server.Components.Navigation
+
+<PageTitle>Polish - AMS Workstation</PageTitle>
+
+<div class="polish-index">
+    <BitStack Horizontal="false" HorizontalAlign="BitAlignment.Center" Gap="1.5rem">
+        <div class="polish-header">
+            <BitText Typography="BitTypography.H4">Polish Area</BitText>
+            <BitText Typography="BitTypography.Body1" Color="BitColor.SecondaryForeground">
+                Polish remains scaffold-only in shared shell. Pickup workflow now owned by Proof module.
+            </BitText>
+        </div>
+
+        <BitCard Class="polish-scaffold-card">
+            <BitStack Horizontal="false" Gap="0.75rem">
+                <BitTag Color="BitColor.Info">Scaffold</BitTag>
+                <BitText Typography="BitTypography.Body2">
+                    Use this page to confirm stage continuity while Prep → Proof → Polish transitions remain stable.
+                </BitText>
+                <BitText Typography="BitTypography.Caption1" Color="BitColor.SecondaryForeground">
+                    Legacy pickup pages were removed. Use Proof Pickups for import/match/stage.
+                </BitText>
+                <BitButton Variant="BitVariant.Outline"
+                           Color="BitColor.Primary"
+                           Href="@GetProofPickupsPath()"
+                           data-polish-scaffold-link="proof-pickups">
+                    Open Proof Pickups
+                </BitButton>
+            </BitStack>
+        </BitCard>
+    </BitStack>
+</div>
+
+@code {
+    private static string GetProofPickupsPath()
+        => StageRouteCatalog.GetModuleCanonicalPath(
+            StageRouteCatalog.StageIds.Proof,
+            StageRouteCatalog.ModuleIds.ProofPickups);
+}
+
+<style>
+    .polish-index {
+        max-width: 800px;
+        margin: 0 auto;
+    }
+
+    .polish-header {
+        display: flex;
+        flex-direction: column;
+        gap: 0.25rem;
+    }
+
+    .polish-scaffold-card {
+        border: 1px dashed var(--bit-clr-brd-sec);
+    }
+</style>

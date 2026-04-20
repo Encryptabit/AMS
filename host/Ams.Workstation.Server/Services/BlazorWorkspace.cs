@@ -22,12 +22,20 @@ namespace Ams.Workstation.Server.Services;
 /// </summary>
 public sealed class BlazorWorkspace : IWorkspace, IDisposable
 {
-    private static readonly string StateFilePath = AmsAppDataPaths.Resolve("workstation-state.json");
+    private static readonly string DefaultStateFilePath = AmsAppDataPaths.Resolve("workstation-state.json");
+    private static readonly StringComparer PersistedPathComparer = OperatingSystem.IsWindows()
+        ? StringComparer.OrdinalIgnoreCase
+        : StringComparer.Ordinal;
+    private const int BackgroundPeakPxPerSec = 1200;
+    private const int MaxBackgroundPeakBuckets = 500_000;
 
     private BookManager? _manager;
     private ChapterContextHandle? _currentChapterHandle;
     private string? _rootPath;
+    private readonly string _stateFilePath;
     private bool _disposed;
+    private CancellationTokenSource? _backgroundPeakPrecomputeCts;
+    private Task? _backgroundPeakPrecomputeTask;
 
     // Maps display title (e.g., "CHAPTER 3") to WAV stem (e.g., "03_CultistOfCerebon2_Ch3")
     private readonly Dictionary<string, string> _stemByTitle = new(StringComparer.OrdinalIgnoreCase);
@@ -36,8 +44,20 @@ public sealed class BlazorWorkspace : IWorkspace, IDisposable
     private readonly Dictionary<string, ChapterContextHandle> _chapterHandles = new(StringComparer.OrdinalIgnoreCase);
 
     public BlazorWorkspace()
+        : this(stateFilePath: null, loadPersistedState: true)
     {
-        LoadPersistedState();
+    }
+
+    internal BlazorWorkspace(string? stateFilePath, bool loadPersistedState)
+    {
+        _stateFilePath = string.IsNullOrWhiteSpace(stateFilePath)
+            ? DefaultStateFilePath
+            : stateFilePath;
+
+        if (loadPersistedState)
+        {
+            LoadPersistedState();
+        }
     }
 
     #region IWorkspace Implementation
@@ -107,10 +127,75 @@ public sealed class BlazorWorkspace : IWorkspace, IDisposable
     public string? CurrentChapterName { get; private set; }
 
     /// <summary>
+    /// Last pickup session path used in Polish, persisted with workspace state.
+    /// </summary>
+    public string? PickupSessionPath { get; private set; }
+
+    /// <summary>
+    /// Last roomtone file path used in Polish, persisted with workspace state.
+    /// </summary>
+    public string? RoomtoneFilePath { get; private set; }
+
+    /// <summary>
+    /// Last persisted workstation-state load failure message, including file path context.
+    /// </summary>
+    public string? LastWorkspaceStateLoadError { get; private set; }
+
+    /// <summary>
+    /// Last persisted project-state load failure message, including file path context.
+    /// </summary>
+    public string? LastProjectStateLoadError { get; private set; }
+
+    /// <summary>
+    /// Whether waveform peaks should be computed for all chapters in the background after loading a workspace.
+    /// </summary>
+    public bool PrecomputePeaksInBackground { get; private set; }
+
+    /// <summary>
     /// The currently open chapter handle, or null if no chapter is selected.
     /// Access chapter data via: CurrentChapterHandle.Context.Audio.Current.Buffer
     /// </summary>
     public ChapterContextHandle? CurrentChapterHandle => _currentChapterHandle;
+
+    /// <summary>
+    /// Count of explicit workspace refreshes performed after setup operations.
+    /// </summary>
+    public int WorkspaceRefreshCount { get; private set; }
+
+    /// <summary>
+    /// Reason string recorded for the last explicit workspace refresh.
+    /// </summary>
+    public string? LastWorkspaceRefreshReason { get; private set; }
+
+    /// <summary>
+    /// Timestamp for the last explicit workspace refresh.
+    /// </summary>
+    public DateTimeOffset? LastWorkspaceRefreshAtUtc { get; private set; }
+
+    /// <summary>
+    /// Count of explicit chapter-handle refreshes performed after prep operations.
+    /// </summary>
+    public int ChapterHandleRefreshCount { get; private set; }
+
+    /// <summary>
+    /// Reason string recorded for the last chapter-handle refresh.
+    /// </summary>
+    public string? LastChapterHandleRefreshReason { get; private set; }
+
+    /// <summary>
+    /// Stem/id of the last chapter whose cached handle was refreshed.
+    /// </summary>
+    public string? LastRefreshedChapterId { get; private set; }
+
+    /// <summary>
+    /// Whether the last chapter refresh reopened the current selection immediately.
+    /// </summary>
+    public bool LastChapterHandleRefreshReopenedCurrentSelection { get; private set; }
+
+    /// <summary>
+    /// Timestamp for the last explicit chapter-handle refresh.
+    /// </summary>
+    public DateTimeOffset? LastChapterHandleRefreshAtUtc { get; private set; }
 
     /// <summary>
     /// Cached book overview metrics. Computed on first access, invalidated when working directory changes.
@@ -127,30 +212,8 @@ public sealed class BlazorWorkspace : IWorkspace, IDisposable
         if (string.IsNullOrEmpty(chapterName) || _manager == null || string.IsNullOrEmpty(_rootPath))
             return false;
 
-        var chapterStem = _stemByTitle.GetValueOrDefault(chapterName, chapterName);
-
-        if (!_chapterHandles.TryGetValue(chapterStem, out var handle))
-        {
-            try
-            {
-                var audioPath = Path.Combine(_rootPath, $"{chapterStem}.wav");
-                var chapterDir = Path.Combine(_rootPath, chapterStem);
-
-                handle = OpenChapter(new ChapterOpenOptions
-                {
-                    ChapterId = chapterStem,
-                    AudioFile = File.Exists(audioPath) ? new FileInfo(audioPath) : null,
-                    ChapterDirectory = Directory.Exists(chapterDir) ? new DirectoryInfo(chapterDir) : null
-                });
-
-                _chapterHandles[chapterStem] = handle;
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"Failed to open chapter '{chapterName}' (stem: {chapterStem}) for hydrate: {ex.Message}");
-                return false;
-            }
-        }
+        if (!TryGetOrCreateChapterHandle(chapterName, out var handle))
+            return false;
 
         hydrated = handle.Chapter.Documents.HydratedTranscript;
         return hydrated != null;
@@ -167,10 +230,13 @@ public sealed class BlazorWorkspace : IWorkspace, IDisposable
     /// <returns>True if successful, false if path is invalid.</returns>
     public bool SetWorkingDirectory(string path)
     {
-        if (string.IsNullOrWhiteSpace(path)) return false;
+        var normalizedPath = AmsPathResolver.NormalizeOptionalPath(path);
+        if (string.IsNullOrWhiteSpace(normalizedPath)) return false;
+        if (!Directory.Exists(normalizedPath)) return false;
 
-        var trimmed = path.Trim();
-        if (!Directory.Exists(trimmed)) return false;
+        var samePath = PersistedPathComparer.Equals(_rootPath ?? string.Empty, normalizedPath);
+
+        CancelBackgroundPeakPrecompute();
 
         // Dispose previous state
         foreach (var handle in _chapterHandles.Values)
@@ -182,8 +248,12 @@ public sealed class BlazorWorkspace : IWorkspace, IDisposable
         CurrentChapterName = null;
         AvailableChapters.Clear();
         CachedBookOverview = null; // Invalidate cached overview
+        if (!samePath)
+        {
+            ResetRefreshMarkers();
+        }
 
-        _rootPath = Path.GetFullPath(trimmed);
+        _rootPath = normalizedPath;
 
         // Initialize book manager if book-index exists
         if (HasBookIndex)
@@ -197,8 +267,46 @@ public sealed class BlazorWorkspace : IWorkspace, IDisposable
             _manager = null;
         }
 
+        LoadProjectState();
         SavePersistedState();
+        RestartBackgroundPeakPrecompute();
         return true;
+    }
+
+    /// <summary>
+    /// Persists Polish path inputs (pickup + roomtone) alongside workspace state.
+    /// </summary>
+    public void SetPolishPaths(string? pickupSessionPath, string? roomtoneFilePath)
+    {
+        var normalizedPickup = NormalizeOptionalPath(pickupSessionPath);
+        var normalizedRoomtone = NormalizeOptionalPath(roomtoneFilePath);
+
+        var pickupChanged = !PersistedPathComparer.Equals(
+            PickupSessionPath ?? string.Empty,
+            normalizedPickup ?? string.Empty);
+        var roomtoneChanged = !PersistedPathComparer.Equals(
+            RoomtoneFilePath ?? string.Empty,
+            normalizedRoomtone ?? string.Empty);
+
+        if (!pickupChanged && !roomtoneChanged)
+            return;
+
+        PickupSessionPath = normalizedPickup;
+        RoomtoneFilePath = normalizedRoomtone;
+        SavePersistedState();
+    }
+
+    /// <summary>
+    /// Enables or disables background waveform peak precomputation for all chapters in the active workspace.
+    /// </summary>
+    public void SetPrecomputePeaksInBackground(bool enabled)
+    {
+        if (PrecomputePeaksInBackground == enabled)
+            return;
+
+        PrecomputePeaksInBackground = enabled;
+        SavePersistedState();
+        RestartBackgroundPeakPrecompute();
     }
 
     /// <summary>
@@ -212,44 +320,16 @@ public sealed class BlazorWorkspace : IWorkspace, IDisposable
         if (string.IsNullOrEmpty(chapterName) || _manager == null || string.IsNullOrEmpty(_rootPath))
             return false;
 
-        // Resolve display title to WAV stem
-        // If not found in mapping, assume chapterName IS the stem (direct usage)
-        var chapterStem = _stemByTitle.GetValueOrDefault(chapterName, chapterName);
-
-        // Check if we already have this chapter cached
-        if (_chapterHandles.TryGetValue(chapterStem, out var existingHandle))
+        if (!TryGetOrCreateChapterHandle(chapterName, out var handle))
         {
-            _currentChapterHandle = existingHandle;
-            CurrentChapterName = chapterName;
-            SavePersistedState();
-            return true;
-        }
-
-        try
-        {
-            // WAV files are in the root directory, not inside the chapter folder
-            var audioPath = Path.Combine(_rootPath, $"{chapterStem}.wav");
-            var chapterDir = Path.Combine(_rootPath, chapterStem);
-
-            var handle = OpenChapter(new ChapterOpenOptions
-            {
-                ChapterId = chapterStem,
-                AudioFile = File.Exists(audioPath) ? new FileInfo(audioPath) : null,
-                ChapterDirectory = Directory.Exists(chapterDir) ? new DirectoryInfo(chapterDir) : null
-            });
-
-            _chapterHandles[chapterStem] = handle;
-            _currentChapterHandle = handle;
-            CurrentChapterName = chapterName; // Store display name for UI
-            SavePersistedState();
-            return true;
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"Failed to open chapter '{chapterName}' (stem: {chapterStem}): {ex.Message}");
             CurrentChapterName = null;
             return false;
         }
+
+        _currentChapterHandle = handle;
+        CurrentChapterName = chapterName; // Store display name for UI
+        SavePersistedState();
+        return true;
     }
 
     /// <summary>
@@ -257,6 +337,7 @@ public sealed class BlazorWorkspace : IWorkspace, IDisposable
     /// </summary>
     public void Clear()
     {
+        CancelBackgroundPeakPrecompute();
         foreach (var handle in _chapterHandles.Values)
         {
             handle.Dispose();
@@ -269,6 +350,7 @@ public sealed class BlazorWorkspace : IWorkspace, IDisposable
         AvailableChapters.Clear();
         _stemByTitle.Clear();
         CachedBookOverview = null;
+        ResetRefreshMarkers();
         SavePersistedState();
     }
 
@@ -286,6 +368,69 @@ public sealed class BlazorWorkspace : IWorkspace, IDisposable
     public string? GetStemForChapter(string displayTitle)
     {
         return _stemByTitle.GetValueOrDefault(displayTitle);
+    }
+
+    /// <summary>
+    /// Re-reads the workspace from disk so newly created book-index/chapter discovery state becomes live.
+    /// </summary>
+    public bool RefreshWorkspaceFromDisk(string reason)
+    {
+        if (string.IsNullOrWhiteSpace(_rootPath))
+        {
+            return false;
+        }
+
+        var refreshed = SetWorkingDirectory(_rootPath);
+        if (refreshed)
+        {
+            WorkspaceRefreshCount++;
+            LastWorkspaceRefreshReason = NormalizeRefreshReason(reason, "workspace");
+            LastWorkspaceRefreshAtUtc = DateTimeOffset.UtcNow;
+        }
+
+        return refreshed;
+    }
+
+    /// <summary>
+    /// Retires any cached handle for the supplied chapter and reopens the current selection when needed.
+    /// </summary>
+    public bool RefreshChapterHandle(string chapterNameOrId, string reason)
+    {
+        if (_manager is null || string.IsNullOrWhiteSpace(_rootPath) || string.IsNullOrWhiteSpace(chapterNameOrId))
+        {
+            return false;
+        }
+
+        var chapterId = _stemByTitle.GetValueOrDefault(chapterNameOrId, chapterNameOrId);
+        var currentSelection = CurrentChapterName;
+        var currentStem = string.IsNullOrWhiteSpace(currentSelection)
+            ? null
+            : _stemByTitle.GetValueOrDefault(currentSelection, currentSelection);
+        var wasCurrentSelection = string.Equals(currentStem, chapterId, StringComparison.OrdinalIgnoreCase);
+
+        if (_chapterHandles.Remove(chapterId, out var cachedHandle))
+        {
+            cachedHandle.Dispose();
+        }
+
+        if (wasCurrentSelection)
+        {
+            _currentChapterHandle = null;
+        }
+
+        var reopenedCurrentSelection = false;
+        if (wasCurrentSelection && !string.IsNullOrWhiteSpace(currentSelection))
+        {
+            reopenedCurrentSelection = SelectChapter(currentSelection);
+        }
+
+        ChapterHandleRefreshCount++;
+        LastChapterHandleRefreshReason = NormalizeRefreshReason(reason, "chapter");
+        LastRefreshedChapterId = chapterId;
+        LastChapterHandleRefreshReopenedCurrentSelection = reopenedCurrentSelection;
+        LastChapterHandleRefreshAtUtc = DateTimeOffset.UtcNow;
+
+        return !wasCurrentSelection || reopenedCurrentSelection;
     }
 
     #endregion
@@ -348,35 +493,40 @@ public sealed class BlazorWorkspace : IWorkspace, IDisposable
 
     private void LoadPersistedState()
     {
+        LastWorkspaceStateLoadError = null;
+
         try
         {
-            if (!File.Exists(StateFilePath)) return;
+            if (!File.Exists(_stateFilePath))
+            {
+                return;
+            }
 
-            var json = File.ReadAllText(StateFilePath);
+            var json = File.ReadAllText(_stateFilePath);
             using var doc = JsonDocument.Parse(json);
             var root = doc.RootElement;
 
+            // Legacy: ignore top-level pickupSessionPath/roomtoneFilePath (now per-project)
+
+            if (root.TryGetProperty("precomputePeaksInBackground", out var precomputeProp) &&
+                (precomputeProp.ValueKind == JsonValueKind.True || precomputeProp.ValueKind == JsonValueKind.False))
+            {
+                PrecomputePeaksInBackground = precomputeProp.GetBoolean();
+            }
+
             if (root.TryGetProperty("workingDirectory", out var wdProp))
             {
-                var wd = wdProp.GetString();
-                if (!string.IsNullOrEmpty(wd) && Directory.Exists(wd))
+                var wd = NormalizeOptionalPath(wdProp.GetString());
+                if (!string.IsNullOrEmpty(wd))
                 {
                     SetWorkingDirectory(wd);
-
-                    // Restore current chapter if still valid
-                    if (root.TryGetProperty("currentChapter", out var chProp))
-                    {
-                        var ch = chProp.GetString();
-                        if (!string.IsNullOrEmpty(ch) && AvailableChapters.Contains(ch))
-                        {
-                            SelectChapter(ch);
-                        }
-                    }
                 }
             }
         }
         catch (Exception ex)
         {
+            LastWorkspaceStateLoadError =
+                $"Failed to load persisted workstation state '{_stateFilePath}': {ex.Message}";
             Console.WriteLine($"Failed to load persisted state: {ex.Message}");
         }
     }
@@ -385,7 +535,7 @@ public sealed class BlazorWorkspace : IWorkspace, IDisposable
     {
         try
         {
-            var dir = Path.GetDirectoryName(StateFilePath);
+            var dir = Path.GetDirectoryName(_stateFilePath);
             if (!string.IsNullOrEmpty(dir) && !Directory.Exists(dir))
             {
                 Directory.CreateDirectory(dir);
@@ -394,29 +544,230 @@ public sealed class BlazorWorkspace : IWorkspace, IDisposable
             var state = new
             {
                 workingDirectory = _rootPath,
-                currentChapter = CurrentChapterName
+                precomputePeaksInBackground = PrecomputePeaksInBackground
             };
 
             var json = JsonSerializer.Serialize(state, new JsonSerializerOptions { WriteIndented = true });
-            File.WriteAllText(StateFilePath, json);
+            File.WriteAllText(_stateFilePath, json);
         }
         catch (Exception ex)
         {
             Console.WriteLine($"Failed to save persisted state: {ex.Message}");
         }
+
+        SaveProjectState();
+    }
+
+    private void LoadProjectState()
+    {
+        PickupSessionPath = null;
+        RoomtoneFilePath = null;
+        LastProjectStateLoadError = null;
+
+        if (string.IsNullOrEmpty(_rootPath)) return;
+
+        var stateFile = Path.Combine(_rootPath, ".polish", "project-state.json");
+
+        try
+        {
+            if (!File.Exists(stateFile)) return;
+
+            var json = File.ReadAllText(stateFile);
+            using var doc = JsonDocument.Parse(json);
+            var root = doc.RootElement;
+
+            if (root.TryGetProperty("pickupSessionPath", out var pickupProp))
+                PickupSessionPath = NormalizeOptionalPath(pickupProp.GetString());
+
+            if (root.TryGetProperty("roomtoneFilePath", out var roomtoneProp))
+                RoomtoneFilePath = NormalizeOptionalPath(roomtoneProp.GetString());
+
+            if (root.TryGetProperty("currentChapter", out var chProp))
+            {
+                var ch = chProp.GetString();
+                if (!string.IsNullOrEmpty(ch) && AvailableChapters.Contains(ch))
+                    SelectChapter(ch);
+            }
+        }
+        catch (Exception ex)
+        {
+            LastProjectStateLoadError =
+                $"Failed to load persisted project state '{stateFile}': {ex.Message}";
+            Console.WriteLine($"Failed to load project state: {ex.Message}");
+        }
+    }
+
+    private void SaveProjectState()
+    {
+        if (string.IsNullOrEmpty(_rootPath)) return;
+
+        try
+        {
+            var polishDir = Path.Combine(_rootPath, ".polish");
+            Directory.CreateDirectory(polishDir);
+
+            var state = new
+            {
+                pickupSessionPath = PickupSessionPath,
+                roomtoneFilePath = RoomtoneFilePath,
+                currentChapter = CurrentChapterName
+            };
+
+            var json = JsonSerializer.Serialize(state, new JsonSerializerOptions { WriteIndented = true });
+            File.WriteAllText(Path.Combine(polishDir, "project-state.json"), json);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Failed to save project state: {ex.Message}");
+        }
     }
 
     #endregion
+
+    private static string? NormalizeOptionalPath(string? path)
+        => AmsPathResolver.NormalizeOptionalPath(path);
+
+    private static string NormalizeRefreshReason(string? reason, string fallback)
+        => string.IsNullOrWhiteSpace(reason) ? fallback : reason.Trim();
+
+    private void ResetRefreshMarkers()
+    {
+        WorkspaceRefreshCount = 0;
+        LastWorkspaceRefreshReason = null;
+        LastWorkspaceRefreshAtUtc = null;
+        ChapterHandleRefreshCount = 0;
+        LastChapterHandleRefreshReason = null;
+        LastRefreshedChapterId = null;
+        LastChapterHandleRefreshReopenedCurrentSelection = false;
+        LastChapterHandleRefreshAtUtc = null;
+    }
 
     public void Dispose()
     {
         if (_disposed) return;
         _disposed = true;
+        CancelBackgroundPeakPrecompute();
         foreach (var handle in _chapterHandles.Values)
         {
             handle.Dispose();
         }
         _chapterHandles.Clear();
         _currentChapterHandle = null;
+    }
+
+    private bool TryGetOrCreateChapterHandle(string chapterName, out ChapterContextHandle handle)
+    {
+        var chapterStem = _stemByTitle.GetValueOrDefault(chapterName, chapterName);
+
+        if (_chapterHandles.TryGetValue(chapterStem, out handle!))
+        {
+            return true;
+        }
+
+        try
+        {
+            var audioPath = Path.Combine(_rootPath!, $"{chapterStem}.wav");
+            var chapterDir = Path.Combine(_rootPath!, chapterStem);
+
+            handle = OpenChapter(new ChapterOpenOptions
+            {
+                ChapterId = chapterStem,
+                AudioFile = File.Exists(audioPath) ? new FileInfo(audioPath) : null,
+                ChapterDirectory = Directory.Exists(chapterDir) ? new DirectoryInfo(chapterDir) : null
+            });
+
+            _chapterHandles[chapterStem] = handle;
+            return true;
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Failed to open chapter '{chapterName}' (stem: {chapterStem}): {ex.Message}");
+            handle = null!;
+            return false;
+        }
+    }
+
+    private void RestartBackgroundPeakPrecompute()
+    {
+        CancelBackgroundPeakPrecompute();
+
+        if (!PrecomputePeaksInBackground || _manager == null || string.IsNullOrEmpty(_rootPath) || AvailableChapters.Count == 0)
+            return;
+
+        var chapters = AvailableChapters.ToList();
+        var cts = new CancellationTokenSource();
+        _backgroundPeakPrecomputeCts = cts;
+        _backgroundPeakPrecomputeTask = Task.Run(() => PrecomputeWaveformPeaksAsync(chapters, cts.Token), cts.Token);
+    }
+
+    private void CancelBackgroundPeakPrecompute()
+    {
+        if (_backgroundPeakPrecomputeCts is null)
+            return;
+
+        try
+        {
+            _backgroundPeakPrecomputeCts.Cancel();
+        }
+        catch
+        {
+            // Ignore cancellation disposal races
+        }
+        finally
+        {
+            _backgroundPeakPrecomputeCts.Dispose();
+            _backgroundPeakPrecomputeCts = null;
+            _backgroundPeakPrecomputeTask = null;
+        }
+    }
+
+    private async Task PrecomputeWaveformPeaksAsync(IReadOnlyList<string> chapters, CancellationToken cancellationToken)
+    {
+        foreach (var chapter in chapters)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            if (!TryGetOrCreateChapterHandle(chapter, out var handle))
+                continue;
+
+            try
+            {
+                var seenBufferIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                var audioContexts = new[]
+                {
+                    handle.Chapter.Audio.Current,
+                };
+
+                foreach (var audioContext in audioContexts)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+
+                    if (audioContext is null || !seenBufferIds.Add(audioContext.Descriptor.BufferId))
+                        continue;
+
+                    var buffer = audioContext.Buffer;
+                    if (buffer is null)
+                        continue;
+
+                    var durationSeconds = buffer.SampleRate > 0
+                        ? buffer.Length / (double)buffer.SampleRate
+                        : 0d;
+                    var requestedBuckets = Math.Max(1, (int)Math.Ceiling(durationSeconds * BackgroundPeakPxPerSec));
+                    var bucketCount = Math.Min(requestedBuckets, MaxBackgroundPeakBuckets);
+
+                    audioContext.GetOrCreateWaveformPeaks(bucketCount);
+                }
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Failed to precompute waveform peaks for '{chapter}': {ex.Message}");
+            }
+
+            await Task.Yield();
+        }
     }
 }

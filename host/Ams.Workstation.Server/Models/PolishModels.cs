@@ -1,3 +1,5 @@
+using Ams.Core.Audio;
+
 namespace Ams.Workstation.Server.Models;
 
 /// <summary>
@@ -54,6 +56,19 @@ public sealed record PickupMatch(
     bool IsLowConfidence = false);
 
 /// <summary>
+/// Input required to stage a pickup replacement against a chapter sentence.
+/// Used by batch staging paths to avoid repeated UI-to-service calls.
+/// </summary>
+public sealed record PickupStageRequest(
+    PickupMatch Match,
+    string PickupFilePath,
+    double OriginalStartSec,
+    double OriginalEndSec,
+    double? CrossfadeSec = null,
+    string? Curve = null,
+    SpliceBoundaryOptions? BoundaryOptions = null);
+
+/// <summary>
 /// A discrete segment within a pickup recording, identified by its time boundaries
 /// and the text transcribed from that segment via ASR.
 /// </summary>
@@ -66,6 +81,8 @@ public sealed record PickupSegment(
 /// Tracks a backup of the original audio segment before a replacement was applied.
 /// Used by the undo system to restore the original audio if a replacement is reverted.
 /// The <see cref="ReplacementId"/> links back to the originating <see cref="StagedReplacement"/>.
+/// For rebuild-based revert, also tracks the replacement audio segment path so the
+/// rebuild process can re-apply edits to the baseline audio.
 /// </summary>
 public sealed record UndoRecord(
     string ReplacementId,
@@ -76,7 +93,8 @@ public sealed record UndoRecord(
     double OriginalEndSec,
     double OriginalDurationSec,
     double ReplacementDurationSec,
-    DateTime AppliedAtUtc);
+    DateTime AppliedAtUtc,
+    string? ReplacementSegmentPath = null);
 
 /// <summary>
 /// Type of batch operation that can be applied across multiple chapters in the Polish workflow.
@@ -157,7 +175,10 @@ public enum PickupBoxState
     Staged,
 
     /// <summary>Pickup replacement has been committed to the chapter audio.</summary>
-    Committed
+    Committed,
+
+    /// <summary>Pickup could not be confidently matched to any CRX target.</summary>
+    Unmatched
 }
 
 public sealed record CrxPickupTarget(
@@ -177,6 +198,51 @@ public sealed record PickupArtifacts(
     DateTime PickupFileModifiedUtc,
     string CrxTargetsFingerprint,
     Dictionary<string, List<CrossChapterPickupMatch>> MatchesByChapter);
+
+/// <summary>
+/// Identifies the source type of a pickup asset — either a segment within
+/// a multi-pickup session file or an individual standalone WAV file.
+/// </summary>
+public enum PickupSourceType
+{
+    /// <summary>A segment extracted from a multi-pickup session recording.</summary>
+    SessionSegment,
+
+    /// <summary>An individual standalone pickup WAV file.</summary>
+    IndividualFile
+}
+
+/// <summary>
+/// A normalized pickup asset that unifies both session-file segments and individual
+/// pickup files into a single shape. Created during import processing and cached
+/// for reuse. Each asset references a source file with trim boundaries and
+/// carries ASR transcription and matching metadata.
+/// </summary>
+public sealed record PickupAsset(
+    string Id,
+    PickupSourceType SourceType,
+    string SourceFilePath,
+    double TrimStartSec,
+    double TrimEndSec,
+    string TranscribedText,
+    double Confidence,
+    int? MatchedErrorNumber,
+    int? MatchedSentenceId,
+    string? MatchedChapterStem,
+    DateTime ImportedAtUtc);
+
+/// <summary>
+/// Cached results of pickup asset processing for a source file. Invalidated
+/// when the source file changes (path + size + modified timestamp) or when
+/// the CRX target set changes.
+/// </summary>
+public sealed record PickupAssetCache(
+    string SourceFilePath,
+    long SourceFileSizeBytes,
+    DateTime SourceFileModifiedUtc,
+    string CrxTargetsFingerprint,
+    IReadOnlyList<PickupAsset> Assets,
+    DateTime ProcessedAtUtc);
 
 public static class StagedReplacementExtensions
 {

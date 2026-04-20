@@ -1,0 +1,689 @@
+diff --git a/.planning/STATE.md b/.planning/STATE.md
+index 185c514..a8eb78e 100644
+--- a/.planning/STATE.md
++++ b/.planning/STATE.md
+@@ -8,8 +8,8 @@ Audio Management System - CLI and core library for audio processing, ASR, forced
+ 
+ **Milestone**: v2.0 Blazor Workstation
+ **Phase**: 14 - Shared Chunked ASR/MFA
+-**Plan**: 6/7
+-**Status**: Plan 14-06 complete; MFA beam profiles (fast/balanced/strict) with adaptive strict retry on low-quality chunk subsets
++**Plan**: 7/7
++**Status**: Phase 14 complete; rollout controls (--no-chunk-plan, --no-chunked-mfa) and verification checklist added
+ 
+ ## Progress
+ 
+@@ -29,7 +29,7 @@ v2.0 Blazor Workstation[██████████████████
+ | 14-04 | Chunked MFA Corpus Builder | 2 | Complete |
+ | 14-05 | TextGrid Chunk Aggregation | 2 | Complete |
+ | 14-06 | MFA Beam Profiles & Adaptive Retry | 2 | Complete |
+-| 14-07 | TBD | - | Pending |
++| 14-07 | Rollout Controls & Verification | 2 | Complete |
+ 
+ ## Phase 13 Plans (Pickup Substitution)
+ 
+@@ -176,6 +176,9 @@ v2.0 Blazor Workstation[██████████████████
+ | MFA beam profile defaults | Fast=20/80, Balanced=40/120, Strict=80/200 | Configurable presets with explicit override precedence |
+ | Coverage heuristic threshold | 0.15 ratio (words / expected at 3.3 words/sec) | Low enough to catch real failures, avoids false positives on natural speech variation |
+ | Adaptive retry strategy | Re-align full corpus with strict beam, collect only failed chunks | Simpler than subset corpus; MFA handles utterance-level recovery internally |
++| Rollout flag defaults | Both flags false (chunking enabled) | New behavior is default; flags revert to legacy without code changes |
++| DisableChunkPlan scope | Skips chunk plan in AsrService + MFA has no plan to use | Single flag reverts both stages to legacy behavior |
++| DisableChunkedMfa scope | MFA-only; ASR chunking unaffected | Allows isolating MFA chunking behavior independently |
+ 
+ ## Phase 8/8.1 Conclusions (Archived)
+ 
+@@ -222,7 +225,7 @@ poc/VelloSharpPoc/     - Avalonia + VelloSharp (child window fails)
+ 
+ ## Next Action
+ 
+-Plan 14-06 complete. MFA beam profiles and adaptive strict retry implemented. Continue with plan 14-07.
++Phase 14 complete. All 7 plans executed. Populate 14-VERIFICATION.md with runtime benchmarks and complete sign-off checklist before promoting shared chunking as default.
+ 
+ ## Deferred UI Refinements (for Plan 10-04)
+ 
+@@ -239,4 +242,4 @@ None currently.
+ 
+ ## Session Continuity
+ 
+-Last activity: 2026-03-05 - Completed plan 14-06: MFA beam profiles and adaptive strict retry on low-quality chunks
++Last activity: 2026-03-05 - Completed plan 14-07: Rollout controls and phase verification checklist (Phase 14 complete)
+diff --git a/.planning/phases/14-shared-chunked-asr-mfa/14-07-SUMMARY.md b/.planning/phases/14-shared-chunked-asr-mfa/14-07-SUMMARY.md
+new file mode 100644
+index 0000000..feaafb4
+--- /dev/null
++++ b/.planning/phases/14-shared-chunked-asr-mfa/14-07-SUMMARY.md
+@@ -0,0 +1,109 @@
++---
++phase: 14-shared-chunked-asr-mfa
++plan: 07
++subsystem: pipeline
++tags: [rollout, feature-flags, concurrency, verification, chunking]
++
++# Dependency graph
++requires:
++  - phase: 14-shared-chunked-asr-mfa (plans 01-06)
++    provides: Shared chunk plan infrastructure, chunked ASR/MFA corpus, TextGrid aggregation, beam profiles
++provides:
++  - CLI rollout flags (--no-chunk-plan, --no-chunked-mfa) for safe incremental adoption
++  - DisableChunkPlan/DisableChunkedMfa pipeline options for programmatic control
++  - Phase verification template with run matrix and go/no-go criteria
++affects: [pipeline-operations, deployment-runbook]
++
++# Tech tracking
++tech-stack:
++  added: []
++  patterns: [feature-flag-rollout, rollback-without-code-change]
++
++key-files:
++  created:
++    - .planning/phases/14-shared-chunked-asr-mfa/14-VERIFICATION.md
++  modified:
++    - host/Ams.Cli/Commands/PipelineCommand.cs
++    - host/Ams.Core/Application/Pipeline/PipelineRunOptions.cs
++    - host/Ams.Core/Application/Commands/GenerateTranscriptCommand.cs
++    - host/Ams.Core/Application/Commands/RunMfaCommand.cs
++    - host/Ams.Core/Application/Mfa/MfaWorkflow.cs
++    - host/Ams.Core/Processors/AsrProcessor.cs
++    - host/Ams.Core/Services/AsrService.cs
++
++key-decisions:
++  - "Rollout flags at CLI level (--no-chunk-plan, --no-chunked-mfa) for quick operator control"
++  - "DisableChunkPlan wired through AsrOptions to AsrService for early-exit before chunk planning"
++  - "DisableChunkedMfa wired through RunMfaOptions to MfaWorkflow for MFA-only isolation"
++  - "Flags default false (chunking enabled) preserving new behavior as default"
++
++patterns-established:
++  - "Feature flag rollout: boolean flags on options records, defaulting to new behavior enabled"
++  - "Rollback without code change: CLI flags revert to legacy behavior at runtime"
++
++requirements-completed: [ROLLout-HARDENING]
++
++# Metrics
++duration: 9min
++completed: 2026-03-05
++---
++
++# Phase 14 Plan 07: Rollout Controls & Verification Summary
++
++**CLI rollout flags (--no-chunk-plan, --no-chunked-mfa) for safe shared-chunking adoption, plus verification run matrix with 10-point go/no-go criteria**
++
++## Performance
++
++- **Duration:** 9 min
++- **Started:** 2026-03-05T06:47:51Z
++- **Completed:** 2026-03-05T06:56:28Z
++- **Tasks:** 2
++- **Files modified:** 8
++
++## Accomplishments
++- Added two rollout control flags that let operators disable ASR chunking and/or MFA chunking independently at the CLI, without code changes
++- Wired flags through the full stack: CLI options -> PipelineRunOptions -> GenerateTranscriptOptions/AsrOptions -> AsrService, and RunMfaOptions -> MfaWorkflow
++- Created comprehensive phase verification document with run matrix (single chapter, parallelism scaling, profile comparison), quality parity checks, workspace isolation tests, and sign-off checklist
++
++## Task Commits
++
++Each task was committed atomically:
++
++1. **Task 1: Add rollout controls and tuned defaults** - `5222e6a` (feat)
++2. **Task 2: Create verification and benchmark checklist** - `77d67c5` (docs)
++
++## Files Created/Modified
++- `host/Ams.Cli/Commands/PipelineCommand.cs` - Added --no-chunk-plan and --no-chunked-mfa CLI options, wired through all call paths
++- `host/Ams.Core/Application/Pipeline/PipelineRunOptions.cs` - Added DisableChunkPlan and DisableChunkedMfa properties
++- `host/Ams.Core/Application/Commands/GenerateTranscriptCommand.cs` - Added DisableChunkPlan to GenerateTranscriptOptions, wired to AsrOptions
++- `host/Ams.Core/Application/Commands/RunMfaCommand.cs` - Added DisableChunkedMfa to RunMfaOptions, passed to MfaWorkflow
++- `host/Ams.Core/Application/Mfa/MfaWorkflow.cs` - Added disableChunkedMfa parameter, guards chunk corpus activation
++- `host/Ams.Core/Processors/AsrProcessor.cs` - Added DisableChunkPlan to AsrOptions record
++- `host/Ams.Core/Services/AsrService.cs` - Early-exit to single-buffer path when DisableChunkPlan is true
++- `.planning/phases/14-shared-chunked-asr-mfa/14-VERIFICATION.md` - Phase verification template with run matrix and go/no-go criteria
++
++## Decisions Made
++- Rollout flags implemented as boolean defaults-false (new chunking behavior is the default; flags revert to legacy)
++- DisableChunkPlan skips chunk plan generation entirely in AsrService (early exit before ResolveOrCreateChunkPlan)
++- DisableChunkedMfa adds conditional guard in MfaWorkflow before chunk corpus building, falling to single-utterance path
++- Concurrency defaults documented: max-asr=1 (GPU-bound), max-mfa=CPU/2 (CPU-bound)
++
++## Deviations from Plan
++
++None - plan executed exactly as written.
++
++## Issues Encountered
++None.
++
++## User Setup Required
++None - no external service configuration required.
++
++## Next Phase Readiness
++- Phase 14 (Shared Chunked ASR/MFA) is now complete
++- All 7 plans executed: chunk plan model, planning service, ASR integration, MFA corpus builder, TextGrid aggregation, beam profiles, and rollout controls
++- Verification template ready for population with actual runtime benchmark measurements
++- Rollout decision pending: fill in 14-VERIFICATION.md run matrix and sign off 10-point checklist before promoting shared chunking as default
++
++---
++*Phase: 14-shared-chunked-asr-mfa*
++*Completed: 2026-03-05*
+diff --git a/.planning/phases/14-shared-chunked-asr-mfa/14-VERIFICATION.md b/.planning/phases/14-shared-chunked-asr-mfa/14-VERIFICATION.md
+new file mode 100644
+index 0000000..31d032c
+--- /dev/null
++++ b/.planning/phases/14-shared-chunked-asr-mfa/14-VERIFICATION.md
+@@ -0,0 +1,243 @@
++# Phase 14: Shared Chunked ASR/MFA - Verification & Benchmark Checklist
++
++## Purpose
++
++Go/no-go criteria for promoting shared chunking as the default pipeline behavior.
++All entries should be completed with actual runtime measurements before rollout.
++
++## Prerequisites
++
++- [ ] Nemo ASR service running at configured endpoint
++- [ ] MFA conda environment activated and models downloaded (english_us_arpa dictionary/acoustic/g2p)
++- [ ] Test book with multiple chapters available (minimum 3 chapters recommended)
++- [ ] Working directory configured with sufficient disk space for parallel MFA workspaces
++
++---
++
++## 1. Run Matrix
++
++### 1.1 Single Chapter - Baseline vs Chunked
++
++| Run | Config | ASR Time | MFA Time | Total Time | Status |
++|-----|--------|----------|----------|------------|--------|
++| A1  | `--no-chunk-plan --no-chunked-mfa` (legacy) | ___ | ___ | ___ | |
++| A2  | Default (shared chunking enabled) | ___ | ___ | ___ | |
++| A3  | `--no-chunked-mfa` (ASR chunked, MFA legacy) | ___ | ___ | ___ | |
++| A4  | `--no-chunk-plan` (ASR legacy, MFA auto) | ___ | ___ | ___ | |
++
++**Commands:**
++```powershell
++# A1: Full legacy baseline
++dotnet Ams.Cli.dll pipeline run --book <book> --audio <chapter.wav> --work-dir <dir> --force --no-chunk-plan --no-chunked-mfa
++
++# A2: Default chunked (no rollout flags)
++dotnet Ams.Cli.dll pipeline run --book <book> --audio <chapter.wav> --work-dir <dir> --force
++
++# A3: ASR chunked, MFA legacy
++dotnet Ams.Cli.dll pipeline run --book <book> --audio <chapter.wav> --work-dir <dir> --force --no-chunked-mfa
++
++# A4: ASR legacy, MFA uses whatever plan exists
++dotnet Ams.Cli.dll pipeline run --book <book> --audio <chapter.wav> --work-dir <dir> --force --no-chunk-plan
++```
++
++**Acceptance:** A2 total time <= A1 total time. Quality metrics (section 2) within tolerance.
++
++### 1.2 All Chapters - Parallelism Scaling
++
++| Run | max-mfa | Chapters | Wall Clock | Avg/Chapter | Peak Memory | Status |
++|-----|---------|----------|------------|-------------|-------------|--------|
++| B1  | 1       | all      | ___        | ___         | ___         | |
++| B2  | 2       | all      | ___        | ___         | ___         | |
++| B3  | 4       | all      | ___        | ___         | ___         | |
++| B4  | CPU/2   | all      | ___        | ___         | ___         | |
++
++**Commands:**
++```powershell
++# B1-B4: Vary --max-mfa with all chapters via REPL mode
++# In REPL: `mode all` then `pipeline run --force --max-mfa <N>`
++```
++
++**Acceptance:** B2 wall clock < B1 wall clock. Diminishing returns expected beyond B3.
++
++### 1.3 MFA Beam Profile Comparison
++
++| Run | Profile    | Beam/Retry | MFA Time | Coverage | Retry Count | Status |
++|-----|------------|------------|----------|----------|-------------|--------|
++| C1  | fast       | 20/80      | ___      | ___      | ___         | |
++| C2  | balanced   | 40/120     | ___      | ___      | ___         | |
++| C3  | strict     | 80/200     | ___      | ___      | ___         | |
++
++**Commands:**
++```powershell
++# C1-C3: Single chapter with each profile
++dotnet Ams.Cli.dll pipeline run --book <book> --audio <chapter.wav> --work-dir <dir> --force --mfa-profile fast
++dotnet Ams.Cli.dll pipeline run --book <book> --audio <chapter.wav> --work-dir <dir> --force --mfa-profile balanced
++dotnet Ams.Cli.dll pipeline run --book <book> --audio <chapter.wav> --work-dir <dir> --force --mfa-profile strict
++```
++
++**Acceptance:** `balanced` is reasonable default (acceptable coverage without strict's time penalty).
++
++---
++
++## 2. Quality Parity Checks
++
++### 2.1 Merge Coverage
++
++Compare timing merge results between legacy and chunked paths.
++
++| Metric | Legacy (A1) | Chunked (A2) | Delta | Acceptable |
++|--------|-------------|--------------|-------|------------|
++| Sentences with MFA timings | ___ | ___ | ___ | <= 1% regression |
++| Words with MFA timings | ___ | ___ | ___ | <= 1% regression |
++| Sentence update count (merge) | ___ | ___ | ___ | Within 5% |
++| Average timing delta per word (ms) | ___ | ___ | ___ | < 50ms |
++
++**How to measure:**
++- Run `pipeline run` with `--verbose` and capture merge log output
++- Compare `MergeTimingsCommand` log lines: "Updated N of M sentences"
++- Diff the resulting `.align.hydrate.json` files between A1 and A2
++
++### 2.2 TextGrid Completeness
++
++| Check | Legacy | Chunked | Pass |
++|-------|--------|---------|------|
++| TextGrid file exists | ___ | ___ | |
++| Words tier interval count | ___ | ___ | |
++| Phones tier interval count | ___ | ___ | |
++| Monotonically increasing timestamps | ___ | ___ | |
++| No overlapping intervals | ___ | ___ | |
++| Gap coverage (% of audio duration) | ___ | ___ | |
++
++**How to measure:**
++- Parse TextGrid files and count intervals per tier
++- Verify timestamp ordering: each interval's start >= previous interval's end
++- Calculate coverage: sum of non-silence interval durations / total audio duration
++
++---
++
++## 3. Failure & Retry Metrics
++
++### 3.1 MFA Alignment Failures
++
++| Scenario | Count | Behavior | Expected |
++|----------|-------|----------|----------|
++| Chunk alignment failures (balanced) | ___ | Adaptive retry with strict | Low-quality chunks retried |
++| Chunk alignment failures (fast) | ___ | Adaptive retry with strict | More retries expected |
++| Total retry invocations | ___ | ___ | < 20% of chunks |
++| Retry success rate | ___ | ___ | > 80% |
++
++### 3.2 Edge Cases
++
++| Test | Description | Result | Pass |
++|------|-------------|--------|------|
++| Empty chapter | Audio with no speech content | ___ | Graceful skip |
++| Very short chapter | < 10 seconds of audio | ___ | Single chunk, legacy path |
++| Very long chapter | > 60 minutes of audio | ___ | Multiple chunks, no timeout |
++| Single-chunk plan | Audio with no silence boundaries | ___ | Falls to legacy path |
++
++---
++
++## 4. MFA Workspace Isolation
++
++### 4.1 Parallel Workspace Behavior
++
++| Check | Expected | Actual | Pass |
++|-------|----------|--------|------|
++| Workspace directories created | MFA_1 through MFA_N (N = max-mfa) | ___ | |
++| No cross-workspace file contamination | Each workspace has only its own artifacts | ___ | |
++| Workspace leasing (rent/return) | Queue-based, no starvation | ___ | |
++| Command history isolation | Each workspace has independent history | ___ | |
++| Cleanup after pipeline complete | No orphaned lock files or temp artifacts | ___ | |
++
++### 4.2 Workspace Recovery
++
++| Check | Expected | Actual | Pass |
++|-------|----------|--------|------|
++| Interrupted pipeline resume | Next run starts clean | ___ | |
++| Corrupted command_history.yaml | ResetCommandHistoryFile recovers | ___ | |
++| Missing workspace directory | EnsureWorkspace creates it | ___ | |
++| Concurrent chapter access to same workspace | Semaphore prevents overlap | ___ | |
++
++**How to verify:**
++```powershell
++# Run multi-chapter pipeline, then inspect workspace directories:
++Get-ChildItem "$env:USERPROFILE\Documents\MFA_*" -Directory | ForEach-Object {
++    Write-Host $_.Name
++    Get-ChildItem $_.FullName -File | Select-Object Name, Length
++}
++
++# Verify no orphan files after clean run:
++# Each MFA_N should contain only: command_history.yaml (if any)
++# Alignment output dirs should be under chapter work dirs, not workspace roots
++```
++
++---
++
++## 5. Rollout Flag Verification
++
++### 5.1 Flag Behavior
++
++| Flag | Stage Affected | Expected Behavior | Verified |
++|------|---------------|-------------------|----------|
++| `--no-chunk-plan` | ASR | Single-buffer ASR, no chunk plan generated | |
++| `--no-chunked-mfa` | MFA | Single-utterance corpus, chunk plan ignored by MFA | |
++| Both flags | ASR + MFA | Full legacy behavior, identical to pre-Phase 14 | |
++| Neither flag (default) | ASR + MFA | Shared chunk plan, chunked MFA corpus | |
++| `--no-chunk-plan` only | ASR legacy, MFA auto | MFA falls to legacy (no plan available) | |
++| `--no-chunked-mfa` only | ASR chunked, MFA legacy | ASR generates plan, MFA ignores it | |
++
++### 5.2 Backward Compatibility
++
++| Check | Expected | Verified |
++|-------|----------|----------|
++| Existing pipeline commands work without new flags | Yes (defaults preserve new behavior) | |
++| REPL `mode all` + `pipeline run` works with flags | Yes | |
++| Single chapter mode works with flags | Yes | |
++| Workstation server pipeline (no CLI flags) | Uses defaults, chunking enabled | |
++
++---
++
++## 6. Concurrency Default Guidance
++
++### Recommended Settings
++
++| Setting | Default Value | Rationale |
++|---------|--------------|-----------|
++| `--max-asr` | 1 | GPU-bound; single large model saturates VRAM |
++| `--max-mfa` | CPU_COUNT / 2 | CPU-bound; each MFA process is multi-threaded |
++| `--max-workers` | CPU_COUNT | Overall chapter parallelism limit |
++| `--mfa-profile` | balanced | Reasonable coverage/speed tradeoff |
++
++### Environment-Specific Tuning
++
++| Environment | max-asr | max-mfa | max-workers | Notes |
++|-------------|---------|---------|-------------|-------|
++| Single GPU, 8-core | 1 | 4 | 8 | Standard workstation |
++| Single GPU, 16-core | 1 | 8 | 16 | High-core server |
++| Multi-GPU, 16-core | 2 | 8 | 16 | Rare; requires ASR service sharding |
++| CPU-only, 8-core | 1 | 4 | 4 | Slower ASR, MFA can run alongside |
++
++---
++
++## 7. Sign-Off Checklist
++
++| # | Criterion | Status | Signed Off By |
++|---|-----------|--------|---------------|
++| 1 | Single-chapter: chunked total time <= legacy total time | | |
++| 2 | Multi-chapter: max-mfa=2 provides wall-clock improvement | | |
++| 3 | Quality: merge coverage regression < 1% | | |
++| 4 | Quality: TextGrid timestamps monotonically valid | | |
++| 5 | Workspace: no cross-contamination under parallel load | | |
++| 6 | Workspace: cleanup leaves no orphaned artifacts | | |
++| 7 | Rollout flags: all 6 combinations behave correctly | | |
++| 8 | Backward compat: existing commands work without new flags | | |
++| 9 | Retry: adaptive strict retry succeeds on >80% of retried chunks | | |
++| 10 | Edge cases: empty/short/long chapters handled gracefully | | |
++
++**Go decision:** All 10 criteria must be met. Criteria 1-4 require measured data. Criteria 5-10 can be verified by inspection or manual testing.
++
++---
++
++*Phase: 14-shared-chunked-asr-mfa*
++*Document created: 2026-03-05*
++*Status: Template ready -- populate with runtime measurements before rollout decision*
+diff --git a/host/Ams.Cli/Commands/PipelineCommand.cs b/host/Ams.Cli/Commands/PipelineCommand.cs
+index f28d965..81f2715 100644
+--- a/host/Ams.Cli/Commands/PipelineCommand.cs
++++ b/host/Ams.Cli/Commands/PipelineCommand.cs
+@@ -453,7 +453,9 @@ public static class PipelineCommand
+         CancellationToken cancellationToken,
+         MfaBeamProfile? mfaProfile = null,
+         int? mfaBeam = null,
+-        int? mfaRetryBeam = null)
++        int? mfaRetryBeam = null,
++        bool disableChunkPlan = false,
++        bool disableChunkedMfa = false)
+     {
+         ArgumentNullException.ThrowIfNull(pipelineService);
+ 
+@@ -540,7 +542,9 @@ public static class PipelineCommand
+                     cancellationToken,
+                     mfaProfile,
+                     mfaBeam,
+-                    mfaRetryBeam).ConfigureAwait(false);
++                    mfaRetryBeam,
++                    disableChunkPlan,
++                    disableChunkedMfa).ConfigureAwait(false);
+ 
+                 reporter?.MarkComplete(chapterId);
+             }
+@@ -1150,6 +1154,11 @@ public static class PipelineCommand
+         var mfaRetryBeamOption = new Option<int?>("--mfa-retry-beam", () => null,
+             "Explicit MFA retry beam width (overrides profile default)");
+ 
++        var noChunkPlanOption = new Option<bool>("--no-chunk-plan", () => false,
++            "Disable shared chunk plan generation; ASR processes the full audio as a single pass (legacy behavior)");
++        var noChunkedMfaOption = new Option<bool>("--no-chunked-mfa", () => false,
++            "Force MFA to use single-utterance corpus even when a chunk plan exists");
++
+         cmd.AddOption(bookOption);
+         cmd.AddOption(audioOption);
+         cmd.AddOption(workDirOption);
+@@ -1169,6 +1178,8 @@ public static class PipelineCommand
+         cmd.AddOption(mfaProfileOption);
+         cmd.AddOption(mfaBeamOption);
+         cmd.AddOption(mfaRetryBeamOption);
++        cmd.AddOption(noChunkPlanOption);
++        cmd.AddOption(noChunkedMfaOption);
+ 
+         cmd.SetHandler(async context =>
+         {
+@@ -1192,6 +1203,8 @@ public static class PipelineCommand
+             var mfaBeam = context.ParseResult.GetValueForOption(mfaBeamOption);
+             var mfaRetryBeam = context.ParseResult.GetValueForOption(mfaRetryBeamOption);
+             var mfaProfile = ParseMfaProfile(mfaProfileRaw);
++            var noChunkPlan = context.ParseResult.GetValueForOption(noChunkPlanOption);
++            var noChunkedMfa = context.ParseResult.GetValueForOption(noChunkedMfaOption);
+             if (showProgress && Log.IsDebugLoggingEnabled())
+             {
+                 Log.Debug("Progress UI disabled while AMS_LOG_LEVEL requests Debug-level logging.");
+@@ -1227,7 +1240,9 @@ public static class PipelineCommand
+                                 cancellationToken,
+                                 mfaProfile,
+                                 mfaBeam,
+-                                mfaRetryBeam));
++                                mfaRetryBeam,
++                                noChunkPlan,
++                                noChunkedMfa));
+                     }
+                     else
+                     {
+@@ -1251,7 +1266,9 @@ public static class PipelineCommand
+                             cancellationToken,
+                             mfaProfile,
+                             mfaBeam,
+-                            mfaRetryBeam).ConfigureAwait(false);
++                            mfaRetryBeam,
++                            noChunkPlan,
++                            noChunkedMfa).ConfigureAwait(false);
+                     }
+                 }
+                 catch (Exception ex)
+@@ -1303,7 +1320,9 @@ public static class PipelineCommand
+                                     cancellationToken,
+                                     mfaProfile,
+                                     mfaBeam,
+-                                    mfaRetryBeam).ConfigureAwait(false);
++                                    mfaRetryBeam,
++                                    noChunkPlan,
++                                    noChunkedMfa).ConfigureAwait(false);
+ 
+                                 reporter.MarkComplete(chapterId);
+                             }
+@@ -1341,7 +1360,9 @@ public static class PipelineCommand
+                         cancellationToken,
+                         mfaProfile,
+                         mfaBeam,
+-                        mfaRetryBeam).ConfigureAwait(false);
++                        mfaRetryBeam,
++                        noChunkPlan,
++                        noChunkedMfa).ConfigureAwait(false);
+                 }
+             }
+             catch (OperationCanceledException)
+@@ -1377,7 +1398,9 @@ public static class PipelineCommand
+         CancellationToken cancellationToken,
+         MfaBeamProfile? mfaProfile = null,
+         int? mfaBeam = null,
+-        int? mfaRetryBeam = null)
++        int? mfaRetryBeam = null,
++        bool disableChunkPlan = false,
++        bool disableChunkedMfa = false)
+     {
+         ArgumentNullException.ThrowIfNull(pipelineService);
+ 
+@@ -1437,7 +1460,8 @@ public static class PipelineCommand
+             ServiceUrl = asrServiceUrl,
+             Model = asrModel,
+             Language = asrLanguage,
+-            EnableWordTimestamps = true
++            EnableWordTimestamps = true,
++            DisableChunkPlan = disableChunkPlan
+         };
+ 
+         var useDedicatedMfaProcess = concurrency?.MfaDegree > 1;
+@@ -1462,6 +1486,8 @@ public static class PipelineCommand
+                 AnchorOptions = defaultAnchorOptions with { EmitWindows = true }
+             },
+             HydrationOptions = null,
++            DisableChunkPlan = disableChunkPlan,
++            DisableChunkedMfa = disableChunkedMfa,
+             MfaOptions = new RunMfaOptions
+             {
+                 AudioFile = audioFile,
+@@ -1471,7 +1497,8 @@ public static class PipelineCommand
+                 UseDedicatedProcess = useDedicatedMfaProcess,
+                 BeamProfile = mfaProfile,
+                 Beam = mfaBeam,
+-                RetryBeam = mfaRetryBeam
++                RetryBeam = mfaRetryBeam,
++                DisableChunkedMfa = disableChunkedMfa
+             },
+             MergeOptions = new MergeTimingsOptions
+             {
+diff --git a/host/Ams.Core/Application/Commands/GenerateTranscriptCommand.cs b/host/Ams.Core/Application/Commands/GenerateTranscriptCommand.cs
+index 5ea3c35..2c4adae 100644
+--- a/host/Ams.Core/Application/Commands/GenerateTranscriptCommand.cs
++++ b/host/Ams.Core/Application/Commands/GenerateTranscriptCommand.cs
+@@ -66,7 +66,8 @@ public sealed class GenerateTranscriptCommand
+             GpuDevice: options.GpuDevice,
+             UseFlashAttention: options.EnableFlashAttention,
+             UseDtwTimestamps: options.EnableDtwTimestamps,
+-            Prompt: prompt);
++            Prompt: prompt,
++            DisableChunkPlan: options.DisableChunkPlan);
+ 
+         if (prompt is not null)
+         {
+@@ -214,4 +215,10 @@ public sealed record GenerateTranscriptOptions
+     public bool EnableWordTimestamps { get; init; } = true;
+     public bool EnableFlashAttention { get; init; }
+     public bool EnableDtwTimestamps { get; init; } = false;
++
++    /// <summary>
++    /// When true, ASR processes the full audio buffer as a single pass without
++    /// chunk plan generation. Reverts to pre-chunking behavior for rollout control.
++    /// </summary>
++    public bool DisableChunkPlan { get; init; }
+ }
+diff --git a/host/Ams.Core/Application/Commands/RunMfaCommand.cs b/host/Ams.Core/Application/Commands/RunMfaCommand.cs
+index 83fe691..de7bd94 100644
+--- a/host/Ams.Core/Application/Commands/RunMfaCommand.cs
++++ b/host/Ams.Core/Application/Commands/RunMfaCommand.cs
+@@ -47,7 +47,8 @@ public sealed class RunMfaCommand
+                 cancellationToken,
+                 useDedicatedProcess: options?.UseDedicatedProcess ?? false,
+                 workspaceRoot: options?.WorkspaceRoot,
+-                beamSettings: beamSettings)
++                beamSettings: beamSettings,
++                disableChunkedMfa: options?.DisableChunkedMfa ?? false)
+             .ConfigureAwait(false);
+ 
+         var alignmentRoot =
+@@ -99,6 +100,13 @@ public sealed record RunMfaOptions
+ 
+     /// <summary>Explicit retry beam width override (supersedes profile default).</summary>
+     public int? RetryBeam { get; init; }
++
++    /// <summary>
++    /// When true, forces MFA to use the legacy single-utterance corpus path even
++    /// when a shared chunk plan exists. Use for rollout control to isolate MFA
++    /// chunking behavior independently from ASR chunk planning.
++    /// </summary>
++    public bool DisableChunkedMfa { get; init; }
+ }
+ 
+ public sealed record RunMfaResult(FileInfo TextGridFile);
+\ No newline at end of file
+diff --git a/host/Ams.Core/Application/Mfa/MfaWorkflow.cs b/host/Ams.Core/Application/Mfa/MfaWorkflow.cs
+index 59dadc3..b80e46b 100644
+--- a/host/Ams.Core/Application/Mfa/MfaWorkflow.cs
++++ b/host/Ams.Core/Application/Mfa/MfaWorkflow.cs
+@@ -24,7 +24,8 @@ public static class MfaWorkflow
+         CancellationToken cancellationToken,
+         bool useDedicatedProcess = false,
+         string? workspaceRoot = null,
+-        MfaBeamSettings? beamSettings = null)
++        MfaBeamSettings? beamSettings = null,
++        bool disableChunkedMfa = false)
+     {
+         if (!useDedicatedProcess)
+         {
+@@ -66,7 +67,11 @@ public static class MfaWorkflow
+         var hydrate = chapterContext.Documents.HydratedTranscript;
+         MfaChunkCorpusBuilder.ChunkCorpusResult? chunkCorpus = null;
+ 
+-        if (chunkPlan is not null && hydrate is not null && chunkPlan.Chunks.Count > 1)
++        if (disableChunkedMfa && chunkPlan is not null && chunkPlan.Chunks.Count > 1)
++        {
++            Log.Debug("Chunked MFA disabled by rollout flag; using single-utterance corpus path");
++        }
++        else if (chunkPlan is not null && hydrate is not null && chunkPlan.Chunks.Count > 1)
+         {
+             // Clean the corpus directory for fresh chunk output
+             CleanCorpusDirectory(corpusDir);
+diff --git a/host/Ams.Core/Application/Pipeline/PipelineRunOptions.cs b/host/Ams.Core/Application/Pipeline/PipelineRunOptions.cs
+index 4343e7e..fa38fe8 100644
+--- a/host/Ams.Core/Application/Pipeline/PipelineRunOptions.cs
++++ b/host/Ams.Core/Application/Pipeline/PipelineRunOptions.cs
+@@ -37,4 +37,18 @@ public sealed record PipelineRunOptions
+     /// <see cref="ChunkPlanningService.IsValid"/> to check before recomputing.
+     /// </remarks>
+     public ChunkPlanningPolicy? ChunkPlanningPolicy { get; init; }
++
++    /// <summary>
++    /// When true, suppresses shared chunk plan generation and usage during ASR.
++    /// ASR will process the full audio buffer as a single pass (legacy behavior).
++    /// Use this to quickly revert to pre-chunking ASR behavior without code changes.
++    /// </summary>
++    public bool DisableChunkPlan { get; init; }
++
++    /// <summary>
++    /// When true, forces MFA to use the legacy single-utterance corpus path even
++    /// when a chunk plan is available. ASR chunk planning is unaffected.
++    /// Use this to isolate MFA chunking behavior during rollout without affecting ASR.
++    /// </summary>
++    public bool DisableChunkedMfa { get; init; }
+ }
+\ No newline at end of file
+diff --git a/host/Ams.Core/Processors/AsrProcessor.cs b/host/Ams.Core/Processors/AsrProcessor.cs
+index 016b034..7683f5c 100644
+--- a/host/Ams.Core/Processors/AsrProcessor.cs
++++ b/host/Ams.Core/Processors/AsrProcessor.cs
+@@ -959,4 +959,5 @@ public sealed record AsrOptions(
+     int GpuDevice = 0,
+     bool UseFlashAttention = true,
+     bool UseDtwTimestamps = false,
+-    string? Prompt = null);
++    string? Prompt = null,
++    bool DisableChunkPlan = false);
+diff --git a/host/Ams.Core/Services/AsrService.cs b/host/Ams.Core/Services/AsrService.cs
+index 94c5528..a095282 100644
+--- a/host/Ams.Core/Services/AsrService.cs
++++ b/host/Ams.Core/Services/AsrService.cs
+@@ -26,6 +26,15 @@ public sealed class AsrService : IAsrService
+         ArgumentNullException.ThrowIfNull(chapter);
+         var buffer = ResolveAsrReadyBuffer(chapter);
+ 
++        // Rollout control: DisableChunkPlan bypasses chunk planning entirely,
++        // reverting to the legacy single-buffer ASR path.
++        if (options.DisableChunkPlan)
++        {
++            Log.Debug("ASR chunk planning disabled by rollout flag; using single-buffer path");
++            return await AsrProcessor.TranscribeBufferAsync(buffer, options, cancellationToken)
++                .ConfigureAwait(false);
++        }
++
+         var plan = ResolveOrCreateChunkPlan(chapter, buffer);
+ 
+         // Single chunk: fall through to original single-buffer path

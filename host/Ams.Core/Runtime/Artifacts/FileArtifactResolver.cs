@@ -131,6 +131,18 @@ public sealed class FileArtifactResolver : IArtifactResolver
         // TextGrid documents are derived from the MFA output TextGrid file and do not need separate persistence.
     }
 
+    public ChunkPlanDocument? LoadChunkPlan(ChapterContext context)
+        => LoadJson<ChunkPlanDocument>(GetChapterArtifactPath(context, "align.chunks.json"));
+
+    public void SaveChunkPlan(ChapterContext context, ChunkPlanDocument document)
+        => SaveJson(GetChapterArtifactPath(context, "align.chunks.json"), document);
+
+    public ChunkAudioDocument? LoadChunkAudio(ChapterContext context)
+        => LoadJson<ChunkAudioDocument>(GetChapterArtifactPath(context, "align.chunk-audio.json"));
+
+    public void SaveChunkAudio(ChapterContext context, ChunkAudioDocument document)
+        => SaveJson(GetChapterArtifactPath(context, "align.chunk-audio.json"), document);
+
     public FileInfo GetBookIndexFile(BookContext context)
         => new(ResolveBookIndexPath(context));
 
@@ -157,6 +169,12 @@ public sealed class FileArtifactResolver : IArtifactResolver
 
     public FileInfo GetTextGridFile(ChapterContext context)
         => new(GetTextGridPath(context));
+
+    public FileInfo GetChunkPlanFile(ChapterContext context)
+        => new(GetChapterArtifactPath(context, "align.chunks.json"));
+
+    public FileInfo GetChunkAudioFile(ChapterContext context)
+        => new(GetChapterArtifactPath(context, "align.chunk-audio.json"));
 
     public FileInfo GetChapterArtifactFile(ChapterContext context, string suffix)
         => new(GetChapterArtifactPath(context, suffix));

@@ -1,5 +1,6 @@
 using Ams.Cli.Repl;
 using Ams.Cli.Workspace;
+using Ams.Core.Common;
 using Ams.Core.Runtime.Workspace;
 
 namespace Ams.Cli.Utilities;
@@ -10,7 +11,7 @@ internal static class CommandInputResolver
     {
         if (provided is not null)
         {
-            return provided;
+            return AmsPathResolver.NormalizeFile(provided);
         }
 
         var context = ReplContext.Current;
@@ -26,7 +27,7 @@ internal static class CommandInputResolver
     {
         if (provided is not null)
         {
-            return provided;
+            return AmsPathResolver.NormalizeFile(provided);
         }
 
         var context = ReplContext.Current;
@@ -43,7 +44,7 @@ internal static class CommandInputResolver
     {
         if (provided is not null)
         {
-            return provided;
+            return AmsPathResolver.NormalizeFile(provided);
         }
 
         var context = ReplContext.Current;
@@ -59,7 +60,7 @@ internal static class CommandInputResolver
     {
         if (provided is not null)
         {
-            return provided;
+            return AmsPathResolver.NormalizeFile(provided);
         }
 
         var context = ReplContext.Current;
@@ -81,7 +82,7 @@ internal static class CommandInputResolver
     {
         if (provided is not null)
         {
-            return provided;
+            return AmsPathResolver.NormalizeFile(provided);
         }
 
         var context = ReplContext.Current;
@@ -104,7 +105,7 @@ internal static class CommandInputResolver
     {
         if (provided is not null)
         {
-            return provided;
+            return AmsPathResolver.NormalizeFile(provided);
         }
 
         var searchRoot = ReplContext.Current?.WorkingDirectory ?? Directory.GetCurrentDirectory();
@@ -128,7 +129,7 @@ internal static class CommandInputResolver
     {
         if (provided is not null)
         {
-            return provided;
+            return AmsPathResolver.NormalizeDirectory(provided);
         }
 
         var context = ReplContext.Current;

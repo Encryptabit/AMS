@@ -53,12 +53,23 @@ public static class ChapterLabelResolver
 
         if (!string.IsNullOrWhiteSpace(rootPath))
         {
-            var rootName = Path.GetFileName(
-                rootPath.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
+            var rootName = ExtractLeafName(rootPath);
             if (!string.IsNullOrWhiteSpace(rootName))
             {
                 yield return rootName;
             }
         }
+    }
+
+    private static string ExtractLeafName(string path)
+    {
+        var trimmed = path.TrimEnd('/', '\\');
+        if (trimmed.Length == 0)
+        {
+            return string.Empty;
+        }
+
+        var lastSeparator = trimmed.LastIndexOfAny(['/', '\\']);
+        return lastSeparator >= 0 ? trimmed[(lastSeparator + 1)..] : trimmed;
     }
 }

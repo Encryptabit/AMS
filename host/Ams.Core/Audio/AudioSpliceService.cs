@@ -93,22 +93,11 @@ public static class AudioSpliceService
         if (roomtone.Length >= targetSamples)
             return AudioProcessor.Trim(roomtone, TimeSpan.Zero, TimeSpan.FromSeconds(targetDurationSec));
 
-        // Loop: copy roomtone repeatedly until we reach target length
-        var result = new AudioBuffer(roomtone.Channels, roomtone.SampleRate, targetSamples, roomtone.Metadata);
-        for (int ch = 0; ch < roomtone.Channels; ch++)
-        {
-            var src = roomtone.GetChannel(ch).Span;
-            var dst = result.GetChannelSpan(ch);
-            int cursor = 0;
-            while (cursor < targetSamples)
-            {
-                int toCopy = Math.Min(roomtone.Length, targetSamples - cursor);
-                src.Slice(0, toCopy).CopyTo(dst.Slice(cursor, toCopy));
-                cursor += toCopy;
-            }
-        }
-
-        return result;
+        // Loop via FFmpeg and trim to target duration.
+        // size is in samples-per-channel for aloop.
+        var filterSpec = FormattableString.Invariant(
+            $"[main]aloop=loop=-1:size={roomtone.Length},atrim=end={targetDurationSec:F6},asetpts=PTS-STARTPTS[out]");
+        return FfFilterGraphRunner.Apply(roomtone, filterSpec);
     }
 
     /// <summary>
@@ -228,9 +217,9 @@ public static class AudioSpliceService
     /// </summary>
     private static AudioBuffer Crossfade(AudioBuffer a, AudioBuffer b, double durationSec, string curve)
     {
-        // Fall back to concat for negligible crossfade or empty buffers
+        // Use FFmpeg concat when crossfade is negligible or a buffer is empty.
         if (durationSec <= 0.001 || a.Length == 0 || b.Length == 0)
-            return AudioBuffer.Concat(a, b);
+            return Concat(a, b);
 
         var inputs = new[]
         {
@@ -241,6 +230,22 @@ public static class AudioSpliceService
         var filterSpec = FormattableString.Invariant(
             $"[a]aformat=sample_fmts=flt[af];[b]aformat=sample_fmts=flt[bf];[af][bf]acrossfade=d={durationSec:F6}:c1={curve}:c2={curve}[out]");
 
+        return FfFilterGraphRunner.Apply(inputs, filterSpec);
+    }
+
+    private static AudioBuffer Concat(AudioBuffer a, AudioBuffer b)
+    {
+        if (a.Length == 0) return b;
+        if (b.Length == 0) return a;
+
+        var inputs = new[]
+        {
+            new FfFilterGraphRunner.GraphInput("a", a),
+            new FfFilterGraphRunner.GraphInput("b", b)
+        };
+
+        var filterSpec =
+            "[a]aformat=sample_fmts=flt[af];[b]aformat=sample_fmts=flt[bf];[af][bf]concat=n=2:v=0:a=1[out]";
         return FfFilterGraphRunner.Apply(inputs, filterSpec);
     }
 }

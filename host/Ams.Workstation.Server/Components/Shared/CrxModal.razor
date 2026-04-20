@@ -59,8 +59,10 @@
                 <div class="crx-col-right">
                     <WaveformPlayer @ref="_waveformPlayer"
                                     AudioUrl="@_audioUrl"
+                                    PeaksUrl="@_peaksUrl"
                                     Title="Audio Preview"
-                                    Height="80" />
+                                    Height="80"
+                                    OnReady="FocusPlayButton" />
                     <BitText Typography="BitTypography.Caption2" Color="BitColor.SecondaryForeground"
                              Style="text-align: center;">
                         @FormatTime(_startTime) → @FormatTime(_endTime + _paddingMs / 1000.0)
@@ -71,7 +73,7 @@
             @* ── Full-width: Comments ── *@
             <div class="crx-comments">
                 <BitText Typography="BitTypography.Body2">Comments</BitText>
-                <textarea rows="3" @bind="_comments" class="crx-comments-textarea" />
+                <textarea rows="4" @bind="_comments" class="crx-comments-textarea" />
             </div>
         </div>
 
@@ -85,7 +87,10 @@
     </div>
 </div>
 
+@inject IJSRuntime JS
+
 @code {
+    private const int PeakPxPerSec = 1200;
     private bool _isVisible;
     private string _chapterName = "";
     private double _startTime;
@@ -97,6 +102,7 @@
     private int _paddingMs = 50;
     private bool _submitting;
     private string _audioUrl = "";
+    private string? _peaksUrl;
     private SentenceReport? _sentenceReport;
     private WaveformPlayer? _waveformPlayer;
 
@@ -132,14 +138,31 @@
 
         // Set audio URL
         _audioUrl = BuildAudioUrl();
+        _peaksUrl = BuildPeaksUrl();
 
         StateHasChanged();
+        _ = ActivateFocusTrapAsync();
+    }
+
+    private async Task ActivateFocusTrapAsync()
+    {
+        await Task.Yield();
+        await JS.InvokeVoidAsync("window.modalFocusTrap.activate");
+    }
+
+    private async Task FocusPlayButton()
+    {
+        // Waveform is ready — focus the play button so spacebar previews the cut
+        await JS.InvokeVoidAsync("eval",
+            "document.querySelector('.crx-modal-overlay.visible button[title=\"Play\"]')?.focus()");
     }
 
     public void Close()
     {
         _isVisible = false;
         _audioUrl = "";
+        _peaksUrl = null;
+        JS.InvokeVoidAsync("window.modalFocusTrap.deactivate");
         StateHasChanged();
     }
 
@@ -223,7 +246,6 @@
                 else
                 {
                     shouldBeLine.Add(text);
-                    readAsLine.Add(text);
                 }
             }
             else if (op.Op == "insert")
@@ -235,7 +257,6 @@
                 }
                 else
                 {
-                    shouldBeLine.Add(text);
                     readAsLine.Add(text);
                 }
             }
@@ -246,7 +267,7 @@
 
         var shouldBe = string.Join(" ", shouldBeLine);
         var readAs = string.Join(" ", readAsLine);
-        return $"Should be: {shouldBe}{Environment.NewLine}Read as: {readAs}";
+        return $"Should be: {shouldBe}{Environment.NewLine}{Environment.NewLine}Read as: {readAs}";
     }
 
     private void OnPaddingInput(ChangeEventArgs e)
@@ -262,6 +283,7 @@
         {
             _paddingMs = val;
             _audioUrl = BuildAudioUrl();
+            _peaksUrl = BuildPeaksUrl();
             StateHasChanged();
         }
     }
@@ -270,6 +292,12 @@
     {
         var end = _endTime + (_paddingMs / 1000.0);
         return $"/api/audio/chapter/{Uri.EscapeDataString(_chapterName)}?start={_startTime}&end={end}";
+    }
+
+    private string BuildPeaksUrl()
+    {
+        var end = _endTime + (_paddingMs / 1000.0);
+        return $"/api/audio/chapter/{Uri.EscapeDataString(_chapterName)}/peaks?start={_startTime}&end={end}&pxPerSec={PeakPxPerSec}";
     }
 
     private async Task Submit()
@@ -286,7 +314,9 @@
                 ErrorType: _errorType,
                 Comments: _comments,
                 Excerpt: _excerpt,
-                PaddingMs: _paddingMs
+                PaddingMs: _paddingMs,
+                ShouldBe: CrxCommentParser.TryParseShouldBe(_comments),
+                ReadAs: CrxCommentParser.TryParseReadAs(_comments)
             );
 
             var result = CrxService.Submit(_chapterName, request);
@@ -303,6 +333,12 @@
     {
         var ts = TimeSpan.FromSeconds(seconds);
         return $"{(int)ts.TotalMinutes}:{ts.Seconds:D2}.{ts.Milliseconds:D3}";
+    }
+
+    public async Task SubmitAsync()
+    {
+        if (_isVisible && !_submitting)
+            await Submit();
     }
 
     private record ErrorOpItem(string Op, string Text, bool Selected);

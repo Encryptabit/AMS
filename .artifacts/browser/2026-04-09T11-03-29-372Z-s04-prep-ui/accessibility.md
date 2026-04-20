@@ -1,0 +1,120 @@
+- banner:
+  - text: AMS Workstation
+  - button "Prep"
+  - button "Proof"
+  - button "Polish"
+  - text: "Completed Stage: workspace_reload"
+  - button "Cancel" [disabled]
+  - combobox "s04-prep-ui"
+  - listbox:
+    - option "s04-prep-ui" [selected]
+  - textbox "Working directory...": /mnt/c/Projects/AMS.test/.tmp/s04-prep-ui
+  - button "Set"
+  - button "Reset Metadata" [disabled]
+  - text: Precompute Peaks In Background
+- main:
+  - heading "Prep Area" [level=4]
+  - paragraph: Build a missing book index and run single-chapter prep through the shared Core pipeline contracts.
+  - heading "Workspace status" [level=6]
+  - text: Working directory
+  - paragraph: /mnt/c/Projects/AMS.test/.tmp/s04-prep-ui
+  - text: Book index
+  - paragraph: Present
+  - text: Workspace initialized
+  - paragraph: "Yes"
+  - text: Current chapter
+  - paragraph: No chapter selected
+  - text: Workspace reloads
+  - paragraph: 1 (prep-build-index)
+  - text: Chapter reloads
+  - paragraph: 0 (none yet)
+  - status:
+    - paragraph: Prep run completed
+    - paragraph: Workspace refreshed
+  - heading "Run chapter prep" [level=6]
+  - paragraph: Run the selected chapter through the shared pipeline service and keep Workstation state synchronized after the run.
+  - text: Index ready
+  - combobox "1"
+  - listbox:
+    - option "1" [selected]
+  - text: Book source
+  - paragraph: /mnt/c/Projects/AMS.test/.tmp/s04-prep-ui/book.md
+  - text: Selected chapter
+  - paragraph: "1"
+  - text: Chapter id
+  - paragraph: "1"
+  - text: Pipeline end stage
+  - paragraph: Mfa
+  - text: Average WPM
+  - paragraph: "200"
+  - text: Chapter handle refresh
+  - paragraph: Automatic after success, failure, or cancellation
+  - button "Run chapter prep"
+  - button "Cancel" [disabled]
+  - heading "Last book-index request" [level=6]
+  - text: Manuscript
+  - paragraph: /mnt/c/Projects/AMS.test/.tmp/s04-prep-ui/book.md
+  - text: Output
+  - paragraph: /mnt/c/Projects/AMS.test/.tmp/s04-prep-ui/book-index.json
+  - text: Average WPM
+  - paragraph: "200"
+  - text: Cache disposition
+  - paragraph: CacheMiss
+  - text: Phonemes backfilled
+  - paragraph: "No"
+  - text: Workspace reloaded
+  - paragraph: "Yes"
+  - heading "Progress timeline" [level=6]
+  - table:
+    - rowgroup:
+      - row "Module Stage State Message Progress":
+        - columnheader "Module"
+        - columnheader "Stage"
+        - columnheader "State"
+        - columnheader "Message"
+        - columnheader "Progress"
+    - rowgroup:
+      - row "prep.book_index.build workspace_reload Completed Workspace refreshed 100 %":
+        - cell "prep.book_index.build"
+        - cell "workspace_reload"
+        - cell "Completed"
+        - cell "Workspace refreshed"
+        - cell "100 %"
+      - row "prep.book_index.build workspace_reload Running Refreshing workspace 95 %":
+        - cell "prep.book_index.build"
+        - cell "workspace_reload"
+        - cell "Running"
+        - cell "Refreshing workspace"
+        - cell "95 %"
+      - row "prep.book_index.build book_index Completed Book index prepared (CacheMiss) 85 %":
+        - cell "prep.book_index.build"
+        - cell "book_index"
+        - cell "Completed"
+        - cell "Book index prepared (CacheMiss)"
+        - cell "85 %"
+      - row "prep.book_index.build book_index Running Building book index 0 %":
+        - cell "prep.book_index.build"
+        - cell "book_index"
+        - cell "Running"
+        - cell "Building book index"
+        - cell "0 %"
+      - row "prep.book_index.build book_index Pending Queued 0 %":
+        - cell "prep.book_index.build"
+        - cell "book_index"
+        - cell "Pending"
+        - cell "Queued"
+        - cell "0 %"
+  - heading "Last artifact set" [level=6]
+  - table:
+    - rowgroup:
+      - row "Name Kind Exists Path":
+        - columnheader "Name"
+        - columnheader "Kind"
+        - columnheader "Exists"
+        - columnheader "Path"
+    - rowgroup:
+      - row "book-index Output Yes /mnt/c/Projects/AMS.test/.tmp/s04-prep-ui/book-index.json":
+        - cell "book-index"
+        - cell "Output"
+        - cell "Yes"
+        - cell "/mnt/c/Projects/AMS.test/.tmp/s04-prep-ui/book-index.json"

@@ -165,6 +165,7 @@ public sealed class BookManager : IBookManager
         {
             context.Save();
             context.Chapters.DeallocateAll();
+            context.Audio.UnloadAll();
             Log.Debug("BookManager deallocated context {BookId}", bookId);
         }
     }
@@ -175,6 +176,7 @@ public sealed class BookManager : IBookManager
         {
             context.Save();
             context.Chapters.DeallocateAll();
+            context.Audio.UnloadAll();
             Log.Debug("BookManager flushed context {BookId}", context.Descriptor.BookId);
         }
 

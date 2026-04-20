@@ -144,8 +144,9 @@ public sealed class BookMetadataResetService
             var persistedWorkingDir = obj["workingDirectory"]?.GetValue<string>();
             if (string.IsNullOrWhiteSpace(persistedWorkingDir)) return false;
 
-            var normalizedCurrent = Path.GetFullPath(workingDirectory.Trim());
-            var normalizedPersisted = Path.GetFullPath(persistedWorkingDir.Trim());
+            var normalizedCurrent = AmsPathResolver.NormalizeOptionalPath(workingDirectory);
+            var normalizedPersisted = AmsPathResolver.NormalizeOptionalPath(persistedWorkingDir);
+            if (string.IsNullOrWhiteSpace(normalizedCurrent) || string.IsNullOrWhiteSpace(normalizedPersisted)) return false;
             if (!PathComparer.Equals(normalizedCurrent, normalizedPersisted)) return false;
 
             if (obj["currentChapter"] is null) return false;

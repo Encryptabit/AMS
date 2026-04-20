@@ -38,6 +38,12 @@ public interface IArtifactResolver
     TextGridDocument? LoadTextGrid(ChapterContext context);
     void SaveTextGrid(ChapterContext context, TextGridDocument document);
 
+    ChunkPlanDocument? LoadChunkPlan(ChapterContext context);
+    void SaveChunkPlan(ChapterContext context, ChunkPlanDocument document);
+
+    ChunkAudioDocument? LoadChunkAudio(ChapterContext context);
+    void SaveChunkAudio(ChapterContext context, ChunkAudioDocument document);
+
     FileInfo GetBookIndexFile(BookContext context);
 
     FileInfo GetTranscriptFile(ChapterContext context);
@@ -48,6 +54,8 @@ public interface IArtifactResolver
     FileInfo GetPausePolicyFile(ChapterContext context);
     FileInfo GetPauseAdjustmentsFile(ChapterContext context);
     FileInfo GetTextGridFile(ChapterContext context);
+    FileInfo GetChunkPlanFile(ChapterContext context);
+    FileInfo GetChunkAudioFile(ChapterContext context);
 
     FileInfo GetChapterArtifactFile(ChapterContext context, string suffix);
     FileInfo GetBookArtifactFile(BookContext context, string fileName);

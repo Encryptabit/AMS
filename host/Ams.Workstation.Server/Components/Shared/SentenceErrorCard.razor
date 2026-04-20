@@ -3,19 +3,27 @@
 <BitCard Style="@GetBorderStyle()" FullWidth="true">
     <BitStack Horizontal="false" Gap="0.5rem" Style="padding: 1rem;">
         @* Header: ID + WER/CER + Status badge + metadata all horizontal *@
-        <BitStack Horizontal="true" Gap="1rem" VerticalAlign="BitAlignment.Center" Wrap="true">
-            <BitText Typography="BitTypography.Body1" Style="font-weight: 600;">#@Sentence.Id</BitText>
-            <BitText Typography="BitTypography.Caption1">
-                WER: <span style="color: var(@GetWerColor());">@Sentence.Wer</span>
-                &nbsp;&nbsp;CER: @Sentence.Cer
-            </BitText>
-            <BitTag Text="@Sentence.Status.ToUpper()"
-                    Color="GetStatusColor()"
-                    Size="BitSize.Small"
-                    Variant="BitVariant.Fill" />
-            <BitText Typography="BitTypography.Caption1" Color="BitColor.SecondaryForeground">Book range: @Sentence.BookRange</BitText>
-            <BitText Typography="BitTypography.Caption1" Color="BitColor.SecondaryForeground">Script range: @Sentence.ScriptRange</BitText>
-            <BitText Typography="BitTypography.Caption1" Color="BitColor.SecondaryForeground">Timing: @Sentence.Timing</BitText>
+        <BitStack Horizontal="true" Gap="1rem" VerticalAlign="BitAlignment.Center" Style="justify-content: space-between;">
+            <BitStack Horizontal="true" Gap="1rem" VerticalAlign="BitAlignment.Center" Wrap="true">
+                <BitText Typography="BitTypography.Body1" Style="font-weight: 600;">#@Sentence.Id</BitText>
+                <BitText Typography="BitTypography.Caption1">
+                    WER: <span style="color: var(@GetWerColor());">@Sentence.Wer</span>
+                    &nbsp;&nbsp;CER: @Sentence.Cer
+                </BitText>
+                <BitTag Text="@Sentence.Status.ToUpper()"
+                        Color="GetStatusColor()"
+                        Size="BitSize.Small"
+                        Variant="BitVariant.Fill" />
+                <BitText Typography="BitTypography.Caption1" Color="BitColor.SecondaryForeground">Book range: @Sentence.BookRange</BitText>
+                <BitText Typography="BitTypography.Caption1" Color="BitColor.SecondaryForeground">Script range: @Sentence.ScriptRange</BitText>
+                <BitText Typography="BitTypography.Caption1" Color="BitColor.SecondaryForeground">Timing: @Sentence.Timing</BitText>
+            </BitStack>
+            @if (IsExported)
+            {
+                <BitIcon IconName="@BitIconName.SkypeCircleCheck"
+                         Style="color: #4a9eff; font-size: 1rem;"
+                         Title="Exported to CRX" />
+            }
         </BitStack>
 
         @* Manuscript *@
@@ -45,6 +53,11 @@
                 Play Audio Segment
             </BitButton>
             <BitButton Variant="BitVariant.Outline" Size="BitSize.Medium"
+                       Color="BitColor.Tertiary"
+                       OnClick="() => OnView.InvokeAsync()">
+                View in Playback
+            </BitButton>
+            <BitButton Variant="BitVariant.Outline" Size="BitSize.Medium"
                        OnClick="() => OnExport.InvokeAsync()">
                 Export Audio
             </BitButton>
@@ -62,18 +75,25 @@
 
 @code {
     [Parameter] public SentenceReport Sentence { get; set; } = default!;
+    [Parameter] public bool IsSelected { get; set; }
+    [Parameter] public bool IsExported { get; set; }
     [Parameter] public EventCallback OnPlayAudio { get; set; }
     [Parameter] public EventCallback OnExport { get; set; }
     [Parameter] public EventCallback OnCrx { get; set; }
     [Parameter] public EventCallback OnIgnore { get; set; }
+    [Parameter] public EventCallback OnView { get; set; }
     [Parameter] public IReadOnlySet<string>? IgnoredKeys { get; set; }
 
-    private string GetBorderStyle() => Sentence.Status switch
+    private string GetBorderStyle()
     {
-        "unreliable" => "border-left: 3px solid var(--bit-clr-err); margin-bottom: 0.75rem;",
-        "attention" => "border-left: 3px solid var(--bit-clr-wrn); margin-bottom: 0.75rem;",
-        _ => "border-left: 3px solid transparent; margin-bottom: 0.75rem;"
-    };
+        var outline = IsSelected ? "outline: 2px solid var(--bit-clr-pri); " : "";
+        return Sentence.Status switch
+        {
+            "unreliable" => $"{outline}border-left: 3px solid var(--bit-clr-err); margin-bottom: 0.75rem;",
+            "attention" => $"{outline}border-left: 3px solid var(--bit-clr-wrn); margin-bottom: 0.75rem;",
+            _ => $"{outline}border-left: 3px solid transparent; margin-bottom: 0.75rem;"
+        };
+    }
 
     private BitColor GetStatusColor() => Sentence.Status switch
     {

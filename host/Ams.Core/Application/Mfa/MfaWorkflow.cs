@@ -2,6 +2,12 @@ using System.IO;
 using System.Text;
 using Ams.Core.Application.Processes;
 using Ams.Core.Application.Mfa.Models;
+
+using Ams.Core.Artifacts;
+using Ams.Core.Artifacts.Alignment;
+using Ams.Core.Artifacts.Hydrate;
+using Ams.Core.Processors;
+using Ams.Core.Processors.Alignment.Mfa;
 using Ams.Core.Runtime.Book;
 using Ams.Core.Runtime.Chapter;
 
@@ -9,7 +15,9 @@ namespace Ams.Core.Application.Mfa;
 
 public static class MfaWorkflow
 {
-    internal static async Task RunChapterAsync(
+    internal readonly record struct RunOutcome(bool PromptlessAsrRetryRecommended);
+
+    internal static async Task<RunOutcome> RunChapterAsync(
         ChapterContext chapterContext,
         FileInfo audioFile,
         FileInfo hydrateFile,
@@ -17,8 +25,13 @@ public static class MfaWorkflow
         DirectoryInfo chapterDirectory,
         CancellationToken cancellationToken,
         bool useDedicatedProcess = false,
-        string? workspaceRoot = null)
+        string? workspaceRoot = null,
+        MfaBeamSettings? beamSettings = null,
+        bool disableChunkedMfa = false,
+        bool requireAsrChunkAudio = false)
     {
+        var promptlessAsrRetryRecommended = false;
+
         if (!useDedicatedProcess)
         {
             await MfaProcessSupervisor.EnsureReadyAsync(cancellationToken).ConfigureAwait(false);
@@ -54,12 +67,48 @@ public static class MfaWorkflow
             }
         }
 
-        var stagedAudioPath = Path.Combine(corpusDir, chapterStem + ".wav");
-        StageAudio(audioFile, stagedAudioPath);
+        // Determine whether to use chunked or single-utterance corpus
+        var chunkPlan = chapterContext.Documents.ChunkPlan;
+        var chunkAudio = chapterContext.Documents.ChunkAudio;
+        var hydrate = chapterContext.Documents.HydratedTranscript;
+        MfaChunkCorpusBuilder.ChunkCorpusResult? chunkCorpus = null;
 
-        var corpusSource = new FileInfo(Path.Combine(chapterDirectory.FullName, chapterStem + ".asr.corpus.txt"));
-        var labPath = Path.Combine(corpusDir, chapterStem + ".lab");
-        await WriteLabFileAsync(hydrateFile, chapterContext, labPath, null, cancellationToken).ConfigureAwait(false);
+        if (disableChunkedMfa && chunkPlan is not null && chunkPlan.Chunks.Count > 1)
+        {
+            Log.Debug("Chunked MFA disabled by rollout flag; using single-utterance corpus path");
+        }
+        else if (chunkPlan is not null && hydrate is not null && chunkPlan.Chunks.Count > 1)
+        {
+            // Clean the corpus directory for fresh chunk output
+            CleanCorpusDirectory(corpusDir);
+
+            var audioBuffer = AudioProcessor.Decode(audioFile.FullName);
+            chunkCorpus = MfaChunkCorpusBuilder.Build(
+                audioBuffer,
+                chunkPlan,
+                hydrate,
+                corpusDir,
+                chunkAudio,
+                requireAsrChunkAudio,
+                chapterContext.Documents.Asr);
+
+            Log.Info("Using chunked MFA corpus: {Count} utterances from shared chunk plan", chunkCorpus.Utterances.Count);
+        }
+        else
+        {
+            // Legacy single-utterance path
+            var stagedAudioPath = Path.Combine(corpusDir, chapterStem + ".wav");
+            StageAudio(audioFile, stagedAudioPath);
+
+            var corpusSource = new FileInfo(Path.Combine(chapterDirectory.FullName, chapterStem + ".asr.corpus.txt"));
+            var labPath = Path.Combine(corpusDir, chapterStem + ".lab");
+            await WriteLabFileAsync(hydrateFile, chapterContext, labPath, null, cancellationToken).ConfigureAwait(false);
+
+            if (chunkPlan is not null && chunkPlan.Chunks.Count <= 1)
+            {
+                Log.Debug("Chunk plan has {Count} chunk(s); using single-utterance corpus path", chunkPlan.Chunks.Count);
+            }
+        }
 
         var dictionaryModel = MfaService.DefaultDictionaryModel;
         var acousticModel = MfaService.DefaultAcousticModel;
@@ -69,8 +118,8 @@ public static class MfaWorkflow
         var customDictionaryPath = Path.Combine(mfaRoot, chapterStem + ".dictionary.zip");
         var alignOutputDir = Path.Combine(mfaRoot, chapterStem + ".align");
 
-        const int FastAlignBeam = 80;
-        const int FastAlignRetryBeam = 200;
+        var resolvedBeam = beamSettings ?? MfaBeamSettings.Resolve(MfaBeamProfile.Balanced);
+        Log.Debug("MFA beam settings: beam={Beam}, retryBeam={RetryBeam}", resolvedBeam.Beam, resolvedBeam.RetryBeam);
 
         var baseContext = new MfaChapterContext
         {
@@ -82,8 +131,8 @@ public static class MfaWorkflow
             G2pModel = g2pModel,
             G2pOutputPath = g2pOutputPath,
             CustomDictionaryPath = customDictionaryPath,
-            Beam = FastAlignBeam,
-            RetryBeam = FastAlignRetryBeam,
+            Beam = resolvedBeam.Beam,
+            RetryBeam = resolvedBeam.RetryBeam,
             SingleSpeaker = true,
             CleanOutput = true
         };
@@ -132,25 +181,64 @@ public static class MfaWorkflow
             ? baseContext
             : baseContext with { CustomDictionaryPath = null };
 
-        Log.Debug("Running MFA align for chapter {Chapter}", chapterStem);
-        var alignUsingCorpus = false;
+        Log.Debug("Running MFA align for chapter {Chapter} ({Mode})", chapterStem,
+            chunkCorpus is not null ? $"chunked, {chunkCorpus.Utterances.Count} utterances" : "single-utterance");
 
-        while (true)
+        if (chunkCorpus is not null)
         {
+            // Chunked path: attempt chunked alignment, fall back to single-utterance on total failure.
+            // Chunked alignment can fail when ASR timings are too rough for accurate chunk-to-text mapping
+            // (chicken-and-egg: MFA produces accurate timings, but chunk labs depend on pre-MFA timings).
             try
             {
                 var alignResult = await service.AlignAsync(alignContext, cancellationToken).ConfigureAwait(false);
                 EnsureSuccess("mfa align", alignResult);
-                break;
             }
-            catch (InvalidOperationException ex) when (!alignUsingCorpus && corpusSource.Exists)
+            catch (InvalidOperationException ex)
             {
-                alignUsingCorpus = true;
-                Log.Warn("MFA align failed using hydrate transcript ({Message}). Retrying with ASR corpus {Corpus}.",
-                    ex.Message, corpusSource.FullName);
-                await WriteLabFileAsync(hydrateFile, chapterContext, labPath, corpusSource, cancellationToken)
+                Log.Warn(
+                    "Chunked MFA alignment failed ({Message}); falling back to single-utterance corpus",
+                    ex.Message);
+
+                // Rebuild corpus as single utterance (same as legacy path)
+                CleanCorpusDirectory(corpusDir);
+                var stagedAudioPath = Path.Combine(corpusDir, chapterStem + ".wav");
+                StageAudio(audioFile, stagedAudioPath);
+                var labPath = Path.Combine(corpusDir, chapterStem + ".lab");
+                await WriteLabFileAsync(hydrateFile, chapterContext, labPath, null, cancellationToken)
                     .ConfigureAwait(false);
-                continue;
+
+                // Discard chunk corpus so downstream skips aggregation
+                chunkCorpus = null;
+
+                var fallbackResult = await service.AlignAsync(alignContext, cancellationToken).ConfigureAwait(false);
+                EnsureSuccess("mfa align (single-utterance fallback)", fallbackResult);
+            }
+        }
+        else
+        {
+            // Legacy single-utterance path with ASR corpus fallback
+            var corpusSource = new FileInfo(Path.Combine(chapterDirectory.FullName, chapterStem + ".asr.corpus.txt"));
+            var labPath = Path.Combine(corpusDir, chapterStem + ".lab");
+            var alignUsingCorpus = false;
+
+            while (true)
+            {
+                try
+                {
+                    var alignResult = await service.AlignAsync(alignContext, cancellationToken).ConfigureAwait(false);
+                    EnsureSuccess("mfa align", alignResult);
+                    break;
+                }
+                catch (InvalidOperationException ex) when (!alignUsingCorpus && corpusSource.Exists)
+                {
+                    alignUsingCorpus = true;
+                    Log.Warn("MFA align failed using hydrate transcript ({Message}). Retrying with ASR corpus {Corpus}.",
+                        ex.Message, corpusSource.FullName);
+                    await WriteLabFileAsync(hydrateFile, chapterContext, labPath, corpusSource, cancellationToken)
+                        .ConfigureAwait(false);
+                    continue;
+                }
             }
         }
 
@@ -161,28 +249,92 @@ public static class MfaWorkflow
         CopyIfExists(Path.Combine(mfaRoot, chapterStem + ".dictionary.zip"),
             Path.Combine(mfaCopyDir, chapterStem + ".dictionary.zip"));
 
-        var textGridCandidates = new[]
+        if (chunkCorpus is not null)
         {
-            Path.Combine(alignOutputDir, "alignment", "mfa", chapterStem + ".TextGrid"),
-            Path.Combine(alignOutputDir, chapterStem + ".TextGrid")
-        };
-        foreach (var candidate in textGridCandidates)
-        {
-            if (File.Exists(candidate))
+            // Chunked path: collect per-utterance TextGrids and detect quality issues
+            var chunkResults = CollectChunkTextGrids(chunkCorpus.Utterances, alignOutputDir, mfaCopyDir);
+
+            // Adaptive strict retry: re-align only problematic chunks with strict beam
+            var failedChunks = chunkResults
+                .Where(r => r.Status != ChunkAlignmentStatus.Ok)
+                .ToList();
+
+            if (failedChunks.Count > 0)
             {
-                CopyIfExists(candidate, textGridCopyPath);
-                break;
+                promptlessAsrRetryRecommended = true;
+                Log.Info(
+                    "Chunked MFA detected {Failed}/{Total} problematic chunks " +
+                    "(missing={Missing}, empty={Empty}, lowCoverage={LowCoverage})",
+                    failedChunks.Count, chunkCorpus.Utterances.Count,
+                    failedChunks.Count(r => r.Status == ChunkAlignmentStatus.MissingOutput),
+                    failedChunks.Count(r => r.Status == ChunkAlignmentStatus.ParseFailure),
+                    failedChunks.Count(r => r.Status == ChunkAlignmentStatus.LowCoverage));
+                Log.Info(
+                    "Skipping strict MFA retry; recommend chapter ASR regeneration with prompt disabled before re-running alignment");
+            }
+
+            // Aggregate per-chunk TextGrids into canonical chapter-level TextGrid
+            var aggregatedCount = TextGridAggregationService.Aggregate(
+                chunkCorpus.Utterances,
+                mfaCopyDir,
+                textGridCopyPath);
+
+            if (aggregatedCount == 0)
+            {
+                Log.Warn("TextGrid aggregation produced no intervals; downstream merge may fail for {Chapter}", chapterStem);
+            }
+        }
+        else
+        {
+            // Legacy single-utterance TextGrid collection
+            var textGridCandidates = new[]
+            {
+                Path.Combine(alignOutputDir, "alignment", "mfa", chapterStem + ".TextGrid"),
+                Path.Combine(alignOutputDir, chapterStem + ".TextGrid")
+            };
+            foreach (var candidate in textGridCandidates)
+            {
+                if (File.Exists(candidate))
+                {
+                    CopyIfExists(candidate, textGridCopyPath);
+                    break;
+                }
             }
         }
 
         CopyIfExists(Path.Combine(alignOutputDir, "alignment", "mfa", "alignment_analysis.csv"),
             Path.Combine(mfaCopyDir, "alignment_analysis.csv"));
+
+        return new RunOutcome(promptlessAsrRetryRecommended);
     }
 
     private static string EnsureDirectory(string path)
     {
         Directory.CreateDirectory(path);
         return path;
+    }
+
+    /// <summary>
+    /// Removes all files from the corpus directory to prepare for fresh chunk output.
+    /// </summary>
+    private static void CleanCorpusDirectory(string corpusDir)
+    {
+        if (!Directory.Exists(corpusDir))
+        {
+            return;
+        }
+
+        foreach (var file in Directory.EnumerateFiles(corpusDir))
+        {
+            try
+            {
+                File.Delete(file);
+            }
+            catch (Exception ex)
+            {
+                Log.Debug("Failed to clean corpus file {Path}: {Message}", file, ex.Message);
+            }
+        }
     }
 
     private static void StageAudio(FileInfo source, string destination)
@@ -482,5 +634,109 @@ public static class MfaWorkflow
             Log.Debug("Failed to copy MFA artifact from {Source} to {Destination}: {Message}", sourcePath,
                 destinationPath, ex.Message);
         }
+    }
+
+    // ----------------------------------------------------------------
+    // Adaptive strict retry: chunk-level quality detection and retry
+    // ----------------------------------------------------------------
+
+    internal enum ChunkAlignmentStatus
+    {
+        Ok,
+        MissingOutput,
+        ParseFailure,
+        LowCoverage
+    }
+
+    internal sealed record ChunkAlignmentResult(
+        MfaChunkCorpusBuilder.UtteranceEntry Utterance,
+        ChunkAlignmentStatus Status,
+        int WordIntervalCount);
+
+    /// <summary>
+    /// Minimum ratio of word intervals to expected coverage (chunk duration / 0.3s per word estimate).
+    /// Chunks below this threshold are considered low-coverage and eligible for strict retry.
+    /// </summary>
+    private const double MinCoverageRatio = 0.15;
+
+    /// <summary>
+    /// Collects per-chunk TextGrid outputs from the alignment directory into the copy directory,
+    /// evaluating quality for each chunk.
+    /// </summary>
+    private static List<ChunkAlignmentResult> CollectChunkTextGrids(
+        IReadOnlyList<MfaChunkCorpusBuilder.UtteranceEntry> utterances,
+        string alignOutputDir,
+        string mfaCopyDir)
+    {
+        var results = new List<ChunkAlignmentResult>(utterances.Count);
+
+        foreach (var utt in utterances)
+        {
+            var destPath = Path.Combine(mfaCopyDir, utt.UtteranceName + ".TextGrid");
+            var sourcePath = FindUtteranceTextGrid(alignOutputDir, utt.UtteranceName);
+
+            if (sourcePath is null)
+            {
+                results.Add(new ChunkAlignmentResult(utt, ChunkAlignmentStatus.MissingOutput, 0));
+                continue;
+            }
+
+            CopyIfExists(sourcePath, destPath);
+
+            // Evaluate quality: parse word intervals
+            int wordCount;
+            try
+            {
+                var intervals = TextGridParser.ParseWordIntervals(destPath);
+                wordCount = intervals.Count(iv =>
+                    !string.IsNullOrWhiteSpace(iv.Text) &&
+                    !string.Equals(iv.Text, "sp", StringComparison.OrdinalIgnoreCase) &&
+                    !string.Equals(iv.Text, "sil", StringComparison.OrdinalIgnoreCase));
+            }
+            catch (Exception ex)
+            {
+                Log.Debug("TextGrid parse failure for chunk {Chunk}: {Message}", utt.UtteranceName, ex.Message);
+                results.Add(new ChunkAlignmentResult(utt, ChunkAlignmentStatus.ParseFailure, 0));
+                continue;
+            }
+
+            if (wordCount == 0)
+            {
+                results.Add(new ChunkAlignmentResult(utt, ChunkAlignmentStatus.ParseFailure, 0));
+                continue;
+            }
+
+            // Low-coverage heuristic: estimate expected words from chunk duration
+            var chunkDuration = utt.ChunkEndSec - utt.ChunkStartSec;
+            var expectedWords = chunkDuration / 0.3; // ~3.3 words/sec average speech rate
+            var coverageRatio = expectedWords > 0 ? wordCount / expectedWords : 1.0;
+
+            if (coverageRatio < MinCoverageRatio)
+            {
+                Log.Debug(
+                    "Low coverage for chunk {Chunk}: {Actual} words vs ~{Expected:F0} expected (ratio={Ratio:F2})",
+                    utt.UtteranceName, wordCount, expectedWords, coverageRatio);
+                results.Add(new ChunkAlignmentResult(utt, ChunkAlignmentStatus.LowCoverage, wordCount));
+                continue;
+            }
+
+            results.Add(new ChunkAlignmentResult(utt, ChunkAlignmentStatus.Ok, wordCount));
+        }
+
+        return results;
+    }
+
+    /// <summary>
+    /// Finds the TextGrid output file for a given utterance name across known MFA output locations.
+    /// </summary>
+    private static string? FindUtteranceTextGrid(string alignOutputDir, string utteranceName)
+    {
+        var candidates = new[]
+        {
+            Path.Combine(alignOutputDir, "alignment", "mfa", utteranceName + ".TextGrid"),
+            Path.Combine(alignOutputDir, utteranceName + ".TextGrid")
+        };
+
+        return candidates.FirstOrDefault(File.Exists);
     }
 }

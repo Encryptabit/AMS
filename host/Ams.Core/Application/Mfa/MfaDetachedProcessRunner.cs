@@ -61,6 +61,7 @@ internal static class MfaDetachedProcessRunner
             if (!string.IsNullOrWhiteSpace(resolvedWorkspaceRoot))
             {
                 Directory.CreateDirectory(resolvedWorkspaceRoot);
+                MfaWorkspaceResolver.ResetCommandHistoryFile(resolvedWorkspaceRoot);
                 psi.Environment["MFA_ROOT_DIR"] = resolvedWorkspaceRoot;
             }
 

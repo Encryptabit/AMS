@@ -37,6 +37,11 @@ public static class TreatCommand
             "Silence detection threshold in dB (default: -55; quieter speech may need around -63)");
         silenceThresholdOption.AddAlias("--silence-db");
 
+        var paddingOption = new Option<double?>(
+            "--padding-ms",
+            "Safety padding in milliseconds added around detected heading/content boundaries (default: 0)");
+        paddingOption.AddAlias("-p");
+
         var minSilenceDurationOption = new Option<double?>(
             "--min-silence-duration",
             "Minimum silence duration in seconds (default: 0.05)");
@@ -53,6 +58,7 @@ public static class TreatCommand
         cmd.AddOption(gapOption);
         cmd.AddOption(postrollOption);
         cmd.AddOption(silenceThresholdOption);
+        cmd.AddOption(paddingOption);
         cmd.AddOption(minSilenceDurationOption);
         cmd.AddOption(forceOption);
 
@@ -67,6 +73,7 @@ public static class TreatCommand
                 var gapValue = context.ParseResult.GetValueForOption(gapOption);
                 var postrollValue = context.ParseResult.GetValueForOption(postrollOption);
                 var silenceThresholdValue = context.ParseResult.GetValueForOption(silenceThresholdOption);
+                var paddingValue = context.ParseResult.GetValueForOption(paddingOption);
                 var minSilenceDurationValue = context.ParseResult.GetValueForOption(minSilenceDurationOption);
                 var force = context.ParseResult.GetValueForOption(forceOption);
 
@@ -110,6 +117,17 @@ public static class TreatCommand
                     }
 
                     options = options with { SilenceThresholdDb = silenceThresholdValue.Value };
+                }
+                if (paddingValue.HasValue)
+                {
+                    if (paddingValue.Value < 0 || paddingValue.Value > 1000)
+                    {
+                        Log.Error("Invalid --padding-ms value {Value}. Expected a range between 0 and 1000 milliseconds.", paddingValue.Value);
+                        context.ExitCode = 1;
+                        return;
+                    }
+
+                    options = options with { BoundaryPaddingSeconds = paddingValue.Value / 1000.0 };
                 }
                 if (minSilenceDurationValue.HasValue)
                 {

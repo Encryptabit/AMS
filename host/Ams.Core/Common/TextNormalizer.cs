@@ -103,6 +103,11 @@ public static partial class TextNormalizer
         // Preserve apostrophes so contractions like "he'd" remain a single token when not expanded.
         normalized = PunctuationRegex().Replace(normalized, " ");
 
+        // Strip apostrophes used as quotation marks (not mid-word contractions like don't).
+        // A leading apostrophe (not preceded by a word char) or trailing apostrophe
+        // (not followed by a word char) is a surviving quote mark, not a contraction.
+        normalized = OrphanApostropheRegex().Replace(normalized, "");
+
         if (options.RemoveNumbers)
         {
             normalized = NumbersRegex().Replace(normalized, " ");
@@ -292,6 +297,9 @@ public static partial class TextNormalizer
 
     [GeneratedRegex(@"[^\w\s']", RegexOptions.CultureInvariant)]
     private static partial Regex PunctuationRegex();
+
+    [GeneratedRegex(@"(?<!\w)'|'(?!\w)", RegexOptions.CultureInvariant)]
+    private static partial Regex OrphanApostropheRegex();
 
     [GeneratedRegex(@"\b\d+\b", RegexOptions.CultureInvariant)]
     private static partial Regex NumbersRegex();

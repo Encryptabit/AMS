@@ -14,6 +14,11 @@ internal static unsafe class FfEncoder
 {
     private const int DefaultChunkSamples = 4096;
     private const int CustomIoBufferSize = 32 * 1024;
+    private static readonly AvioSeekDelegate SeekDelegate = AvioSeek;
+    private static readonly IntPtr SeekCallbackPtr = Marshal.GetFunctionPointerForDelegate(SeekDelegate);
+
+    [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+    private unsafe delegate long AvioSeekDelegate(void* opaque, long offset, int whence);
 
     public static void EncodeToDynamicBuffer(AudioBuffer buffer, Stream output, AudioEncodeOptions? options = null)
     {
@@ -69,6 +74,7 @@ internal static unsafe class FfEncoder
         var pinnedPointers = Array.Empty<IntPtr>();
         AVChannelLayout inputLayout = default;
         var inputLayoutInitialized = false;
+        avio_alloc_context_seek_func? seekCallback = null;
 
         try
         {
@@ -97,7 +103,7 @@ internal static unsafe class FfEncoder
             avcodec_parameters_from_context(stream->codecpar, cc);
             stream->time_base = cc->time_base;
 
-            SetupIo(fmt, output, sink, ref customIo, ref streamHandle, ref writeCallback);
+            SetupIo(fmt, output, sink, ref customIo, ref streamHandle, ref writeCallback, ref seekCallback);
             ThrowIfError(avformat_write_header(fmt, null), nameof(avformat_write_header));
 
             inputLayout = CreateDefaultChannelLayout(buffer.Channels);
@@ -163,7 +169,7 @@ internal static unsafe class FfEncoder
                 avcodec_free_context(&cc);
             }
 
-            CleanupIo(fmt, sink, ref customIo, ref streamHandle, writeCallback);
+            CleanupIo(fmt, sink, ref customIo, ref streamHandle, writeCallback, seekCallback);
 
             if (fmt != null)
             {
@@ -384,7 +390,8 @@ internal static unsafe class FfEncoder
         EncoderSink sink,
         ref AVIOContext* customIo,
         ref GCHandle handle,
-        ref avio_alloc_context_write_packet? writeCallback)
+        ref avio_alloc_context_write_packet? writeCallback,
+        ref avio_alloc_context_seek_func? seekCallback)
     {
         if (sink == EncoderSink.DynamicBuffer)
         {
@@ -400,6 +407,9 @@ internal static unsafe class FfEncoder
 
         handle = GCHandle.Alloc(output, GCHandleType.Normal);
         writeCallback = AvioWritePacket;
+        seekCallback = output.CanSeek
+            ? new avio_alloc_context_seek_func { Pointer = SeekCallbackPtr }
+            : null;
 
         var handlePtr = GCHandle.ToIntPtr(handle);
 
@@ -410,7 +420,7 @@ internal static unsafe class FfEncoder
             (void*)handlePtr,
             null,
             writeCallback,
-            null);
+            seekCallback ?? default);
 
         if (customIo == null)
         {
@@ -419,6 +429,7 @@ internal static unsafe class FfEncoder
             throw new InvalidOperationException("avio_alloc_context failed");
         }
 
+        customIo->seekable = output.CanSeek ? AVIO_SEEKABLE_NORMAL : 0;
         fmt->pb = customIo;
         fmt->flags |= AVFMT_FLAG_CUSTOM_IO;
     }
@@ -451,6 +462,8 @@ internal static unsafe class FfEncoder
         {
             avio_flush(customIo);
         }
+
+        output.Flush();
     }
 
     private static unsafe void CleanupIo(
@@ -458,7 +471,8 @@ internal static unsafe class FfEncoder
         EncoderSink sink,
         ref AVIOContext* customIo,
         ref GCHandle handle,
-        avio_alloc_context_write_packet? writeCallback)
+        avio_alloc_context_write_packet? writeCallback,
+        avio_alloc_context_seek_func? seekCallback)
     {
         if (sink == EncoderSink.CustomStream)
         {
@@ -483,6 +497,11 @@ internal static unsafe class FfEncoder
             if (writeCallback != null)
             {
                 GC.KeepAlive(writeCallback);
+            }
+
+            if (seekCallback != null)
+            {
+                GC.KeepAlive(seekCallback);
             }
         }
 
@@ -514,6 +533,40 @@ internal static unsafe class FfEncoder
         }
     }
 
+    private static unsafe long AvioSeek(void* opaque, long offset, int whence)
+    {
+        const int SeekSet = 0;
+        const int SeekCur = 1;
+        const int SeekEnd = 2;
+
+        try
+        {
+            var handle = GCHandle.FromIntPtr((IntPtr)opaque);
+            var stream = (Stream)handle.Target!;
+            if (!stream.CanSeek)
+            {
+                return -1;
+            }
+
+            if (whence == AVSEEK_SIZE)
+            {
+                return stream.Length;
+            }
+
+            return whence switch
+            {
+                SeekSet => stream.Seek(offset, SeekOrigin.Begin),
+                SeekCur => stream.Seek(offset, SeekOrigin.Current),
+                SeekEnd => stream.Seek(offset, SeekOrigin.End),
+                _ => -1,
+            };
+        }
+        catch
+        {
+            return -1;
+        }
+    }
+
     private sealed unsafe class StreamingEncoderSink : FfFilterGraphRunner.IAudioFrameSink
     {
         private readonly Stream _output;
@@ -526,6 +579,7 @@ internal static unsafe class FfEncoder
         private AVFrame* _frame;
         private GCHandle _streamHandle;
         private avio_alloc_context_write_packet? _writeCallback;
+        private avio_alloc_context_seek_func? _seekCallback;
         private int _inputSampleRate;
         private int _inputChannels;
         private int _targetSampleRate;
@@ -598,7 +652,7 @@ internal static unsafe class FfEncoder
             _stream->time_base = _codecContext->time_base;
 
             SetupIo(_formatContext, _output, EncoderSink.CustomStream, ref _customIo, ref _streamHandle,
-                ref _writeCallback);
+                ref _writeCallback, ref _seekCallback);
             ThrowIfError(avformat_write_header(_formatContext, null), nameof(avformat_write_header));
 
             var inputLayout = CreateDefaultChannelLayout(_inputChannels);
@@ -720,7 +774,8 @@ internal static unsafe class FfEncoder
 
             if (_formatContext != null)
             {
-                CleanupIo(_formatContext, EncoderSink.CustomStream, ref _customIo, ref _streamHandle, _writeCallback);
+                CleanupIo(_formatContext, EncoderSink.CustomStream, ref _customIo, ref _streamHandle, _writeCallback,
+                    _seekCallback);
                 avformat_free_context(_formatContext);
                 _formatContext = null;
             }

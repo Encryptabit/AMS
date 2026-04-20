@@ -6,25 +6,27 @@ using System.Text.Json;
 using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
+using Ams.Core.Artifacts;
+using Ams.Core.Artifacts.Alignment;
 using Ams.Core.Artifacts.Hydrate;
 using Ams.Core.Asr;
 using Ams.Core.Audio;
 using Ams.Core.Common;
 using Ams.Core.Processors;
+using Ams.Core.Services.Alignment;
 using Ams.Workstation.Server.Models;
 
 namespace Ams.Workstation.Server.Services;
 
 /// <summary>
-/// Runs ASR on pickup recording files and matches recognized utterances to
-/// CRX target sentences using positional pairing (CRX order drives the match).
-/// Levenshtein similarity is used as a confidence metric, not a filter.
+/// Runs ASR on pickup recording files and matches segmented pickup utterances to
+/// CRX targets. Session-file pairing is deterministic and CRX-driven: MFA-refined
+/// pickup segment ranges are assigned to CRX entries in ErrorNumber order.
 /// </summary>
 public class PickupMatchingService
 {
-    private const double LowConfidenceThreshold = 0.4;
     private const double MinSegmentDurationSec = 0.3;
-    private const double UtteranceGapSec = 0.8;
+    private const int MaxSegmentsPerTarget = 6;
 
     private static readonly Regex PunctuationRegex = new(@"[^\w\s]", RegexOptions.Compiled);
     private static readonly Regex WhitespaceRegex = new(@"\s+", RegexOptions.Compiled);
@@ -36,6 +38,7 @@ public class PickupMatchingService
 
     private readonly BlazorWorkspace _workspace;
     private readonly PickupMfaRefinementService _mfaRefinement;
+    private readonly ChunkPlanningService _chunkPlanning = new();
 
     public PickupMatchingService(BlazorWorkspace workspace, PickupMfaRefinementService mfaRefinement)
     {
@@ -57,17 +60,27 @@ public class PickupMatchingService
         ArgumentNullException.ThrowIfNull(crxTargets);
 
         if (crxTargets.Count == 0)
-            return new List<PickupMatch>();
+        {
+            throw new InvalidOperationException(
+                "Pickup import requires CRX.json targets. No CRX targets were provided for deterministic pairing.");
+        }
+
+        var pickupBuffer = AudioProcessor.Decode(pickupFilePath);
+        var asrReady = AsrAudioPreparer.PrepareForAsr(pickupBuffer);
+        var chunkPlan = _chunkPlanning.GeneratePlan(asrReady, pickupFilePath, new ChunkPlanningPolicy()
+        {
+            MaxChunkDuration = TimeSpan.FromSeconds(15),
+            MinChunkDuration = TimeSpan.FromSeconds(5),
+            MinSilenceDuration = TimeSpan.FromSeconds(2)
+        });
 
         // 1. ASR on full WAV (with named artifact cache)
         var asrResponse = TryReadNamedAsrCache(pickupFilePath);
 
         if (asrResponse == null)
         {
-            var pickupBuffer = AudioProcessor.Decode(pickupFilePath);
-            var asrReady = AsrAudioPreparer.PrepareForAsr(pickupBuffer);
             var asrOptions = await BuildAsrOptionsAsync(ct).ConfigureAwait(false);
-            asrResponse = await AsrProcessor.TranscribeBufferAsync(asrReady, asrOptions, ct)
+            asrResponse = await TranscribePickupBufferAsync(asrReady, chunkPlan, asrOptions, ct)
                 .ConfigureAwait(false);
             WriteNamedAsrCache(pickupFilePath, asrResponse);
         }
@@ -75,171 +88,37 @@ public class PickupMatchingService
         // 2. MFA refinement
         asrResponse = await _mfaRefinement.RefineAsrTimingsAsync(
             pickupFilePath,
+            asrReady,
+            chunkPlan,
             asrResponse,
             ct).ConfigureAwait(false);
         WriteNamedMfaCache(asrResponse);
 
-        // 3. Utterance segmentation: detect gaps >= 0.8s between MFA-refined tokens
-        var tokens = asrResponse.Tokens;
-        if (tokens is not { Length: > 0 })
-            return new List<PickupMatch>();
-
-        var segments = SegmentUtterances(tokens);
-
-        // 4. CRX positional pairing
         var sortedTargets = crxTargets.OrderBy(t => t.ErrorNumber).ToList();
-        var matches = PairSegmentsToTargets(segments, sortedTargets);
 
-        return matches;
+        // 3. Collapse ASR/MFA segments back to CRX-target utterances. Whisper sentence
+        //    segments often split one pickup into multiple fragments, so deterministic
+        //    pairing needs a partitioning pass rather than a raw count equality check.
+        if (asrResponse.Segments is not { Length: > 0 })
+        {
+            throw new InvalidOperationException(
+                "Pickup import could not derive any MFA-refined pickup segments from the session file.");
+        }
+
+        var segments = BuildDeterministicSegments(asrResponse.Segments, sortedTargets);
+        if (segments.Count != crxTargets.Count)
+        {
+            throw new InvalidOperationException(
+                $"Deterministic CRX pairing requires equal counts, but MFA produced {segments.Count} pickup segments for {crxTargets.Count} CRX targets.");
+        }
+
+        return PairSegmentsToTargets(segments, sortedTargets);
     }
 
     /// <summary>
-    /// Segments ASR tokens into utterances based on silence gaps.
-    /// Short fragments are merged into neighboring segments rather than dropped.
-    /// </summary>
-    private static List<PickupSegment> SegmentUtterances(AsrToken[] tokens)
-    {
-        var segments = new List<PickupSegment>();
-        if (tokens.Length == 0)
-            return segments;
-
-        // MFA-refined tokens can occasionally be non-monotonic; normalize order first.
-        var orderedTokens = tokens
-            .Select((token, index) => (Token: token, Index: index))
-            .OrderBy(x => x.Token.StartTime)
-            .ThenBy(x => x.Index)
-            .Select(x => x.Token)
-            .ToArray();
-
-        var tokenGroups = new List<List<AsrToken>>();
-        var currentGroup = new List<AsrToken> { orderedTokens[0] };
-
-        for (int i = 1; i < orderedTokens.Length; i++)
-        {
-            var previous = currentGroup[^1];
-            var prevEnd = previous.StartTime + Math.Max(0.01, previous.Duration);
-            var gap = orderedTokens[i].StartTime - prevEnd;
-
-            if (gap >= UtteranceGapSec)
-            {
-                tokenGroups.Add(currentGroup);
-                currentGroup = new List<AsrToken>();
-            }
-
-            currentGroup.Add(orderedTokens[i]);
-        }
-
-        if (currentGroup.Count > 0)
-            tokenGroups.Add(currentGroup);
-
-        MergeShortTokenGroups(tokenGroups);
-
-        foreach (var group in tokenGroups)
-        {
-            var (startSec, endSec, text, durationSec) = DescribeTokenGroup(group);
-            if (string.IsNullOrWhiteSpace(text))
-                continue;
-
-            if (durationSec < MinSegmentDurationSec)
-            {
-                Log.Debug(
-                    "Keeping isolated short segment ({Duration:F2}s < {Min:F1}s): \"{Text}\"",
-                    durationSec, MinSegmentDurationSec, text);
-            }
-
-            segments.Add(new PickupSegment(startSec, endSec, text));
-        }
-
-        return segments;
-    }
-
-    private static void MergeShortTokenGroups(List<List<AsrToken>> tokenGroups)
-    {
-        if (tokenGroups.Count <= 1)
-            return;
-
-        int i = 0;
-        while (i < tokenGroups.Count)
-        {
-            var (_, _, text, durationSec) = DescribeTokenGroup(tokenGroups[i]);
-            if (durationSec >= MinSegmentDurationSec || string.IsNullOrWhiteSpace(text))
-            {
-                i++;
-                continue;
-            }
-
-            var mergeTargetIndex = ChooseMergeTarget(tokenGroups, i);
-            if (mergeTargetIndex < 0)
-            {
-                i++;
-                continue;
-            }
-
-            Log.Debug(
-                "Merging short segment ({Duration:F2}s < {Min:F1}s): \"{Text}\"",
-                durationSec, MinSegmentDurationSec, text);
-
-            if (mergeTargetIndex < i)
-            {
-                tokenGroups[mergeTargetIndex].AddRange(tokenGroups[i]);
-            }
-            else
-            {
-                tokenGroups[mergeTargetIndex].InsertRange(0, tokenGroups[i]);
-            }
-
-            tokenGroups.RemoveAt(i);
-            i = Math.Max(0, i - 1);
-        }
-    }
-
-    private static int ChooseMergeTarget(IReadOnlyList<List<AsrToken>> tokenGroups, int index)
-    {
-        if (tokenGroups.Count <= 1)
-            return -1;
-
-        if (index == 0)
-            return 1;
-
-        if (index == tokenGroups.Count - 1)
-            return index - 1;
-
-        var (_, prevEndSec, _, _) = DescribeTokenGroup(tokenGroups[index - 1]);
-        var (currentStartSec, currentEndSec, _, _) = DescribeTokenGroup(tokenGroups[index]);
-        var (nextStartSec, _, _, _) = DescribeTokenGroup(tokenGroups[index + 1]);
-
-        var gapToPrevious = Math.Abs(currentStartSec - prevEndSec);
-        var gapToNext = Math.Abs(nextStartSec - currentEndSec);
-        return gapToNext <= gapToPrevious ? index + 1 : index - 1;
-    }
-
-    private static (double StartSec, double EndSec, string Text, double DurationSec) DescribeTokenGroup(
-        IReadOnlyList<AsrToken> tokenGroup)
-    {
-        if (tokenGroup.Count == 0)
-            return (0, 0, string.Empty, 0);
-
-        var startSec = tokenGroup[0].StartTime;
-        var endSec = tokenGroup[0].StartTime + Math.Max(0.01, tokenGroup[0].Duration);
-
-        for (int i = 1; i < tokenGroup.Count; i++)
-        {
-            var token = tokenGroup[i];
-            var tokenStart = token.StartTime;
-            var tokenEnd = token.StartTime + Math.Max(0.01, token.Duration);
-            if (tokenStart < startSec) startSec = tokenStart;
-            if (tokenEnd > endSec) endSec = tokenEnd;
-        }
-
-        var text = string.Join(" ", tokenGroup.Select(t => t.Word)).Trim();
-        var durationSec = Math.Max(0, endSec - startSec);
-        return (startSec, endSec, text, durationSec);
-    }
-
-    /// <summary>
-    /// Pairs utterance segments to CRX targets using positional alignment.
-    /// When there are more segments than targets, finds the best starting offset
-    /// by maximizing total confidence.
+    /// Pairs utterance segments to CRX targets deterministically in ErrorNumber order.
+    /// The MFA-refined pickup segment timing range becomes the pickup range owned by
+    /// the corresponding CRX entry. Counts must match exactly.
     /// </summary>
     private static List<PickupMatch> PairSegmentsToTargets(
         List<PickupSegment> segments,
@@ -248,117 +127,247 @@ public class PickupMatchingService
         if (segments.Count == 0 || targets.Count == 0)
             return new List<PickupMatch>();
 
-        // Find best starting offset when segment count differs from target count
-        int bestOffset = 0;
-        double bestTotalConfidence = -1;
-
-        int maxOffset = Math.Max(0, segments.Count - targets.Count);
-        for (int offset = 0; offset <= maxOffset; offset++)
+        if (segments.Count != targets.Count)
         {
-            double totalConfidence = 0;
-            int pairCount = Math.Min(targets.Count, segments.Count - offset);
-
-            for (int i = 0; i < pairCount; i++)
-            {
-                var segment = segments[offset + i];
-                var target = targets[i];
-                var normalizedSegment = NormalizeForMatch(segment.TranscribedText);
-                var normalizedTarget = NormalizeForMatch(target.ShouldBeText);
-                totalConfidence += LevenshteinMetrics.Similarity(normalizedSegment, normalizedTarget);
-            }
-
-            if (totalConfidence > bestTotalConfidence)
-            {
-                bestTotalConfidence = totalConfidence;
-                bestOffset = offset;
-            }
+            throw new InvalidOperationException(
+                $"Deterministic CRX pairing requires equal counts, but detected {segments.Count} pickup segments " +
+                $"for {targets.Count} CRX targets. Re-import after fixing segmentation or CRX coverage.");
         }
 
-        // Pair using best offset
+        Log.Debug(
+            "Pickup matching strategy selected: deterministic-crx-order (segments={Segments}, targets={Targets})",
+            segments.Count,
+            targets.Count);
+
         var matches = new List<PickupMatch>();
-        int pairsToMake = Math.Min(targets.Count, segments.Count - bestOffset);
 
-        if (pairsToMake < targets.Count)
+        for (int i = 0; i < targets.Count; i++)
         {
-            Log.Warn(
-                "Fewer segments ({Segments}) than targets ({Targets}); {Unpaired} targets will be unmatched",
-                segments.Count, targets.Count, targets.Count - pairsToMake);
-        }
-
-        for (int i = 0; i < pairsToMake; i++)
-        {
-            var segment = segments[bestOffset + i];
+            var segment = segments[i];
             var target = targets[i];
-
-            var normalizedSegment = NormalizeForMatch(segment.TranscribedText);
-            var normalizedTarget = NormalizeForMatch(target.ShouldBeText);
-            var confidence = LevenshteinMetrics.Similarity(normalizedSegment, normalizedTarget);
-            var isLowConfidence = confidence < LowConfidenceThreshold;
-
-            if (isLowConfidence)
-            {
-                Log.Warn(
-                    "Low confidence match for error #{ErrorNumber} (sentence {SentenceId}): " +
-                    "confidence={Confidence:F3}, expected=\"{Expected}\", got=\"{Got}\"",
-                    target.ErrorNumber, target.SentenceId, confidence,
-                    target.ShouldBeText, segment.TranscribedText);
-            }
 
             matches.Add(new PickupMatch(
                 SentenceId: target.SentenceId,
                 PickupStartSec: segment.StartSec,
                 PickupEndSec: segment.EndSec,
-                Confidence: confidence,
+                Confidence: 1.0,
                 RecognizedText: segment.TranscribedText,
                 ErrorNumber: target.ErrorNumber,
-                IsLowConfidence: isLowConfidence));
+                IsLowConfidence: false));
         }
 
         return matches;
     }
 
+    internal static List<PickupSegment> BuildDeterministicSegments(
+        IReadOnlyList<AsrSegment> segments,
+        IReadOnlyList<CrxPickupTarget> targets)
+    {
+        var result = ConvertAsrSegments(segments);
+        if (result.Count == 0 || targets.Count == 0 || result.Count == targets.Count || result.Count < targets.Count)
+        {
+            return result;
+        }
+
+        return MergeSegmentsToTargets(result, targets);
+    }
+
+    private static List<PickupSegment> ConvertAsrSegments(IReadOnlyList<AsrSegment> segments)
+    {
+        var result = new List<PickupSegment>(segments.Count);
+        foreach (var segment in segments)
+        {
+            if (segment.EndSec <= segment.StartSec)
+            {
+                continue;
+            }
+
+            var text = segment.Text?.Trim() ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(text))
+            {
+                continue;
+            }
+
+            result.Add(new PickupSegment(segment.StartSec, segment.EndSec, text));
+        }
+
+        return result;
+    }
+
+    private static List<PickupSegment> MergeSegmentsToTargets(
+        IReadOnlyList<PickupSegment> segments,
+        IReadOnlyList<CrxPickupTarget> targets)
+    {
+        var segmentCount = segments.Count;
+        var targetCount = targets.Count;
+        var costs = new double[segmentCount + 1, targetCount + 1];
+        var previous = new int[segmentCount + 1, targetCount + 1];
+
+        for (var i = 0; i <= segmentCount; i++)
+        {
+            for (var j = 0; j <= targetCount; j++)
+            {
+                costs[i, j] = double.PositiveInfinity;
+                previous[i, j] = -1;
+            }
+        }
+
+        costs[0, 0] = 0;
+
+        for (var consumedSegments = 0; consumedSegments < segmentCount; consumedSegments++)
+        {
+            for (var consumedTargets = 0; consumedTargets < targetCount; consumedTargets++)
+            {
+                var baseCost = costs[consumedSegments, consumedTargets];
+                if (double.IsPositiveInfinity(baseCost))
+                {
+                    continue;
+                }
+
+                var remainingTargetsAfterCurrent = targetCount - consumedTargets - 1;
+                var maxEndExclusive = Math.Min(
+                    segmentCount - remainingTargetsAfterCurrent,
+                    consumedSegments + MaxSegmentsPerTarget);
+
+                for (var endExclusive = consumedSegments + 1; endExclusive <= maxEndExclusive; endExclusive++)
+                {
+                    var candidate = MergeSegmentRange(segments, consumedSegments, endExclusive);
+                    var assignmentCost =
+                        ComputeAssignmentCost(candidate.TranscribedText, targets[consumedTargets].ShouldBeText);
+                    var totalCost = baseCost + assignmentCost;
+
+                    if (totalCost < costs[endExclusive, consumedTargets + 1])
+                    {
+                        costs[endExclusive, consumedTargets + 1] = totalCost;
+                        previous[endExclusive, consumedTargets + 1] = consumedSegments;
+                    }
+                }
+            }
+        }
+
+        if (double.IsPositiveInfinity(costs[segmentCount, targetCount]))
+        {
+            return segments.ToList();
+        }
+
+        var merged = new List<PickupSegment>(targetCount);
+        var segmentIndex = segmentCount;
+        var targetIndex = targetCount;
+
+        while (targetIndex > 0)
+        {
+            var startIndex = previous[segmentIndex, targetIndex];
+            if (startIndex < 0)
+            {
+                return segments.ToList();
+            }
+
+            merged.Add(MergeSegmentRange(segments, startIndex, segmentIndex));
+            segmentIndex = startIndex;
+            targetIndex--;
+        }
+
+        merged.Reverse();
+        return merged;
+    }
+
+    private static PickupSegment MergeSegmentRange(
+        IReadOnlyList<PickupSegment> segments,
+        int startIndex,
+        int endExclusive)
+    {
+        var startSec = segments[startIndex].StartSec;
+        var endSec = segments[endExclusive - 1].EndSec;
+        var text = string.Join(" ", segments
+                .Skip(startIndex)
+                .Take(endExclusive - startIndex)
+                .Select(s => s.TranscribedText)
+                .Where(t => !string.IsNullOrWhiteSpace(t)))
+            .Trim();
+
+        return new PickupSegment(startSec, endSec, text);
+    }
+
+    private static double ComputeAssignmentCost(string candidateText, string targetText)
+    {
+        var candidateWords = SplitNormalizedWords(candidateText);
+        var targetWords = SplitNormalizedWords(targetText);
+        if (candidateWords.Count == 0 && targetWords.Count == 0)
+        {
+            return 0;
+        }
+
+        if (candidateWords.Count == 0 || targetWords.Count == 0)
+        {
+            return 1;
+        }
+
+        var distance = ComputeWordEditDistance(candidateWords, targetWords);
+        var maxWordCount = Math.Max(candidateWords.Count, targetWords.Count);
+        return distance / (double)maxWordCount;
+    }
+
+    private static IReadOnlyList<string> SplitNormalizedWords(string text)
+    {
+        var normalized = NormalizeForMatch(text);
+        if (string.IsNullOrWhiteSpace(normalized))
+        {
+            return Array.Empty<string>();
+        }
+
+        return normalized.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+    }
+
+    private static int ComputeWordEditDistance(IReadOnlyList<string> left, IReadOnlyList<string> right)
+    {
+        var dp = new int[left.Count + 1, right.Count + 1];
+
+        for (var i = 0; i <= left.Count; i++)
+        {
+            dp[i, 0] = i;
+        }
+
+        for (var j = 0; j <= right.Count; j++)
+        {
+            dp[0, j] = j;
+        }
+
+        for (var i = 1; i <= left.Count; i++)
+        {
+            for (var j = 1; j <= right.Count; j++)
+            {
+                var substitutionCost = string.Equals(left[i - 1], right[j - 1], StringComparison.Ordinal)
+                    ? 0
+                    : 1;
+
+                dp[i, j] = Math.Min(
+                    Math.Min(dp[i - 1, j] + 1, dp[i, j - 1] + 1),
+                    dp[i - 1, j - 1] + substitutionCost);
+            }
+        }
+
+        return dp[left.Count, right.Count];
+    }
+
     /// <summary>
-    /// Simplified matching for individual pickup files (one per sentence).
-    /// Runs ASR on the entire file and creates a match with the specified target sentence.
+    /// Individual-file pickup matching is intentionally unsupported.
+    /// The pickup pipeline requires a single stitched pickup WAV and CRX-driven ordering.
     /// </summary>
     public async Task<PickupMatch> MatchSinglePickupAsync(
         string pickupFilePath,
         HydratedSentence targetSentence,
         CancellationToken ct)
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(pickupFilePath);
-        ArgumentNullException.ThrowIfNull(targetSentence);
-
-        var pickupBuffer = AudioProcessor.Decode(pickupFilePath);
-        var asrReady = AsrAudioPreparer.PrepareForAsr(pickupBuffer);
-
-        var asrOptions = await BuildAsrOptionsAsync(ct).ConfigureAwait(false);
-        var asrResponse = await AsrProcessor.TranscribeBufferAsync(asrReady, asrOptions, ct)
-            .ConfigureAwait(false);
-
-        var recognizedText = ExtractFullText(asrResponse);
-        var pickupDuration = (double)pickupBuffer.Length / pickupBuffer.SampleRate;
-
-        double confidence = 0;
-        if (!string.IsNullOrWhiteSpace(recognizedText))
-        {
-            var normalizedRecognized = NormalizeForMatch(recognizedText);
-            var normalizedTarget = NormalizeForMatch(targetSentence.BookText);
-            confidence = LevenshteinMetrics.Similarity(normalizedRecognized, normalizedTarget);
-        }
-
-        return new PickupMatch(
-            SentenceId: targetSentence.Id,
-            PickupStartSec: 0,
-            PickupEndSec: pickupDuration,
-            Confidence: confidence,
-            RecognizedText: recognizedText ?? string.Empty);
+        await Task.CompletedTask;
+        throw new NotSupportedException(
+            "Individual-file pickup matching is not supported. Use a single stitched pickup WAV with CRX targets.");
     }
 
     /// <summary>
     /// Extracts the full recognized text from an ASR response by joining token words.
+    /// Public for reuse by <see cref="PickupAssetService"/> and other callers.
     /// </summary>
-    internal static string ExtractFullText(AsrResponse response)
+    public static string ExtractFullText(AsrResponse response)
     {
         if (response.Tokens is { Length: > 0 })
         {
@@ -375,8 +384,9 @@ public class PickupMatchingService
 
     /// <summary>
     /// Normalizes text for fuzzy matching: lowercase, collapse whitespace, remove punctuation.
+    /// Public for reuse by <see cref="PickupAssetService"/> and other callers.
     /// </summary>
-    internal static string NormalizeForMatch(string text)
+    public static string NormalizeForMatch(string text)
     {
         if (string.IsNullOrWhiteSpace(text))
             return string.Empty;
@@ -397,12 +407,81 @@ public class PickupMatchingService
             EnableWordTimestamps: true);
     }
 
+    private async Task<AsrResponse> TranscribePickupBufferAsync(
+        AudioBuffer asrReady,
+        ChunkPlanDocument chunkPlan,
+        AsrOptions asrOptions,
+        CancellationToken ct)
+    {
+        if (chunkPlan.Chunks.Count <= 1)
+        {
+            return await AsrProcessor.TranscribeBufferAsync(asrReady, asrOptions, ct).ConfigureAwait(false);
+        }
+
+        var totalDuration = asrReady.Length / (double)asrReady.SampleRate;
+        Log.Debug(
+            "Pickup ASR chunk-plan driven: {ChunkCount} chunks from {TotalDuration:F1}s audio",
+            chunkPlan.Chunks.Count,
+            totalDuration);
+
+        var chunkResults = new List<(AsrResponse Response, double OffsetSec)>(chunkPlan.Chunks.Count);
+        foreach (var entry in chunkPlan.Chunks)
+        {
+            ct.ThrowIfCancellationRequested();
+            var slice = asrReady.Slice(entry.StartSample, entry.LengthSamples);
+            var response = await AsrProcessor.TranscribeBufferAsync(slice, asrOptions, ct).ConfigureAwait(false);
+            chunkResults.Add((Response: response, OffsetSec: entry.StartSec));
+        }
+
+        return MergeChunkResponses(chunkResults);
+    }
+
+    private static AsrResponse MergeChunkResponses(
+        IReadOnlyList<(AsrResponse Response, double OffsetSec)> chunks)
+    {
+        var allTokens = new List<AsrToken>();
+        var allSegments = new List<AsrSegment>();
+        string? modelVersion = null;
+        double lastTokenEnd = 0;
+        double lastSegmentEnd = 0;
+
+        var ordered = chunks.Count <= 1 ? chunks : chunks.OrderBy(c => c.OffsetSec).ToList();
+        foreach (var (response, offsetSec) in ordered)
+        {
+            modelVersion ??= response.ModelVersion;
+
+            if (response.Tokens is { Length: > 0 })
+            {
+                foreach (var token in response.Tokens)
+                {
+                    var adjustedStart = Math.Max(token.StartTime + offsetSec, lastTokenEnd);
+                    var adjustedDuration = token.Duration;
+                    allTokens.Add(new AsrToken(adjustedStart, adjustedDuration, token.Word));
+                    lastTokenEnd = adjustedStart + Math.Max(0, adjustedDuration);
+                }
+            }
+
+            if (response.Segments is { Length: > 0 })
+            {
+                foreach (var segment in response.Segments)
+                {
+                    var adjustedStart = Math.Max(segment.StartSec + offsetSec, lastSegmentEnd);
+                    var adjustedEnd = Math.Max(segment.EndSec + offsetSec, adjustedStart);
+                    allSegments.Add(new AsrSegment(adjustedStart, adjustedEnd, segment.Text));
+                    lastSegmentEnd = adjustedEnd;
+                }
+            }
+        }
+
+        return new AsrResponse(modelVersion ?? "whisper", allTokens.ToArray(), allSegments.ToArray());
+    }
+
     #region Named Artifact Cache
 
     private string GetPickupsDir()
     {
         var workDir = _workspace.WorkingDirectory
-            ?? throw new InvalidOperationException("No working directory set.");
+                      ?? throw new InvalidOperationException("No working directory set.");
         var dir = Path.Combine(workDir, ".polish", "pickups");
         Directory.CreateDirectory(dir);
         return dir;

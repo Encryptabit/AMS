@@ -17,9 +17,9 @@ What's Implemented
   - `refine-sentences`: Sentence-only refinement. Starts from Aeneas (per-sentence) and ends from FFmpeg `silencedetect` (noise floor and min duration are parameters). Outputs `[ { start, end, startWordIdx, endWordIdx } ]`.
 - Workspace abstraction
   - `IWorkspace` now owns `BookContext` lifetimes per host. The CLI REPL exposes `ReplState.Workspace`, and ASP.NET hosts use `WebWorkspace`, so commands/services call `workspace.OpenChapter(...)` instead of a global `ChapterContextFactory`.
-- ASR Client
-  - `Ams.Core.AsrClient`: Posts `{audio_path, model, language}` and deserializes response.
-  - Updated to handle word-level tokens without segment structure for cleaner validation.
+- ASR
+  - `Ams.Core.Processors.AsrProcessor`: Runs Whisper.NET in-process or shells out to WhisperX and normalizes both to `AsrResponse`.
+  - `AsrResponse` supports word-level tokens with segment fallback for downstream validation/alignment.
 - Validation Core
   - `ScriptValidator`: Text normalization, DP alignment (WER/CER), basic segment stats.
 - Alignment & Anchors
@@ -44,7 +44,6 @@ What's Implemented
   - CLI `build-index`: Slim options; prints canonical totals; no ASR alignment in this command.
 
 How To Run
-- Start ASR service: `services/asr-nemo/start_service.bat` (Windows) or `uvicorn services.asr-nemo.app:app`.
 - ASR only: `dotnet run --project host/Ams.Cli -- asr run -a <audio.wav> -o <asr.json>`
 - Validate only: `dotnet run --project host/Ams.Cli -- validate script -a <audio.wav> -s <script.txt> -j <asr.json> -o <report.json>`
 - Book indexing: `dotnet run --project host/Ams.Cli -- build-index -b <book.docx> -o <index.json>`
@@ -118,15 +117,16 @@ Per Book
   - Files: `host/Ams.Cli/Commands/BuildIndexCommand.cs`, `host/Ams.Core/Runtime/Documents/Book/BookParser.cs`, `host/Ams.Core/Runtime/Documents/Book/BookIndexer.cs`.
 - Verify (optional): `book verify` to sanity‑check `book-index.json`.
   - Files: `host/Ams.Cli/Commands/BookCommand.cs`.
-- Services (once per machine): ensure ASR and Aeneas/FFmpeg are available.
-  - ASR (asr-nemo): `services/asr-nemo` (see its README/logs).
+- Services (once per machine): ensure ASR backends and Aeneas/FFmpeg are available.
+  - Whisper.NET: provide a GGML model file or alias.
+  - WhisperX: ensure `whisperx` is installed and on PATH (or set `AMS_WHISPERX_BIN`).
   - Aeneas: install Python+aeneas; set env vars if needed:
     - `AENEAS_PYTHON` → python that can run aeneas; `FFMPEG_EXE` → ffmpeg path.
 
 Per Chapter
 - ASR: `asr run` → `<chapter>.asr.json`.
-  - Command: `dotnet run --project host/Ams.Cli -- asr run -a <chapter.wav> -o <chapter.asr.json> -s <url> -l en`
-  - Files: `host/Ams.Cli/Commands/AsrCommand.cs`, `host/Ams.Core/AsrClient.cs`.
+  - Command: `dotnet run --project host/Ams.Cli -- asr run -a <chapter.wav> -o <chapter.asr.json> -l en [--engine whisper|whisperx]`
+  - Files: `host/Ams.Cli/Commands/AsrCommand.cs`, `host/Ams.Core/Processors/AsrProcessor.cs`.
 - Transcript Index: `align tx` → `<chapter>.tx.json` (sentence/paragraph ScriptRanges bound to tokens).
   - Command: `dotnet run --project host/Ams.Cli -- align tx -i <book-index.json> -j <chapter.asr.json> -a <chapter.wav> -o <chapter.tx.json>`
   - Files: `host/Ams.Cli/Commands/AlignCommand.cs`, `host/Ams.Core/Align/*`, `host/Ams.Core/Align/Tx/TranscriptModels.cs`.
@@ -137,6 +137,6 @@ Per Chapter
 
 File Index (by function)
 - Per Book: `BuildIndexCommand.cs`, `BookParser.cs`, `BookIndexer.cs`, `BookCommand.cs`.
-- ASR: `AsrCommand.cs`, `AsrClient.cs`, `services/asr-nemo/*`.
+- ASR: `AsrCommand.cs`, `AsrProcessor.cs`.
 - Align + TX: `AlignCommand.cs`, `Ams.Core/Align/*`, `Align/Tx/TranscriptModels.cs`.
 - Sentence refine: `RefineSentencesCommand.cs`, `SentenceRefinementService.cs` (env: `AENEAS_PYTHON`, `FFMPEG_EXE`).

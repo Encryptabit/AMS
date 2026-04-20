@@ -1,4 +1,5 @@
 using Ams.Core.Application.Commands;
+using Ams.Core.Application.Runs;
 using Ams.Core.Services.Alignment;
 
 namespace Ams.Core.Application.Pipeline;
@@ -10,6 +11,15 @@ public sealed record PipelineRunOptions
     public FileInfo AudioFile { get; init; } = null!;
     public DirectoryInfo? ChapterDirectory { get; init; }
     public string ChapterId { get; init; } = string.Empty;
+    public ModuleId ModuleId { get; init; } = ModuleIds.PipelineRun;
+
+    /// <summary>
+    /// Optional shared progress sink for pipeline execution. Hosts should translate these
+    /// Core-owned updates into UI affordances rather than inventing their own transport.
+    /// The update ItemId carries the chapter id for multi-item reporters.
+    /// </summary>
+    public IProgress<RunProgressUpdate>? Progress { get; init; }
+
     public bool Force { get; init; }
     public bool ForceIndex { get; init; }
     public PipelineStage StartStage { get; init; } = PipelineStage.BookIndex;
@@ -24,4 +34,31 @@ public sealed record PipelineRunOptions
     public bool SkipTreatedCopy { get; init; }
     public FileInfo? TreatedCopyFile { get; init; }
     public PipelineConcurrencyControl? Concurrency { get; init; }
+
+    /// <summary>
+    /// Optional chunk planning policy for ASR and MFA stages. When null, stages
+    /// use <see cref="ChunkPlanningPolicy.Default"/>. Explicit policy enables
+    /// callers to override silence threshold, minimum silence duration, or chunk
+    /// duration bounds for specific pipeline runs.
+    /// </summary>
+    /// <remarks>
+    /// Invalidation rule: a stored chunk plan should be regenerated when the source
+    /// audio fingerprint or the chunk policy differs from the stored plan. Use
+    /// <see cref="ChunkPlanningService.IsValid"/> to check before recomputing.
+    /// </remarks>
+    public ChunkPlanningPolicy? ChunkPlanningPolicy { get; init; }
+
+    /// <summary>
+    /// When true, suppresses shared chunk plan generation and usage during ASR.
+    /// ASR will process the full audio buffer as a single pass (legacy behavior).
+    /// Use this to quickly revert to pre-chunking ASR behavior without code changes.
+    /// </summary>
+    public bool DisableChunkPlan { get; init; }
+
+    /// <summary>
+    /// When true, forces MFA to use the legacy single-utterance corpus path even
+    /// when a chunk plan is available. ASR chunk planning is unaffected.
+    /// Use this to isolate MFA chunking behavior during rollout without affecting ASR.
+    /// </summary>
+    public bool DisableChunkedMfa { get; init; }
 }

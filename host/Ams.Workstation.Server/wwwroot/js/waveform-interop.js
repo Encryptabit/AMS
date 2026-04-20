@@ -4,6 +4,11 @@
 // Global instance registry keyed by element ID
 window.wavesurferInstances = window.wavesurferInstances || {};
 
+const DEFAULT_WHEEL_ZOOM_SCALE = 0.5;
+const DEFAULT_WHEEL_DELTA_THRESHOLD = 5;
+const DEFAULT_MAX_ZOOM = 5000;
+const DEFAULT_BAR_HEIGHT_SCALE = 0.01;
+
 /**
  * Creates a new WaveSurfer instance and stores it in the registry.
  * @param {string} elementId - The DOM element ID for the waveform container
@@ -20,11 +25,10 @@ export function createWaveSurfer(elementId, options) {
     // Destroy existing instance if present
     if (window.wavesurferInstances[elementId]) {
         try {
-            window.wavesurferInstances[elementId].wavesurfer.destroy();
+            destroy(elementId);
         } catch (e) {
             console.warn(`[waveform-interop] Error destroying existing instance:`, e);
         }
-        delete window.wavesurferInstances[elementId];
     }
 
     const wsOptions = {
@@ -36,7 +40,7 @@ export function createWaveSurfer(elementId, options) {
         normalize: true,
         backend: 'MediaElement',
         pixelRatio: window.devicePixelRatio || 1,
-        minPxPerSec: 100,
+        minPxPerSec: options.minPxPerSec || 100,
         autoCenter: true,
         disableZoom: true,
         scrollParent: true,
@@ -57,14 +61,33 @@ export function createWaveSurfer(elementId, options) {
     }
 
     const wavesurfer = WaveSurfer.create(wsOptions);
+    let zoomPlugin = null;
+
+    if (typeof WaveSurfer !== 'undefined' && typeof WaveSurfer.Zoom !== 'undefined') {
+        zoomPlugin = wavesurfer.registerPlugin(WaveSurfer.Zoom.create({
+            scale: options.wheelZoomScale || DEFAULT_WHEEL_ZOOM_SCALE,
+            maxZoom: options.maxZoomPxPerSec || DEFAULT_MAX_ZOOM,
+            deltaThreshold: options.wheelZoomDeltaThreshold || DEFAULT_WHEEL_DELTA_THRESHOLD,
+        }));
+    }
 
     // Store instance with metadata
     window.wavesurferInstances[elementId] = {
         wavesurfer: wavesurfer,
+        zoomPlugin: zoomPlugin,
         regionsPlugin: null,
         dotNetRef: null,
         isPlaying: false,
-        preservePitch: true
+        preservePitch: true,
+        currentZoom: wsOptions.minPxPerSec,
+        currentBarHeight: wsOptions.barHeight || 1,
+        minBarHeight: options.minBarHeightScale || 0.25,
+        maxBarHeight: options.maxBarHeightScale || 8,
+        barHeightScale: options.barHeightWheelScale || DEFAULT_BAR_HEIGHT_SCALE,
+        heightDeltaThreshold: options.heightWheelDeltaThreshold || DEFAULT_WHEEL_DELTA_THRESHOLD,
+        heightAccumulatedDelta: 0,
+        zoomSyncTimerId: null,
+        cleanupHandlers: [],
     };
 
     return elementId;
@@ -82,6 +105,43 @@ export function loadAudio(elementId, url) {
         return;
     }
     instance.wavesurfer.load(url);
+}
+
+/**
+ * Loads audio using a streamable URL plus a precomputed peaks JSON payload.
+ * Falls back to the normal decode path if the peaks request fails.
+ * @param {string} elementId - The element ID of the WaveSurfer instance
+ * @param {string} url - The URL of the audio file to load
+ * @param {string} peaksUrl - The URL of the peaks payload
+ */
+export async function loadAudioWithPeaks(elementId, url, peaksUrl) {
+    const instance = window.wavesurferInstances[elementId];
+    if (!instance) {
+        console.error(`[waveform-interop] No WaveSurfer instance for '${elementId}'`);
+        return;
+    }
+
+    try {
+        const response = await fetch(peaksUrl, {
+            headers: {
+                'Accept': 'application/json'
+            }
+        });
+
+        if (!response.ok) {
+            throw new Error(`Failed to fetch peaks: ${response.status} ${response.statusText}`);
+        }
+
+        const payload = await response.json();
+        if (!payload || !Array.isArray(payload.peaks) || typeof payload.duration !== 'number') {
+            throw new Error('Invalid peaks payload');
+        }
+
+        instance.wavesurfer.load(url, payload.peaks, payload.duration);
+    } catch (error) {
+        console.warn('[waveform-interop] Falling back to client decode for waveform peaks:', error);
+        instance.wavesurfer.load(url);
+    }
 }
 
 /**
@@ -123,10 +183,32 @@ export function seekTo(elementId, seconds) {
     const instance = window.wavesurferInstances[elementId];
     if (!instance) return;
 
-    const duration = instance.wavesurfer.getDuration();
+    const ws = instance.wavesurfer;
+    const media = typeof ws.getMediaElement === 'function' ? ws.getMediaElement() : null;
+    const duration = ws.getDuration();
+
+    instance.pendingSeekRequest = {
+        requestedSec: seconds,
+        issuedAtMs: Date.now(),
+    };
+
+    console.info(
+        `[waveform-interop] seek request element=${elementId} requested=${seconds.toFixed(3)}s duration=${duration.toFixed(3)}s current=${ws.getCurrentTime().toFixed(3)}s`
+    );
+
+    if (typeof ws.setTime === 'function') {
+        ws.setTime(seconds);
+        return;
+    }
+
+    if (media && Number.isFinite(media.duration) && media.duration > 0) {
+        media.currentTime = seconds;
+        return;
+    }
+
     if (duration > 0) {
-        // seekTo expects a ratio 0-1
-        instance.wavesurfer.seekTo(seconds / duration);
+        // Fallback for older WaveSurfer builds that only expose ratio-based seeking.
+        ws.seekTo(seconds / duration);
     }
 }
 
@@ -224,6 +306,71 @@ export function registerCallbacks(elementId, dotNetRef) {
     instance.lastTimeUpdate = 0;
     const ws = instance.wavesurfer;
 
+    // Update the time display directly via DOM instead of round-tripping through Blazor.
+    const timeEl = document.getElementById(elementId + '-time');
+    const formatTime = (secs) => {
+        if (!Number.isFinite(secs)) return '0:00';
+        const m = Math.floor(secs / 60);
+        const s = Math.floor(secs % 60);
+        return m + ':' + String(s).padStart(2, '0');
+    };
+    const updateTimeDisplay = (currentTime) => {
+        if (timeEl) {
+            const dur = ws.getDuration();
+            timeEl.textContent = formatTime(currentTime) + ' / ' + formatTime(dur);
+        }
+    };
+
+    const notifyTimeUpdate = (currentTime, force = false) => {
+        if (!Number.isFinite(currentTime)) {
+            return;
+        }
+
+        // Always update the time display client-side (no Blazor round-trip)
+        updateTimeDisplay(currentTime);
+
+        if (!force && Math.abs(currentTime - instance.lastTimeUpdate) < 0.025) {
+            return;
+        }
+
+        instance.lastTimeUpdate = currentTime;
+        dotNetRef.invokeMethodAsync('OnTimeUpdate', currentTime)
+            .catch(err => console.warn('[waveform-interop] Error invoking OnTimeUpdate:', err));
+    };
+    const logSeekProgress = (eventName, currentTime) => {
+        if (!instance.pendingSeekRequest) {
+            return;
+        }
+
+        const media = typeof ws.getMediaElement === 'function' ? ws.getMediaElement() : null;
+        const mediaTime = media && Number.isFinite(media.currentTime) ? media.currentTime : null;
+        const requestedSec = instance.pendingSeekRequest.requestedSec;
+        const deltaSec = currentTime - requestedSec;
+        const mediaDeltaSec = mediaTime == null ? null : mediaTime - requestedSec;
+
+        console.info(
+            `[waveform-interop] seek ${eventName} element=${elementId} requested=${requestedSec.toFixed(3)}s ws=${currentTime.toFixed(3)}s delta=${deltaSec.toFixed(3)}s`
+            + (mediaTime == null ? '' : ` media=${mediaTime.toFixed(3)}s mediaDelta=${mediaDeltaSec.toFixed(3)}s`)
+        );
+    };
+    const clearSeekProgress = (eventName, currentTime) => {
+        logSeekProgress(eventName, currentTime);
+        instance.pendingSeekRequest = null;
+    };
+
+    ws.on('zoom', (pxPerSec) => {
+        instance.currentZoom = pxPerSec;
+        if (instance.zoomSyncTimerId !== null) {
+            clearTimeout(instance.zoomSyncTimerId);
+        }
+
+        instance.zoomSyncTimerId = setTimeout(() => {
+            instance.zoomSyncTimerId = null;
+            dotNetRef.invokeMethodAsync('OnZoomChanged', Math.round(pxPerSec))
+                .catch(err => console.warn('[waveform-interop] Error invoking OnZoomChanged:', err));
+        }, 50);
+    });
+
     // Ready event - fires when audio is decoded and waveform is drawn
     ws.on('ready', () => {
         const duration = ws.getDuration();
@@ -231,14 +378,20 @@ export function registerCallbacks(elementId, dotNetRef) {
             .catch(err => console.warn('[waveform-interop] Error invoking OnWaveformReady:', err));
     });
 
-    // Time update event - throttled to ~10fps to reduce Blazor re-renders
+    // Smooth playback updates while audio is actively playing.
     ws.on('audioprocess', (currentTime) => {
-        dotNetRef.invokeMethodAsync('OnTimeUpdate', currentTime)
-            .catch(err => console.warn('[waveform-interop] Error invoking OnTimeUpdate:', err));
+        notifyTimeUpdate(currentTime);
+    });
+
+    // MediaElement-backed streaming emits timeupdate reliably even when audioprocess is sparse.
+    ws.on('timeupdate', (currentTime) => {
+        notifyTimeUpdate(currentTime, true);
     });
 
     // Seeking event - fires when user clicks on waveform
     ws.on('seeking', (currentTime) => {
+        notifyTimeUpdate(currentTime, true);
+        logSeekProgress('seeking', currentTime);
         dotNetRef.invokeMethodAsync('OnSeeking', currentTime)
             .catch(err => console.warn('[waveform-interop] Error invoking OnSeeking:', err));
     });
@@ -252,6 +405,9 @@ export function registerCallbacks(elementId, dotNetRef) {
     // Play event
     ws.on('play', () => {
         instance.isPlaying = true;
+        const currentTime = ws.getCurrentTime();
+        notifyTimeUpdate(currentTime, true);
+        logSeekProgress('play', currentTime);
         dotNetRef.invokeMethodAsync('OnPlayStateChanged', true)
             .catch(err => console.warn('[waveform-interop] Error invoking OnPlayStateChanged:', err));
     });
@@ -269,6 +425,40 @@ export function registerCallbacks(elementId, dotNetRef) {
         dotNetRef.invokeMethodAsync('OnError', error.toString())
             .catch(err => console.warn('[waveform-interop] Error invoking OnError:', err));
     });
+
+    if (typeof ws.getMediaElement === 'function') {
+        const media = ws.getMediaElement();
+        if (media) {
+            const onPlaying = () => {
+                const currentTime = ws.getCurrentTime();
+                notifyTimeUpdate(currentTime, true);
+                clearSeekProgress('playing', currentTime);
+            };
+            const onSeeked = () => {
+                const currentTime = ws.getCurrentTime();
+                notifyTimeUpdate(currentTime, true);
+                clearSeekProgress('seeked', currentTime);
+            };
+            const onLoadedMetadata = () => {
+                const durationText = Number.isFinite(media.duration)
+                    ? media.duration.toFixed(3)
+                    : 'NaN';
+                console.info(
+                    `[waveform-interop] media loadedmetadata element=${elementId} mediaDuration=${durationText}s wsDuration=${ws.getDuration().toFixed(3)}s`
+                );
+            };
+
+            media.addEventListener('playing', onPlaying);
+            media.addEventListener('seeked', onSeeked);
+            media.addEventListener('loadedmetadata', onLoadedMetadata);
+
+            instance.cleanupHandlers.push(() => media.removeEventListener('playing', onPlaying));
+            instance.cleanupHandlers.push(() => media.removeEventListener('seeked', onSeeked));
+            instance.cleanupHandlers.push(() => media.removeEventListener('loadedmetadata', onLoadedMetadata));
+        }
+    }
+
+    attachCtrlWheelHeightHandler(instance, dotNetRef);
 }
 
 /**
@@ -279,14 +469,7 @@ export function initRegions(elementId) {
     const instance = window.wavesurferInstances[elementId];
     if (!instance) return;
 
-    if (!instance.regionsPlugin) {
-        // WaveSurfer.Regions is available globally from the CDN
-        if (typeof WaveSurfer.Regions !== 'undefined') {
-            instance.regionsPlugin = instance.wavesurfer.registerPlugin(WaveSurfer.Regions.create());
-        } else {
-            console.error('[waveform-interop] WaveSurfer.Regions plugin not loaded');
-        }
-    }
+    ensureRegionsPlugin(instance);
 }
 
 /**
@@ -299,7 +482,12 @@ export function initRegions(elementId) {
  */
 export function addRegion(elementId, id, start, end, color) {
     const instance = window.wavesurferInstances[elementId];
-    if (!instance || !instance.regionsPlugin) {
+    if (!instance) {
+        console.warn('[waveform-interop] No WaveSurfer instance for addRegion');
+        return;
+    }
+
+    if (!ensureRegionsPlugin(instance)) {
         console.warn('[waveform-interop] Regions plugin not initialized');
         return;
     }
@@ -398,6 +586,19 @@ export function destroy(elementId) {
     if (!instance) return;
 
     try {
+        if (instance.zoomSyncTimerId !== null) {
+            clearTimeout(instance.zoomSyncTimerId);
+            instance.zoomSyncTimerId = null;
+        }
+        if (instance.cleanupHandlers && instance.cleanupHandlers.length > 0) {
+            instance.cleanupHandlers.forEach((cleanup) => {
+                try {
+                    cleanup();
+                } catch (e) {
+                    console.warn('[waveform-interop] Error during cleanup:', e);
+                }
+            });
+        }
         instance.wavesurfer.destroy();
     } catch (e) {
         console.warn('[waveform-interop] Error during destroy:', e);
@@ -436,13 +637,8 @@ export function addEditableRegion(elementId, id, start, end, color, dotNetRef) {
     }
 
     // Auto-initialize regions plugin if not yet initialized
-    if (!instance.regionsPlugin) {
-        if (typeof WaveSurfer.Regions !== 'undefined') {
-            instance.regionsPlugin = instance.wavesurfer.registerPlugin(WaveSurfer.Regions.create());
-        } else {
-            console.error('[waveform-interop] WaveSurfer.Regions plugin not loaded');
-            return null;
-        }
+    if (!ensureRegionsPlugin(instance)) {
+        return null;
     }
 
     const region = instance.regionsPlugin.addRegion({
@@ -556,6 +752,7 @@ export function setZoom(elementId, pxPerSec) {
     const instance = window.wavesurferInstances[elementId];
     if (!instance) return;
 
+    instance.currentZoom = pxPerSec;
     instance.wavesurfer.zoom(pxPerSec);
 }
 
@@ -601,4 +798,77 @@ export async function loadAndDrawMiniWaveform(canvasId, audioPath, startSec, end
     if (!response.ok) return;
     const data = await response.json();
     drawMiniWaveform(canvasId, data, color);
+}
+
+function ensureRegionsPlugin(instance) {
+    if (!instance) return false;
+    if (instance.regionsPlugin) return true;
+
+    // WaveSurfer.Regions is available globally from the CDN.
+    if (typeof WaveSurfer !== 'undefined' &&
+        typeof WaveSurfer.Regions !== 'undefined') {
+        instance.regionsPlugin = instance.wavesurfer.registerPlugin(WaveSurfer.Regions.create());
+        return true;
+    }
+
+    console.error('[waveform-interop] WaveSurfer.Regions plugin not loaded');
+    return false;
+}
+
+function attachCtrlWheelHeightHandler(instance, dotNetRef) {
+    if (!instance || !instance.wavesurfer) return;
+
+    const wheelTarget = instance.wavesurfer.getWrapper()?.parentElement;
+    if (!wheelTarget) return;
+
+    const onWheel = (event) => {
+        if (!event.ctrlKey) {
+            if (!event.shiftKey) {
+                return;
+            }
+
+            // Preserve the expected browser gesture: Shift + wheel pans horizontally.
+            // Stop the zoom plugin from consuming the event, then apply horizontal scroll.
+            event.preventDefault();
+            event.stopImmediatePropagation();
+
+            const delta = Math.abs(event.deltaX) > 0 ? event.deltaX : event.deltaY;
+            wheelTarget.scrollLeft += delta;
+            return;
+        }
+
+        if (Math.abs(event.deltaX) >= Math.abs(event.deltaY)) {
+            return;
+        }
+
+        event.preventDefault();
+        event.stopPropagation();
+
+        instance.heightAccumulatedDelta += -event.deltaY;
+        if (instance.heightDeltaThreshold !== 0 &&
+            Math.abs(instance.heightAccumulatedDelta) < instance.heightDeltaThreshold) {
+            return;
+        }
+
+        const nextBarHeight = clampNumber(
+            Number((instance.currentBarHeight + instance.heightAccumulatedDelta * instance.barHeightScale).toFixed(2)),
+            instance.minBarHeight,
+            instance.maxBarHeight);
+
+        instance.heightAccumulatedDelta = 0;
+
+        if (nextBarHeight === instance.currentBarHeight) {
+            return;
+        }
+
+        instance.currentBarHeight = nextBarHeight;
+        instance.wavesurfer.setOptions({ barHeight: nextBarHeight });
+    };
+
+    wheelTarget.addEventListener('wheel', onWheel, { passive: false, capture: true });
+    instance.cleanupHandlers.push(() => wheelTarget.removeEventListener('wheel', onWheel, true));
+}
+
+function clampNumber(value, min, max) {
+    return Math.min(max, Math.max(min, value));
 }

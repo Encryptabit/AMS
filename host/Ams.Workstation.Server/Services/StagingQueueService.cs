@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Text.Json;
+using Ams.Core.Audio;
 using Ams.Workstation.Server.Models;
 
 namespace Ams.Workstation.Server.Services;
@@ -16,20 +17,38 @@ namespace Ams.Workstation.Server.Services;
 public class StagingQueueService
 {
     private static readonly JsonSerializerOptions JsonOptions = new() { WriteIndented = true };
+    private const double BoundaryEpsilonSec = 0.001;
 
     private readonly BlazorWorkspace _workspace;
+    private readonly EditListService _editListService;
     private readonly object _lock = new();
     private Dictionary<string, List<StagedReplacement>>? _queue;
 
-    public StagingQueueService(BlazorWorkspace workspace)
+    public StagingQueueService(BlazorWorkspace workspace, EditListService editListService)
     {
         _workspace = workspace;
+        _editListService = editListService;
     }
 
     /// <summary>
     /// Adds a replacement to the staging queue for its chapter.
     /// </summary>
     public void Stage(StagedReplacement item)
+    {
+        if (!TryStage(item, out var validationError))
+        {
+            throw new InvalidOperationException(
+                $"Unable to stage replacement '{item.Id}': {validationError ?? "validation failed"}");
+        }
+    }
+
+    /// <summary>
+    /// Adds a replacement to the staging queue for its chapter after validating overlap constraints.
+    /// </summary>
+    /// <param name="item">The replacement to stage.</param>
+    /// <param name="validationError">Validation error if staging failed.</param>
+    /// <returns>True when the item was staged; otherwise false.</returns>
+    public bool TryStage(StagedReplacement item, out string? validationError)
     {
         ArgumentNullException.ThrowIfNull(item);
 
@@ -42,8 +61,88 @@ public class StagingQueueService
                 _queue[item.ChapterStem] = list;
             }
 
+            if (!IsValidRange(item.OriginalStartSec, item.OriginalEndSec))
+            {
+                validationError = "Replacement boundaries are invalid (end must be greater than start).";
+                return false;
+            }
+
+            var conflicting = FindFirstOverlap(
+                list,
+                item.OriginalStartSec,
+                item.OriginalEndSec,
+                item.Id);
+            if (conflicting is not null)
+            {
+                validationError = BuildOverlapError(conflicting);
+                return false;
+            }
+
             list.Add(item);
             Save();
+            validationError = null;
+            return true;
+        }
+    }
+
+    /// <summary>
+    /// Adds multiple replacements to the staging queue, saving once after all successful additions.
+    /// Items that fail validation are skipped and returned as error messages.
+    /// </summary>
+    public (int StagedCount, IReadOnlyList<string> Errors) TryStageMany(IReadOnlyList<StagedReplacement> items)
+    {
+        ArgumentNullException.ThrowIfNull(items);
+
+        if (items.Count == 0)
+        {
+            return (0, Array.Empty<string>());
+        }
+
+        lock (_lock)
+        {
+            EnsureLoaded();
+
+            var stagedCount = 0;
+            var errors = new List<string>();
+            var changed = false;
+
+            foreach (var item in items)
+            {
+                if (!_queue!.TryGetValue(item.ChapterStem, out var list))
+                {
+                    list = new List<StagedReplacement>();
+                    _queue[item.ChapterStem] = list;
+                }
+
+                if (!IsValidRange(item.OriginalStartSec, item.OriginalEndSec))
+                {
+                    errors.Add(
+                        $"Sentence {item.SentenceId}: replacement boundaries are invalid (end must be greater than start).");
+                    continue;
+                }
+
+                var conflicting = FindFirstOverlap(
+                    list,
+                    item.OriginalStartSec,
+                    item.OriginalEndSec,
+                    item.Id);
+                if (conflicting is not null)
+                {
+                    errors.Add($"Sentence {item.SentenceId}: {BuildOverlapError(conflicting)}");
+                    continue;
+                }
+
+                list.Add(item);
+                stagedCount++;
+                changed = true;
+            }
+
+            if (changed)
+            {
+                Save();
+            }
+
+            return (stagedCount, errors);
         }
     }
 
@@ -107,9 +206,16 @@ public class StagingQueueService
 
     /// <summary>
     /// Transitions the status of a replacement (e.g., Staged -> Applied, Applied -> Reverted).
+    /// Optionally updates <see cref="EditListService"/> to keep timeline projection in sync.
     /// </summary>
+    /// <param name="replacementId">Replacement identifier.</param>
+    /// <param name="newStatus">New lifecycle state.</param>
+    /// <param name="syncEditList">
+    /// When true (default), applies legacy pickup edit-list mutations.
+    /// When false, caller owns edit-list synchronization.
+    /// </param>
     /// <returns>True if the item was found and updated.</returns>
-    public bool UpdateStatus(string replacementId, ReplacementStatus newStatus)
+    public bool UpdateStatus(string replacementId, ReplacementStatus newStatus, bool syncEditList = true)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(replacementId);
 
@@ -121,8 +227,38 @@ public class StagingQueueService
                 var index = list.FindIndex(r => r.Id == replacementId);
                 if (index >= 0)
                 {
-                    list[index] = list[index] with { Status = newStatus };
+                    var replacement = list[index];
+                    list[index] = replacement with { Status = newStatus };
                     Save();
+
+                    if (!syncEditList)
+                    {
+                        return true;
+                    }
+
+                    // Track in edit list for timeline projection
+                    if (newStatus == ReplacementStatus.Applied)
+                    {
+                        var edit = new ChapterEdit(
+                            Id: replacement.Id,
+                            ChapterStem: replacement.ChapterStem,
+                            Operation: EditOperation.PickupReplace,
+                            BaselineStartSec: replacement.OriginalStartSec,
+                            BaselineEndSec: replacement.OriginalEndSec,
+                            ReplacementDurationSec: replacement.PickupDuration(),
+                            SentenceId: replacement.SentenceId,
+                            ErrorNumber: null,
+                            PickupAssetId: null,
+                            CrossfadeDurationSec: replacement.CrossfadeDurationSec,
+                            CrossfadeCurve: replacement.CrossfadeCurve,
+                            AppliedAtUtc: DateTime.UtcNow);
+                        _editListService.Add(edit);
+                    }
+                    else if (newStatus == ReplacementStatus.Reverted)
+                    {
+                        _editListService.Remove(replacement.Id);
+                    }
+
                     return true;
                 }
             }
@@ -141,12 +277,88 @@ public class StagingQueueService
     /// <param name="newEndSec">New end time in seconds.</param>
     /// <returns>True if the item was found and updated.</returns>
     public bool UpdateBoundaries(string replacementId, double newStartSec, double newEndSec)
+        => TryUpdateBoundaries(replacementId, newStartSec, newEndSec, out _);
+
+    /// <summary>
+    /// Updates splice boundaries for a staged replacement, rejecting invalid or overlapping ranges.
+    /// </summary>
+    /// <param name="replacementId">The replacement to update.</param>
+    /// <param name="newStartSec">New start time in seconds.</param>
+    /// <param name="newEndSec">New end time in seconds.</param>
+    /// <param name="validationError">Validation error if update failed.</param>
+    /// <returns>True when updated; otherwise false.</returns>
+    public bool TryUpdateBoundaries(
+        string replacementId,
+        double newStartSec,
+        double newEndSec,
+        out string? validationError)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(replacementId);
 
         lock (_lock)
         {
             EnsureLoaded();
+            if (!IsValidRange(newStartSec, newEndSec))
+            {
+                validationError = "Region must have a positive duration.";
+                return false;
+            }
+
+            foreach (var list in _queue!.Values)
+            {
+                var index = list.FindIndex(r => r.Id == replacementId && r.Status == ReplacementStatus.Staged);
+                if (index >= 0)
+                {
+                    var conflicting = FindFirstOverlap(list, newStartSec, newEndSec, replacementId);
+                    if (conflicting is not null)
+                    {
+                        validationError = BuildOverlapError(conflicting);
+                        return false;
+                    }
+
+                    list[index] = list[index] with
+                    {
+                        OriginalStartSec = newStartSec,
+                        OriginalEndSec = newEndSec
+                    };
+                    Save();
+                    validationError = null;
+                    return true;
+                }
+            }
+
+            validationError = $"Replacement '{replacementId}' was not found or is not staged.";
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Updates the pickup-side (trim) boundaries for a staged replacement.
+    /// Called when the user adjusts trim handles on the pickup detail panel.
+    /// Only updates items with <see cref="ReplacementStatus.Staged"/> status.
+    /// </summary>
+    /// <param name="replacementId">The replacement to update.</param>
+    /// <param name="newPickupStartSec">New pickup trim start time in seconds.</param>
+    /// <param name="newPickupEndSec">New pickup trim end time in seconds.</param>
+    /// <param name="validationError">Validation error if update failed.</param>
+    /// <returns>True when updated; otherwise false.</returns>
+    public bool TryUpdatePickupBoundaries(
+        string replacementId,
+        double newPickupStartSec,
+        double newPickupEndSec,
+        out string? validationError)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(replacementId);
+
+        lock (_lock)
+        {
+            EnsureLoaded();
+            if (!IsValidRange(newPickupStartSec, newPickupEndSec))
+            {
+                validationError = "Pickup trim must have a positive duration.";
+                return false;
+            }
+
             foreach (var list in _queue!.Values)
             {
                 var index = list.FindIndex(r => r.Id == replacementId && r.Status == ReplacementStatus.Staged);
@@ -154,56 +366,58 @@ public class StagingQueueService
                 {
                     list[index] = list[index] with
                     {
-                        OriginalStartSec = newStartSec,
-                        OriginalEndSec = newEndSec
+                        PickupStartSec = newPickupStartSec,
+                        PickupEndSec = newPickupEndSec
                     };
                     Save();
+                    validationError = null;
                     return true;
                 }
             }
 
+            validationError = $"Replacement '{replacementId}' was not found or is not staged.";
             return false;
         }
     }
 
     /// <summary>
-    /// Shifts OriginalStartSec and OriginalEndSec for all downstream items in the chapter
-    /// whose SentenceId is greater than <paramref name="pivotSentenceId"/>.
-    /// Applies to both Staged and Applied items so that revert/preview targets the
-    /// correct region even when upstream replacements change duration.
-    /// Call after apply/revert to cascade timing changes to downstream items.
+    /// Maps a baseline time position to the current (post-edit) timeline for a chapter
+    /// by delegating to <see cref="TimelineProjection.BaselineToCurrentTime"/>.
     /// </summary>
-    public void ShiftDownstream(string chapterStem, int pivotSentenceId, double deltaSec)
+    /// <param name="chapterStem">The chapter whose edit list to use.</param>
+    /// <param name="baselineTimeSec">A time in the original, unedited audio.</param>
+    /// <returns>The equivalent time in the current post-edit audio.</returns>
+    public double GetCurrentTime(string chapterStem, double baselineTimeSec)
     {
-        if (Math.Abs(deltaSec) < 0.001) return;
+        var edits = _editListService.GetEdits(chapterStem);
+        return TimelineProjection.BaselineToCurrentTime(baselineTimeSec, edits);
+    }
+
+    /// <summary>
+    /// Checks whether the given range overlaps any active (staged/applied) replacement
+    /// in a chapter, excluding <paramref name="replacementId"/> when provided.
+    /// </summary>
+    public bool TryGetActiveOverlap(
+        string chapterStem,
+        string? replacementId,
+        double startSec,
+        double endSec,
+        out StagedReplacement? conflicting)
+    {
         ArgumentException.ThrowIfNullOrWhiteSpace(chapterStem);
 
         lock (_lock)
         {
             EnsureLoaded();
-            if (!_queue!.TryGetValue(chapterStem, out var list))
-                return;
+            conflicting = null;
 
-            bool changed = false;
-            for (int i = 0; i < list.Count; i++)
+            if (!_queue!.TryGetValue(chapterStem, out var list))
             {
-                var item = list[i];
-                if (item.SentenceId > pivotSentenceId
-                    && (item.Status == ReplacementStatus.Staged || item.Status == ReplacementStatus.Applied))
-                {
-                    list[i] = item with
-                    {
-                        OriginalStartSec = item.OriginalStartSec + deltaSec,
-                        OriginalEndSec = item.OriginalEndSec + deltaSec
-                    };
-                    changed = true;
-                    Console.WriteLine(
-                        $"[CascadeOffset] Shifted sentence {item.SentenceId} ({item.Status}): " +
-                        $"{item.OriginalStartSec:F3}s → {list[i].OriginalStartSec:F3}s (delta {deltaSec:+0.000;-0.000}s)");
-                }
+                return false;
             }
 
-            if (changed) Save();
+            conflicting = FindFirstOverlap(list, startSec, endSec, replacementId);
+            return conflicting is not null;
         }
     }
 
@@ -290,4 +504,50 @@ public class StagingQueueService
             Console.WriteLine($"Failed to save staging queue: {ex.Message}");
         }
     }
+
+    private static bool IsValidRange(double startSec, double endSec)
+        => !double.IsNaN(startSec)
+           && !double.IsNaN(endSec)
+           && !double.IsInfinity(startSec)
+           && !double.IsInfinity(endSec)
+           && endSec > startSec + BoundaryEpsilonSec;
+
+    private static bool Overlaps(double aStart, double aEnd, double bStart, double bEnd)
+        => aStart < bEnd - BoundaryEpsilonSec && bStart < aEnd - BoundaryEpsilonSec;
+
+    private static bool IsActive(StagedReplacement item)
+        => item.Status == ReplacementStatus.Staged || item.Status == ReplacementStatus.Applied;
+
+    private static StagedReplacement? FindFirstOverlap(
+        IReadOnlyList<StagedReplacement> list,
+        double startSec,
+        double endSec,
+        string? excludeReplacementId)
+    {
+        for (var i = 0; i < list.Count; i++)
+        {
+            var item = list[i];
+            if (!IsActive(item))
+            {
+                continue;
+            }
+
+            if (!string.IsNullOrWhiteSpace(excludeReplacementId) &&
+                string.Equals(item.Id, excludeReplacementId, StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            if (Overlaps(startSec, endSec, item.OriginalStartSec, item.OriginalEndSec))
+            {
+                return item;
+            }
+        }
+
+        return null;
+    }
+
+    private static string BuildOverlapError(StagedReplacement conflicting)
+        => $"Overlaps sentence {conflicting.SentenceId} ({conflicting.Status}) at " +
+           $"{conflicting.OriginalStartSec:F3}s-{conflicting.OriginalEndSec:F3}s.";
 }

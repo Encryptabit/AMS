@@ -2,6 +2,8 @@ using System.Text.Json;
 using System.Text.RegularExpressions;
 using System.Threading;
 using Ams.Cli.Workspace;
+using Ams.Core.Asr;
+using Ams.Core.Common;
 using Ams.Core.Runtime.Workspace;
 
 namespace Ams.Cli.Repl;
@@ -116,7 +118,7 @@ internal sealed class ReplState
             return;
         }
 
-        var full = Path.GetFullPath(path);
+        var full = AmsPathResolver.NormalizePath(path);
         if (!Directory.Exists(full))
         {
             Console.WriteLine($"Directory not found: {full}");
@@ -217,11 +219,7 @@ internal sealed class ReplState
             Console.WriteLine("Mode              : NONE (no WAV files detected)");
         }
 
-        Console.WriteLine($"ASR Service      : {AsrProcessSupervisor.StatusDescription}");
-        if (!string.IsNullOrWhiteSpace(AsrProcessSupervisor.BaseUrl))
-        {
-            Console.WriteLine($"ASR Endpoint     : {AsrProcessSupervisor.BaseUrl}");
-        }
+        Console.WriteLine($"ASR Engine       : {AsrEngineConfig.Resolve()}");
     }
 
     public void UseAllChapters()

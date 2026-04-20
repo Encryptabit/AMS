@@ -3,6 +3,13 @@
 ## Project Overview
 Audio Management System (AMS) - CLI and core library for audio processing, ASR, forced alignment, and audiobook mastering.
 
+## GSD Auto-Mode Guardrails
+
+- In GSD auto-mode, treat any message explicitly marked as a `system notification` / `not user input` / `do not treat this as a human message` as non-actionable unless the notification changes local execution state in a way that requires tool use.
+- Do **not** emit a user-visible reply to `async_job_result` notifications. Consume the result silently if needed; otherwise ignore it.
+- After the required terminal line for a task or slice (for example `Task T01 complete.`), emit no further assistant text unless a new human message arrives.
+- Near the end of a GSD auto task, prefer blocking verification commands over background jobs so completion is not followed by stray async notifications.
+
 ## Application Layer & CLI Host
 
 - `host/Ams.Core/Application` now exposes use-case commands (`GenerateTranscript`, `ComputeAnchors`, `BuildTranscriptIndex`, `HydrateTranscript`, `RunMfa`, `MergeTimings`) plus orchestration services (`PipelineService`, `ValidationService`). Each command implements a single `ExecuteAsync(ChapterContext, Options, CancellationToken)` entry point so hosts (CLI today, future UI/daemon later) can reuse identical business logic.
@@ -13,12 +20,12 @@ Audio Management System (AMS) - CLI and core library for audio processing, ASR, 
 
 ## Current Pipeline (MFA-based)
 
-The pipeline uses **Nemo ASR** for initial speech recognition and **Montreal Forced Aligner (MFA)** for precise word/phone-level timing refinement.
+The pipeline uses **Whisper-family ASR** (in-process Whisper.NET or spawned WhisperX) for initial speech recognition and **Montreal Forced Aligner (MFA)** for precise word/phone-level timing refinement.
 
 ### Pipeline Stages
 
 1. **ASR Stage** (`host/Ams.Cli/Commands/AsrCommand.cs`)
-   - Uses Nemo ASR service to generate initial word-level timings
+   - Uses Whisper.NET or WhisperX to generate initial word-level timings
    - Outputs: `{chapter}.asr.json` with token timings
 
 2. **Alignment Stage** (`host/Ams.Cli/Commands/AlignCommand.cs`)
@@ -43,7 +50,8 @@ The pipeline uses **Nemo ASR** for initial speech recognition and **Montreal For
 
 ### Key Models & Services
 
-- **Nemo ASR**: Default service at `http://localhost:8765`
+- **Whisper.NET**: default in-process backend using GGML models
+- **WhisperX**: optional spawned backend for alternative word timing behavior
 - **MFA Models**:
   - Dictionary: `english_us_arpa`
   - Acoustic: `english_us_arpa`
