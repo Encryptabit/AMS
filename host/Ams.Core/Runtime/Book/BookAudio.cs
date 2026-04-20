@@ -19,6 +19,9 @@ public sealed class BookAudio
         new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, AudioBuffer> _pickupBuffersById =
         new(StringComparer.OrdinalIgnoreCase);
+    private readonly object _playbackErrorAlertLock = new();
+    private PlaybackErrorAlertDescriptor? _playbackErrorAlertSound;
+    private AudioBuffer? _playbackErrorAlertBuffer;
     private AudioBuffer? _roomtone;
     private bool _roomtoneLoaded;
 
@@ -50,6 +53,20 @@ public sealed class BookAudio
                 return _pickupsById.Values
                     .OrderBy(p => p.RegisteredAtUtc)
                     .ToArray();
+            }
+        }
+    }
+
+    /// <summary>
+    /// Gets the app-level playback-error alert sound descriptor currently loaded into this book context.
+    /// </summary>
+    public PlaybackErrorAlertDescriptor? PlaybackErrorAlertSound
+    {
+        get
+        {
+            lock (_playbackErrorAlertLock)
+            {
+                return _playbackErrorAlertSound;
             }
         }
     }
@@ -279,12 +296,144 @@ public sealed class BookAudio
     }
 
     /// <summary>
+    /// Registers the app-level playback-error alert sound in this book context.
+    /// Re-registering refreshes metadata and invalidates stale cached buffers when the source changes.
+    /// </summary>
+    public PlaybackErrorAlertDescriptor RegisterPlaybackErrorAlertSound(string soundPath)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(soundPath);
+
+        var sourceFile = new FileInfo(soundPath.Trim());
+        if (!sourceFile.Exists)
+        {
+            throw new FileNotFoundException($"Playback alert sound file not found: {soundPath}", soundPath);
+        }
+
+        var canonicalPath = sourceFile.FullName;
+        var sourceModifiedUtc = sourceFile.LastWriteTimeUtc;
+        var sourceSizeBytes = sourceFile.Length;
+
+        lock (_playbackErrorAlertLock)
+        {
+            if (_playbackErrorAlertSound is not null
+                && string.Equals(_playbackErrorAlertSound.SourcePath, canonicalPath, StringComparison.OrdinalIgnoreCase)
+                && _playbackErrorAlertSound.SourceModifiedUtc == sourceModifiedUtc
+                && _playbackErrorAlertSound.SourceSizeBytes == sourceSizeBytes)
+            {
+                return _playbackErrorAlertSound;
+            }
+
+            _playbackErrorAlertBuffer = null;
+            _playbackErrorAlertSound = new PlaybackErrorAlertDescriptor(
+                SourcePath: canonicalPath,
+                SourceModifiedUtc: sourceModifiedUtc,
+                SourceSizeBytes: sourceSizeBytes,
+                RegisteredAtUtc: DateTime.UtcNow);
+
+            Log.Debug(
+                "BookAudio registered playback error alert sound for {BookId} from {Path}",
+                _book.Descriptor.BookId,
+                canonicalPath);
+
+            return _playbackErrorAlertSound;
+        }
+    }
+
+    /// <summary>
+    /// Loads and caches the app-level playback-error alert buffer.
+    /// Returns null when no alert sound is configured or when decoding fails.
+    /// </summary>
+    public AudioBuffer? LoadPlaybackErrorAlertSound()
+    {
+        lock (_playbackErrorAlertLock)
+        {
+            if (_playbackErrorAlertSound is null)
+            {
+                return null;
+            }
+
+            var sourceFile = new FileInfo(_playbackErrorAlertSound.SourcePath);
+            if (!sourceFile.Exists)
+            {
+                Log.Warn(
+                    "BookAudio playback alert sound missing for {BookId} at {Path}",
+                    _book.Descriptor.BookId,
+                    _playbackErrorAlertSound.SourcePath);
+                _playbackErrorAlertSound = null;
+                _playbackErrorAlertBuffer = null;
+                return null;
+            }
+
+            var sourceChanged = _playbackErrorAlertSound.SourceModifiedUtc != sourceFile.LastWriteTimeUtc
+                || _playbackErrorAlertSound.SourceSizeBytes != sourceFile.Length;
+            if (sourceChanged)
+            {
+                _playbackErrorAlertBuffer = null;
+                _playbackErrorAlertSound = _playbackErrorAlertSound with
+                {
+                    SourceModifiedUtc = sourceFile.LastWriteTimeUtc,
+                    SourceSizeBytes = sourceFile.Length
+                };
+            }
+
+            if (_playbackErrorAlertBuffer is not null)
+            {
+                return _playbackErrorAlertBuffer;
+            }
+
+            try
+            {
+                _playbackErrorAlertBuffer = AudioProcessor.Decode(sourceFile.FullName);
+                Log.Debug(
+                    "BookAudio loaded playback alert sound for {BookId} ({Duration:F2}s, {SampleRate}Hz)",
+                    _book.Descriptor.BookId,
+                    _playbackErrorAlertBuffer.Length / (double)_playbackErrorAlertBuffer.SampleRate,
+                    _playbackErrorAlertBuffer.SampleRate);
+                return _playbackErrorAlertBuffer;
+            }
+            catch (Exception ex)
+            {
+                Log.Warn(
+                    "BookAudio failed to decode playback alert sound for {BookId} from {Path}: {Message}",
+                    _book.Descriptor.BookId,
+                    sourceFile.FullName,
+                    ex.Message);
+                return null;
+            }
+        }
+    }
+
+    /// <summary>
+    /// Releases the cached playback-error alert buffer while keeping its descriptor.
+    /// </summary>
+    public void UnloadPlaybackErrorAlertSound()
+    {
+        lock (_playbackErrorAlertLock)
+        {
+            _playbackErrorAlertBuffer = null;
+        }
+    }
+
+    /// <summary>
+    /// Clears the playback-error alert descriptor and cached buffer from this book context.
+    /// </summary>
+    public void ClearPlaybackErrorAlertSound()
+    {
+        lock (_playbackErrorAlertLock)
+        {
+            _playbackErrorAlertSound = null;
+            _playbackErrorAlertBuffer = null;
+        }
+    }
+
+    /// <summary>
     /// Unloads all book-level audio caches (roomtone and pickups).
     /// </summary>
     public void UnloadAll()
     {
         UnloadRoomtone();
         DeallocateAllPickups();
+        UnloadPlaybackErrorAlertSound();
     }
 
     private AudioBuffer? LoadRoomtone()
@@ -319,6 +468,15 @@ public sealed class BookAudio
 /// </summary>
 public sealed record PickupAudioDescriptor(
     string PickupId,
+    string SourcePath,
+    DateTime SourceModifiedUtc,
+    long SourceSizeBytes,
+    DateTime RegisteredAtUtc);
+
+/// <summary>
+/// App-level playback-error alert metadata loaded into <see cref="BookAudio"/>.
+/// </summary>
+public sealed record PlaybackErrorAlertDescriptor(
     string SourcePath,
     DateTime SourceModifiedUtc,
     long SourceSizeBytes,

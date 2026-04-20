@@ -1,3 +1,12 @@
 .proof-review {
     width: 100%;
 }
+
+.playback-alert-settings {
+    margin-bottom: 0.5rem;
+}
+
+.playback-alert-status {
+    margin-top: 0.4rem;
+    display: block;
+}

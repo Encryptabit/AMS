@@ -1,4 +1,5 @@
 using Ams.Core.Application.Processes;
+using Ams.Core.Runtime.Audio;
 using Ams.Workstation.Server.Components;
 using Ams.Workstation.Server.Services;
 using Ams.Workstation.Server.Services.Pickups.Edl;
@@ -13,6 +14,9 @@ builder.Services.AddRazorComponents()
 
 builder.Services.AddControllers();
 builder.Services.AddHotKeys2();
+
+// App-level playback alert sound persistence and context hydration (Core contract).
+builder.Services.AddSingleton<IAppPlaybackAlertSoundService, AppPlaybackAlertSoundService>();
 
 // Blazor workspace - singleton for single-user workstation
 // Allows API controllers and Blazor circuits to share the same state

@@ -13,6 +13,7 @@
 @inject IJSRuntime JS
 @using Ams.Workstation.Server.Components.Navigation
 @using Ams.Workstation.Server.Models
+@using Ams.Core.Runtime.Audio
 @implements IAsyncDisposable
 
 <PageTitle>@ChapterName - Proof - AMS Workstation</PageTitle>
@@ -42,6 +43,32 @@
 @if (_currentView == "playback")
 {
     <BitGrid Columns="12">
+        <BitGridItem ColumnSpan="12">
+            <BitCard Class="playback-alert-settings" FullWidth="true">
+                <BitStack Horizontal="true" Gap="0.6rem" VerticalAlign="BitAlignment.End" Wrap="true">
+                    <BitTextField @bind-Value="_playbackErrorAlertSourcePath"
+                                  Immediate="true"
+                                  Placeholder="Alert sound file path (.wav, .mp3, .ogg, .flac, .m4a)"
+                                  Style="min-width: 18rem; flex: 1;" />
+                    <BitButton Variant="BitVariant.Fill"
+                               Color="BitColor.Primary"
+                               OnClick="SavePlaybackErrorAlertSound">
+                        Save Alert Sound
+                    </BitButton>
+                    <BitButton Variant="BitVariant.Outline"
+                               Color="BitColor.Secondary"
+                               IsEnabled="@(_playbackErrorAlertSoundSetting is not null)"
+                               OnClick="ClearPlaybackErrorAlertSound">
+                        Clear
+                    </BitButton>
+                </BitStack>
+                <BitText Typography="BitTypography.Caption1"
+                         Color="BitColor.SecondaryForeground"
+                         Class="playback-alert-status">
+                    @GetPlaybackErrorAlertStatusText()
+                </BitText>
+            </BitCard>
+        </BitGridItem>
         <BitGridItem ColumnSpan="12" style="min-width: 0;">
                 <WaveformPlayer
                     @ref="_waveformPlayer"
@@ -92,7 +119,11 @@ else
     private CrxModal? _crxModal;
     private IgnoreErrorModal? _ignoreModal;
     private HashSet<int> _exportedSentenceIds = new();
+    private HashSet<int> _visibleErrorSentenceIds = new();
     private IJSObjectReference? _snippetPlayer;
+    private IJSObjectReference? _alertSoundPlayer;
+    private string _playbackErrorAlertSourcePath = string.Empty;
+    private AppPlaybackAlertSoundSettings? _playbackErrorAlertSoundSetting;
     private string? _lastRenderedChapter;
     private bool _scrollToTopPending;
 
@@ -119,6 +150,7 @@ else
                 _lastRenderedChapter = decodedName;
                 _selectedErrorIndex = 0;
                 _selectedSentenceId = null;
+                _lastTimeBasedSentenceId = null;
             }
             if (Workspace.CurrentChapterName != decodedName)
             {
@@ -136,6 +168,7 @@ else
 
             // Load reviewed status (direct service call)
             _isReviewed = ReviewedStatusService.IsReviewed(decodedName);
+            _playbackErrorAlertSoundSetting = Workspace.GetPlaybackErrorAlertSoundSetting();
         }
 
         _currentTime = 0;
@@ -168,6 +201,12 @@ else
             _chapterPatterns = ErrorPatternService.AggregatePatternsForChapter(chapterName, hydrate, IgnoredPatternsService.GetIgnoredKeys()).Patterns;
             MaterializeErrorSentences();
         }
+        else
+        {
+            _report = null;
+            _chapterPatterns = null;
+            MaterializeErrorSentences();
+        }
     }
 
     private void LoadExportedSentenceIds()
@@ -191,6 +230,7 @@ else
         if (_report == null)
         {
             _errorSentencesList = new();
+            _visibleErrorSentenceIds = new();
             return;
         }
 
@@ -199,6 +239,9 @@ else
             .OrderByDescending(s => ParseWer(s.Wer))
             .ThenBy(s => s.Id)
             .ToList();
+        _visibleErrorSentenceIds = _errorSentencesList
+            .Select(sentence => sentence.Id)
+            .ToHashSet();
 
         // Clamp index to prevent out-of-range after list shrinks (e.g., ignore pattern)
         if (_errorSentencesList.Count == 0)
@@ -268,7 +311,7 @@ else
         return Uri.UnescapeDataString(ChapterName ?? "Audio");
     }
 
-    private void HandleTimeUpdate(double time)
+    private async Task HandleTimeUpdate(double time)
     {
         _currentTime = time;
 
@@ -280,8 +323,95 @@ else
         {
             _lastTimeBasedSentenceId = newId;
             _selectedSentenceId = null;
+
+            if (_currentView == "playback"
+                && activeSentence is not null
+                && _visibleErrorSentenceIds.Contains(activeSentence.Id))
+            {
+                await TryPlayPlaybackErrorAlertAsync();
+            }
+
             StateHasChanged();
         }
+    }
+
+    private async Task TryPlayPlaybackErrorAlertAsync()
+    {
+        var alertUrl = GetPlaybackErrorAlertUrl();
+        if (string.IsNullOrWhiteSpace(alertUrl))
+        {
+            return;
+        }
+
+        try
+        {
+            _alertSoundPlayer ??= await JS.InvokeAsync<IJSObjectReference>("import", "./js/alert-sound-player.js");
+            await _alertSoundPlayer.InvokeVoidAsync("play", alertUrl);
+        }
+        catch (JSDisconnectedException)
+        {
+            // Ignore disconnect races during navigation.
+        }
+        catch (Exception ex)
+        {
+            // Do not toast here to avoid spamming while playback continues.
+            Console.WriteLine($"Failed to play playback error alert sound: {ex.Message}");
+        }
+    }
+
+    private string? GetPlaybackErrorAlertUrl()
+    {
+        if (_playbackErrorAlertSoundSetting is null)
+        {
+            return null;
+        }
+
+        return $"/api/audio/alerts/playback-error?v={_playbackErrorAlertSoundSetting.UpdatedAtUtc.Ticks}";
+    }
+
+    private void SavePlaybackErrorAlertSound()
+    {
+        var sourcePath = _playbackErrorAlertSourcePath?.Trim();
+        if (string.IsNullOrWhiteSpace(sourcePath))
+        {
+            ToastService.Warning("Enter a local sound file path before saving.");
+            return;
+        }
+
+        try
+        {
+            _playbackErrorAlertSoundSetting = Workspace.SetPlaybackErrorAlertSound(sourcePath);
+            _playbackErrorAlertSourcePath = string.Empty;
+            ToastService.Success($"Playback alert sound saved: {_playbackErrorAlertSoundSetting.SourceFileName}");
+        }
+        catch (Exception ex)
+        {
+            ToastService.Error($"Failed to save playback alert sound: {ex.Message}");
+        }
+    }
+
+    private void ClearPlaybackErrorAlertSound()
+    {
+        try
+        {
+            Workspace.ClearPlaybackErrorAlertSound();
+            _playbackErrorAlertSoundSetting = null;
+            ToastService.Info("Playback alert sound cleared.");
+        }
+        catch (Exception ex)
+        {
+            ToastService.Error($"Failed to clear playback alert sound: {ex.Message}");
+        }
+    }
+
+    private string GetPlaybackErrorAlertStatusText()
+    {
+        if (_playbackErrorAlertSoundSetting is null)
+        {
+            return "No app-level playback alert sound is configured. Set one to hear a notification when playback reaches an error sentence.";
+        }
+
+        return $"Current app-level alert sound: {_playbackErrorAlertSoundSetting.SourceFileName}";
     }
 
     private async Task HandleWaveformReady()
@@ -773,6 +903,16 @@ else
             catch (JSDisconnectedException) { }
         }
         _dotNetRef?.Dispose();
+
+        if (_alertSoundPlayer is not null)
+        {
+            try
+            {
+                await _alertSoundPlayer.InvokeVoidAsync("dispose");
+                await _alertSoundPlayer.DisposeAsync();
+            }
+            catch (JSDisconnectedException) { }
+        }
 
         if (_snippetPlayer is not null)
         {

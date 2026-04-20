@@ -73,6 +73,35 @@ public class AudioController : ControllerBase
     }
 
     /// <summary>
+    /// Serves the configured app-level playback-error alert sound used by the proof playback view.
+    /// </summary>
+    [HttpGet("alerts/playback-error")]
+    public IActionResult GetPlaybackErrorAlertAudio()
+    {
+        if (!_workspace.IsInitialized)
+        {
+            return NotFound("Workspace not initialized");
+        }
+
+        var descriptor = _workspace.Book.Audio.PlaybackErrorAlertSound;
+        if (descriptor is null)
+        {
+            return NotFound("Playback error alert sound is not configured");
+        }
+
+        if (!System.IO.File.Exists(descriptor.SourcePath))
+        {
+            _workspace.Book.Audio.ClearPlaybackErrorAlertSound();
+            _logger.LogWarning(
+                "Playback error alert sound is configured but missing on disk at {Path}",
+                descriptor.SourcePath);
+            return NotFound("Playback error alert sound file is missing");
+        }
+
+        return ServeAudioFile(descriptor.SourcePath);
+    }
+
+    /// <summary>
     /// Gets the audio for a chapter from the workspace's AudioBufferContext.
     /// Streams WAV data from the loaded AudioBuffer.
     /// When start/end query params are provided, trims to that segment.

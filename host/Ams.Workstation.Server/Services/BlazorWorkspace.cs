@@ -6,6 +6,7 @@ using System.Text.Json;
 using Ams.Core.Artifacts.Hydrate;
 using Ams.Core.Common;
 using Ams.Core.Runtime.Artifacts;
+using Ams.Core.Runtime.Audio;
 using Ams.Core.Runtime.Book;
 using Ams.Core.Runtime.Chapter;
 using Ams.Core.Runtime.Workspace;
@@ -33,6 +34,7 @@ public sealed class BlazorWorkspace : IWorkspace, IDisposable
     private ChapterContextHandle? _currentChapterHandle;
     private string? _rootPath;
     private readonly string _stateFilePath;
+    private readonly IAppPlaybackAlertSoundService _playbackAlertSoundService;
     private bool _disposed;
     private CancellationTokenSource? _backgroundPeakPrecomputeCts;
     private Task? _backgroundPeakPrecomputeTask;
@@ -44,12 +46,26 @@ public sealed class BlazorWorkspace : IWorkspace, IDisposable
     private readonly Dictionary<string, ChapterContextHandle> _chapterHandles = new(StringComparer.OrdinalIgnoreCase);
 
     public BlazorWorkspace()
-        : this(stateFilePath: null, loadPersistedState: true)
+        : this(stateFilePath: null, loadPersistedState: true, playbackAlertSoundService: null)
+    {
+    }
+
+    public BlazorWorkspace(IAppPlaybackAlertSoundService playbackAlertSoundService)
+        : this(stateFilePath: null, loadPersistedState: true, playbackAlertSoundService)
     {
     }
 
     internal BlazorWorkspace(string? stateFilePath, bool loadPersistedState)
+        : this(stateFilePath, loadPersistedState, playbackAlertSoundService: null)
     {
+    }
+
+    internal BlazorWorkspace(
+        string? stateFilePath,
+        bool loadPersistedState,
+        IAppPlaybackAlertSoundService? playbackAlertSoundService)
+    {
+        _playbackAlertSoundService = playbackAlertSoundService ?? new AppPlaybackAlertSoundService();
         _stateFilePath = string.IsNullOrWhiteSpace(stateFilePath)
             ? DefaultStateFilePath
             : stateFilePath;
@@ -150,6 +166,31 @@ public sealed class BlazorWorkspace : IWorkspace, IDisposable
     /// Whether waveform peaks should be computed for all chapters in the background after loading a workspace.
     /// </summary>
     public bool PrecomputePeaksInBackground { get; private set; }
+
+    /// <summary>
+    /// Gets the app-level playback-error alert sound setting, if configured.
+    /// </summary>
+    public AppPlaybackAlertSoundSettings? GetPlaybackErrorAlertSoundSetting()
+        => _playbackAlertSoundService.GetPlaybackErrorAlertSound();
+
+    /// <summary>
+    /// Sets the app-level playback-error alert sound from a source file path and applies it to the active book context.
+    /// </summary>
+    public AppPlaybackAlertSoundSettings SetPlaybackErrorAlertSound(string sourcePath)
+    {
+        var setting = _playbackAlertSoundService.SetPlaybackErrorAlertSound(sourcePath);
+        ApplyAppPlaybackAlertSoundToCurrentBook();
+        return setting;
+    }
+
+    /// <summary>
+    /// Clears the app-level playback-error alert sound and unloads it from the active book context.
+    /// </summary>
+    public void ClearPlaybackErrorAlertSound()
+    {
+        _playbackAlertSoundService.ClearPlaybackErrorAlertSound();
+        ApplyAppPlaybackAlertSoundToCurrentBook();
+    }
 
     /// <summary>
     /// The currently open chapter handle, or null if no chapter is selected.
@@ -260,6 +301,7 @@ public sealed class BlazorWorkspace : IWorkspace, IDisposable
         {
             var descriptor = BuildDescriptor(_rootPath);
             _manager = new BookManager(new[] { descriptor }, FileArtifactResolver.Instance);
+            ApplyAppPlaybackAlertSoundToCurrentBook();
             LoadChaptersFromIndex();
         }
         else
@@ -484,6 +526,23 @@ public sealed class BlazorWorkspace : IWorkspace, IDisposable
         catch (Exception ex)
         {
             Console.WriteLine($"Failed to load chapters: {ex.Message}");
+        }
+    }
+
+    private void ApplyAppPlaybackAlertSoundToCurrentBook()
+    {
+        if (_manager is null)
+        {
+            return;
+        }
+
+        try
+        {
+            _playbackAlertSoundService.ApplyTo(_manager.Current.Audio);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Failed to apply app playback alert sound: {ex.Message}");
         }
     }
 

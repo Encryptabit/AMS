@@ -7,6 +7,7 @@ using Ams.Core.Application.Benchmark;
 using Ams.Core.Application.Mfa;
 using Ams.Core.Application.Validation;
 using Ams.Core.Asr;
+using Ams.Core.Runtime.Audio;
 using Ams.Core.Runtime.Book;
 using Ams.Core.Services;
 using Ams.Core.Services.Alignment;
@@ -95,6 +96,7 @@ public static class Program
 
         services.AddSingleton<IPronunciationProvider>(_ => new MfaPronunciationProvider());
         services.AddSingleton<IBookCache>(_ => Ams.Core.Processors.DocumentProcessor.DocumentProcessor.CreateBookCache());
+        services.AddSingleton<IAppPlaybackAlertSoundService, AppPlaybackAlertSoundService>();
         services.AddSingleton<IDocumentService, DocumentService>();
         services.AddSingleton<IAsrService, AsrService>();
         services.AddSingleton<IAnchorComputeService, AnchorComputeService>();

@@ -1,6 +1,7 @@
 using System.IO;
 using Ams.Cli.Repl;
 using Ams.Core.Runtime.Artifacts;
+using Ams.Core.Runtime.Audio;
 using Ams.Core.Runtime.Book;
 using Ams.Core.Runtime.Chapter;
 using Ams.Core.Runtime.Workspace;
@@ -11,14 +12,22 @@ internal sealed class CliWorkspace : IWorkspace
 {
     private readonly ReplState? _state;
     private readonly BookManager _manager;
+    private readonly IAppPlaybackAlertSoundService _playbackAlertSoundService;
     private readonly string _rootPath;
 
-    public CliWorkspace(ReplState state, IArtifactResolver? resolver = null)
-        : this(state.WorkingDirectory, state, resolver)
+    public CliWorkspace(
+        ReplState state,
+        IArtifactResolver? resolver = null,
+        IAppPlaybackAlertSoundService? playbackAlertSoundService = null)
+        : this(state.WorkingDirectory, state, resolver, playbackAlertSoundService)
     {
     }
 
-    public CliWorkspace(string rootPath, ReplState? state = null, IArtifactResolver? resolver = null)
+    public CliWorkspace(
+        string rootPath,
+        ReplState? state = null,
+        IArtifactResolver? resolver = null,
+        IAppPlaybackAlertSoundService? playbackAlertSoundService = null)
     {
         if (string.IsNullOrWhiteSpace(rootPath))
         {
@@ -26,9 +35,11 @@ internal sealed class CliWorkspace : IWorkspace
         }
 
         _state = state;
+        _playbackAlertSoundService = playbackAlertSoundService ?? new AppPlaybackAlertSoundService();
         _rootPath = Path.GetFullPath(rootPath);
         var descriptor = BuildDescriptor(_rootPath);
         _manager = new BookManager(new[] { descriptor }, resolver ?? FileArtifactResolver.Instance);
+        ApplyAppPlaybackAlertSound();
     }
 
     public string RootPath => _rootPath;
@@ -87,6 +98,18 @@ internal sealed class CliWorkspace : IWorkspace
         }
 
         return new FileInfo(fallback);
+    }
+
+    private void ApplyAppPlaybackAlertSound()
+    {
+        try
+        {
+            _playbackAlertSoundService.ApplyTo(_manager.Current.Audio);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Failed to apply app playback alert sound: {ex.Message}");
+        }
     }
 
     private static BookDescriptor BuildDescriptor(string rootPath)
