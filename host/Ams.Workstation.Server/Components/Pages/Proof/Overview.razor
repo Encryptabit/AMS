@@ -1,68 +1,64 @@
 @page "/proof/overview"
 @using Ams.Workstation.Server.Components.Navigation
+@using Ams.Workstation.Server.Components.UI
 @inject Ams.Workstation.Server.Services.BlazorWorkspace Workspace
 @inject Ams.Workstation.Server.Services.ValidationMetricsService MetricsService
 @inject NavigationManager Navigation
 
 <PageTitle>Book Overview - AMS Workstation</PageTitle>
 
-<BitStack Horizontal="false" HorizontalAlign="BitAlignment.Center" Gap="1.5rem">
-    @* Header *@
+<div class="proof-overview">
     <div class="overview-header">
-        <BitText Typography="BitTypography.H4">Book Overview</BitText>
-        <BitText Typography="BitTypography.Body1" Color="BitColor.SecondaryForeground">
-            Validation status across all chapters
-        </BitText>
+        <h1>Book Overview</h1>
+        <p class="ams-body ams-body--muted">Validation status across all chapters</p>
     </div>
 
     @if (_loading)
     {
-        <BitStack HorizontalAlign="BitAlignment.Center" VerticalAlign="BitAlignment.Center" Style="padding: 2rem;">
-            <BitProgress Circular="true" />
-        </BitStack>
+        <div class="proof-overview__loading">
+            <AmsSpinner Size="lg" Tone="primary" Label="Loading book overview" />
+        </div>
     }
     else if (_overview != null)
     {
-        @* Stats Grid *@
-        <BitGrid Columns="3" Gap="1rem">
-            <BitGridItem>
+        <div class="proof-stats-grid" data-ams-proof="stats-grid">
+            <div>
                 <StatCard Title="Total Chapters" Value="@_overview.ChapterCount.ToString()" />
-            </BitGridItem>
-            <BitGridItem>
+            </div>
+            <div>
                 <StatCard Title="Total Sentences"
                           Value="@_overview.TotalSentences.ToString()"
                           Detail="@($"Flagged: {_overview.TotalFlaggedSentences} | Avg WER: {_overview.AvgSentenceWer}")" />
-            </BitGridItem>
-            <BitGridItem>
+            </div>
+            <div>
                 <StatCard Title="Total Paragraphs"
                           Value="@_overview.TotalParagraphs.ToString()"
                           Detail="@($"Flagged: {_overview.TotalFlaggedParagraphs}")" />
-            </BitGridItem>
-        </BitGrid>
+            </div>
+        </div>
 
-        @* Chapter Grid *@
         <div class="chapter-section">
-            <BitText Typography="BitTypography.Subtitle1" Style="margin-bottom: 1rem;">
-                Chapters
-            </BitText>
-            <BitGrid Columns="4" Gap="1rem">
+            <h2 class="ams-subtitle">Chapters</h2>
+            <div class="proof-chapter-grid" data-ams-proof="chapter-grid">
                 @foreach (var chapter in _overview.Chapters)
                 {
-                    <BitGridItem>
+                    <div>
                         <ChapterCard Chapter="chapter"
                                      OnClick="() => NavigateToChapter(chapter.Name)" />
-                    </BitGridItem>
+                    </div>
                 }
-            </BitGrid>
+            </div>
         </div>
     }
     else
     {
-        <BitMessage Color="BitColor.Warning">
+        <div class="ams-message ams-message--info" role="status">
             No overview data available. Set a working directory first.
-        </BitMessage>
+        </div>
     }
-</BitStack>
+</div>
+
+@* TODO(T04): scoped SCSS sibling *@
 
 @code {
     private bool _loading = true;
@@ -136,13 +132,3 @@
         Navigation.NavigateTo(StageRouteCatalog.BuildProofChapterCompatibilityPath(chapterName));
     }
 }
-
-<style>
-    .overview-header {
-        margin-bottom: 1rem;
-    }
-
-    .chapter-section {
-        margin-top: 1rem;
-    }
-</style>

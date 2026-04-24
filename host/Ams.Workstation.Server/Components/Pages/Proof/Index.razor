@@ -6,95 +6,77 @@
 <PageTitle>Proof - AMS Workstation</PageTitle>
 
 <div class="proof-index">
-    <BitStack Horizontal="false" HorizontalAlign="BitAlignment.Center" Gap="1.5rem">
+    <div class="proof-index__stack">
         <div class="proof-header">
-            <BitText Typography="BitTypography.H4">Proof Area</BitText>
-            <BitText Typography="BitTypography.Body1" Color="BitColor.SecondaryForeground">
-                Review and validate chapter alignments.
-            </BitText>
+            <h1>Proof Area</h1>
+            <p class="ams-body ams-body--muted">Review and validate chapter alignments.</p>
         </div>
 
         @if (Workspace.HasBookIndex)
         {
-            @* Book Overview Link *@
-            <BitCard Class="overview-link" Style="margin-bottom: 1rem;">
-                <BitLink Href="@GetProofOverviewPath()" Style="display: flex; align-items: center; gap: 0.5rem; text-decoration: none;">
-                    <BitIcon IconName="ViewDashboard" />
-                    <BitText Typography="BitTypography.Subtitle2">Book Overview</BitText>
-                    <BitText Typography="BitTypography.Caption2" Color="BitColor.SecondaryForeground">
-                        View all chapters
-                    </BitText>
-                </BitLink>
-            </BitCard>
+            <section class="ams-card overview-link">
+                <a href="@GetProofOverviewPath()" class="ams-btn ams-btn--secondary ams-btn--md proof-index__quick-link">
+                    <span aria-hidden="true">▦</span>
+                    <span>Book Overview</span>
+                    <span class="proof-index__quick-link-detail">View all chapters</span>
+                </a>
+            </section>
 
-            @* Error Patterns Link *@
-            <BitCard Class="overview-link" Style="margin-bottom: 1rem;">
-                <BitLink Href="@GetProofPatternsPath()" Style="display: flex; align-items: center; gap: 0.5rem; text-decoration: none;">
-                    <BitIcon IconName="Warning" />
-                    <BitText Typography="BitTypography.Subtitle2">Error Patterns</BitText>
-                    <BitText Typography="BitTypography.Caption2" Color="BitColor.SecondaryForeground">
-                        Recurring differences
-                    </BitText>
-                </BitLink>
-            </BitCard>
+            <section class="ams-card overview-link">
+                <a href="@GetProofPatternsPath()" class="ams-btn ams-btn--secondary ams-btn--md proof-index__quick-link">
+                    <span aria-hidden="true">⚠</span>
+                    <span>Error Patterns</span>
+                    <span class="proof-index__quick-link-detail">Recurring differences</span>
+                </a>
+            </section>
 
-            @* Pickups Link *@
-            <BitCard Class="overview-link" Style="margin-bottom: 1rem;" data-proof-index-link="pickups">
-                <BitLink Href="@GetProofPickupsPath()" Style="display: flex; align-items: center; gap: 0.5rem; text-decoration: none;">
-                    <BitIcon IconName="MicOff" />
-                    <BitText Typography="BitTypography.Subtitle2">Pickups</BitText>
-                    <BitText Typography="BitTypography.Caption2" Color="BitColor.SecondaryForeground">
-                        Import stitched pickups and stage replacements
-                    </BitText>
-                </BitLink>
-            </BitCard>
+            <section class="ams-card overview-link" data-proof-index-link="pickups">
+                <a href="@GetProofPickupsPath()" class="ams-btn ams-btn--secondary ams-btn--md proof-index__quick-link">
+                    <span aria-hidden="true">🎙</span>
+                    <span>Pickups</span>
+                    <span class="proof-index__quick-link-detail">Import stitched pickups and stage replacements</span>
+                </a>
+            </section>
 
-            <BitCard>
-                <BitText Typography="BitTypography.Subtitle2" Color="BitColor.SecondaryForeground"
-                         Style="margin-bottom: 1rem; text-transform: uppercase; letter-spacing: 0.05em;">
-                    Select a Chapter to Review
-                </BitText>
+            <section class="ams-card">
+                <p class="proof-index__section-label">Select a Chapter to Review</p>
 
                 @if (Workspace.AvailableChapters.Count == 0)
                 {
-                    <BitText Color="BitColor.SecondaryForeground">No chapters available.</BitText>
+                    <p class="ams-body ams-body--muted">No chapters available.</p>
                 }
                 else
                 {
-                    <BitBasicList TItem="string"
-                                  Items="Workspace.AvailableChapters"
-                                  Class="chapters">
-                        <RowTemplate Context="chapter">
-                            <BitLink Href="@GetProofChapterPath(chapter)"
-                                     Class="chapter-link">
-                                <BitStack Horizontal="true" Gap="0.5rem" VerticalAlign="BitAlignment.Center">
-                                    <BitIcon IconName="TextDocument" />
-                                    <span class="chapter-name">@chapter</span>
-                                </BitStack>
-                                <BitIcon IconName="ChevronRight" Color="BitColor.SecondaryForeground" />
-                            </BitLink>
-                        </RowTemplate>
-                    </BitBasicList>
+                    <ul class="chapters">
+                        @foreach (var chapter in Workspace.AvailableChapters)
+                        {
+                            <li>
+                                <a href="@GetProofChapterPath(chapter)" class="chapter-link">
+                                    <span class="chapter-link__start">
+                                        <span aria-hidden="true">▤</span>
+                                        <span class="chapter-name">@chapter</span>
+                                    </span>
+                                    <span aria-hidden="true">›</span>
+                                </a>
+                            </li>
+                        }
+                    </ul>
                 }
-            </BitCard>
+            </section>
         }
         else
         {
-            <BitMessage Color="BitColor.Info">
-                <BitStack Horizontal="false" Gap="0.5rem">
-                    <BitText Typography="BitTypography.Body1">
-                        No working directory set or book-index.json not found.
-                    </BitText>
-                    <BitButton Variant="BitVariant.Outline"
-                               Color="BitColor.Primary"
-                               Href="/">
-                        Go to Home to set a working directory
-                    </BitButton>
-                </BitStack>
-            </BitMessage>
+            <div class="ams-message ams-message--info" role="status" data-ams-proof="no-workspace-message">
+                <div class="proof-index__message">
+                    <p>No working directory set or book-index.json not found.</p>
+                    <a href="/" class="ams-btn ams-btn--secondary ams-btn--md">Go to Home to set a working directory</a>
+                </div>
+            </div>
         }
-    </BitStack>
+    </div>
 </div>
+
+@* TODO(T04): scoped SCSS sibling *@
 
 @code {
     private static string GetProofOverviewPath()
@@ -115,49 +97,3 @@
     private static string GetProofChapterPath(string chapterName)
         => StageRouteCatalog.BuildProofChapterCompatibilityPath(chapterName);
 }
-
-<style>
-    .proof-index {
-        max-width: 800px;
-        margin: 0 auto;
-    }
-
-    .chapters {
-        list-style: none;
-        margin: 0;
-        padding: 0;
-    }
-
-    .chapter-link {
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        padding: 1rem;
-        text-decoration: none;
-        transition: background-color 0.15s ease;
-        border-radius: 4px;
-        border-bottom: 1px solid var(--bit-clr-brd-sec);
-    }
-
-    .chapter-link:last-child {
-        border-bottom: none;
-    }
-
-    .chapter-link:hover {
-        background-color: var(--bit-clr-bg-sec-hover);
-        text-decoration: none;
-    }
-
-    .chapter-name {
-        font-weight: 500;
-    }
-
-    .overview-link {
-        background-color: var(--bit-clr-bg-sec);
-        transition: background-color 0.15s ease;
-    }
-
-    .overview-link:hover {
-        background-color: var(--bit-clr-bg-sec-hover);
-    }
-</style>

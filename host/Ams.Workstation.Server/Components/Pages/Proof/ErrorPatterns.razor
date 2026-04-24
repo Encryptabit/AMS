@@ -4,65 +4,63 @@
 @inject IgnoredPatternsService IgnoredPatternsService
 @using Ams.Workstation.Server.Models
 @using Ams.Workstation.Server.Services
+@using Ams.Workstation.Server.Components.UI
 
 <PageTitle>Error Patterns - AMS Workstation</PageTitle>
 
-<BitStack Horizontal="false" Gap="1.5rem" AutoHeight="true">
-    <BitStack Horizontal="false" Gap="0.25rem">
-        <BitText Typography="BitTypography.H4">Error Patterns</BitText>
-        <BitText Typography="BitTypography.Body1" Color="BitColor.SecondaryForeground">
-            Recurring differences across all chapters
-        </BitText>
-    </BitStack>
+<div class="proof-patterns-page">
+    <div class="proof-patterns-header">
+        <h1>Error Patterns</h1>
+        <p class="ams-body ams-body--muted">Recurring differences across all chapters</p>
+    </div>
 
-    @* Filter input *@
-    <BitTextField @bind-Value="_filterText"
-                  Placeholder="Filter patterns..."
-                  OnChange="HandleFilterChange"
-                  Style="max-width: 400px;" />
+    <input type="text"
+           class="ams-input"
+           value="@_filterText"
+           @oninput="@(e => HandleFilterChange(e.Value?.ToString()))"
+           placeholder="Filter patterns…"
+           data-ams-proof="patterns-filter" />
 
     @if (_loading)
     {
-        <BitStack HorizontalAlign="BitAlignment.Center" VerticalAlign="BitAlignment.Center" Style="padding: 2rem;">
-            <BitProgress Circular="true" />
-        </BitStack>
+        <div class="proof-patterns-loading">
+            <AmsSpinner Label="Loading error patterns" />
+        </div>
     }
     else if (_patterns != null && _patterns.Patterns.Count > 0)
     {
-        <BitText Typography="BitTypography.Caption1" Color="BitColor.SecondaryForeground">
-            Showing @FilteredPatterns.Count() of @_patterns.Patterns.Count patterns
-        </BitText>
+        <p class="ams-caption ams-caption--muted">Showing @FilteredPatterns.Count() of @_patterns.Patterns.Count patterns</p>
 
-        <BitGrid Columns="5" Spacing="0.5rem">
+        <div class="proof-patterns-grid" data-ams-proof="patterns-grid">
             @foreach (var pattern in FilteredPatterns)
             {
-                <BitGridItem>
+                <div>
                     <PatternCard Pattern="pattern"
                                  OnToggleIgnore="() => ToggleIgnore(pattern)" />
-                </BitGridItem>
+                </div>
             }
-        </BitGrid>
+        </div>
 
         @if (!FilteredPatterns.Any())
         {
-            <BitText Color="BitColor.SecondaryForeground" Style="font-style: italic;">
-                No patterns match the filter.
-            </BitText>
+            <p class="ams-body ams-body--muted"><em>No patterns match filter.</em></p>
         }
     }
     else if (_patterns != null && _patterns.Patterns.Count == 0)
     {
-        <BitMessage Color="BitColor.Success">
+        <div class="ams-message ams-message--info" role="status">
             No error patterns found. All sentences match perfectly.
-        </BitMessage>
+        </div>
     }
     else
     {
-        <BitMessage Color="BitColor.Warning">
-            No pattern data available. Set a working directory first.
-        </BitMessage>
+        <div class="ams-message ams-message--info" role="status">
+            No pattern data available. Set working directory first.
+        </div>
     }
-</BitStack>
+</div>
+
+@* TODO(T04): scoped SCSS sibling *@
 
 @code {
     private ErrorPatternsResult? _patterns;
@@ -125,4 +123,3 @@
     }
 
 }
-

@@ -14,62 +14,60 @@
 @using Ams.Workstation.Server.Components.Navigation
 @using Ams.Workstation.Server.Models
 @using Ams.Core.Runtime.Audio
+@using Ams.Workstation.Server.Components.UI
 @implements IAsyncDisposable
 
 <PageTitle>@ChapterName - Proof - AMS Workstation</PageTitle>
 
-<BitStack Horizontal="true" Gap="0.5rem" AutoHeight="true" HorizontalAlign="BitAlignment.Center" Style="margin-bottom: 1rem;">
-    <BitButton Variant="@(_currentView == "errors" ? BitVariant.Fill : BitVariant.Outline)"
-               OnClick="@(() => SwitchView("errors"))">
-        Errors View
-    </BitButton>
-    <BitButton Variant="@(_currentView == "playback" ? BitVariant.Fill : BitVariant.Outline)"
-               OnClick="@(() => SwitchView("playback"))">
-        Playback View
-    </BitButton>
-    <BitButton Variant="@(_isReviewed ? BitVariant.Fill : BitVariant.Outline)"
-               Color="@(_isReviewed ? BitColor.Success : BitColor.Primary)"
-               OnClick="ToggleReviewed">
-        @(_isReviewed ? "Reviewed" : "Mark as Reviewed")
-    </BitButton>
-    <span data-proof-editing-handoff="pickups">
-        <BitButton Variant="BitVariant.Outline"
-                   OnClick="NavigateToPickups">
-            Pickups
-        </BitButton>
-    </span>
-</BitStack>
+<div class="proof-review">
+    <div class="proof-view-switcher" data-ams-proof="view-switcher">
+        <AmsButton Variant="@(_currentView == "errors" ? "primary" : "secondary")"
+                   OnClick="@(() => SwitchView("errors"))">
+            Errors View
+        </AmsButton>
+        <AmsButton Variant="@(_currentView == "playback" ? "primary" : "secondary")"
+                   OnClick="@(() => SwitchView("playback"))">
+            Playback View
+        </AmsButton>
+        <AmsButton Variant="@(_isReviewed ? "primary" : "secondary")"
+                   OnClick="ToggleReviewed">
+            @(_isReviewed ? "Reviewed" : "Mark as Reviewed")
+        </AmsButton>
+        <span data-proof-editing-handoff="pickups">
+            <AmsButton Variant="secondary"
+                       OnClick="NavigateToPickups">
+                Pickups
+            </AmsButton>
+        </span>
+    </div>
 
-@if (_currentView == "playback")
-{
-    <BitGrid Columns="12">
-        <BitGridItem ColumnSpan="12">
-            <BitCard Class="playback-alert-settings" FullWidth="true">
-                <BitStack Horizontal="true" Gap="0.6rem" VerticalAlign="BitAlignment.End" Wrap="true">
-                    <BitTextField @bind-Value="_playbackErrorAlertSourcePath"
-                                  Immediate="true"
-                                  Placeholder="Alert sound file path (.wav, .mp3, .ogg, .flac, .m4a)"
-                                  Style="min-width: 18rem; flex: 1;" />
-                    <BitButton Variant="BitVariant.Fill"
-                               Color="BitColor.Primary"
-                               OnClick="SavePlaybackErrorAlertSound">
-                        Save Alert Sound
-                    </BitButton>
-                    <BitButton Variant="BitVariant.Outline"
-                               Color="BitColor.Secondary"
-                               IsEnabled="@(_playbackErrorAlertSoundSetting is not null)"
-                               OnClick="ClearPlaybackErrorAlertSound">
-                        Clear
-                    </BitButton>
-                </BitStack>
-                <BitText Typography="BitTypography.Caption1"
-                         Color="BitColor.SecondaryForeground"
-                         Class="playback-alert-status">
-                    @GetPlaybackErrorAlertStatusText()
-                </BitText>
-            </BitCard>
-        </BitGridItem>
-        <BitGridItem ColumnSpan="12" style="min-width: 0;">
+    @if (_currentView == "playback")
+    {
+        <div class="proof-playback-grid">
+            <div class="proof-playback-grid-item proof-playback-grid-item--span-12">
+                <section class="ams-card playback-alert-settings" data-ams-proof="alert-sound-card">
+                    <div class="proof-alert-settings__controls">
+                        <input type="text"
+                               class="ams-input"
+                               value="@_playbackErrorAlertSourcePath"
+                               @oninput="@(e => _playbackErrorAlertSourcePath = e.Value?.ToString() ?? string.Empty)"
+                               placeholder="Alert sound file path (.wav, .mp3, .ogg, .flac, .m4a)" />
+                        <AmsButton Variant="primary"
+                                   OnClick="SavePlaybackErrorAlertSound">
+                            Save Alert Sound
+                        </AmsButton>
+                        <AmsButton Variant="secondary"
+                                   Disabled="@(_playbackErrorAlertSoundSetting is null)"
+                                   OnClick="ClearPlaybackErrorAlertSound">
+                            Clear
+                        </AmsButton>
+                    </div>
+                    <span class="playback-alert-status ams-caption ams-caption--muted">
+                        @GetPlaybackErrorAlertStatusText()
+                    </span>
+                </section>
+            </div>
+            <div class="proof-playback-grid-item proof-playback-grid-item--span-12" style="min-width: 0;">
                 <WaveformPlayer
                     @ref="_waveformPlayer"
                     AudioUrl="@GetAudioUrl()"
@@ -79,34 +77,33 @@
                     OnReady="HandleWaveformReady"
                     OnSeek="HandleSeek"
                     OnFinished="HandlePlaybackFinished"/>
-        </BitGridItem>
-        <BitGridItem ColumnSpan="12">
-            <SentenceList
-                Sentences="@_sentences"
-                CurrentTime="@_currentTime"
-                ActiveSentenceId="@_selectedSentenceId"
-                OnSentenceSelected="HandleSentenceSelected" />
-        </BitGridItem>
-    </BitGrid>
-}
-else
-{
-    <ErrorsView Report="_report" ChapterPatterns="_chapterPatterns"
-                IgnoredKeys="IgnoredPatternsService.GetIgnoredKeys()"
-                ExportedSentenceIds="_exportedSentenceIds"
-                SelectedIndex="_selectedErrorIndex"
-                OnPlaySentence="HandlePlayFromErrors"
-                OnExportSentence="HandleExportFromErrors"
-                OnCrxSentence="HandleCrxFromErrors"
-                OnIgnoreSentence="HandleIgnoreFromErrors"
-                OnTogglePatternIgnore="HandleTogglePatternIgnore"
-                OnViewSentence="HandleViewFromErrors" />
-}
+            </div>
+            <div class="proof-playback-grid-item proof-playback-grid-item--span-12">
+                <SentenceList
+                    Sentences="@_sentences"
+                    CurrentTime="@_currentTime"
+                    ActiveSentenceId="@_selectedSentenceId"
+                    OnSentenceSelected="HandleSentenceSelected" />
+            </div>
+        </div>
+    }
+    else
+    {
+        <ErrorsView Report="_report" ChapterPatterns="_chapterPatterns"
+                    IgnoredKeys="IgnoredPatternsService.GetIgnoredKeys()"
+                    ExportedSentenceIds="_exportedSentenceIds"
+                    SelectedIndex="_selectedErrorIndex"
+                    OnPlaySentence="HandlePlayFromErrors"
+                    OnExportSentence="HandleExportFromErrors"
+                    OnCrxSentence="HandleCrxFromErrors"
+                    OnIgnoreSentence="HandleIgnoreFromErrors"
+                    OnTogglePatternIgnore="HandleTogglePatternIgnore"
+                    OnViewSentence="HandleViewFromErrors" />
+    }
 
-<CrxModal @ref="_crxModal" OnSubmitted="HandleCrxSubmitted" />
-<IgnoreErrorModal @ref="_ignoreModal" OnSubmitted="HandleIgnoreModalSubmitted" />
-
-
+    <CrxModal @ref="_crxModal" OnSubmitted="HandleCrxSubmitted" />
+    <IgnoreErrorModal @ref="_ignoreModal" OnSubmitted="HandleIgnoreModalSubmitted" />
+</div>
 @code {
     private const int PeakPxPerSec = 1200;
     private double _currentTime;
