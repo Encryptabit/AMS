@@ -75,6 +75,11 @@ tmp/
 # ── GSD baseline (auto-generated) ──
 .mcp.json
 
+# ── M007 browser UAT harness ──
+# Local Playwright install cache used by scripts/verify_m007_s01_ui.sh. The
+# evidence bundles next to it (timestamp-m007-s01-uat/) remain tracked.
+.artifacts/browser/.pwcache/
+
 # ── M007 Sass toolchain generated output ──
 # Global stylesheet compiled from host/Ams.Workstation.Server/Styles/app.scss.
 host/Ams.Workstation.Server/wwwroot/css/app.css

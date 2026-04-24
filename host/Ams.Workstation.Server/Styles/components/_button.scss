@@ -1,0 +1,111 @@
+// Global .ams-btn rules so the button composition works on any element — most
+// notably `<a class="ams-btn">` used by Home's quick-link cards, which cannot
+// render via the <button>-only AmsButton primitive but must still present with
+// the same touch-safe sizing + tokenized chrome. Blazor CSS isolation scopes
+// AmsButton.razor.scss to the primitive component only; this partial exposes
+// the same base visuals globally. See M007-UI-FOUNDATION.md §3.15/§3.16.
+@use "../tokens/spacing" as sp;
+@use "../tokens/radius" as r;
+@use "../tokens/typography" as t;
+@use "../tokens/motion" as m;
+@use "../mixins/focus-ring" as fr;
+
+.ams-btn {
+    --_ams-btn-bg: var(--ams-color-accent);
+    --_ams-btn-bg-hover: var(--ams-color-accent-hover);
+    --_ams-btn-fg: var(--ams-color-text-primary);
+    --_ams-btn-border: transparent;
+
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: sp.$ams-space-2;
+
+    min-height: 44px;
+    padding: sp.$ams-space-2 sp.$ams-space-4;
+    border: 1px solid var(--_ams-btn-border);
+    border-radius: r.$ams-radius-2;
+
+    background-color: var(--_ams-btn-bg);
+    color: var(--_ams-btn-fg);
+
+    font-family: inherit;
+    font-size: t.$ams-font-size-md;
+    font-weight: 500;
+    line-height: 1;
+    white-space: nowrap;
+    text-decoration: none;
+
+    cursor: pointer;
+    transition: background-color m.$ams-duration-2 m.$ams-ease-standard,
+                border-color m.$ams-duration-2 m.$ams-ease-standard;
+
+    @include fr.focus-ring;
+
+    &:hover:not(.is-disabled):not([disabled]) {
+        background-color: var(--_ams-btn-bg-hover);
+    }
+
+    &.is-disabled,
+    &[disabled] {
+        cursor: not-allowed;
+        opacity: 0.5;
+    }
+
+    &.is-loading {
+        cursor: progress;
+    }
+}
+
+.ams-btn__icon,
+.ams-btn__spinner {
+    display: inline-flex;
+    flex-shrink: 0;
+}
+
+.ams-btn__spinner {
+    width: 14px;
+    height: 14px;
+    border: 2px solid currentColor;
+    border-top-color: transparent;
+    border-radius: 50%;
+    animation: ams-btn-spin 0.8s linear infinite;
+}
+
+.ams-btn--secondary {
+    --_ams-btn-bg: transparent;
+    --_ams-btn-bg-hover: var(--ams-color-surface-2);
+    --_ams-btn-fg: var(--ams-color-text-primary);
+    --_ams-btn-border: var(--ams-color-border-subtle);
+}
+
+.ams-btn--ghost {
+    --_ams-btn-bg: transparent;
+    --_ams-btn-bg-hover: var(--ams-color-surface-2);
+    --_ams-btn-fg: var(--ams-color-text-secondary);
+}
+
+.ams-btn--danger {
+    --_ams-btn-bg: var(--ams-color-danger);
+    --_ams-btn-bg-hover: color-mix(in srgb, var(--ams-color-danger) 85%, black);
+}
+
+.ams-btn--sm {
+    min-height: 36px;
+    padding: sp.$ams-space-1 sp.$ams-space-3;
+    font-size: t.$ams-font-size-sm;
+}
+
+.ams-btn--lg {
+    min-height: 48px;
+    padding: sp.$ams-space-3 sp.$ams-space-6;
+    font-size: t.$ams-font-size-lg;
+}
+
+.ams-btn--full {
+    width: 100%;
+}
+
+@keyframes ams-btn-spin {
+    to { transform: rotate(360deg); }
+}

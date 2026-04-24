@@ -1,0 +1,86 @@
+[
+  {
+    "type": "info",
+    "text": "[2026-04-24T16:43:18.072Z] Information: Normalizing '_blazor' to 'http://127.0.0.1:55553/_blazor'.",
+    "url": "http://127.0.0.1:55553/",
+    "context": "home-viewport"
+  },
+  {
+    "type": "info",
+    "text": "[2026-04-24T16:43:18.092Z] Information: WebSocket connected to ws://127.0.0.1:55553/_blazor?id=G5EquJVaLcf1pHfOiWQquw.",
+    "url": "http://127.0.0.1:55553/",
+    "context": "home-viewport"
+  },
+  {
+    "type": "info",
+    "text": "[2026-04-24T16:43:18.682Z] Information: Normalizing '_blazor' to 'http://127.0.0.1:55553/_blazor'.",
+    "url": "http://127.0.0.1:55553/",
+    "context": "home-viewport"
+  },
+  {
+    "type": "info",
+    "text": "[2026-04-24T16:43:18.691Z] Information: WebSocket connected to ws://127.0.0.1:55553/_blazor?id=ZApbiVan10V1Epd7b4CUPA.",
+    "url": "http://127.0.0.1:55553/",
+    "context": "home-viewport"
+  },
+  {
+    "type": "info",
+    "text": "[2026-04-24T16:43:19.242Z] Information: Normalizing '_blazor' to 'http://127.0.0.1:55553/_blazor'.",
+    "url": "http://127.0.0.1:55553/",
+    "context": "home-viewport"
+  },
+  {
+    "type": "info",
+    "text": "[2026-04-24T16:43:19.248Z] Information: WebSocket connected to ws://127.0.0.1:55553/_blazor?id=800Gnmb14L5Cgs-bTbjOCQ.",
+    "url": "http://127.0.0.1:55553/",
+    "context": "home-viewport"
+  },
+  {
+    "type": "info",
+    "text": "[2026-04-24T16:43:19.785Z] Information: Normalizing '_blazor' to 'http://127.0.0.1:55553/_blazor'.",
+    "url": "http://127.0.0.1:55553/",
+    "context": "theme-toggle"
+  },
+  {
+    "type": "info",
+    "text": "[2026-04-24T16:43:19.791Z] Information: WebSocket connected to ws://127.0.0.1:55553/_blazor?id=I8zIfu3x0PnO4xvL7cI1AA.",
+    "url": "http://127.0.0.1:55553/",
+    "context": "theme-toggle"
+  },
+  {
+    "type": "info",
+    "text": "[2026-04-24T16:43:21.971Z] Information: Normalizing '_blazor' to 'http://127.0.0.1:55553/_blazor'.",
+    "url": "http://127.0.0.1:55553/prep",
+    "context": "unmigrated-route"
+  },
+  {
+    "type": "info",
+    "text": "[2026-04-24T16:43:21.977Z] Information: WebSocket connected to ws://127.0.0.1:55553/_blazor?id=fSQ2qEaMe18pxycdO79AHQ.",
+    "url": "http://127.0.0.1:55553/prep",
+    "context": "unmigrated-route"
+  },
+  {
+    "type": "info",
+    "text": "[2026-04-24T16:43:22.761Z] Information: Normalizing '_blazor' to 'http://127.0.0.1:55553/_blazor'.",
+    "url": "http://127.0.0.1:55553/proof",
+    "context": "unmigrated-route"
+  },
+  {
+    "type": "info",
+    "text": "[2026-04-24T16:43:22.768Z] Information: WebSocket connected to ws://127.0.0.1:55553/_blazor?id=2eMT_DjLnyDuNzNdLctYww.",
+    "url": "http://127.0.0.1:55553/proof",
+    "context": "unmigrated-route"
+  },
+  {
+    "type": "info",
+    "text": "[2026-04-24T16:43:23.545Z] Information: Normalizing '_blazor' to 'http://127.0.0.1:55553/_blazor'.",
+    "url": "http://127.0.0.1:55553/polish",
+    "context": "unmigrated-route"
+  },
+  {
+    "type": "info",
+    "text": "[2026-04-24T16:43:23.550Z] Information: WebSocket connected to ws://127.0.0.1:55553/_blazor?id=PwP90RiMUjaWKaBp8Zf-UA.",
+    "url": "http://127.0.0.1:55553/polish",
+    "context": "unmigrated-route"
+  }
+]

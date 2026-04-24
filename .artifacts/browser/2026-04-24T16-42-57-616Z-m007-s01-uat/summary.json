@@ -1,0 +1,344 @@
+{
+  "slice": "M007/S01",
+  "task": "T05",
+  "verdict": "PASS",
+  "startedAt": "2026-04-24T16:43:17.480Z",
+  "finishedAt": "2026-04-24T16:43:24.387Z",
+  "baseUrl": "http://127.0.0.1:55553",
+  "counts": {
+    "pass": 25,
+    "fail": 0,
+    "total": 25
+  },
+  "checks": [
+    {
+      "name": "home.load.mobile-360",
+      "status": "PASS",
+      "detail": "status=200"
+    },
+    {
+      "name": "home.no_horizontal_overflow.mobile-360",
+      "status": "PASS",
+      "detail": ".workstation-content scrollWidth=360 clientWidth=360",
+      "data": {
+        "scrollWidth": 506,
+        "clientWidth": 360,
+        "innerWidth": 360,
+        "workstationContent": {
+          "scrollWidth": 360,
+          "clientWidth": 360
+        },
+        "homeContainer": {
+          "scrollWidth": 360,
+          "clientWidth": 360,
+          "offsetWidth": 360
+        },
+        "themeAttr": "dark",
+        "primaryBg": "rgb(17, 21, 28)",
+        "primaryFg": "rgb(246, 247, 249)",
+        "primaryButtons": [
+          {
+            "tag": "a",
+            "classes": "ams-btn ams-btn--secondary ams-btn--md",
+            "offsetHeight": 44,
+            "offsetWidth": 102,
+            "text": "⚙\n                    Prep Area"
+          },
+          {
+            "tag": "a",
+            "classes": "ams-btn ams-btn--secondary ams-btn--md",
+            "offsetHeight": 44,
+            "offsetWidth": 105,
+            "text": "✓\n                    Proof Area"
+          },
+          {
+            "tag": "a",
+            "classes": "ams-btn ams-btn--secondary ams-btn--md",
+            "offsetHeight": 44,
+            "offsetWidth": 110,
+            "text": "◉\n                    Polish Area"
+          }
+        ],
+        "headerControlsVisible": {
+          "themeToggle": true,
+          "workspaces": true,
+          "chapter": true
+        }
+      }
+    },
+    {
+      "name": "home.touch_targets.mobile-360",
+      "status": "PASS",
+      "detail": "3 button(s) all >=44px high",
+      "data": [
+        {
+          "tag": "a",
+          "classes": "ams-btn ams-btn--secondary ams-btn--md",
+          "offsetHeight": 44,
+          "offsetWidth": 102,
+          "text": "⚙\n                    Prep Area"
+        },
+        {
+          "tag": "a",
+          "classes": "ams-btn ams-btn--secondary ams-btn--md",
+          "offsetHeight": 44,
+          "offsetWidth": 105,
+          "text": "✓\n                    Proof Area"
+        },
+        {
+          "tag": "a",
+          "classes": "ams-btn ams-btn--secondary ams-btn--md",
+          "offsetHeight": 44,
+          "offsetWidth": 110,
+          "text": "◉\n                    Polish Area"
+        }
+      ]
+    },
+    {
+      "name": "header.visible.mobile-360",
+      "status": "PASS",
+      "detail": "theme toggle + workspaces select present"
+    },
+    {
+      "name": "theme.default.mobile-360",
+      "status": "PASS",
+      "detail": "data-ams-theme=dark"
+    },
+    {
+      "name": "home.load.tablet-768",
+      "status": "PASS",
+      "detail": "status=200"
+    },
+    {
+      "name": "home.no_horizontal_overflow.tablet-768",
+      "status": "PASS",
+      "detail": ".workstation-content scrollWidth=768 clientWidth=768",
+      "data": {
+        "scrollWidth": 768,
+        "clientWidth": 768,
+        "innerWidth": 768,
+        "workstationContent": {
+          "scrollWidth": 768,
+          "clientWidth": 768
+        },
+        "homeContainer": {
+          "scrollWidth": 700,
+          "clientWidth": 700,
+          "offsetWidth": 700
+        },
+        "themeAttr": "dark",
+        "primaryBg": "rgb(17, 21, 28)",
+        "primaryFg": "rgb(246, 247, 249)",
+        "primaryButtons": [
+          {
+            "tag": "a",
+            "classes": "ams-btn ams-btn--secondary ams-btn--md",
+            "offsetHeight": 44,
+            "offsetWidth": 102,
+            "text": "⚙\n                    Prep Area"
+          },
+          {
+            "tag": "a",
+            "classes": "ams-btn ams-btn--secondary ams-btn--md",
+            "offsetHeight": 44,
+            "offsetWidth": 105,
+            "text": "✓\n                    Proof Area"
+          },
+          {
+            "tag": "a",
+            "classes": "ams-btn ams-btn--secondary ams-btn--md",
+            "offsetHeight": 44,
+            "offsetWidth": 110,
+            "text": "◉\n                    Polish Area"
+          }
+        ],
+        "headerControlsVisible": {
+          "themeToggle": true,
+          "workspaces": true,
+          "chapter": true
+        }
+      }
+    },
+    {
+      "name": "home.touch_targets.tablet-768",
+      "status": "PASS",
+      "detail": "3 button(s) all >=44px high",
+      "data": [
+        {
+          "tag": "a",
+          "classes": "ams-btn ams-btn--secondary ams-btn--md",
+          "offsetHeight": 44,
+          "offsetWidth": 102,
+          "text": "⚙\n                    Prep Area"
+        },
+        {
+          "tag": "a",
+          "classes": "ams-btn ams-btn--secondary ams-btn--md",
+          "offsetHeight": 44,
+          "offsetWidth": 105,
+          "text": "✓\n                    Proof Area"
+        },
+        {
+          "tag": "a",
+          "classes": "ams-btn ams-btn--secondary ams-btn--md",
+          "offsetHeight": 44,
+          "offsetWidth": 110,
+          "text": "◉\n                    Polish Area"
+        }
+      ]
+    },
+    {
+      "name": "header.visible.tablet-768",
+      "status": "PASS",
+      "detail": "theme toggle + workspaces select present"
+    },
+    {
+      "name": "theme.default.tablet-768",
+      "status": "PASS",
+      "detail": "data-ams-theme=dark"
+    },
+    {
+      "name": "home.load.desktop-1280",
+      "status": "PASS",
+      "detail": "status=200"
+    },
+    {
+      "name": "home.no_horizontal_overflow.desktop-1280",
+      "status": "PASS",
+      "detail": ".workstation-content scrollWidth=1280 clientWidth=1280",
+      "data": {
+        "scrollWidth": 1280,
+        "clientWidth": 1280,
+        "innerWidth": 1280,
+        "workstationContent": {
+          "scrollWidth": 1280,
+          "clientWidth": 1280
+        },
+        "homeContainer": {
+          "scrollWidth": 700,
+          "clientWidth": 700,
+          "offsetWidth": 700
+        },
+        "themeAttr": "dark",
+        "primaryBg": "rgb(17, 21, 28)",
+        "primaryFg": "rgb(246, 247, 249)",
+        "primaryButtons": [
+          {
+            "tag": "a",
+            "classes": "ams-btn ams-btn--secondary ams-btn--md",
+            "offsetHeight": 44,
+            "offsetWidth": 102,
+            "text": "⚙\n                    Prep Area"
+          },
+          {
+            "tag": "a",
+            "classes": "ams-btn ams-btn--secondary ams-btn--md",
+            "offsetHeight": 44,
+            "offsetWidth": 105,
+            "text": "✓\n                    Proof Area"
+          },
+          {
+            "tag": "a",
+            "classes": "ams-btn ams-btn--secondary ams-btn--md",
+            "offsetHeight": 44,
+            "offsetWidth": 110,
+            "text": "◉\n                    Polish Area"
+          }
+        ],
+        "headerControlsVisible": {
+          "themeToggle": true,
+          "workspaces": true,
+          "chapter": true
+        }
+      }
+    },
+    {
+      "name": "home.touch_targets.desktop-1280",
+      "status": "PASS",
+      "detail": "3 button(s) all >=44px high",
+      "data": [
+        {
+          "tag": "a",
+          "classes": "ams-btn ams-btn--secondary ams-btn--md",
+          "offsetHeight": 44,
+          "offsetWidth": 102,
+          "text": "⚙\n                    Prep Area"
+        },
+        {
+          "tag": "a",
+          "classes": "ams-btn ams-btn--secondary ams-btn--md",
+          "offsetHeight": 44,
+          "offsetWidth": 105,
+          "text": "✓\n                    Proof Area"
+        },
+        {
+          "tag": "a",
+          "classes": "ams-btn ams-btn--secondary ams-btn--md",
+          "offsetHeight": 44,
+          "offsetWidth": 110,
+          "text": "◉\n                    Polish Area"
+        }
+      ]
+    },
+    {
+      "name": "header.visible.desktop-1280",
+      "status": "PASS",
+      "detail": "theme toggle + workspaces select present"
+    },
+    {
+      "name": "theme.default.desktop-1280",
+      "status": "PASS",
+      "detail": "data-ams-theme=dark"
+    },
+    {
+      "name": "theme.toggle.attribute_flip",
+      "status": "PASS",
+      "detail": "dark -> light"
+    },
+    {
+      "name": "theme.toggle.bg_changed",
+      "status": "PASS",
+      "detail": "bg: rgb(17, 21, 28) -> rgb(255, 255, 255)"
+    },
+    {
+      "name": "theme.toggle.return_to_dark",
+      "status": "PASS",
+      "detail": "light -> dark"
+    },
+    {
+      "name": "route.load./prep",
+      "status": "PASS",
+      "detail": "status=200 theme=dark"
+    },
+    {
+      "name": "route.theme./prep",
+      "status": "PASS",
+      "detail": "data-ams-theme=dark preserved on Bit-powered route"
+    },
+    {
+      "name": "route.load./proof",
+      "status": "PASS",
+      "detail": "status=200 theme=dark"
+    },
+    {
+      "name": "route.theme./proof",
+      "status": "PASS",
+      "detail": "data-ams-theme=dark preserved on Bit-powered route"
+    },
+    {
+      "name": "route.load./polish",
+      "status": "PASS",
+      "detail": "status=200 theme=dark"
+    },
+    {
+      "name": "route.theme./polish",
+      "status": "PASS",
+      "detail": "data-ams-theme=dark preserved on Bit-powered route"
+    },
+    {
+      "name": "console.no_errors_migrated",
+      "status": "PASS",
+      "detail": "no console.error on Home / theme-toggle flows"
+    }
+  ]
+}

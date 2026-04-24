@@ -28,3 +28,8 @@
 
 @use "utilities/sr-only";
 @use "utilities/scroll";
+
+// Components that need globally-available class hooks (e.g. .ams-btn applied to
+// plain <a> anchors). Blazor CSS isolation keeps AmsButton.razor.scss scoped to
+// the primitive; this exposes the same base visuals for non-component usage.
+@use "components/button";
