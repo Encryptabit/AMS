@@ -3,7 +3,7 @@
 
 @if (IsOpen)
 {
-    <div class="ams-dialog-backdrop" @onclick="DismissIfNotBlocking"></div>
+    <div class="ams-dialog-backdrop" @onclick="Dismiss"></div>
     <div class="ams-dialog"
          role="dialog"
          aria-modal="true"
@@ -63,8 +63,12 @@
         return builder.Length == 0 ? "untitled" : builder.ToString();
     }
 
-    private async Task DismissIfNotBlocking()
+    private async Task Dismiss()
     {
+        if (IsOpenChanged.HasDelegate)
+        {
+            await IsOpenChanged.InvokeAsync(false);
+        }
         await OnDismiss.InvokeAsync();
     }
 
@@ -72,7 +76,7 @@
     {
         if (args.Key == "Escape")
         {
-            await OnDismiss.InvokeAsync();
+            await Dismiss();
         }
     }
 }

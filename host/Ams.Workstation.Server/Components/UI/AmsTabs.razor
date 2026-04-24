@@ -51,4 +51,17 @@
         ActiveItem = item;
         StateHasChanged();
     }
+
+    public void UnregisterItem(AmsTabItem item)
+    {
+        if (!_items.Remove(item))
+        {
+            return;
+        }
+        if (ActiveItem == item)
+        {
+            ActiveItem = _items.Count > 0 ? _items[0] : null;
+        }
+        StateHasChanged();
+    }
 }

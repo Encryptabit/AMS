@@ -4,6 +4,7 @@
 @using System.Linq
 @using Ams.Core.Application.Pipeline
 @using Ams.Core.Application.Runs
+@using Ams.Workstation.Server.Components.UI
 @using Ams.Workstation.Server.Services
 @using Ams.Workstation.Server.Services.Prep
 @implements IDisposable
@@ -12,40 +13,38 @@
 
 <PageTitle>Prep - AMS Workstation</PageTitle>
 
+@* Icon glyph mapping (Bit icon name → vanilla glyph):
+     Equalizer → ⚙, Add → +, EntryView → ◉, Delete → ✕,
+     ChevronLeft → ‹, ChevronRight → ›, TaskGroup → ☰,
+     History → ⏱, MusicInCollection → ♪, TextDocument → ▤. *@
+
 <SectionContent SectionName="header-extra">
     @if (HasWorkingDirectory)
     {
-        <BitStack Horizontal="true"
-                  Gap="0.5rem"
-                  VerticalAlign="BitAlignment.Center"
-                  Wrap="true"
-                  Class="prep-header-extra">
-            <BitTag Color="@GetPhaseColor(Session.CurrentPhase)">@FormatPhase(Session.CurrentPhase)</BitTag>
+        <div class="prep-header-extra prep-header-extra--row">
+            <AmsTag Tone="@GetPhaseTone(Session.CurrentPhase)" Size="sm">@FormatPhase(Session.CurrentPhase)</AmsTag>
 
             @if (!string.IsNullOrWhiteSpace(Session.CurrentStage))
             {
-                <BitText Typography="BitTypography.Caption1" Color="BitColor.SecondaryForeground">
-                    Stage: @Session.CurrentStage
-                </BitText>
+                <span class="ams-caption ams-caption--muted">Stage: @Session.CurrentStage</span>
             }
 
-            <BitButton Variant="BitVariant.Outline"
-                       Size="BitSize.Small"
-                       Color="BitColor.Warning"
+            <AmsButton Variant="danger"
+                       Size="sm"
                        OnClick="HandleCancel"
-                       IsEnabled="@(Session.IsRunning && !Session.IsCancellationRequested)">
+                       Disabled="@(!(Session.IsRunning && !Session.IsCancellationRequested))">
                 Cancel
-            </BitButton>
-        </BitStack>
+            </AmsButton>
+        </div>
     }
 </SectionContent>
 
 <SectionContent SectionName="module-inspector">
     @if (HasWorkingDirectory && Workspace.HasBookIndex)
     {
-        <BitStack Horizontal="false" Gap="0rem" Class="prep-header-extra">
+        <div class="prep-header-extra prep-header-extra--column">
             <div class="inspector-header">
-                <BitText Typography="BitTypography.Subtitle2">
+                <h3 class="ams-subtitle">
                     @if (SelectedQueueItem is not null)
                     {
                         <text>INSPECTOR: @SelectedQueueItem.Chapter</text>
@@ -54,101 +53,101 @@
                     {
                         <text>Pipeline Inspector</text>
                     }
-                </BitText>
+                </h3>
             </div>
 
             @if (Session.IsRunning)
             {
-                <div class="inspector-section">
-                    <BitText Typography="BitTypography.Overline">Active Run</BitText>
+                <div class="inspector-section" data-ams-inspector-section="session">
+                    <span class="ams-overline">Active Run</span>
                     <div class="prep-kv">
-                        <BitText Typography="BitTypography.Caption1" Color="BitColor.SecondaryForeground">Phase</BitText>
-                        <BitTag Color="@GetPhaseColor(Session.CurrentPhase)">@FormatPhase(Session.CurrentPhase)</BitTag>
+                        <span class="ams-caption ams-caption--muted">Phase</span>
+                        <AmsTag Tone="@GetPhaseTone(Session.CurrentPhase)" Size="sm">@FormatPhase(Session.CurrentPhase)</AmsTag>
                     </div>
                     <div class="prep-kv">
-                        <BitText Typography="BitTypography.Caption1" Color="BitColor.SecondaryForeground">Stage</BitText>
-                        <BitText Typography="BitTypography.Body2">@DisplayOrPlaceholder(Session.CurrentStage, "Pending")</BitText>
+                        <span class="ams-caption ams-caption--muted">Stage</span>
+                        <span class="ams-body">@DisplayOrPlaceholder(Session.CurrentStage, "Pending")</span>
                     </div>
                     @if (Session.CurrentProgress?.Progress is double progress)
                     {
-                        <BitProgress Percent="@(progress * 100d)" ShowPercentNumber="true" />
+                        <AmsProgress Value="@(progress * 100d)" State="info" ShowLabel="true" />
                     }
                     else
                     {
-                        <BitText Typography="BitTypography.Caption1" Color="BitColor.SecondaryForeground">
+                        <span class="ams-caption ams-caption--muted">
                             @(Session.CurrentProgress?.Message ?? Session.LastMessage ?? "Working...")
-                        </BitText>
+                        </span>
                     }
                 </div>
             }
 
             @if (SelectedQueueItem is not null)
             {
-                <div class="inspector-section">
-                    <BitText Typography="BitTypography.Overline">Status</BitText>
+                <div class="inspector-section" data-ams-inspector-section="queue">
+                    <span class="ams-overline">Status</span>
                     <div class="prep-kv">
-                        <BitText Typography="BitTypography.Caption1" Color="BitColor.SecondaryForeground">State</BitText>
-                        <BitTag Color="@GetRunStateColor(SelectedQueueItem.State)">@SelectedQueueItem.State</BitTag>
+                        <span class="ams-caption ams-caption--muted">State</span>
+                        <AmsTag Tone="@GetRunStateTone(SelectedQueueItem.State)" Size="sm">@SelectedQueueItem.State</AmsTag>
                     </div>
                     <div class="prep-kv">
-                        <BitText Typography="BitTypography.Caption1" Color="BitColor.SecondaryForeground">Stage</BitText>
-                        <BitText Typography="BitTypography.Body2">@DisplayOrPlaceholder(SelectedQueueItem.Stage, "n/a")</BitText>
+                        <span class="ams-caption ams-caption--muted">Stage</span>
+                        <span class="ams-body">@DisplayOrPlaceholder(SelectedQueueItem.Stage, "n/a")</span>
                     </div>
                     <div class="prep-kv">
-                        <BitText Typography="BitTypography.Caption1" Color="BitColor.SecondaryForeground">Artifacts</BitText>
-                        <BitText Typography="BitTypography.Body2">@SelectedQueueItem.ArtifactCount</BitText>
+                        <span class="ams-caption ams-caption--muted">Artifacts</span>
+                        <span class="ams-body">@SelectedQueueItem.ArtifactCount</span>
                     </div>
                 </div>
                 @if (SelectedQueueItem.State == RunState.Failed && !string.IsNullOrWhiteSpace(SelectedQueueItem.Message))
                 {
-                    <div class="inspector-section">
-                        <BitText Typography="BitTypography.Overline">Error</BitText>
+                    <div class="inspector-section" data-ams-inspector-section="queue">
+                        <span class="ams-overline">Error</span>
                         <div class="inspector-error-log">@SelectedQueueItem.Message</div>
                     </div>
                 }
                 @if (SelectedQueueItem.ArtifactCount > 0 && Session.LastArtifacts.Count > 0
                      && string.Equals(Session.LastChapterId, SelectedQueueItem.Chapter, StringComparison.OrdinalIgnoreCase))
                 {
-                    <div class="inspector-section">
-                        <BitText Typography="BitTypography.Overline">Artifacts</BitText>
+                    <div class="inspector-section" data-ams-inspector-section="assets">
+                        <span class="ams-overline">Artifacts</span>
                         @foreach (var artifact in Session.LastArtifacts)
                         {
                             <div class="inspector-asset-row">
-                                <BitIcon IconName="@(artifact.Name.Contains("audio", StringComparison.OrdinalIgnoreCase) ? BitIconName.MusicInCollection : BitIconName.TextDocument)" />
-                                <BitText Typography="BitTypography.Caption1">@artifact.Name</BitText>
+                                <span aria-hidden="true">@(artifact.Name.Contains("audio", StringComparison.OrdinalIgnoreCase) ? "♪" : "▤")</span>
+                                <span class="ams-caption">@artifact.Name</span>
                                 @if (!artifact.Exists)
                                 {
-                                    <BitTag Color="BitColor.Warning" Size="BitSize.Small">missing</BitTag>
+                                    <AmsTag Tone="warning" Size="sm">missing</AmsTag>
                                 }
                             </div>
                         }
                     </div>
                 }
-                <div class="inspector-section">
-                    <BitText Typography="BitTypography.Caption1" Color="BitColor.SecondaryForeground">
+                <div class="inspector-section" data-ams-inspector-section="queue">
+                    <span class="ams-caption ams-caption--muted">
                         @DisplayOrPlaceholder(SelectedQueueItem.Message, "n/a")
-                    </BitText>
+                    </span>
                 </div>
             }
             else
             {
-                <div class="inspector-section">
-                    <BitMessage Color="BitColor.Info">
+                <div class="inspector-section" data-ams-inspector-section="queue">
+                    <div class="ams-message ams-message--info" role="status">
                         Select a queue row to inspect run diagnostics.
-                    </BitMessage>
+                    </div>
                 </div>
             }
 
             @if (Session.LastPipelineResult is not null)
             {
-                <div class="inspector-section">
-                    <BitText Typography="BitTypography.Overline">Stage Results</BitText>
+                <div class="inspector-section" data-ams-inspector-section="session">
+                    <span class="ams-overline">Stage Results</span>
                     @foreach (var stage in Session.LastPipelineResult.StageResults)
                     {
                         <div class="inspector-stage-row">
-                            <BitTag Color="@GetRunStateColor(stage.State)" Size="BitSize.Small">@stage.State</BitTag>
-                            <BitText Typography="BitTypography.Caption1">@stage.StageName</BitText>
-                            <BitText Typography="BitTypography.Caption2" Color="BitColor.SecondaryForeground">@(stage.Executed ? "ran" : "cached")</BitText>
+                            <AmsTag Tone="@GetRunStateTone(stage.State)" Size="sm">@stage.State</AmsTag>
+                            <span class="ams-caption">@stage.StageName</span>
+                            <span class="ams-caption ams-caption--muted">@(stage.Executed ? "ran" : "cached")</span>
                         </div>
                     }
                     @if (Session.LastFailure is not null)
@@ -161,620 +160,668 @@
             @if (Session.LastRuntimeReadiness is not null)
             {
                 var readiness = Session.LastRuntimeReadiness;
-                <div class="inspector-section">
-                    <BitText Typography="BitTypography.Overline">Runtime</BitText>
+                <div class="inspector-section" data-ams-inspector-section="runtime">
+                    <span class="ams-overline">Runtime</span>
                     <div class="inspector-runtime-row">
-                        <BitText Typography="BitTypography.Caption2" Color="BitColor.SecondaryForeground">ASR</BitText>
-                        <BitTag Color="@GetRuntimeReadinessColor(readiness.ModelProvenance.State)" Size="BitSize.Small">@readiness.ModelProvenance.State</BitTag>
+                        <span class="ams-caption ams-caption--muted">ASR</span>
+                        <AmsTag Tone="@GetRuntimeReadinessTone(readiness.ModelProvenance.State)" Size="sm">@readiness.ModelProvenance.State</AmsTag>
                     </div>
                     <div class="inspector-runtime-row">
-                        <BitText Typography="BitTypography.Caption2" Color="BitColor.SecondaryForeground">FFmpeg</BitText>
-                        <BitTag Color="@GetRuntimeReadinessColor(readiness.Ffmpeg.State)" Size="BitSize.Small">@readiness.Ffmpeg.State</BitTag>
+                        <span class="ams-caption ams-caption--muted">FFmpeg</span>
+                        <AmsTag Tone="@GetRuntimeReadinessTone(readiness.Ffmpeg.State)" Size="sm">@readiness.Ffmpeg.State</AmsTag>
                     </div>
                     <div class="inspector-runtime-row">
-                        <BitText Typography="BitTypography.Caption2" Color="BitColor.SecondaryForeground">MFA</BitText>
-                        <BitTag Color="@GetRuntimeReadinessColor(readiness.Mfa.State)" Size="BitSize.Small">@readiness.Mfa.State</BitTag>
+                        <span class="ams-caption ams-caption--muted">MFA</span>
+                        <AmsTag Tone="@GetRuntimeReadinessTone(readiness.Mfa.State)" Size="sm">@readiness.Mfa.State</AmsTag>
                     </div>
                     @if (readiness.Notes.Count > 0)
                     {
                         @foreach (var note in readiness.Notes)
                         {
-                            <BitText Typography="BitTypography.Caption2" Color="BitColor.Warning">@note</BitText>
+                            <span class="ams-caption ams-caption--warning">@note</span>
                         }
                     }
                 </div>
             }
 
-            <div class="inspector-section">
-                <BitText Typography="BitTypography.Overline">Batch Throughput</BitText>
+            <div class="inspector-section" data-ams-inspector-section="session">
+                <span class="ams-overline">Batch Throughput</span>
                 <div class="prep-grid prep-grid--compact">
                     <div class="prep-kv">
-                        <BitText Typography="BitTypography.Caption1" Color="BitColor.SecondaryForeground">Queued</BitText>
-                        <BitText Typography="BitTypography.Body2">@BatchQueuedCount</BitText>
+                        <span class="ams-caption ams-caption--muted">Queued</span>
+                        <span class="ams-body">@BatchQueuedCount</span>
                     </div>
                     <div class="prep-kv">
-                        <BitText Typography="BitTypography.Caption1" Color="BitColor.SecondaryForeground">Running</BitText>
-                        <BitText Typography="BitTypography.Body2">@BatchRunningCount</BitText>
+                        <span class="ams-caption ams-caption--muted">Running</span>
+                        <span class="ams-body">@BatchRunningCount</span>
                     </div>
                     <div class="prep-kv">
-                        <BitText Typography="BitTypography.Caption1" Color="BitColor.SecondaryForeground">Completed</BitText>
-                        <BitText Typography="BitTypography.Body2">@BatchCompletedCount</BitText>
+                        <span class="ams-caption ams-caption--muted">Completed</span>
+                        <span class="ams-body">@BatchCompletedCount</span>
                     </div>
                     <div class="prep-kv">
-                        <BitText Typography="BitTypography.Caption1" Color="BitColor.SecondaryForeground">Failed</BitText>
-                        <BitText Typography="BitTypography.Body2">@BatchFailedCount</BitText>
+                        <span class="ams-caption ams-caption--muted">Failed</span>
+                        <span class="ams-body">@BatchFailedCount</span>
                     </div>
                 </div>
             </div>
-        </BitStack>
+        </div>
     }
 </SectionContent>
 
 <div class="prep-page">
-    <BitStack Horizontal="false" Gap="1rem">
+    <div class="prep-page__stack">
         @if (HasWorkingDirectory && Workspace.HasBookIndex)
         {
-            <BitStack Horizontal="true"
-                      HorizontalAlign="BitAlignment.Center"
-                      VerticalAlign="BitAlignment.Center"
-                      Gap="0.75rem"
-                      Wrap="true"
-                      Class="pipeline-action-bar">
-                <BitText Typography="BitTypography.Body2">
-                    <strong>@Workspace.AvailableChapters.Count</strong> CHAPTERS
-                </BitText>
-                <BitButton Variant="BitVariant.Outline"
-                           Size="BitSize.Small"
-                           Color="BitColor.Secondary"
-                           IconName="@BitIconName.Equalizer"
-                           Title="Pipeline settings"
-                           AriaLabel="Pipeline settings"
+            <div class="pipeline-action-bar">
+                <span class="ams-body"><strong>@Workspace.AvailableChapters.Count</strong> CHAPTERS</span>
+                <AmsButton Variant="secondary"
+                           Size="sm"
+                           Icon="⚙"
+                           data-ams-prep="pipeline-settings-button"
+                           title="Pipeline settings"
+                           aria-label="Pipeline settings"
                            OnClick="@(() => _isPipelineSettingsOpen = true)" />
-                <BitButton Variant="BitVariant.Fill"
-                           Color="BitColor.Primary"
-                           Size="BitSize.Small"
+                <AmsButton Variant="primary"
+                           Size="sm"
                            OnClick="HandleRunBatchPrepAsync"
-                           IsEnabled="@CanRunBatchQueue">
+                           Disabled="@(!CanRunBatchQueue)">
                     Run batch prep
-                </BitButton>
-                <BitButton Variant="BitVariant.Outline"
-                           Color="BitColor.Warning"
-                           Size="BitSize.Small"
+                </AmsButton>
+                <AmsButton Variant="danger"
+                           Size="sm"
                            OnClick="HandleCancelBatch"
-                           IsEnabled="@(_isBatchRunning || (Session.IsRunning && !Session.IsCancellationRequested))">
+                           Disabled="@(!(_isBatchRunning || (Session.IsRunning && !Session.IsCancellationRequested)))">
                     Cancel batch
-                </BitButton>
-            </BitStack>
+                </AmsButton>
+            </div>
 
-            <BitGrid Columns="12" Gap="1rem" Class="pipeline-layout-grid">
+            <div class="prep-grid-12 pipeline-layout-grid">
 
-                <BitGridItem ColumnSpan="4" Class="pipeline-grid-item--top">
-                    <BitCard FullWidth="true" Class="pipeline-card pipeline-card--top" Style="height:100%;display:flex;flex-direction:column">
-                        <BitStack Horizontal="false" Gap="0.75rem" Class="queue-builder-stack">
-                            <BitText Typography="BitTypography.Overline">Queue Builder</BitText>
+                <div class="prep-grid-item--span-4 pipeline-grid-item--top">
+                    <section class="ams-card pipeline-card pipeline-card--top" data-ams-prep="queue-builder">
+                        <div class="queue-builder-stack">
+                            <span class="ams-overline">Queue Builder</span>
                             <div class="queue-builder-range">
-                                <BitStack Horizontal="true" HorizontalAlign="BitAlignment.SpaceBetween" VerticalAlign="BitAlignment.Center">
-                                    <BitText Typography="BitTypography.Caption1" Color="BitColor.SecondaryForeground">
+                                <div class="queue-builder-range__row">
+                                    <span class="ams-caption ams-caption--muted">
                                         @GetChapterAtIndex((int)_queueRangeStart)
-                                    </BitText>
-                                    <BitText Typography="BitTypography.Caption2" Color="BitColor.Primary">
+                                    </span>
+                                    <span class="ams-caption ams-caption--primary">
                                         @(Math.Abs((int)_queueRangeEnd - (int)_queueRangeStart) + 1) chapters selected
-                                    </BitText>
-                                    <BitText Typography="BitTypography.Caption1" Color="BitColor.SecondaryForeground">
+                                    </span>
+                                    <span class="ams-caption ams-caption--muted">
                                         @GetChapterAtIndex((int)_queueRangeEnd)
-                                    </BitText>
-                                </BitStack>
-                                <BitSlider IsRanged="true"
-                                           Min="1"
-                                           Max="@((double)(Math.Max(Workspace.AvailableChapters.Count, 1)))"
-                                           @bind-LowerValue="_queueRangeStart"
-                                           @bind-UpperValue="_queueRangeEnd"
-                                           Step="1"
-                                           IsEnabled="@(!Session.IsRunning && !_isBatchRunning)" />
+                                    </span>
+                                </div>
+                                <AmsRangeSlider Min="1"
+                                                Max="@((double)(Math.Max(Workspace.AvailableChapters.Count, 1)))"
+                                                @bind-LowerValue="_queueRangeStart"
+                                                @bind-UpperValue="_queueRangeEnd"
+                                                Step="1"
+                                                IsEnabled="@(!Session.IsRunning && !_isBatchRunning)" />
                             </div>
-                            <BitStack Horizontal="true" Gap="0.5rem" Wrap="true">
-                                <BitButton Variant="BitVariant.Fill"
-                                           Color="BitColor.Primary"
-                                           Size="BitSize.Small"
+                            <div class="queue-builder-actions">
+                                <AmsButton Variant="primary"
+                                           Size="sm"
+                                           Icon="+"
                                            OnClick="HandleAddRangeToQueue"
-                                           IsEnabled="@CanAddRangeToQueue"
-                                           IconName="@BitIconName.Add">
+                                           Disabled="@(!CanAddRangeToQueue)">
                                     Add range
-                                </BitButton>
-                                <BitButton Variant="BitVariant.Outline"
-                                           Color="BitColor.Secondary"
-                                           Size="BitSize.Small"
+                                </AmsButton>
+                                <AmsButton Variant="secondary"
+                                           Size="sm"
                                            OnClick="HandleClearQueue"
-                                           IsEnabled="@CanClearQueue">
+                                           Disabled="@(!CanClearQueue)">
                                     Clear queue
-                                </BitButton>
-                            </BitStack>
-                        </BitStack>
-                    </BitCard>
-                </BitGridItem>
+                                </AmsButton>
+                            </div>
+                        </div>
+                    </section>
+                </div>
 
-                <BitGridItem ColumnSpan="8" Class="pipeline-grid-item--top">
-                    <BitCard FullWidth="true" Class="pipeline-card pipeline-card--top" Style="height:100%;display:flex;flex-direction:column">
-                        <BitStack Horizontal="false" Gap="0.75rem" Class="throughput-stack">
-                            <BitStack Horizontal="true" HorizontalAlign="BitAlignment.SpaceBetween" VerticalAlign="BitAlignment.Center">
-                                <BitText Typography="BitTypography.Overline">Pipeline Throughput</BitText>
-                                <BitTag Color="@(_isBatchRunning ? BitColor.Primary : BitColor.Secondary)">@(_isBatchRunning ? "Running" : "Idle")</BitTag>
-                            </BitStack>
+                <div class="prep-grid-item--span-8 pipeline-grid-item--top">
+                    <section class="ams-card pipeline-card pipeline-card--top" data-ams-prep="throughput">
+                        <div class="throughput-stack">
+                            <div class="throughput-heading">
+                                <span class="ams-overline">Pipeline Throughput</span>
+                                <AmsTag Tone="@(_isBatchRunning ? "primary" : "neutral")" Size="sm">@(_isBatchRunning ? "Running" : "Idle")</AmsTag>
+                            </div>
                             <div class="pipeline-throughput-row">
                                 <div class="pipeline-throughput-box">
-                                    <BitText Typography="BitTypography.H5">@PendingReadyCount</BitText>
-                                    <BitText Typography="BitTypography.Caption1" Color="BitColor.SecondaryForeground">Ready</BitText>
+                                    <h2 class="ams-metric">@PendingReadyCount</h2>
+                                    <span class="ams-caption ams-caption--muted">Ready</span>
                                     <div class="pipeline-throughput-indicator pipeline-throughput-indicator--secondary"></div>
                                 </div>
                                 <div class="pipeline-throughput-box">
-                                    <BitText Typography="BitTypography.H5">@BatchQueuedCount</BitText>
-                                    <BitText Typography="BitTypography.Caption1" Color="BitColor.SecondaryForeground">Queued</BitText>
+                                    <h2 class="ams-metric">@BatchQueuedCount</h2>
+                                    <span class="ams-caption ams-caption--muted">Queued</span>
                                     <div class="pipeline-throughput-indicator pipeline-throughput-indicator--info"></div>
                                 </div>
                                 <div class="pipeline-throughput-box">
-                                    <BitText Typography="BitTypography.H5" Color="BitColor.Primary">@BatchRunningCount</BitText>
-                                    <BitText Typography="BitTypography.Caption1" Color="BitColor.SecondaryForeground">Running</BitText>
+                                    <h2 class="ams-metric ams-metric--primary">@BatchRunningCount</h2>
+                                    <span class="ams-caption ams-caption--muted">Running</span>
                                     <div class="pipeline-throughput-indicator pipeline-throughput-indicator--primary"></div>
                                 </div>
                                 <div class="pipeline-throughput-box">
-                                    <BitText Typography="BitTypography.H5" Color="BitColor.Error">@BatchFailedCount</BitText>
-                                    <BitText Typography="BitTypography.Caption1" Color="BitColor.SecondaryForeground">Failed</BitText>
+                                    <h2 class="ams-metric ams-metric--danger">@BatchFailedCount</h2>
+                                    <span class="ams-caption ams-caption--muted">Failed</span>
                                     <div class="pipeline-throughput-indicator pipeline-throughput-indicator--error"></div>
                                 </div>
                                 <div class="pipeline-throughput-box pipeline-throughput-box--wide">
-                                    <BitText Typography="BitTypography.H5">@BatchCompletedCount</BitText>
-                                    <BitText Typography="BitTypography.Caption1" Color="BitColor.SecondaryForeground">Succeeded</BitText>
+                                    <h2 class="ams-metric">@BatchCompletedCount</h2>
+                                    <span class="ams-caption ams-caption--muted">Succeeded</span>
                                     <div class="pipeline-throughput-indicator pipeline-throughput-indicator--success"></div>
                                 </div>
                             </div>
-                        </BitStack>
-                    </BitCard>
-                </BitGridItem>
+                        </div>
+                    </section>
+                </div>
 
-                <BitGridItem ColumnSpan="12">
-                    <BitCard FullWidth="true" Class="pipeline-card">
-                        <BitStack Horizontal="false" Gap="0.5rem">
-                            <BitText Typography="BitTypography.Overline">Pipeline Dashboard</BitText>
-                            <BitPivot>
-                                <BitPivotItem HeaderText="Active Tasks" IconName="@BitIconName.TaskGroup">
-                                    <table class="prep-table">
-                                        <thead>
-                                            <tr>
-                                                <th>#</th>
-                                                <th>Chapter</th>
-                                                <th>Status</th>
-                                                <th>Stage</th>
-                                                <th>Progress</th>
-                                                <th>Action</th>
-                                            </tr>
-                                        </thead>
-                                        <tbody>
-                                            @if (_batchQueue.Count == 0)
+                <div class="prep-grid-item--span-12">
+                    <section class="ams-card pipeline-card">
+                        <div class="pipeline-dashboard-stack">
+                            <span class="ams-overline">Pipeline Dashboard</span>
+                            <div data-ams-prep="pipeline-tabs">
+                                <AmsTabs>
+                                    <AmsTabItem Icon="☰">
+                                        <Header>Active Tasks</Header>
+                                        <ChildContent>
+                                            <table class="prep-table">
+                                                <thead>
+                                                    <tr>
+                                                        <th>#</th>
+                                                        <th>Chapter</th>
+                                                        <th>Status</th>
+                                                        <th>Stage</th>
+                                                        <th>Progress</th>
+                                                        <th>Action</th>
+                                                    </tr>
+                                                </thead>
+                                                <tbody>
+                                                    @if (_batchQueue.Count == 0)
+                                                    {
+                                                        <tr>
+                                                            <td colspan="6">Queue is empty. Add chapters to start batch processing.</td>
+                                                        </tr>
+                                                    }
+                                                    else
+                                                    {
+                                                        var rowIndex = 0;
+                                                        @foreach (var item in _batchQueue)
+                                                        {
+                                                            rowIndex++;
+                                                            var isSelected = string.Equals(item.Chapter, _selectedQueueChapter, StringComparison.OrdinalIgnoreCase);
+                                                            <tr class="@(isSelected ? "pipeline-row--selected" : "")">
+                                                                <td>@rowIndex.ToString("D3")</td>
+                                                                <td><strong>@item.Chapter</strong></td>
+                                                                <td><AmsTag Tone="@GetRunStateTone(item.State)" Size="sm">@item.State</AmsTag></td>
+                                                                <td>@DisplayOrPlaceholder(item.Stage, "n/a")</td>
+                                                                <td>
+                                                                    @if (item.State == RunState.Running)
+                                                                    {
+                                                                        <AmsProgress Value="50" State="info" />
+                                                                    }
+                                                                    else if (item.State == RunState.Completed)
+                                                                    {
+                                                                        <AmsProgress Value="100" State="success" />
+                                                                    }
+                                                                    else if (item.State == RunState.Failed)
+                                                                    {
+                                                                        <AmsProgress Value="75" State="danger" />
+                                                                    }
+                                                                </td>
+                                                                <td>
+                                                                    <div class="pipeline-row-actions">
+                                                                        <AmsButton Variant="ghost"
+                                                                                   Size="sm"
+                                                                                   Icon="◉"
+                                                                                   OnClick="@(() => SelectQueueItem(item.Chapter))">
+                                                                            Inspect
+                                                                        </AmsButton>
+                                                                        <AmsButton Variant="ghost"
+                                                                                   Size="sm"
+                                                                                   Icon="✕"
+                                                                                   OnClick="@(() => RemoveQueueItem(item.Chapter))"
+                                                                                   Disabled="@_isBatchRunning">
+                                                                            Remove
+                                                                        </AmsButton>
+                                                                    </div>
+                                                                </td>
+                                                            </tr>
+                                                        }
+                                                    }
+                                                </tbody>
+                                            </table>
+                                        </ChildContent>
+                                    </AmsTabItem>
+                                    <AmsTabItem Icon="⏱">
+                                        <Header>History</Header>
+                                        <ChildContent>
+                                            @if (Session.ProgressUpdates.Count > 0)
                                             {
-                                                <tr>
-                                                    <td colspan="6">Queue is empty. Add chapters to start batch processing.</td>
-                                                </tr>
+                                                var chapters = HistoryChapterKeys;
+                                                var currentChapter = HistoryCurrentChapter;
+                                                var pageUpdates = HistoryPageUpdates;
+
+                                                <div class="history-pager">
+                                                    <AmsButton Variant="ghost"
+                                                               Size="sm"
+                                                               Icon="‹"
+                                                               OnClick="@(() => _historyPageIndex = Math.Max(0, _historyPageIndex - 1))"
+                                                               Disabled="@(_historyPageIndex <= 0)" />
+                                                    <span class="ams-body">
+                                                        <strong>@(currentChapter == "__global__" ? "Global" : currentChapter)</strong>
+                                                        <span class="ams-caption ams-caption--muted">
+                                                            (@(_historyPageIndex + 1) of @chapters.Count)
+                                                        </span>
+                                                    </span>
+                                                    <AmsButton Variant="ghost"
+                                                               Size="sm"
+                                                               Icon="›"
+                                                               OnClick="@(() => _historyPageIndex = Math.Min(chapters.Count - 1, _historyPageIndex + 1))"
+                                                               Disabled="@(_historyPageIndex >= chapters.Count - 1)" />
+                                                </div>
+
+                                                <table class="prep-table">
+                                                    <thead>
+                                                        <tr>
+                                                            <th>Module</th>
+                                                            <th>Stage</th>
+                                                            <th>State</th>
+                                                            <th>Message</th>
+                                                            <th>Progress</th>
+                                                        </tr>
+                                                    </thead>
+                                                    <tbody>
+                                                        @foreach (var update in pageUpdates)
+                                                        {
+                                                            <tr>
+                                                                <td>@update.ModuleId.Value</td>
+                                                                <td>@DisplayOrPlaceholder(update.Stage, "n/a")</td>
+                                                                <td>
+                                                                    <AmsTag Tone="@GetRunStateTone(update.State)" Size="sm">@update.State</AmsTag>
+                                                                </td>
+                                                                <td>
+                                                                    <div>@update.Message</div>
+                                                                    @if (update.Failure is not null)
+                                                                    {
+                                                                        <div class="prep-inline-note">@update.Failure.Kind: @update.Failure.Message</div>
+                                                                    }
+                                                                </td>
+                                                                <td>@FormatProgress(update.Progress)</td>
+                                                            </tr>
+                                                        }
+                                                    </tbody>
+                                                </table>
                                             }
                                             else
                                             {
-                                                var rowIndex = 0;
-                                                @foreach (var item in _batchQueue)
-                                                {
-                                                    rowIndex++;
-                                                    var isSelected = string.Equals(item.Chapter, _selectedQueueChapter, StringComparison.OrdinalIgnoreCase);
-                                                    <tr class="@(isSelected ? "pipeline-row--selected" : "")">
-                                                        <td>@rowIndex.ToString("D3")</td>
-                                                        <td><strong>@item.Chapter</strong></td>
-                                                        <td><BitTag Color="@GetRunStateColor(item.State)">@item.State</BitTag></td>
-                                                        <td>@DisplayOrPlaceholder(item.Stage, "n/a")</td>
-                                                        <td>
-                                                            @if (item.State == RunState.Running)
-                                                            {
-                                                                <BitProgress Percent="50" />
-                                                            }
-                                                            else if (item.State == RunState.Completed)
-                                                            {
-                                                                <BitProgress Percent="100" Color="BitColor.Success" />
-                                                            }
-                                                            else if (item.State == RunState.Failed)
-                                                            {
-                                                                <BitProgress Percent="75" Color="BitColor.Error" />
-                                                            }
-                                                        </td>
-                                                        <td>
-                                                            <BitStack Horizontal="true" Gap="0.25rem">
-                                                                <BitButton Variant="BitVariant.Text"
-                                                                           Size="BitSize.Small"
-                                                                           Color="BitColor.Primary"
-                                                                           IconName="@BitIconName.EntryView"
-                                                                           OnClick="@(() => SelectQueueItem(item.Chapter))">
-                                                                    Inspect
-                                                                </BitButton>
-                                                                <BitButton Variant="BitVariant.Text"
-                                                                           Size="BitSize.Small"
-                                                                           Color="BitColor.Secondary"
-                                                                           IconName="@BitIconName.Delete"
-                                                                           OnClick="@(() => RemoveQueueItem(item.Chapter))"
-                                                                           IsEnabled="@(!_isBatchRunning)">
-                                                                    Remove
-                                                                </BitButton>
-                                                            </BitStack>
-                                                        </td>
-                                                    </tr>
-                                                }
+                                                <div class="ams-message ams-message--info" role="status">No progress history recorded yet.</div>
                                             }
-                                        </tbody>
-                                    </table>
-                                </BitPivotItem>
-                                <BitPivotItem HeaderText="History" IconName="@BitIconName.History">
-                                    @if (Session.ProgressUpdates.Count > 0)
-                                    {
-                                        var chapters = HistoryChapterKeys;
-                                        var currentChapter = HistoryCurrentChapter;
-                                        var pageUpdates = HistoryPageUpdates;
-
-                                        <BitStack Horizontal="true"
-                                                  VerticalAlign="BitAlignment.Center"
-                                                  HorizontalAlign="BitAlignment.SpaceBetween"
-                                                  Gap="0.5rem"
-                                                  Class="history-pager">
-                                            <BitButton Variant="BitVariant.Text"
-                                                       Size="BitSize.Small"
-                                                       IconName="@BitIconName.ChevronLeft"
-                                                       OnClick="@(() => _historyPageIndex = Math.Max(0, _historyPageIndex - 1))"
-                                                       IsEnabled="@(_historyPageIndex > 0)" />
-                                            <BitText Typography="BitTypography.Body2">
-                                                <strong>@(currentChapter == "__global__" ? "Global" : currentChapter)</strong>
-                                                <BitText Typography="BitTypography.Caption1" Color="BitColor.SecondaryForeground">
-                                                    (@(_historyPageIndex + 1) of @chapters.Count)
-                                                </BitText>
-                                            </BitText>
-                                            <BitButton Variant="BitVariant.Text"
-                                                       Size="BitSize.Small"
-                                                       IconName="@BitIconName.ChevronRight"
-                                                       OnClick="@(() => _historyPageIndex = Math.Min(chapters.Count - 1, _historyPageIndex + 1))"
-                                                       IsEnabled="@(_historyPageIndex < chapters.Count - 1)" />
-                                        </BitStack>
-
-                                        <table class="prep-table">
-                                            <thead>
-                                                <tr>
-                                                    <th>Module</th>
-                                                    <th>Stage</th>
-                                                    <th>State</th>
-                                                    <th>Message</th>
-                                                    <th>Progress</th>
-                                                </tr>
-                                            </thead>
-                                            <tbody>
-                                                @foreach (var update in pageUpdates)
-                                                {
-                                                    <tr>
-                                                        <td>@update.ModuleId.Value</td>
-                                                        <td>@DisplayOrPlaceholder(update.Stage, "n/a")</td>
-                                                        <td>
-                                                            <BitTag Color="@GetRunStateColor(update.State)">@update.State</BitTag>
-                                                        </td>
-                                                        <td>
-                                                            <div>@update.Message</div>
-                                                            @if (update.Failure is not null)
-                                                            {
-                                                                <div class="prep-inline-note">@update.Failure.Kind: @update.Failure.Message</div>
-                                                            }
-                                                        </td>
-                                                        <td>@FormatProgress(update.Progress)</td>
-                                                    </tr>
-                                                }
-                                            </tbody>
-                                        </table>
-                                    }
-                                    else
-                                    {
-                                        <BitMessage Color="BitColor.Info">No progress history recorded yet.</BitMessage>
-                                    }
-                                </BitPivotItem>
-                            </BitPivot>
-                        </BitStack>
-                    </BitCard>
-                </BitGridItem>
-            </BitGrid>
+                                        </ChildContent>
+                                    </AmsTabItem>
+                                </AmsTabs>
+                            </div>
+                        </div>
+                    </section>
+                </div>
+            </div>
         }
 
         @if (!HasWorkingDirectory)
         {
-            <BitMessage Color="BitColor.Info">
-                <BitStack Horizontal="false" Gap="0.5rem">
-                    <BitText Typography="BitTypography.Body1">
+            <div class="ams-message ams-message--info" role="status" data-ams-prep="no-workspace-message">
+                <div class="prep-message-stack">
+                    <p class="ams-body">
                         Set a working directory from the header before running Prep.
-                    </BitText>
-                    <BitText Typography="BitTypography.Body2" Color="BitColor.SecondaryForeground">
+                    </p>
+                    <span class="ams-caption ams-caption--muted">
                         Once a workspace is loaded, this page will either ask for a manuscript path to build book-index.json or let you run chapter prep against the shared pipeline service.
-                    </BitText>
-                </BitStack>
-            </BitMessage>
+                    </span>
+                </div>
+            </div>
         }
         else if (!Workspace.HasBookIndex)
         {
-            <BitCard>
-                <BitStack Horizontal="false" Gap="1rem">
-                    <BitStack Horizontal="true"
-                              HorizontalAlign="BitAlignment.SpaceBetween"
-                              VerticalAlign="BitAlignment.Start"
-                              Gap="1rem"
-                              Wrap="true">
-                        <BitStack Horizontal="false" Gap="0.25rem">
-                            <BitText Typography="BitTypography.Subtitle1">Build book index</BitText>
-                            <BitText Typography="BitTypography.Body2" Color="BitColor.SecondaryForeground">
+            <section class="ams-card" data-ams-prep="build-index-form">
+                <div class="prep-card-stack">
+                    <div class="prep-card-heading">
+                        <div class="prep-card-heading__text">
+                            <h3 class="ams-subtitle">Build book index</h3>
+                            <span class="ams-caption ams-caption--muted">
                                 book-index.json is missing, so Prep needs an explicit manuscript path before queue processing can run.
-                            </BitText>
-                        </BitStack>
-                        <BitTag Color="BitColor.Warning">Index required</BitTag>
-                    </BitStack>
+                            </span>
+                        </div>
+                        <AmsTag Tone="warning" Size="sm">Index required</AmsTag>
+                    </div>
 
-                    <BitTextField @bind-Value="_manuscriptPath"
-                                  Immediate="true"
-                                  Placeholder="Absolute path to the manuscript markdown file..."
-                                  IsEnabled="@(!Session.IsRunning)" />
+                    <input type="text"
+                           class="ams-input"
+                           value="@_manuscriptPath"
+                           @oninput="@(e => _manuscriptPath = e.Value?.ToString() ?? string.Empty)"
+                           placeholder="Absolute path to the manuscript markdown file..."
+                           disabled="@Session.IsRunning" />
 
                     <div class="prep-grid">
                         <div class="prep-kv">
-                            <BitText Typography="BitTypography.Caption1" Color="BitColor.SecondaryForeground">Output file</BitText>
-                            <BitText Typography="BitTypography.Body2" Class="prep-mono">@GetBookIndexOutputPath()</BitText>
+                            <span class="ams-caption ams-caption--muted">Output file</span>
+                            <span class="ams-body prep-mono">@GetBookIndexOutputPath()</span>
                         </div>
                         <div class="prep-kv">
-                            <BitText Typography="BitTypography.Caption1" Color="BitColor.SecondaryForeground">Average WPM</BitText>
-                            <BitText Typography="BitTypography.Body2">@PrepRunSession.ExplicitAverageWordsPerMinute</BitText>
+                            <span class="ams-caption ams-caption--muted">Average WPM</span>
+                            <span class="ams-body">@PrepRunSession.ExplicitAverageWordsPerMinute</span>
                         </div>
                         <div class="prep-kv">
-                            <BitText Typography="BitTypography.Caption1" Color="BitColor.SecondaryForeground">Cache mode</BitText>
-                            <BitText Typography="BitTypography.Body2">PreferCache</BitText>
+                            <span class="ams-caption ams-caption--muted">Cache mode</span>
+                            <span class="ams-body">PreferCache</span>
                         </div>
                         <div class="prep-kv">
-                            <BitText Typography="BitTypography.Caption1" Color="BitColor.SecondaryForeground">Workspace reload</BitText>
-                            <BitText Typography="BitTypography.Body2">Automatic after a successful build</BitText>
+                            <span class="ams-caption ams-caption--muted">Workspace reload</span>
+                            <span class="ams-body">Automatic after a successful build</span>
                         </div>
                     </div>
 
-                    <BitStack Horizontal="true" Gap="0.75rem" Wrap="true">
-                        <BitButton Variant="BitVariant.Fill"
-                                   Color="BitColor.Primary"
+                    <div class="prep-card-actions">
+                        <AmsButton Variant="primary"
                                    OnClick="HandleBuildBookIndexAsync"
-                                   IsEnabled="@CanBuildBookIndex">
+                                   Disabled="@(!CanBuildBookIndex)">
                             Build book index
-                        </BitButton>
-                        <BitButton Variant="BitVariant.Outline"
-                                   Color="BitColor.Warning"
+                        </AmsButton>
+                        <AmsButton Variant="danger"
                                    OnClick="HandleCancel"
-                                   IsEnabled="@(Session.IsRunning && !Session.IsCancellationRequested)">
+                                   Disabled="@(!(Session.IsRunning && !Session.IsCancellationRequested))">
                             Cancel
-                        </BitButton>
-                    </BitStack>
-                </BitStack>
-            </BitCard>
+                        </AmsButton>
+                    </div>
+                </div>
+            </section>
         }
         else
         {
             @if (Workspace.AvailableChapters.Count == 0)
             {
-                <BitMessage Color="BitColor.Warning">
+                <div class="ams-message ams-message--warning" role="status">
                     No chapters were discovered after loading book-index.json.
-                </BitMessage>
+                </div>
             }
         }
 
         @if (Session.LastBuildRequest is not null || Session.LastBuildBookIndexResult is not null)
         {
-            <BitCard>
-                <BitStack Horizontal="false" Gap="0.75rem">
-                    <BitText Typography="BitTypography.Subtitle1">Last book-index request</BitText>
+            <section class="ams-card">
+                <div class="prep-card-stack">
+                    <h3 class="ams-subtitle">Last book-index request</h3>
 
                     <div class="prep-grid">
                         <div class="prep-kv">
-                            <BitText Typography="BitTypography.Caption1" Color="BitColor.SecondaryForeground">Manuscript</BitText>
-                            <BitText Typography="BitTypography.Body2" Class="prep-mono">@DisplayOrPlaceholder(Session.LastBuildRequest?.BookFile.FullName, "No build request recorded")</BitText>
+                            <span class="ams-caption ams-caption--muted">Manuscript</span>
+                            <span class="ams-body prep-mono">@DisplayOrPlaceholder(Session.LastBuildRequest?.BookFile.FullName, "No build request recorded")</span>
                         </div>
                         <div class="prep-kv">
-                            <BitText Typography="BitTypography.Caption1" Color="BitColor.SecondaryForeground">Output</BitText>
-                            <BitText Typography="BitTypography.Body2" Class="prep-mono">@DisplayOrPlaceholder(Session.LastBuildRequest?.OutputFile.FullName, "No output file recorded")</BitText>
+                            <span class="ams-caption ams-caption--muted">Output</span>
+                            <span class="ams-body prep-mono">@DisplayOrPlaceholder(Session.LastBuildRequest?.OutputFile.FullName, "No output file recorded")</span>
                         </div>
                         <div class="prep-kv">
-                            <BitText Typography="BitTypography.Caption1" Color="BitColor.SecondaryForeground">Average WPM</BitText>
-                            <BitText Typography="BitTypography.Body2">@GetLastBuildAverageWpmDisplay()</BitText>
+                            <span class="ams-caption ams-caption--muted">Average WPM</span>
+                            <span class="ams-body">@GetLastBuildAverageWpmDisplay()</span>
                         </div>
                         <div class="prep-kv">
-                            <BitText Typography="BitTypography.Caption1" Color="BitColor.SecondaryForeground">Cache disposition</BitText>
-                            <BitText Typography="BitTypography.Body2">@DisplayOrPlaceholder(Session.LastBuildBookIndexResult?.CacheDisposition.ToString(), "No result yet")</BitText>
+                            <span class="ams-caption ams-caption--muted">Cache disposition</span>
+                            <span class="ams-body">@DisplayOrPlaceholder(Session.LastBuildBookIndexResult?.CacheDisposition.ToString(), "No result yet")</span>
                         </div>
                         <div class="prep-kv">
-                            <BitText Typography="BitTypography.Caption1" Color="BitColor.SecondaryForeground">Phonemes backfilled</BitText>
-                            <BitText Typography="BitTypography.Body2">@(Session.LastBuildBookIndexResult?.PhonemesBackfilled is true ? "Yes" : Session.LastBuildBookIndexResult is null ? "n/a" : "No")</BitText>
+                            <span class="ams-caption ams-caption--muted">Phonemes backfilled</span>
+                            <span class="ams-body">@(Session.LastBuildBookIndexResult?.PhonemesBackfilled is true ? "Yes" : Session.LastBuildBookIndexResult is null ? "n/a" : "No")</span>
                         </div>
                         <div class="prep-kv">
-                            <BitText Typography="BitTypography.Caption1" Color="BitColor.SecondaryForeground">Workspace reloaded</BitText>
-                            <BitText Typography="BitTypography.Body2">@(Session.LastWorkspaceReloaded ? "Yes" : "No")</BitText>
+                            <span class="ams-caption ams-caption--muted">Workspace reloaded</span>
+                            <span class="ams-body">@(Session.LastWorkspaceReloaded ? "Yes" : "No")</span>
                         </div>
                     </div>
-                </BitStack>
-            </BitCard>
+                </div>
+            </section>
         }
 
-    </BitStack>
+    </div>
 </div>
 
 @if (HasWorkingDirectory && Workspace.HasBookIndex)
 {
-    <BitDialog @bind-IsOpen="_isPipelineSettingsOpen"
+    <AmsDialog @bind-IsOpen="_isPipelineSettingsOpen"
                Title="Pipeline settings"
-               IsBlocking="true"
-               ShowOkButton="false"
-               ShowCancelButton="false"
-               Class="pipeline-settings-dialog">
-        <BitStack Horizontal="false" Gap="0.75rem">
-            <BitText Typography="BitTypography.Body2" Color="BitColor.SecondaryForeground">
+               OnDismiss="@(() => _isPipelineSettingsOpen = false)">
+        <div class="pipeline-settings-stack">
+            <span class="ams-caption ams-caption--muted">
                 Configure pipeline execution options. Changes apply immediately to the next run.
-            </BitText>
+            </span>
 
             <div class="prep-control-sections">
                 <div class="prep-control-section">
-                    <BitText Typography="BitTypography.Subtitle2">Pipeline execution</BitText>
+                    <h3 class="ams-subtitle">Pipeline execution</h3>
                     <div class="prep-grid prep-grid--compact">
                         <div class="prep-kv">
-                            <BitText Typography="BitTypography.Caption1" Color="BitColor.SecondaryForeground">End stage</BitText>
-                            <BitDropdown TItem="BitDropdownItem<string>"
-                                         TValue="string"
-                                         Items="@EndStageItems"
-                                         Value="@_operatorControls.EndStageKey"
-                                         OnChange="HandleEndStageChange"
-                                         Class="prep-field-min"
-                                         IsEnabled="@(!Session.IsRunning)" />
+                            <span class="ams-caption ams-caption--muted">End stage</span>
+                            <select class="ams-select prep-field-min"
+                                    value="@_operatorControls.EndStageKey"
+                                    @onchange="@(e => HandleEndStageChange(e.Value?.ToString()))"
+                                    disabled="@Session.IsRunning">
+                                @foreach (var opt in PrepPipelineOperatorControls.EndStageOptions)
+                                {
+                                    <option value="@opt.Value" selected="@(opt.Value == _operatorControls.EndStageKey)">@opt.Label</option>
+                                }
+                            </select>
                         </div>
                         <div class="prep-kv">
-                            <BitCheckbox Label="Force rerun"
-                                         Value="@_operatorControls.Force"
-                                         OnChange="HandleForceChange"
-                                         IsEnabled="@(!Session.IsRunning)" />
+                            <label class="ams-checkbox">
+                                <input type="checkbox"
+                                       checked="@_operatorControls.Force"
+                                       @onchange="@(e => HandleForceChange((bool)e.Value!))"
+                                       disabled="@Session.IsRunning" />
+                                <span>Force rerun</span>
+                            </label>
                         </div>
                         <div class="prep-kv">
-                            <BitCheckbox Label="Force index rebuild"
-                                         Value="@_operatorControls.ForceIndex"
-                                         OnChange="HandleForceIndexChange"
-                                         IsEnabled="@(!Session.IsRunning)" />
+                            <label class="ams-checkbox">
+                                <input type="checkbox"
+                                       checked="@_operatorControls.ForceIndex"
+                                       @onchange="@(e => HandleForceIndexChange((bool)e.Value!))"
+                                       disabled="@Session.IsRunning" />
+                                <span>Force index rebuild</span>
+                            </label>
                         </div>
                     </div>
                 </div>
 
                 <div class="prep-control-section">
-                    <BitText Typography="BitTypography.Subtitle2">ASR identity & refinement</BitText>
+                    <h3 class="ams-subtitle">ASR identity &amp; refinement</h3>
                     <div class="prep-grid prep-grid--compact">
                         <div class="prep-kv">
-                            <BitText Typography="BitTypography.Caption1" Color="BitColor.SecondaryForeground">Engine</BitText>
-                            <BitDropdown TItem="BitDropdownItem<string>"
-                                         TValue="string"
-                                         Items="@AsrEngineItems"
-                                         Value="@_operatorControls.AsrEngineKey"
-                                         OnChange="HandleAsrEngineChange"
-                                         Class="prep-field-min"
-                                         IsEnabled="@(!Session.IsRunning)" />
+                            <span class="ams-caption ams-caption--muted">Engine</span>
+                            <select class="ams-select prep-field-min"
+                                    value="@_operatorControls.AsrEngineKey"
+                                    @onchange="@(e => HandleAsrEngineChange(e.Value?.ToString()))"
+                                    disabled="@Session.IsRunning">
+                                @foreach (var opt in PrepPipelineOperatorControls.AsrEngineOptions)
+                                {
+                                    <option value="@opt.Value" selected="@(opt.Value == _operatorControls.AsrEngineKey)">@opt.Label</option>
+                                }
+                            </select>
                         </div>
                         <div class="prep-kv">
-                            <BitTextField Label="Model"
-                                          Value="@_operatorControls.AsrModel"
-                                          OnChange="HandleAsrModelChange"
-                                          Placeholder="Optional model alias/path"
-                                          IsEnabled="@(!Session.IsRunning)" />
+                            <label class="ams-field">
+                                <span class="ams-caption ams-caption--muted">Model</span>
+                                <input type="text"
+                                       class="ams-input"
+                                       value="@_operatorControls.AsrModel"
+                                       @oninput="@(e => HandleAsrModelChange(e.Value?.ToString()))"
+                                       placeholder="Optional model alias/path"
+                                       disabled="@Session.IsRunning" />
+                            </label>
                         </div>
                         <div class="prep-kv">
-                            <BitTextField Label="Language"
-                                          Value="@_operatorControls.AsrLanguage"
-                                          OnChange="HandleAsrLanguageChange"
-                                          Placeholder="en"
-                                          IsEnabled="@(!Session.IsRunning)" />
+                            <label class="ams-field">
+                                <span class="ams-caption ams-caption--muted">Language</span>
+                                <input type="text"
+                                       class="ams-input"
+                                       value="@_operatorControls.AsrLanguage"
+                                       @oninput="@(e => HandleAsrLanguageChange(e.Value?.ToString()))"
+                                       placeholder="en"
+                                       disabled="@Session.IsRunning" />
+                            </label>
                         </div>
                         <div class="prep-kv">
-                            <BitCheckbox Label="Word timestamps"
-                                         Value="@_operatorControls.EnableWordTimestamps"
-                                         OnChange="HandleEnableWordTimestampsChange"
-                                         IsEnabled="@(!Session.IsRunning)" />
+                            <label class="ams-checkbox">
+                                <input type="checkbox"
+                                       checked="@_operatorControls.EnableWordTimestamps"
+                                       @onchange="@(e => HandleEnableWordTimestampsChange((bool)e.Value!))"
+                                       disabled="@Session.IsRunning" />
+                                <span>Word timestamps</span>
+                            </label>
                         </div>
                         <div class="prep-kv">
-                            <BitCheckbox Label="FlashAttention"
-                                         Value="@_operatorControls.EnableFlashAttention"
-                                         OnChange="HandleEnableFlashAttentionChange"
-                                         IsEnabled="@(!Session.IsRunning)" />
+                            <label class="ams-checkbox">
+                                <input type="checkbox"
+                                       checked="@_operatorControls.EnableFlashAttention"
+                                       @onchange="@(e => HandleEnableFlashAttentionChange((bool)e.Value!))"
+                                       disabled="@Session.IsRunning" />
+                                <span>FlashAttention</span>
+                            </label>
                         </div>
                         <div class="prep-kv">
-                            <BitCheckbox Label="DTW timestamps"
-                                         Value="@_operatorControls.EnableDtwTimestamps"
-                                         OnChange="HandleEnableDtwTimestampsChange"
-                                         IsEnabled="@(!Session.IsRunning)" />
+                            <label class="ams-checkbox">
+                                <input type="checkbox"
+                                       checked="@_operatorControls.EnableDtwTimestamps"
+                                       @onchange="@(e => HandleEnableDtwTimestampsChange((bool)e.Value!))"
+                                       disabled="@Session.IsRunning" />
+                                <span>DTW timestamps</span>
+                            </label>
                         </div>
                         <div class="prep-kv">
-                            <BitCheckbox Label="Disable prompt"
-                                         Value="@_operatorControls.DisablePrompt"
-                                         OnChange="HandleDisablePromptChange"
-                                         IsEnabled="@(!Session.IsRunning)" />
+                            <label class="ams-checkbox">
+                                <input type="checkbox"
+                                       checked="@_operatorControls.DisablePrompt"
+                                       @onchange="@(e => HandleDisablePromptChange((bool)e.Value!))"
+                                       disabled="@Session.IsRunning" />
+                                <span>Disable prompt</span>
+                            </label>
                         </div>
                     </div>
                 </div>
 
                 <div class="prep-control-section">
-                    <BitText Typography="BitTypography.Subtitle2">MFA quality</BitText>
+                    <h3 class="ams-subtitle">MFA quality</h3>
                     <div class="prep-grid prep-grid--compact">
                         <div class="prep-kv">
-                            <BitText Typography="BitTypography.Caption1" Color="BitColor.SecondaryForeground">Beam profile</BitText>
-                            <BitDropdown TItem="BitDropdownItem<string>"
-                                         TValue="string"
-                                         Items="@MfaBeamProfileItems"
-                                         Value="@_operatorControls.MfaBeamProfileKey"
-                                         OnChange="HandleMfaBeamProfileChange"
-                                         Class="prep-field-min"
-                                         IsEnabled="@(!Session.IsRunning)" />
+                            <span class="ams-caption ams-caption--muted">Beam profile</span>
+                            <select class="ams-select prep-field-min"
+                                    value="@_operatorControls.MfaBeamProfileKey"
+                                    @onchange="@(e => HandleMfaBeamProfileChange(e.Value?.ToString()))"
+                                    disabled="@Session.IsRunning">
+                                @foreach (var opt in PrepPipelineOperatorControls.MfaBeamProfileOptions)
+                                {
+                                    <option value="@opt.Value" selected="@(opt.Value == _operatorControls.MfaBeamProfileKey)">@opt.Label</option>
+                                }
+                            </select>
                         </div>
                         <div class="prep-kv">
-                            <BitTextField Label="Beam override"
-                                          Value="@_operatorControls.MfaBeamText"
-                                          OnChange="HandleMfaBeamChange"
-                                          Placeholder="Optional integer"
-                                          IsEnabled="@(!Session.IsRunning)" />
+                            <label class="ams-field">
+                                <span class="ams-caption ams-caption--muted">Beam override</span>
+                                <input type="text"
+                                       class="ams-input"
+                                       value="@_operatorControls.MfaBeamText"
+                                       @oninput="@(e => HandleMfaBeamChange(e.Value?.ToString()))"
+                                       placeholder="Optional integer"
+                                       disabled="@Session.IsRunning" />
+                            </label>
                         </div>
                         <div class="prep-kv">
-                            <BitTextField Label="Retry beam override"
-                                          Value="@_operatorControls.MfaRetryBeamText"
-                                          OnChange="HandleMfaRetryBeamChange"
-                                          Placeholder="Optional integer"
-                                          IsEnabled="@(!Session.IsRunning)" />
+                            <label class="ams-field">
+                                <span class="ams-caption ams-caption--muted">Retry beam override</span>
+                                <input type="text"
+                                       class="ams-input"
+                                       value="@_operatorControls.MfaRetryBeamText"
+                                       @oninput="@(e => HandleMfaRetryBeamChange(e.Value?.ToString()))"
+                                       placeholder="Optional integer"
+                                       disabled="@Session.IsRunning" />
+                            </label>
                         </div>
                     </div>
                 </div>
 
                 <div class="prep-control-section">
-                    <BitText Typography="BitTypography.Subtitle2">Chunking policy</BitText>
+                    <h3 class="ams-subtitle">Chunking policy</h3>
                     <div class="prep-grid prep-grid--compact">
                         <div class="prep-kv">
-                            <BitCheckbox Label="Disable chunk plan"
-                                         Value="@_operatorControls.DisableChunkPlan"
-                                         OnChange="HandleDisableChunkPlanChange"
-                                         IsEnabled="@(!Session.IsRunning)" />
+                            <label class="ams-checkbox">
+                                <input type="checkbox"
+                                       checked="@_operatorControls.DisableChunkPlan"
+                                       @onchange="@(e => HandleDisableChunkPlanChange((bool)e.Value!))"
+                                       disabled="@Session.IsRunning" />
+                                <span>Disable chunk plan</span>
+                            </label>
                         </div>
                         <div class="prep-kv">
-                            <BitCheckbox Label="Disable chunked MFA"
-                                         Value="@_operatorControls.DisableChunkedMfa"
-                                         OnChange="HandleDisableChunkedMfaChange"
-                                         IsEnabled="@(!Session.IsRunning)" />
+                            <label class="ams-checkbox">
+                                <input type="checkbox"
+                                       checked="@_operatorControls.DisableChunkedMfa"
+                                       @onchange="@(e => HandleDisableChunkedMfaChange((bool)e.Value!))"
+                                       disabled="@Session.IsRunning" />
+                                <span>Disable chunked MFA</span>
+                            </label>
                         </div>
                         <div class="prep-kv">
-                            <BitCheckbox Label="Require ASR chunk audio"
-                                         Value="@_operatorControls.RequireAsrChunkAudio"
-                                         OnChange="HandleRequireAsrChunkAudioChange"
-                                         IsEnabled="@(!Session.IsRunning)" />
+                            <label class="ams-checkbox">
+                                <input type="checkbox"
+                                       checked="@_operatorControls.RequireAsrChunkAudio"
+                                       @onchange="@(e => HandleRequireAsrChunkAudioChange((bool)e.Value!))"
+                                       disabled="@Session.IsRunning" />
+                                <span>Require ASR chunk audio</span>
+                            </label>
                         </div>
                         <div class="prep-kv">
-                            <BitTextField Label="Silence threshold (dB)"
-                                          Value="@_operatorControls.ChunkSilenceThresholdDbText"
-                                          OnChange="HandleChunkSilenceThresholdChange"
-                                          Placeholder="Optional number"
-                                          IsEnabled="@(!Session.IsRunning)" />
+                            <label class="ams-field">
+                                <span class="ams-caption ams-caption--muted">Silence threshold (dB)</span>
+                                <input type="text"
+                                       class="ams-input"
+                                       value="@_operatorControls.ChunkSilenceThresholdDbText"
+                                       @oninput="@(e => HandleChunkSilenceThresholdChange(e.Value?.ToString()))"
+                                       placeholder="Optional number"
+                                       disabled="@Session.IsRunning" />
+                            </label>
                         </div>
                         <div class="prep-kv">
-                            <BitTextField Label="Min silence (ms)"
-                                          Value="@_operatorControls.ChunkMinSilenceDurationMsText"
-                                          OnChange="HandleChunkMinSilenceDurationChange"
-                                          Placeholder="Optional number"
-                                          IsEnabled="@(!Session.IsRunning)" />
+                            <label class="ams-field">
+                                <span class="ams-caption ams-caption--muted">Min silence (ms)</span>
+                                <input type="text"
+                                       class="ams-input"
+                                       value="@_operatorControls.ChunkMinSilenceDurationMsText"
+                                       @oninput="@(e => HandleChunkMinSilenceDurationChange(e.Value?.ToString()))"
+                                       placeholder="Optional number"
+                                       disabled="@Session.IsRunning" />
+                            </label>
                         </div>
                         <div class="prep-kv">
-                            <BitTextField Label="Min chunk (sec)"
-                                          Value="@_operatorControls.ChunkMinDurationSecText"
-                                          OnChange="HandleChunkMinDurationChange"
-                                          Placeholder="Optional number"
-                                          IsEnabled="@(!Session.IsRunning)" />
+                            <label class="ams-field">
+                                <span class="ams-caption ams-caption--muted">Min chunk (sec)</span>
+                                <input type="text"
+                                       class="ams-input"
+                                       value="@_operatorControls.ChunkMinDurationSecText"
+                                       @oninput="@(e => HandleChunkMinDurationChange(e.Value?.ToString()))"
+                                       placeholder="Optional number"
+                                       disabled="@Session.IsRunning" />
+                            </label>
                         </div>
                         <div class="prep-kv">
-                            <BitTextField Label="Max chunk (sec)"
-                                          Value="@_operatorControls.ChunkMaxDurationSecText"
-                                          OnChange="HandleChunkMaxDurationChange"
-                                          Placeholder="Optional number"
-                                          IsEnabled="@(!Session.IsRunning)" />
+                            <label class="ams-field">
+                                <span class="ams-caption ams-caption--muted">Max chunk (sec)</span>
+                                <input type="text"
+                                       class="ams-input"
+                                       value="@_operatorControls.ChunkMaxDurationSecText"
+                                       @oninput="@(e => HandleChunkMaxDurationChange(e.Value?.ToString()))"
+                                       placeholder="Optional number"
+                                       disabled="@Session.IsRunning" />
+                            </label>
                         </div>
                     </div>
                 </div>
@@ -782,20 +829,20 @@
 
             @if (OperatorWarnings.Count > 0)
             {
-                <BitMessage Color="BitColor.Warning">
-                    <BitStack Horizontal="false" Gap="0.25rem">
-                        <BitText Typography="BitTypography.Body2">Option warnings</BitText>
+                <div class="ams-message ams-message--warning" role="status">
+                    <div class="prep-warning-stack">
+                        <p class="ams-body">Option warnings</p>
                         <ul class="prep-warning-list">
                             @foreach (var warning in OperatorWarnings)
                             {
                                 <li>@warning</li>
                             }
                         </ul>
-                    </BitStack>
-                </BitMessage>
+                    </div>
+                </div>
             }
-        </BitStack>
-    </BitDialog>
+        </div>
+    </AmsDialog>
 }
 
 @code {
@@ -809,18 +856,6 @@
     private int _historyPageIndex;
     private readonly List<PipelineBatchQueueItem> _batchQueue = [];
     private readonly PrepPipelineOperatorControls _operatorControls = new();
-
-    private static List<BitDropdownItem<string>> EndStageItems { get; } = PrepPipelineOperatorControls.EndStageOptions
-        .Select(option => new BitDropdownItem<string> { Text = option.Label, Value = option.Value })
-        .ToList();
-
-    private static List<BitDropdownItem<string>> AsrEngineItems { get; } = PrepPipelineOperatorControls.AsrEngineOptions
-        .Select(option => new BitDropdownItem<string> { Text = option.Label, Value = option.Value })
-        .ToList();
-
-    private static List<BitDropdownItem<string>> MfaBeamProfileItems { get; } = PrepPipelineOperatorControls.MfaBeamProfileOptions
-        .Select(option => new BitDropdownItem<string> { Text = option.Label, Value = option.Value })
-        .ToList();
 
     private bool HasWorkingDirectory => !string.IsNullOrWhiteSpace(Workspace.WorkingDirectory);
 
@@ -1212,32 +1247,32 @@
             ? "n/a"
             : Session.LastBuildRequest.IndexOptions.AverageWpm.ToString();
 
-    private static BitColor GetPhaseColor(PrepRunPhase phase)
+    private static string GetPhaseTone(PrepRunPhase phase)
         => phase switch
         {
-            PrepRunPhase.Completed => BitColor.Success,
-            PrepRunPhase.Cancelled => BitColor.Warning,
-            PrepRunPhase.Failed => BitColor.Error,
-            PrepRunPhase.BuildingBookIndex or PrepRunPhase.RefreshingWorkspace or PrepRunPhase.RunningPipeline or PrepRunPhase.RefreshingChapterHandle => BitColor.Primary,
-            _ => BitColor.Secondary
+            PrepRunPhase.Completed => "success",
+            PrepRunPhase.Cancelled => "warning",
+            PrepRunPhase.Failed => "danger",
+            PrepRunPhase.BuildingBookIndex or PrepRunPhase.RefreshingWorkspace or PrepRunPhase.RunningPipeline or PrepRunPhase.RefreshingChapterHandle => "primary",
+            _ => "neutral"
         };
 
-    private static BitColor GetRunStateColor(RunState state)
+    private static string GetRunStateTone(RunState state)
         => state switch
         {
-            RunState.Completed => BitColor.Success,
-            RunState.Failed => BitColor.Error,
-            RunState.Running => BitColor.Primary,
-            _ => BitColor.Info
+            RunState.Completed => "success",
+            RunState.Failed => "danger",
+            RunState.Running => "primary",
+            _ => "info"
         };
 
-    private static BitColor GetRuntimeReadinessColor(PrepRuntimeReadinessState state)
+    private static string GetRuntimeReadinessTone(PrepRuntimeReadinessState state)
         => state switch
         {
-            PrepRuntimeReadinessState.Ready => BitColor.Success,
-            PrepRuntimeReadinessState.Warning => BitColor.Warning,
-            PrepRuntimeReadinessState.Failed => BitColor.Error,
-            _ => BitColor.Info
+            PrepRuntimeReadinessState.Ready => "success",
+            PrepRuntimeReadinessState.Warning => "warning",
+            PrepRuntimeReadinessState.Failed => "danger",
+            _ => "info"
         };
 
     private static string FormatPhase(PrepRunPhase phase)

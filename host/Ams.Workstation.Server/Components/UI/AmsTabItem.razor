@@ -1,5 +1,6 @@
 @* Vanilla tab panel child. Registers itself with the parent <AmsTabs> via cascading value
    and renders only when selected. Visual rules live in Styles/components/_tabs.scss. *@
+@implements IDisposable
 
 @if (Tabs is not null && Tabs.ActiveItem == this)
 {
@@ -23,5 +24,10 @@
                 "AmsTabItem must be nested inside an <AmsTabs> component so the cascading parent can register it.");
         }
         Tabs.RegisterItem(this);
+    }
+
+    public void Dispose()
+    {
+        Tabs?.UnregisterItem(this);
     }
 }

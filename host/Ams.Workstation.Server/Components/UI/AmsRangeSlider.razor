@@ -7,7 +7,7 @@
            min="@Min"
            max="@Max"
            step="@Step"
-           value="@LowerValue"
+           value="@_lower"
            @oninput="OnLowerInput"
            disabled="@(!IsEnabled)"
            aria-label="Lower bound" />
@@ -16,13 +16,16 @@
            min="@Min"
            max="@Max"
            step="@Step"
-           value="@UpperValue"
+           value="@_upper"
            @oninput="OnUpperInput"
            disabled="@(!IsEnabled)"
            aria-label="Upper bound" />
 </div>
 
 @code {
+    private double _lower;
+    private double _upper;
+
     [Parameter] public double Min { get; set; }
     [Parameter] public double Max { get; set; } = 100;
     [Parameter] public double Step { get; set; } = 1;
@@ -33,6 +36,12 @@
     [Parameter] public bool IsEnabled { get; set; } = true;
     [Parameter(CaptureUnmatchedValues = true)] public IReadOnlyDictionary<string, object>? AdditionalAttributes { get; set; }
 
+    protected override void OnParametersSet()
+    {
+        _lower = LowerValue;
+        _upper = UpperValue;
+    }
+
     private async Task OnLowerInput(ChangeEventArgs args)
     {
         if (!TryParse(args.Value, out var next))
@@ -41,20 +50,20 @@
         }
 
         var lower = Math.Clamp(next, Min, Max);
-        var upper = UpperValue;
+        var upper = _upper;
         if (lower > upper)
         {
             upper = lower;
         }
 
-        if (!AreClose(lower, LowerValue))
+        if (!AreClose(lower, _lower))
         {
-            LowerValue = lower;
+            _lower = lower;
             await LowerValueChanged.InvokeAsync(lower);
         }
-        if (!AreClose(upper, UpperValue))
+        if (!AreClose(upper, _upper))
         {
-            UpperValue = upper;
+            _upper = upper;
             await UpperValueChanged.InvokeAsync(upper);
         }
     }
@@ -67,20 +76,20 @@
         }
 
         var upper = Math.Clamp(next, Min, Max);
-        var lower = LowerValue;
+        var lower = _lower;
         if (upper < lower)
         {
             lower = upper;
         }
 
-        if (!AreClose(upper, UpperValue))
+        if (!AreClose(upper, _upper))
         {
-            UpperValue = upper;
+            _upper = upper;
             await UpperValueChanged.InvokeAsync(upper);
         }
-        if (!AreClose(lower, LowerValue))
+        if (!AreClose(lower, _lower))
         {
-            LowerValue = lower;
+            _lower = lower;
             await LowerValueChanged.InvokeAsync(lower);
         }
     }
