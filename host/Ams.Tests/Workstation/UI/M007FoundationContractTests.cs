@@ -27,6 +27,8 @@ public sealed class M007FoundationContractTests
     [
         "host/Ams.Workstation.Server/Components/UI",
         "host/Ams.Workstation.Server/Components/Pages/Prep",
+        "host/Ams.Workstation.Server/Components/Pages/Proof",
+        "host/Ams.Workstation.Server/Components/Shared",
     ];
 
     private static readonly Regex BitTagPattern = new("<Bit[A-Z]", RegexOptions.CultureInvariant | RegexOptions.Compiled);
