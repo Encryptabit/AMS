@@ -1,0 +1,407 @@
+// Prep page scoped styles (M007/S02/T04 migration off Bit.BlazorUI).
+@use "../../../Styles/tokens/spacing" as sp;
+@use "../../../Styles/tokens/radius" as r;
+@use "../../../Styles/tokens/typography" as t;
+@use "../../../Styles/tokens/motion" as m;
+@use "../../../Styles/mixins/focus-ring" as fr;
+
+.prep-page {
+    width: 100%;
+    min-width: 0;
+}
+
+.prep-page__stack {
+    display: flex;
+    flex-direction: column;
+    gap: sp.$ams-space-4;
+}
+
+.prep-header-extra {
+    min-width: 0;
+}
+
+.prep-header-extra--row {
+    display: flex;
+    align-items: center;
+    gap: sp.$ams-space-2;
+}
+
+.prep-header-extra--column {
+    display: flex;
+    flex-direction: column;
+    gap: sp.$ams-space-3;
+}
+
+// 12-column grid used by the pipeline layout row.
+.prep-grid-12 {
+    display: grid;
+    grid-template-columns: repeat(12, minmax(0, 1fr));
+    gap: sp.$ams-space-4;
+}
+
+@for $i from 1 through 12 {
+    .prep-grid-item--span-#{$i} {
+        grid-column: span $i / span $i;
+        min-width: 0;
+    }
+}
+
+@media (max-width: 640px) {
+    .prep-grid-12 {
+        grid-template-columns: 1fr;
+    }
+
+    @for $i from 1 through 12 {
+        .prep-grid-item--span-#{$i} {
+            grid-column: 1 / -1;
+        }
+    }
+}
+
+// Auto-fit key/value grid used inside cards and the inspector panel.
+.prep-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: sp.$ams-space-3 sp.$ams-space-4;
+}
+
+.prep-grid--compact {
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+}
+
+.prep-kv {
+    display: flex;
+    flex-direction: column;
+    gap: sp.$ams-space-1;
+    min-width: 0;
+}
+
+// Dialog-internal sections.
+.prep-control-sections {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: sp.$ams-space-3;
+}
+
+.prep-control-section {
+    display: flex;
+    flex-direction: column;
+    gap: sp.$ams-space-2;
+    padding: sp.$ams-space-3;
+    background-color: var(--ams-color-surface-2);
+    border: 1px solid var(--ams-color-border-subtle);
+    border-radius: r.$ams-radius-2;
+}
+
+.prep-field-min {
+    min-width: 220px;
+}
+
+.prep-field-min--wide {
+    min-width: 260px;
+}
+
+.prep-mono {
+    font-family: t.$ams-font-mono;
+}
+
+.prep-wrap {
+    overflow-wrap: anywhere;
+}
+
+.prep-warning-list {
+    margin: 0;
+    padding-left: sp.$ams-space-5;
+
+    li {
+        margin: sp.$ams-space-1 0;
+    }
+}
+
+.prep-warning-stack {
+    display: flex;
+    flex-direction: column;
+    gap: sp.$ams-space-2;
+}
+
+.prep-message-stack {
+    display: flex;
+    flex-direction: column;
+    gap: sp.$ams-space-2;
+}
+
+.prep-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: t.$ams-font-size-md;
+    table-layout: fixed;
+
+    th,
+    td {
+        text-align: left;
+        vertical-align: top;
+        padding: sp.$ams-space-3;
+        border-bottom: 1px solid var(--ams-color-border-subtle);
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+
+    th {
+        color: var(--ams-color-text-secondary);
+        font-size: t.$ams-font-size-xs;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+    }
+}
+
+.prep-inline-note {
+    margin-top: sp.$ams-space-1;
+    color: var(--ams-color-text-secondary);
+    font-size: t.$ams-font-size-sm;
+}
+
+.prep-card-stack {
+    display: flex;
+    flex-direction: column;
+    gap: sp.$ams-space-4;
+}
+
+.prep-card-heading {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: sp.$ams-space-3;
+}
+
+.prep-card-heading__text {
+    display: flex;
+    flex-direction: column;
+    gap: sp.$ams-space-1;
+}
+
+.prep-card-actions {
+    display: flex;
+    gap: sp.$ams-space-2;
+    flex-wrap: wrap;
+}
+
+.prep-running-status {
+    display: flex;
+    align-items: center;
+    gap: sp.$ams-space-2;
+}
+
+// Pipeline action bar.
+.pipeline-action-bar {
+    display: flex;
+    align-items: center;
+    gap: sp.$ams-space-3;
+    padding: sp.$ams-space-2 0;
+    flex-wrap: wrap;
+}
+
+// Pipeline cards and their inner stacks.
+.pipeline-card {
+    width: 100%;
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+}
+
+.pipeline-card--top {
+    height: 100%;
+}
+
+.pipeline-dashboard-stack {
+    display: flex;
+    flex-direction: column;
+    gap: sp.$ams-space-3;
+}
+
+// Queue Builder card layout.
+.queue-builder-stack {
+    display: flex;
+    flex-direction: column;
+    gap: sp.$ams-space-3;
+    height: 100%;
+    justify-content: space-between;
+}
+
+.queue-builder-range {
+    display: flex;
+    flex-direction: column;
+    gap: sp.$ams-space-1;
+    flex: 1;
+}
+
+.queue-builder-range__row {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: sp.$ams-space-2;
+}
+
+.queue-builder-actions {
+    display: flex;
+    gap: sp.$ams-space-2;
+    flex-wrap: wrap;
+}
+
+// Pipeline throughput card.
+.throughput-stack {
+    display: flex;
+    flex-direction: column;
+    gap: sp.$ams-space-3;
+    height: 100%;
+    justify-content: space-between;
+}
+
+.throughput-heading {
+    display: flex;
+    align-items: center;
+    gap: sp.$ams-space-2;
+}
+
+.pipeline-throughput-row {
+    display: flex;
+    gap: 2px;
+    width: 100%;
+    flex: 1;
+}
+
+.pipeline-throughput-box {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: sp.$ams-space-3 sp.$ams-space-2;
+    position: relative;
+    background-color: var(--ams-color-surface-2);
+    border-radius: r.$ams-radius-2;
+}
+
+.pipeline-throughput-box--wide {
+    flex: 3;
+}
+
+.pipeline-throughput-indicator {
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    width: 100%;
+    height: 2px;
+}
+
+.pipeline-throughput-indicator--primary {
+    background-color: var(--ams-color-accent);
+}
+
+.pipeline-throughput-indicator--error {
+    background-color: var(--ams-color-danger);
+}
+
+.pipeline-throughput-indicator--success {
+    background-color: var(--ams-color-success);
+}
+
+.pipeline-throughput-indicator--secondary {
+    background-color: var(--ams-color-text-secondary);
+}
+
+.pipeline-throughput-indicator--info {
+    background-color: var(--ams-color-info);
+}
+
+// Active-task table: highlight the selected row.
+.pipeline-row--selected {
+    background-color: var(--ams-color-surface-3);
+    border-left: 2px solid var(--ams-color-accent);
+}
+
+.pipeline-row-actions {
+    display: flex;
+    gap: sp.$ams-space-1;
+    flex-wrap: wrap;
+}
+
+// Inspector panel.
+.inspector-header {
+    padding: sp.$ams-space-3;
+    border-bottom: 1px solid var(--ams-color-border-subtle);
+    background-color: var(--ams-color-surface-2);
+    border-radius: r.$ams-radius-2 r.$ams-radius-2 0 0;
+}
+
+.inspector-section {
+    padding: sp.$ams-space-3;
+    display: flex;
+    flex-direction: column;
+    gap: sp.$ams-space-2;
+}
+
+.inspector-error-log {
+    padding: sp.$ams-space-2;
+    font-family: t.$ams-font-mono;
+    font-size: t.$ams-font-size-xs;
+    line-height: t.$ams-line-body;
+    background-color: var(--ams-color-surface-2);
+    border-left: 2px solid var(--ams-color-danger);
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    border-radius: r.$ams-radius-2;
+}
+
+.inspector-asset-row {
+    display: flex;
+    align-items: center;
+    gap: sp.$ams-space-2;
+    padding: sp.$ams-space-1 sp.$ams-space-2;
+    background-color: var(--ams-color-surface-2);
+    border-radius: r.$ams-radius-2;
+}
+
+.inspector-stage-row {
+    display: flex;
+    align-items: center;
+    gap: sp.$ams-space-2;
+    padding: sp.$ams-space-1 0;
+}
+
+.inspector-runtime-row {
+    display: flex;
+    align-items: center;
+    gap: sp.$ams-space-2;
+    padding: sp.$ams-space-1 0;
+}
+
+// Pipeline settings dialog stack.
+.pipeline-settings-stack {
+    display: flex;
+    flex-direction: column;
+    gap: sp.$ams-space-4;
+}
+
+// History pager.
+.history-pager {
+    display: flex;
+    align-items: center;
+    gap: sp.$ams-space-2;
+    padding: sp.$ams-space-2 0;
+    border-bottom: 1px solid var(--ams-color-border-subtle);
+    margin-bottom: sp.$ams-space-1;
+}
+
+@media (max-width: 960px) {
+    .pipeline-throughput-row {
+        flex-wrap: wrap;
+    }
+
+    .pipeline-throughput-box--wide {
+        flex-basis: 100%;
+    }
+
+    .prep-control-sections {
+        grid-template-columns: 1fr;
+    }
+}
