@@ -1,0 +1,23 @@
+{
+  "$schema": "https://raw.githubusercontent.com/koenvzeijl/AspNetCore.SassCompiler/main/src/AspNetCore.SassCompiler/sasscompiler.schema.json",
+  "SourceFolder": "Styles",
+  "TargetFolder": "wwwroot/css",
+  "Arguments": "--error-css",
+  "GenerateScopedCss": true,
+  "ScopedCssFolders": ["Components"],
+  "IncludePaths": [],
+  "ExcludedFiles": [],
+  "ExcludedPaths": [
+    "node_modules",
+    "bin",
+    "obj"
+  ],
+  "Configurations": {
+    "Debug": {
+      "Arguments": "--style=expanded --source-map --embed-sources"
+    },
+    "Release": {
+      "Arguments": "--style=compressed --no-source-map"
+    }
+  }
+}

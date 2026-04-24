@@ -71,3 +71,17 @@ vendor/
 coverage/
 .cache/
 tmp/
+
+# ── GSD baseline (auto-generated) ──
+.mcp.json
+
+# ── M007 Sass toolchain generated output ──
+# Global stylesheet compiled from host/Ams.Workstation.Server/Styles/app.scss.
+host/Ams.Workstation.Server/wwwroot/css/app.css
+host/Ams.Workstation.Server/wwwroot/css/app.css.map
+# Source maps for every compiled .scss (component-scoped or global).
+host/Ams.Workstation.Server/**/*.css.map
+# Component-scoped outputs whose .razor.scss sibling is the authoritative source.
+# Hand-authored legacy .razor.css files (no .scss sibling) stay tracked until their
+# migration slice rewrites them — list each generated file explicitly.
+host/Ams.Workstation.Server/Components/UI/AmsButton.razor.css

@@ -1,0 +1,90 @@
+// Global foundation entry point for the workstation UI.
+//
+// This file is the single emitter of wwwroot/css/app.css. Partials under
+// Styles/** (prefixed with _) are @use-imported here and do not emit their
+// own .css. Per M007-UI-FOUNDATION.md §1, component-scoped styles live in
+// sibling *.razor.scss files and are handled by Blazor CSS isolation.
+//
+// T01 intentionally keeps this file minimal to prove the compile pipeline.
+// Real token/foundation/utility imports land in T02 (see §3 of the
+// foundation reference).
+
+*, *::before, *::after {
+    box-sizing: border-box;
+}
+
+html, body {
+    margin: 0;
+    padding: 0;
+    height: 100%;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+    font-size: 14px;
+    line-height: 1.5;
+}
+
+:root {
+    --sidebar-width: 220px;
+    --header-height: 48px;
+}
+
+input, button, select, textarea {
+    font-family: inherit;
+    font-size: inherit;
+}
+
+#blazor-error-ui {
+    background: #dc3545;
+    color: white;
+    bottom: 0;
+    box-shadow: 0 -2px 8px rgba(0, 0, 0, 0.3);
+    display: none;
+    left: 0;
+    padding: 1rem;
+    position: fixed;
+    width: 100%;
+    z-index: 1000;
+}
+
+#blazor-error-ui .dismiss {
+    cursor: pointer;
+    position: absolute;
+    right: 1rem;
+    top: 0.5rem;
+}
+
+#blazor-error-ui .reload {
+    color: white;
+    text-decoration: underline;
+}
+
+.blazor-error-boundary {
+    background: #dc3545;
+    padding: 1rem;
+    color: white;
+    border-radius: 4px;
+}
+
+.blazor-error-boundary::after {
+    content: "An error has occurred.";
+}
+
+.valid.modified:not([type=checkbox]) {
+    outline: 1px solid #198754;
+}
+
+.invalid {
+    outline: 1px solid #dc3545;
+}
+
+.validation-message {
+    color: #dc3545;
+    font-size: 0.875rem;
+    margin-top: 0.25rem;
+}
+
+// Retained Bit-specific shim until S04 migration removes BitCard usages.
+.pipeline-card--top > .bit-crd-cnt {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+}

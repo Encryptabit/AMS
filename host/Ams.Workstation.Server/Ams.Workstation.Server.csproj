@@ -5,10 +5,17 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- Kept until S04 removes them entirely. -->
     <PackageReference Include="Bit.BlazorUI" Version="10.3.0" />
     <PackageReference Include="Bit.BlazorUI.Icons" Version="10.3.0" />
     <PackageReference Include="ClosedXML" Version="0.104.2" />
     <PackageReference Include="Toolbelt.Blazor.HotKeys2" Version="6.1.0" />
+
+    <!-- Sass compile toolchain (M007/S01/T01). AspNetCore.SassCompiler ships
+         its own Dart runtime so no .NET runtime side-deps apply, and it has
+         explicit Source/Target/ScopedCss configuration that matches the
+         M007-UI-FOUNDATION §1.8 layout out-of-the-box. -->
+    <PackageReference Include="AspNetCore.SassCompiler" Version="1.99.0" PrivateAssets="all" />
   </ItemGroup>
 
   <ItemGroup>

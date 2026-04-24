@@ -1,0 +1,10 @@
+// Minimal stub for T01 — proves component-scoped .razor.scss compiles in-place
+// to a sibling .razor.css that Blazor CSS isolation can pick up.
+//
+// Real AmsButton contract (variants/sizes/focus ring) lands in T03 per
+// M007-UI-FOUNDATION.md §3.16.
+
+.ams-btn {
+    // placeholder rule; T03 replaces with real button styles.
+    display: inline-flex;
+}

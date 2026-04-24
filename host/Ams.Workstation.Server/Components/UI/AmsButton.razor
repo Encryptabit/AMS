@@ -1,0 +1,13 @@
+@* Minimal vanilla button primitive stub (M007/S01/T01).
+   Real contract (variants, sizes, focus ring) lands in T03 per
+   M007-UI-FOUNDATION.md §3.15. This stub exists only so Blazor CSS
+   isolation can pair AmsButton.razor.scss -> AmsButton.razor.css with
+   an owning component. Not wired into shell yet. *@
+
+<button type="@Type" class="ams-btn" @attributes="AdditionalAttributes">@ChildContent</button>
+
+@code {
+    [Parameter] public RenderFragment? ChildContent { get; set; }
+    [Parameter] public string Type { get; set; } = "button";
+    [Parameter(CaptureUnmatchedValues = true)] public IReadOnlyDictionary<string, object>? AdditionalAttributes { get; set; }
+}
