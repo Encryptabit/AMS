@@ -1,0 +1,107 @@
+@use "../../../Styles/tokens/spacing" as sp;
+@use "../../../Styles/tokens/radius" as r;
+@use "../../../Styles/tokens/typography" as t;
+@use "../../../Styles/tokens/motion" as m;
+@use "../../../Styles/mixins/focus-ring" as fr;
+
+.proof-index {
+    width: 100%;
+    min-width: 0;
+    color: var(--ams-color-text-primary);
+}
+
+.proof-index__stack {
+    display: flex;
+    flex-direction: column;
+    gap: sp.$ams-space-4;
+}
+
+.overview-link {
+    display: block;
+    padding: sp.$ams-space-1;
+}
+
+.proof-index__quick-link {
+    width: 100%;
+    justify-content: flex-start;
+    display: grid;
+    grid-template-columns: auto 1fr auto;
+    align-items: center;
+    gap: sp.$ams-space-2;
+    text-align: left;
+}
+
+.proof-index__quick-link-detail {
+    grid-column: 2 / -1;
+    color: var(--ams-color-text-secondary);
+    font-size: t.$ams-font-size-sm;
+}
+
+.proof-index__section-label {
+    margin: 0 0 sp.$ams-space-3;
+    color: var(--ams-color-text-secondary);
+    font-size: t.$ams-font-size-sm;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+
+.chapters {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: sp.$ams-space-2;
+}
+
+.chapter-link {
+    width: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: sp.$ams-space-2;
+    text-decoration: none;
+    padding: sp.$ams-space-3;
+    border-radius: r.$ams-radius-2;
+    border: 1px solid var(--ams-color-border-subtle);
+    background-color: var(--ams-color-surface-1);
+    color: var(--ams-color-text-primary);
+    transition:
+        border-color m.$ams-duration-2 m.$ams-ease-standard,
+        background-color m.$ams-duration-2 m.$ams-ease-standard;
+
+    @include fr.focus-ring(var(--ams-color-accent));
+
+    &:hover {
+        border-color: var(--ams-color-accent);
+        background-color: var(--ams-color-surface-2);
+    }
+}
+
+.chapter-link__start {
+    display: inline-flex;
+    align-items: center;
+    gap: sp.$ams-space-2;
+    min-width: 0;
+}
+
+.chapter-name {
+    overflow-wrap: anywhere;
+}
+
+.proof-index__message {
+    display: flex;
+    flex-direction: column;
+    gap: sp.$ams-space-3;
+}
+
+@media (max-width: 640px) {
+    .proof-index__quick-link {
+        grid-template-columns: auto 1fr;
+    }
+
+    .proof-index__quick-link-detail {
+        grid-column: 1 / -1;
+        padding-left: calc(sp.$ams-space-4 + sp.$ams-space-1);
+    }
+}

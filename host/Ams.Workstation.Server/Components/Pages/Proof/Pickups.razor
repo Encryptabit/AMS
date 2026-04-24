@@ -35,7 +35,7 @@
         else
         {
             <section class="ams-card">
-                <div class="proof-pickups-controls">
+                <div class="proof-pickups-controls proof-pickups-action-bar">
                     <div class="proof-pickups-field">
                         <label class="ams-field">
                             <span class="ams-caption ams-caption--muted">Chapter</span>
@@ -338,7 +338,7 @@
                 }
                 else
                 {
-                    <div class="proof-pickups-ledger-list">
+                    <div class="proof-pickups-ledger proof-pickups-ledger-list">
                         @foreach (var entry in _snapshot.ArtifactLedgerEntries.OrderByDescending(item => item.Sequence).Take(20))
                         {
                             <section class="ams-card proof-pickups-item" data-proof-pickups-ledger-row="true">
@@ -359,7 +359,6 @@
     </div>
 </div>
 
-@* TODO(T04): scoped SCSS sibling *@
 @code {
     private string? _pickupSourcePath;
     private string? _selectedChapter;

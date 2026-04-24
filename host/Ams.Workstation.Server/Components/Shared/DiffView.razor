@@ -6,15 +6,15 @@
     {
         @if (op.Op == "equal")
         {
-            <span class="diff-token">@(string.Join(" ", op.Tokens))</span>
+            <span class="diff-token diff-view__span diff-view__span--equal">@(string.Join(" ", op.Tokens))</span>
         }
         else if (op.Op == "delete")
         {
-            <span class="diff-token diff-delete">@(string.Join(" ", op.Tokens))</span>
+            <span class="diff-token diff-delete diff-view__span diff-view__span--del">@(string.Join(" ", op.Tokens))</span>
         }
         else if (op.Op == "insert")
         {
-            <span class="diff-token diff-insert">@(string.Join(" ", op.Tokens))</span>
+            <span class="diff-token diff-insert diff-view__span diff-view__span--ins">@(string.Join(" ", op.Tokens))</span>
         }
         @(" ")
     }
@@ -92,18 +92,3 @@
     }
 }
 
-<style>
-    .diff-view {
-        line-height: 1.8;
-    }
-    .diff-delete {
-        background-color: var(--bit-clr-err-bg);
-        color: var(--bit-clr-err);
-        text-decoration: line-through;
-    }
-    .diff-insert {
-        background-color: var(--bit-clr-suc-bg);
-        color: var(--bit-clr-suc);
-        font-weight: 500;
-    }
-</style>

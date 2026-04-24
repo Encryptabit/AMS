@@ -1,0 +1,164 @@
+@use "../../../Styles/tokens/spacing" as sp;
+@use "../../../Styles/tokens/radius" as r;
+@use "../../../Styles/tokens/typography" as t;
+
+.proof-pickups-page {
+    width: 100%;
+    min-width: 0;
+    color: var(--ams-color-text-primary);
+}
+
+.proof-pickups-stack {
+    display: flex;
+    flex-direction: column;
+    gap: sp.$ams-space-4;
+}
+
+.proof-pickups-header {
+    display: flex;
+    flex-direction: column;
+    gap: sp.$ams-space-1;
+}
+
+.proof-pickups-action-bar,
+.proof-pickups-controls {
+    display: grid;
+    grid-template-columns: repeat(12, minmax(0, 1fr));
+    gap: sp.$ams-space-2;
+    align-items: end;
+}
+
+.proof-pickups-field {
+    grid-column: span 3;
+}
+
+.proof-pickups-field--source {
+    grid-column: span 6;
+}
+
+.proof-pickups-action-bar > .ams-btn,
+.proof-pickups-controls > .ams-btn {
+    grid-column: span 1;
+    min-width: 7.5rem;
+}
+
+.proof-pickups-progress {
+    display: flex;
+    flex-direction: column;
+    gap: sp.$ams-space-2;
+    padding: sp.$ams-space-2;
+    border: 1px solid var(--ams-color-border-subtle);
+    border-radius: r.$ams-radius-2;
+    background-color: var(--ams-color-surface-2);
+}
+
+.proof-pickups-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    gap: sp.$ams-space-3;
+}
+
+.proof-queue-card {
+    display: flex;
+    flex-direction: column;
+    gap: sp.$ams-space-2;
+}
+
+.proof-queue-card__header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: sp.$ams-space-2;
+}
+
+.proof-pickups-item {
+    border: 1px solid var(--ams-color-border-subtle);
+    background-color: var(--ams-color-surface-1);
+}
+
+.proof-pickups-item__stack {
+    display: flex;
+    flex-direction: column;
+    gap: sp.$ams-space-2;
+}
+
+.proof-pickups-item__actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: sp.$ams-space-2;
+}
+
+.proof-pickups-item__failure {
+    margin: 0;
+    font-size: t.$ams-font-size-sm;
+    color: var(--ams-color-danger);
+}
+
+.proof-pickups-diagnostics {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: sp.$ams-space-2;
+}
+
+.proof-pickups-diagnostics > div {
+    padding: sp.$ams-space-2;
+    border-radius: r.$ams-radius-2;
+    background-color: var(--ams-color-surface-1);
+    border: 1px solid var(--ams-color-border-subtle);
+}
+
+.proof-pickups-diagnostics dt {
+    margin: 0;
+    font-size: t.$ams-font-size-xs;
+    color: var(--ams-color-text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+
+.proof-pickups-diagnostics dd {
+    margin: sp.$ams-space-1 0 0;
+    overflow-wrap: anywhere;
+}
+
+.proof-pickups-diagnostics-text {
+    margin: 0;
+    padding: sp.$ams-space-2;
+    background-color: var(--ams-color-surface-1);
+    border: 1px solid var(--ams-color-border-subtle);
+    border-radius: r.$ams-radius-2;
+    color: var(--ams-color-text-secondary);
+    font-family: t.$ams-font-mono;
+    font-size: t.$ams-font-size-xs;
+    overflow-x: auto;
+}
+
+.proof-pickups-ledger,
+.proof-pickups-ledger-list {
+    display: flex;
+    flex-direction: column;
+    gap: sp.$ams-space-2;
+}
+
+@media (max-width: 1200px) {
+    .proof-pickups-field {
+        grid-column: span 4;
+    }
+
+    .proof-pickups-field--source {
+        grid-column: span 8;
+    }
+}
+
+@media (max-width: 960px) {
+    .proof-pickups-action-bar,
+    .proof-pickups-controls {
+        grid-template-columns: 1fr;
+    }
+
+    .proof-pickups-field,
+    .proof-pickups-field--source,
+    .proof-pickups-action-bar > .ams-btn,
+    .proof-pickups-controls > .ams-btn {
+        grid-column: 1 / -1;
+    }
+}

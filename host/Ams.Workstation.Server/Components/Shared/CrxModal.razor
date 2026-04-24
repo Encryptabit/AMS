@@ -52,7 +52,7 @@
                     </div>
                 }
 
-                <div class="padding-control">
+                <div class="padding-control crx-modal-padding-control">
                     <p class="ams-body">Tail Padding: @_paddingMs ms</p>
                     <input type="range" min="0" max="200" step="10"
                            value="@_paddingMs"
@@ -61,14 +61,14 @@
                 </div>
             </div>
 
-            <div class="crx-col-right">
+            <div class="crx-col-right crx-modal-preview">
                 <WaveformPlayer @ref="_waveformPlayer"
                                 AudioUrl="@_audioUrl"
                                 PeaksUrl="@_peaksUrl"
                                 Title="Audio Preview"
                                 Height="80"
                                 OnReady="FocusPlayButton" />
-                <p class="ams-caption ams-caption--muted" style="text-align: center;">
+                <p class="crx-modal-preview__range ams-caption ams-caption--muted">
                     @FormatTime(_startTime) → @FormatTime(_endTime + _paddingMs / 1000.0)
                 </p>
             </div>
@@ -90,7 +90,6 @@
     </FooterContent>
 </AmsDialog>
 
-@* TODO(T04): scoped SCSS sibling *@
 @code {
     private const int PeakPxPerSec = 1200;
     private bool _isVisible;

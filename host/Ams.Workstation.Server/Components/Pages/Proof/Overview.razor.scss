@@ -1,0 +1,67 @@
+@use "../../../Styles/tokens/spacing" as sp;
+@use "../../../Styles/tokens/radius" as r;
+@use "../../../Styles/tokens/typography" as t;
+
+.proof-overview {
+    width: 100%;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: sp.$ams-space-4;
+    color: var(--ams-color-text-primary);
+}
+
+.overview-header {
+    display: flex;
+    flex-direction: column;
+    gap: sp.$ams-space-1;
+}
+
+.proof-overview__loading {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 12rem;
+    border: 1px solid var(--ams-color-border-subtle);
+    border-radius: r.$ams-radius-3;
+    background-color: var(--ams-color-surface-2);
+}
+
+.proof-stats-grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: sp.$ams-space-4;
+}
+
+.chapter-section {
+    display: flex;
+    flex-direction: column;
+    gap: sp.$ams-space-3;
+}
+
+.proof-chapter-grid {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: sp.$ams-space-3;
+}
+
+@media (max-width: 960px) {
+    .proof-stats-grid,
+    .proof-chapter-grid {
+        grid-template-columns: 1fr;
+    }
+}
+
+@media (max-width: 640px) {
+    .proof-overview {
+        gap: sp.$ams-space-3;
+    }
+
+    .chapter-section {
+        gap: sp.$ams-space-2;
+    }
+
+    .chapter-section .ams-subtitle {
+        font-size: t.$ams-font-size-lg;
+    }
+}

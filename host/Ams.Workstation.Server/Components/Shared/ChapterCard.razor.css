@@ -1,0 +1,79 @@
+.chapter-card {
+  width: 100%;
+  padding: 0.75rem;
+  border-radius: 8px;
+  border: 1px solid var(--ams-color-border-subtle);
+  background-color: var(--ams-color-surface-2);
+  color: var(--ams-color-text-primary);
+  text-align: left;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  cursor: pointer;
+  transition: border-color 160ms cubic-bezier(0.2, 0, 0, 1), background-color 160ms cubic-bezier(0.2, 0, 0, 1);
+}
+.chapter-card:focus-visible {
+  outline: 2px solid var(--ams-color-accent);
+  outline-offset: 2px;
+}
+.chapter-card:hover {
+  border-color: var(--ams-color-accent);
+  background-color: var(--ams-color-surface-1);
+}
+
+.chapter-card__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.chapter-card__title {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 600;
+}
+
+.chapter-metrics {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.metric {
+  display: flex;
+  gap: 0.5rem;
+  align-items: baseline;
+  flex-wrap: wrap;
+}
+
+.label {
+  color: var(--ams-color-text-secondary);
+  font-size: 0.8125rem;
+}
+
+.value {
+  font-size: 0.875rem;
+}
+
+.chapter-card__wer {
+  font-weight: 600;
+}
+
+.chapter-card--wer-good .value {
+  color: var(--ams-color-success);
+}
+
+.chapter-card--wer-warn .value {
+  color: var(--ams-color-warning);
+}
+
+.chapter-card--wer-bad .value {
+  color: var(--ams-color-danger);
+}
+
+.chapter-card--reviewed {
+  border-left: 3px solid var(--ams-color-success);
+}
+
+/*# sourceMappingURL=ChapterCard.razor.css.map */

@@ -1,0 +1,60 @@
+@use "../../Styles/tokens/spacing" as sp;
+@use "../../Styles/tokens/radius" as r;
+@use "../../Styles/tokens/typography" as t;
+
+.ignore-modal-body {
+    display: flex;
+    flex-direction: column;
+    gap: sp.$ams-space-3;
+    color: var(--ams-color-text-primary);
+}
+
+.ignore-modal-checklist,
+.ignore-errors-section {
+    border: 1px solid var(--ams-color-border-subtle);
+    border-radius: r.$ams-radius-2;
+    background-color: var(--ams-color-surface-1);
+    padding: sp.$ams-space-2;
+    display: flex;
+    flex-direction: column;
+    gap: sp.$ams-space-2;
+}
+
+.ignore-errors-header {
+    display: flex;
+    justify-content: flex-end;
+}
+
+.ignore-select-all {
+    display: inline-flex;
+    align-items: center;
+    gap: sp.$ams-space-1;
+}
+
+.ignore-errors-list {
+    display: flex;
+    flex-direction: column;
+    gap: sp.$ams-space-1;
+    max-height: 14rem;
+    overflow-y: auto;
+    padding-right: sp.$ams-space-1;
+}
+
+.ignore-error-item {
+    display: inline-flex;
+    align-items: flex-start;
+    gap: sp.$ams-space-2;
+    line-height: t.$ams-line-body;
+}
+
+.ignore-del {
+    color: var(--ams-color-danger);
+}
+
+.ignore-ins {
+    color: var(--ams-color-success);
+}
+
+.ignore-sub {
+    color: var(--ams-color-warning);
+}

@@ -10,7 +10,7 @@
         <div class="ignore-modal-body">
         <p class="ams-body ams-body--muted">Select errors to ignore for entire book:</p>
 
-        <div class="ignore-errors-section">
+        <div class="ignore-errors-section ignore-modal-checklist">
             <div class="ignore-errors-header">
                 <label class="ignore-select-all">
                     <input type="checkbox" checked="@_allSelected"
@@ -45,7 +45,6 @@
     </FooterContent>
 </AmsDialog>
 
-@* TODO(T04): scoped SCSS sibling *@
 @code {
     private bool _isVisible;
     private List<IgnoreErrorItem> _errorItems = new();

@@ -1,0 +1,84 @@
+@use "../../Styles/tokens/spacing" as sp;
+@use "../../Styles/tokens/radius" as r;
+@use "../../Styles/tokens/typography" as t;
+@use "../../Styles/tokens/motion" as m;
+@use "../../Styles/mixins/focus-ring" as fr;
+
+.chapter-card {
+    width: 100%;
+    padding: sp.$ams-space-3;
+    border-radius: r.$ams-radius-3;
+    border: 1px solid var(--ams-color-border-subtle);
+    background-color: var(--ams-color-surface-2);
+    color: var(--ams-color-text-primary);
+    text-align: left;
+    display: flex;
+    flex-direction: column;
+    gap: sp.$ams-space-3;
+    cursor: pointer;
+    transition:
+        border-color m.$ams-duration-2 m.$ams-ease-standard,
+        background-color m.$ams-duration-2 m.$ams-ease-standard;
+
+    @include fr.focus-ring(var(--ams-color-accent));
+
+    &:hover {
+        border-color: var(--ams-color-accent);
+        background-color: var(--ams-color-surface-1);
+    }
+}
+
+.chapter-card__header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: sp.$ams-space-2;
+}
+
+.chapter-card__title {
+    margin: 0;
+    font-size: t.$ams-font-size-lg;
+    font-weight: 600;
+}
+
+.chapter-metrics {
+    display: flex;
+    flex-direction: column;
+    gap: sp.$ams-space-1;
+}
+
+.metric {
+    display: flex;
+    gap: sp.$ams-space-2;
+    align-items: baseline;
+    flex-wrap: wrap;
+}
+
+.label {
+    color: var(--ams-color-text-secondary);
+    font-size: t.$ams-font-size-sm;
+}
+
+.value {
+    font-size: t.$ams-font-size-md;
+}
+
+.chapter-card__wer {
+    font-weight: 600;
+}
+
+.chapter-card--wer-good .value {
+    color: var(--ams-color-success);
+}
+
+.chapter-card--wer-warn .value {
+    color: var(--ams-color-warning);
+}
+
+.chapter-card--wer-bad .value {
+    color: var(--ams-color-danger);
+}
+
+.chapter-card--reviewed {
+    border-left: 3px solid var(--ams-color-success);
+}

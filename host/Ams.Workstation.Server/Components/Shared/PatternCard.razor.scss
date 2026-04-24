@@ -1,0 +1,93 @@
+@use "../../Styles/tokens/spacing" as sp;
+@use "../../Styles/tokens/radius" as r;
+@use "../../Styles/tokens/typography" as t;
+
+.pattern-card {
+    display: flex;
+    flex-direction: column;
+    gap: sp.$ams-space-3;
+    height: 100%;
+    padding: sp.$ams-space-3;
+    border-radius: r.$ams-radius-3;
+    border: 1px solid var(--ams-color-border-subtle);
+    background-color: var(--ams-color-surface-2);
+    color: var(--ams-color-text-primary);
+}
+
+.pattern-card--ignored {
+    opacity: 0.75;
+    border-style: dashed;
+}
+
+.pattern-card__header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: sp.$ams-space-2;
+}
+
+.pattern-card__type {
+    display: inline-flex;
+    align-items: center;
+    padding: sp.$ams-space-1 sp.$ams-space-2;
+    border-radius: r.$ams-radius-pill;
+    font-size: t.$ams-font-size-xs;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    font-weight: 600;
+}
+
+.pattern-card__type--del {
+    color: var(--ams-color-danger);
+    background-color: color-mix(in srgb, var(--ams-color-danger) 16%, transparent);
+}
+
+.pattern-card__type--ins {
+    color: var(--ams-color-success);
+    background-color: color-mix(in srgb, var(--ams-color-success) 16%, transparent);
+}
+
+.pattern-card__type--sub {
+    color: var(--ams-color-warning);
+    background-color: color-mix(in srgb, var(--ams-color-warning) 16%, transparent);
+}
+
+.pattern-card__type--other {
+    color: var(--ams-color-info);
+    background-color: color-mix(in srgb, var(--ams-color-info) 16%, transparent);
+}
+
+.pattern-card__count {
+    color: var(--ams-color-text-secondary);
+    font-size: t.$ams-font-size-sm;
+}
+
+.pattern-card__diff {
+    display: flex;
+    align-items: center;
+    gap: sp.$ams-space-1;
+    flex-wrap: wrap;
+    line-height: t.$ams-line-body;
+}
+
+.pattern-card__from,
+.pattern-card__to {
+    font-family: t.$ams-font-mono;
+    overflow-wrap: anywhere;
+}
+
+.pattern-card__from {
+    color: var(--ams-color-text-secondary);
+}
+
+.pattern-card__arrow {
+    color: var(--ams-color-accent);
+}
+
+.pattern-card__to {
+    color: var(--ams-color-text-primary);
+}
+
+.pattern-card__actions {
+    margin-top: auto;
+}

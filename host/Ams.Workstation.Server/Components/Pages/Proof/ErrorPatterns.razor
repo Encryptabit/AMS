@@ -8,14 +8,14 @@
 
 <PageTitle>Error Patterns - AMS Workstation</PageTitle>
 
-<div class="proof-patterns-page">
-    <div class="proof-patterns-header">
+<div class="proof-patterns proof-patterns-page">
+    <div class="proof-patterns__header proof-patterns-header">
         <h1>Error Patterns</h1>
         <p class="ams-body ams-body--muted">Recurring differences across all chapters</p>
     </div>
 
     <input type="text"
-           class="ams-input"
+           class="ams-input proof-patterns__filter"
            value="@_filterText"
            @oninput="@(e => HandleFilterChange(e.Value?.ToString()))"
            placeholder="Filter patterns…"
@@ -60,7 +60,6 @@
     }
 </div>
 
-@* TODO(T04): scoped SCSS sibling *@
 
 @code {
     private ErrorPatternsResult? _patterns;

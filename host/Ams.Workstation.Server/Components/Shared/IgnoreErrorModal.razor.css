@@ -1,0 +1,58 @@
+.ignore-modal-body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  color: var(--ams-color-text-primary);
+}
+
+.ignore-modal-checklist,
+.ignore-errors-section {
+  border: 1px solid var(--ams-color-border-subtle);
+  border-radius: 4px;
+  background-color: var(--ams-color-surface-1);
+  padding: 0.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.ignore-errors-header {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.ignore-select-all {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+
+.ignore-errors-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  max-height: 14rem;
+  overflow-y: auto;
+  padding-right: 0.25rem;
+}
+
+.ignore-error-item {
+  display: inline-flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+  line-height: 1.5;
+}
+
+.ignore-del {
+  color: var(--ams-color-danger);
+}
+
+.ignore-ins {
+  color: var(--ams-color-success);
+}
+
+.ignore-sub {
+  color: var(--ams-color-warning);
+}
+
+/*# sourceMappingURL=IgnoreErrorModal.razor.css.map */

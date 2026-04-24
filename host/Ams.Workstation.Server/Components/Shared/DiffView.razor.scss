@@ -1,0 +1,33 @@
+@use "../../Styles/tokens/spacing" as sp;
+@use "../../Styles/tokens/radius" as r;
+@use "../../Styles/tokens/typography" as t;
+
+.diff-view {
+    line-height: 1.8;
+    color: var(--ams-color-text-primary);
+    overflow-wrap: anywhere;
+}
+
+.diff-view__span {
+    display: inline;
+    padding: 0 sp.$ams-space-1;
+    border-radius: r.$ams-radius-1;
+}
+
+.diff-view__span--equal {
+    color: var(--ams-color-text-primary);
+}
+
+.diff-view__span--del,
+.diff-delete {
+    background-color: color-mix(in srgb, var(--ams-color-danger) 22%, transparent);
+    color: var(--ams-color-danger);
+    text-decoration: line-through;
+}
+
+.diff-view__span--ins,
+.diff-insert {
+    background-color: color-mix(in srgb, var(--ams-color-success) 22%, transparent);
+    color: var(--ams-color-success);
+    font-weight: 500;
+}

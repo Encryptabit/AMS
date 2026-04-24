@@ -52,9 +52,9 @@
         // Parse WER percentage and classify
         if (double.TryParse(Chapter.Metrics.SentenceAvgWer.TrimEnd('%'), out var wer))
         {
-            if (wer >= 10) return "wer-high";
-            if (wer >= 5) return "wer-medium";
+            if (wer >= 10) return "wer-bad";
+            if (wer >= 5) return "wer-warn";
         }
-        return "wer-low";
+        return "wer-good";
     }
 }

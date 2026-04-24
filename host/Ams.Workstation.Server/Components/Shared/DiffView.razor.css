@@ -1,0 +1,31 @@
+.diff-view {
+  line-height: 1.8;
+  color: var(--ams-color-text-primary);
+  overflow-wrap: anywhere;
+}
+
+.diff-view__span {
+  display: inline;
+  padding: 0 0.25rem;
+  border-radius: 2px;
+}
+
+.diff-view__span--equal {
+  color: var(--ams-color-text-primary);
+}
+
+.diff-view__span--del,
+.diff-delete {
+  background-color: color-mix(in srgb, var(--ams-color-danger) 22%, transparent);
+  color: var(--ams-color-danger);
+  text-decoration: line-through;
+}
+
+.diff-view__span--ins,
+.diff-insert {
+  background-color: color-mix(in srgb, var(--ams-color-success) 22%, transparent);
+  color: var(--ams-color-success);
+  font-weight: 500;
+}
+
+/*# sourceMappingURL=DiffView.razor.css.map */

@@ -1,12 +1,70 @@
 .proof-review {
-    width: 100%;
+  width: 100%;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  color: var(--ams-color-text-primary);
+}
+
+.proof-view-switcher {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.proof-playback-grid {
+  display: grid;
+  grid-template-columns: repeat(12, minmax(0, 1fr));
+  gap: 0.75rem;
+  width: 100%;
+}
+
+.proof-playback-grid-item {
+  min-width: 0;
+}
+
+.proof-playback-grid-item--span-12 {
+  grid-column: 1/-1;
+}
+
+.proof-playback-grid-item--player {
+  min-width: 0;
 }
 
 .playback-alert-settings {
-    margin-bottom: 0.5rem;
+  margin-bottom: 0.5rem;
+  border-radius: 8px;
+}
+
+.proof-alert-settings__controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
 }
 
 .playback-alert-status {
-    margin-top: 0.4rem;
-    display: block;
+  margin-top: 0.5rem;
+  display: block;
+  color: var(--ams-color-text-secondary);
+  font-size: 0.8125rem;
 }
+
+@media (max-width: 960px) {
+  .proof-alert-settings__controls {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .proof-view-switcher {
+    gap: 0.25rem;
+  }
+}
+@media (prefers-reduced-motion: no-preference) {
+  .proof-view-switcher {
+    transition: gap 160ms cubic-bezier(0.2, 0, 0, 1);
+  }
+}
+
+/*# sourceMappingURL=ChapterReview.razor.css.map */

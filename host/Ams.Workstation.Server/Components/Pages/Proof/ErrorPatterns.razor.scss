@@ -1,0 +1,44 @@
+@use "../../../Styles/tokens/spacing" as sp;
+@use "../../../Styles/tokens/radius" as r;
+@use "../../../Styles/tokens/typography" as t;
+
+.proof-patterns {
+    width: 100%;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: sp.$ams-space-3;
+    color: var(--ams-color-text-primary);
+}
+
+.proof-patterns__header {
+    display: flex;
+    flex-direction: column;
+    gap: sp.$ams-space-1;
+}
+
+.proof-patterns__filter {
+    max-width: 32rem;
+    border-radius: r.$ams-radius-2;
+}
+
+.proof-patterns-loading {
+    min-height: 10rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border: 1px solid var(--ams-color-border-subtle);
+    border-radius: r.$ams-radius-3;
+    background-color: var(--ams-color-surface-2);
+}
+
+.proof-patterns-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+    gap: sp.$ams-space-3;
+}
+
+.proof-patterns .ams-caption {
+    color: var(--ams-color-text-secondary);
+    font-size: t.$ams-font-size-sm;
+}

@@ -1,86 +1,127 @@
-/* SentenceList Component Styles - minimal CSS using BitUI theme variables */
-
-/* Card wrapper - BitCard handles most styling */
-::deep .sentence-list-card {
-    overflow-y: auto;
-    scroll-behavior: smooth;
+.sentence-list-card {
+  overflow-y: auto;
+  scroll-behavior: smooth;
+  border-radius: 8px;
 }
 
-/* Header section */
-.sentence-list-header {
-    padding: 0.75rem 1rem;
-    border-bottom: 1px solid var(--bit-clr-brd-sec);
-    width: 100%;
+.sentence-list-header,
+.sentence-list__header {
+  padding: 0.75rem 1rem;
+  border-bottom: 1px solid var(--ams-color-border-subtle);
+  width: 100%;
 }
 
-/* List container - BitBasicList handles structure */
-::deep .sentence-items {
-    list-style: none;
-    margin: 0;
-    padding: 0.5rem;
-    width: 100%;
-    box-sizing: border-box;
+.sentence-list__header-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 0.5rem;
+  flex-wrap: wrap;
 }
 
-/* Ensure list items stretch full width */
-::deep .sentence-items li {
-    width: 100%;
+.sentence-list__title {
+  margin: 0;
+  font-size: 1rem;
 }
 
-/* Individual sentence item */
+.sentence-list__hint {
+  margin: 0;
+  color: var(--ams-color-text-secondary);
+  font-size: 0.8125rem;
+}
+
+.sentence-list__empty {
+  padding: 1rem;
+}
+
+.sentence-list__empty-text {
+  margin: 0;
+  color: var(--ams-color-text-secondary);
+}
+
+.sentence-items,
+.sentence-list__items {
+  list-style: none;
+  margin: 0;
+  padding: 0.5rem;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.sentence-items li,
+.sentence-list__item {
+  width: 100%;
+}
+
 .sentence-item {
-    padding: 0.75rem 1rem;
-    margin-bottom: 0.25rem;
-    background: var(--bit-clr-bg-sec);
-    border-radius: 4px;
-    border-left: 3px solid transparent;
-    cursor: pointer;
-    transition: background-color 0.15s ease, border-color 0.15s ease;
+  padding: 0.75rem 1rem;
+  margin-bottom: 0.25rem;
+  background: var(--ams-color-surface-2);
+  border-radius: 4px;
+  border-left: 3px solid transparent;
+  cursor: pointer;
+  transition: background-color 160ms cubic-bezier(0.2, 0, 0, 1), border-color 160ms cubic-bezier(0.2, 0, 0, 1);
 }
-
+.sentence-item:focus-visible {
+  outline: 2px solid var(--ams-color-accent);
+  outline-offset: 2px;
+}
 .sentence-item:hover {
-    background: var(--bit-clr-bg-sec-hover);
-    border-left-color: var(--bit-clr-pri);
+  background: var(--ams-color-surface-3);
+  border-left-color: var(--ams-color-accent);
 }
-
-/* Active/playing state */
 .sentence-item.playing {
-    background: var(--bit-clr-pri-bg);
-    border-left-color: var(--bit-clr-pri);
+  background: color-mix(in srgb, var(--ams-color-accent) 18%, var(--ams-color-surface-2));
+  border-left-color: var(--ams-color-accent);
 }
-
-/* Status indicators via left border */
 .sentence-item.status-warning {
-    border-left-color: var(--bit-clr-wrn);
+  border-left-color: var(--ams-color-warning);
 }
-
 .sentence-item.status-error {
-    border-left-color: var(--bit-clr-err);
+  border-left-color: var(--ams-color-danger);
 }
 
-/* Sentence ID accent color */
+.sentence-list__meta {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.5rem;
+  align-items: baseline;
+}
+
 .sentence-id {
-    font-weight: 600;
-    color: var(--bit-clr-sec);
+  font-weight: 600;
+  color: var(--ams-color-text-secondary);
 }
 
-/* Sentence text spacing */
+.sentence-list__time {
+  color: var(--ams-color-text-secondary);
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+  font-size: 0.75rem;
+}
+
 .sentence-text {
-    margin-top: 0.25rem;
-    line-height: 1.5;
+  margin-top: 0.25rem;
+  line-height: 1.5;
 }
 
-/* Diff highlighting for sentence text */
-.sentence-text ::deep .diff-deleted,
-.sentence-text ::deep .diff-delete {
-    background-color: var(--bit-clr-err-bg);
-    color: var(--bit-clr-err);
-    text-decoration: line-through;
+.sentence-list__plain-text {
+  margin: 0;
 }
 
-.sentence-text ::deep .diff-inserted,
-.sentence-text ::deep .diff-insert {
-    background-color: var(--bit-clr-suc-bg);
-    color: var(--bit-clr-suc);
-    font-weight: 500;
+.sentence-text .diff-deleted,
+.sentence-text .diff-delete,
+.sentence-text .diff-view__span--del {
+  background-color: color-mix(in srgb, var(--ams-color-danger) 22%, transparent);
+  color: var(--ams-color-danger);
+  text-decoration: line-through;
 }
+
+.sentence-text .diff-inserted,
+.sentence-text .diff-insert,
+.sentence-text .diff-view__span--ins {
+  background-color: color-mix(in srgb, var(--ams-color-success) 22%, transparent);
+  color: var(--ams-color-success);
+  font-weight: 500;
+}
+
+/*# sourceMappingURL=SentenceList.razor.css.map */

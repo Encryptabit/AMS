@@ -1,0 +1,124 @@
+.sentence-error-card {
+  --_sentence-error-card-accent: var(--ams-color-accent);
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  padding: 0.75rem;
+  border-radius: 8px;
+  border: 1px solid var(--ams-color-border-subtle);
+  border-left: 3px solid var(--_sentence-error-card-accent);
+  background-color: var(--ams-color-surface-2);
+  color: var(--ams-color-text-primary);
+}
+
+.sentence-error-card--status-err {
+  --_sentence-error-card-accent: var(--ams-color-danger);
+}
+
+.sentence-error-card--status-wrn {
+  --_sentence-error-card-accent: var(--ams-color-warning);
+}
+
+.sentence-error-card--status-suc {
+  --_sentence-error-card-accent: var(--ams-color-success);
+}
+
+.sentence-error-card--status-pri {
+  --_sentence-error-card-accent: var(--ams-color-accent);
+}
+
+.sentence-error-card--selected {
+  outline: 1px solid var(--_sentence-error-card-accent);
+  background-color: color-mix(in srgb, var(--_sentence-error-card-accent) 8%, var(--ams-color-surface-2));
+}
+
+.sentence-error-card__header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 0.5rem;
+}
+
+.sentence-error-card__meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.sentence-error-card__id {
+  font-weight: 700;
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+}
+
+.sentence-error-card__wer,
+.sentence-error-card__range {
+  color: var(--ams-color-text-secondary);
+  font-size: 0.8125rem;
+}
+
+.sentence-error-card__cer {
+  margin-left: 0.25rem;
+}
+
+.sentence-error-card__transcripts {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.75rem;
+}
+
+.sentence-error-card__transcript-panel {
+  border: 1px solid var(--ams-color-border-subtle);
+  border-radius: 4px;
+  background-color: var(--ams-color-surface-1);
+  padding: 0.5rem;
+  min-width: 0;
+}
+
+.sentence-error-card__transcript-title {
+  margin: 0 0 0.25rem;
+  font-size: 0.75rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--ams-color-text-secondary);
+}
+
+.sentence-error-card__transcript-text {
+  margin: 0;
+  line-height: 1.5;
+}
+
+.sentence-error-card__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.sentence-error-card__exported {
+  font-size: 1rem;
+  color: var(--ams-color-success);
+}
+
+.sentence-error-card__wer-value {
+  font-weight: 600;
+}
+
+.sentence-error-card__wer-value--low {
+  color: var(--ams-color-success);
+}
+
+.sentence-error-card__wer-value--medium {
+  color: var(--ams-color-warning);
+}
+
+.sentence-error-card__wer-value--high {
+  color: var(--ams-color-danger);
+}
+
+@media (max-width: 960px) {
+  .sentence-error-card__transcripts {
+    grid-template-columns: 1fr;
+  }
+}
+
+/*# sourceMappingURL=SentenceErrorCard.razor.css.map */
