@@ -32,4 +32,16 @@
 // Components that need globally-available class hooks (e.g. .ams-btn applied to
 // plain <a> anchors). Blazor CSS isolation keeps AmsButton.razor.scss scoped to
 // the primitive; this exposes the same base visuals for non-component usage.
+// Per MEM087, alias every @use when basename collisions could occur; these
+// partials default to unique namespaces so plain @use is safe.
 @use "components/button";
+@use "components/card";
+@use "components/checkbox";
+@use "components/dialog";
+@use "components/input";
+@use "components/message";
+@use "components/progress";
+@use "components/select";
+@use "components/table";
+@use "components/tabs";
+@use "components/tag";

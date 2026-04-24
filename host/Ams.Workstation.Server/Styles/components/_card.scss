@@ -1,0 +1,21 @@
+// .ams-card: tokenized panel surface for section grouping. The --compact
+// modifier halves the padding for dense diagnostic readouts (Prep pipeline
+// tiles).
+@use "../tokens/spacing" as sp;
+@use "../tokens/radius" as r;
+
+.ams-card {
+    display: flex;
+    flex-direction: column;
+    gap: sp.$ams-space-3;
+    padding: sp.$ams-space-4;
+    background-color: var(--ams-color-surface-2);
+    border: 1px solid var(--ams-color-border-subtle);
+    border-radius: r.$ams-radius-3;
+    color: var(--ams-color-text-primary);
+}
+
+.ams-card--compact {
+    padding: sp.$ams-space-2 sp.$ams-space-3;
+    gap: sp.$ams-space-2;
+}

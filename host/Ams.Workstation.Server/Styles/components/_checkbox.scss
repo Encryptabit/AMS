@@ -1,0 +1,24 @@
+// Global .ams-checkbox wrapper for <label> around <input type="checkbox">.
+@use "../tokens/spacing" as sp;
+@use "../tokens/typography" as t;
+@use "../mixins/focus-ring" as fr;
+
+.ams-checkbox {
+    display: inline-flex;
+    align-items: center;
+    gap: sp.$ams-space-2;
+    color: var(--ams-color-text-primary);
+    font-size: t.$ams-font-size-sm;
+    cursor: pointer;
+    user-select: none;
+
+    input[type="checkbox"] {
+        width: 16px;
+        height: 16px;
+        margin: 0;
+        accent-color: var(--ams-color-accent);
+        cursor: pointer;
+
+        @include fr.focus-ring;
+    }
+}

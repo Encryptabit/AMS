@@ -1,0 +1,172 @@
+[
+  {
+    "t": 0,
+    "kind": "driver",
+    "detail": "launch chromium"
+  },
+  {
+    "t": 292,
+    "kind": "viewport",
+    "detail": "Home @ mobile-360"
+  },
+  {
+    "t": 1000,
+    "kind": "check",
+    "detail": "PASS home.load.mobile-360 :: status=200"
+  },
+  {
+    "t": 1007,
+    "kind": "check",
+    "detail": "PASS home.no_horizontal_overflow.mobile-360 :: .workstation-content scrollWidth=360 clientWidth=360"
+  },
+  {
+    "t": 1007,
+    "kind": "check",
+    "detail": "PASS home.touch_targets.mobile-360 :: 3 button(s) all >=44px high"
+  },
+  {
+    "t": 1007,
+    "kind": "check",
+    "detail": "PASS header.visible.mobile-360 :: theme toggle + workspaces select present"
+  },
+  {
+    "t": 1007,
+    "kind": "check",
+    "detail": "PASS theme.default.mobile-360 :: data-ams-theme=dark"
+  },
+  {
+    "t": 1007,
+    "kind": "viewport",
+    "detail": "Home @ tablet-768"
+  },
+  {
+    "t": 1594,
+    "kind": "check",
+    "detail": "PASS home.load.tablet-768 :: status=200"
+  },
+  {
+    "t": 1598,
+    "kind": "check",
+    "detail": "PASS home.no_horizontal_overflow.tablet-768 :: .workstation-content scrollWidth=768 clientWidth=768"
+  },
+  {
+    "t": 1598,
+    "kind": "check",
+    "detail": "PASS home.touch_targets.tablet-768 :: 3 button(s) all >=44px high"
+  },
+  {
+    "t": 1598,
+    "kind": "check",
+    "detail": "PASS header.visible.tablet-768 :: theme toggle + workspaces select present"
+  },
+  {
+    "t": 1598,
+    "kind": "check",
+    "detail": "PASS theme.default.tablet-768 :: data-ams-theme=dark"
+  },
+  {
+    "t": 1598,
+    "kind": "viewport",
+    "detail": "Home @ desktop-1280"
+  },
+  {
+    "t": 2157,
+    "kind": "check",
+    "detail": "PASS home.load.desktop-1280 :: status=200"
+  },
+  {
+    "t": 2161,
+    "kind": "check",
+    "detail": "PASS home.no_horizontal_overflow.desktop-1280 :: .workstation-content scrollWidth=1280 clientWidth=1280"
+  },
+  {
+    "t": 2161,
+    "kind": "check",
+    "detail": "PASS home.touch_targets.desktop-1280 :: 3 button(s) all >=44px high"
+  },
+  {
+    "t": 2161,
+    "kind": "check",
+    "detail": "PASS header.visible.desktop-1280 :: theme toggle + workspaces select present"
+  },
+  {
+    "t": 2161,
+    "kind": "check",
+    "detail": "PASS theme.default.desktop-1280 :: data-ams-theme=dark"
+  },
+  {
+    "t": 2162,
+    "kind": "theme",
+    "detail": "starting theme toggle check"
+  },
+  {
+    "t": 4287,
+    "kind": "check",
+    "detail": "PASS theme.toggle.attribute_flip :: dark -> light"
+  },
+  {
+    "t": 4287,
+    "kind": "check",
+    "detail": "PASS theme.toggle.bg_changed :: bg: rgb(17, 21, 28) -> rgb(255, 255, 255)"
+  },
+  {
+    "t": 4353,
+    "kind": "check",
+    "detail": "PASS theme.toggle.return_to_dark :: light -> dark"
+  },
+  {
+    "t": 4354,
+    "kind": "route",
+    "detail": "visit /prep"
+  },
+  {
+    "t": 5142,
+    "kind": "check",
+    "detail": "PASS route.load./prep :: status=200 theme=dark"
+  },
+  {
+    "t": 5142,
+    "kind": "check",
+    "detail": "PASS route.theme./prep :: data-ams-theme=dark preserved on Bit-powered route"
+  },
+  {
+    "t": 5142,
+    "kind": "route",
+    "detail": "visit /proof"
+  },
+  {
+    "t": 5927,
+    "kind": "check",
+    "detail": "PASS route.load./proof :: status=200 theme=dark"
+  },
+  {
+    "t": 5927,
+    "kind": "check",
+    "detail": "PASS route.theme./proof :: data-ams-theme=dark preserved on Bit-powered route"
+  },
+  {
+    "t": 5927,
+    "kind": "route",
+    "detail": "visit /polish"
+  },
+  {
+    "t": 6712,
+    "kind": "check",
+    "detail": "PASS route.load./polish :: status=200 theme=dark"
+  },
+  {
+    "t": 6712,
+    "kind": "check",
+    "detail": "PASS route.theme./polish :: data-ams-theme=dark preserved on Bit-powered route"
+  },
+  {
+    "t": 6713,
+    "kind": "check",
+    "detail": "PASS console.no_errors_migrated :: no console.error on Home / theme-toggle flows"
+  },
+  {
+    "t": 6792,
+    "kind": "driver",
+    "detail": "closed chromium"
+  }
+]

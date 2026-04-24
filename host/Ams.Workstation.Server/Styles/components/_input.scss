@@ -1,0 +1,30 @@
+// Global .ams-input rules for text/number inputs. Layout modifiers
+// (e.g. .ams-input--workspace) belong with the owning layout SCSS.
+@use "../tokens/spacing" as sp;
+@use "../tokens/radius" as r;
+@use "../tokens/typography" as t;
+@use "../tokens/motion" as m;
+@use "../mixins/focus-ring" as fr;
+
+.ams-input {
+    min-height: 36px;
+    padding: sp.$ams-space-1 sp.$ams-space-3;
+    border: 1px solid var(--ams-color-border-subtle);
+    border-radius: r.$ams-radius-2;
+    background-color: var(--ams-color-surface-1);
+    color: var(--ams-color-text-primary);
+    font-family: inherit;
+    font-size: t.$ams-font-size-sm;
+    line-height: 1;
+    transition: border-color m.$ams-duration-2 m.$ams-ease-standard;
+
+    @include fr.focus-ring;
+
+    &::placeholder {
+        color: var(--ams-color-text-muted);
+    }
+
+    &:hover:not([disabled]) {
+        border-color: var(--ams-color-accent);
+    }
+}

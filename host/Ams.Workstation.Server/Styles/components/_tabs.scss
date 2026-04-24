@@ -1,0 +1,68 @@
+// .ams-tabs: header strip of segmented controls + active panel. Selection is
+// driven by aria-selected="true" on the header tab so keyboard and screen
+// reader semantics remain correct.
+@use "../tokens/spacing" as sp;
+@use "../tokens/radius" as r;
+@use "../tokens/typography" as t;
+@use "../tokens/motion" as m;
+@use "../mixins/focus-ring" as fr;
+
+.ams-tabs {
+    display: flex;
+    flex-direction: column;
+    gap: sp.$ams-space-3;
+}
+
+.ams-tabs__header {
+    display: flex;
+    align-items: stretch;
+    gap: sp.$ams-space-1;
+    border-bottom: 1px solid var(--ams-color-border-subtle);
+}
+
+.ams-tabs__tab {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: sp.$ams-space-2;
+    padding: sp.$ams-space-2 sp.$ams-space-4;
+    border: 1px solid transparent;
+    border-bottom: none;
+    border-top-left-radius: r.$ams-radius-2;
+    border-top-right-radius: r.$ams-radius-2;
+    background-color: transparent;
+    color: var(--ams-color-text-secondary);
+    font-family: inherit;
+    font-size: t.$ams-font-size-sm;
+    font-weight: 500;
+    line-height: 1;
+    cursor: pointer;
+    transition: background-color m.$ams-duration-2 m.$ams-ease-standard,
+                color m.$ams-duration-2 m.$ams-ease-standard,
+                border-color m.$ams-duration-2 m.$ams-ease-standard;
+
+    @include fr.focus-ring;
+
+    &:hover:not([disabled]):not([aria-selected="true"]) {
+        color: var(--ams-color-text-primary);
+        background-color: var(--ams-color-surface-2);
+    }
+
+    &[disabled] {
+        cursor: not-allowed;
+        opacity: 0.5;
+    }
+
+    &[aria-selected="true"] {
+        color: var(--ams-color-text-primary);
+        background-color: var(--ams-color-surface-2);
+        border-color: var(--ams-color-border-subtle);
+        border-bottom-color: var(--ams-color-surface-2);
+        margin-bottom: -1px;
+    }
+}
+
+.ams-tabs__panel {
+    padding: sp.$ams-space-3 0;
+    color: var(--ams-color-text-primary);
+}

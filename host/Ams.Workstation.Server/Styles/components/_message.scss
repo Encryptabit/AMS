@@ -1,0 +1,43 @@
+// Global .ams-message toast/banner with tone variants (error|warning|success|info).
+// The info tone is new in S02 — Prep surfaces informational diagnostics and
+// should not collide with success/warning semantics.
+@use "../tokens/spacing" as sp;
+@use "../tokens/radius" as r;
+@use "../tokens/typography" as t;
+@use "../mixins/focus-ring" as fr;
+
+.ams-message {
+    display: flex;
+    align-items: center;
+    gap: sp.$ams-space-3;
+    padding: sp.$ams-space-3 sp.$ams-space-4;
+    border-radius: r.$ams-radius-2;
+    border: 1px solid var(--ams-color-border-subtle);
+    background-color: var(--ams-color-surface-2);
+    color: var(--ams-color-text-primary);
+    font-size: t.$ams-font-size-md;
+    line-height: t.$ams-line-body;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3);
+}
+
+.ams-message__text {
+    flex: 1;
+}
+
+.ams-message__dismiss {
+    flex-shrink: 0;
+    background: transparent;
+    border: none;
+    color: inherit;
+    font-size: t.$ams-font-size-xl;
+    line-height: 1;
+    cursor: pointer;
+    padding: 0 sp.$ams-space-2;
+
+    @include fr.focus-ring;
+}
+
+.ams-message--error { border-color: var(--ams-color-danger); }
+.ams-message--warning { border-color: var(--ams-color-warning); }
+.ams-message--success { border-color: var(--ams-color-success); }
+.ams-message--info { border-color: var(--ams-color-info); }

@@ -1,10 +1,8 @@
-// HeaderControls scoped styles (M007/S01/T03 migration).
+// HeaderControls scoped styles (M007/S01/T03 migration; S02/T01 trimmed to
+// layout-only + workspace modifier rules after promoting the primitive base
+// rules into Styles/components/_*.scss global partials.
 @use "../../Styles/tokens/spacing" as sp;
-@use "../../Styles/tokens/radius" as r;
-@use "../../Styles/tokens/typography" as t;
-@use "../../Styles/tokens/motion" as m;
 @use "../../Styles/tokens/z-index" as z;
-@use "../../Styles/mixins/focus-ring" as fr;
 
 .header-controls {
     display: flex;
@@ -35,85 +33,16 @@
     flex-wrap: wrap;
 }
 
-.ams-select {
-    min-height: 36px;
-    padding: sp.$ams-space-1 sp.$ams-space-3;
-    border: 1px solid var(--ams-color-border-subtle);
-    border-radius: r.$ams-radius-2;
-    background-color: var(--ams-color-surface-1);
-    color: var(--ams-color-text-primary);
-    font-family: inherit;
-    font-size: t.$ams-font-size-sm;
-    line-height: 1;
-    min-width: 200px;
-    cursor: pointer;
-    transition: border-color m.$ams-duration-2 m.$ams-ease-standard;
-
-    @include fr.focus-ring;
-
-    &:hover:not([disabled]) {
-        border-color: var(--ams-color-accent);
-    }
-
-    &:disabled {
-        cursor: not-allowed;
-        opacity: 0.5;
-    }
-}
-
 .ams-select--workspace {
     width: 220px;
     min-width: 120px;
     flex-shrink: 1;
 }
 
-.ams-input {
-    min-height: 36px;
-    padding: sp.$ams-space-1 sp.$ams-space-3;
-    border: 1px solid var(--ams-color-border-subtle);
-    border-radius: r.$ams-radius-2;
-    background-color: var(--ams-color-surface-1);
-    color: var(--ams-color-text-primary);
-    font-family: inherit;
-    font-size: t.$ams-font-size-sm;
-    line-height: 1;
-    transition: border-color m.$ams-duration-2 m.$ams-ease-standard;
-
-    @include fr.focus-ring;
-
-    &::placeholder {
-        color: var(--ams-color-text-muted);
-    }
-
-    &:hover:not([disabled]) {
-        border-color: var(--ams-color-accent);
-    }
-}
-
 .ams-input--workspace {
     width: 220px;
     min-width: 120px;
     flex-shrink: 1;
-}
-
-.ams-checkbox {
-    display: inline-flex;
-    align-items: center;
-    gap: sp.$ams-space-2;
-    color: var(--ams-color-text-primary);
-    font-size: t.$ams-font-size-sm;
-    cursor: pointer;
-    user-select: none;
-
-    input[type="checkbox"] {
-        width: 16px;
-        height: 16px;
-        margin: 0;
-        accent-color: var(--ams-color-accent);
-        cursor: pointer;
-
-        @include fr.focus-ring;
-    }
 }
 
 .error-toast {
@@ -124,85 +53,4 @@
     z-index: z.$ams-z-toast;
     max-width: 500px;
     width: 90%;
-}
-
-.ams-message {
-    display: flex;
-    align-items: center;
-    gap: sp.$ams-space-3;
-    padding: sp.$ams-space-3 sp.$ams-space-4;
-    border-radius: r.$ams-radius-2;
-    border: 1px solid var(--ams-color-border-subtle);
-    background-color: var(--ams-color-surface-2);
-    color: var(--ams-color-text-primary);
-    font-size: t.$ams-font-size-md;
-    line-height: t.$ams-line-body;
-    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3);
-}
-
-.ams-message__text {
-    flex: 1;
-}
-
-.ams-message__dismiss {
-    flex-shrink: 0;
-    background: transparent;
-    border: none;
-    color: inherit;
-    font-size: t.$ams-font-size-xl;
-    line-height: 1;
-    cursor: pointer;
-    padding: 0 sp.$ams-space-2;
-
-    @include fr.focus-ring;
-}
-
-.ams-message--error { border-color: var(--ams-color-danger); }
-.ams-message--warning { border-color: var(--ams-color-warning); }
-.ams-message--success { border-color: var(--ams-color-success); }
-
-.ams-dialog-backdrop {
-    position: fixed;
-    inset: 0;
-    background-color: rgba(0, 0, 0, 0.5);
-    z-index: z.$ams-z-modal;
-}
-
-.ams-dialog {
-    position: fixed;
-    top: 50%;
-    left: 50%;
-    transform: translate(-50%, -50%);
-    z-index: calc(#{z.$ams-z-modal} + 1);
-    max-width: 480px;
-    width: 90%;
-    background-color: var(--ams-color-surface-2);
-    border: 1px solid var(--ams-color-border-subtle);
-    border-radius: r.$ams-radius-3;
-    padding: sp.$ams-space-6;
-    color: var(--ams-color-text-primary);
-    box-shadow: 0 16px 48px rgba(0, 0, 0, 0.5);
-
-    display: flex;
-    flex-direction: column;
-    gap: sp.$ams-space-4;
-}
-
-.ams-dialog__title {
-    margin: 0;
-    font-size: t.$ams-font-size-xl;
-    font-weight: 600;
-    line-height: t.$ams-line-tight;
-}
-
-.ams-dialog__message {
-    margin: 0;
-    color: var(--ams-color-text-secondary);
-    line-height: t.$ams-line-body;
-}
-
-.ams-dialog__actions {
-    display: flex;
-    justify-content: flex-end;
-    gap: sp.$ams-space-2;
 }

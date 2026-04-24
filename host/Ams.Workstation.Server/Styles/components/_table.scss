@@ -1,0 +1,41 @@
+// .ams-table: tokenized table chrome for tabular data. Prep's existing
+// .prep-table rules can @extend / compose from this base once the Prep SCSS is
+// migrated in later S02 tasks.
+@use "../tokens/spacing" as sp;
+@use "../tokens/radius" as r;
+@use "../tokens/typography" as t;
+
+.ams-table {
+    width: 100%;
+    border-collapse: separate;
+    border-spacing: 0;
+    font-size: t.$ams-font-size-sm;
+    color: var(--ams-color-text-primary);
+    background-color: var(--ams-color-surface-1);
+    border: 1px solid var(--ams-color-border-subtle);
+    border-radius: r.$ams-radius-2;
+    overflow: hidden;
+
+    thead th {
+        padding: sp.$ams-space-2 sp.$ams-space-3;
+        text-align: left;
+        font-weight: 600;
+        color: var(--ams-color-text-secondary);
+        background-color: var(--ams-color-surface-2);
+        border-bottom: 1px solid var(--ams-color-border-subtle);
+    }
+
+    tbody td {
+        padding: sp.$ams-space-2 sp.$ams-space-3;
+        border-bottom: 1px solid var(--ams-color-border-subtle);
+        vertical-align: top;
+    }
+
+    tbody tr:last-child td {
+        border-bottom: none;
+    }
+
+    tbody tr:hover td {
+        background-color: var(--ams-color-surface-2);
+    }
+}

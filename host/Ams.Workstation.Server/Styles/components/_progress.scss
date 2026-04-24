@@ -1,0 +1,33 @@
+// .ams-progress: determinate horizontal progress bar. State modifier classes
+// (success|warning|danger|info) set --_ams-progress-fill to the semantic tone
+// so callers only toggle one class to signal completion/error state.
+@use "../tokens/spacing" as sp;
+@use "../tokens/radius" as r;
+@use "../tokens/motion" as m;
+
+.ams-progress {
+    --_ams-progress-fill: var(--ams-color-accent);
+
+    position: relative;
+    width: 100%;
+    min-width: sp.$ams-space-8;
+    height: sp.$ams-space-2;
+    background-color: var(--ams-color-surface-3);
+    border-radius: r.$ams-radius-pill;
+    overflow: hidden;
+}
+
+.ams-progress__bar {
+    display: block;
+    height: 100%;
+    width: 0;
+    background-color: var(--_ams-progress-fill);
+    border-radius: inherit;
+    transition: width m.$ams-duration-3 m.$ams-ease-standard,
+                background-color m.$ams-duration-2 m.$ams-ease-standard;
+}
+
+.ams-progress--success { --_ams-progress-fill: var(--ams-color-success); }
+.ams-progress--warning { --_ams-progress-fill: var(--ams-color-warning); }
+.ams-progress--danger  { --_ams-progress-fill: var(--ams-color-danger); }
+.ams-progress--info    { --_ams-progress-fill: var(--ams-color-info); }

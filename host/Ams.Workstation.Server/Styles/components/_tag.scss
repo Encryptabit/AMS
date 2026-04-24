@@ -1,0 +1,76 @@
+// .ams-tag: small pill for status/attribute labels. Tone variants read
+// semantic --ams-color-{tone} CSS variables so they flip with the theme. Size
+// variants control padding/typography only — tone is orthogonal.
+@use "../tokens/spacing" as sp;
+@use "../tokens/radius" as r;
+@use "../tokens/typography" as t;
+
+.ams-tag {
+    --_ams-tag-bg: var(--ams-color-surface-3);
+    --_ams-tag-fg: var(--ams-color-text-primary);
+    --_ams-tag-border: var(--ams-color-border-subtle);
+
+    display: inline-flex;
+    align-items: center;
+    gap: sp.$ams-space-1;
+    padding: sp.$ams-space-1 sp.$ams-space-2;
+    border: 1px solid var(--_ams-tag-border);
+    border-radius: r.$ams-radius-pill;
+    background-color: var(--_ams-tag-bg);
+    color: var(--_ams-tag-fg);
+    font-size: t.$ams-font-size-xs;
+    font-weight: 500;
+    line-height: 1;
+    white-space: nowrap;
+}
+
+// Tonal variants: primary (accent), secondary (neutral border), plus the
+// standard semantic tones. Each reads var(--ams-color-{tone}) so the tag
+// tracks the theme cascade.
+.ams-tag--primary {
+    --_ams-tag-bg: color-mix(in srgb, var(--ams-color-accent) 18%, transparent);
+    --_ams-tag-fg: var(--ams-color-accent);
+    --_ams-tag-border: var(--ams-color-accent);
+}
+
+.ams-tag--secondary {
+    --_ams-tag-bg: var(--ams-color-surface-2);
+    --_ams-tag-fg: var(--ams-color-text-secondary);
+    --_ams-tag-border: var(--ams-color-border-subtle);
+}
+
+.ams-tag--success {
+    --_ams-tag-bg: color-mix(in srgb, var(--ams-color-success) 18%, transparent);
+    --_ams-tag-fg: var(--ams-color-success);
+    --_ams-tag-border: var(--ams-color-success);
+}
+
+.ams-tag--warning {
+    --_ams-tag-bg: color-mix(in srgb, var(--ams-color-warning) 18%, transparent);
+    --_ams-tag-fg: var(--ams-color-warning);
+    --_ams-tag-border: var(--ams-color-warning);
+}
+
+.ams-tag--danger {
+    --_ams-tag-bg: color-mix(in srgb, var(--ams-color-danger) 18%, transparent);
+    --_ams-tag-fg: var(--ams-color-danger);
+    --_ams-tag-border: var(--ams-color-danger);
+}
+
+.ams-tag--info {
+    --_ams-tag-bg: color-mix(in srgb, var(--ams-color-info) 18%, transparent);
+    --_ams-tag-fg: var(--ams-color-info);
+    --_ams-tag-border: var(--ams-color-info);
+}
+
+// Size variants: sm is the default-compact footprint; md widens padding/text
+// for tags that need to read at body scale alongside prose.
+.ams-tag--sm {
+    padding: sp.$ams-space-1 sp.$ams-space-2;
+    font-size: t.$ams-font-size-xs;
+}
+
+.ams-tag--md {
+    padding: sp.$ams-space-1 sp.$ams-space-3;
+    font-size: t.$ams-font-size-sm;
+}
