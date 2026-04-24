@@ -1,0 +1,210 @@
+[
+  {
+    "route": "/proof",
+    "viewport": "mobile-360",
+    "url": "http://127.0.0.1:36207/proof",
+    "context": "proof-route",
+    "themeAttr": "dark",
+    "root": null,
+    "routeInfoMessage": false,
+    "proofNoWorkspaceVisible": false,
+    "visibleMdLgButtons": [],
+    "runtimePickupsAnchors": []
+  },
+  {
+    "route": "/proof/pickups",
+    "viewport": "mobile-360",
+    "url": "http://127.0.0.1:36207/proof/pickups",
+    "context": "proof-route",
+    "themeAttr": "dark",
+    "root": {
+      "scrollWidth": 360,
+      "clientWidth": 360,
+      "offsetHeight": 1636
+    },
+    "routeInfoMessage": false,
+    "proofNoWorkspaceVisible": false,
+    "visibleMdLgButtons": [
+      {
+        "className": "ams-btn ams-btn--secondary ams-btn--md",
+        "text": "Return to Editing",
+        "offsetHeight": 44
+      },
+      {
+        "className": "ams-btn ams-btn--primary ams-btn--md is-disabled",
+        "text": "Import + Match",
+        "offsetHeight": 44
+      },
+      {
+        "className": "ams-btn ams-btn--danger ams-btn--md is-disabled",
+        "text": "Cancel",
+        "offsetHeight": 44
+      }
+    ],
+    "runtimePickupsAnchors": [
+      "data-proof-pickups-page=true",
+      "data-proof-pickups-handoff=editing",
+      "data-proof-pickups-action=return-editing",
+      "data-proof-pickups-action=import",
+      "data-proof-pickups-action=cancel",
+      "data-proof-pickups-queue=matched",
+      "data-proof-pickups-queue=unmatched",
+      "data-proof-pickups-queue=staged",
+      "data-proof-pickups-lifecycle=true",
+      "data-proof-pickups-queue=applied",
+      "data-proof-pickups-queue=reverted",
+      "data-proof-pickups-queue=failed",
+      "data-proof-pickups-diagnostics=true",
+      "data-proof-pickups-phase=true",
+      "data-proof-pickups-last-op=true",
+      "data-proof-pickups-ledger=true",
+      "data-proof-pickups-ledger-empty=true"
+    ]
+  },
+  {
+    "route": "/proof",
+    "viewport": "tablet-768",
+    "url": "http://127.0.0.1:36207/proof",
+    "context": "proof-route",
+    "themeAttr": "dark",
+    "root": {
+      "scrollWidth": 768,
+      "clientWidth": 768,
+      "offsetHeight": 5000
+    },
+    "routeInfoMessage": false,
+    "proofNoWorkspaceVisible": false,
+    "visibleMdLgButtons": [],
+    "runtimePickupsAnchors": []
+  },
+  {
+    "route": "/proof/pickups",
+    "viewport": "tablet-768",
+    "url": "http://127.0.0.1:36207/proof/pickups",
+    "context": "proof-route",
+    "themeAttr": "dark",
+    "root": {
+      "scrollWidth": 768,
+      "clientWidth": 768,
+      "offsetHeight": 1150
+    },
+    "routeInfoMessage": false,
+    "proofNoWorkspaceVisible": false,
+    "visibleMdLgButtons": [
+      {
+        "className": "ams-btn ams-btn--secondary ams-btn--md",
+        "text": "Return to Editing",
+        "offsetHeight": 44
+      },
+      {
+        "className": "ams-btn ams-btn--primary ams-btn--md is-disabled",
+        "text": "Import + Match",
+        "offsetHeight": 44
+      },
+      {
+        "className": "ams-btn ams-btn--danger ams-btn--md is-disabled",
+        "text": "Cancel",
+        "offsetHeight": 44
+      }
+    ],
+    "runtimePickupsAnchors": [
+      "data-proof-pickups-page=true",
+      "data-proof-pickups-handoff=editing",
+      "data-proof-pickups-action=return-editing",
+      "data-proof-pickups-action=import",
+      "data-proof-pickups-action=cancel",
+      "data-proof-pickups-queue=matched",
+      "data-proof-pickups-queue=unmatched",
+      "data-proof-pickups-queue=staged",
+      "data-proof-pickups-lifecycle=true",
+      "data-proof-pickups-queue=applied",
+      "data-proof-pickups-queue=reverted",
+      "data-proof-pickups-queue=failed",
+      "data-proof-pickups-diagnostics=true",
+      "data-proof-pickups-phase=true",
+      "data-proof-pickups-last-op=true",
+      "data-proof-pickups-ledger=true",
+      "data-proof-pickups-ledger-empty=true"
+    ]
+  },
+  {
+    "route": "/proof",
+    "viewport": "desktop-1280",
+    "url": "http://127.0.0.1:36207/proof",
+    "context": "proof-route",
+    "themeAttr": "dark",
+    "root": {
+      "scrollWidth": 1280,
+      "clientWidth": 1280,
+      "offsetHeight": 5000
+    },
+    "routeInfoMessage": false,
+    "proofNoWorkspaceVisible": false,
+    "visibleMdLgButtons": [],
+    "runtimePickupsAnchors": []
+  },
+  {
+    "route": "/proof/pickups",
+    "viewport": "desktop-1280",
+    "url": "http://127.0.0.1:36207/proof/pickups",
+    "context": "proof-route",
+    "themeAttr": "dark",
+    "root": {
+      "scrollWidth": 1280,
+      "clientWidth": 1280,
+      "offsetHeight": 728
+    },
+    "routeInfoMessage": false,
+    "proofNoWorkspaceVisible": false,
+    "visibleMdLgButtons": [
+      {
+        "className": "ams-btn ams-btn--secondary ams-btn--md",
+        "text": "Return to Editing",
+        "offsetHeight": 44
+      },
+      {
+        "className": "ams-btn ams-btn--primary ams-btn--md is-disabled",
+        "text": "Import + Match",
+        "offsetHeight": 44
+      },
+      {
+        "className": "ams-btn ams-btn--danger ams-btn--md is-disabled",
+        "text": "Cancel",
+        "offsetHeight": 44
+      }
+    ],
+    "runtimePickupsAnchors": [
+      "data-proof-pickups-page=true",
+      "data-proof-pickups-handoff=editing",
+      "data-proof-pickups-action=return-editing",
+      "data-proof-pickups-action=import",
+      "data-proof-pickups-action=cancel",
+      "data-proof-pickups-queue=matched",
+      "data-proof-pickups-queue=unmatched",
+      "data-proof-pickups-queue=staged",
+      "data-proof-pickups-lifecycle=true",
+      "data-proof-pickups-queue=applied",
+      "data-proof-pickups-queue=reverted",
+      "data-proof-pickups-queue=failed",
+      "data-proof-pickups-diagnostics=true",
+      "data-proof-pickups-phase=true",
+      "data-proof-pickups-last-op=true",
+      "data-proof-pickups-ledger=true",
+      "data-proof-pickups-ledger-empty=true"
+    ]
+  },
+  {
+    "context": "theme-toggle",
+    "route": "/proof",
+    "viewport": "desktop-1280",
+    "url": "http://127.0.0.1:36207/proof",
+    "before": {
+      "theme": "dark",
+      "bg": "rgb(17, 21, 28)"
+    },
+    "after": {
+      "theme": "light",
+      "bg": "rgb(255, 255, 255)"
+    }
+  }
+]

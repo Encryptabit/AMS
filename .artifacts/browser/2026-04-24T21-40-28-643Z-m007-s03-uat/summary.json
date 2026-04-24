@@ -1,0 +1,355 @@
+{
+  "slice": "M007/S03",
+  "task": "T06",
+  "verdict": "FAIL",
+  "startedAt": "2026-04-24T21:40:50.511Z",
+  "finishedAt": "2026-04-24T21:41:05.614Z",
+  "baseUrl": "http://127.0.0.1:36207",
+  "preconditionWorkingDir": null,
+  "seeded": "unseeded",
+  "counts": {
+    "pass": 32,
+    "fail": 10,
+    "total": 42
+  },
+  "assertions": [
+    {
+      "name": "proof.pickups.source_anchor_contract",
+      "status": "PASS",
+      "detail": "16 source anchor snippets present"
+    },
+    {
+      "name": "proof.overview.loading_spinner_contract",
+      "status": "PASS",
+      "detail": "Overview loading spinner anchor present in source"
+    },
+    {
+      "name": "proof.load",
+      "status": "PASS",
+      "detail": "status=200",
+      "data": null,
+      "viewport": "mobile-360",
+      "route": "/proof"
+    },
+    {
+      "name": "proof.theme_attr",
+      "status": "PASS",
+      "detail": "data-ams-theme=dark",
+      "data": null,
+      "viewport": "mobile-360",
+      "route": "/proof"
+    },
+    {
+      "name": "proof.no_horizontal_overflow",
+      "status": "FAIL",
+      "detail": ".proof-index not found",
+      "data": null,
+      "viewport": "mobile-360",
+      "route": "/proof"
+    },
+    {
+      "name": "proof.touch_targets_md_lg",
+      "status": "PASS",
+      "detail": "no visible md/lg buttons on route",
+      "data": null,
+      "viewport": "mobile-360",
+      "route": "/proof"
+    },
+    {
+      "name": "proof.empty_workspace_info",
+      "status": "FAIL",
+      "detail": "expected info message in unseeded /proof",
+      "data": null,
+      "viewport": "mobile-360",
+      "route": "/proof"
+    },
+    {
+      "name": "proof.empty_workspace_anchor",
+      "status": "FAIL",
+      "detail": "[data-ams-proof='no-workspace-message'] missing",
+      "data": null,
+      "viewport": "mobile-360",
+      "route": "/proof"
+    },
+    {
+      "name": "pickups.load",
+      "status": "PASS",
+      "detail": "status=200",
+      "data": null,
+      "viewport": "mobile-360",
+      "route": "/proof/pickups"
+    },
+    {
+      "name": "pickups.theme_attr",
+      "status": "PASS",
+      "detail": "data-ams-theme=dark",
+      "data": null,
+      "viewport": "mobile-360",
+      "route": "/proof/pickups"
+    },
+    {
+      "name": "pickups.no_horizontal_overflow",
+      "status": "PASS",
+      "detail": "scrollWidth=360 clientWidth=360",
+      "data": {
+        "scrollWidth": 360,
+        "clientWidth": 360,
+        "offsetHeight": 1636
+      },
+      "viewport": "mobile-360",
+      "route": "/proof/pickups"
+    },
+    {
+      "name": "pickups.touch_targets_md_lg",
+      "status": "PASS",
+      "detail": "all 3 md/lg buttons >=44px",
+      "data": null,
+      "viewport": "mobile-360",
+      "route": "/proof/pickups"
+    },
+    {
+      "name": "pickups.empty_workspace_info",
+      "status": "FAIL",
+      "detail": "expected info message in unseeded /proof/pickups",
+      "data": null,
+      "viewport": "mobile-360",
+      "route": "/proof/pickups"
+    },
+    {
+      "name": "pickups.runtime_anchors_empty_workspace",
+      "status": "PASS",
+      "detail": "base pickups anchors visible in empty-workspace DOM",
+      "data": null,
+      "viewport": "mobile-360",
+      "route": "/proof/pickups"
+    },
+    {
+      "name": "proof.load",
+      "status": "PASS",
+      "detail": "status=200",
+      "data": null,
+      "viewport": "tablet-768",
+      "route": "/proof"
+    },
+    {
+      "name": "proof.theme_attr",
+      "status": "PASS",
+      "detail": "data-ams-theme=dark",
+      "data": null,
+      "viewport": "tablet-768",
+      "route": "/proof"
+    },
+    {
+      "name": "proof.no_horizontal_overflow",
+      "status": "PASS",
+      "detail": "scrollWidth=768 clientWidth=768",
+      "data": {
+        "scrollWidth": 768,
+        "clientWidth": 768,
+        "offsetHeight": 5000
+      },
+      "viewport": "tablet-768",
+      "route": "/proof"
+    },
+    {
+      "name": "proof.touch_targets_md_lg",
+      "status": "PASS",
+      "detail": "no visible md/lg buttons on route",
+      "data": null,
+      "viewport": "tablet-768",
+      "route": "/proof"
+    },
+    {
+      "name": "proof.empty_workspace_info",
+      "status": "FAIL",
+      "detail": "expected info message in unseeded /proof",
+      "data": null,
+      "viewport": "tablet-768",
+      "route": "/proof"
+    },
+    {
+      "name": "proof.empty_workspace_anchor",
+      "status": "FAIL",
+      "detail": "[data-ams-proof='no-workspace-message'] missing",
+      "data": null,
+      "viewport": "tablet-768",
+      "route": "/proof"
+    },
+    {
+      "name": "pickups.load",
+      "status": "PASS",
+      "detail": "status=200",
+      "data": null,
+      "viewport": "tablet-768",
+      "route": "/proof/pickups"
+    },
+    {
+      "name": "pickups.theme_attr",
+      "status": "PASS",
+      "detail": "data-ams-theme=dark",
+      "data": null,
+      "viewport": "tablet-768",
+      "route": "/proof/pickups"
+    },
+    {
+      "name": "pickups.no_horizontal_overflow",
+      "status": "PASS",
+      "detail": "scrollWidth=768 clientWidth=768",
+      "data": {
+        "scrollWidth": 768,
+        "clientWidth": 768,
+        "offsetHeight": 1150
+      },
+      "viewport": "tablet-768",
+      "route": "/proof/pickups"
+    },
+    {
+      "name": "pickups.touch_targets_md_lg",
+      "status": "PASS",
+      "detail": "all 3 md/lg buttons >=44px",
+      "data": null,
+      "viewport": "tablet-768",
+      "route": "/proof/pickups"
+    },
+    {
+      "name": "pickups.empty_workspace_info",
+      "status": "FAIL",
+      "detail": "expected info message in unseeded /proof/pickups",
+      "data": null,
+      "viewport": "tablet-768",
+      "route": "/proof/pickups"
+    },
+    {
+      "name": "pickups.runtime_anchors_empty_workspace",
+      "status": "PASS",
+      "detail": "base pickups anchors visible in empty-workspace DOM",
+      "data": null,
+      "viewport": "tablet-768",
+      "route": "/proof/pickups"
+    },
+    {
+      "name": "proof.load",
+      "status": "PASS",
+      "detail": "status=200",
+      "data": null,
+      "viewport": "desktop-1280",
+      "route": "/proof"
+    },
+    {
+      "name": "proof.theme_attr",
+      "status": "PASS",
+      "detail": "data-ams-theme=dark",
+      "data": null,
+      "viewport": "desktop-1280",
+      "route": "/proof"
+    },
+    {
+      "name": "proof.no_horizontal_overflow",
+      "status": "PASS",
+      "detail": "scrollWidth=1280 clientWidth=1280",
+      "data": {
+        "scrollWidth": 1280,
+        "clientWidth": 1280,
+        "offsetHeight": 5000
+      },
+      "viewport": "desktop-1280",
+      "route": "/proof"
+    },
+    {
+      "name": "proof.touch_targets_md_lg",
+      "status": "PASS",
+      "detail": "no visible md/lg buttons on route",
+      "data": null,
+      "viewport": "desktop-1280",
+      "route": "/proof"
+    },
+    {
+      "name": "proof.empty_workspace_info",
+      "status": "FAIL",
+      "detail": "expected info message in unseeded /proof",
+      "data": null,
+      "viewport": "desktop-1280",
+      "route": "/proof"
+    },
+    {
+      "name": "proof.empty_workspace_anchor",
+      "status": "FAIL",
+      "detail": "[data-ams-proof='no-workspace-message'] missing",
+      "data": null,
+      "viewport": "desktop-1280",
+      "route": "/proof"
+    },
+    {
+      "name": "pickups.load",
+      "status": "PASS",
+      "detail": "status=200",
+      "data": null,
+      "viewport": "desktop-1280",
+      "route": "/proof/pickups"
+    },
+    {
+      "name": "pickups.theme_attr",
+      "status": "PASS",
+      "detail": "data-ams-theme=dark",
+      "data": null,
+      "viewport": "desktop-1280",
+      "route": "/proof/pickups"
+    },
+    {
+      "name": "pickups.no_horizontal_overflow",
+      "status": "PASS",
+      "detail": "scrollWidth=1280 clientWidth=1280",
+      "data": {
+        "scrollWidth": 1280,
+        "clientWidth": 1280,
+        "offsetHeight": 728
+      },
+      "viewport": "desktop-1280",
+      "route": "/proof/pickups"
+    },
+    {
+      "name": "pickups.touch_targets_md_lg",
+      "status": "PASS",
+      "detail": "all 3 md/lg buttons >=44px",
+      "data": null,
+      "viewport": "desktop-1280",
+      "route": "/proof/pickups"
+    },
+    {
+      "name": "pickups.empty_workspace_info",
+      "status": "FAIL",
+      "detail": "expected info message in unseeded /proof/pickups",
+      "data": null,
+      "viewport": "desktop-1280",
+      "route": "/proof/pickups"
+    },
+    {
+      "name": "pickups.runtime_anchors_empty_workspace",
+      "status": "PASS",
+      "detail": "base pickups anchors visible in empty-workspace DOM",
+      "data": null,
+      "viewport": "desktop-1280",
+      "route": "/proof/pickups"
+    },
+    {
+      "name": "seeded.blocks",
+      "status": "PASS",
+      "detail": "PRECONDITION_WORKING_DIR not set; seeded assertion blocks skipped by contract"
+    },
+    {
+      "name": "proof.theme.attribute_flip",
+      "status": "PASS",
+      "detail": "dark -> light"
+    },
+    {
+      "name": "proof.theme.body_bg_changed",
+      "status": "PASS",
+      "detail": "rgb(17, 21, 28) -> rgb(255, 255, 255)"
+    },
+    {
+      "name": "proof.console.no_pageerror",
+      "status": "PASS",
+      "detail": "zero pageerror entries across all viewports/routes"
+    }
+  ]
+}

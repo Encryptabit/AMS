@@ -1,0 +1,354 @@
+{
+  "slice": "M007/S03",
+  "task": "T06",
+  "verdict": "PASS",
+  "startedAt": "2026-04-24T21:37:10.686Z",
+  "finishedAt": "2026-04-24T21:37:26.465Z",
+  "baseUrl": "http://127.0.0.1:49647",
+  "preconditionWorkingDir": null,
+  "seeded": "unseeded",
+  "counts": {
+    "pass": 41,
+    "fail": 0,
+    "total": 41
+  },
+  "assertions": [
+    {
+      "name": "proof.pickups.source_anchor_contract",
+      "status": "PASS",
+      "detail": "16 source anchor snippets present"
+    },
+    {
+      "name": "proof.load",
+      "status": "PASS",
+      "detail": "status=200",
+      "data": null,
+      "viewport": "mobile-360",
+      "route": "/proof"
+    },
+    {
+      "name": "proof.theme_attr",
+      "status": "PASS",
+      "detail": "data-ams-theme=dark",
+      "data": null,
+      "viewport": "mobile-360",
+      "route": "/proof"
+    },
+    {
+      "name": "proof.no_horizontal_overflow",
+      "status": "PASS",
+      "detail": "scrollWidth=360 clientWidth=360",
+      "data": {
+        "scrollWidth": 360,
+        "clientWidth": 360,
+        "offsetHeight": 207
+      },
+      "viewport": "mobile-360",
+      "route": "/proof"
+    },
+    {
+      "name": "proof.touch_targets_md_lg",
+      "status": "PASS",
+      "detail": "no visible md/lg buttons on route",
+      "data": null,
+      "viewport": "mobile-360",
+      "route": "/proof"
+    },
+    {
+      "name": "proof.empty_workspace_info",
+      "status": "PASS",
+      "detail": ".ams-message.ams-message--info visible",
+      "data": null,
+      "viewport": "mobile-360",
+      "route": "/proof"
+    },
+    {
+      "name": "proof.empty_workspace_anchor",
+      "status": "PASS",
+      "detail": "[data-ams-proof='no-workspace-message'] visible",
+      "data": null,
+      "viewport": "mobile-360",
+      "route": "/proof"
+    },
+    {
+      "name": "pickups.load",
+      "status": "PASS",
+      "detail": "status=200",
+      "data": null,
+      "viewport": "mobile-360",
+      "route": "/proof/pickups"
+    },
+    {
+      "name": "pickups.theme_attr",
+      "status": "PASS",
+      "detail": "data-ams-theme=dark",
+      "data": null,
+      "viewport": "mobile-360",
+      "route": "/proof/pickups"
+    },
+    {
+      "name": "pickups.no_horizontal_overflow",
+      "status": "PASS",
+      "detail": "scrollWidth=360 clientWidth=360",
+      "data": {
+        "scrollWidth": 360,
+        "clientWidth": 360,
+        "offsetHeight": 226
+      },
+      "viewport": "mobile-360",
+      "route": "/proof/pickups"
+    },
+    {
+      "name": "pickups.touch_targets_md_lg",
+      "status": "PASS",
+      "detail": "all 1 md/lg buttons >=44px",
+      "data": null,
+      "viewport": "mobile-360",
+      "route": "/proof/pickups"
+    },
+    {
+      "name": "pickups.empty_workspace_info",
+      "status": "PASS",
+      "detail": ".ams-message.ams-message--info visible",
+      "data": null,
+      "viewport": "mobile-360",
+      "route": "/proof/pickups"
+    },
+    {
+      "name": "pickups.runtime_anchors_empty_workspace",
+      "status": "PASS",
+      "detail": "base pickups anchors visible in empty-workspace DOM",
+      "data": null,
+      "viewport": "mobile-360",
+      "route": "/proof/pickups"
+    },
+    {
+      "name": "proof.load",
+      "status": "PASS",
+      "detail": "status=200",
+      "data": null,
+      "viewport": "tablet-768",
+      "route": "/proof"
+    },
+    {
+      "name": "proof.theme_attr",
+      "status": "PASS",
+      "detail": "data-ams-theme=dark",
+      "data": null,
+      "viewport": "tablet-768",
+      "route": "/proof"
+    },
+    {
+      "name": "proof.no_horizontal_overflow",
+      "status": "PASS",
+      "detail": "scrollWidth=768 clientWidth=768",
+      "data": {
+        "scrollWidth": 768,
+        "clientWidth": 768,
+        "offsetHeight": 207
+      },
+      "viewport": "tablet-768",
+      "route": "/proof"
+    },
+    {
+      "name": "proof.touch_targets_md_lg",
+      "status": "PASS",
+      "detail": "no visible md/lg buttons on route",
+      "data": null,
+      "viewport": "tablet-768",
+      "route": "/proof"
+    },
+    {
+      "name": "proof.empty_workspace_info",
+      "status": "PASS",
+      "detail": ".ams-message.ams-message--info visible",
+      "data": null,
+      "viewport": "tablet-768",
+      "route": "/proof"
+    },
+    {
+      "name": "proof.empty_workspace_anchor",
+      "status": "PASS",
+      "detail": "[data-ams-proof='no-workspace-message'] visible",
+      "data": null,
+      "viewport": "tablet-768",
+      "route": "/proof"
+    },
+    {
+      "name": "pickups.load",
+      "status": "PASS",
+      "detail": "status=200",
+      "data": null,
+      "viewport": "tablet-768",
+      "route": "/proof/pickups"
+    },
+    {
+      "name": "pickups.theme_attr",
+      "status": "PASS",
+      "detail": "data-ams-theme=dark",
+      "data": null,
+      "viewport": "tablet-768",
+      "route": "/proof/pickups"
+    },
+    {
+      "name": "pickups.no_horizontal_overflow",
+      "status": "PASS",
+      "detail": "scrollWidth=768 clientWidth=768",
+      "data": {
+        "scrollWidth": 768,
+        "clientWidth": 768,
+        "offsetHeight": 189
+      },
+      "viewport": "tablet-768",
+      "route": "/proof/pickups"
+    },
+    {
+      "name": "pickups.touch_targets_md_lg",
+      "status": "PASS",
+      "detail": "all 1 md/lg buttons >=44px",
+      "data": null,
+      "viewport": "tablet-768",
+      "route": "/proof/pickups"
+    },
+    {
+      "name": "pickups.empty_workspace_info",
+      "status": "PASS",
+      "detail": ".ams-message.ams-message--info visible",
+      "data": null,
+      "viewport": "tablet-768",
+      "route": "/proof/pickups"
+    },
+    {
+      "name": "pickups.runtime_anchors_empty_workspace",
+      "status": "PASS",
+      "detail": "base pickups anchors visible in empty-workspace DOM",
+      "data": null,
+      "viewport": "tablet-768",
+      "route": "/proof/pickups"
+    },
+    {
+      "name": "proof.load",
+      "status": "PASS",
+      "detail": "status=200",
+      "data": null,
+      "viewport": "desktop-1280",
+      "route": "/proof"
+    },
+    {
+      "name": "proof.theme_attr",
+      "status": "PASS",
+      "detail": "data-ams-theme=dark",
+      "data": null,
+      "viewport": "desktop-1280",
+      "route": "/proof"
+    },
+    {
+      "name": "proof.no_horizontal_overflow",
+      "status": "PASS",
+      "detail": "scrollWidth=1280 clientWidth=1280",
+      "data": {
+        "scrollWidth": 1280,
+        "clientWidth": 1280,
+        "offsetHeight": 207
+      },
+      "viewport": "desktop-1280",
+      "route": "/proof"
+    },
+    {
+      "name": "proof.touch_targets_md_lg",
+      "status": "PASS",
+      "detail": "no visible md/lg buttons on route",
+      "data": null,
+      "viewport": "desktop-1280",
+      "route": "/proof"
+    },
+    {
+      "name": "proof.empty_workspace_info",
+      "status": "PASS",
+      "detail": ".ams-message.ams-message--info visible",
+      "data": null,
+      "viewport": "desktop-1280",
+      "route": "/proof"
+    },
+    {
+      "name": "proof.empty_workspace_anchor",
+      "status": "PASS",
+      "detail": "[data-ams-proof='no-workspace-message'] visible",
+      "data": null,
+      "viewport": "desktop-1280",
+      "route": "/proof"
+    },
+    {
+      "name": "pickups.load",
+      "status": "PASS",
+      "detail": "status=200",
+      "data": null,
+      "viewport": "desktop-1280",
+      "route": "/proof/pickups"
+    },
+    {
+      "name": "pickups.theme_attr",
+      "status": "PASS",
+      "detail": "data-ams-theme=dark",
+      "data": null,
+      "viewport": "desktop-1280",
+      "route": "/proof/pickups"
+    },
+    {
+      "name": "pickups.no_horizontal_overflow",
+      "status": "PASS",
+      "detail": "scrollWidth=1280 clientWidth=1280",
+      "data": {
+        "scrollWidth": 1280,
+        "clientWidth": 1280,
+        "offsetHeight": 189
+      },
+      "viewport": "desktop-1280",
+      "route": "/proof/pickups"
+    },
+    {
+      "name": "pickups.touch_targets_md_lg",
+      "status": "PASS",
+      "detail": "all 1 md/lg buttons >=44px",
+      "data": null,
+      "viewport": "desktop-1280",
+      "route": "/proof/pickups"
+    },
+    {
+      "name": "pickups.empty_workspace_info",
+      "status": "PASS",
+      "detail": ".ams-message.ams-message--info visible",
+      "data": null,
+      "viewport": "desktop-1280",
+      "route": "/proof/pickups"
+    },
+    {
+      "name": "pickups.runtime_anchors_empty_workspace",
+      "status": "PASS",
+      "detail": "base pickups anchors visible in empty-workspace DOM",
+      "data": null,
+      "viewport": "desktop-1280",
+      "route": "/proof/pickups"
+    },
+    {
+      "name": "seeded.blocks",
+      "status": "PASS",
+      "detail": "PRECONDITION_WORKING_DIR not set; seeded assertion blocks skipped by contract"
+    },
+    {
+      "name": "proof.theme.attribute_flip",
+      "status": "PASS",
+      "detail": "dark -> light"
+    },
+    {
+      "name": "proof.theme.body_bg_changed",
+      "status": "PASS",
+      "detail": "rgb(17, 21, 28) -> rgb(255, 255, 255)"
+    },
+    {
+      "name": "proof.console.no_pageerror",
+      "status": "PASS",
+      "detail": "zero pageerror entries across all viewports/routes"
+    }
+  ]
+}

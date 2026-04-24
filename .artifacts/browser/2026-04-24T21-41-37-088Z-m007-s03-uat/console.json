@@ -1,0 +1,162 @@
+[
+  {
+    "type": "info",
+    "text": "[2026-04-24T21:41:57.149Z] Information: Normalizing '_blazor' to 'http://127.0.0.1:53015/_blazor'.",
+    "url": "http://127.0.0.1:53015/proof",
+    "context": "proof-routes",
+    "viewport": null,
+    "route": null
+  },
+  {
+    "type": "info",
+    "text": "[2026-04-24T21:41:57.166Z] Information: WebSocket connected to ws://127.0.0.1:53015/_blazor?id=NO6F6HTzYC2Ks4cDBsEWUw.",
+    "url": "http://127.0.0.1:53015/proof",
+    "context": "proof-routes",
+    "viewport": null,
+    "route": null
+  },
+  {
+    "type": "requestfailed",
+    "text": "http://127.0.0.1:53015/_blazor/disconnect :: net::ERR_ABORTED",
+    "url": "http://127.0.0.1:53015/proof",
+    "context": "proof-routes",
+    "viewport": null,
+    "route": null
+  },
+  {
+    "type": "info",
+    "text": "[2026-04-24T21:41:59.234Z] Information: Normalizing '_blazor' to 'http://127.0.0.1:53015/_blazor'.",
+    "url": "http://127.0.0.1:53015/proof/pickups",
+    "context": "proof-routes",
+    "viewport": null,
+    "route": null
+  },
+  {
+    "type": "info",
+    "text": "[2026-04-24T21:41:59.241Z] Information: WebSocket connected to ws://127.0.0.1:53015/_blazor?id=_lBtRndCOoZ0kbqni9bFuQ.",
+    "url": "http://127.0.0.1:53015/proof/pickups",
+    "context": "proof-routes",
+    "viewport": null,
+    "route": null
+  },
+  {
+    "type": "requestfailed",
+    "text": "http://127.0.0.1:53015/_blazor/disconnect :: net::ERR_ABORTED",
+    "url": "http://127.0.0.1:53015/proof/pickups",
+    "context": "proof-routes",
+    "viewport": null,
+    "route": null
+  },
+  {
+    "type": "info",
+    "text": "[2026-04-24T21:42:01.294Z] Information: Normalizing '_blazor' to 'http://127.0.0.1:53015/_blazor'.",
+    "url": "http://127.0.0.1:53015/proof",
+    "context": "proof-routes",
+    "viewport": null,
+    "route": null
+  },
+  {
+    "type": "info",
+    "text": "[2026-04-24T21:42:01.300Z] Information: WebSocket connected to ws://127.0.0.1:53015/_blazor?id=5rz7lIJdIUlXaniS1zMjLg.",
+    "url": "http://127.0.0.1:53015/proof",
+    "context": "proof-routes",
+    "viewport": null,
+    "route": null
+  },
+  {
+    "type": "requestfailed",
+    "text": "http://127.0.0.1:53015/_blazor/disconnect :: net::ERR_ABORTED",
+    "url": "http://127.0.0.1:53015/proof",
+    "context": "proof-routes",
+    "viewport": null,
+    "route": null
+  },
+  {
+    "type": "info",
+    "text": "[2026-04-24T21:42:03.341Z] Information: Normalizing '_blazor' to 'http://127.0.0.1:53015/_blazor'.",
+    "url": "http://127.0.0.1:53015/proof/pickups",
+    "context": "proof-routes",
+    "viewport": null,
+    "route": null
+  },
+  {
+    "type": "info",
+    "text": "[2026-04-24T21:42:03.347Z] Information: WebSocket connected to ws://127.0.0.1:53015/_blazor?id=d7nNgUWNGOuUDch6odcH-w.",
+    "url": "http://127.0.0.1:53015/proof/pickups",
+    "context": "proof-routes",
+    "viewport": null,
+    "route": null
+  },
+  {
+    "type": "requestfailed",
+    "text": "http://127.0.0.1:53015/_blazor/disconnect :: net::ERR_ABORTED",
+    "url": "http://127.0.0.1:53015/proof/pickups",
+    "context": "proof-routes",
+    "viewport": null,
+    "route": null
+  },
+  {
+    "type": "info",
+    "text": "[2026-04-24T21:42:05.403Z] Information: Normalizing '_blazor' to 'http://127.0.0.1:53015/_blazor'.",
+    "url": "http://127.0.0.1:53015/proof",
+    "context": "proof-routes",
+    "viewport": null,
+    "route": null
+  },
+  {
+    "type": "info",
+    "text": "[2026-04-24T21:42:05.409Z] Information: WebSocket connected to ws://127.0.0.1:53015/_blazor?id=5kV-_HcVg_Ickpb7WnjgsA.",
+    "url": "http://127.0.0.1:53015/proof",
+    "context": "proof-routes",
+    "viewport": null,
+    "route": null
+  },
+  {
+    "type": "requestfailed",
+    "text": "http://127.0.0.1:53015/_blazor/disconnect :: net::ERR_ABORTED",
+    "url": "http://127.0.0.1:53015/proof",
+    "context": "proof-routes",
+    "viewport": null,
+    "route": null
+  },
+  {
+    "type": "info",
+    "text": "[2026-04-24T21:42:07.448Z] Information: Normalizing '_blazor' to 'http://127.0.0.1:53015/_blazor'.",
+    "url": "http://127.0.0.1:53015/proof/pickups",
+    "context": "proof-routes",
+    "viewport": null,
+    "route": null
+  },
+  {
+    "type": "info",
+    "text": "[2026-04-24T21:42:07.454Z] Information: WebSocket connected to ws://127.0.0.1:53015/_blazor?id=KCoDolt-HUrINagSvSNDTg.",
+    "url": "http://127.0.0.1:53015/proof/pickups",
+    "context": "proof-routes",
+    "viewport": null,
+    "route": null
+  },
+  {
+    "type": "requestfailed",
+    "text": "http://127.0.0.1:53015/_blazor/disconnect :: net::ERR_ABORTED",
+    "url": "http://127.0.0.1:53015/proof/pickups",
+    "context": "theme-toggle",
+    "viewport": null,
+    "route": null
+  },
+  {
+    "type": "info",
+    "text": "[2026-04-24T21:42:09.491Z] Information: Normalizing '_blazor' to 'http://127.0.0.1:53015/_blazor'.",
+    "url": "http://127.0.0.1:53015/proof",
+    "context": "theme-toggle",
+    "viewport": null,
+    "route": null
+  },
+  {
+    "type": "info",
+    "text": "[2026-04-24T21:42:09.496Z] Information: WebSocket connected to ws://127.0.0.1:53015/_blazor?id=SWuGaZncr78EXGcVCZVnVA.",
+    "url": "http://127.0.0.1:53015/proof",
+    "context": "theme-toggle",
+    "viewport": null,
+    "route": null
+  }
+]

@@ -1,0 +1,257 @@
+[
+  {
+    "t": 0,
+    "kind": "driver",
+    "detail": "launch chromium"
+  },
+  {
+    "t": 281,
+    "kind": "check",
+    "detail": "PASS proof.pickups.source_anchor_contract :: 16 source anchor snippets present"
+  },
+  {
+    "t": 284,
+    "kind": "check",
+    "detail": "PASS proof.overview.loading_spinner_contract :: Overview loading spinner anchor present in source"
+  },
+  {
+    "t": 289,
+    "kind": "route",
+    "detail": "/proof @ mobile-360"
+  },
+  {
+    "t": 967,
+    "kind": "check",
+    "detail": "PASS proof.load @mobile-360 [/proof] :: status=200"
+  },
+  {
+    "t": 2475,
+    "kind": "check",
+    "detail": "PASS proof.theme_attr @mobile-360 [/proof] :: data-ams-theme=dark"
+  },
+  {
+    "t": 2475,
+    "kind": "check",
+    "detail": "FAIL proof.no_horizontal_overflow @mobile-360 [/proof] :: .proof-index not found"
+  },
+  {
+    "t": 2475,
+    "kind": "check",
+    "detail": "PASS proof.touch_targets_md_lg @mobile-360 [/proof] :: no visible md/lg buttons on route"
+  },
+  {
+    "t": 2475,
+    "kind": "check",
+    "detail": "FAIL proof.empty_workspace_info @mobile-360 [/proof] :: expected info message in unseeded /proof"
+  },
+  {
+    "t": 2475,
+    "kind": "check",
+    "detail": "FAIL proof.empty_workspace_anchor @mobile-360 [/proof] :: [data-ams-proof='no-workspace-message'] missing"
+  },
+  {
+    "t": 2475,
+    "kind": "route",
+    "detail": "/proof/pickups @ mobile-360"
+  },
+  {
+    "t": 3109,
+    "kind": "check",
+    "detail": "PASS pickups.load @mobile-360 [/proof/pickups] :: status=200"
+  },
+  {
+    "t": 4615,
+    "kind": "check",
+    "detail": "PASS pickups.theme_attr @mobile-360 [/proof/pickups] :: data-ams-theme=dark"
+  },
+  {
+    "t": 4615,
+    "kind": "check",
+    "detail": "PASS pickups.no_horizontal_overflow @mobile-360 [/proof/pickups] :: scrollWidth=360 clientWidth=360"
+  },
+  {
+    "t": 4615,
+    "kind": "check",
+    "detail": "PASS pickups.touch_targets_md_lg @mobile-360 [/proof/pickups] :: all 3 md/lg buttons >=44px"
+  },
+  {
+    "t": 4615,
+    "kind": "check",
+    "detail": "FAIL pickups.empty_workspace_info @mobile-360 [/proof/pickups] :: expected info message in unseeded /proof/pickups"
+  },
+  {
+    "t": 4615,
+    "kind": "check",
+    "detail": "PASS pickups.runtime_anchors_empty_workspace @mobile-360 [/proof/pickups] :: base pickups anchors visible in empty-workspace DOM"
+  },
+  {
+    "t": 4640,
+    "kind": "route",
+    "detail": "/proof @ tablet-768"
+  },
+  {
+    "t": 5180,
+    "kind": "check",
+    "detail": "PASS proof.load @tablet-768 [/proof] :: status=200"
+  },
+  {
+    "t": 6685,
+    "kind": "check",
+    "detail": "PASS proof.theme_attr @tablet-768 [/proof] :: data-ams-theme=dark"
+  },
+  {
+    "t": 6685,
+    "kind": "check",
+    "detail": "PASS proof.no_horizontal_overflow @tablet-768 [/proof] :: scrollWidth=768 clientWidth=768"
+  },
+  {
+    "t": 6685,
+    "kind": "check",
+    "detail": "PASS proof.touch_targets_md_lg @tablet-768 [/proof] :: no visible md/lg buttons on route"
+  },
+  {
+    "t": 6685,
+    "kind": "check",
+    "detail": "FAIL proof.empty_workspace_info @tablet-768 [/proof] :: expected info message in unseeded /proof"
+  },
+  {
+    "t": 6685,
+    "kind": "check",
+    "detail": "FAIL proof.empty_workspace_anchor @tablet-768 [/proof] :: [data-ams-proof='no-workspace-message'] missing"
+  },
+  {
+    "t": 6685,
+    "kind": "route",
+    "detail": "/proof/pickups @ tablet-768"
+  },
+  {
+    "t": 7225,
+    "kind": "check",
+    "detail": "PASS pickups.load @tablet-768 [/proof/pickups] :: status=200"
+  },
+  {
+    "t": 8729,
+    "kind": "check",
+    "detail": "PASS pickups.theme_attr @tablet-768 [/proof/pickups] :: data-ams-theme=dark"
+  },
+  {
+    "t": 8729,
+    "kind": "check",
+    "detail": "PASS pickups.no_horizontal_overflow @tablet-768 [/proof/pickups] :: scrollWidth=768 clientWidth=768"
+  },
+  {
+    "t": 8729,
+    "kind": "check",
+    "detail": "PASS pickups.touch_targets_md_lg @tablet-768 [/proof/pickups] :: all 3 md/lg buttons >=44px"
+  },
+  {
+    "t": 8729,
+    "kind": "check",
+    "detail": "FAIL pickups.empty_workspace_info @tablet-768 [/proof/pickups] :: expected info message in unseeded /proof/pickups"
+  },
+  {
+    "t": 8729,
+    "kind": "check",
+    "detail": "PASS pickups.runtime_anchors_empty_workspace @tablet-768 [/proof/pickups] :: base pickups anchors visible in empty-workspace DOM"
+  },
+  {
+    "t": 8751,
+    "kind": "route",
+    "detail": "/proof @ desktop-1280"
+  },
+  {
+    "t": 9292,
+    "kind": "check",
+    "detail": "PASS proof.load @desktop-1280 [/proof] :: status=200"
+  },
+  {
+    "t": 10797,
+    "kind": "check",
+    "detail": "PASS proof.theme_attr @desktop-1280 [/proof] :: data-ams-theme=dark"
+  },
+  {
+    "t": 10797,
+    "kind": "check",
+    "detail": "PASS proof.no_horizontal_overflow @desktop-1280 [/proof] :: scrollWidth=1280 clientWidth=1280"
+  },
+  {
+    "t": 10797,
+    "kind": "check",
+    "detail": "PASS proof.touch_targets_md_lg @desktop-1280 [/proof] :: no visible md/lg buttons on route"
+  },
+  {
+    "t": 10797,
+    "kind": "check",
+    "detail": "FAIL proof.empty_workspace_info @desktop-1280 [/proof] :: expected info message in unseeded /proof"
+  },
+  {
+    "t": 10797,
+    "kind": "check",
+    "detail": "FAIL proof.empty_workspace_anchor @desktop-1280 [/proof] :: [data-ams-proof='no-workspace-message'] missing"
+  },
+  {
+    "t": 10797,
+    "kind": "route",
+    "detail": "/proof/pickups @ desktop-1280"
+  },
+  {
+    "t": 11336,
+    "kind": "check",
+    "detail": "PASS pickups.load @desktop-1280 [/proof/pickups] :: status=200"
+  },
+  {
+    "t": 12841,
+    "kind": "check",
+    "detail": "PASS pickups.theme_attr @desktop-1280 [/proof/pickups] :: data-ams-theme=dark"
+  },
+  {
+    "t": 12841,
+    "kind": "check",
+    "detail": "PASS pickups.no_horizontal_overflow @desktop-1280 [/proof/pickups] :: scrollWidth=1280 clientWidth=1280"
+  },
+  {
+    "t": 12841,
+    "kind": "check",
+    "detail": "PASS pickups.touch_targets_md_lg @desktop-1280 [/proof/pickups] :: all 3 md/lg buttons >=44px"
+  },
+  {
+    "t": 12841,
+    "kind": "check",
+    "detail": "FAIL pickups.empty_workspace_info @desktop-1280 [/proof/pickups] :: expected info message in unseeded /proof/pickups"
+  },
+  {
+    "t": 12841,
+    "kind": "check",
+    "detail": "PASS pickups.runtime_anchors_empty_workspace @desktop-1280 [/proof/pickups] :: base pickups anchors visible in empty-workspace DOM"
+  },
+  {
+    "t": 12842,
+    "kind": "check",
+    "detail": "PASS seeded.blocks :: PRECONDITION_WORKING_DIR not set; seeded assertion blocks skipped by contract"
+  },
+  {
+    "t": 12843,
+    "kind": "theme",
+    "detail": "starting theme toggle inheritance check on /proof"
+  },
+  {
+    "t": 14972,
+    "kind": "check",
+    "detail": "PASS proof.theme.attribute_flip :: dark -> light"
+  },
+  {
+    "t": 14972,
+    "kind": "check",
+    "detail": "PASS proof.theme.body_bg_changed :: rgb(17, 21, 28) -> rgb(255, 255, 255)"
+  },
+  {
+    "t": 15027,
+    "kind": "check",
+    "detail": "PASS proof.console.no_pageerror :: zero pageerror entries across all viewports/routes"
+  },
+  {
+    "t": 15103,
+    "kind": "driver",
+    "detail": "closed chromium"
+  }
+]
