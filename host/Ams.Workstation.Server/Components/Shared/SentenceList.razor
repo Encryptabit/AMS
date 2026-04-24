@@ -1,61 +1,49 @@
 @using Ams.Workstation.Server.Models
 @inject IJSRuntime JS
 
-<BitCard Class="sentence-list-card" FullWidth="true">
-    <BitStack Horizontal="false" Gap="0">
-        @* Header *@
-        <div class="sentence-list-header">
-            <BitStack Horizontal="true" HorizontalAlign="BitAlignment.SpaceBetween" VerticalAlign="BitAlignment.Center">
-                <BitText Typography="BitTypography.Subtitle2">Chapter Sentences</BitText>
-                <BitText Typography="BitTypography.Caption1" Color="BitColor.SecondaryForeground">
-                    Click to seek | Arrow keys to navigate
-                </BitText>
-            </BitStack>
+<section class="ams-card sentence-list sentence-list-card">
+    <header class="sentence-list-header sentence-list__header">
+        <div class="sentence-list__header-row">
+            <h3 class="sentence-list__title">Chapter Sentences</h3>
+            <p class="sentence-list__hint">Click to seek | Arrow keys to navigate</p>
         </div>
+    </header>
 
-        @* Sentence list *@
-        @if (Sentences == null || !Sentences.Any())
-        {
-            <BitStack HorizontalAlign="BitAlignment.Center" VerticalAlign="BitAlignment.Center" Style="padding: 2rem;">
-                <BitText Color="BitColor.SecondaryForeground" Style="font-style: italic;">
-                    No sentences loaded
-                </BitText>
-            </BitStack>
-        }
-        else
-        {
-            <BitBasicList TItem="SentenceViewModel"
-                          Items="Sentences.ToList()"
-                          Class="sentence-items"
-                          Style="width: 100%;">
-                <RowTemplate Context="sentence">
-                    <div class="@GetSentenceClasses(sentence)"
-                         id="@GetSentenceElementId(sentence.Id)"
-                         @onclick="() => HandleSentenceClick(sentence)">
-                        <BitStack Horizontal="true" HorizontalAlign="BitAlignment.SpaceBetween" VerticalAlign="BitAlignment.Center">
-                            <BitText Typography="BitTypography.Caption1" Color="BitColor.SecondaryForeground">
-                                <span class="sentence-id">#@sentence.Id</span>
-                            </BitText>
-                            <BitText Typography="BitTypography.Body2" Color="BitColor.SecondaryForeground" Style="font-family: monospace;">
-                                @FormatTime(sentence.StartTime) - @FormatTime(sentence.EndTime)
-                            </BitText>
-                        </BitStack>
-                        <div class="sentence-text">
-                            @if (sentence.HasDiff && !string.IsNullOrEmpty(sentence.DiffHtml))
-                            {
-                                @((MarkupString)sentence.DiffHtml)
-                            }
-                            else
-                            {
-                                <BitText Typography="BitTypography.Body2">@sentence.Text</BitText>
-                            }
-                        </div>
+    @if (Sentences == null || !Sentences.Any())
+    {
+        <div class="sentence-list__empty" role="status" aria-live="polite">
+            <p class="sentence-list__empty-text">No sentences loaded</p>
+        </div>
+    }
+    else
+    {
+        <ul class="sentence-items sentence-list__items">
+            @foreach (var sentence in Sentences)
+            {
+                <li class="@($"{GetSentenceClasses(sentence)} sentence-list__item")"
+                    id="@GetSentenceElementId(sentence.Id)"
+                    @onclick="() => HandleSentenceClick(sentence)">
+                    <div class="sentence-list__meta">
+                        <span class="sentence-id">#@sentence.Id</span>
+                        <span class="sentence-list__time">
+                            @FormatTime(sentence.StartTime) - @FormatTime(sentence.EndTime)
+                        </span>
                     </div>
-                </RowTemplate>
-            </BitBasicList>
-        }
-    </BitStack>
-</BitCard>
+                    <div class="sentence-text">
+                        @if (sentence.HasDiff && !string.IsNullOrEmpty(sentence.DiffHtml))
+                        {
+                            @((MarkupString)sentence.DiffHtml)
+                        }
+                        else
+                        {
+                            <p class="sentence-list__plain-text">@sentence.Text</p>
+                        }
+                    </div>
+                </li>
+            }
+        </ul>
+    }
+</section>
 
 @code {
     private int? _lastScrolledToId;

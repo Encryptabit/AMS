@@ -1,74 +1,68 @@
+@using Ams.Workstation.Server.Components.UI
 @using Ams.Workstation.Server.Models
 @inject IJSRuntime JS
 
-<BitStack Horizontal="false" Gap="1.5rem" AutoHeight="true">
+<div class="errors-view">
     @if (Report == null)
     {
-        <BitStack HorizontalAlign="BitAlignment.Center" VerticalAlign="BitAlignment.Center" Style="padding: 2rem;">
-            <BitProgress Circular="true" />
-        </BitStack>
+        <div class="errors-view__loading" role="status" aria-live="polite">
+            <AmsSpinner Size="lg" Label="Loading chapter errors" />
+        </div>
     }
     else
     {
-        @* Stats Grid *@
-        <BitGrid Columns="4" Spacing="1rem" Style="width: 100%;">
-            <BitGridItem ColumnSpan="1" />
-            <BitGridItem>
-                <StatCard Title="Sentences"
-                          Value="@Report.Stats.SentenceCount.ToString()"
-                          Detail="@($"Flagged: {Report.Stats.FlaggedCount} | Avg WER: {Report.Stats.AvgWer} | Max: {Report.Stats.MaxWer}")" />
-            </BitGridItem>
-            <BitGridItem>
-                <StatCard Title="Paragraphs"
-                          Value="@Report.Stats.ParagraphCount.ToString()"
-                          Detail="@($"Avg WER: {Report.Stats.ParagraphAvgWer} | Coverage: {Report.Stats.AvgCoverage}")" />
-            </BitGridItem>
-            <BitGridItem ColumnSpan="1" />
-        </BitGrid>
+        <div class="errors-stats-grid">
+            <div class="errors-stats-grid__spacer"></div>
+            <StatCard Title="Sentences"
+                      Value="@Report.Stats.SentenceCount.ToString()"
+                      Detail="@($"Flagged: {Report.Stats.FlaggedCount} | Avg WER: {Report.Stats.AvgWer} | Max: {Report.Stats.MaxWer}")" />
+            <StatCard Title="Paragraphs"
+                      Value="@Report.Stats.ParagraphCount.ToString()"
+                      Detail="@($"Avg WER: {Report.Stats.ParagraphAvgWer} | Coverage: {Report.Stats.AvgCoverage}")" />
+            <div class="errors-stats-grid__spacer"></div>
+        </div>
 
-        @* Chapter Error Patterns *@
         @if (VisiblePatterns.Any())
         {
-            <BitStack Horizontal="false" Gap="0.5rem">
-                <BitText Typography="BitTypography.Subtitle2">
+            <section class="errors-view__patterns">
+                <h3 class="errors-view__heading">
                     Error Patterns (@VisiblePatterns.Count())
-                </BitText>
-                <BitGrid Columns="4" ColumnsSm="2" ColumnsMd="3" Spacing="0.75rem">
+                </h3>
+                <div class="errors-patterns-grid">
                     @foreach (var pattern in VisiblePatterns.Take(12))
                     {
-                        <BitGridItem>
-                            <PatternCard Pattern="pattern"
-                                         OnToggleIgnore="() => ToggleIgnore(pattern)" />
-                        </BitGridItem>
+                        <PatternCard Pattern="pattern"
+                                     OnToggleIgnore="() => ToggleIgnore(pattern)" />
                     }
-                </BitGrid>
-            </BitStack>
+                </div>
+            </section>
         }
 
-        @* Detailed Sentences *@
-        <BitStack Horizontal="false" Gap="0.75rem">
-            <BitText Typography="BitTypography.Subtitle1">
+        <section class="errors-view__sentences">
+            <h3 class="errors-view__heading">
                 Sentences with Errors (@ErrorList.Count)
-            </BitText>
-            @for (var i = 0; i < ErrorList.Count; i++)
-            {
-                var idx = i;
-                var sentence = ErrorList[idx];
-                <div id="error-card-@sentence.Id" style="width:100%">
-                    <SentenceErrorCard Sentence="sentence"
-                                       IsSelected="idx == SelectedIndex"
-                                       IsExported="ExportedSentenceIds?.Contains(sentence.Id) == true"
-                                       OnPlayAudio="() => OnPlaySentence.InvokeAsync(sentence)"
-                                       OnExport="() => HandleExport(sentence)"
-                                       OnCrx="() => HandleCrx(sentence)"
-                                       OnIgnore="() => OnIgnoreSentence.InvokeAsync(sentence)"
-                                       OnView="() => OnViewSentence.InvokeAsync(sentence)"
-                                       IgnoredKeys="IgnoredKeys" />
-                </div>
-            }
-        </BitStack>
+            </h3>
+            <div class="errors-sentence-list">
+                @for (var i = 0; i < ErrorList.Count; i++)
+                {
+                    var idx = i;
+                    var sentence = ErrorList[idx];
+                    <div id="error-card-@sentence.Id" class="errors-sentence-list__item">
+                        <SentenceErrorCard Sentence="sentence"
+                                           IsSelected="idx == SelectedIndex"
+                                           IsExported="ExportedSentenceIds?.Contains(sentence.Id) == true"
+                                           OnPlayAudio="() => OnPlaySentence.InvokeAsync(sentence)"
+                                           OnExport="() => HandleExport(sentence)"
+                                           OnCrx="() => HandleCrx(sentence)"
+                                           OnIgnore="() => OnIgnoreSentence.InvokeAsync(sentence)"
+                                           OnView="() => OnViewSentence.InvokeAsync(sentence)"
+                                           IgnoredKeys="IgnoredKeys" />
+                    </div>
+                }
+            </div>
+        </section>
     }
-</BitStack>
+</div>
 
 @code {
     private int _lastScrolledIndex = -1;

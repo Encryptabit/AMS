@@ -1,77 +1,63 @@
+@using Ams.Workstation.Server.Components.UI
 @using Ams.Workstation.Server.Models
 
-<BitCard Style="@GetBorderStyle()" FullWidth="true">
-    <BitStack Horizontal="false" Gap="0.5rem" Style="padding: 1rem;">
-        @* Header: ID + WER/CER + Status badge + metadata all horizontal *@
-        <BitStack Horizontal="true" Gap="1rem" VerticalAlign="BitAlignment.Center" Style="justify-content: space-between;">
-            <BitStack Horizontal="true" Gap="1rem" VerticalAlign="BitAlignment.Center" Wrap="true">
-                <BitText Typography="BitTypography.Body1" Style="font-weight: 600;">#@Sentence.Id</BitText>
-                <BitText Typography="BitTypography.Caption1">
-                    WER: <span style="color: var(@GetWerColor());">@Sentence.Wer</span>
-                    &nbsp;&nbsp;CER: @Sentence.Cer
-                </BitText>
-                <BitTag Text="@Sentence.Status.ToUpper()"
-                        Color="GetStatusColor()"
-                        Size="BitSize.Small"
-                        Variant="BitVariant.Fill" />
-                <BitText Typography="BitTypography.Caption1" Color="BitColor.SecondaryForeground">Book range: @Sentence.BookRange</BitText>
-                <BitText Typography="BitTypography.Caption1" Color="BitColor.SecondaryForeground">Script range: @Sentence.ScriptRange</BitText>
-                <BitText Typography="BitTypography.Caption1" Color="BitColor.SecondaryForeground">Timing: @Sentence.Timing</BitText>
-            </BitStack>
-            @if (IsExported)
-            {
-                <BitIcon IconName="@BitIconName.SkypeCircleCheck"
-                         Style="color: #4a9eff; font-size: 1rem;"
-                         Title="Exported to CRX" />
-            }
-        </BitStack>
+<section class="@GetCardClass()">
+    <header class="sentence-error-card__header">
+        <div class="sentence-error-card__meta">
+            <span class="sentence-error-card__id">#@Sentence.Id</span>
+            <span class="sentence-error-card__wer">
+                WER: <span class="@GetWerClass()">@Sentence.Wer</span>
+                <span class="sentence-error-card__cer">CER: @Sentence.Cer</span>
+            </span>
+            <AmsTag Tone="@GetStatusTone()" Size="sm">@GetStatusLabel()</AmsTag>
+            <span class="sentence-error-card__range">Book range: @Sentence.BookRange</span>
+            <span class="sentence-error-card__range">Script range: @Sentence.ScriptRange</span>
+            <span class="sentence-error-card__range">Timing: @Sentence.Timing</span>
+        </div>
+        @if (IsExported)
+        {
+            <span aria-hidden="true" class="sentence-error-card__exported" title="Exported to CRX">📤</span>
+        }
+    </header>
 
-        @* Manuscript *@
-        <BitCard Background="BitColorKind.Primary" NoShadow="true" FullWidth="true">
-            <BitStack Horizontal="false" Gap="0.4rem" Style="padding: 0.75rem;">
-                <BitText Typography="BitTypography.Overline">MANUSCRIPT</BitText>
-                <BitText Typography="BitTypography.Body2" Style="line-height: 1.6;">@Sentence.BookText</BitText>
-            </BitStack>
-        </BitCard>
+    <div class="sentence-error-card__transcripts">
+        <section class="sentence-error-card__transcript-panel">
+            <h4 class="sentence-error-card__transcript-title">MANUSCRIPT</h4>
+            <p class="sentence-error-card__transcript-text">@Sentence.BookText</p>
+        </section>
 
-        @* Transcript (Diff) *@
         @if (Sentence.Diff != null)
         {
-            <BitCard Background="BitColorKind.Primary" NoShadow="true" FullWidth="true">
-                <BitStack Horizontal="false" Gap="0.4rem" Style="padding: 0.75rem;">
-                    <BitText Typography="BitTypography.Overline">TRANSCRIPT</BitText>
-                    <DiffView Diff="Sentence.Diff" IgnoredKeys="IgnoredKeys" />
-                </BitStack>
-            </BitCard>
+            <section class="sentence-error-card__transcript-panel">
+                <h4 class="sentence-error-card__transcript-title">TRANSCRIPT</h4>
+                <DiffView Diff="Sentence.Diff" IgnoredKeys="IgnoredKeys" />
+            </section>
         }
+    </div>
 
-        @* Action Buttons *@
-        <BitStack Horizontal="true" Gap="0.5rem" Wrap="true" HorizontalAlign="BitAlignment.Center">
-            <BitButton Variant="BitVariant.Fill" Size="BitSize.Medium"
-                       Color="BitColor.Primary"
-                       OnClick="() => OnPlayAudio.InvokeAsync()">
-                Play Audio Segment
-            </BitButton>
-            <BitButton Variant="BitVariant.Outline" Size="BitSize.Medium"
-                       Color="BitColor.Tertiary"
-                       OnClick="() => OnView.InvokeAsync()">
-                View in Playback
-            </BitButton>
-            <BitButton Variant="BitVariant.Outline" Size="BitSize.Medium"
-                       OnClick="() => OnExport.InvokeAsync()">
-                Export Audio
-            </BitButton>
-            <BitButton Variant="BitVariant.Outline" Size="BitSize.Medium"
-                       OnClick="() => OnCrx.InvokeAsync()">
-                Add to CRX
-            </BitButton>
-            <BitButton Variant="BitVariant.Text" Size="BitSize.Medium"
-                       OnClick="() => OnIgnore.InvokeAsync()">
-                Ignore Error...
-            </BitButton>
-        </BitStack>
-    </BitStack>
-</BitCard>
+    <div class="sentence-error-card__actions">
+        <AmsButton Variant="primary" Size="sm"
+                   OnClick="() => OnPlayAudio.InvokeAsync()">
+            Play Audio Segment
+        </AmsButton>
+        <AmsButton Variant="secondary" Size="sm"
+                   OnClick="() => OnView.InvokeAsync()">
+            View in Playback
+        </AmsButton>
+        <AmsButton Variant="secondary" Size="sm"
+                   OnClick="() => OnExport.InvokeAsync()">
+            Export Audio
+        </AmsButton>
+        <AmsButton Variant="secondary" Size="sm"
+                   OnClick="() => OnCrx.InvokeAsync()">
+            Add to CRX
+        </AmsButton>
+        <AmsButton Variant="ghost" Size="sm"
+                   OnClick="() => OnIgnore.InvokeAsync()">
+            Ignore Error...
+        </AmsButton>
+    </div>
+</section>
 
 @code {
     [Parameter] public SentenceReport Sentence { get; set; } = default!;
@@ -84,32 +70,48 @@
     [Parameter] public EventCallback OnView { get; set; }
     [Parameter] public IReadOnlySet<string>? IgnoredKeys { get; set; }
 
-    private string GetBorderStyle()
+    private string GetCardClass()
     {
-        var outline = IsSelected ? "outline: 2px solid var(--bit-clr-pri); " : "";
-        return Sentence.Status switch
+        var classes = new List<string>
         {
-            "unreliable" => $"{outline}border-left: 3px solid var(--bit-clr-err); margin-bottom: 0.75rem;",
-            "attention" => $"{outline}border-left: 3px solid var(--bit-clr-wrn); margin-bottom: 0.75rem;",
-            _ => $"{outline}border-left: 3px solid transparent; margin-bottom: 0.75rem;"
+            "sentence-error-card",
+            $"sentence-error-card--status-{GetStatusKey()}"
         };
+
+        if (IsSelected)
+        {
+            classes.Add("sentence-error-card--selected");
+        }
+
+        return string.Join(" ", classes);
     }
 
-    private BitColor GetStatusColor() => Sentence.Status switch
+    private string GetStatusKey() => Sentence.Status switch
     {
-        "unreliable" => BitColor.Error,
-        "attention" => BitColor.Warning,
-        "ok" => BitColor.Success,
-        _ => BitColor.Secondary
+        "unreliable" => "err",
+        "attention" => "wrn",
+        "ok" => "suc",
+        _ => "pri"
     };
 
-    private string GetWerColor()
+    private string GetStatusTone() => Sentence.Status switch
+    {
+        "unreliable" => "danger",
+        "attention" => "warning",
+        "ok" => "success",
+        _ => "secondary"
+    };
+
+    private string GetStatusLabel() => (Sentence.Status ?? string.Empty).ToUpperInvariant();
+
+    private string GetWerClass()
     {
         if (double.TryParse(Sentence.Wer.TrimEnd('%'), out var wer))
         {
-            if (wer >= 50) return "--bit-clr-err";
-            if (wer >= 10) return "--bit-clr-wrn";
+            if (wer >= 50) return "sentence-error-card__wer-value sentence-error-card__wer-value--high";
+            if (wer >= 10) return "sentence-error-card__wer-value sentence-error-card__wer-value--medium";
         }
-        return "--bit-clr-suc";
+
+        return "sentence-error-card__wer-value sentence-error-card__wer-value--low";
     }
 }

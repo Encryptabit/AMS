@@ -1,3 +1,4 @@
+@using Ams.Workstation.Server.Components.UI
 @inject IJSRuntime JS
 @implements IAsyncDisposable
 
@@ -9,22 +10,30 @@
     <div id="@_elementId" class="waveform-container" style="--wfp-height: @(Height)px;">
         @if (!_isReady)
         {
-            <div class="waveform-loading">
-                <BitProgress Circular="true" />
+            <div class="waveform-loading" role="status" aria-live="polite">
+                <AmsSpinner Size="md" Label="Loading waveform" />
                 <span>Loading waveform...</span>
             </div>
         }
     </div>
     <div class="waveform-controls">
-        <BitButton Variant="BitVariant.Text" OnClick="SkipToStart" Title="Skip to start" IsEnabled="_isReady" IconName="@BitIconName.Previous" Color="BitColor.Secondary" />
-        <BitButton Variant="BitVariant.Fill" OnClick="PlayPause" Title="@(IsPlaying ? "Pause" : "Play")" IsEnabled="_isReady" IconName="@(IsPlaying ? BitIconName.Pause : BitIconName.Play)" />
-        <BitButton Variant="BitVariant.Text" OnClick="SkipToEnd" Title="Skip to end" IsEnabled="_isReady" IconName="@BitIconName.Next" Color="BitColor.Secondary" />
+        <AmsButton Variant="secondary" Size="sm" OnClick="SkipToStart" Title="Skip to start" Disabled="@(!_isReady)">
+            <span aria-hidden="true">⏮</span>
+        </AmsButton>
+        <AmsButton Variant="secondary" Size="sm" OnClick="PlayPause" Title="@(IsPlaying ? "Pause" : "Play")" Disabled="@(!_isReady)">
+            <span aria-hidden="true">@(IsPlaying ? "⏸" : "▶")</span>
+        </AmsButton>
+        <AmsButton Variant="secondary" Size="sm" OnClick="SkipToEnd" Title="Skip to end" Disabled="@(!_isReady)">
+            <span aria-hidden="true">⏭</span>
+        </AmsButton>
         <div class="waveform-zoom-section">
-            <BitButton Variant="BitVariant.Text"
+            <AmsButton Variant="secondary"
+                       Size="sm"
                        OnClick="ResetZoom"
                        Title="Reset zoom"
-                       IsEnabled="_isReady"
-                       IconName="@BitIconName.ZoomOut" />
+                       Disabled="@(!_isReady)">
+                <span aria-hidden="true">🔍</span>
+            </AmsButton>
             <input type="range"
                    min="@MinZoomPxPerSec"
                    max="@MaxZoomPxPerSec"
@@ -52,7 +61,7 @@
     @if (!string.IsNullOrEmpty(_errorMessage))
     {
         <div class="waveform-error">
-            <BitIcon IconName="@BitIconName.Warning" />
+            <span class="waveform-error-indicator" aria-hidden="true">⚠</span>
             <span>@_errorMessage</span>
         </div>
     }

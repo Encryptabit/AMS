@@ -1,18 +1,13 @@
-<BitCard FullWidth="true" Style="text-align: center; padding: 1.5rem 1rem;">
-    <BitStack Horizontal="false" Gap="0.25rem" HorizontalAlign="BitAlignment.Center">
-        <BitText Typography="BitTypography.Caption1" Color="BitColor.SecondaryForeground"
-                 Style="text-transform: uppercase; letter-spacing: 0.05em;">
-            @Title
-        </BitText>
-        <BitText Typography="BitTypography.H3">@Value</BitText>
+<section class="ams-card stat-card">
+    <div class="stat-card__body">
+        <h3 class="stat-card__title">@Title</h3>
+        <p class="stat-card__value">@Value</p>
         @if (!string.IsNullOrEmpty(Detail))
         {
-            <BitText Typography="BitTypography.Caption2" Color="BitColor.SecondaryForeground">
-                @Detail
-            </BitText>
+            <span class="stat-card__detail">@Detail</span>
         }
-    </BitStack>
-</BitCard>
+    </div>
+</section>
 
 @code {
     [Parameter] public string Title { get; set; } = "";

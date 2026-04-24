@@ -1,64 +1,51 @@
+@using Ams.Workstation.Server.Components.UI
 @using Ams.Workstation.Server.Models
 
-<BitCard FullSize="true" Style="@GetCardStyle()">
-    <BitStack Horizontal="false" Gap="0.25rem" Style="height: 100%;">
-        <BitStack Horizontal="true" HorizontalAlign="BitAlignment.SpaceBetween">
-            <BitText Typography="BitTypography.Caption1" Style="@GetTypeStyle()">
-                @Pattern.Type.ToUpper()
-            </BitText>
-            <BitText Typography="BitTypography.Caption1" Color="BitColor.SecondaryForeground">
-                @Pattern.Count occurrences
-            </BitText>
-        </BitStack>
+<section class="@GetCardClass()">
+    <header class="pattern-card__header">
+        <span class="pattern-card__type pattern-card__type--@GetTypeKey()">
+            @Pattern.Type.ToUpperInvariant()
+        </span>
+        <span class="pattern-card__count">@Pattern.Count occurrences</span>
+    </header>
 
-        <div style="font-family: monospace; font-size: 0.85rem; line-height: 1.4;">
-            @if (!string.IsNullOrEmpty(Pattern.Book))
-            {
-                <span class="pattern-del">"@Pattern.Book"</span>
-            }
-            @if (!string.IsNullOrEmpty(Pattern.Book) && !string.IsNullOrEmpty(Pattern.Script))
-            {
-                <span style="color: var(--bit-clr-fg-sec); margin: 0 0.25rem;">&#8594;</span>
-            }
-            @if (!string.IsNullOrEmpty(Pattern.Script))
-            {
-                <span class="pattern-ins">"@Pattern.Script"</span>
-            }
-        </div>
+    <span class="pattern-card__diff">
+        @if (!string.IsNullOrEmpty(Pattern.Book))
+        {
+            <span class="pattern-card__from">"@Pattern.Book"</span>
+        }
+        @if (!string.IsNullOrEmpty(Pattern.Book) && !string.IsNullOrEmpty(Pattern.Script))
+        {
+            <span class="pattern-card__arrow" aria-hidden="true">→</span>
+        }
+        @if (!string.IsNullOrEmpty(Pattern.Script))
+        {
+            <span class="pattern-card__to">"@Pattern.Script"</span>
+        }
+    </span>
 
-        <BitStack HorizontalAlign="BitAlignment.Center" Style="margin-top: auto; justify-content: flex-end;">
-            <BitButton Variant="BitVariant.Fill"
-                       Color="@(Pattern.Ignored ? BitColor.Secondary : BitColor.Primary)"
-                       OnClick="() => OnToggleIgnore.InvokeAsync()"
-                       Size="BitSize.Small">
-                @(Pattern.Ignored ? "Unignore" : "Ignore")
-            </BitButton>
-        </BitStack>
-    </BitStack>
-</BitCard>
+    <div class="pattern-card__actions">
+        <AmsButton Variant="secondary"
+                   Size="sm"
+                   OnClick="() => OnToggleIgnore.InvokeAsync()">
+            @(Pattern.Ignored ? "Unignore" : "Ignore")
+        </AmsButton>
+    </div>
+</section>
 
 @code {
     [Parameter] public ErrorPattern Pattern { get; set; } = default!;
     [Parameter] public EventCallback OnToggleIgnore { get; set; }
 
-    private string GetCardStyle() => Pattern.Ignored
-        ? "opacity: 0.4;"
-        : "";
+    private string GetCardClass() => Pattern.Ignored
+        ? "pattern-card pattern-card--ignored"
+        : "pattern-card";
 
-    private string GetTypeStyle() => Pattern.Type switch
+    private string GetTypeKey() => Pattern.Type?.ToLowerInvariant() switch
     {
-        "del" => "color: var(--bit-clr-err); font-weight: 600;",
-        "ins" => "color: var(--bit-clr-suc); font-weight: 600;",
-        "sub" => "color: var(--bit-clr-wrn); font-weight: 600;",
-        _ => "font-weight: 600;"
+        "del" => "del",
+        "ins" => "ins",
+        "sub" => "sub",
+        _ => "other"
     };
 }
-
-<style>
-    .pattern-del {
-        color: var(--bit-clr-err);
-    }
-    .pattern-ins {
-        color: var(--bit-clr-suc);
-    }
-</style>

@@ -1,27 +1,27 @@
+@using Ams.Workstation.Server.Components.UI
 @using Ams.Workstation.Server.Services
 @inject ReviewedStatusService ReviewedStatusService
 
-<BitCard Class="@GetCardClass()" @onclick="HandleClick" Style="cursor: pointer;">
-    <BitStack Horizontal="false" Gap="0.5rem">
-        <BitStack Horizontal="true" Gap="0.5rem" VerticalAlign="BitAlignment.Center" AutoHeight="true">
-            <BitText Typography="BitTypography.Subtitle2">@Chapter.Name</BitText>
-            @if (IsReviewed)
-            {
-                <span class="reviewed-badge">reviewed</span>
-            }
-        </BitStack>
-        <div class="chapter-metrics">
-            <span class="metric">
-                <span class="label">Sentences:</span>
-                <span class="value">@Chapter.Metrics.SentenceCount (@Chapter.Metrics.SentenceFlagged flagged)</span>
-            </span>
-            <span class="metric">
-                <span class="label">Avg WER:</span>
-                <span class="value @GetWerClass()">@Chapter.Metrics.SentenceAvgWer</span>
-            </span>
-        </div>
-    </BitStack>
-</BitCard>
+<button type="button" class="@GetCardClass()" @onclick="HandleClick">
+    <header class="chapter-card__header">
+        <h3 class="chapter-card__title">@Chapter.Name</h3>
+        @if (IsReviewed)
+        {
+            <AmsTag Tone="success" Size="sm">Reviewed</AmsTag>
+        }
+    </header>
+
+    <div class="chapter-metrics">
+        <span class="metric">
+            <span class="label">Sentences:</span>
+            <span class="value">@Chapter.Metrics.SentenceCount (@Chapter.Metrics.SentenceFlagged flagged)</span>
+        </span>
+        <span class="metric">
+            <span class="label">Avg WER:</span>
+            <span class="value @GetWerClass()">@Chapter.Metrics.SentenceAvgWer</span>
+        </span>
+    </div>
+</button>
 
 @code {
     [Parameter] public ProofChapterInfo Chapter { get; set; } = default!;
@@ -33,13 +33,18 @@
 
     private string GetCardClass()
     {
-        var statusClass = GetStatusClass();
-        return string.IsNullOrEmpty(statusClass) ? "chapter-card" : $"chapter-card {statusClass}";
-    }
+        var classes = new List<string>
+        {
+            "chapter-card",
+            $"chapter-card--{GetWerClass()}"
+        };
 
-    private string GetStatusClass()
-    {
-        return IsReviewed ? "reviewed" : "";
+        if (IsReviewed)
+        {
+            classes.Add("chapter-card--reviewed");
+        }
+
+        return string.Join(" ", classes);
     }
 
     private string GetWerClass()
@@ -53,51 +58,3 @@
         return "wer-low";
     }
 }
-
-<style>
-    .chapter-card {
-        transition: background-color 0.15s ease;
-        padding: 1rem;
-    }
-
-    .chapter-card:hover {
-        background-color: var(--bit-clr-bg-sec-hover);
-    }
-
-    .chapter-metrics {
-        display: flex;
-        flex-wrap: wrap;
-        gap: 1rem;
-    }
-
-    .metric .label {
-        color: var(--bit-clr-fg-sec);
-        margin-right: 0.25rem;
-    }
-
-    .wer-high {
-        color: #f48771;
-    }
-
-    .wer-medium {
-        color: #dcdcaa;
-    }
-
-    .wer-low {
-        color: #4ec9b0;
-    }
-
-    .chapter-card.reviewed {
-        border-left: 3px solid #4ec9b0;
-    }
-
-    .reviewed-badge {
-        font-size: 0.65rem;
-        padding: 0.1rem 0.3rem;
-        border-radius: 3px;
-        background-color: rgba(78, 201, 176, 0.2);
-        color: #4ec9b0;
-        text-transform: uppercase;
-        font-weight: 600;
-    }
-</style>
