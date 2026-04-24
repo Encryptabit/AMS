@@ -82,6 +82,24 @@ public sealed class ProofEditingPlaybackSourceContractTests
             ChapterReviewRelativePath,
             "_playbackNavigationIndex = currentIndex;",
             "playback keyboard navigation persists cursor index");
+
+        AssertContains(
+            source,
+            ChapterReviewRelativePath,
+            "var shouldSeek = _waveformPlayer != null && Math.Abs(_currentTime - targetSentence.StartTime) > 0.005;",
+            "playback keyboard navigation avoids redundant seek requests when sentence times match");
+
+        AssertContains(
+            source,
+            ChapterReviewRelativePath,
+            "_pendingKeyboardSeekTime = targetSentence.StartTime;",
+            "playback keyboard navigation tracks in-flight seek target");
+
+        AssertContains(
+            source,
+            ChapterReviewRelativePath,
+            "wavesurfer may emit an intermediate seeking callback at the pre-seek time.",
+            "playback seek handler tolerates transient pre-seek callback ordering");
     }
 
     [Fact]
@@ -98,8 +116,20 @@ public sealed class ProofEditingPlaybackSourceContractTests
         AssertContains(
             source,
             ChapterReviewRelativePath,
-            "if (isPlaying\n                && _currentView == \"playback\"",
-            "playback alert is emitted only while actively playing in playback view");
+            "if (!isPlaying)",
+            "paused playback gate prevents time-sync cursor snapback");
+
+        AssertContains(
+            source,
+            ChapterReviewRelativePath,
+            "Keep manual keyboard selection stable while paused.",
+            "paused playback gate documents manual navigation stability");
+
+        AssertContains(
+            source,
+            ChapterReviewRelativePath,
+            "if (_currentView == \"playback\"",
+            "playback alert is emitted only in playback view");
 
         AssertContains(
             source,

@@ -137,6 +137,7 @@ else
     private DotNetObjectReference<ChapterReview>? _dotNetRef;
     private List<SentenceReport> _errorSentencesList = new();
     private double? _pendingSeekTime;
+    private double? _pendingKeyboardSeekTime;
 
     [Parameter] public string? ChapterName { get; set; }
 
@@ -155,6 +156,8 @@ else
                 _lastTimeBasedSentenceId = null;
                 _lastPlaybackAlertSentenceId = null;
                 _playbackNavigationIndex = null;
+                _pendingSeekTime = null;
+                _pendingKeyboardSeekTime = null;
             }
             if (Workspace.CurrentChapterName != decodedName)
             {
@@ -318,6 +321,13 @@ else
     {
         _currentTime = time;
 
+        var isPlaying = _waveformPlayer?.IsPlaying == true;
+        if (!isPlaying)
+        {
+            // Keep manual keyboard selection stable while paused.
+            return;
+        }
+
         // Only re-render when the active sentence changes, not on every time tick.
         // This avoids flooding the Blazor render queue (~40 re-renders/sec).
         var activeSentence = _sentences.FirstOrDefault(s => time >= s.StartTime && time < s.EndTime);
@@ -330,20 +340,16 @@ else
                 ? _sentences.FindIndex(sentence => sentence.Id == newId.Value)
                 : null;
 
-            var isPlaying = _waveformPlayer?.IsPlaying == true;
-
             // Only allow one alert per sentence while audio is actually playing.
             // Manual keyboard seeking should stay silent.
-            if (isPlaying
-                && newId.HasValue
+            if (newId.HasValue
                 && _lastPlaybackAlertSentenceId.HasValue
                 && newId.Value != _lastPlaybackAlertSentenceId.Value)
             {
                 _lastPlaybackAlertSentenceId = null;
             }
 
-            if (isPlaying
-                && _currentView == "playback"
+            if (_currentView == "playback"
                 && activeSentence is not null
                 && _visibleErrorSentenceIds.Contains(activeSentence.Id)
                 && _lastPlaybackAlertSentenceId != activeSentence.Id)
@@ -451,6 +457,19 @@ else
     {
         _currentTime = time;
 
+        if (_pendingKeyboardSeekTime.HasValue)
+        {
+            // wavesurfer may emit an intermediate seeking callback at the pre-seek time.
+            // Ignore that transient value and wait until the target seek time is reached.
+            if (Math.Abs(time - _pendingKeyboardSeekTime.Value) <= 0.05)
+            {
+                _pendingKeyboardSeekTime = null;
+            }
+
+            StateHasChanged();
+            return;
+        }
+
         if (_playbackNavigationIndex.HasValue
             && _playbackNavigationIndex.Value >= 0
             && _playbackNavigationIndex.Value < _sentences.Count)
@@ -479,15 +498,21 @@ else
 
     private async Task HandleSentenceSelected(SentenceViewModel sentence)
     {
+        var shouldSeek = _waveformPlayer != null && Math.Abs(_currentTime - sentence.StartTime) > 0.005;
+
         _selectedSentenceId = sentence.Id;
         _playbackNavigationIndex = _sentences.FindIndex(s => s.Id == sentence.Id);
-        _lastTimeBasedSentenceId = sentence.Id;
         _currentTime = sentence.StartTime;
 
-        // Seek waveform to the start time of the selected sentence
-        if (_waveformPlayer != null)
+        // Seek waveform to the start time of the selected sentence (if needed).
+        if (shouldSeek)
         {
-            await _waveformPlayer.SeekTo(sentence.StartTime);
+            _pendingKeyboardSeekTime = sentence.StartTime;
+            await _waveformPlayer!.SeekTo(sentence.StartTime);
+        }
+        else
+        {
+            _pendingKeyboardSeekTime = null;
         }
     }
 
@@ -669,14 +694,22 @@ else
                 currentIndex = Math.Min(_sentences.Count - 1, currentIndex + 1);
 
             var targetSentence = _sentences[currentIndex];
+            var shouldSeek = _waveformPlayer != null && Math.Abs(_currentTime - targetSentence.StartTime) > 0.005;
+
             _playbackNavigationIndex = currentIndex;
             _selectedSentenceId = targetSentence.Id;
-            _lastTimeBasedSentenceId = targetSentence.Id;
             _currentTime = targetSentence.StartTime;
 
-            // Seek the waveform to keep audio position in sync with keyboard navigation.
-            if (_waveformPlayer != null)
-                await _waveformPlayer.SeekTo(targetSentence.StartTime);
+            // Keep keyboard navigation responsive even when adjacent sentences share the same start time.
+            if (shouldSeek)
+            {
+                _pendingKeyboardSeekTime = targetSentence.StartTime;
+                await _waveformPlayer!.SeekTo(targetSentence.StartTime);
+            }
+            else
+            {
+                _pendingKeyboardSeekTime = null;
+            }
         }
         StateHasChanged();
     }
