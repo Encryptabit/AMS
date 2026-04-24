@@ -1,0 +1,53 @@
+// .ams-spinner: circular busy indicator. Size/tone modifiers update private
+// custom properties so one base rule owns geometry, border, and motion.
+.ams-spinner {
+    --_ams-spinner-size: 24px;
+    --_ams-spinner-thickness: 3px;
+    --_ams-spinner-ring: var(--ams-color-accent);
+
+    display: inline-block;
+    box-sizing: border-box;
+    width: var(--_ams-spinner-size);
+    height: var(--_ams-spinner-size);
+    border: var(--_ams-spinner-thickness) solid var(--ams-color-border-subtle);
+    border-top-color: var(--_ams-spinner-ring);
+    border-radius: 50%;
+    animation: ams-spinner-spin var(--ams-motion-spinner-duration, 0.8s) linear infinite;
+}
+
+.ams-spinner--sm {
+    --_ams-spinner-size: 16px;
+    --_ams-spinner-thickness: 2px;
+}
+
+.ams-spinner--md {
+    --_ams-spinner-size: 24px;
+    --_ams-spinner-thickness: 3px;
+}
+
+.ams-spinner--lg {
+    --_ams-spinner-size: 40px;
+    --_ams-spinner-thickness: 4px;
+}
+
+// `primary|secondary|neutral` API maps onto existing foundation tokens:
+// accent, text-secondary, and text-primary. Semantic states map 1:1.
+.ams-spinner--primary { --_ams-spinner-ring: var(--ams-color-accent); }
+.ams-spinner--secondary { --_ams-spinner-ring: var(--ams-color-text-secondary); }
+.ams-spinner--neutral { --_ams-spinner-ring: var(--ams-color-text-primary); }
+.ams-spinner--success { --_ams-spinner-ring: var(--ams-color-success); }
+.ams-spinner--warning { --_ams-spinner-ring: var(--ams-color-warning); }
+.ams-spinner--danger { --_ams-spinner-ring: var(--ams-color-danger); }
+.ams-spinner--info { --_ams-spinner-ring: var(--ams-color-info); }
+
+@keyframes ams-spinner-spin {
+    to {
+        transform: rotate(360deg);
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .ams-spinner {
+        animation-duration: 3s;
+    }
+}
