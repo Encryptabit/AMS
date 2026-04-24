@@ -33,6 +33,10 @@ builder.Services.AddTransient<ErrorPatternService>();
 // Toast notification service - singleton (shared across circuits)
 builder.Services.AddSingleton<ToastService>();
 
+// Theme state - scoped per circuit so each connected user controls their own
+// data-ams-theme attribute via ams-theme.js interop.
+builder.Services.AddScoped<ThemeService>();
+
 // Persistence services - singleton (shared state across circuits)
 builder.Services.AddSingleton<ReviewedStatusService>();
 builder.Services.AddSingleton<IgnoredPatternsService>();

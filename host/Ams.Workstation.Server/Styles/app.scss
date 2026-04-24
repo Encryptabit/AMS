@@ -5,86 +5,26 @@
 // own .css. Per M007-UI-FOUNDATION.md §1, component-scoped styles live in
 // sibling *.razor.scss files and are handled by Blazor CSS isolation.
 //
-// T01 intentionally keeps this file minimal to prove the compile pipeline.
-// Real token/foundation/utility imports land in T02 (see §3 of the
-// foundation reference).
+// Token partials are @use-d with explicit namespaces to avoid a default-name
+// clash between tokens/typography and foundation/typography (Dart Sass refuses
+// two modules with the same default namespace). Only the foundation/utility
+// partials emit rules; every legacy global rule from the pre-M007 app.css now
+// lives in foundation/_blazor.scss (framework visuals + Bit shim) or has been
+// superseded by foundation/_reset.scss + foundation/_typography.scss.
 
-*, *::before, *::after {
-    box-sizing: border-box;
-}
+@use "tokens/color" as _tokens-color;
+@use "tokens/spacing" as _tokens-spacing;
+@use "tokens/typography" as _tokens-typography;
+@use "tokens/radius" as _tokens-radius;
+@use "tokens/motion" as _tokens-motion;
+@use "tokens/z-index" as _tokens-z-index;
+@use "tokens/breakpoints" as _tokens-breakpoints;
 
-html, body {
-    margin: 0;
-    padding: 0;
-    height: 100%;
-    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
-    font-size: 14px;
-    line-height: 1.5;
-}
+@use "foundation/reset";
+@use "foundation/root";
+@use "foundation/typography" as _foundation-typography;
+@use "foundation/focus";
+@use "foundation/blazor";
 
-:root {
-    --sidebar-width: 220px;
-    --header-height: 48px;
-}
-
-input, button, select, textarea {
-    font-family: inherit;
-    font-size: inherit;
-}
-
-#blazor-error-ui {
-    background: #dc3545;
-    color: white;
-    bottom: 0;
-    box-shadow: 0 -2px 8px rgba(0, 0, 0, 0.3);
-    display: none;
-    left: 0;
-    padding: 1rem;
-    position: fixed;
-    width: 100%;
-    z-index: 1000;
-}
-
-#blazor-error-ui .dismiss {
-    cursor: pointer;
-    position: absolute;
-    right: 1rem;
-    top: 0.5rem;
-}
-
-#blazor-error-ui .reload {
-    color: white;
-    text-decoration: underline;
-}
-
-.blazor-error-boundary {
-    background: #dc3545;
-    padding: 1rem;
-    color: white;
-    border-radius: 4px;
-}
-
-.blazor-error-boundary::after {
-    content: "An error has occurred.";
-}
-
-.valid.modified:not([type=checkbox]) {
-    outline: 1px solid #198754;
-}
-
-.invalid {
-    outline: 1px solid #dc3545;
-}
-
-.validation-message {
-    color: #dc3545;
-    font-size: 0.875rem;
-    margin-top: 0.25rem;
-}
-
-// Retained Bit-specific shim until S04 migration removes BitCard usages.
-.pipeline-card--top > .bit-crd-cnt {
-    flex: 1;
-    display: flex;
-    flex-direction: column;
-}
+@use "utilities/sr-only";
+@use "utilities/scroll";

@@ -1,0 +1,22 @@
+// Raw palette. Do not reference raw $ams-* values from components — use semantic
+// aliases declared in foundation/_root.scss (keyed by [data-ams-theme]) instead.
+
+$ams-neutral-0:   #ffffff;
+$ams-neutral-50:  #f6f7f9;
+$ams-neutral-100: #eceef2;
+$ams-neutral-200: #d6dae1;
+$ams-neutral-300: #bcc2cc;
+$ams-neutral-400: #8a94a6;
+$ams-neutral-500: #5d6678;
+$ams-neutral-600: #3f4856;
+$ams-neutral-700: #2a313c;
+$ams-neutral-800: #1d232c;
+$ams-neutral-900: #11151c;
+
+$ams-accent-500:  #3d7dff;
+$ams-accent-600:  #2f63d9;
+
+$ams-success-500: #1e9e6a;
+$ams-warning-500: #d9a441;
+$ams-danger-500:  #d94a4a;
+$ams-info-500:    #3aa6c2;

@@ -1,0 +1,14 @@
+@use "../tokens/typography" as t;
+
+html, body {
+  font-family: t.$ams-font-sans;
+  font-size: t.$ams-font-size-md;
+  line-height: t.$ams-line-body;
+  color: var(--ams-color-text-primary);
+  background-color: var(--ams-color-surface-1);
+}
+
+h1, h2, h3, h4, h5, h6 {
+  margin: 0;
+  line-height: t.$ams-line-tight;
+}

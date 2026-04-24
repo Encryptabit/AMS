@@ -1,0 +1,7 @@
+// Mobile-first. Only min-width breakpoints. Never write max-width breakpoints
+// in components — see M007-UI-FOUNDATION.md §1.7.
+
+$ams-bp-sm: 480px;
+$ams-bp-md: 768px;
+$ams-bp-lg: 1024px;
+$ams-bp-xl: 1280px;

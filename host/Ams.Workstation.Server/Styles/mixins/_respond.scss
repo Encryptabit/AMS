@@ -1,0 +1,16 @@
+@use "../tokens/breakpoints" as bp;
+
+// Mobile-first min-width breakpoint mixin.
+//
+// Usage:
+//   .my-block {
+//     padding: 1rem;
+//     @include respond-up(md) { padding: 1.5rem; }
+//   }
+@mixin respond-up($size) {
+  @if      $size == sm { @media (min-width: bp.$ams-bp-sm) { @content; } }
+  @else if $size == md { @media (min-width: bp.$ams-bp-md) { @content; } }
+  @else if $size == lg { @media (min-width: bp.$ams-bp-lg) { @content; } }
+  @else if $size == xl { @media (min-width: bp.$ams-bp-xl) { @content; } }
+  @else { @error "respond-up(): unknown breakpoint `#{$size}`. Use sm|md|lg|xl."; }
+}

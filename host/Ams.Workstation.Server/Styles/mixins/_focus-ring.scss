@@ -1,0 +1,6 @@
+@mixin focus-ring($color: var(--ams-color-accent), $offset: 2px) {
+  &:focus-visible {
+    outline: 2px solid $color;
+    outline-offset: $offset;
+  }
+}

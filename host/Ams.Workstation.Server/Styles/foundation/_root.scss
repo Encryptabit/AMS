@@ -1,0 +1,61 @@
+@use "../tokens/color" as c;
+@use "../tokens/spacing" as sp;
+@use "../tokens/radius" as r;
+@use "../tokens/motion" as m;
+
+// Dark theme (default). `:root` declares the same values so elements rendered
+// before interop runs still have tokens resolved; the explicit
+// [data-ams-theme="dark"] selector pins them when the attribute is set.
+:root,
+[data-ams-theme="dark"] {
+  // Semantic color aliases — components reference these, not raw palette.
+  --ams-color-surface-1: #{c.$ams-neutral-900};
+  --ams-color-surface-2: #{c.$ams-neutral-800};
+  --ams-color-surface-3: #{c.$ams-neutral-600};
+  --ams-color-border-subtle: #{c.$ams-neutral-600};
+  --ams-color-text-primary: #{c.$ams-neutral-50};
+  --ams-color-text-secondary: #{c.$ams-neutral-200};
+  --ams-color-text-muted: #{c.$ams-neutral-400};
+  --ams-color-accent: #{c.$ams-accent-500};
+  --ams-color-accent-hover: #{c.$ams-accent-600};
+  --ams-color-success: #{c.$ams-success-500};
+  --ams-color-warning: #{c.$ams-warning-500};
+  --ams-color-danger: #{c.$ams-danger-500};
+  --ams-color-info: #{c.$ams-info-500};
+
+  // Spacing tokens available to components that prefer CSS vars over Sass.
+  --ams-space-1: #{sp.$ams-space-1};
+  --ams-space-2: #{sp.$ams-space-2};
+  --ams-space-3: #{sp.$ams-space-3};
+  --ams-space-4: #{sp.$ams-space-4};
+  --ams-space-6: #{sp.$ams-space-6};
+
+  --ams-radius-2: #{r.$ams-radius-2};
+  --ams-radius-3: #{r.$ams-radius-3};
+
+  --ams-duration-2: #{m.$ams-duration-2};
+  --ams-ease-standard: #{m.$ams-ease-standard};
+
+  // Legacy shell dimensions (kept for continuity during migration).
+  --ams-sidebar-width: 220px;
+  --ams-header-height: 48px;
+}
+
+// Light theme — surfaces map to the high end of the neutral scale, text maps
+// to the low end. Only color tokens need to flip; spacing/radius/motion/shell
+// dimensions are shared with dark.
+[data-ams-theme="light"] {
+  --ams-color-surface-1: #{c.$ams-neutral-0};
+  --ams-color-surface-2: #{c.$ams-neutral-50};
+  --ams-color-surface-3: #{c.$ams-neutral-100};
+  --ams-color-border-subtle: #{c.$ams-neutral-200};
+  --ams-color-text-primary: #{c.$ams-neutral-900};
+  --ams-color-text-secondary: #{c.$ams-neutral-700};
+  --ams-color-text-muted: #{c.$ams-neutral-500};
+  --ams-color-accent: #{c.$ams-accent-600};
+  --ams-color-accent-hover: #{c.$ams-accent-500};
+  --ams-color-success: #{c.$ams-success-500};
+  --ams-color-warning: #{c.$ams-warning-500};
+  --ams-color-danger: #{c.$ams-danger-500};
+  --ams-color-info: #{c.$ams-info-500};
+}

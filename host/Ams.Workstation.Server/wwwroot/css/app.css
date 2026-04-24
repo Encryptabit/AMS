@@ -6,75 +6,156 @@ html, body {
   margin: 0;
   padding: 0;
   height: 100%;
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-  font-size: 14px;
-  line-height: 1.5;
-}
-
-:root {
-  --sidebar-width: 220px;
-  --header-height: 48px;
 }
 
 input, button, select, textarea {
   font-family: inherit;
   font-size: inherit;
+  color: inherit;
 }
 
+:root,
+[data-ams-theme=dark] {
+  --ams-color-surface-1: #11151c;
+  --ams-color-surface-2: #1d232c;
+  --ams-color-surface-3: #3f4856;
+  --ams-color-border-subtle: #3f4856;
+  --ams-color-text-primary: #f6f7f9;
+  --ams-color-text-secondary: #d6dae1;
+  --ams-color-text-muted: #8a94a6;
+  --ams-color-accent: #3d7dff;
+  --ams-color-accent-hover: #2f63d9;
+  --ams-color-success: #1e9e6a;
+  --ams-color-warning: #d9a441;
+  --ams-color-danger: #d94a4a;
+  --ams-color-info: #3aa6c2;
+  --ams-space-1: 0.25rem;
+  --ams-space-2: 0.5rem;
+  --ams-space-3: 0.75rem;
+  --ams-space-4: 1rem;
+  --ams-space-6: 1.5rem;
+  --ams-radius-2: 4px;
+  --ams-radius-3: 8px;
+  --ams-duration-2: 160ms;
+  --ams-ease-standard: cubic-bezier(0.2, 0, 0, 1);
+  --ams-sidebar-width: 220px;
+  --ams-header-height: 48px;
+}
+
+[data-ams-theme=light] {
+  --ams-color-surface-1: #ffffff;
+  --ams-color-surface-2: #f6f7f9;
+  --ams-color-surface-3: #eceef2;
+  --ams-color-border-subtle: #d6dae1;
+  --ams-color-text-primary: #11151c;
+  --ams-color-text-secondary: #2a313c;
+  --ams-color-text-muted: #5d6678;
+  --ams-color-accent: #2f63d9;
+  --ams-color-accent-hover: #3d7dff;
+  --ams-color-success: #1e9e6a;
+  --ams-color-warning: #d9a441;
+  --ams-color-danger: #d94a4a;
+  --ams-color-info: #3aa6c2;
+}
+
+html, body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  font-size: 0.875rem;
+  line-height: 1.5;
+  color: var(--ams-color-text-primary);
+  background-color: var(--ams-color-surface-1);
+}
+
+h1, h2, h3, h4, h5, h6 {
+  margin: 0;
+  line-height: 1.2;
+}
+
+:focus {
+  outline: none;
+}
+
+:focus-visible {
+  outline: 2px solid var(--ams-color-accent);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
 #blazor-error-ui {
-  background: #dc3545;
-  color: white;
+  background: var(--ams-color-danger);
+  color: var(--ams-color-text-primary);
   bottom: 0;
   box-shadow: 0 -2px 8px rgba(0, 0, 0, 0.3);
   display: none;
   left: 0;
-  padding: 1rem;
+  padding: var(--ams-space-4);
   position: fixed;
   width: 100%;
   z-index: 1000;
 }
-
 #blazor-error-ui .dismiss {
   cursor: pointer;
   position: absolute;
-  right: 1rem;
-  top: 0.5rem;
+  right: var(--ams-space-4);
+  top: var(--ams-space-2);
 }
-
 #blazor-error-ui .reload {
-  color: white;
+  color: var(--ams-color-text-primary);
   text-decoration: underline;
 }
 
 .blazor-error-boundary {
-  background: #dc3545;
-  padding: 1rem;
-  color: white;
-  border-radius: 4px;
+  background: var(--ams-color-danger);
+  padding: var(--ams-space-4);
+  color: var(--ams-color-text-primary);
+  border-radius: var(--ams-radius-2);
 }
-
 .blazor-error-boundary::after {
   content: "An error has occurred.";
 }
 
 .valid.modified:not([type=checkbox]) {
-  outline: 1px solid #198754;
+  outline: 1px solid var(--ams-color-success);
 }
 
 .invalid {
-  outline: 1px solid #dc3545;
+  outline: 1px solid var(--ams-color-danger);
 }
 
 .validation-message {
-  color: #dc3545;
+  color: var(--ams-color-danger);
   font-size: 0.875rem;
-  margin-top: 0.25rem;
+  margin-top: var(--ams-space-1);
 }
 
 .pipeline-card--top > .bit-crd-cnt {
   flex: 1;
   display: flex;
   flex-direction: column;
+}
+
+.u-sr-only,
+.u-visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.u-scroll-lock {
+  overflow: hidden;
 }
 
 /*# sourceMappingURL=app.css.map */

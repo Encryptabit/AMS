@@ -1,0 +1,61 @@
+// Blazor-framework visuals + lingering global shims from the pre-M007 app.css.
+// Per M007-UI-FOUNDATION.md §1.2, the framework error/validation visuals live
+// in the global stylesheet. The Bit-specific shim below is retained verbatim
+// from the legacy app.css until S04 removes BitCard usages.
+
+#blazor-error-ui {
+  background: var(--ams-color-danger);
+  color: var(--ams-color-text-primary);
+  bottom: 0;
+  box-shadow: 0 -2px 8px rgba(0, 0, 0, 0.3);
+  display: none;
+  left: 0;
+  padding: var(--ams-space-4);
+  position: fixed;
+  width: 100%;
+  z-index: 1000;
+
+  .dismiss {
+    cursor: pointer;
+    position: absolute;
+    right: var(--ams-space-4);
+    top: var(--ams-space-2);
+  }
+
+  .reload {
+    color: var(--ams-color-text-primary);
+    text-decoration: underline;
+  }
+}
+
+.blazor-error-boundary {
+  background: var(--ams-color-danger);
+  padding: var(--ams-space-4);
+  color: var(--ams-color-text-primary);
+  border-radius: var(--ams-radius-2);
+
+  &::after {
+    content: "An error has occurred.";
+  }
+}
+
+.valid.modified:not([type=checkbox]) {
+  outline: 1px solid var(--ams-color-success);
+}
+
+.invalid {
+  outline: 1px solid var(--ams-color-danger);
+}
+
+.validation-message {
+  color: var(--ams-color-danger);
+  font-size: 0.875rem;
+  margin-top: var(--ams-space-1);
+}
+
+// Retained Bit-specific shim until S04 migration removes BitCard usages.
+.pipeline-card--top > .bit-crd-cnt {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+}
