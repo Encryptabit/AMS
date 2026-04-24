@@ -1,0 +1,62 @@
+[
+  {
+    "type": "info",
+    "text": "[2026-04-24T18:04:19.404Z] Information: Normalizing '_blazor' to 'http://127.0.0.1:35503/_blazor'.",
+    "url": "http://127.0.0.1:35503/prep",
+    "context": "seed"
+  },
+  {
+    "type": "info",
+    "text": "[2026-04-24T18:04:19.428Z] Information: WebSocket connected to ws://127.0.0.1:35503/_blazor?id=bEn4pmfJ-7svOzbylX-fDw.",
+    "url": "http://127.0.0.1:35503/prep",
+    "context": "seed"
+  },
+  {
+    "type": "info",
+    "text": "[2026-04-24T18:04:20.019Z] Information: Normalizing '_blazor' to 'http://127.0.0.1:35503/_blazor'.",
+    "url": "http://127.0.0.1:35503/prep",
+    "context": "prep-viewport"
+  },
+  {
+    "type": "info",
+    "text": "[2026-04-24T18:04:20.026Z] Information: WebSocket connected to ws://127.0.0.1:35503/_blazor?id=gL0OLeqeNNtbmt-TadhA1w.",
+    "url": "http://127.0.0.1:35503/prep",
+    "context": "prep-viewport"
+  },
+  {
+    "type": "info",
+    "text": "[2026-04-24T18:04:22.094Z] Information: Normalizing '_blazor' to 'http://127.0.0.1:35503/_blazor'.",
+    "url": "http://127.0.0.1:35503/prep",
+    "context": "prep-viewport"
+  },
+  {
+    "type": "info",
+    "text": "[2026-04-24T18:04:22.100Z] Information: WebSocket connected to ws://127.0.0.1:35503/_blazor?id=lDYXINRPex079mc_CqMtug.",
+    "url": "http://127.0.0.1:35503/prep",
+    "context": "prep-viewport"
+  },
+  {
+    "type": "info",
+    "text": "[2026-04-24T18:04:24.167Z] Information: Normalizing '_blazor' to 'http://127.0.0.1:35503/_blazor'.",
+    "url": "http://127.0.0.1:35503/prep",
+    "context": "prep-viewport"
+  },
+  {
+    "type": "info",
+    "text": "[2026-04-24T18:04:24.175Z] Information: WebSocket connected to ws://127.0.0.1:35503/_blazor?id=mCM15De-bf_zhRNMW98gOw.",
+    "url": "http://127.0.0.1:35503/prep",
+    "context": "prep-viewport"
+  },
+  {
+    "type": "info",
+    "text": "[2026-04-24T18:04:26.217Z] Information: Normalizing '_blazor' to 'http://127.0.0.1:35503/_blazor'.",
+    "url": "http://127.0.0.1:35503/prep",
+    "context": "theme-toggle"
+  },
+  {
+    "type": "info",
+    "text": "[2026-04-24T18:04:26.223Z] Information: WebSocket connected to ws://127.0.0.1:35503/_blazor?id=LbIvWUeI_WYvYUX9RmPlsw.",
+    "url": "http://127.0.0.1:35503/prep",
+    "context": "theme-toggle"
+  }
+]

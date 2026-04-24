@@ -1,0 +1,757 @@
+{
+  "slice": "M007/S02",
+  "task": "T06",
+  "verdict": "FAIL",
+  "startedAt": "2026-04-24T18:04:18.548Z",
+  "finishedAt": "2026-04-24T18:04:28.457Z",
+  "baseUrl": "http://127.0.0.1:35503",
+  "preconditionWorkingDir": null,
+  "seeded": "unseeded",
+  "counts": {
+    "pass": 13,
+    "fail": 9,
+    "total": 22
+  },
+  "checks": [
+    {
+      "name": "prep.initial_load",
+      "status": "PASS",
+      "detail": "status=200"
+    },
+    {
+      "name": "prep.load",
+      "viewport": "mobile-360",
+      "status": "PASS",
+      "detail": "status=200",
+      "data": null
+    },
+    {
+      "name": "prep.theme_attr",
+      "viewport": "mobile-360",
+      "status": "PASS",
+      "detail": "data-ams-theme=dark",
+      "data": null
+    },
+    {
+      "name": "prep.no_horizontal_overflow",
+      "viewport": "mobile-360",
+      "status": "PASS",
+      "detail": "scrollWidth=360 clientWidth=360",
+      "data": {
+        "scrollWidth": 360,
+        "clientWidth": 360,
+        "offsetHeight": 621
+      }
+    },
+    {
+      "name": "prep.touch_target_any",
+      "viewport": "mobile-360",
+      "status": "FAIL",
+      "detail": "no visible .ams-btn >=44px tall (max=36)",
+      "data": [
+        {
+          "classes": "ams-btn ams-btn--primary ams-btn--sm",
+          "offsetHeight": 36,
+          "offsetWidth": 47,
+          "visible": true,
+          "text": "Prep",
+          "data": null
+        },
+        {
+          "classes": "ams-btn ams-btn--ghost ams-btn--sm",
+          "offsetHeight": 36,
+          "offsetWidth": 50,
+          "visible": true,
+          "text": "Proof",
+          "data": null
+        },
+        {
+          "classes": "ams-btn ams-btn--ghost ams-btn--sm",
+          "offsetHeight": 36,
+          "offsetWidth": 54,
+          "visible": true,
+          "text": "Polish",
+          "data": null
+        },
+        {
+          "classes": "ams-btn ams-btn--danger ams-btn--sm is-disabled",
+          "offsetHeight": 36,
+          "offsetWidth": 58,
+          "visible": true,
+          "text": "Cancel",
+          "data": null
+        },
+        {
+          "classes": "ams-btn ams-btn--primary ams-btn--sm",
+          "offsetHeight": 36,
+          "offsetWidth": 40,
+          "visible": true,
+          "text": "Set",
+          "data": null
+        },
+        {
+          "classes": "ams-btn ams-btn--secondary ams-btn--sm",
+          "offsetHeight": 36,
+          "offsetWidth": 103,
+          "visible": true,
+          "text": "Reset Metadata",
+          "data": null
+        },
+        {
+          "classes": "ams-btn ams-btn--ghost ams-btn--sm",
+          "offsetHeight": 36,
+          "offsetWidth": 60,
+          "visible": true,
+          "text": "☾ Dark",
+          "data": null
+        },
+        {
+          "classes": "ams-btn ams-btn--secondary ams-btn--sm",
+          "offsetHeight": 36,
+          "offsetWidth": 40,
+          "visible": true,
+          "text": "⚙",
+          "data": "pipeline-settings-button"
+        },
+        {
+          "classes": "ams-btn ams-btn--primary ams-btn--sm is-disabled",
+          "offsetHeight": 36,
+          "offsetWidth": 101,
+          "visible": true,
+          "text": "Run batch prep",
+          "data": null
+        },
+        {
+          "classes": "ams-btn ams-btn--danger ams-btn--sm is-disabled",
+          "offsetHeight": 36,
+          "offsetWidth": 89,
+          "visible": true,
+          "text": "Cancel batch",
+          "data": null
+        },
+        {
+          "classes": "ams-btn ams-btn--primary ams-btn--sm",
+          "offsetHeight": 36,
+          "offsetWidth": 89,
+          "visible": true,
+          "text": "+\n                                    Ad",
+          "data": null
+        },
+        {
+          "classes": "ams-btn ams-btn--secondary ams-btn--sm is-disabled",
+          "offsetHeight": 36,
+          "offsetWidth": 85,
+          "visible": true,
+          "text": "Clear queue",
+          "data": null
+        }
+      ]
+    },
+    {
+      "name": "prep.touch_target_all",
+      "viewport": "mobile-360",
+      "status": "FAIL",
+      "detail": "12 visible .ams-btn under 44px",
+      "data": [
+        {
+          "classes": "ams-btn ams-btn--primary ams-btn--sm",
+          "offsetHeight": 36,
+          "offsetWidth": 47,
+          "visible": true,
+          "text": "Prep",
+          "data": null
+        },
+        {
+          "classes": "ams-btn ams-btn--ghost ams-btn--sm",
+          "offsetHeight": 36,
+          "offsetWidth": 50,
+          "visible": true,
+          "text": "Proof",
+          "data": null
+        },
+        {
+          "classes": "ams-btn ams-btn--ghost ams-btn--sm",
+          "offsetHeight": 36,
+          "offsetWidth": 54,
+          "visible": true,
+          "text": "Polish",
+          "data": null
+        },
+        {
+          "classes": "ams-btn ams-btn--danger ams-btn--sm is-disabled",
+          "offsetHeight": 36,
+          "offsetWidth": 58,
+          "visible": true,
+          "text": "Cancel",
+          "data": null
+        },
+        {
+          "classes": "ams-btn ams-btn--primary ams-btn--sm",
+          "offsetHeight": 36,
+          "offsetWidth": 40,
+          "visible": true,
+          "text": "Set",
+          "data": null
+        },
+        {
+          "classes": "ams-btn ams-btn--secondary ams-btn--sm",
+          "offsetHeight": 36,
+          "offsetWidth": 103,
+          "visible": true,
+          "text": "Reset Metadata",
+          "data": null
+        },
+        {
+          "classes": "ams-btn ams-btn--ghost ams-btn--sm",
+          "offsetHeight": 36,
+          "offsetWidth": 60,
+          "visible": true,
+          "text": "☾ Dark",
+          "data": null
+        },
+        {
+          "classes": "ams-btn ams-btn--secondary ams-btn--sm",
+          "offsetHeight": 36,
+          "offsetWidth": 40,
+          "visible": true,
+          "text": "⚙",
+          "data": "pipeline-settings-button"
+        },
+        {
+          "classes": "ams-btn ams-btn--primary ams-btn--sm is-disabled",
+          "offsetHeight": 36,
+          "offsetWidth": 101,
+          "visible": true,
+          "text": "Run batch prep",
+          "data": null
+        },
+        {
+          "classes": "ams-btn ams-btn--danger ams-btn--sm is-disabled",
+          "offsetHeight": 36,
+          "offsetWidth": 89,
+          "visible": true,
+          "text": "Cancel batch",
+          "data": null
+        },
+        {
+          "classes": "ams-btn ams-btn--primary ams-btn--sm",
+          "offsetHeight": 36,
+          "offsetWidth": 89,
+          "visible": true,
+          "text": "+\n                                    Ad",
+          "data": null
+        },
+        {
+          "classes": "ams-btn ams-btn--secondary ams-btn--sm is-disabled",
+          "offsetHeight": 36,
+          "offsetWidth": 85,
+          "visible": true,
+          "text": "Clear queue",
+          "data": null
+        }
+      ]
+    },
+    {
+      "name": "prep.state.empty_workspace_message",
+      "viewport": "mobile-360",
+      "status": "FAIL",
+      "detail": "no-workspace-message missing but PRECONDITION_WORKING_DIR unset",
+      "data": null
+    },
+    {
+      "name": "prep.load",
+      "viewport": "tablet-768",
+      "status": "PASS",
+      "detail": "status=200",
+      "data": null
+    },
+    {
+      "name": "prep.theme_attr",
+      "viewport": "tablet-768",
+      "status": "PASS",
+      "detail": "data-ams-theme=dark",
+      "data": null
+    },
+    {
+      "name": "prep.no_horizontal_overflow",
+      "viewport": "tablet-768",
+      "status": "PASS",
+      "detail": "scrollWidth=768 clientWidth=768",
+      "data": {
+        "scrollWidth": 768,
+        "clientWidth": 768,
+        "offsetHeight": 459
+      }
+    },
+    {
+      "name": "prep.touch_target_any",
+      "viewport": "tablet-768",
+      "status": "FAIL",
+      "detail": "no visible .ams-btn >=44px tall (max=36)",
+      "data": [
+        {
+          "classes": "ams-btn ams-btn--primary ams-btn--sm",
+          "offsetHeight": 36,
+          "offsetWidth": 47,
+          "visible": true,
+          "text": "Prep",
+          "data": null
+        },
+        {
+          "classes": "ams-btn ams-btn--ghost ams-btn--sm",
+          "offsetHeight": 36,
+          "offsetWidth": 50,
+          "visible": true,
+          "text": "Proof",
+          "data": null
+        },
+        {
+          "classes": "ams-btn ams-btn--ghost ams-btn--sm",
+          "offsetHeight": 36,
+          "offsetWidth": 54,
+          "visible": true,
+          "text": "Polish",
+          "data": null
+        },
+        {
+          "classes": "ams-btn ams-btn--danger ams-btn--sm is-disabled",
+          "offsetHeight": 36,
+          "offsetWidth": 58,
+          "visible": true,
+          "text": "Cancel",
+          "data": null
+        },
+        {
+          "classes": "ams-btn ams-btn--primary ams-btn--sm",
+          "offsetHeight": 36,
+          "offsetWidth": 40,
+          "visible": true,
+          "text": "Set",
+          "data": null
+        },
+        {
+          "classes": "ams-btn ams-btn--secondary ams-btn--sm",
+          "offsetHeight": 36,
+          "offsetWidth": 103,
+          "visible": true,
+          "text": "Reset Metadata",
+          "data": null
+        },
+        {
+          "classes": "ams-btn ams-btn--ghost ams-btn--sm",
+          "offsetHeight": 36,
+          "offsetWidth": 60,
+          "visible": true,
+          "text": "☾ Dark",
+          "data": null
+        },
+        {
+          "classes": "ams-btn ams-btn--secondary ams-btn--sm",
+          "offsetHeight": 36,
+          "offsetWidth": 40,
+          "visible": true,
+          "text": "⚙",
+          "data": "pipeline-settings-button"
+        },
+        {
+          "classes": "ams-btn ams-btn--primary ams-btn--sm is-disabled",
+          "offsetHeight": 36,
+          "offsetWidth": 101,
+          "visible": true,
+          "text": "Run batch prep",
+          "data": null
+        },
+        {
+          "classes": "ams-btn ams-btn--danger ams-btn--sm is-disabled",
+          "offsetHeight": 36,
+          "offsetWidth": 89,
+          "visible": true,
+          "text": "Cancel batch",
+          "data": null
+        },
+        {
+          "classes": "ams-btn ams-btn--primary ams-btn--sm",
+          "offsetHeight": 36,
+          "offsetWidth": 89,
+          "visible": true,
+          "text": "+\n                                    Ad",
+          "data": null
+        },
+        {
+          "classes": "ams-btn ams-btn--secondary ams-btn--sm is-disabled",
+          "offsetHeight": 36,
+          "offsetWidth": 85,
+          "visible": true,
+          "text": "Clear queue",
+          "data": null
+        }
+      ]
+    },
+    {
+      "name": "prep.touch_target_all",
+      "viewport": "tablet-768",
+      "status": "FAIL",
+      "detail": "12 visible .ams-btn under 44px",
+      "data": [
+        {
+          "classes": "ams-btn ams-btn--primary ams-btn--sm",
+          "offsetHeight": 36,
+          "offsetWidth": 47,
+          "visible": true,
+          "text": "Prep",
+          "data": null
+        },
+        {
+          "classes": "ams-btn ams-btn--ghost ams-btn--sm",
+          "offsetHeight": 36,
+          "offsetWidth": 50,
+          "visible": true,
+          "text": "Proof",
+          "data": null
+        },
+        {
+          "classes": "ams-btn ams-btn--ghost ams-btn--sm",
+          "offsetHeight": 36,
+          "offsetWidth": 54,
+          "visible": true,
+          "text": "Polish",
+          "data": null
+        },
+        {
+          "classes": "ams-btn ams-btn--danger ams-btn--sm is-disabled",
+          "offsetHeight": 36,
+          "offsetWidth": 58,
+          "visible": true,
+          "text": "Cancel",
+          "data": null
+        },
+        {
+          "classes": "ams-btn ams-btn--primary ams-btn--sm",
+          "offsetHeight": 36,
+          "offsetWidth": 40,
+          "visible": true,
+          "text": "Set",
+          "data": null
+        },
+        {
+          "classes": "ams-btn ams-btn--secondary ams-btn--sm",
+          "offsetHeight": 36,
+          "offsetWidth": 103,
+          "visible": true,
+          "text": "Reset Metadata",
+          "data": null
+        },
+        {
+          "classes": "ams-btn ams-btn--ghost ams-btn--sm",
+          "offsetHeight": 36,
+          "offsetWidth": 60,
+          "visible": true,
+          "text": "☾ Dark",
+          "data": null
+        },
+        {
+          "classes": "ams-btn ams-btn--secondary ams-btn--sm",
+          "offsetHeight": 36,
+          "offsetWidth": 40,
+          "visible": true,
+          "text": "⚙",
+          "data": "pipeline-settings-button"
+        },
+        {
+          "classes": "ams-btn ams-btn--primary ams-btn--sm is-disabled",
+          "offsetHeight": 36,
+          "offsetWidth": 101,
+          "visible": true,
+          "text": "Run batch prep",
+          "data": null
+        },
+        {
+          "classes": "ams-btn ams-btn--danger ams-btn--sm is-disabled",
+          "offsetHeight": 36,
+          "offsetWidth": 89,
+          "visible": true,
+          "text": "Cancel batch",
+          "data": null
+        },
+        {
+          "classes": "ams-btn ams-btn--primary ams-btn--sm",
+          "offsetHeight": 36,
+          "offsetWidth": 89,
+          "visible": true,
+          "text": "+\n                                    Ad",
+          "data": null
+        },
+        {
+          "classes": "ams-btn ams-btn--secondary ams-btn--sm is-disabled",
+          "offsetHeight": 36,
+          "offsetWidth": 85,
+          "visible": true,
+          "text": "Clear queue",
+          "data": null
+        }
+      ]
+    },
+    {
+      "name": "prep.state.empty_workspace_message",
+      "viewport": "tablet-768",
+      "status": "FAIL",
+      "detail": "no-workspace-message missing but PRECONDITION_WORKING_DIR unset",
+      "data": null
+    },
+    {
+      "name": "prep.load",
+      "viewport": "desktop-1280",
+      "status": "PASS",
+      "detail": "status=200",
+      "data": null
+    },
+    {
+      "name": "prep.theme_attr",
+      "viewport": "desktop-1280",
+      "status": "PASS",
+      "detail": "data-ams-theme=dark",
+      "data": null
+    },
+    {
+      "name": "prep.no_horizontal_overflow",
+      "viewport": "desktop-1280",
+      "status": "PASS",
+      "detail": "scrollWidth=1280 clientWidth=1280",
+      "data": {
+        "scrollWidth": 1280,
+        "clientWidth": 1280,
+        "offsetHeight": 422
+      }
+    },
+    {
+      "name": "prep.touch_target_any",
+      "viewport": "desktop-1280",
+      "status": "FAIL",
+      "detail": "no visible .ams-btn >=44px tall (max=36)",
+      "data": [
+        {
+          "classes": "ams-btn ams-btn--primary ams-btn--sm",
+          "offsetHeight": 36,
+          "offsetWidth": 47,
+          "visible": true,
+          "text": "Prep",
+          "data": null
+        },
+        {
+          "classes": "ams-btn ams-btn--ghost ams-btn--sm",
+          "offsetHeight": 36,
+          "offsetWidth": 50,
+          "visible": true,
+          "text": "Proof",
+          "data": null
+        },
+        {
+          "classes": "ams-btn ams-btn--ghost ams-btn--sm",
+          "offsetHeight": 36,
+          "offsetWidth": 54,
+          "visible": true,
+          "text": "Polish",
+          "data": null
+        },
+        {
+          "classes": "ams-btn ams-btn--danger ams-btn--sm is-disabled",
+          "offsetHeight": 36,
+          "offsetWidth": 58,
+          "visible": true,
+          "text": "Cancel",
+          "data": null
+        },
+        {
+          "classes": "ams-btn ams-btn--primary ams-btn--sm",
+          "offsetHeight": 36,
+          "offsetWidth": 40,
+          "visible": true,
+          "text": "Set",
+          "data": null
+        },
+        {
+          "classes": "ams-btn ams-btn--secondary ams-btn--sm",
+          "offsetHeight": 36,
+          "offsetWidth": 103,
+          "visible": true,
+          "text": "Reset Metadata",
+          "data": null
+        },
+        {
+          "classes": "ams-btn ams-btn--ghost ams-btn--sm",
+          "offsetHeight": 36,
+          "offsetWidth": 60,
+          "visible": true,
+          "text": "☾ Dark",
+          "data": null
+        },
+        {
+          "classes": "ams-btn ams-btn--secondary ams-btn--sm",
+          "offsetHeight": 36,
+          "offsetWidth": 40,
+          "visible": true,
+          "text": "⚙",
+          "data": "pipeline-settings-button"
+        },
+        {
+          "classes": "ams-btn ams-btn--primary ams-btn--sm is-disabled",
+          "offsetHeight": 36,
+          "offsetWidth": 101,
+          "visible": true,
+          "text": "Run batch prep",
+          "data": null
+        },
+        {
+          "classes": "ams-btn ams-btn--danger ams-btn--sm is-disabled",
+          "offsetHeight": 36,
+          "offsetWidth": 89,
+          "visible": true,
+          "text": "Cancel batch",
+          "data": null
+        },
+        {
+          "classes": "ams-btn ams-btn--primary ams-btn--sm",
+          "offsetHeight": 36,
+          "offsetWidth": 89,
+          "visible": true,
+          "text": "+\n                                    Ad",
+          "data": null
+        },
+        {
+          "classes": "ams-btn ams-btn--secondary ams-btn--sm is-disabled",
+          "offsetHeight": 36,
+          "offsetWidth": 85,
+          "visible": true,
+          "text": "Clear queue",
+          "data": null
+        }
+      ]
+    },
+    {
+      "name": "prep.touch_target_all",
+      "viewport": "desktop-1280",
+      "status": "FAIL",
+      "detail": "12 visible .ams-btn under 44px",
+      "data": [
+        {
+          "classes": "ams-btn ams-btn--primary ams-btn--sm",
+          "offsetHeight": 36,
+          "offsetWidth": 47,
+          "visible": true,
+          "text": "Prep",
+          "data": null
+        },
+        {
+          "classes": "ams-btn ams-btn--ghost ams-btn--sm",
+          "offsetHeight": 36,
+          "offsetWidth": 50,
+          "visible": true,
+          "text": "Proof",
+          "data": null
+        },
+        {
+          "classes": "ams-btn ams-btn--ghost ams-btn--sm",
+          "offsetHeight": 36,
+          "offsetWidth": 54,
+          "visible": true,
+          "text": "Polish",
+          "data": null
+        },
+        {
+          "classes": "ams-btn ams-btn--danger ams-btn--sm is-disabled",
+          "offsetHeight": 36,
+          "offsetWidth": 58,
+          "visible": true,
+          "text": "Cancel",
+          "data": null
+        },
+        {
+          "classes": "ams-btn ams-btn--primary ams-btn--sm",
+          "offsetHeight": 36,
+          "offsetWidth": 40,
+          "visible": true,
+          "text": "Set",
+          "data": null
+        },
+        {
+          "classes": "ams-btn ams-btn--secondary ams-btn--sm",
+          "offsetHeight": 36,
+          "offsetWidth": 103,
+          "visible": true,
+          "text": "Reset Metadata",
+          "data": null
+        },
+        {
+          "classes": "ams-btn ams-btn--ghost ams-btn--sm",
+          "offsetHeight": 36,
+          "offsetWidth": 60,
+          "visible": true,
+          "text": "☾ Dark",
+          "data": null
+        },
+        {
+          "classes": "ams-btn ams-btn--secondary ams-btn--sm",
+          "offsetHeight": 36,
+          "offsetWidth": 40,
+          "visible": true,
+          "text": "⚙",
+          "data": "pipeline-settings-button"
+        },
+        {
+          "classes": "ams-btn ams-btn--primary ams-btn--sm is-disabled",
+          "offsetHeight": 36,
+          "offsetWidth": 101,
+          "visible": true,
+          "text": "Run batch prep",
+          "data": null
+        },
+        {
+          "classes": "ams-btn ams-btn--danger ams-btn--sm is-disabled",
+          "offsetHeight": 36,
+          "offsetWidth": 89,
+          "visible": true,
+          "text": "Cancel batch",
+          "data": null
+        },
+        {
+          "classes": "ams-btn ams-btn--primary ams-btn--sm",
+          "offsetHeight": 36,
+          "offsetWidth": 89,
+          "visible": true,
+          "text": "+\n                                    Ad",
+          "data": null
+        },
+        {
+          "classes": "ams-btn ams-btn--secondary ams-btn--sm is-disabled",
+          "offsetHeight": 36,
+          "offsetWidth": 85,
+          "visible": true,
+          "text": "Clear queue",
+          "data": null
+        }
+      ]
+    },
+    {
+      "name": "prep.state.empty_workspace_message",
+      "viewport": "desktop-1280",
+      "status": "FAIL",
+      "detail": "no-workspace-message missing but PRECONDITION_WORKING_DIR unset",
+      "data": null
+    },
+    {
+      "name": "prep.theme.attribute_flip",
+      "status": "PASS",
+      "detail": "dark -> light"
+    },
+    {
+      "name": "prep.theme.bg_changed",
+      "status": "PASS",
+      "detail": "bg: rgb(17, 21, 28) -> rgb(255, 255, 255)"
+    },
+    {
+      "name": "prep.console.no_pageerror",
+      "status": "PASS",
+      "detail": "no pageerror entries across all viewports"
+    }
+  ]
+}

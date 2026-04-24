@@ -1,0 +1,230 @@
+[
+  {
+    "url": "http://127.0.0.1:47329/prep",
+    "viewport": "mobile-360",
+    "context": "prep-viewport",
+    "measurements": {
+      "themeAttr": "dark",
+      "prepPage": {
+        "scrollWidth": 360,
+        "clientWidth": 360,
+        "offsetHeight": 128
+      },
+      "amsButtons": [
+        {
+          "classes": "ams-btn ams-btn--primary ams-btn--sm",
+          "offsetHeight": 36,
+          "offsetWidth": 47,
+          "visible": true,
+          "text": "Prep",
+          "data": null,
+          "isMdOrLg": false
+        },
+        {
+          "classes": "ams-btn ams-btn--ghost ams-btn--sm",
+          "offsetHeight": 36,
+          "offsetWidth": 50,
+          "visible": true,
+          "text": "Proof",
+          "data": null,
+          "isMdOrLg": false
+        },
+        {
+          "classes": "ams-btn ams-btn--ghost ams-btn--sm",
+          "offsetHeight": 36,
+          "offsetWidth": 54,
+          "visible": true,
+          "text": "Polish",
+          "data": null,
+          "isMdOrLg": false
+        },
+        {
+          "classes": "ams-btn ams-btn--primary ams-btn--sm is-disabled",
+          "offsetHeight": 36,
+          "offsetWidth": 40,
+          "visible": true,
+          "text": "Set",
+          "data": null,
+          "isMdOrLg": false
+        },
+        {
+          "classes": "ams-btn ams-btn--secondary ams-btn--sm is-disabled",
+          "offsetHeight": 36,
+          "offsetWidth": 103,
+          "visible": true,
+          "text": "Reset Metadata",
+          "data": null,
+          "isMdOrLg": false
+        },
+        {
+          "classes": "ams-btn ams-btn--ghost ams-btn--sm",
+          "offsetHeight": 36,
+          "offsetWidth": 60,
+          "visible": true,
+          "text": "☾ Dark",
+          "data": null,
+          "isMdOrLg": false
+        }
+      ],
+      "noWorkspace": true,
+      "buildIndexForm": false,
+      "queueBuilder": false
+    }
+  },
+  {
+    "url": "http://127.0.0.1:47329/prep",
+    "viewport": "tablet-768",
+    "context": "prep-viewport",
+    "measurements": {
+      "themeAttr": "dark",
+      "prepPage": {
+        "scrollWidth": 768,
+        "clientWidth": 768,
+        "offsetHeight": 110
+      },
+      "amsButtons": [
+        {
+          "classes": "ams-btn ams-btn--primary ams-btn--sm",
+          "offsetHeight": 36,
+          "offsetWidth": 47,
+          "visible": true,
+          "text": "Prep",
+          "data": null,
+          "isMdOrLg": false
+        },
+        {
+          "classes": "ams-btn ams-btn--ghost ams-btn--sm",
+          "offsetHeight": 36,
+          "offsetWidth": 50,
+          "visible": true,
+          "text": "Proof",
+          "data": null,
+          "isMdOrLg": false
+        },
+        {
+          "classes": "ams-btn ams-btn--ghost ams-btn--sm",
+          "offsetHeight": 36,
+          "offsetWidth": 54,
+          "visible": true,
+          "text": "Polish",
+          "data": null,
+          "isMdOrLg": false
+        },
+        {
+          "classes": "ams-btn ams-btn--primary ams-btn--sm is-disabled",
+          "offsetHeight": 36,
+          "offsetWidth": 40,
+          "visible": true,
+          "text": "Set",
+          "data": null,
+          "isMdOrLg": false
+        },
+        {
+          "classes": "ams-btn ams-btn--secondary ams-btn--sm is-disabled",
+          "offsetHeight": 36,
+          "offsetWidth": 103,
+          "visible": true,
+          "text": "Reset Metadata",
+          "data": null,
+          "isMdOrLg": false
+        },
+        {
+          "classes": "ams-btn ams-btn--ghost ams-btn--sm",
+          "offsetHeight": 36,
+          "offsetWidth": 60,
+          "visible": true,
+          "text": "☾ Dark",
+          "data": null,
+          "isMdOrLg": false
+        }
+      ],
+      "noWorkspace": true,
+      "buildIndexForm": false,
+      "queueBuilder": false
+    }
+  },
+  {
+    "url": "http://127.0.0.1:47329/prep",
+    "viewport": "desktop-1280",
+    "context": "prep-viewport",
+    "measurements": {
+      "themeAttr": "dark",
+      "prepPage": {
+        "scrollWidth": 1280,
+        "clientWidth": 1280,
+        "offsetHeight": 91
+      },
+      "amsButtons": [
+        {
+          "classes": "ams-btn ams-btn--primary ams-btn--sm",
+          "offsetHeight": 36,
+          "offsetWidth": 47,
+          "visible": true,
+          "text": "Prep",
+          "data": null,
+          "isMdOrLg": false
+        },
+        {
+          "classes": "ams-btn ams-btn--ghost ams-btn--sm",
+          "offsetHeight": 36,
+          "offsetWidth": 50,
+          "visible": true,
+          "text": "Proof",
+          "data": null,
+          "isMdOrLg": false
+        },
+        {
+          "classes": "ams-btn ams-btn--ghost ams-btn--sm",
+          "offsetHeight": 36,
+          "offsetWidth": 54,
+          "visible": true,
+          "text": "Polish",
+          "data": null,
+          "isMdOrLg": false
+        },
+        {
+          "classes": "ams-btn ams-btn--primary ams-btn--sm is-disabled",
+          "offsetHeight": 36,
+          "offsetWidth": 40,
+          "visible": true,
+          "text": "Set",
+          "data": null,
+          "isMdOrLg": false
+        },
+        {
+          "classes": "ams-btn ams-btn--secondary ams-btn--sm is-disabled",
+          "offsetHeight": 36,
+          "offsetWidth": 103,
+          "visible": true,
+          "text": "Reset Metadata",
+          "data": null,
+          "isMdOrLg": false
+        },
+        {
+          "classes": "ams-btn ams-btn--ghost ams-btn--sm",
+          "offsetHeight": 36,
+          "offsetWidth": 60,
+          "visible": true,
+          "text": "☾ Dark",
+          "data": null,
+          "isMdOrLg": false
+        }
+      ],
+      "noWorkspace": true,
+      "buildIndexForm": false,
+      "queueBuilder": false
+    }
+  },
+  {
+    "url": "http://127.0.0.1:47329/prep",
+    "context": "theme-toggle",
+    "before": {
+      "theme": "dark",
+      "bg": "rgb(17, 21, 28)"
+    },
+    "afterFirst": {
+      "theme": "light",
+      "bg": "rgb(255, 255, 255)"
+    }
+  }
+]

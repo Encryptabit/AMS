@@ -1,0 +1,175 @@
+{
+  "slice": "M007/S02",
+  "task": "T06",
+  "verdict": "PASS",
+  "startedAt": "2026-04-24T18:06:37.726Z",
+  "finishedAt": "2026-04-24T18:06:47.161Z",
+  "baseUrl": "http://127.0.0.1:47195",
+  "preconditionWorkingDir": null,
+  "seeded": "unseeded",
+  "counts": {
+    "pass": 22,
+    "fail": 0,
+    "total": 22
+  },
+  "checks": [
+    {
+      "name": "prep.initial_load",
+      "status": "PASS",
+      "detail": "status=200"
+    },
+    {
+      "name": "prep.load",
+      "viewport": "mobile-360",
+      "status": "PASS",
+      "detail": "status=200",
+      "data": null
+    },
+    {
+      "name": "prep.theme_attr",
+      "viewport": "mobile-360",
+      "status": "PASS",
+      "detail": "data-ams-theme=dark",
+      "data": null
+    },
+    {
+      "name": "prep.no_horizontal_overflow",
+      "viewport": "mobile-360",
+      "status": "PASS",
+      "detail": "scrollWidth=360 clientWidth=360",
+      "data": {
+        "scrollWidth": 360,
+        "clientWidth": 360,
+        "offsetHeight": 128
+      }
+    },
+    {
+      "name": "prep.touch_target_any",
+      "viewport": "mobile-360",
+      "status": "PASS",
+      "detail": "no md/lg .ams-btn on /prep (6 sm buttons; R020 applies to md/lg only)",
+      "data": null
+    },
+    {
+      "name": "prep.touch_target_all",
+      "viewport": "mobile-360",
+      "status": "PASS",
+      "detail": "no md/lg .ams-btn to enforce 44px against (6 sm buttons present)",
+      "data": null
+    },
+    {
+      "name": "prep.state.empty_workspace_message",
+      "viewport": "mobile-360",
+      "status": "PASS",
+      "detail": "[data-ams-prep='no-workspace-message'] present",
+      "data": null
+    },
+    {
+      "name": "prep.load",
+      "viewport": "tablet-768",
+      "status": "PASS",
+      "detail": "status=200",
+      "data": null
+    },
+    {
+      "name": "prep.theme_attr",
+      "viewport": "tablet-768",
+      "status": "PASS",
+      "detail": "data-ams-theme=dark",
+      "data": null
+    },
+    {
+      "name": "prep.no_horizontal_overflow",
+      "viewport": "tablet-768",
+      "status": "PASS",
+      "detail": "scrollWidth=768 clientWidth=768",
+      "data": {
+        "scrollWidth": 768,
+        "clientWidth": 768,
+        "offsetHeight": 110
+      }
+    },
+    {
+      "name": "prep.touch_target_any",
+      "viewport": "tablet-768",
+      "status": "PASS",
+      "detail": "no md/lg .ams-btn on /prep (6 sm buttons; R020 applies to md/lg only)",
+      "data": null
+    },
+    {
+      "name": "prep.touch_target_all",
+      "viewport": "tablet-768",
+      "status": "PASS",
+      "detail": "no md/lg .ams-btn to enforce 44px against (6 sm buttons present)",
+      "data": null
+    },
+    {
+      "name": "prep.state.empty_workspace_message",
+      "viewport": "tablet-768",
+      "status": "PASS",
+      "detail": "[data-ams-prep='no-workspace-message'] present",
+      "data": null
+    },
+    {
+      "name": "prep.load",
+      "viewport": "desktop-1280",
+      "status": "PASS",
+      "detail": "status=200",
+      "data": null
+    },
+    {
+      "name": "prep.theme_attr",
+      "viewport": "desktop-1280",
+      "status": "PASS",
+      "detail": "data-ams-theme=dark",
+      "data": null
+    },
+    {
+      "name": "prep.no_horizontal_overflow",
+      "viewport": "desktop-1280",
+      "status": "PASS",
+      "detail": "scrollWidth=1280 clientWidth=1280",
+      "data": {
+        "scrollWidth": 1280,
+        "clientWidth": 1280,
+        "offsetHeight": 91
+      }
+    },
+    {
+      "name": "prep.touch_target_any",
+      "viewport": "desktop-1280",
+      "status": "PASS",
+      "detail": "no md/lg .ams-btn on /prep (6 sm buttons; R020 applies to md/lg only)",
+      "data": null
+    },
+    {
+      "name": "prep.touch_target_all",
+      "viewport": "desktop-1280",
+      "status": "PASS",
+      "detail": "no md/lg .ams-btn to enforce 44px against (6 sm buttons present)",
+      "data": null
+    },
+    {
+      "name": "prep.state.empty_workspace_message",
+      "viewport": "desktop-1280",
+      "status": "PASS",
+      "detail": "[data-ams-prep='no-workspace-message'] present",
+      "data": null
+    },
+    {
+      "name": "prep.theme.attribute_flip",
+      "status": "PASS",
+      "detail": "dark -> light"
+    },
+    {
+      "name": "prep.theme.bg_changed",
+      "status": "PASS",
+      "detail": "bg: rgb(17, 21, 28) -> rgb(255, 255, 255)"
+    },
+    {
+      "name": "prep.console.no_pageerror",
+      "status": "PASS",
+      "detail": "no pageerror entries across all viewports"
+    }
+  ]
+}
