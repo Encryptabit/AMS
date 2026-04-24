@@ -1,31 +1,139 @@
-/* Home page scoped styles */
-
 .home-container {
-    max-width: 700px;
-    margin: 0 auto;
-    padding: 2rem 0;
+  max-width: 700px;
+  margin: 0 auto;
+  padding: 2rem 1rem;
+}
+
+.home-stack {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 2rem;
 }
 
 .welcome-header {
-    text-align: center;
+  text-align: center;
 }
 
-.getting-started,
-.workspace-info,
-.quick-links {
-    width: 100%;
+.welcome-title {
+  font-size: 1.75rem;
+  line-height: 1.2;
+  margin: 0 0 0.5rem 0;
+  color: var(--ams-color-text-primary);
+}
+
+.welcome-subtitle {
+  margin: 0;
+  color: var(--ams-color-text-secondary);
+  font-size: 0.875rem;
+  line-height: 1.5;
+}
+
+.ams-card {
+  width: 100%;
+  background-color: var(--ams-color-surface-2);
+  border: 1px solid var(--ams-color-border-subtle);
+  border-radius: 8px;
+  padding: 1.5rem;
+  color: var(--ams-color-text-primary);
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.card-subtitle {
+  margin: 0;
+  font-size: 1.125rem;
+  font-weight: 600;
+  line-height: 1.2;
+}
+
+.card-muted {
+  margin: 0;
+  color: var(--ams-color-text-secondary);
+  font-size: 0.875rem;
+  line-height: 1.5;
+}
+
+.card-eyebrow {
+  margin: 0;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--ams-color-text-secondary);
+}
+
+.info-block {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.info-label {
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--ams-color-text-secondary);
+}
+
+.info-value {
+  font-size: 0.875rem;
+  color: var(--ams-color-text-primary);
+}
+
+.info-value--mono {
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+}
+
+.ams-message {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.75rem 1rem;
+  border-radius: 4px;
+  border: 1px solid var(--ams-color-border-subtle);
+  background-color: var(--ams-color-surface-1);
+  color: var(--ams-color-text-primary);
+  font-size: 0.875rem;
+  line-height: 1.5;
+}
+.ams-message p {
+  margin: 0;
+}
+
+.ams-message--success {
+  border-color: var(--ams-color-success);
+}
+
+.ams-message--success .ams-message__icon {
+  color: var(--ams-color-success);
+  font-weight: 700;
+}
+
+.ams-message--warning {
+  border-color: var(--ams-color-warning);
+  flex-direction: column;
+  align-items: flex-start;
 }
 
 .steps-list {
-    margin: 0;
-    padding-left: 1.5rem;
-    opacity: 0.8;
+  margin: 0;
+  padding-left: 1.5rem;
+  color: var(--ams-color-text-secondary);
 }
-
 .steps-list li {
-    margin-bottom: 0.5rem;
+  margin-bottom: 0.5rem;
+}
+.steps-list li:last-child {
+  margin-bottom: 0;
 }
 
-.steps-list li:last-child {
-    margin-bottom: 0;
+.quick-links-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem;
 }
+
+/*# sourceMappingURL=Home.razor.css.map */

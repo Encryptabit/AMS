@@ -85,3 +85,5 @@ host/Ams.Workstation.Server/**/*.css.map
 # Hand-authored legacy .razor.css files (no .scss sibling) stay tracked until their
 # migration slice rewrites them — list each generated file explicitly.
 host/Ams.Workstation.Server/Components/UI/AmsButton.razor.css
+host/Ams.Workstation.Server/Components/Pages/Home.razor.css
+host/Ams.Workstation.Server/Components/Layout/HeaderControls.razor.css

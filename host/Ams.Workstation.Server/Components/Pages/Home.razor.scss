@@ -1,0 +1,144 @@
+// Home page scoped styles (M007/S01/T03 migration).
+@use "../../Styles/tokens/spacing" as sp;
+@use "../../Styles/tokens/radius" as r;
+@use "../../Styles/tokens/typography" as t;
+
+.home-container {
+    max-width: 700px;
+    margin: 0 auto;
+    padding: sp.$ams-space-8 sp.$ams-space-4;
+}
+
+.home-stack {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    gap: sp.$ams-space-8;
+}
+
+.welcome-header {
+    text-align: center;
+}
+
+.welcome-title {
+    font-size: t.$ams-font-size-3xl;
+    line-height: t.$ams-line-tight;
+    margin: 0 0 sp.$ams-space-2 0;
+    color: var(--ams-color-text-primary);
+}
+
+.welcome-subtitle {
+    margin: 0;
+    color: var(--ams-color-text-secondary);
+    font-size: t.$ams-font-size-md;
+    line-height: t.$ams-line-body;
+}
+
+.ams-card {
+    width: 100%;
+    background-color: var(--ams-color-surface-2);
+    border: 1px solid var(--ams-color-border-subtle);
+    border-radius: r.$ams-radius-3;
+    padding: sp.$ams-space-6;
+    color: var(--ams-color-text-primary);
+
+    display: flex;
+    flex-direction: column;
+    gap: sp.$ams-space-4;
+}
+
+.card-subtitle {
+    margin: 0;
+    font-size: t.$ams-font-size-xl;
+    font-weight: 600;
+    line-height: t.$ams-line-tight;
+}
+
+.card-muted {
+    margin: 0;
+    color: var(--ams-color-text-secondary);
+    font-size: t.$ams-font-size-md;
+    line-height: t.$ams-line-body;
+}
+
+.card-eyebrow {
+    margin: 0;
+    font-size: t.$ams-font-size-sm;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--ams-color-text-secondary);
+}
+
+.info-block {
+    display: flex;
+    flex-direction: column;
+    gap: sp.$ams-space-1;
+}
+
+.info-label {
+    font-size: t.$ams-font-size-xs;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--ams-color-text-secondary);
+}
+
+.info-value {
+    font-size: t.$ams-font-size-md;
+    color: var(--ams-color-text-primary);
+}
+
+.info-value--mono {
+    font-family: t.$ams-font-mono;
+}
+
+.ams-message {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: sp.$ams-space-2;
+    padding: sp.$ams-space-3 sp.$ams-space-4;
+    border-radius: r.$ams-radius-2;
+    border: 1px solid var(--ams-color-border-subtle);
+    background-color: var(--ams-color-surface-1);
+    color: var(--ams-color-text-primary);
+    font-size: t.$ams-font-size-md;
+    line-height: t.$ams-line-body;
+
+    p { margin: 0; }
+}
+
+.ams-message--success {
+    border-color: var(--ams-color-success);
+}
+
+.ams-message--success .ams-message__icon {
+    color: var(--ams-color-success);
+    font-weight: 700;
+}
+
+.ams-message--warning {
+    border-color: var(--ams-color-warning);
+    flex-direction: column;
+    align-items: flex-start;
+}
+
+.steps-list {
+    margin: 0;
+    padding-left: sp.$ams-space-6;
+    color: var(--ams-color-text-secondary);
+
+    li {
+        margin-bottom: sp.$ams-space-2;
+
+        &:last-child {
+            margin-bottom: 0;
+        }
+    }
+}
+
+.quick-links-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: sp.$ams-space-4;
+}

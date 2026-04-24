@@ -1,13 +1,41 @@
-@* Minimal vanilla button primitive stub (M007/S01/T01).
-   Real contract (variants, sizes, focus ring) lands in T03 per
-   M007-UI-FOUNDATION.md §3.15. This stub exists only so Blazor CSS
-   isolation can pair AmsButton.razor.scss -> AmsButton.razor.css with
-   an owning component. Not wired into shell yet. *@
+@* Vanilla button primitive. Variants: primary | secondary | ghost | danger.
+   Sizes: sm | md | lg. States: disabled, loading. See M007-UI-FOUNDATION.md §3.15. *@
 
-<button type="@Type" class="ams-btn" @attributes="AdditionalAttributes">@ChildContent</button>
+<button type="@Type"
+        class="@ComposeClasses()"
+        disabled="@Disabled"
+        aria-busy="@(IsLoading ? "true" : null)"
+        @onclick="OnClick"
+        @attributes="AdditionalAttributes">
+    @if (IsLoading)
+    {
+        <span class="ams-btn__spinner" aria-hidden="true"></span>
+    }
+    @if (!string.IsNullOrEmpty(Icon))
+    {
+        <span class="ams-btn__icon" aria-hidden="true">@Icon</span>
+    }
+    <span class="ams-btn__label">@ChildContent</span>
+</button>
 
 @code {
     [Parameter] public RenderFragment? ChildContent { get; set; }
     [Parameter] public string Type { get; set; } = "button";
+    [Parameter] public string Variant { get; set; } = "primary";
+    [Parameter] public string Size { get; set; } = "md";
+    [Parameter] public bool Disabled { get; set; }
+    [Parameter] public bool IsLoading { get; set; }
+    [Parameter] public bool FullWidth { get; set; }
+    [Parameter] public string? Icon { get; set; }
+    [Parameter] public EventCallback<MouseEventArgs> OnClick { get; set; }
     [Parameter(CaptureUnmatchedValues = true)] public IReadOnlyDictionary<string, object>? AdditionalAttributes { get; set; }
+
+    private string ComposeClasses()
+    {
+        var classes = new List<string> { "ams-btn", $"ams-btn--{Variant}", $"ams-btn--{Size}" };
+        if (FullWidth) classes.Add("ams-btn--full");
+        if (IsLoading) classes.Add("is-loading");
+        if (Disabled) classes.Add("is-disabled");
+        return string.Join(' ', classes);
+    }
 }

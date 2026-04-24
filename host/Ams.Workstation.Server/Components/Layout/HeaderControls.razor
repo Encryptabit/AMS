@@ -1,116 +1,155 @@
 @using System.IO
 @using Ams.Core.Common
 @using Ams.Workstation.Server.Components.Navigation
+@using Ams.Workstation.Server.Components.UI
+@using Ams.Workstation.Server.Services
 @implements IDisposable
 @inject NavigationManager NavigationManager
 @inject Ams.Workstation.Server.Services.BlazorWorkspace Workspace
 @inject Ams.Workstation.Server.Services.WorkspaceHistoryService WorkspaceHistory
 @inject Ams.Workstation.Server.Services.BookMetadataResetService MetadataReset
+@inject Ams.Workstation.Server.Services.ThemeService ThemeService
 
 <div class="header-controls">
     <div class="header-nav">
-        <BitButton Variant="@(IsActive(StageRouteCatalog.StageIds.Prep) ? BitVariant.Fill : BitVariant.Text)"
-                   Color="BitColor.Primary"
-                   Size="BitSize.Small"
+        <AmsButton Variant="@(IsActive(StageRouteCatalog.StageIds.Prep) ? "primary" : "ghost")"
+                   Size="sm"
                    OnClick="@(() => NavigateToStage(StageRouteCatalog.StageIds.Prep))">
             Prep
-        </BitButton>
-        <BitButton Variant="@(IsActive(StageRouteCatalog.StageIds.Proof) ? BitVariant.Fill : BitVariant.Text)"
-                   Color="BitColor.Primary"
-                   Size="BitSize.Small"
+        </AmsButton>
+        <AmsButton Variant="@(IsActive(StageRouteCatalog.StageIds.Proof) ? "primary" : "ghost")"
+                   Size="sm"
                    OnClick="@(() => NavigateToStage(StageRouteCatalog.StageIds.Proof))">
             Proof
-        </BitButton>
-        <BitButton Variant="@(IsActive(StageRouteCatalog.StageIds.Polish) ? BitVariant.Fill : BitVariant.Text)"
-                   Color="BitColor.Primary"
-                   Size="BitSize.Small"
+        </AmsButton>
+        <AmsButton Variant="@(IsActive(StageRouteCatalog.StageIds.Polish) ? "primary" : "ghost")"
+                   Size="sm"
                    OnClick="@(() => NavigateToStage(StageRouteCatalog.StageIds.Polish))">
             Polish
-        </BitButton>
+        </AmsButton>
     </div>
 
     <div class="header-chapter">
         @if (Workspace.AvailableChapters.Count > 0)
         {
-            <BitDropdown TItem="BitDropdownItem<string>"
-                         TValue="string"
-                         Items="@chapterItems"
-                         @bind-Value="selectedChapter"
-                         Placeholder="Select chapter"
-                         Style="min-width: 200px;"
-                         OnChange="OnChapterChange" />
+            <select class="ams-select"
+                    aria-label="Select chapter"
+                    data-ams-header-control="chapter"
+                    value="@(selectedChapter ?? string.Empty)"
+                    @onchange="OnChapterSelectChanged">
+                <option value="" disabled selected="@(string.IsNullOrEmpty(selectedChapter))">Select chapter</option>
+                @foreach (var chapter in Workspace.AvailableChapters)
+                {
+                    <option value="@chapter" selected="@(chapter == selectedChapter)">@chapter</option>
+                }
+            </select>
         }
     </div>
 
     <SectionOutlet SectionName="header-extra" />
 
     <div class="header-directory">
-        <BitDropdown TItem="BitDropdownItem<string>"
-                     TValue="string"
-                     Items="@savedWorkspaceItems"
-                     @bind-Value="selectedSavedWorkspace"
-                     Placeholder="Saved workspaces"
-                     Style="width: 220px; flex-shrink: 1; min-width: 120px;"
-                     OnChange="OnSavedWorkspaceChange" />
-        <BitTextField @bind-Value="workingDirectory"
-                      Immediate="true"
-                      Placeholder="Working directory..."
-                      Style="width: 220px; flex-shrink: 1; min-width: 120px;"
-                      OnKeyDown="OnDirectoryKeyDown" />
-        <BitButton Variant="BitVariant.Fill"
-                   Color="BitColor.Primary"
-                   Size="BitSize.Small"
-                   OnClick="SetDirectory"
-                   IsEnabled="@(!string.IsNullOrWhiteSpace(workingDirectory))">
+        <select class="ams-select ams-select--workspace"
+                aria-label="Saved workspaces"
+                data-ams-header-control="saved-workspaces"
+                value="@(selectedSavedWorkspace ?? string.Empty)"
+                @onchange="OnSavedWorkspaceSelectChanged">
+            <option value="" disabled selected="@(string.IsNullOrEmpty(selectedSavedWorkspace))">Saved workspaces</option>
+            @foreach (var item in savedWorkspaceItems)
+            {
+                <option value="@item.Value" selected="@(item.Value == selectedSavedWorkspace)">@item.Text</option>
+            }
+        </select>
+        <input type="text"
+               class="ams-input ams-input--workspace"
+               placeholder="Working directory..."
+               aria-label="Working directory"
+               data-ams-header-control="working-directory"
+               value="@workingDirectory"
+               @oninput="OnDirectoryInput"
+               @onkeydown="OnDirectoryKeyDown" />
+        <AmsButton Variant="primary"
+                   Size="sm"
+                   Disabled="@string.IsNullOrWhiteSpace(workingDirectory)"
+                   OnClick="SetDirectory">
             Set
-        </BitButton>
-        <BitButton Variant="BitVariant.Outline"
-                   Color="BitColor.Warning"
-                   Size="BitSize.Small"
-                   OnClick="ResetMetadataAsync"
-                   IsEnabled="@Workspace.IsInitialized">
+        </AmsButton>
+        <AmsButton Variant="secondary"
+                   Size="sm"
+                   Disabled="@(!Workspace.IsInitialized)"
+                   OnClick="ResetMetadataAsync">
             Reset Metadata
-        </BitButton>
-        <BitCheckbox Label="Precompute Peaks In Background"
-                     Value="@Workspace.PrecomputePeaksInBackground"
-                     OnChange="HandlePrecomputePeaksToggle" />
+        </AmsButton>
+        <label class="ams-checkbox">
+            <input type="checkbox"
+                   checked="@Workspace.PrecomputePeaksInBackground"
+                   @onchange="OnPrecomputePeaksChanged" />
+            <span>Precompute Peaks In Background</span>
+        </label>
+        <AmsButton Variant="ghost"
+                   Size="sm"
+                   OnClick="ToggleThemeAsync"
+                   data-ams-header-control="theme-toggle"
+                   aria-label="@ThemeToggleAriaLabel">
+            @ThemeToggleLabel
+        </AmsButton>
     </div>
 </div>
 
 @if (!string.IsNullOrEmpty(message))
 {
     <div class="error-toast">
-        <BitMessage Color="@messageColor" OnDismiss="DismissMessage">
-            @message
-        </BitMessage>
+        <div class="ams-message @MessageCssClass" role="status">
+            <span class="ams-message__text">@message</span>
+            <button type="button" class="ams-message__dismiss" aria-label="Dismiss" @onclick="DismissMessage">×</button>
+        </div>
     </div>
 }
 
-<BitDialog @bind-IsOpen="isResetDialogOpen"
-           Title="Reset Metadata"
-           Message="@resetDialogMessage"
-           OkText="Reset"
-           CancelText="Cancel"
-           IsBlocking="true"
-           OnOk="ConfirmReset"
-           OnCancel="() => isResetDialogOpen = false" />
+@if (isResetDialogOpen)
+{
+    <div class="ams-dialog-backdrop" role="presentation" @onclick="CancelReset"></div>
+    <div class="ams-dialog" role="dialog" aria-modal="true" aria-labelledby="reset-dialog-title">
+        <h2 class="ams-dialog__title" id="reset-dialog-title">Reset Metadata</h2>
+        <p class="ams-dialog__message">@resetDialogMessage</p>
+        <div class="ams-dialog__actions">
+            <AmsButton Variant="secondary" Size="sm" OnClick="CancelReset">Cancel</AmsButton>
+            <AmsButton Variant="danger" Size="sm" OnClick="ConfirmReset">Reset</AmsButton>
+        </div>
+    </div>
+}
 
 @code {
+    private enum MessageTone { Error, Warning, Success }
+
+    private sealed record WorkspaceOption(string Text, string Value);
+
     private string workingDirectory = string.Empty;
     private string? selectedChapter;
     private string? selectedSavedWorkspace;
     private string? message;
-    private BitColor messageColor = BitColor.Error;
+    private MessageTone messageTone = MessageTone.Error;
     private StageRouteMatch? currentRoute;
-    private List<BitDropdownItem<string>> chapterItems = new();
-    private List<BitDropdownItem<string>> savedWorkspaceItems = new();
+    private List<WorkspaceOption> savedWorkspaceItems = new();
     private bool isResetDialogOpen;
     private string resetDialogMessage = string.Empty;
+
+    private string MessageCssClass => messageTone switch
+    {
+        MessageTone.Success => "ams-message--success",
+        MessageTone.Warning => "ams-message--warning",
+        _ => "ams-message--error",
+    };
+
+    private string ThemeToggleLabel => ThemeService.Current == AmsTheme.Dark ? "☾ Dark" : "☀ Light";
+    private string ThemeToggleAriaLabel
+        => ThemeService.Current == AmsTheme.Dark ? "Switch to light theme" : "Switch to dark theme";
 
     protected override void OnInitialized()
     {
         UpdateCurrentPath();
         NavigationManager.LocationChanged += OnLocationChanged;
+        ThemeService.ThemeChanged += OnThemeChanged;
 
         // Restore state
         if (!string.IsNullOrEmpty(Workspace.WorkingDirectory))
@@ -118,7 +157,6 @@
             workingDirectory = Workspace.WorkingDirectory;
             selectedSavedWorkspace = workingDirectory;
             WorkspaceHistory.RememberWorkspace(workingDirectory);
-            RefreshChapterList();
         }
 
         if (!string.IsNullOrEmpty(Workspace.CurrentChapterName))
@@ -134,6 +172,11 @@
         UpdateCurrentPath();
         SyncSelectedChapter();
         StateHasChanged();
+    }
+
+    private void OnThemeChanged(AmsTheme _)
+    {
+        InvokeAsync(StateHasChanged);
     }
 
     private void SyncSelectedChapter()
@@ -162,6 +205,11 @@
         NavigationManager.NavigateTo(StageRouteCatalog.GetStageEntryPath(stageId));
     }
 
+    private void OnDirectoryInput(ChangeEventArgs e)
+    {
+        workingDirectory = e.Value?.ToString() ?? string.Empty;
+    }
+
     private void OnDirectoryKeyDown(KeyboardEventArgs e)
     {
         if (e.Key == "Enter")
@@ -182,13 +230,13 @@
 
         if (!Directory.Exists(normalizedPath))
         {
-            SetMessage($"Directory does not exist: {normalizedPath}", BitColor.Error);
+            SetMessage($"Directory does not exist: {normalizedPath}", MessageTone.Error);
             return;
         }
 
         if (!Workspace.SetWorkingDirectory(normalizedPath))
         {
-            SetMessage($"Failed to initialize workspace: {normalizedPath}", BitColor.Error);
+            SetMessage($"Failed to initialize workspace: {normalizedPath}", MessageTone.Error);
             return;
         }
 
@@ -204,7 +252,6 @@
     {
         var paths = WorkspaceHistory.GetSavedWorkspaces(existingOnly: true).ToList();
 
-        // Build display names from folder name, numbering duplicates
         var nameCounts = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
         var displayNames = new List<string>(paths.Count);
 
@@ -218,9 +265,8 @@
             displayNames.Add(folderName);
         }
 
-        // Second pass: append (2), (3), etc. for duplicates
         var emitted = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
-        savedWorkspaceItems = new List<BitDropdownItem<string>>(paths.Count);
+        savedWorkspaceItems = new List<WorkspaceOption>(paths.Count);
         for (int i = 0; i < paths.Count; i++)
         {
             var name = displayNames[i];
@@ -232,44 +278,42 @@
                 emitted[name] = seq;
                 if (seq > 1) text = $"{name} ({seq})";
             }
-            savedWorkspaceItems.Add(new BitDropdownItem<string> { Text = text, Value = paths[i] });
+            savedWorkspaceItems.Add(new WorkspaceOption(text, paths[i]));
         }
     }
 
-    private void RefreshChapterList()
+    private void OnSavedWorkspaceSelectChanged(ChangeEventArgs e)
     {
-        chapterItems.Clear();
-
-        if (Workspace.HasBookIndex && Workspace.AvailableChapters.Count > 0)
-        {
-            chapterItems = Workspace.AvailableChapters
-                .Select(c => new BitDropdownItem<string> { Text = c, Value = c })
-                .ToList();
-        }
-    }
-
-    private void OnSavedWorkspaceChange(string? path)
-    {
+        var path = e.Value?.ToString();
         if (string.IsNullOrWhiteSpace(path))
         {
             return;
         }
 
         workingDirectory = path;
+        selectedSavedWorkspace = path;
         SetDirectory();
     }
 
-    private void OnChapterChange(string? chapter)
+    private void OnChapterSelectChanged(ChangeEventArgs e)
     {
+        var chapter = e.Value?.ToString();
         if (!string.IsNullOrEmpty(chapter) && Workspace.SelectChapter(chapter))
         {
+            selectedChapter = chapter;
             NavigationManager.NavigateTo(StageRouteCatalog.BuildProofChapterCompatibilityPath(chapter));
         }
     }
 
-    private void HandlePrecomputePeaksToggle(bool enabled)
+    private void OnPrecomputePeaksChanged(ChangeEventArgs e)
     {
+        var enabled = e.Value is bool b && b;
         Workspace.SetPrecomputePeaksInBackground(enabled);
+    }
+
+    private async Task ToggleThemeAsync()
+    {
+        await ThemeService.ToggleAsync().ConfigureAwait(true);
     }
 
     private void ResetMetadataAsync()
@@ -278,7 +322,7 @@
 
         if (!Workspace.IsInitialized || string.IsNullOrWhiteSpace(Workspace.WorkingDirectory))
         {
-            SetMessage("Set a workspace before resetting metadata.", BitColor.Warning);
+            SetMessage("Set a workspace before resetting metadata.", MessageTone.Warning);
             return;
         }
 
@@ -292,13 +336,18 @@
     {
         isResetDialogOpen = false;
         var result = MetadataReset.ResetCurrentBook();
-        SetMessage(result.Message, result.Success ? BitColor.Success : BitColor.Error);
+        SetMessage(result.Message, result.Success ? MessageTone.Success : MessageTone.Error);
     }
 
-    private void SetMessage(string text, BitColor color)
+    private void CancelReset()
+    {
+        isResetDialogOpen = false;
+    }
+
+    private void SetMessage(string text, MessageTone tone)
     {
         message = text;
-        messageColor = color;
+        messageTone = tone;
     }
 
     private void DismissMessage()
@@ -309,5 +358,6 @@
     public void Dispose()
     {
         NavigationManager.LocationChanged -= OnLocationChanged;
+        ThemeService.ThemeChanged -= OnThemeChanged;
     }
 }
