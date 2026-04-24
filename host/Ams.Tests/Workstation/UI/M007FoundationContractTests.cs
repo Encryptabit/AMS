@@ -26,6 +26,7 @@ public sealed class M007FoundationContractTests
     private static readonly string[] MigratedRazorDirectories =
     [
         "host/Ams.Workstation.Server/Components/UI",
+        "host/Ams.Workstation.Server/Components/Pages/Prep",
     ];
 
     private static readonly Regex BitTagPattern = new("<Bit[A-Z]", RegexOptions.CultureInvariant | RegexOptions.Compiled);

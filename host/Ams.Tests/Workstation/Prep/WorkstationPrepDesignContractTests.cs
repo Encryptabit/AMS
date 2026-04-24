@@ -6,25 +6,16 @@ namespace Ams.Tests.Workstation.Prep;
 public sealed class WorkstationPrepDesignContractTests
 {
     private const string PrepIndexRelativePath = "host/Ams.Workstation.Server/Components/Pages/Prep/Index.razor";
-    private const string PrepCssRelativePath = "host/Ams.Workstation.Server/Components/Pages/Prep/Index.razor.css";
+    private const string PrepScssRelativePath = "host/Ams.Workstation.Server/Components/Pages/Prep/Index.razor.scss";
 
-    private static readonly string[] ExpectedCustomUtilitySelectors =
+    private static readonly string[] AllowedTopLevelSelectorPrefixes =
     [
-        "prep-control-section",
-        "prep-control-sections",
-        "prep-field-min",
-        "prep-field-min--wide",
-        "prep-grid",
-        "prep-grid--compact",
-        "prep-header-extra",
-        "prep-inline-note",
-        "prep-kv",
-        "prep-mono",
-        "prep-page",
-        "prep-running-status",
-        "prep-table",
-        "prep-warning-list",
-        "prep-wrap"
+        ".prep-",
+        ".pipeline-",
+        ".inspector-",
+        ".history-",
+        ".queue-builder-",
+        ".throughput-"
     ];
 
     [Fact]
@@ -42,57 +33,80 @@ public sealed class WorkstationPrepDesignContractTests
     }
 
     [Fact]
-    public void PrepPage_ContainsBitFirstAnchors_AndRequiredDiagnosticsSurfaces()
+    public void PrepPage_IsBitFree_AndDeclaresVanillaDiagnosticSurfaces()
     {
         var source = ReadRepoFile(PrepIndexRelativePath);
 
-        var requiredBitAnchors = new[]
+        var bitMatches = Regex.Matches(source, "<Bit[A-Z][A-Za-z0-9]*", RegexOptions.CultureInvariant);
+        if (bitMatches.Count > 0)
         {
-            "<BitStack Horizontal=\"true\"",
-            "<BitCard>",
-            "<BitMessage",
-            "<BitDropdown",
-            "<BitCheckbox",
-            "<BitButton Variant=\"BitVariant.Fill\"",
-            "<BitProgress"
+            var offenders = bitMatches
+                .Select(m => $"{PrepIndexRelativePath}:{GetLineNumber(source, m.Index)}:{m.Value}")
+                .ToArray();
+            Assert.Fail(
+                $"Found {bitMatches.Count} Bit.BlazorUI tag occurrence(s) in '{PrepIndexRelativePath}'. Prep must be fully vanilla after M007/S02. Offenders:\n{string.Join("\n", offenders)}");
+        }
+
+        var requiredLiteralAnchors = new[]
+        {
+            "<AmsButton",
+            "<AmsTag",
+            "<AmsProgress",
+            "<AmsTabs",
+            "<AmsTabItem",
+            "<AmsDialog",
+            "<AmsRangeSlider",
+            "<input type=\"checkbox\"",
+            "data-ams-prep=\"queue-builder\"",
+            "data-ams-prep=\"throughput\"",
+            "data-ams-prep=\"pipeline-tabs\"",
+            "data-ams-prep=\"pipeline-settings-button\""
         };
 
-        var requiredDiagnosticsAnchors = new[]
+        foreach (var anchor in requiredLiteralAnchors)
+        {
+            if (!source.Contains(anchor, StringComparison.Ordinal))
+            {
+                Assert.Fail(
+                    $"Missing required vanilla/native anchor '{anchor}' in '{PrepIndexRelativePath}'. Migrated Prep page must expose this surface so UAT and contract tests have a stable selector.");
+            }
+        }
+
+        // <select> uses .ams-select as one class in a possibly-multi-class attribute
+        // (e.g. class="ams-select prep-field-min"), so match the class token within the attribute.
+        if (!Regex.IsMatch(source, "<select\\b[^>]*\\bclass\\s*=\\s*\"[^\"]*\\bams-select\\b", RegexOptions.CultureInvariant))
+        {
+            Assert.Fail(
+                $"Missing required native '<select class=\"... ams-select ...\">' anchor in '{PrepIndexRelativePath}'. Operator controls must use the project-owned ams-select class so post-Bit UAT can target the dropdown.");
+        }
+
+        if (!Regex.IsMatch(source, "data-ams-inspector-section=\"", RegexOptions.CultureInvariant))
+        {
+            Assert.Fail(
+                $"Missing required anchor 'data-ams-inspector-section=\"...\"' in '{PrepIndexRelativePath}'. Inspector panel must expose at least one tagged section for UAT parity.");
+        }
+
+        var requiredSectionHeaders = new[]
         {
             "Pipeline Dashboard",
-            "Run batch prep",
-            "Queue Builder + Pipeline Throughput",
-            "Runtime readiness snapshot",
-            "Last typed request snapshot",
-            "Option normalization warnings",
-            "Progress timeline",
-            "Last artifact set",
-            "Last book-index request"
+            "Queue Builder",
+            "Pipeline Throughput",
+            "Runtime",
+            "Pipeline settings"
         };
 
-        foreach (var anchor in requiredBitAnchors)
+        foreach (var header in requiredSectionHeaders)
         {
-            AssertContainsAnchor(source, PrepIndexRelativePath, anchor, "Bit-first composition anchor");
+            if (!source.Contains(header, StringComparison.Ordinal))
+            {
+                Assert.Fail(
+                    $"Missing required diagnostics section header '{header}' in '{PrepIndexRelativePath}'. Operator-facing section label is part of the Prep UI contract.");
+            }
         }
-
-        foreach (var anchor in requiredDiagnosticsAnchors)
-        {
-            AssertContainsAnchor(source, PrepIndexRelativePath, anchor, "Prep diagnostics surface anchor");
-        }
-
-        var bitCardCount = Regex.Matches(source, "<BitCard>", RegexOptions.CultureInvariant).Count;
-        Assert.True(
-            bitCardCount >= 5,
-            $"Expected at least five BitCard layout anchors in '{PrepIndexRelativePath}' to maintain Bit-first sectional composition, but found {bitCardCount}.");
-
-        var diagnosticsTableCount = Regex.Matches(source, "<table class=\"prep-table\">", RegexOptions.CultureInvariant).Count;
-        Assert.True(
-            diagnosticsTableCount >= 3,
-            $"Expected at least three diagnostics table anchors in '{PrepIndexRelativePath}' (stage results, progress timeline, artifacts), but found {diagnosticsTableCount}.");
     }
 
     [Fact]
-    public void PrepPage_DoesNotReintroduceForbiddenCustomStylingPatterns()
+    public void PrepPage_DoesNotReintroduceForbiddenInlinePatterns()
     {
         var source = ReadRepoFile(PrepIndexRelativePath);
 
@@ -108,7 +122,7 @@ public sealed class WorkstationPrepDesignContractTests
             "\\sstyle\\s*=",
             RegexOptions.CultureInvariant | RegexOptions.IgnoreCase,
             PrepIndexRelativePath,
-            "inline style attribute");
+            "inline style= attribute (progress fills are owned by <AmsProgress>)");
 
         AssertDoesNotMatch(
             source,
@@ -134,64 +148,96 @@ public sealed class WorkstationPrepDesignContractTests
     }
 
     [Fact]
-    public void PrepCss_StaysWithinAllowlistedUtilitySelectors_AndTokenizedStyles()
+    public void PrepScss_UsesAmsTokensAndApprovedSelectors()
     {
-        var source = ReadRepoFile(PrepCssRelativePath);
-        var selectors = ExtractPrepSelectors(source);
+        var source = ReadRepoFile(PrepScssRelativePath);
 
-        Assert.Equal(ExpectedCustomUtilitySelectors, selectors);
-
-        AssertDoesNotMatch(
-            source,
-            "#[0-9a-fA-F]{3,8}\\b",
-            RegexOptions.CultureInvariant,
-            PrepCssRelativePath,
-            "hardcoded hex color literal");
-
-        AssertDoesNotMatch(
-            source,
-            "border-radius\\s*:",
-            RegexOptions.CultureInvariant | RegexOptions.IgnoreCase,
-            PrepCssRelativePath,
-            "non-zero-radius custom chrome declaration");
-
-        AssertDoesNotMatch(
-            source,
-            "box-shadow\\s*:",
-            RegexOptions.CultureInvariant | RegexOptions.IgnoreCase,
-            PrepCssRelativePath,
-            "custom shadow chrome declaration");
-
-        AssertDoesNotMatch(
-            source,
-            "!important",
-            RegexOptions.CultureInvariant | RegexOptions.IgnoreCase,
-            PrepCssRelativePath,
-            "style override via !important");
-
-        AssertContainsAnchor(source, PrepCssRelativePath, "var(--bit-clr-bg-sec)", "Bit tokenized tonal background");
-        AssertContainsAnchor(source, PrepCssRelativePath, "var(--bit-clr-brd-sec)", "Bit tokenized subtle border");
-        AssertContainsAnchor(source, PrepCssRelativePath, "var(--bit-clr-fg-secondary)", "Bit tokenized secondary foreground");
-    }
-
-    private static string[] ExtractPrepSelectors(string source)
-    {
-        var selectorMatches = Regex.Matches(
-            source,
-            "(?m)^\\.(?<selector>prep-[a-z0-9-]+)(?=\\s*(?:,|\\{))",
-            RegexOptions.CultureInvariant);
-
-        var selectors = selectorMatches
-            .Select(match => match.Groups["selector"].Value)
-            .Distinct(StringComparer.Ordinal)
-            .OrderBy(selector => selector, StringComparer.Ordinal)
-            .ToArray();
+        var bitTokenMatches = Regex.Matches(source, "var\\(--bit-clr-[A-Za-z0-9-]+\\)", RegexOptions.CultureInvariant);
+        if (bitTokenMatches.Count > 0)
+        {
+            var offenders = bitTokenMatches
+                .Select(m => $"{PrepScssRelativePath}:{GetLineNumber(source, m.Index)}:{m.Value}")
+                .ToArray();
+            Assert.Fail(
+                $"Found {bitTokenMatches.Count} Bit custom-property reference(s) in '{PrepScssRelativePath}'. Prep SCSS must consume only --ams-* tokens. Offenders:\n{string.Join("\n", offenders)}");
+        }
 
         Assert.True(
-            selectors.Length > 0,
-            $"Expected prep scoped CSS selectors in '{PrepCssRelativePath}', but none were found.");
+            Regex.IsMatch(source, "var\\(--ams-color-[A-Za-z0-9-]+\\)", RegexOptions.CultureInvariant),
+            $"Expected at least one 'var(--ams-color-*)' reference in '{PrepScssRelativePath}' to prove token consumption.");
 
-        return selectors;
+        Assert.True(
+            Regex.IsMatch(source, "(?m)^\\.prep-grid-12\\s*\\{", RegexOptions.CultureInvariant),
+            $"Expected top-level '.prep-grid-12' selector in '{PrepScssRelativePath}' — the 12-column pipeline grid block is part of the Prep layout contract.");
+
+        var disallowedSelectors = ExtractDisallowedTopLevelSelectors(source);
+        if (disallowedSelectors.Count > 0)
+        {
+            Assert.Fail(
+                $"Found {disallowedSelectors.Count} disallowed top-level selector(s)/at-rule(s) in '{PrepScssRelativePath}'. Every top-level block must be a '@use' / '@forward' directive, a '@media' / '@for' at-rule, or a class selector starting with one of: {string.Join(", ", AllowedTopLevelSelectorPrefixes)}.\n{string.Join("\n", disallowedSelectors)}");
+        }
+    }
+
+    private static IReadOnlyList<string> ExtractDisallowedTopLevelSelectors(string source)
+    {
+        var normalized = source.Replace("\r\n", "\n", StringComparison.Ordinal);
+        var lines = normalized.Split('\n');
+        var disallowed = new List<string>();
+
+        for (var i = 0; i < lines.Length; i++)
+        {
+            var raw = lines[i];
+            if (raw.Length == 0)
+            {
+                continue;
+            }
+
+            // Top-level = starts at column 0, not whitespace, not a comment.
+            var first = raw[0];
+            if (first == ' ' || first == '\t' || first == '}' || first == '/')
+            {
+                continue;
+            }
+
+            var trimmed = raw.TrimEnd();
+
+            // Only consider block-opening lines (end with '{') or directive lines (@use/@forward ending ';').
+            if (trimmed.EndsWith(";", StringComparison.Ordinal))
+            {
+                if (trimmed.StartsWith("@use", StringComparison.Ordinal)
+                    || trimmed.StartsWith("@forward", StringComparison.Ordinal))
+                {
+                    continue;
+                }
+
+                disallowed.Add($"{PrepScssRelativePath}:{i + 1}:{trimmed}");
+                continue;
+            }
+
+            if (!trimmed.EndsWith("{", StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            if (trimmed.StartsWith("@media", StringComparison.Ordinal)
+                || trimmed.StartsWith("@for", StringComparison.Ordinal)
+                || trimmed.StartsWith("@supports", StringComparison.Ordinal)
+                || trimmed.StartsWith("@keyframes", StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            var selectorBody = trimmed[..^1].TrimEnd();
+            var isAllowedClassSelector = AllowedTopLevelSelectorPrefixes.Any(prefix =>
+                selectorBody.StartsWith(prefix, StringComparison.Ordinal));
+
+            if (!isAllowedClassSelector)
+            {
+                disallowed.Add($"{PrepScssRelativePath}:{i + 1}:{trimmed}");
+            }
+        }
+
+        return disallowed;
     }
 
     private static IReadOnlyList<string> ExtractAndValidateRouteTemplates(string relativePath)
@@ -231,18 +277,30 @@ public sealed class WorkstationPrepDesignContractTests
         return routeTemplates;
     }
 
-    private static void AssertContainsAnchor(string source, string relativePath, string anchor, string description)
-    {
-        Assert.True(
-            source.Contains(anchor, StringComparison.Ordinal),
-            $"Missing anchor '{description}' in '{relativePath}'. Expected snippet: {anchor}");
-    }
-
     private static void AssertDoesNotMatch(string source, string pattern, RegexOptions options, string relativePath, string description)
     {
-        Assert.False(
-            Regex.IsMatch(source, pattern, options),
-            $"Found forbidden {description} in '{relativePath}'. Pattern: {pattern}");
+        var match = Regex.Match(source, pattern, options);
+        if (!match.Success)
+        {
+            return;
+        }
+
+        var lineNumber = GetLineNumber(source, match.Index);
+        Assert.Fail($"Found forbidden {description} in '{relativePath}':{lineNumber}. Pattern: {pattern}. Matched: '{match.Value}'.");
+    }
+
+    private static int GetLineNumber(string source, int index)
+    {
+        var line = 1;
+        var upper = Math.Min(index, source.Length);
+        for (var i = 0; i < upper; i++)
+        {
+            if (source[i] == '\n')
+            {
+                line++;
+            }
+        }
+        return line;
     }
 
     private static string ReadRepoFile(string relativePath)
