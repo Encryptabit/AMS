@@ -1,0 +1,99 @@
+@* Vanilla dual-thumb range primitive. Two overlaid <input type="range"> elements
+   clamp so LowerValue <= UpperValue. Scoped layout overlay lives in AmsRangeSlider.razor.scss. *@
+
+<div class="ams-range-slider" @attributes="AdditionalAttributes">
+    <input type="range"
+           class="ams-range-slider__input ams-range-slider__input--lower"
+           min="@Min"
+           max="@Max"
+           step="@Step"
+           value="@LowerValue"
+           @oninput="OnLowerInput"
+           disabled="@(!IsEnabled)"
+           aria-label="Lower bound" />
+    <input type="range"
+           class="ams-range-slider__input ams-range-slider__input--upper"
+           min="@Min"
+           max="@Max"
+           step="@Step"
+           value="@UpperValue"
+           @oninput="OnUpperInput"
+           disabled="@(!IsEnabled)"
+           aria-label="Upper bound" />
+</div>
+
+@code {
+    [Parameter] public double Min { get; set; }
+    [Parameter] public double Max { get; set; } = 100;
+    [Parameter] public double Step { get; set; } = 1;
+    [Parameter] public double LowerValue { get; set; }
+    [Parameter] public EventCallback<double> LowerValueChanged { get; set; }
+    [Parameter] public double UpperValue { get; set; }
+    [Parameter] public EventCallback<double> UpperValueChanged { get; set; }
+    [Parameter] public bool IsEnabled { get; set; } = true;
+    [Parameter(CaptureUnmatchedValues = true)] public IReadOnlyDictionary<string, object>? AdditionalAttributes { get; set; }
+
+    private async Task OnLowerInput(ChangeEventArgs args)
+    {
+        if (!TryParse(args.Value, out var next))
+        {
+            return;
+        }
+
+        var lower = Math.Clamp(next, Min, Max);
+        var upper = UpperValue;
+        if (lower > upper)
+        {
+            upper = lower;
+        }
+
+        if (!AreClose(lower, LowerValue))
+        {
+            LowerValue = lower;
+            await LowerValueChanged.InvokeAsync(lower);
+        }
+        if (!AreClose(upper, UpperValue))
+        {
+            UpperValue = upper;
+            await UpperValueChanged.InvokeAsync(upper);
+        }
+    }
+
+    private async Task OnUpperInput(ChangeEventArgs args)
+    {
+        if (!TryParse(args.Value, out var next))
+        {
+            return;
+        }
+
+        var upper = Math.Clamp(next, Min, Max);
+        var lower = LowerValue;
+        if (upper < lower)
+        {
+            lower = upper;
+        }
+
+        if (!AreClose(upper, UpperValue))
+        {
+            UpperValue = upper;
+            await UpperValueChanged.InvokeAsync(upper);
+        }
+        if (!AreClose(lower, LowerValue))
+        {
+            LowerValue = lower;
+            await LowerValueChanged.InvokeAsync(lower);
+        }
+    }
+
+    private static bool TryParse(object? raw, out double value)
+    {
+        value = 0;
+        if (raw is null)
+        {
+            return false;
+        }
+        return double.TryParse(raw.ToString(), System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out value);
+    }
+
+    private static bool AreClose(double a, double b) => Math.Abs(a - b) < 1e-9;
+}

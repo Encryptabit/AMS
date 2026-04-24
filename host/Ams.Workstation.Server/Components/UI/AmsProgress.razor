@@ -1,0 +1,26 @@
+@* Vanilla determinate progress primitive. States: success | warning | danger | info.
+   Visual rules live in Styles/components/_progress.scss. *@
+
+<div class="@ComposeClasses()"
+     role="progressbar"
+     aria-valuenow="@ValueClamped"
+     aria-valuemin="0"
+     aria-valuemax="100"
+     @attributes="AdditionalAttributes">
+    <div class="ams-progress__bar" style="width:@(ValueClamped)%"></div>
+    @if (ShowLabel)
+    {
+        <span class="ams-progress__label">@(ValueClamped)%</span>
+    }
+</div>
+
+@code {
+    [Parameter] public double Value { get; set; }
+    [Parameter] public string State { get; set; } = "info";
+    [Parameter] public bool ShowLabel { get; set; }
+    [Parameter(CaptureUnmatchedValues = true)] public IReadOnlyDictionary<string, object>? AdditionalAttributes { get; set; }
+
+    private double ValueClamped => Math.Clamp(Value, 0, 100);
+
+    private string ComposeClasses() => $"ams-progress ams-progress--{State}";
+}

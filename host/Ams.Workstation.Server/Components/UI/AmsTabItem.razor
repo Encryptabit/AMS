@@ -1,0 +1,27 @@
+@* Vanilla tab panel child. Registers itself with the parent <AmsTabs> via cascading value
+   and renders only when selected. Visual rules live in Styles/components/_tabs.scss. *@
+
+@if (Tabs is not null && Tabs.ActiveItem == this)
+{
+    <div class="ams-tabs__panel" role="tabpanel">
+        @ChildContent
+    </div>
+}
+
+@code {
+    [CascadingParameter] public AmsTabs? Tabs { get; set; }
+
+    [Parameter] public RenderFragment? Header { get; set; }
+    [Parameter] public string? Icon { get; set; }
+    [Parameter] public RenderFragment? ChildContent { get; set; }
+
+    protected override void OnInitialized()
+    {
+        if (Tabs is null)
+        {
+            throw new InvalidOperationException(
+                "AmsTabItem must be nested inside an <AmsTabs> component so the cascading parent can register it.");
+        }
+        Tabs.RegisterItem(this);
+    }
+}

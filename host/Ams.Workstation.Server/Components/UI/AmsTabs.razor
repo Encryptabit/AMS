@@ -1,0 +1,54 @@
+@* Vanilla tabs primitive. Children <AmsTabItem> register via CascadingValue and render
+   only the active panel. Visual rules live in Styles/components/_tabs.scss. *@
+
+<div class="ams-tabs" @attributes="AdditionalAttributes">
+    <div class="ams-tabs__header" role="tablist">
+        @foreach (var item in _items)
+        {
+            <button type="button"
+                    role="tab"
+                    class="ams-tabs__tab"
+                    aria-selected="@(item == ActiveItem ? "true" : "false")"
+                    @onclick="() => SelectItem(item)">
+                @if (!string.IsNullOrEmpty(item.Icon))
+                {
+                    <span aria-hidden="true">@item.Icon</span>
+                }
+                @item.Header
+            </button>
+        }
+    </div>
+    <CascadingValue Value="this" IsFixed="true">
+        @ChildContent
+    </CascadingValue>
+</div>
+
+@code {
+    private readonly List<AmsTabItem> _items = new();
+
+    [Parameter] public RenderFragment? ChildContent { get; set; }
+    [Parameter(CaptureUnmatchedValues = true)] public IReadOnlyDictionary<string, object>? AdditionalAttributes { get; set; }
+
+    public AmsTabItem? ActiveItem { get; private set; }
+
+    public void RegisterItem(AmsTabItem item)
+    {
+        if (_items.Contains(item))
+        {
+            return;
+        }
+        _items.Add(item);
+        ActiveItem ??= item;
+        StateHasChanged();
+    }
+
+    public void SelectItem(AmsTabItem item)
+    {
+        if (!_items.Contains(item) || ActiveItem == item)
+        {
+            return;
+        }
+        ActiveItem = item;
+        StateHasChanged();
+    }
+}

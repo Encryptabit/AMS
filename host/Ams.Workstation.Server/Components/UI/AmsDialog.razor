@@ -1,0 +1,78 @@
+@* Vanilla modal dialog primitive. Escape and backdrop click fire OnDismiss.
+   Visual rules live in Styles/components/_dialog.scss. *@
+
+@if (IsOpen)
+{
+    <div class="ams-dialog-backdrop" @onclick="DismissIfNotBlocking"></div>
+    <div class="ams-dialog"
+         role="dialog"
+         aria-modal="true"
+         aria-labelledby="@TitleId"
+         @onkeydown="HandleKey"
+         tabindex="-1">
+        <h2 id="@TitleId" class="ams-dialog__title">@Title</h2>
+        <div class="ams-dialog__body">@ChildContent</div>
+        @if (FooterContent is not null)
+        {
+            <div class="ams-dialog__actions">@FooterContent</div>
+        }
+    </div>
+}
+
+@code {
+    private readonly string _instanceSuffix = Guid.NewGuid().ToString("N")[..8];
+
+    [Parameter] public bool IsOpen { get; set; }
+    [Parameter] public EventCallback<bool> IsOpenChanged { get; set; }
+    [Parameter] public string Title { get; set; } = string.Empty;
+    [Parameter] public RenderFragment? ChildContent { get; set; }
+    [Parameter] public RenderFragment? FooterContent { get; set; }
+    [Parameter] public EventCallback OnDismiss { get; set; }
+
+    private string TitleId => $"ams-dialog-title-{Slugify(Title)}-{_instanceSuffix}";
+
+    private static string Slugify(string? input)
+    {
+        if (string.IsNullOrWhiteSpace(input))
+        {
+            return "untitled";
+        }
+        var builder = new System.Text.StringBuilder(input.Length);
+        foreach (var ch in input)
+        {
+            if (char.IsLetterOrDigit(ch))
+            {
+                builder.Append(char.ToLowerInvariant(ch));
+            }
+            else if (ch is ' ' or '-' or '_')
+            {
+                if (builder.Length > 0 && builder[^1] != '-')
+                {
+                    builder.Append('-');
+                }
+            }
+        }
+        if (builder.Length == 0)
+        {
+            return "untitled";
+        }
+        if (builder[^1] == '-')
+        {
+            builder.Length--;
+        }
+        return builder.Length == 0 ? "untitled" : builder.ToString();
+    }
+
+    private async Task DismissIfNotBlocking()
+    {
+        await OnDismiss.InvokeAsync();
+    }
+
+    private async Task HandleKey(KeyboardEventArgs args)
+    {
+        if (args.Key == "Escape")
+        {
+            await OnDismiss.InvokeAsync();
+        }
+    }
+}
