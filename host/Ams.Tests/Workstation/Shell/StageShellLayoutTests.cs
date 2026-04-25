@@ -165,6 +165,7 @@ public sealed class StageShellLayoutTests
         AssertSourceContains(source, HeaderControlsRelativePath, "data-ams-header-control=\"chapter\"", "chapter selector anchor");
         AssertSourceContains(source, HeaderControlsRelativePath, "data-ams-header-control=\"workspace\"", "workspace selector anchor");
         AssertSourceContains(source, HeaderControlsRelativePath, "data-ams-mobile-overflow-state=", "mobile overflow diagnostic state marker");
+        AssertSourceContains(source, HeaderControlsRelativePath, "data-ams-mobile-overflow-open=", "mobile overflow trigger diagnostic marker");
         AssertSourceContains(source, HeaderControlsRelativePath, "data-ams-header-control=\"mobile-overflow-trigger\"", "mobile overflow trigger anchor");
         AssertSourceContains(source, HeaderControlsRelativePath, "data-ams-header-control=\"mobile-overflow-panel\"", "mobile overflow panel anchor");
         AssertSourceContains(source, HeaderControlsRelativePath, "data-ams-header-optional=\"mobile-overflow-hidden\"", "mobile-hide optional controls anchor");
@@ -173,9 +174,10 @@ public sealed class StageShellLayoutTests
         AssertSourceContains(css, HeaderControlsCssRelativePath, ".header-field--workspace", "workspace mobile style block");
         AssertSourceContains(css, HeaderControlsCssRelativePath, "flex: 1 1 100%;", "workspace full-width mobile reachability");
         AssertSourceContains(css, HeaderControlsCssRelativePath, ".header-mobile-overflow-trigger", "mobile overflow trigger style block");
+        AssertSourceContains(css, HeaderControlsCssRelativePath, "[data-ams-mobile-overflow-open=\"true\"]", "mobile overflow trigger-open style selector");
         AssertSourceContains(css, HeaderControlsCssRelativePath, ".header-mobile-overflow-overlay", "mobile overflow overlay style block");
         AssertSourceContains(css, HeaderControlsCssRelativePath, ".header-secondary-optional", "secondary controls container selector");
-        AssertSourceContains(css, HeaderControlsCssRelativePath, "display: none;", "mobile hide rule for inline secondary controls");
+        AssertSourceContains(css, HeaderControlsCssRelativePath, "display: none !important;", "mobile hide rule for inline secondary controls");
     }
 
     private static void AssertVisibleState(

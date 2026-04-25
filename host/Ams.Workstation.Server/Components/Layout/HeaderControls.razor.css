@@ -61,6 +61,11 @@
     display: none;
 }
 
+.header-mobile-overflow-trigger[data-ams-mobile-overflow-open="true"] ::deep button,
+.header-mobile-overflow-trigger[data-ams-mobile-overflow-open="true"] ::deep .bit-btn {
+    border-color: var(--bit-clr-primary-main, #2563eb);
+}
+
 .header-mobile-overflow-overlay {
     display: none;
     position: fixed;
@@ -184,7 +189,7 @@
     }
 
     .header-secondary-optional {
-        display: none;
+        display: none !important;
     }
 
     .header-field--directory {

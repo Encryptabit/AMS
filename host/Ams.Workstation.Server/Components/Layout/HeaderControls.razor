@@ -59,12 +59,14 @@
                          OnChange="OnSavedWorkspaceChange" />
         </div>
 
-        <div class="header-mobile-overflow-trigger" data-ams-header-control="mobile-overflow-trigger">
+        <div class="header-mobile-overflow-trigger"
+             data-ams-header-control="mobile-overflow-trigger"
+             data-ams-mobile-overflow-open="@(isMobileOverflowOpen ? "true" : "false")">
             <BitButton Variant="BitVariant.Outline"
                        Color="BitColor.Secondary"
                        Size="BitSize.Small"
                        OnClick="ToggleMobileOverflow">
-                More
+                @(isMobileOverflowOpen ? "Close" : "More")
             </BitButton>
         </div>
 
