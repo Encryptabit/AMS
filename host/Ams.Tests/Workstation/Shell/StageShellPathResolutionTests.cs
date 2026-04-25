@@ -128,6 +128,13 @@ public sealed class StageShellPathResolutionTests
         AssertSourceContains(layout, MainLayoutRelativePath, "data-ams-mobile-module-rail-open=", "mobile module-rail toggle-state marker");
         AssertSourceContains(layout, MainLayoutRelativePath, "data-ams-mobile-module-rail=", "sidebar rail state marker");
         AssertSourceContains(layout, MainLayoutRelativePath, "data-ams-mobile-module-rail-overlay=\"visible\"", "drawer overlay diagnostic marker");
+        AssertSourceContains(layout, MainLayoutRelativePath, "role=\"@(isMobileModuleRailOpen ? \"dialog\" : null)\"", "drawer dialog semantics");
+        AssertSourceContains(layout, MainLayoutRelativePath, "aria-modal=\"@(isMobileModuleRailOpen ? \"true\" : null)\"", "drawer modal semantics");
+        AssertSourceContains(layout, MainLayoutRelativePath, "@onkeydown=\"HandleMobileModuleRailKeyDown\"", "drawer keydown handler");
+        AssertSourceContains(layout, MainLayoutRelativePath, "if (string.Equals(e.Key, \"Escape\"", "escape key close handling");
+        AssertSourceContains(layout, MainLayoutRelativePath, "focusMobileModuleRailPanel", "panel focus handoff flag");
+        AssertSourceContains(layout, MainLayoutRelativePath, "await mobileModuleRailPanelRef.FocusAsync();", "panel focus handoff call");
+        AssertSourceContains(layout, MainLayoutRelativePath, "inert=\"@(isMobileModuleRailOpen ? \"inert\" : null)\"", "background inert toggle while drawer open");
         AssertSourceContains(layout, MainLayoutRelativePath, "HandleLocationChanged", "route-change handler used to auto-close mobile drawer");
         AssertSourceContains(layout, MainLayoutRelativePath, "isMobileModuleRailOpen = false;", "mobile drawer close assignment");
 
@@ -135,10 +142,14 @@ public sealed class StageShellPathResolutionTests
         AssertSourceContains(layoutCss, MainLayoutCssRelativePath, ".workstation-module-rail-toggle", "mobile module-rail toggle style block");
         AssertSourceContains(layoutCss, MainLayoutCssRelativePath, ".workstation-sidebar.workstation-sidebar--mobile-open", "mobile-open sidebar selector");
         AssertSourceContains(layoutCss, MainLayoutCssRelativePath, "transform: translateX(-106%);", "default hidden mobile drawer transform");
+        AssertSourceContains(layoutCss, MainLayoutCssRelativePath, ".workstation-sidebar:focus", "mobile drawer focus outline style");
+        AssertSourceContains(layoutCss, MainLayoutCssRelativePath, ".workstation-module-rail-panel-header", "mobile drawer panel header style");
         AssertSourceContains(layoutCss, MainLayoutCssRelativePath, ".workstation-module-rail-overlay", "mobile drawer overlay style block");
 
         AssertSourceContains(moduleRail, StageModuleRailRelativePath, "data-ams-mobile-module-rail-contract=\"collapsible\"", "collapsible module-rail contract marker");
         AssertSourceContains(moduleRail, StageModuleRailRelativePath, "data-ams-mobile-module-rail-link=\"module\"", "module-selection anchor");
+        AssertSourceContains(moduleRail, StageModuleRailRelativePath, "public EventCallback OnModuleInvoked", "module-invoked callback contract");
+        AssertSourceContains(moduleRail, StageModuleRailRelativePath, "OnClick=\"HandleModuleInvoked\"", "module click callback hook");
         AssertSourceContains(moduleRailCss, StageModuleRailCssRelativePath, "min-height: 44px;", "touch-target minimum size");
     }
 

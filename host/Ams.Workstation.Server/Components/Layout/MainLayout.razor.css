@@ -34,6 +34,17 @@
     display: none;
 }
 
+.workstation-module-rail-panel-header {
+    display: none;
+}
+
+.workstation-module-rail-panel-title {
+    font-size: 0.8rem;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+}
+
 .workstation-shell {
     display: flex;
     flex: 1;
@@ -163,6 +174,24 @@
         transition: transform 160ms ease-in-out;
         visibility: hidden;
         pointer-events: none;
+    }
+
+    .workstation-sidebar:focus {
+        outline: 2px solid var(--bit-clr-primary-main, #2563eb);
+        outline-offset: -2px;
+    }
+
+    .workstation-module-rail-panel-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 0.5rem;
+        margin: 0.75rem 0.85rem 0;
+    }
+
+    .workstation-module-rail-panel-header ::deep button,
+    .workstation-module-rail-panel-header ::deep .bit-btn {
+        min-height: 44px;
     }
 
     .workstation-sidebar.workstation-sidebar--mobile-open {

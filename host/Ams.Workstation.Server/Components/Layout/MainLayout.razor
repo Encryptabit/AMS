@@ -1,5 +1,6 @@
 @inherits LayoutComponentBase
 @using Ams.Workstation.Server.Components.Shared
+@using Microsoft.AspNetCore.Components.Web
 @implements IDisposable
 @inject NavigationManager NavigationManager
 
@@ -10,7 +11,9 @@
 
         <div class="workstation-module-rail-toggle"
              data-ams-header-control="module-rail-toggle"
-             data-ams-mobile-module-rail-open="@(isMobileModuleRailOpen ? "true" : "false")">
+             data-ams-mobile-module-rail-open="@(isMobileModuleRailOpen ? "true" : "false")"
+             inert="@(isMobileModuleRailOpen ? "inert" : null)"
+             aria-hidden="@(isMobileModuleRailOpen ? "true" : null)">
             <BitButton Variant="BitVariant.Outline"
                        Color="BitColor.Secondary"
                        Size="BitSize.Small"
@@ -26,6 +29,8 @@
         <div class="workstation-header-controls-host"
              data-ams-shell-region="header-controls"
              data-ams-mobile-overflow-contract="secondary-actions"
+             inert="@(isMobileModuleRailOpen ? "inert" : null)"
+             aria-hidden="@(isMobileModuleRailOpen ? "true" : null)"
              style="flex: 1; min-width: 0;">
             <HeaderControls />
         </div>
@@ -35,17 +40,43 @@
         <aside class="workstation-sidebar @SidebarMobileStateClass"
                id="@MobileModuleRailPanelId"
                data-stage-shell-region="left"
-               data-ams-mobile-module-rail="@(isMobileModuleRailOpen ? "open" : "closed")">
-            <StageModuleRail />
+               data-ams-mobile-module-rail="@(isMobileModuleRailOpen ? "open" : "closed")"
+               role="@(isMobileModuleRailOpen ? "dialog" : null)"
+               aria-modal="@(isMobileModuleRailOpen ? "true" : null)"
+               aria-labelledby="@(isMobileModuleRailOpen ? MobileModuleRailTitleId : null)"
+               aria-label="Module navigation"
+               tabindex="@(isMobileModuleRailOpen ? "0" : "-1")"
+               @ref="mobileModuleRailPanelRef"
+               @onkeydown="HandleMobileModuleRailKeyDown">
+            @if (isMobileModuleRailOpen)
+            {
+                <div class="workstation-module-rail-panel-header">
+                    <span id="@MobileModuleRailTitleId" class="workstation-module-rail-panel-title">Module navigation</span>
+                    <BitButton Variant="BitVariant.Text"
+                               Color="BitColor.Secondary"
+                               Size="BitSize.Small"
+                               OnClick="CloseMobileModuleRail">
+                        Close
+                    </BitButton>
+                </div>
+            }
+
+            <StageModuleRail OnModuleInvoked="HandleModuleRailModuleInvoked" />
         </aside>
 
-        <div class="workstation-body" data-stage-shell-region="center">
+        <div class="workstation-body"
+             data-stage-shell-region="center"
+             inert="@(isMobileModuleRailOpen ? "inert" : null)"
+             aria-hidden="@(isMobileModuleRailOpen ? "true" : null)">
             <main class="workstation-content">
                 @Body
             </main>
         </div>
 
-        <aside class="workstation-inspector" data-stage-shell-region="right"><SectionOutlet SectionName="module-inspector" /></aside>
+        <aside class="workstation-inspector"
+               data-stage-shell-region="right"
+               inert="@(isMobileModuleRailOpen ? "inert" : null)"
+               aria-hidden="@(isMobileModuleRailOpen ? "true" : null)"><SectionOutlet SectionName="module-inspector" /></aside>
     </div>
 
     @if (isMobileModuleRailOpen)
@@ -61,8 +92,11 @@
 @code {
     private const string MobileModuleRailPanelId = "workstation-mobile-module-rail";
     private const string MobileModuleRailToggleId = "workstation-mobile-module-rail-toggle";
+    private const string MobileModuleRailTitleId = "workstation-mobile-module-rail-title";
 
     private bool isMobileModuleRailOpen;
+    private bool focusMobileModuleRailPanel;
+    private ElementReference mobileModuleRailPanelRef;
 
     private string SidebarMobileStateClass
         => isMobileModuleRailOpen
@@ -74,14 +108,42 @@
         NavigationManager.LocationChanged += HandleLocationChanged;
     }
 
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (focusMobileModuleRailPanel && isMobileModuleRailOpen)
+        {
+            focusMobileModuleRailPanel = false;
+            await mobileModuleRailPanelRef.FocusAsync();
+        }
+    }
+
     private void ToggleMobileModuleRail()
     {
-        isMobileModuleRailOpen = !isMobileModuleRailOpen;
+        var nextState = !isMobileModuleRailOpen;
+        isMobileModuleRailOpen = nextState;
+        focusMobileModuleRailPanel = nextState;
     }
 
     private void CloseMobileModuleRail()
     {
         isMobileModuleRailOpen = false;
+        focusMobileModuleRailPanel = false;
+    }
+
+    private void HandleMobileModuleRailKeyDown(KeyboardEventArgs e)
+    {
+        if (string.Equals(e.Key, "Escape", StringComparison.OrdinalIgnoreCase))
+        {
+            CloseMobileModuleRail();
+        }
+    }
+
+    private void HandleModuleRailModuleInvoked()
+    {
+        if (isMobileModuleRailOpen)
+        {
+            CloseMobileModuleRail();
+        }
     }
 
     private void HandleLocationChanged(object? sender, LocationChangedEventArgs args)
@@ -91,7 +153,7 @@
             return;
         }
 
-        isMobileModuleRailOpen = false;
+        CloseMobileModuleRail();
         _ = InvokeAsync(StateHasChanged);
     }
 

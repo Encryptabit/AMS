@@ -29,7 +29,8 @@
                                Class="@(module.IsActive ? "stage-module-rail__module-link stage-module-rail__module-link--active bit-btn-flw" : "stage-module-rail__module-link bit-btn-flw")"
                                data-stage-module-id="@module.Id"
                                data-stage-module-active="@(module.IsActive ? "true" : "false")"
-                               data-ams-mobile-module-rail-link="module">
+                               data-ams-mobile-module-rail-link="module"
+                               OnClick="HandleModuleInvoked">
                         @module.DisplayName
                     </BitButton>
                 }
@@ -51,12 +52,23 @@ else
 }
 
 @code {
+    [Parameter]
+    public EventCallback OnModuleInvoked { get; set; }
+
     private StageModuleRailState _state = StageModuleRailState.Hidden(StageRouteCatalog.RootPath, "Stage module rail unavailable.");
 
     protected override void OnInitialized()
     {
         UpdateState(NavigationManager.Uri);
         NavigationManager.LocationChanged += HandleLocationChanged;
+    }
+
+    private async Task HandleModuleInvoked()
+    {
+        if (OnModuleInvoked.HasDelegate)
+        {
+            await OnModuleInvoked.InvokeAsync();
+        }
     }
 
     private void HandleLocationChanged(object? sender, LocationChangedEventArgs args)
