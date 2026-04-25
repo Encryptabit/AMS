@@ -7,6 +7,28 @@
     width: 100%;
 }
 
+.proof-selection-indicator {
+    margin-bottom: 0.6rem;
+    padding: 0.4rem 0.7rem;
+    border: 1px solid var(--bit-clr-bdr-pri);
+    border-radius: 0.45rem;
+    background: rgba(0, 0, 0, 0.02);
+}
+
+.proof-selection-indicator[data-ams-proof-selection-mode-state="active"] {
+    border-color: var(--bit-clr-pri);
+    background: rgba(0, 120, 212, 0.08);
+}
+
+.proof-selection-indicator[data-ams-proof-selection-mode-state="inactive"] {
+    opacity: 0.85;
+}
+
+.proof-selection-indicator-text {
+    display: block;
+    line-height: 1.35;
+}
+
 .proof-playback-shell {
     width: 100%;
     min-width: 0;
@@ -51,6 +73,11 @@
 @media (max-width: 768px) {
     .proof-view-switcher {
         margin-bottom: 0.55rem;
+    }
+
+    .proof-selection-indicator {
+        margin-bottom: 0.5rem;
+        padding: 0.45rem 0.6rem;
     }
 
     .proof-view-switcher ::deep .proof-view-switcher-stack {

@@ -43,6 +43,17 @@
         </BitStack>
     </div>
 
+    <div class="proof-selection-indicator"
+         data-ams-proof-selection-mode-state="@SelectionModeState"
+         data-ams-proof-selection-count="@_selectedSentenceIds.Count"
+         data-ams-proof-selection-last-event="@_lastSelectionGestureEvent">
+        <BitText Typography="BitTypography.Caption1"
+                 Color="BitColor.SecondaryForeground"
+                 Class="proof-selection-indicator-text">
+            @GetSelectionModeIndicatorText()
+        </BitText>
+    </div>
+
     @if (_currentView == "playback")
     {
         <div class="proof-playback-shell" data-ams-proof-mobile-contract="sentence-first">
@@ -164,6 +175,13 @@
     private string? _lastRenderedChapter;
     private bool _scrollToTopPending;
 
+    // Touch selection state
+    private bool _isSelectionModeActive;
+    private HashSet<int> _selectedSentenceIds = new();
+    private bool _resumePlaybackOnSelectionExit;
+    private string _lastSelectionGestureEvent = "idle";
+    private string SelectionModeState => _isSelectionModeActive ? "active" : "inactive";
+
     // Keyboard navigation state
     private int _selectedErrorIndex;
     private int? _selectedSentenceId;
@@ -196,6 +214,10 @@
                 _pendingSeekTime = null;
                 _pendingKeyboardSeekTime = null;
                 _isPlaybackAlertSettingsExpanded = false;
+                _isSelectionModeActive = false;
+                _selectedSentenceIds.Clear();
+                _resumePlaybackOnSelectionExit = false;
+                _lastSelectionGestureEvent = "chapter-reset";
             }
             if (Workspace.CurrentChapterName != decodedName)
             {
@@ -551,6 +573,12 @@
 
     private async Task HandleSentenceSelected(SentenceViewModel sentence)
     {
+        if (_isSelectionModeActive)
+        {
+            ToggleSelectionMembership(sentence.Id, "tap");
+            return;
+        }
+
         var shouldSeek = _waveformPlayer != null && Math.Abs(_currentTime - sentence.StartTime) > 0.005;
 
         _selectedSentenceId = sentence.Id;
@@ -567,6 +595,177 @@
         {
             _pendingKeyboardSeekTime = null;
         }
+    }
+
+    private string GetSelectionModeIndicatorText()
+    {
+        if (!_isSelectionModeActive)
+        {
+            return "Selection mode inactive.";
+        }
+
+        var noun = _selectedSentenceIds.Count == 1 ? "sentence" : "sentences";
+        return $"Selection mode active: {_selectedSentenceIds.Count} {noun} selected. Long-press again to clear and resume playback.";
+    }
+
+    private void ToggleSelectionMembership(int sentenceId, string trigger)
+    {
+        if (sentenceId <= 0)
+        {
+            _lastSelectionGestureEvent = "toggle-invalid";
+            LogSelectionModeDiagnostic(_lastSelectionGestureEvent, trigger, sentenceId, "Cannot toggle selection for a non-positive sentence id.");
+            return;
+        }
+
+        var sentenceIndex = _sentences.FindIndex(sentence => sentence.Id == sentenceId);
+        if (sentenceIndex < 0)
+        {
+            _lastSelectionGestureEvent = "toggle-missing-sentence";
+            LogSelectionModeDiagnostic(_lastSelectionGestureEvent, trigger, sentenceId, "Sentence id is not present in the current sentence list.");
+            return;
+        }
+
+        var added = _selectedSentenceIds.Add(sentenceId);
+        if (!added)
+        {
+            _selectedSentenceIds.Remove(sentenceId);
+        }
+
+        _selectedSentenceId = sentenceId;
+        _playbackNavigationIndex = sentenceIndex;
+        _lastSelectionGestureEvent = added ? "toggle-add" : "toggle-remove";
+        LogSelectionModeDiagnostic(_lastSelectionGestureEvent, trigger, sentenceId, $"selectedCount={_selectedSentenceIds.Count}");
+        StateHasChanged();
+    }
+
+    private async Task EnterSelectionModeAsync(int sentenceId, string trigger)
+    {
+        if (!TryResolveSelectionSentenceId(sentenceId, out var resolvedSentenceId))
+        {
+            _lastSelectionGestureEvent = "long-press-enter-missing-sentence";
+            LogSelectionModeDiagnostic(_lastSelectionGestureEvent, trigger, sentenceId, "No valid sentence was available to seed selection mode.");
+            return;
+        }
+
+        _isSelectionModeActive = true;
+        _selectedSentenceIds.Clear();
+        _selectedSentenceIds.Add(resolvedSentenceId);
+        _selectedSentenceId = resolvedSentenceId;
+        _playbackNavigationIndex = _sentences.FindIndex(sentence => sentence.Id == resolvedSentenceId);
+
+        var autoPaused = await TryPausePlaybackForSelectionModeAsync();
+        _resumePlaybackOnSelectionExit = autoPaused;
+        _lastSelectionGestureEvent = "long-press-enter";
+
+        LogSelectionModeDiagnostic(
+            _lastSelectionGestureEvent,
+            trigger,
+            resolvedSentenceId,
+            $"selectedCount={_selectedSentenceIds.Count};autoPaused={autoPaused}");
+
+        StateHasChanged();
+    }
+
+    private async Task ClearSelectionModeAndResumeAsync(int sentenceId, string trigger)
+    {
+        var selectedCountBeforeClear = _selectedSentenceIds.Count;
+        _selectedSentenceIds.Clear();
+        _isSelectionModeActive = false;
+
+        var resumedPlayback = await TryResumePlaybackAfterSelectionModeAsync();
+        _resumePlaybackOnSelectionExit = false;
+        _lastSelectionGestureEvent = "long-press-exit";
+
+        LogSelectionModeDiagnostic(
+            _lastSelectionGestureEvent,
+            trigger,
+            sentenceId,
+            $"clearedCount={selectedCountBeforeClear};resumedPlayback={resumedPlayback}");
+
+        StateHasChanged();
+    }
+
+    private bool TryResolveSelectionSentenceId(int sentenceId, out int resolvedSentenceId)
+    {
+        if (sentenceId > 0 && _sentences.Any(sentence => sentence.Id == sentenceId))
+        {
+            resolvedSentenceId = sentenceId;
+            return true;
+        }
+
+        if (_selectedSentenceId.HasValue && _sentences.Any(sentence => sentence.Id == _selectedSentenceId.Value))
+        {
+            resolvedSentenceId = _selectedSentenceId.Value;
+            return true;
+        }
+
+        if (_lastTimeBasedSentenceId.HasValue && _sentences.Any(sentence => sentence.Id == _lastTimeBasedSentenceId.Value))
+        {
+            resolvedSentenceId = _lastTimeBasedSentenceId.Value;
+            return true;
+        }
+
+        var sentenceAtCurrentTime = _sentences.FirstOrDefault(sentence => _currentTime >= sentence.StartTime && _currentTime < sentence.EndTime);
+        if (sentenceAtCurrentTime is not null)
+        {
+            resolvedSentenceId = sentenceAtCurrentTime.Id;
+            return true;
+        }
+
+        if (_sentences.Count > 0)
+        {
+            resolvedSentenceId = _sentences[0].Id;
+            return true;
+        }
+
+        resolvedSentenceId = 0;
+        return false;
+    }
+
+    private async Task<bool> TryPausePlaybackForSelectionModeAsync()
+    {
+        if (_currentView != "playback" || _waveformPlayer is null || !_waveformPlayer.IsPlaying)
+        {
+            return false;
+        }
+
+        try
+        {
+            await _waveformPlayer.PlayPause();
+            return true;
+        }
+        catch (Exception ex)
+        {
+            LogSelectionModeDiagnostic("pause-failed", "enter-selection", _selectedSentenceId ?? 0, ex.Message);
+            return false;
+        }
+    }
+
+    private async Task<bool> TryResumePlaybackAfterSelectionModeAsync()
+    {
+        if (!_resumePlaybackOnSelectionExit
+            || _currentView != "playback"
+            || _waveformPlayer is null
+            || _waveformPlayer.IsPlaying)
+        {
+            return false;
+        }
+
+        try
+        {
+            await _waveformPlayer.PlayPause();
+            return true;
+        }
+        catch (Exception ex)
+        {
+            LogSelectionModeDiagnostic("resume-failed", "exit-selection", _selectedSentenceId ?? 0, ex.Message);
+            return false;
+        }
+    }
+
+    private void LogSelectionModeDiagnostic(string eventName, string trigger, int sentenceId, string details)
+    {
+        Console.WriteLine($"[ProofSelectionMode] event={eventName}; trigger={trigger}; view={_currentView}; sentenceId={sentenceId}; mode={SelectionModeState}; selectedCount={_selectedSentenceIds.Count}; details={details}");
     }
 
     private async Task HandlePlayFromErrors(SentenceReport sentence)
@@ -685,11 +884,44 @@
 
     private void HandleViewFromErrors(SentenceReport sentence)
     {
+        if (_isSelectionModeActive)
+        {
+            ToggleSelectionMembership(sentence.Id, "errors-view");
+            return;
+        }
+
         _currentView = "playback";
         var target = _sentences.FirstOrDefault(s => s.Id == sentence.Id);
         if (target != null)
             _pendingSeekTime = target.StartTime;
         StateHasChanged();
+    }
+
+    // ── Touch gesture JSInvokable handlers ──
+
+    [JSInvokable]
+    public async Task OnSentenceLongPress(int sentenceId)
+    {
+        if (_isSelectionModeActive)
+        {
+            await ClearSelectionModeAndResumeAsync(sentenceId, "long-press");
+            return;
+        }
+
+        await EnterSelectionModeAsync(sentenceId, "long-press");
+    }
+
+    [JSInvokable]
+    public void OnSelectionSentenceTap(int sentenceId)
+    {
+        if (!_isSelectionModeActive)
+        {
+            _lastSelectionGestureEvent = "selection-tap-ignored";
+            LogSelectionModeDiagnostic(_lastSelectionGestureEvent, "selection-tap", sentenceId, "Ignored tap because selection mode is inactive.");
+            return;
+        }
+
+        ToggleSelectionMembership(sentenceId, "selection-tap");
     }
 
     // ── Keyboard JSInvokable handlers ──
