@@ -13,33 +13,41 @@ public sealed class ProofCrxBatchExportContractTests
     public void ChapterReview_BatchExport_UsesSelectedSetAnchorsAndSharedComposition()
     {
         var source = ReadRepoFile(ChapterReviewRelativePath);
+        var swipeRightBody = ExtractMethodBody(source, "private Task HandleSelectionSwipeRightAsync(");
+        var exportDiagnosticBody = ExtractMethodBody(source, "private void LogCrxExportDiagnostic(");
 
         AssertContains(
-            source,
+            swipeRightBody,
             ChapterReviewRelativePath,
             "const string eventName = \"swipe-right-export\";",
             "batch export swipe-right contract event anchor");
 
         AssertContains(
-            source,
+            swipeRightBody,
             ChapterReviewRelativePath,
             "selectedSentenceIds.Contains(sentence.Id)",
             "batch export resolves export seeds from selected sentence ids");
 
         AssertContains(
-            source,
+            swipeRightBody,
             ChapterReviewRelativePath,
             "var composition = ComposeCrxExportComposition(exportSeeds);",
             "batch export uses shared composition helper");
 
         AssertContains(
-            source,
+            swipeRightBody,
             ChapterReviewRelativePath,
             "composition.RequiresRangeConfirmation);",
             "batch export modal handoff carries fallback-range confirmation contract");
 
         AssertContains(
-            source,
+            swipeRightBody,
+            ChapterReviewRelativePath,
+            "LogCrxExportDiagnostic(trigger, sourceSurface, sentenceId, composition);",
+            "batch export handler routes observability through shared export diagnostic seam");
+
+        AssertContains(
+            exportDiagnosticBody,
             ChapterReviewRelativePath,
             "[ProofCrxExport]",
             "batch export observability diagnostics anchor");
@@ -49,39 +57,40 @@ public sealed class ProofCrxBatchExportContractTests
     public void ChapterReview_ComposeCrxExportComposition_UsesMinMaxDefaultsAndFallbackSeed()
     {
         var source = ReadRepoFile(ChapterReviewRelativePath);
+        var composeBody = ExtractMethodBody(source, "private static CrxExportComposition ComposeCrxExportComposition(");
 
         AssertContains(
-            source,
+            composeBody,
             ChapterReviewRelativePath,
             "var batchStart = startCandidates.Count > 0 ? startCandidates.Min() : double.NaN;",
             "selected-set merged start range uses min start time");
 
         AssertContains(
-            source,
+            composeBody,
             ChapterReviewRelativePath,
             "var batchEnd = endCandidates.Count > 0 ? endCandidates.Max() : double.NaN;",
             "selected-set merged end range uses max end time");
 
         AssertContains(
-            source,
+            composeBody,
             ChapterReviewRelativePath,
             "var requiresRangeConfirmation = !IsValidCrxRange(batchStart, batchEnd);",
             "invalid merged ranges trigger explicit confirmation mode");
 
         AssertContains(
-            source,
+            composeBody,
             ChapterReviewRelativePath,
             "batchStart = Math.Max(0, fallbackAnchor - CrxFallbackLeadInSec);",
             "fallback start range seeds deterministic lead-in window");
 
         AssertContains(
-            source,
+            composeBody,
             ChapterReviewRelativePath,
             "batchEnd = batchStart + CrxFallbackExportDurationSec;",
             "fallback end range seeds deterministic fixed duration window");
 
         AssertContains(
-            source,
+            composeBody,
             ChapterReviewRelativePath,
             "RangeMode: \"fallback-empty\"",
             "empty seed set fail-closes to fallback-empty range mode");
