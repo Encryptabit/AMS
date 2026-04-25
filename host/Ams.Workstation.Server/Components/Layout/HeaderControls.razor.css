@@ -8,6 +8,23 @@
     min-width: 0;
 }
 
+.header-row {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    min-width: 0;
+}
+
+.header-row--primary {
+    flex-shrink: 0;
+}
+
+.header-row--secondary {
+    margin-left: auto;
+    flex: 1;
+    justify-content: flex-end;
+}
+
 .header-nav {
     display: flex;
     align-items: center;
@@ -16,16 +33,126 @@
 }
 
 .header-chapter {
-    flex-shrink: 0;
+    width: min(18rem, 28vw);
+    min-width: 12rem;
+    flex-shrink: 1;
+}
+
+.header-extra {
+    display: flex;
+    align-items: center;
+    min-width: 0;
 }
 
 .header-directory {
     display: flex;
     align-items: center;
     gap: 0.5rem;
-    margin-left: auto;
-    flex-shrink: 1;
+}
+
+.header-field {
     min-width: 0;
+}
+
+.header-field--workspace,
+.header-field--directory {
+    width: min(16rem, 24vw);
+    min-width: 8rem;
+}
+
+.header-actions {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    flex-wrap: nowrap;
+}
+
+.header-options {
+    display: flex;
+    align-items: center;
+    min-width: 0;
+    white-space: nowrap;
+}
+
+@media (max-width: 768px) {
+    .header-controls {
+        flex-direction: column;
+        align-items: stretch;
+        gap: 0.5rem;
+    }
+
+    .header-row {
+        width: 100%;
+        flex-wrap: wrap;
+        gap: 0.5rem;
+    }
+
+    .header-row--secondary {
+        margin-left: 0;
+        justify-content: flex-start;
+    }
+
+    .header-nav {
+        width: 100%;
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 0.5rem;
+    }
+
+    .header-nav ::deep button,
+    .header-nav ::deep .bit-btn {
+        min-height: 44px;
+        width: 100%;
+    }
+
+    .header-chapter,
+    .header-extra {
+        width: 100%;
+        min-width: 0;
+        flex: 1 1 100%;
+    }
+
+    .header-field {
+        flex: 1 1 12rem;
+    }
+
+    .header-field--directory {
+        flex-basis: 100%;
+    }
+
+    .header-actions {
+        width: 100%;
+        flex-wrap: wrap;
+    }
+
+    .header-actions ::deep button,
+    .header-actions ::deep .bit-btn {
+        min-height: 44px;
+        flex: 1 1 calc(50% - 0.5rem);
+    }
+
+    .header-options {
+        width: 100%;
+        min-height: 44px;
+    }
+
+    .header-options ::deep label {
+        min-height: 44px;
+        display: inline-flex;
+        align-items: center;
+    }
+
+    .header-row ::deep input,
+    .header-row ::deep select,
+    .header-row ::deep textarea,
+    .header-row ::deep .bit-input,
+    .header-row ::deep .bit-drp,
+    .header-row ::deep .bit-drp-wrp,
+    .header-row ::deep .bit-tfl,
+    .header-row ::deep .bit-tfl-inp {
+        min-height: 44px;
+        font-size: 16px;
+    }
 }
 
 .error-toast {

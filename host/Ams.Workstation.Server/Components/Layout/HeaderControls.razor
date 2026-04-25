@@ -8,72 +8,87 @@
 @inject Ams.Workstation.Server.Services.BookMetadataResetService MetadataReset
 
 <div class="header-controls">
-    <div class="header-nav">
-        <BitButton Variant="@(IsActive(StageRouteCatalog.StageIds.Prep) ? BitVariant.Fill : BitVariant.Text)"
-                   Color="BitColor.Primary"
-                   Size="BitSize.Small"
-                   OnClick="@(() => NavigateToStage(StageRouteCatalog.StageIds.Prep))">
-            Prep
-        </BitButton>
-        <BitButton Variant="@(IsActive(StageRouteCatalog.StageIds.Proof) ? BitVariant.Fill : BitVariant.Text)"
-                   Color="BitColor.Primary"
-                   Size="BitSize.Small"
-                   OnClick="@(() => NavigateToStage(StageRouteCatalog.StageIds.Proof))">
-            Proof
-        </BitButton>
-        <BitButton Variant="@(IsActive(StageRouteCatalog.StageIds.Polish) ? BitVariant.Fill : BitVariant.Text)"
-                   Color="BitColor.Primary"
-                   Size="BitSize.Small"
-                   OnClick="@(() => NavigateToStage(StageRouteCatalog.StageIds.Polish))">
-            Polish
-        </BitButton>
+    <div class="header-row header-row--primary">
+        <div class="header-nav">
+            <BitButton Variant="@(IsActive(StageRouteCatalog.StageIds.Prep) ? BitVariant.Fill : BitVariant.Text)"
+                       Color="BitColor.Primary"
+                       Size="BitSize.Small"
+                       OnClick="@(() => NavigateToStage(StageRouteCatalog.StageIds.Prep))">
+                Prep
+            </BitButton>
+            <BitButton Variant="@(IsActive(StageRouteCatalog.StageIds.Proof) ? BitVariant.Fill : BitVariant.Text)"
+                       Color="BitColor.Primary"
+                       Size="BitSize.Small"
+                       OnClick="@(() => NavigateToStage(StageRouteCatalog.StageIds.Proof))">
+                Proof
+            </BitButton>
+            <BitButton Variant="@(IsActive(StageRouteCatalog.StageIds.Polish) ? BitVariant.Fill : BitVariant.Text)"
+                       Color="BitColor.Primary"
+                       Size="BitSize.Small"
+                       OnClick="@(() => NavigateToStage(StageRouteCatalog.StageIds.Polish))">
+                Polish
+            </BitButton>
+        </div>
+
+        <div class="header-chapter">
+            @if (Workspace.AvailableChapters.Count > 0)
+            {
+                <BitDropdown TItem="BitDropdownItem<string>"
+                             TValue="string"
+                             Items="@chapterItems"
+                             @bind-Value="selectedChapter"
+                             Placeholder="Select chapter"
+                             Style="width: 100%; min-width: 0;"
+                             OnChange="OnChapterChange" />
+            }
+        </div>
+
+        <div class="header-extra">
+            <SectionOutlet SectionName="header-extra" />
+        </div>
     </div>
 
-    <div class="header-chapter">
-        @if (Workspace.AvailableChapters.Count > 0)
-        {
+    <div class="header-row header-row--secondary header-directory">
+        <div class="header-field header-field--workspace">
             <BitDropdown TItem="BitDropdownItem<string>"
                          TValue="string"
-                         Items="@chapterItems"
-                         @bind-Value="selectedChapter"
-                         Placeholder="Select chapter"
-                         Style="min-width: 200px;"
-                         OnChange="OnChapterChange" />
-        }
-    </div>
+                         Items="@savedWorkspaceItems"
+                         @bind-Value="selectedSavedWorkspace"
+                         Placeholder="Saved workspaces"
+                         Style="width: 100%; min-width: 0;"
+                         OnChange="OnSavedWorkspaceChange" />
+        </div>
 
-    <SectionOutlet SectionName="header-extra" />
+        <div class="header-field header-field--directory">
+            <BitTextField @bind-Value="workingDirectory"
+                          Immediate="true"
+                          Placeholder="Working directory..."
+                          Style="width: 100%; min-width: 0;"
+                          OnKeyDown="OnDirectoryKeyDown" />
+        </div>
 
-    <div class="header-directory">
-        <BitDropdown TItem="BitDropdownItem<string>"
-                     TValue="string"
-                     Items="@savedWorkspaceItems"
-                     @bind-Value="selectedSavedWorkspace"
-                     Placeholder="Saved workspaces"
-                     Style="width: 220px; flex-shrink: 1; min-width: 120px;"
-                     OnChange="OnSavedWorkspaceChange" />
-        <BitTextField @bind-Value="workingDirectory"
-                      Immediate="true"
-                      Placeholder="Working directory..."
-                      Style="width: 220px; flex-shrink: 1; min-width: 120px;"
-                      OnKeyDown="OnDirectoryKeyDown" />
-        <BitButton Variant="BitVariant.Fill"
-                   Color="BitColor.Primary"
-                   Size="BitSize.Small"
-                   OnClick="SetDirectory"
-                   IsEnabled="@(!string.IsNullOrWhiteSpace(workingDirectory))">
-            Set
-        </BitButton>
-        <BitButton Variant="BitVariant.Outline"
-                   Color="BitColor.Warning"
-                   Size="BitSize.Small"
-                   OnClick="ResetMetadataAsync"
-                   IsEnabled="@Workspace.IsInitialized">
-            Reset Metadata
-        </BitButton>
-        <BitCheckbox Label="Precompute Peaks In Background"
-                     Value="@Workspace.PrecomputePeaksInBackground"
-                     OnChange="HandlePrecomputePeaksToggle" />
+        <div class="header-actions">
+            <BitButton Variant="BitVariant.Fill"
+                       Color="BitColor.Primary"
+                       Size="BitSize.Small"
+                       OnClick="SetDirectory"
+                       IsEnabled="@(!string.IsNullOrWhiteSpace(workingDirectory))">
+                Set
+            </BitButton>
+            <BitButton Variant="BitVariant.Outline"
+                       Color="BitColor.Warning"
+                       Size="BitSize.Small"
+                       OnClick="ResetMetadataAsync"
+                       IsEnabled="@Workspace.IsInitialized">
+                Reset Metadata
+            </BitButton>
+        </div>
+
+        <div class="header-options">
+            <BitCheckbox Label="Precompute Peaks In Background"
+                         Value="@Workspace.PrecomputePeaksInBackground"
+                         OnChange="HandlePrecomputePeaksToggle" />
+        </div>
     </div>
 </div>
 
