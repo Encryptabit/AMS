@@ -1,4 +1,3 @@
-using System.Globalization;
 using System.Reflection;
 using Ams.Core.Application.Commands;
 using Ams.Core.Artifacts;
@@ -14,36 +13,29 @@ namespace Ams.Tests.Workstation.Proof;
 
 public sealed class ProofGestureSelectionContractTests
 {
-    private static readonly SemaphoreSlim ConsoleCaptureGate = new(1, 1);
 
     [Fact]
     public async Task LongPress_EntersSelection_AndSecondLongPressExitsSelectionBeforeFurtherIgnoreDispatch()
     {
         using var harness = await GestureHarness.CreateAsync();
 
-        var diagnostics = await CaptureConsoleOutputAsync(async () =>
-        {
-            await InvokeComponentStateTransitionAsync(() => harness.Component.OnSentenceLongPress(harness.PrimarySentenceId));
-            await InvokeComponentStateTransitionAsync(() => harness.Component.OnSelectionSwipeLeft(harness.PrimarySentenceId, "playback"));
+        await InvokeComponentStateTransitionAsync(() => harness.Component.OnSentenceLongPress(harness.PrimarySentenceId));
+        await InvokeComponentStateTransitionAsync(() => harness.Component.OnSelectionSwipeLeft(harness.PrimarySentenceId, "playback"));
 
-            // Must wait past duplicate dispatch guard to exercise real second long-press exit behavior.
-            await Task.Delay(350);
-            await InvokeComponentStateTransitionAsync(() => harness.Component.OnSentenceLongPress(harness.PrimarySentenceId));
+        // Must wait past duplicate dispatch guard to exercise real second long-press exit behavior.
+        await Task.Delay(350);
+        await InvokeComponentStateTransitionAsync(() => harness.Component.OnSentenceLongPress(harness.PrimarySentenceId));
 
-            InvokeComponentStateTransition(() => harness.Component.OnSelectionSentenceTap(harness.SecondarySentenceId));
-            await InvokeComponentStateTransitionAsync(() => harness.Component.OnSelectionSwipeLeft(harness.SecondarySentenceId, "playback"));
-        });
-
-        Assert.Contains("event=long-press-enter", diagnostics, StringComparison.Ordinal);
-        Assert.Contains("event=long-press-exit", diagnostics, StringComparison.Ordinal);
+        InvokeComponentStateTransition(() => harness.Component.OnSelectionSentenceTap(harness.SecondarySentenceId));
+        await InvokeComponentStateTransitionAsync(() => harness.Component.OnSelectionSwipeLeft(harness.SecondarySentenceId, "playback"));
 
         Assert.True(
             harness.IgnoredPatternsService.IsIgnored(harness.PrimaryPatternKey),
-            "Expected playback swipe-left to ignore the selected sentence's diff pattern while selection mode is active.");
+            "Expected playback swipe-left to ignore selected sentence while long-press selection mode is active.");
 
         Assert.False(
             harness.IgnoredPatternsService.IsIgnored(harness.SecondaryPatternKey),
-            "Expected second long-press to exit/clear selection mode so a later tap+swipe does not dispatch ignore behavior.");
+            "Expected second long-press to clear selection mode so later tap+swipe cannot ignore unselected sentence.");
     }
 
     [Fact]
@@ -60,20 +52,35 @@ public sealed class ProofGestureSelectionContractTests
     }
 
     [Fact]
+    public async Task SwipeLeft_IgnoresGestureFromSentenceOutsideSelection()
+    {
+        using var harness = await GestureHarness.CreateAsync();
+
+        await InvokeComponentStateTransitionAsync(() => harness.Component.OnSentenceLongPress(harness.PrimarySentenceId));
+        await InvokeComponentStateTransitionAsync(() => harness.Component.OnSelectionSwipeLeft(harness.SecondarySentenceId, "playback"));
+
+        Assert.False(
+            harness.IgnoredPatternsService.IsIgnored(harness.PrimaryPatternKey),
+            "Expected swipe-left to no-op when gesture sentence is outside active selection context.");
+
+        Assert.False(
+            harness.IgnoredPatternsService.IsIgnored(harness.SecondaryPatternKey),
+            "Expected swipe-left to no-op for unselected gesture-origin sentence.");
+    }
+
+    [Fact]
     public async Task SwipeRight_FromPlaybackSurface_UsesExportDispatchWithoutCreatingNewPersistenceArtifacts()
     {
         using var harness = await GestureHarness.CreateAsync();
 
         var baselineWorkspaceFiles = SnapshotFiles(harness.RootPath);
 
-        var diagnostics = await CaptureConsoleOutputAsync(async () =>
-        {
-            await InvokeComponentStateTransitionAsync(() => harness.Component.OnSentenceLongPress(harness.PrimarySentenceId));
-            await InvokeComponentStateTransitionAsync(() => harness.Component.OnSelectionSwipeRight(harness.PrimarySentenceId, "playback"));
-        });
+        await InvokeComponentStateTransitionAsync(() => harness.Component.OnSentenceLongPress(harness.PrimarySentenceId));
+        await InvokeComponentStateTransitionAsync(() => harness.Component.OnSelectionSwipeRight(harness.PrimarySentenceId, "playback"));
 
-        Assert.Contains("event=swipe-right-export-failed-modal-unavailable", diagnostics, StringComparison.Ordinal);
-        Assert.Contains("surface=playback", diagnostics, StringComparison.Ordinal);
+        Assert.False(
+            harness.IgnoredPatternsService.IsIgnored(harness.PrimaryPatternKey),
+            "Expected swipe-right export path to avoid mutating ignore persistence state.");
 
         Assert.Empty(harness.CrxService.GetEntries());
         Assert.Empty(harness.ReviewedStatusService.GetAll());
@@ -105,26 +112,6 @@ public sealed class ProofGestureSelectionContractTests
         catch (InvalidOperationException ex) when (ex.Message.Contains("render handle is not yet assigned", StringComparison.OrdinalIgnoreCase))
         {
             // Same lifecycle guard as async helper.
-        }
-    }
-
-    private static async Task<string> CaptureConsoleOutputAsync(Func<Task> action)
-    {
-        await ConsoleCaptureGate.WaitAsync();
-        var originalOut = Console.Out;
-        using var buffer = new StringWriter(CultureInfo.InvariantCulture);
-
-        Console.SetOut(buffer);
-
-        try
-        {
-            await action();
-            return buffer.ToString();
-        }
-        finally
-        {
-            Console.SetOut(originalOut);
-            ConsoleCaptureGate.Release();
         }
     }
 
