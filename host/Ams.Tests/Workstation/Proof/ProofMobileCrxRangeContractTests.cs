@@ -30,12 +30,16 @@ public sealed class ProofMobileCrxRangeContractTests
 
         AssertContains(source, CrxModalRelativePath, "data-ams-crx-range-validation=\"true\"", "range validation diagnostics seam");
         AssertContains(source, CrxModalRelativePath, "private bool HasRangeValidationError => !string.IsNullOrWhiteSpace(_rangeValidationMessage);", "range validation state helper");
+        AssertContains(source, CrxModalRelativePath, "private bool HasPendingRangeConfirmation => _requiresRangeConfirmation && !_isRangeConfirmed;", "fallback range confirmation state helper");
         AssertContains(source, CrxModalRelativePath, "if (HasRangeValidationError)", "fail-closed preview guard");
         AssertContains(source, CrxModalRelativePath, "_audioUrl = string.Empty;", "audio preview cleared on invalid ranges");
         AssertContains(source, CrxModalRelativePath, "_peaksUrl = null;", "waveform peaks cleared on invalid ranges");
-        AssertContains(source, CrxModalRelativePath, "OnClick=\"Submit\" IsEnabled=\"@(!_submitting && !HasRangeValidationError)\"", "submit button disabled while range invalid");
+        AssertContains(source, CrxModalRelativePath, "OnClick=\"Submit\" IsEnabled=\"@(!_submitting && !HasRangeValidationError && !HasPendingRangeConfirmation)\"", "submit button disabled while range invalid or fallback confirmation pending");
         AssertContains(source, CrxModalRelativePath, "Start must be before End. Adjust either bound to create a positive export range.", "negative-duration validation message");
         AssertContains(source, CrxModalRelativePath, "Range is zero-duration. Adjust Start earlier or End later before submitting this CRX entry.", "zero-duration validation message");
+        AssertContains(source, CrxModalRelativePath, "data-ams-crx-range-confirm-required=\"true\"", "fallback confirmation prompt seam");
+        AssertContains(source, CrxModalRelativePath, "data-ams-crx-range-confirm-checkbox=\"true\"", "fallback range confirmation checkbox seam");
+        AssertContains(source, CrxModalRelativePath, "data-ams-crx-range-confirm-status=\"pending\"", "fallback confirmation pending status seam");
     }
 
     [Fact]
@@ -55,7 +59,7 @@ public sealed class ProofMobileCrxRangeContractTests
 
         AssertContains(source, ChapterReviewRelativePath, "data-ams-proof-mobile-contract=\"sentence-first\"", "sentence-first playback shell seam");
         AssertContains(source, ChapterReviewRelativePath, "data-ams-proof-mobile-waveform=\"compact\"", "compact waveform seam");
-        AssertContains(source, ChapterReviewRelativePath, "<div class=\"proof-playback-sentences\">", "sentence list wrapper seam");
+        AssertContains(source, ChapterReviewRelativePath, "<div class=\"proof-playback-sentences\" data-ams-proof-gesture-surface=\"playback\">", "sentence list wrapper seam");
     }
 
     [Fact]

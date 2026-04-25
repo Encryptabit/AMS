@@ -100,6 +100,27 @@
                                 @_rangeValidationMessage
                             </BitText>
                         }
+
+                        @if (_requiresRangeConfirmation)
+                        {
+                            <label class="crx-range-confirm" data-ams-crx-range-confirm-required="true">
+                                <input type="checkbox"
+                                       checked="@_isRangeConfirmed"
+                                       data-ams-crx-range-confirm-checkbox="true"
+                                       @onchange="OnRangeConfirmationChanged" />
+                                <span>Timing cluster produced a fallback range. Review Start/End and confirm this range before submitting.</span>
+                            </label>
+
+                            @if (HasPendingRangeConfirmation)
+                            {
+                                <BitText Typography="BitTypography.Caption1"
+                                         Color="BitColor.SecondaryForeground"
+                                         class="crx-range-confirm-status"
+                                         data-ams-crx-range-confirm-status="pending">
+                                    Confirm current range to enable Add to CRX.
+                                </BitText>
+                            }
+                        }
                     </div>
                 </div>
 
@@ -128,7 +149,7 @@
         <div class="crx-modal-footer">
             <BitButton Variant="BitVariant.Outline" OnClick="Close">Cancel</BitButton>
             <BitButton Variant="BitVariant.Fill" Color="BitColor.Primary"
-                       OnClick="Submit" IsEnabled="@(!_submitting && !HasRangeValidationError)">
+                       OnClick="Submit" IsEnabled="@(!_submitting && !HasRangeValidationError && !HasPendingRangeConfirmation)">
                 @(_submitting ? "Submitting..." : "Add to CRX")
             </BitButton>
         </div>
@@ -153,6 +174,8 @@
     private string _startInput = "";
     private string _endInput = "";
     private string? _rangeValidationMessage;
+    private bool _requiresRangeConfirmation;
+    private bool _isRangeConfirmed;
     private bool _submitting;
     private string _audioUrl = "";
     private string? _peaksUrl;
@@ -171,7 +194,14 @@
 
     [Parameter] public EventCallback<CrxSubmitResult> OnSubmitted { get; set; }
 
-    public void Open(string chapterName, double start, double end, int sentenceId, string excerpt, SentenceReport? sentenceReport = null)
+    public void Open(
+        string chapterName,
+        double start,
+        double end,
+        int sentenceId,
+        string excerpt,
+        SentenceReport? sentenceReport = null,
+        bool requireRangeConfirmation = false)
     {
         _chapterName = chapterName;
         _startTime = start;
@@ -181,6 +211,8 @@
         _sentenceReport = sentenceReport;
         _errorType = "MR";
         _isVisible = true;
+        _requiresRangeConfirmation = requireRangeConfirmation;
+        _isRangeConfirmed = !requireRangeConfirmation;
 
         _startInput = FormatTime(_startTime);
         _endInput = FormatTime(_endTime);
@@ -220,6 +252,8 @@
         _audioUrl = "";
         _peaksUrl = null;
         _rangeValidationMessage = null;
+        _requiresRangeConfirmation = false;
+        _isRangeConfirmed = false;
         _activeRangeDrag = null;
         JS.InvokeVoidAsync("window.modalFocusTrap.deactivate");
         StateHasChanged();
@@ -330,6 +364,19 @@
     }
 
     private bool HasRangeValidationError => !string.IsNullOrWhiteSpace(_rangeValidationMessage);
+    private bool HasPendingRangeConfirmation => _requiresRangeConfirmation && !_isRangeConfirmed;
+
+    private void OnRangeConfirmationChanged(ChangeEventArgs e)
+    {
+        _isRangeConfirmed = e.Value switch
+        {
+            bool boolValue => boolValue,
+            string stringValue when bool.TryParse(stringValue, out var parsed) => parsed,
+            _ => false
+        };
+
+        StateHasChanged();
+    }
 
     private void OnStartInputTyping(ChangeEventArgs e)
         => _startInput = e.Value?.ToString() ?? string.Empty;
@@ -372,6 +419,11 @@
         else
             _endTime = Math.Max(0, _activeRangeDrag.StartValue + deltaSeconds);
 
+        if (_requiresRangeConfirmation)
+        {
+            _isRangeConfirmed = false;
+        }
+
         _startInput = FormatTime(_startTime);
         _endInput = FormatTime(_endTime);
         ValidateRange();
@@ -411,10 +463,20 @@
             return;
         }
 
+        var normalizedSeconds = Math.Max(0, seconds);
+        if (_requiresRangeConfirmation)
+        {
+            var currentSeconds = isStart ? _startTime : _endTime;
+            if (Math.Abs(currentSeconds - normalizedSeconds) > MinRangeDurationSec)
+            {
+                _isRangeConfirmed = false;
+            }
+        }
+
         if (isStart)
-            _startTime = Math.Max(0, seconds);
+            _startTime = normalizedSeconds;
         else
-            _endTime = Math.Max(0, seconds);
+            _endTime = normalizedSeconds;
 
         CommitRangeChange();
     }
@@ -455,10 +517,20 @@
             return false;
         }
 
-        _startTime = Math.Max(0, parsedStart);
-        _endTime = Math.Max(0, parsedEnd);
+        var normalizedStart = Math.Max(0, parsedStart);
+        var normalizedEnd = Math.Max(0, parsedEnd);
+
+        if (_requiresRangeConfirmation
+            && (Math.Abs(_startTime - normalizedStart) > MinRangeDurationSec
+                || Math.Abs(_endTime - normalizedEnd) > MinRangeDurationSec))
+        {
+            _isRangeConfirmed = false;
+        }
+
+        _startTime = normalizedStart;
+        _endTime = normalizedEnd;
         CommitRangeChange();
-        return !HasRangeValidationError;
+        return !HasRangeValidationError && !HasPendingRangeConfirmation;
     }
 
     private void ValidateRange()
@@ -698,6 +770,21 @@
     }
     .crx-range-validation {
         line-height: 1.25;
+    }
+    .crx-range-confirm {
+        display: flex;
+        align-items: flex-start;
+        gap: 0.45rem;
+        font-size: 0.8rem;
+        color: var(--bit-clr-fg-pri);
+        line-height: 1.25;
+        margin-top: 0.25rem;
+    }
+    .crx-range-confirm input {
+        margin-top: 0.15rem;
+    }
+    .crx-range-confirm-status {
+        line-height: 1.2;
     }
     .crx-errors-section {
         display: flex;

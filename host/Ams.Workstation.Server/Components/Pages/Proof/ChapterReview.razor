@@ -172,6 +172,27 @@
 
 @code {
     private const int PeakPxPerSec = 1200;
+    private const double CrxMinExportDurationSec = 0.001;
+    private const double CrxFallbackExportDurationSec = 1.0;
+    private const double CrxFallbackLeadInSec = 0.25;
+
+    private sealed record CrxExportSeed(
+        int SentenceId,
+        double StartTime,
+        double EndTime,
+        string Text,
+        SentenceReport? Report);
+
+    private sealed record CrxExportComposition(
+        double StartTime,
+        double EndTime,
+        int AnchorSentenceId,
+        string Excerpt,
+        SentenceReport? AnchorReport,
+        bool RequiresRangeConfirmation,
+        string RangeMode,
+        int Cardinality);
+
     private double _currentTime;
     private WaveformPlayer? _waveformPlayer;
     private List<SentenceViewModel> _sentences = new();
@@ -1120,12 +1141,26 @@
             return Task.CompletedTask;
         }
 
-        var selectedSentences = _sentences
+        var reportBySentenceId = _report?.Sentences.ToDictionary(sentence => sentence.Id)
+            ?? new Dictionary<int, SentenceReport>();
+
+        var exportSeeds = _sentences
             .Where(sentence => selectedSentenceIds.Contains(sentence.Id))
-            .OrderBy(sentence => sentence.StartTime)
+            .Select(sentence =>
+            {
+                reportBySentenceId.TryGetValue(sentence.Id, out var sentenceReport);
+                return new CrxExportSeed(
+                    sentence.Id,
+                    sentence.StartTime,
+                    sentence.EndTime,
+                    sentence.Text,
+                    sentenceReport);
+            })
+            .OrderBy(seed => seed.StartTime)
+            .ThenBy(seed => seed.SentenceId)
             .ToList();
 
-        if (selectedSentences.Count == 0)
+        if (exportSeeds.Count == 0)
         {
             _lastSelectionGestureEvent = $"{eventName}-failed-missing-sentences";
             LogSelectionModeDiagnostic(_lastSelectionGestureEvent, trigger, sentenceId, $"surface={sourceSurface};selectedCount={selectedSentenceIds.Count}");
@@ -1139,21 +1174,26 @@
             return Task.CompletedTask;
         }
 
-        var batchStart = selectedSentences.First().StartTime;
-        var batchEnd = selectedSentences.Last().EndTime;
-        var anchorSentence = selectedSentences.First();
-        var anchorReport = _report?.Sentences.FirstOrDefault(sentence => sentence.Id == anchorSentence.Id);
-        var excerpt = BuildBatchCrxExcerpt(selectedSentences);
-
+        var composition = ComposeCrxExportComposition(exportSeeds);
         var decodedChapter = Uri.UnescapeDataString(ChapterName);
-        _crxModal.Open(decodedChapter, batchStart, batchEnd, anchorSentence.Id, excerpt, anchorReport);
+
+        _crxModal.Open(
+            decodedChapter,
+            composition.StartTime,
+            composition.EndTime,
+            composition.AnchorSentenceId,
+            composition.Excerpt,
+            composition.AnchorReport,
+            composition.RequiresRangeConfirmation);
 
         _lastSelectionGestureEvent = eventName;
         LogSelectionModeDiagnostic(
             _lastSelectionGestureEvent,
             trigger,
             sentenceId,
-            $"surface={sourceSurface};selectedCount={selectedSentenceIds.Count};range={FormatTime(batchStart)}-{FormatTime(batchEnd)}");
+            $"surface={sourceSurface};selectedCount={composition.Cardinality};range={FormatTime(composition.StartTime)}-{FormatTime(composition.EndTime)};rangeMode={composition.RangeMode};confirmRequired={composition.RequiresRangeConfirmation}");
+
+        LogCrxExportDiagnostic(trigger, sourceSurface, sentenceId, composition);
 
         StateHasChanged();
         return Task.CompletedTask;
@@ -1221,21 +1261,115 @@
         StateHasChanged();
     }
 
-    private static string BuildBatchCrxExcerpt(IReadOnlyList<SentenceViewModel> selectedSentences)
+    private static CrxExportComposition ComposeCrxExportComposition(IReadOnlyList<CrxExportSeed> exportSeeds)
     {
-        if (selectedSentences.Count == 0)
+        if (exportSeeds.Count == 0)
+        {
+            return new CrxExportComposition(
+                StartTime: 0,
+                EndTime: CrxFallbackExportDurationSec,
+                AnchorSentenceId: 0,
+                Excerpt: "Batch export",
+                AnchorReport: null,
+                RequiresRangeConfirmation: true,
+                RangeMode: "fallback-empty",
+                Cardinality: 0);
+        }
+
+        var orderedByStart = exportSeeds
+            .OrderBy(seed => seed.StartTime)
+            .ThenBy(seed => seed.SentenceId)
+            .ToList();
+
+        var anchorSeed = orderedByStart[0];
+
+        var startCandidates = orderedByStart
+            .Select(seed => seed.StartTime)
+            .Where(IsFiniteNonNegativeTime)
+            .ToList();
+
+        var endCandidates = orderedByStart
+            .Select(seed => seed.EndTime)
+            .Where(IsFiniteNonNegativeTime)
+            .ToList();
+
+        var batchStart = startCandidates.Count > 0 ? startCandidates.Min() : double.NaN;
+        var batchEnd = endCandidates.Count > 0 ? endCandidates.Max() : double.NaN;
+
+        var requiresRangeConfirmation = !IsValidCrxRange(batchStart, batchEnd);
+        var rangeMode = "composed";
+
+        if (requiresRangeConfirmation)
+        {
+            var fallbackAnchor = startCandidates
+                .Concat(endCandidates)
+                .DefaultIfEmpty(Math.Max(0, anchorSeed.StartTime))
+                .Min();
+
+            batchStart = Math.Max(0, fallbackAnchor - CrxFallbackLeadInSec);
+            batchEnd = batchStart + CrxFallbackExportDurationSec;
+            rangeMode = "fallback";
+        }
+
+        return new CrxExportComposition(
+            StartTime: batchStart,
+            EndTime: batchEnd,
+            AnchorSentenceId: anchorSeed.SentenceId,
+            Excerpt: BuildBatchCrxExcerpt(exportSeeds),
+            AnchorReport: exportSeeds.Count == 1 ? anchorSeed.Report : null,
+            RequiresRangeConfirmation: requiresRangeConfirmation,
+            RangeMode: rangeMode,
+            Cardinality: exportSeeds.Count);
+    }
+
+    private static bool IsFiniteNonNegativeTime(double value)
+        => !double.IsNaN(value) && !double.IsInfinity(value) && value >= 0;
+
+    private static bool IsValidCrxRange(double start, double end)
+        => IsFiniteNonNegativeTime(start)
+           && IsFiniteNonNegativeTime(end)
+           && (end - start) > CrxMinExportDurationSec;
+
+    private static string BuildBatchCrxExcerpt(IReadOnlyList<CrxExportSeed> exportSeeds)
+    {
+        if (exportSeeds.Count == 0)
         {
             return "Batch export";
         }
 
-        if (selectedSentences.Count == 1)
+        if (exportSeeds.Count == 1)
         {
-            return selectedSentences[0].Text;
+            var singleText = exportSeeds[0].Text?.Trim();
+            return string.IsNullOrWhiteSpace(singleText)
+                ? $"Sentence #{exportSeeds[0].SentenceId}"
+                : singleText;
         }
 
-        var firstSentence = selectedSentences[0];
-        var lastSentence = selectedSentences[^1];
-        return $"Batch export sentences #{firstSentence.Id} through #{lastSentence.Id} ({selectedSentences.Count} total).";
+        var orderedById = exportSeeds
+            .OrderBy(seed => seed.SentenceId)
+            .ToList();
+
+        var contextText = string.Join(
+            " ",
+            orderedById
+                .Select(seed => seed.Text?.Trim())
+                .Where(text => !string.IsNullOrWhiteSpace(text)));
+
+        if (contextText.Length > 240)
+        {
+            contextText = $"{contextText[..237]}...";
+        }
+
+        var summary = $"Batch export sentences #{orderedById[0].SentenceId} through #{orderedById[^1].SentenceId} ({orderedById.Count} total).";
+        return string.IsNullOrWhiteSpace(contextText)
+            ? summary
+            : $"{summary} {contextText}";
+    }
+
+    private void LogCrxExportDiagnostic(string trigger, string sourceSurface, int sentenceId, CrxExportComposition composition)
+    {
+        Console.WriteLine(
+            $"[ProofCrxExport] trigger={trigger}; view={_currentView}; surface={sourceSurface}; sentenceId={sentenceId}; cardinality={composition.Cardinality}; range={FormatTime(composition.StartTime)}-{FormatTime(composition.EndTime)}; rangeMode={composition.RangeMode}; confirmRequired={composition.RequiresRangeConfirmation}");
     }
 
     private async Task HandlePlayFromErrors(SentenceReport sentence)
@@ -1279,9 +1413,31 @@
 
     private void HandleCrxFromErrors(SentenceReport sentence)
     {
-        if (string.IsNullOrEmpty(ChapterName)) return;
+        if (string.IsNullOrEmpty(ChapterName) || _crxModal is null)
+        {
+            return;
+        }
+
         var decoded = Uri.UnescapeDataString(ChapterName);
-        _crxModal?.Open(decoded, sentence.StartTime, sentence.EndTime, sentence.Id, sentence.Excerpt, sentence);
+        var exportSeed = new CrxExportSeed(
+            sentence.Id,
+            sentence.StartTime,
+            sentence.EndTime,
+            string.IsNullOrWhiteSpace(sentence.Excerpt) ? sentence.BookText : sentence.Excerpt,
+            sentence);
+
+        var composition = ComposeCrxExportComposition(new List<CrxExportSeed> { exportSeed });
+
+        _crxModal.Open(
+            decoded,
+            composition.StartTime,
+            composition.EndTime,
+            composition.AnchorSentenceId,
+            composition.Excerpt,
+            composition.AnchorReport,
+            composition.RequiresRangeConfirmation);
+
+        LogCrxExportDiagnostic("open-crx", _currentView, sentence.Id, composition);
     }
 
     private void HandleCrxSubmitted(CrxSubmitResult result)

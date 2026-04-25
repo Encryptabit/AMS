@@ -93,6 +93,54 @@ public sealed class ProofEditingPlaybackSourceContractTests
     }
 
     [Fact]
+    public void ChapterReview_CrxExportComposition_UsesMinMaxRangeAndSharedSingleBatchFlow()
+    {
+        var source = ReadRepoFile(ChapterReviewRelativePath);
+
+        AssertContains(
+            source,
+            ChapterReviewRelativePath,
+            "private static CrxExportComposition ComposeCrxExportComposition(IReadOnlyList<CrxExportSeed> exportSeeds)",
+            "shared CRX export composition helper for single and multi-sentence paths");
+
+        AssertContains(
+            source,
+            ChapterReviewRelativePath,
+            "var batchStart = startCandidates.Count > 0 ? startCandidates.Min() : double.NaN;",
+            "batch export start bound composes from minimum selected start time");
+
+        AssertContains(
+            source,
+            ChapterReviewRelativePath,
+            "var batchEnd = endCandidates.Count > 0 ? endCandidates.Max() : double.NaN;",
+            "batch export end bound composes from maximum selected end time");
+
+        AssertContains(
+            source,
+            ChapterReviewRelativePath,
+            "var composition = ComposeCrxExportComposition(exportSeeds);",
+            "selection swipe-right export path uses shared composition helper");
+
+        AssertContains(
+            source,
+            ChapterReviewRelativePath,
+            "var composition = ComposeCrxExportComposition(new List<CrxExportSeed> { exportSeed });",
+            "single sentence CRX path uses shared composition helper");
+
+        AssertContains(
+            source,
+            ChapterReviewRelativePath,
+            "composition.RequiresRangeConfirmation);",
+            "modal handoff carries explicit range confirmation requirement for fallback ranges");
+
+        AssertContains(
+            source,
+            ChapterReviewRelativePath,
+            "[ProofCrxExport]",
+            "CRX export diagnostics anchor emits composed range/cardinality metadata");
+    }
+
+    [Fact]
     public void ChapterReview_PlaybackNavigation_UsesStableSentenceCursorForKeyboardStepping()
     {
         var source = ReadRepoFile(ChapterReviewRelativePath);

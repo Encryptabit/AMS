@@ -5,6 +5,7 @@ using Ams.Core.Artifacts.Hydrate;
 using Ams.Core.Runtime.Book;
 using Ams.Core.Services.Documents;
 using Ams.Workstation.Server.Components.Pages.Proof;
+using Ams.Workstation.Server.Components.Shared;
 using Ams.Workstation.Server.Services;
 using Microsoft.AspNetCore.Components;
 using Microsoft.JSInterop;
@@ -78,6 +79,15 @@ public sealed class ProofGestureSelectionContractTests
         await InvokeComponentStateTransitionAsync(() => harness.Component.OnSentenceLongPress(harness.PrimarySentenceId));
         await InvokeComponentStateTransitionAsync(() => harness.Component.OnSelectionSwipeRight(harness.PrimarySentenceId, "playback"));
 
+        Assert.True(
+            harness.CrxModalProbe.IsVisible,
+            "Expected swipe-right gesture path to dispatch through CRX modal export flow.");
+
+        Assert.Equal(harness.PrimarySentenceId, harness.CrxModalProbe.SentenceId);
+        Assert.Equal(harness.ChapterName, harness.CrxModalProbe.ChapterName);
+        Assert.Equal(0.0, harness.CrxModalProbe.StartTime, precision: 3);
+        Assert.Equal(0.8, harness.CrxModalProbe.EndTime, precision: 3);
+
         Assert.False(
             harness.IgnoredPatternsService.IsIgnored(harness.PrimaryPatternKey),
             "Expected swipe-right export path to avoid mutating ignore persistence state.");
@@ -88,6 +98,43 @@ public sealed class ProofGestureSelectionContractTests
 
         var workspaceFilesAfterGestures = SnapshotFiles(harness.RootPath);
         Assert.Equal(baselineWorkspaceFiles, workspaceFilesAfterGestures);
+    }
+
+    [Fact]
+    public async Task SwipeRight_MultiSelection_ComposesMergedRangeAndBatchContext()
+    {
+        using var harness = await GestureHarness.CreateAsync();
+
+        await InvokeComponentStateTransitionAsync(() => harness.Component.OnSentenceLongPress(harness.PrimarySentenceId));
+        InvokeComponentStateTransition(() => harness.Component.OnSelectionSentenceTap(harness.SecondarySentenceId));
+        await InvokeComponentStateTransitionAsync(() => harness.Component.OnSelectionSwipeRight(harness.PrimarySentenceId, "playback"));
+
+        Assert.True(harness.CrxModalProbe.IsVisible);
+        Assert.Equal(harness.PrimarySentenceId, harness.CrxModalProbe.SentenceId);
+        Assert.Equal(0.0, harness.CrxModalProbe.StartTime, precision: 3);
+        Assert.Equal(1.6, harness.CrxModalProbe.EndTime, precision: 3);
+        Assert.False(harness.CrxModalProbe.RequiresRangeConfirmation);
+        Assert.Contains("Batch export sentences", harness.CrxModalProbe.Excerpt, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task SwipeRight_InvalidMergedRange_SeedsFallbackWindowAndRequiresExplicitConfirmation()
+    {
+        using var harness = await GestureHarness.CreateAsync(
+            primaryStartTime: 0.4,
+            primaryEndTime: 0.4,
+            secondaryStartTime: 0.4,
+            secondaryEndTime: 0.4);
+
+        await InvokeComponentStateTransitionAsync(() => harness.Component.OnSentenceLongPress(harness.PrimarySentenceId));
+        InvokeComponentStateTransition(() => harness.Component.OnSelectionSentenceTap(harness.SecondarySentenceId));
+        await InvokeComponentStateTransitionAsync(() => harness.Component.OnSelectionSwipeRight(harness.PrimarySentenceId, "playback"));
+
+        Assert.True(harness.CrxModalProbe.IsVisible);
+        Assert.True(harness.CrxModalProbe.RequiresRangeConfirmation);
+        Assert.Equal(0.15, harness.CrxModalProbe.StartTime, precision: 2);
+        Assert.Equal(1.15, harness.CrxModalProbe.EndTime, precision: 2);
+        Assert.Contains("Batch export sentences", harness.CrxModalProbe.Excerpt, StringComparison.Ordinal);
     }
 
     private static async Task InvokeComponentStateTransitionAsync(Func<Task> action)
@@ -141,7 +188,8 @@ public sealed class ProofGestureSelectionContractTests
             ReviewedStatusService reviewedStatusService,
             IgnoredPatternsService ignoredPatternsService,
             CrxService crxService,
-            TestableChapterReview component)
+            TestableChapterReview component,
+            CrxModalProbe crxModalProbe)
         {
             RootPath = rootPath;
             ChapterName = chapterName;
@@ -154,6 +202,7 @@ public sealed class ProofGestureSelectionContractTests
             IgnoredPatternsService = ignoredPatternsService;
             CrxService = crxService;
             Component = component;
+            CrxModalProbe = crxModalProbe;
 
         }
 
@@ -179,7 +228,13 @@ public sealed class ProofGestureSelectionContractTests
 
         public TestableChapterReview Component { get; }
 
-        public static async Task<GestureHarness> CreateAsync()
+        public CrxModalProbe CrxModalProbe { get; }
+
+        public static async Task<GestureHarness> CreateAsync(
+            double primaryStartTime = 0.0,
+            double primaryEndTime = 0.8,
+            double secondaryStartTime = 0.8,
+            double secondaryEndTime = 1.6)
         {
             var root = Path.Combine(Path.GetTempPath(), $"ams-proof-gesture-tests-{Guid.NewGuid():N}");
             Directory.CreateDirectory(root);
@@ -220,7 +275,11 @@ public sealed class ProofGestureSelectionContractTests
                 primaryBookToken,
                 primaryScriptToken,
                 secondaryBookToken,
-                secondaryScriptToken);
+                secondaryScriptToken,
+                primaryStartTime,
+                primaryEndTime,
+                secondaryStartTime,
+                secondaryEndTime);
 
             WorkspaceSeedHydratedTranscript(workspace, hydrate);
 
@@ -248,6 +307,9 @@ public sealed class ProofGestureSelectionContractTests
                 new NoopJsRuntime(),
                 Uri.EscapeDataString(chapterName));
 
+            var crxModalProbe = new CrxModalProbe();
+            component.SetCrxModalForTest(crxModalProbe);
+
             await component.RunOnParametersSetAsyncForTest();
 
             // Ensure deterministic clean start for this book scope.
@@ -265,7 +327,8 @@ public sealed class ProofGestureSelectionContractTests
                 reviewedStatusService,
                 ignoredPatternsService,
                 crxService,
-                component);
+                component,
+                crxModalProbe);
         }
 
         public void Dispose()
@@ -320,7 +383,11 @@ public sealed class ProofGestureSelectionContractTests
             string primaryBookToken,
             string primaryScriptToken,
             string secondaryBookToken,
-            string secondaryScriptToken)
+            string secondaryScriptToken,
+            double primaryStartTime,
+            double primaryEndTime,
+            double secondaryStartTime,
+            double secondaryEndTime)
         {
             static HydratedDiff BuildSubDiff(string bookToken, string scriptToken)
                 => new(
@@ -334,15 +401,15 @@ public sealed class ProofGestureSelectionContractTests
             {
                 new(BookIdx: 0, AsrIdx: 0, BookWord: primaryBookToken, AsrWord: primaryScriptToken, Op: "sub", Reason: "gesture-test", Score: 0)
                 {
-                    StartSec = 0.0,
-                    EndSec = 0.8,
-                    DurationSec = 0.8
+                    StartSec = primaryStartTime,
+                    EndSec = primaryEndTime,
+                    DurationSec = Math.Max(0, primaryEndTime - primaryStartTime)
                 },
                 new(BookIdx: 1, AsrIdx: 1, BookWord: secondaryBookToken, AsrWord: secondaryScriptToken, Op: "sub", Reason: "gesture-test", Score: 0)
                 {
-                    StartSec = 0.8,
-                    EndSec = 1.6,
-                    DurationSec = 0.8
+                    StartSec = secondaryStartTime,
+                    EndSec = secondaryEndTime,
+                    DurationSec = Math.Max(0, secondaryEndTime - secondaryStartTime)
                 }
             };
 
@@ -356,7 +423,7 @@ public sealed class ProofGestureSelectionContractTests
                     ScriptText: $"{sentencePrefix} primary script",
                     Metrics: new SentenceMetrics(Wer: 1.0, Cer: 1.0, SpanWer: 1.0, MissingRuns: 1, ExtraRuns: 1),
                     Status: "error",
-                    Timing: new TimingRange(0.0, 0.8),
+                    Timing: new TimingRange(primaryStartTime, primaryEndTime),
                     Diff: BuildSubDiff(primaryBookToken, primaryScriptToken)),
                 new(
                     Id: secondarySentenceId,
@@ -366,7 +433,7 @@ public sealed class ProofGestureSelectionContractTests
                     ScriptText: $"{sentencePrefix} secondary script",
                     Metrics: new SentenceMetrics(Wer: 1.0, Cer: 1.0, SpanWer: 1.0, MissingRuns: 1, ExtraRuns: 1),
                     Status: "error",
-                    Timing: new TimingRange(0.8, 1.6),
+                    Timing: new TimingRange(secondaryStartTime, secondaryEndTime),
                     Diff: BuildSubDiff(secondaryBookToken, secondaryScriptToken))
             };
 
@@ -467,6 +534,9 @@ public sealed class ProofGestureSelectionContractTests
             SetMember(this, "ChapterName", chapterName);
         }
 
+        public void SetCrxModalForTest(CrxModal modal)
+            => SetMember(this, "_crxModal", modal);
+
         private static void SetMember(object target, string memberName, object? value)
         {
             const BindingFlags SearchFlags = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.DeclaredOnly;
@@ -493,6 +563,38 @@ public sealed class ProofGestureSelectionContractTests
         }
 
         public Task RunOnParametersSetAsyncForTest() => base.OnParametersSetAsync();
+    }
+
+    private sealed class CrxModalProbe : CrxModal
+    {
+        public bool IsVisible => ReadPrivateField<bool>("_isVisible");
+
+        public string ChapterName => ReadPrivateField<string>("_chapterName");
+
+        public double StartTime => ReadPrivateField<double>("_startTime");
+
+        public double EndTime => ReadPrivateField<double>("_endTime");
+
+        public int SentenceId => ReadPrivateField<int>("_sentenceId");
+
+        public string Excerpt => ReadPrivateField<string>("_excerpt");
+
+        public bool RequiresRangeConfirmation => ReadPrivateField<bool>("_requiresRangeConfirmation");
+
+        private T ReadPrivateField<T>(string fieldName)
+        {
+            var field = typeof(CrxModal).GetField(fieldName, BindingFlags.Instance | BindingFlags.NonPublic)
+                ?? throw new Xunit.Sdk.XunitException($"Missing private field '{fieldName}' on {typeof(CrxModal).FullName}.");
+
+            var value = field.GetValue(this);
+            if (value is T typed)
+            {
+                return typed;
+            }
+
+            throw new Xunit.Sdk.XunitException(
+                $"Unable to read private field '{fieldName}' as {typeof(T).Name}; actual value type was '{value?.GetType().Name ?? "null"}'.");
+        }
     }
 
     private sealed class TestNavigationManager : NavigationManager
