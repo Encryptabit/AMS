@@ -81,11 +81,11 @@
 
     @if (isMobileModuleRailOpen)
     {
-        <button type="button"
-                class="workstation-module-rail-overlay"
-                aria-label="Close module navigation"
-                data-ams-mobile-module-rail-overlay="visible"
-                @onclick="CloseMobileModuleRail"></button>
+        <div class="workstation-module-rail-overlay"
+             role="presentation"
+             aria-hidden="true"
+             data-ams-mobile-module-rail-overlay="visible"
+             @onclick="CloseMobileModuleRail"></div>
     }
 </div>
 

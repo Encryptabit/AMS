@@ -128,6 +128,9 @@ public sealed class StageShellPathResolutionTests
         AssertSourceContains(layout, MainLayoutRelativePath, "data-ams-mobile-module-rail-open=", "mobile module-rail toggle-state marker");
         AssertSourceContains(layout, MainLayoutRelativePath, "data-ams-mobile-module-rail=", "sidebar rail state marker");
         AssertSourceContains(layout, MainLayoutRelativePath, "data-ams-mobile-module-rail-overlay=\"visible\"", "drawer overlay diagnostic marker");
+        AssertSourceContains(layout, MainLayoutRelativePath, "<div class=\"workstation-module-rail-overlay\"", "drawer overlay uses non-focusable container");
+        AssertSourceContains(layout, MainLayoutRelativePath, "role=\"presentation\"", "drawer overlay presentational semantics");
+        AssertSourceContains(layout, MainLayoutRelativePath, "aria-hidden=\"true\"", "drawer overlay hidden from accessibility tree");
         AssertSourceContains(layout, MainLayoutRelativePath, "role=\"@(isMobileModuleRailOpen ? \"dialog\" : null)\"", "drawer dialog semantics");
         AssertSourceContains(layout, MainLayoutRelativePath, "aria-modal=\"@(isMobileModuleRailOpen ? \"true\" : null)\"", "drawer modal semantics");
         AssertSourceContains(layout, MainLayoutRelativePath, "@onkeydown=\"HandleMobileModuleRailKeyDown\"", "drawer keydown handler");
