@@ -48,10 +48,12 @@ public sealed class ProofMobileCrxRangeContractTests
         var source = ReadRepoFile(CrxModalRelativePath);
 
         AssertContains(source, CrxModalRelativePath, "private static bool DidRangeBoundChange(double currentSeconds, double nextSeconds)", "range change helper for confirmation reset");
+        AssertContains(source, CrxModalRelativePath, "=> currentSeconds != nextSeconds;", "range confirmation helper compares parsed numeric bounds directly");
         AssertContains(source, CrxModalRelativePath, "if (DidRangeBoundChange(currentSeconds, normalizedSeconds))", "range confirmation resets on any committed start/end input change");
         AssertContains(source, CrxModalRelativePath, "DidRangeBoundChange(_startTime, normalizedStart)", "submit-time pending start input change resets fallback confirmation");
         AssertContains(source, CrxModalRelativePath, "DidRangeBoundChange(_endTime, normalizedEnd)", "submit-time pending end input change resets fallback confirmation");
 
+        AssertDoesNotContain(source, CrxModalRelativePath, "!string.Equals(FormatTime(currentSeconds), FormatTime(nextSeconds), StringComparison.Ordinal)", "stale formatted-string comparison for confirmation reset");
         AssertDoesNotContain(source, CrxModalRelativePath, "Math.Abs(currentSeconds - normalizedSeconds) > MinRangeDurationSec", "stale threshold-gated start/end confirmation reset");
         AssertDoesNotContain(source, CrxModalRelativePath, "Math.Abs(_startTime - normalizedStart) > MinRangeDurationSec", "stale submit-time threshold-gated start confirmation reset");
         AssertDoesNotContain(source, CrxModalRelativePath, "Math.Abs(_endTime - normalizedEnd) > MinRangeDurationSec", "stale submit-time threshold-gated end confirmation reset");

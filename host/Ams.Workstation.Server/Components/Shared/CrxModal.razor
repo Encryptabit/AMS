@@ -534,7 +534,7 @@
     }
 
     private static bool DidRangeBoundChange(double currentSeconds, double nextSeconds)
-        => !string.Equals(FormatTime(currentSeconds), FormatTime(nextSeconds), StringComparison.Ordinal);
+        => currentSeconds != nextSeconds;
 
     private void ValidateRange()
     {
