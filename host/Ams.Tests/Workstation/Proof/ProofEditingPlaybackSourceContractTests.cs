@@ -480,8 +480,20 @@ public sealed class ProofEditingPlaybackSourceContractTests
         AssertContains(
             source,
             ChapterReviewRelativePath,
-            "trigger: \"swipe-left\"",
-            "swipe-left trigger preserved while delegating to shared batch ignore executor");
+            "var isFallbackAction = sourceSurface.StartsWith(\"mobile-action-bar-\", StringComparison.Ordinal);",
+            "batch ignore classifies fallback controls against gesture surfaces");
+
+        AssertContains(
+            source,
+            ChapterReviewRelativePath,
+            "var trigger = isFallbackAction ? \"ignore-button\" : \"swipe-left\";",
+            "batch ignore maps fallback controls and swipe gestures to distinct trigger diagnostics");
+
+        AssertContains(
+            source,
+            ChapterReviewRelativePath,
+            "trigger: trigger,",
+            "swipe-left wrapper forwards computed trigger into shared batch ignore executor");
 
         AssertContains(
             source,
