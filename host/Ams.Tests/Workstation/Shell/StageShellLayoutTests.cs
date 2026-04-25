@@ -16,6 +16,8 @@ public sealed class StageShellLayoutTests
     private const string MainLayoutRelativePath = "host/Ams.Workstation.Server/Components/Layout/MainLayout.razor";
     private const string MainLayoutCssRelativePath = "host/Ams.Workstation.Server/Components/Layout/MainLayout.razor.css";
     private const string MobileActionBarRelativePath = "host/Ams.Workstation.Server/Components/Layout/MobileActionBar.razor";
+    private const string ReconnectModalRelativePath = "host/Ams.Workstation.Server/Components/Layout/ReconnectModal.razor";
+    private const string ReconnectModalCssRelativePath = "host/Ams.Workstation.Server/Components/Layout/ReconnectModal.razor.css";
     [Theory]
     [InlineData("/prep", StageRouteCatalog.StageIds.Prep, StageRouteCatalog.ModuleIds.PrepPipeline)]
     [InlineData("/prep/", StageRouteCatalog.StageIds.Prep, StageRouteCatalog.ModuleIds.PrepPipeline)]
@@ -208,6 +210,24 @@ public sealed class StageShellLayoutTests
         AssertSourceContains(layoutCss, MainLayoutCssRelativePath, ".workstation-mobile-action-bar-host", "mobile action bar host style block");
         AssertSourceContains(layoutCss, MainLayoutCssRelativePath, ".workstation-mobile-action-bar-host ::deep .mobile-action-bar__actions", "mobile action bar action-grid selector");
         AssertSourceContains(layoutCss, MainLayoutCssRelativePath, "min-height: 44px;", "touch target minimum height contract");
+        AssertSourceContains(layoutCss, MainLayoutCssRelativePath, "touch-action: manipulation;", "touch-action manipulation contract");
+        AssertSourceContains(layoutCss, MainLayoutCssRelativePath, ".workstation-layout ::deep input", "mobile iOS zoom guard selector");
+        AssertSourceContains(layoutCss, MainLayoutCssRelativePath, "env(safe-area-inset-bottom)", "safe-area inset handling for bottom controls");
+    }
+
+    [Fact]
+    public void ReconnectModal_MobileContract_DeclaresSafeAreaReadableLayout()
+    {
+        var modal = ReadRepoFile(ReconnectModalRelativePath);
+        var css = ReadRepoFile(ReconnectModalCssRelativePath);
+
+        AssertSourceContains(modal, ReconnectModalRelativePath, "data-ams-reconnect-mobile-contract=\"safe-area-layout\"", "reconnect modal mobile contract marker");
+
+        AssertSourceContains(css, ReconnectModalCssRelativePath, "@media (max-width: 768px)", "mobile reconnect breakpoint");
+        AssertSourceContains(css, ReconnectModalCssRelativePath, "@media (max-height: 540px) and (orientation: landscape)", "landscape reconnect breakpoint");
+        AssertSourceContains(css, ReconnectModalCssRelativePath, "env(safe-area-inset-bottom)", "safe-area bottom inset support");
+        AssertSourceContains(css, ReconnectModalCssRelativePath, "max-height: calc(100dvh - env(safe-area-inset-top) - env(safe-area-inset-bottom) - 1rem);", "mobile reconnect max-height clamp");
+        AssertSourceContains(css, ReconnectModalCssRelativePath, "min-height: 44px;", "reconnect button touch target minimum");
     }
 
     private static void AssertVisibleState(

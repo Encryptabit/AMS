@@ -5,6 +5,7 @@
     flex-direction: column;
     height: 100vh;
     overflow: hidden;
+    touch-action: manipulation;
 }
 
 .workstation-header {
@@ -149,6 +150,7 @@
     .workstation-module-rail-toggle ::deep button,
     .workstation-module-rail-toggle ::deep .bit-btn {
         min-height: 44px;
+        touch-action: manipulation;
     }
 
     .workstation-header-controls-host {
@@ -160,6 +162,16 @@
     .workstation-shell {
         position: relative;
         flex-direction: column;
+    }
+
+    .workstation-content {
+        padding: 1rem 0.75rem calc(6.25rem + env(safe-area-inset-bottom));
+    }
+
+    .workstation-layout ::deep input,
+    .workstation-layout ::deep select,
+    .workstation-layout ::deep textarea {
+        font-size: 16px;
     }
 
     .workstation-mobile-action-bar-host {
@@ -203,6 +215,7 @@
         min-height: 44px;
         width: 100%;
         padding-inline: 0.45rem;
+        touch-action: manipulation;
     }
 
     .workstation-sidebar {

@@ -220,6 +220,27 @@ public sealed class WorkstationPrepDesignContractTests
 
         AssertMatches(
             css,
+            "touch-action\\s*:\\s*manipulation",
+            RegexOptions.CultureInvariant,
+            PrepCssRelativePath,
+            "global touch-action manipulation guard");
+
+        AssertMatches(
+            css,
+            "@media\\s*\\(max-width:\\s*768px\\)[\\s\\S]*?padding-bottom\\s*:\\s*calc\\(1rem\\s*\\+\\s*env\\(safe-area-inset-bottom\\)\\)",
+            RegexOptions.CultureInvariant,
+            PrepCssRelativePath,
+            "mobile safe-area bottom padding");
+
+        AssertMatches(
+            css,
+            "@media\\s*\\(max-width:\\s*768px\\)[\\s\\S]*?pipeline-dashboard-table-wrap[\\s\\S]*?touch-action\\s*:\\s*pan-y",
+            RegexOptions.CultureInvariant,
+            PrepCssRelativePath,
+            "mobile table wrapper pan-y touch-action rule");
+
+        AssertMatches(
+            css,
             "@media\\s*\\(max-width:\\s*768px\\)[\\s\\S]*?pipeline-dashboard-table[\\s\\S]*?content\\s*:\\s*attr\\(data-label\\)",
             RegexOptions.CultureInvariant,
             PrepCssRelativePath,

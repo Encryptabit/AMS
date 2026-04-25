@@ -1,6 +1,7 @@
 .proof-review {
     width: 100%;
     min-width: 0;
+    touch-action: manipulation;
 }
 
 .proof-view-switcher {
@@ -46,6 +47,10 @@
     min-width: 0;
 }
 
+.proof-errors-shell {
+    min-width: 0;
+}
+
 .proof-playback-alert,
 .proof-playback-waveform,
 .proof-playback-sentences {
@@ -87,6 +92,18 @@
         padding-bottom: calc(9rem + env(safe-area-inset-bottom));
     }
 
+    .proof-review ::deep input,
+    .proof-review ::deep select,
+    .proof-review ::deep textarea {
+        font-size: 16px;
+    }
+
+    .proof-playback-sentences,
+    .proof-errors-shell {
+        touch-action: pan-y;
+        overscroll-behavior-y: contain;
+    }
+
     .proof-view-switcher {
         margin-bottom: 0.55rem;
     }
@@ -108,6 +125,7 @@
         min-height: 44px;
         line-height: 1.15;
         padding-inline: 0.7rem;
+        touch-action: manipulation;
     }
 
     .proof-playback-shell {
@@ -177,6 +195,7 @@
 
     .proof-playback-sentences ::deep .sentence-items {
         padding: 0.35rem;
+        touch-action: pan-y;
     }
 
     .proof-playback-sentences ::deep .sentence-item {

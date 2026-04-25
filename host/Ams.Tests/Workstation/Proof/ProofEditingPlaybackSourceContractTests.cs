@@ -5,6 +5,7 @@ namespace Ams.Tests.Workstation.Proof;
 public sealed class ProofEditingPlaybackSourceContractTests
 {
     private const string ChapterReviewRelativePath = "host/Ams.Workstation.Server/Components/Pages/Proof/ChapterReview.razor";
+    private const string ChapterReviewCssRelativePath = "host/Ams.Workstation.Server/Components/Pages/Proof/ChapterReview.razor.css";
     private const string MobileActionBarRelativePath = "host/Ams.Workstation.Server/Components/Layout/MobileActionBar.razor";
     private const string CrxModalRelativePath = "host/Ams.Workstation.Server/Components/Shared/CrxModal.razor";
     private const string AudioControllerRelativePath = "host/Ams.Workstation.Server/Controllers/AudioController.cs";
@@ -343,6 +344,102 @@ public sealed class ProofEditingPlaybackSourceContractTests
             MobileActionBarRelativePath,
             "data-ams-proof-mobile-action-bar-selection-count=\"@SelectedCount\"",
             "mobile action bar selection-count diagnostic marker");
+    }
+
+    [Fact]
+    public void ChapterReview_MobileCssContracts_DeclareTouchActionAndSafeAreaGuards()
+    {
+        var css = ReadRepoFile(ChapterReviewCssRelativePath);
+
+        AssertContains(
+            css,
+            ChapterReviewCssRelativePath,
+            "touch-action: manipulation;",
+            "proof surface touch-action manipulation baseline");
+
+        AssertContains(
+            css,
+            ChapterReviewCssRelativePath,
+            ".proof-errors-shell",
+            "proof errors shell selector for mobile gesture region");
+
+        AssertContains(
+            css,
+            ChapterReviewCssRelativePath,
+            "touch-action: pan-y;",
+            "proof swipe region pan-y touch-action guard");
+
+        AssertContains(
+            css,
+            ChapterReviewCssRelativePath,
+            "padding-bottom: calc(9rem + env(safe-area-inset-bottom));",
+            "proof safe-area bottom spacing for mobile action bar");
+
+        AssertContains(
+            css,
+            ChapterReviewCssRelativePath,
+            ".proof-review ::deep input",
+            "proof mobile iOS zoom guard selector");
+
+        AssertContains(
+            css,
+            ChapterReviewCssRelativePath,
+            "font-size: 16px;",
+            "proof mobile input font-size guard");
+    }
+
+    [Fact]
+    public void CrxModal_MobileLayoutContract_DeclaresResponsiveSafeAreaAndInputGuards()
+    {
+        var source = ReadRepoFile(CrxModalRelativePath);
+
+        AssertContains(
+            source,
+            CrxModalRelativePath,
+            "data-ams-crx-modal-state=",
+            "CRX modal state diagnostic marker");
+
+        AssertContains(
+            source,
+            CrxModalRelativePath,
+            "data-ams-crx-modal-layout=\"responsive\"",
+            "CRX modal responsive layout contract marker");
+
+        AssertContains(
+            source,
+            CrxModalRelativePath,
+            "aria-label=\"Add to CRX\"",
+            "CRX modal dialog accessibility label");
+
+        AssertContains(
+            source,
+            CrxModalRelativePath,
+            "max-height: min(92dvh, 48rem);",
+            "CRX modal desktop max-height clamp");
+
+        AssertContains(
+            source,
+            CrxModalRelativePath,
+            "@@media (max-width: 768px)",
+            "CRX modal mobile breakpoint rule");
+
+        AssertContains(
+            source,
+            CrxModalRelativePath,
+            "max-height: calc(100dvh - env(safe-area-inset-top) - env(safe-area-inset-bottom) - 0.7rem);",
+            "CRX modal mobile safe-area max-height clamp");
+
+        AssertContains(
+            source,
+            CrxModalRelativePath,
+            "padding-bottom: calc(0.85rem + env(safe-area-inset-bottom));",
+            "CRX modal footer safe-area padding");
+
+        AssertContains(
+            source,
+            CrxModalRelativePath,
+            "min-height: 44px;",
+            "CRX modal touch-target minimum size");
     }
 
     [Fact]
