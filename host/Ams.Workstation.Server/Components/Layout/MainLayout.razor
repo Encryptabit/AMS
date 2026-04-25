@@ -21,6 +21,8 @@
                        aria-haspopup="dialog"
                        aria-controls="@MobileModuleRailPanelId"
                        aria-expanded="@(isMobileModuleRailOpen ? "true" : "false")"
+                       aria-label="@(isMobileModuleRailOpen ? "Close module navigation" : "Open module navigation")"
+                       title="@(isMobileModuleRailOpen ? "Close module navigation" : "Open module navigation")"
                        OnClick="ToggleMobileModuleRail">
                 @(isMobileModuleRailOpen ? "Close Modules" : "Modules")
             </BitButton>
@@ -55,6 +57,8 @@
                     <BitButton Variant="BitVariant.Text"
                                Color="BitColor.Secondary"
                                Size="BitSize.Small"
+                               aria-label="Close module navigation"
+                               title="Close module navigation"
                                OnClick="CloseMobileModuleRail">
                         Close
                     </BitButton>

@@ -85,6 +85,10 @@ public sealed class StageShellCompositionContractTests
         AssertContains(source, HeaderControlsRelativePath, "aria-haspopup=\"dialog\"", "overflow trigger dialog semantics");
         AssertContains(source, HeaderControlsRelativePath, "aria-controls=\"@MobileOverflowPanelId\"", "overflow trigger controls relationship");
         AssertContains(source, HeaderControlsRelativePath, "aria-expanded=\"@(isMobileOverflowOpen ? \"true\" : \"false\")\"", "overflow expanded state expression");
+        AssertContains(source, HeaderControlsRelativePath, "aria-label=\"@(isMobileOverflowOpen ? \"Close secondary header actions\" : \"Open secondary header actions\")\"", "overflow trigger accessibility label expression");
+        AssertContains(source, HeaderControlsRelativePath, "title=\"@(isMobileOverflowOpen ? \"Close secondary header actions\" : \"Open secondary header actions\")\"", "overflow trigger title expression");
+        AssertContains(source, HeaderControlsRelativePath, "aria-label=\"Close secondary header actions\"", "overflow panel close button accessibility label");
+        AssertContains(source, HeaderControlsRelativePath, "title=\"Close secondary header actions\"", "overflow panel close button title");
         AssertContains(source, HeaderControlsRelativePath, "id=\"@MobileOverflowPanelId\"", "overflow panel id expression");
         AssertContains(source, HeaderControlsRelativePath, "aria-labelledby=\"@MobileOverflowTitleId\"", "overflow panel labelled-by expression");
         AssertContains(source, HeaderControlsRelativePath, "@ref=\"mobileOverflowPanelRef\"", "overflow panel focus target");
@@ -101,6 +105,10 @@ public sealed class StageShellCompositionContractTests
 
         AssertContains(mainLayout, MainLayoutRelativePath, "data-ams-shell-region=\"header-controls\"", "header controls shell region marker");
         AssertContains(mainLayout, MainLayoutRelativePath, "data-ams-mobile-overflow-contract=\"secondary-actions\"", "header overflow contract marker");
+        AssertContains(mainLayout, MainLayoutRelativePath, "aria-label=\"@(isMobileModuleRailOpen ? \"Close module navigation\" : \"Open module navigation\")\"", "module rail toggle accessibility label expression");
+        AssertContains(mainLayout, MainLayoutRelativePath, "title=\"@(isMobileModuleRailOpen ? \"Close module navigation\" : \"Open module navigation\")\"", "module rail toggle title expression");
+        AssertContains(mainLayout, MainLayoutRelativePath, "aria-label=\"Close module navigation\"", "module rail close button accessibility label");
+        AssertContains(mainLayout, MainLayoutRelativePath, "title=\"Close module navigation\"", "module rail close button title");
     }
 
     private static void AssertContains(string source, string relativePath, string anchor, string anchorDescription)

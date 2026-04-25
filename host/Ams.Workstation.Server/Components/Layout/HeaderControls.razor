@@ -69,6 +69,8 @@
                        aria-haspopup="dialog"
                        aria-controls="@MobileOverflowPanelId"
                        aria-expanded="@(isMobileOverflowOpen ? "true" : "false")"
+                       aria-label="@(isMobileOverflowOpen ? "Close secondary header actions" : "Open secondary header actions")"
+                       title="@(isMobileOverflowOpen ? "Close secondary header actions" : "Open secondary header actions")"
                        OnClick="ToggleMobileOverflow">
                 @(isMobileOverflowOpen ? "Close" : "More")
             </BitButton>
@@ -129,6 +131,8 @@
                 <BitButton Variant="BitVariant.Text"
                            Color="BitColor.Secondary"
                            Size="BitSize.Small"
+                           aria-label="Close secondary header actions"
+                           title="Close secondary header actions"
                            OnClick="CloseMobileOverflow">
                     Close
                 </BitButton>

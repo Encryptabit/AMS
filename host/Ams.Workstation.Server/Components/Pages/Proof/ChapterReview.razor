@@ -19,17 +19,22 @@
 <PageTitle>@ChapterName - Proof - AMS Workstation</PageTitle>
 
 <SectionContent SectionName="mobile-action-bar">
-    <MobileActionBar CurrentView="@_currentView"
-                     IsSelectionModeActive="@_isSelectionModeActive"
-                     SelectedCount="@SelectionCount"
-                     IsBatchActionsEnabled="@CanRunSelectionBatchActions"
-                     IsReviewed="@_isReviewed"
-                     OnSwitchToErrors="SwitchToErrorsFromMobileActionBar"
-                     OnSwitchToPlayback="SwitchToPlaybackFromMobileActionBar"
-                     OnExportSelection="ExportSelectionFromMobileActionBarAsync"
-                     OnIgnoreSelection="IgnoreSelectionFromMobileActionBarAsync"
-                     OnToggleReviewed="ToggleReviewedFromMobileActionBar"
-                     OnToggleModules="ToggleModulesFromMobileActionBarAsync" />
+    <div class="proof-mobile-fallback-actions"
+         data-ams-proof-gesture-fallback-controls="mobile-action-buttons"
+         role="region"
+         aria-label="Proof gesture fallback controls">
+        <MobileActionBar CurrentView="@_currentView"
+                         IsSelectionModeActive="@_isSelectionModeActive"
+                         SelectedCount="@SelectionCount"
+                         IsBatchActionsEnabled="@CanRunSelectionBatchActions"
+                         IsReviewed="@_isReviewed"
+                         OnSwitchToErrors="SwitchToErrorsFromMobileActionBar"
+                         OnSwitchToPlayback="SwitchToPlaybackFromMobileActionBar"
+                         OnExportSelection="ExportSelectionFromMobileActionBarAsync"
+                         OnIgnoreSelection="IgnoreSelectionFromMobileActionBarAsync"
+                         OnToggleReviewed="ToggleReviewedFromMobileActionBar"
+                         OnToggleModules="ToggleModulesFromMobileActionBarAsync" />
+    </div>
 </SectionContent>
 
 <div class="proof-review" data-ams-proof-mobile-action-bar-contract="selection-workflows">
@@ -66,6 +71,15 @@
                  Class="proof-selection-indicator-text">
             @GetSelectionModeIndicatorText()
         </BitText>
+        <BitButton Variant="BitVariant.Outline"
+                   Color="BitColor.Secondary"
+                   Size="BitSize.Small"
+                   data-ams-proof-selection-fallback-toggle="true"
+                   aria-label="@SelectionFallbackToggleAriaLabel"
+                   title="@SelectionFallbackToggleTitle"
+                   OnClick="ToggleSelectionModeFallbackAsync">
+            @SelectionFallbackToggleText
+        </BitButton>
     </div>
 
     @if (_currentView == "playback")
@@ -228,6 +242,11 @@
     private int SelectionCount => _selectedSentenceIds.Count;
     private bool CanRunSelectionBatchActions => _isSelectionModeActive && _selectedSentenceIds.Count > 0;
     private string CurrentMobileActionSurface => _currentView == "errors" ? "errors" : "playback";
+    private string SelectionFallbackToggleText => _isSelectionModeActive ? "Exit Selection" : "Select Current";
+    private string SelectionFallbackToggleAriaLabel => _isSelectionModeActive
+        ? "Exit selection mode and resume playback"
+        : "Enter selection mode using the current sentence";
+    private string SelectionFallbackToggleTitle => _isSelectionModeActive ? "Exit selection mode" : "Enter selection mode";
 
     // Keyboard navigation state
     private int _selectedErrorIndex;
@@ -409,6 +428,34 @@
     {
         var anchorSentenceId = ResolveSelectionActionAnchorSentenceId();
         return HandleSelectionSwipeLeftAsync(anchorSentenceId, $"mobile-action-bar-{CurrentMobileActionSurface}");
+    }
+
+    private async Task ToggleSelectionModeFallbackAsync()
+    {
+        var anchorSentenceId = ResolveSelectionActionAnchorSentenceId();
+        if (anchorSentenceId <= 0)
+        {
+            anchorSentenceId = ResolveFallbackSelectionSentenceId();
+        }
+
+        if (_isSelectionModeActive)
+        {
+            await ClearSelectionModeAndResumeAsync(anchorSentenceId, "fallback-selection-toggle");
+            return;
+        }
+
+        await EnterSelectionModeAsync(anchorSentenceId, "fallback-selection-toggle");
+    }
+
+    private int ResolveFallbackSelectionSentenceId()
+    {
+        if (_currentView == "errors" && _errorSentencesList.Count > 0)
+        {
+            var clampedIndex = Math.Clamp(_selectedErrorIndex, 0, _errorSentencesList.Count - 1);
+            return _errorSentencesList[clampedIndex].Id;
+        }
+
+        return ResolvePlaybackSelectionSentenceId() ?? 0;
     }
 
     private async Task ToggleModulesFromMobileActionBarAsync()
@@ -1130,8 +1177,9 @@
 
     private Task HandleSelectionSwipeRightAsync(int sentenceId, string sourceSurface)
     {
-        const string eventName = "swipe-right-export";
-        const string trigger = "swipe-right";
+        var isFallbackAction = sourceSurface.StartsWith("mobile-action-bar-", StringComparison.Ordinal);
+        var trigger = isFallbackAction ? "export-button" : "swipe-right";
+        var eventName = isFallbackAction ? "explicit-export" : "swipe-right-export";
 
         if (!TryValidateBatchGestureContext(eventName, trigger, sentenceId, sourceSurface, out var selectedSentenceIds))
         {
@@ -1205,11 +1253,15 @@
 
     private Task HandleSelectionSwipeLeftAsync(int sentenceId, string sourceSurface)
     {
+        var isFallbackAction = sourceSurface.StartsWith("mobile-action-bar-", StringComparison.Ordinal);
+        var trigger = isFallbackAction ? "ignore-button" : "swipe-left";
+        var eventName = isFallbackAction ? "explicit-ignore" : "swipe-left-ignore";
+
         return ExecuteSelectionBatchIgnoreAsync(
             sentenceId: sentenceId,
-            trigger: "swipe-left",
+            trigger: trigger,
             sourceSurface: sourceSurface,
-            eventName: "swipe-left-ignore");
+            eventName: eventName);
     }
 
     private async Task ExecuteSelectionBatchIgnoreAsync(
