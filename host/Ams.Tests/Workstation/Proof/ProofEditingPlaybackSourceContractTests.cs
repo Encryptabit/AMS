@@ -414,6 +414,12 @@ public sealed class ProofEditingPlaybackSourceContractTests
         AssertContains(
             source,
             CrxModalRelativePath,
+            "z-index: 1300; /* Above shell mobile action bar host (z-index: 1150). */",
+            "CRX modal overlay stacks above mobile action bar shell chrome");
+
+        AssertContains(
+            source,
+            CrxModalRelativePath,
             "max-height: min(92dvh, 48rem);",
             "CRX modal desktop max-height clamp");
 
