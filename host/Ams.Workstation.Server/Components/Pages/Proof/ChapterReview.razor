@@ -159,7 +159,7 @@
                         OnPlaySentence="HandlePlayFromErrors"
                         OnExportSentence="HandleExportFromErrors"
                         OnCrxSentence="HandleCrxFromErrors"
-                        OnIgnoreSentence="HandleIgnoreFromErrors"
+                        OnIgnoreSentence="HandleIgnoreSentenceActionAsync"
                         OnTogglePatternIgnore="HandleTogglePatternIgnore"
                         OnViewSentence="HandleViewFromErrors" />
         </div>
@@ -858,7 +858,11 @@
         }
 
         var noun = SelectionCount == 1 ? "sentence" : "sentences";
-        return $"Selection mode active: {SelectionCount} {noun} selected. Long-press again to clear and resume playback.";
+        var selectionPolicyHint = _lastSelectionGestureEvent is "swipe-left-ignore" or "explicit-ignore"
+            ? " Batch ignore keeps current selection."
+            : string.Empty;
+
+        return $"Selection mode active: {SelectionCount} {noun} selected. Long-press again to clear and resume playback.{selectionPolicyHint}";
     }
 
     private void ToggleSelectionMembership(int sentenceId, string trigger)
@@ -1199,13 +1203,35 @@
         return Task.CompletedTask;
     }
 
-    private async Task HandleSelectionSwipeLeftAsync(int sentenceId, string sourceSurface)
+    private Task HandleSelectionSwipeLeftAsync(int sentenceId, string sourceSurface)
     {
-        const string eventName = "swipe-left-ignore";
-        const string trigger = "swipe-left";
+        return ExecuteSelectionBatchIgnoreAsync(
+            sentenceId: sentenceId,
+            trigger: "swipe-left",
+            sourceSurface: sourceSurface,
+            eventName: "swipe-left-ignore");
+    }
+
+    private async Task ExecuteSelectionBatchIgnoreAsync(
+        int sentenceId,
+        string trigger,
+        string sourceSurface,
+        string eventName)
+    {
+        const string selectionPolicy = "retain";
 
         if (!TryValidateBatchGestureContext(eventName, trigger, sentenceId, sourceSurface, out var selectedSentenceIds))
         {
+            LogBatchIgnoreDiagnostic(
+                result: $"{eventName}-invalid-context",
+                trigger: trigger,
+                sourceSurface: sourceSurface,
+                sentenceId: sentenceId,
+                selectedCount: selectedSentenceIds.Count,
+                ignoredPatternCount: 0,
+                failedSentenceCount: selectedSentenceIds.Count,
+                refreshed: false,
+                selectionPolicy: selectionPolicy);
             return;
         }
 
@@ -1213,6 +1239,17 @@
         {
             _lastSelectionGestureEvent = $"{eventName}-failed-missing-report";
             LogSelectionModeDiagnostic(_lastSelectionGestureEvent, trigger, sentenceId, $"surface={sourceSurface};selectedCount={selectedSentenceIds.Count}");
+
+            LogBatchIgnoreDiagnostic(
+                result: _lastSelectionGestureEvent,
+                trigger: trigger,
+                sourceSurface: sourceSurface,
+                sentenceId: sentenceId,
+                selectedCount: selectedSentenceIds.Count,
+                ignoredPatternCount: 0,
+                failedSentenceCount: selectedSentenceIds.Count,
+                refreshed: false,
+                selectionPolicy: selectionPolicy);
             return;
         }
 
@@ -1225,27 +1262,62 @@
         {
             _lastSelectionGestureEvent = $"{eventName}-failed-missing-sentences";
             LogSelectionModeDiagnostic(_lastSelectionGestureEvent, trigger, sentenceId, $"surface={sourceSurface};selectedCount={selectedSentenceIds.Count}");
+
+            LogBatchIgnoreDiagnostic(
+                result: _lastSelectionGestureEvent,
+                trigger: trigger,
+                sourceSurface: sourceSurface,
+                sentenceId: sentenceId,
+                selectedCount: selectedSentenceIds.Count,
+                ignoredPatternCount: 0,
+                failedSentenceCount: selectedSentenceIds.Count,
+                refreshed: false,
+                selectionPolicy: selectionPolicy);
             return;
         }
 
         var ignoredPatternCount = 0;
+        var failedSentenceCount = 0;
+
         foreach (var selectedSentence in selectedReports)
         {
-            ignoredPatternCount += IgnorePatternsForSentence(selectedSentence);
+            var ignoredCountForSentence = IgnorePatternsForSentence(selectedSentence);
+            ignoredPatternCount += ignoredCountForSentence;
+            if (ignoredCountForSentence <= 0)
+            {
+                failedSentenceCount++;
+            }
         }
 
         if (ignoredPatternCount <= 0)
         {
             _lastSelectionGestureEvent = $"{eventName}-noop";
-            LogSelectionModeDiagnostic(_lastSelectionGestureEvent, trigger, sentenceId, $"surface={sourceSurface};selectedCount={selectedReports.Count};ignoredCount=0");
+            LogSelectionModeDiagnostic(
+                _lastSelectionGestureEvent,
+                trigger,
+                sentenceId,
+                $"surface={sourceSurface};selectedCount={selectedReports.Count};ignoredCount=0;failedCount={selectedReports.Count};selectionPolicy={selectionPolicy}");
+
+            LogBatchIgnoreDiagnostic(
+                result: _lastSelectionGestureEvent,
+                trigger: trigger,
+                sourceSurface: sourceSurface,
+                sentenceId: sentenceId,
+                selectedCount: selectedReports.Count,
+                ignoredPatternCount: 0,
+                failedSentenceCount: selectedReports.Count,
+                refreshed: false,
+                selectionPolicy: selectionPolicy);
             return;
         }
 
+        var refreshed = false;
         if (!string.IsNullOrEmpty(ChapterName))
         {
             var decoded = Uri.UnescapeDataString(ChapterName);
             LoadReport(decoded);
             await LoadSentencesAsync(decoded);
+            refreshed = true;
         }
 
         _lastSelectionGestureEvent = eventName;
@@ -1253,11 +1325,23 @@
             _lastSelectionGestureEvent,
             trigger,
             sentenceId,
-            $"surface={sourceSurface};selectedCount={selectedReports.Count};ignoredCount={ignoredPatternCount}");
+            $"surface={sourceSurface};selectedCount={selectedReports.Count};ignoredCount={ignoredPatternCount};failedCount={failedSentenceCount};selectionPolicy={selectionPolicy}");
+
+        LogBatchIgnoreDiagnostic(
+            result: _lastSelectionGestureEvent,
+            trigger: trigger,
+            sourceSurface: sourceSurface,
+            sentenceId: sentenceId,
+            selectedCount: selectedReports.Count,
+            ignoredPatternCount: ignoredPatternCount,
+            failedSentenceCount: failedSentenceCount,
+            refreshed: refreshed,
+            selectionPolicy: selectionPolicy);
 
         var sentenceNoun = selectedReports.Count == 1 ? "sentence" : "sentences";
         var patternNoun = ignoredPatternCount == 1 ? "pattern" : "patterns";
-        ToastService.Info($"Ignored {ignoredPatternCount} error {patternNoun} across {selectedReports.Count} selected {sentenceNoun}.");
+        ToastService.Info($"Ignored {ignoredPatternCount} error {patternNoun} across {selectedReports.Count} selected {sentenceNoun}. Selection retained.");
+
         StateHasChanged();
     }
 
@@ -1372,6 +1456,21 @@
             $"[ProofCrxExport] trigger={trigger}; view={_currentView}; surface={sourceSurface}; sentenceId={sentenceId}; cardinality={composition.Cardinality}; range={FormatTime(composition.StartTime)}-{FormatTime(composition.EndTime)}; rangeMode={composition.RangeMode}; confirmRequired={composition.RequiresRangeConfirmation}");
     }
 
+    private void LogBatchIgnoreDiagnostic(
+        string result,
+        string trigger,
+        string sourceSurface,
+        int sentenceId,
+        int selectedCount,
+        int ignoredPatternCount,
+        int failedSentenceCount,
+        bool refreshed,
+        string selectionPolicy)
+    {
+        Console.WriteLine(
+            $"[ProofBatchIgnore] result={result}; trigger={trigger}; view={_currentView}; surface={sourceSurface}; sentenceId={sentenceId}; selectedCount={selectedCount}; ignoredPatternCount={ignoredPatternCount}; failedSentenceCount={failedSentenceCount}; refreshed={refreshed}; selectionPolicy={selectionPolicy}");
+    }
+
     private async Task HandlePlayFromErrors(SentenceReport sentence)
     {
         _snippetPlayer ??= await JS.InvokeAsync<IJSObjectReference>("import", "./js/snippet-player.js");
@@ -1452,6 +1551,20 @@
             ToastService.Error($"CRX failed: {result.Error}");
         }
         StateHasChanged();
+    }
+
+    private Task HandleIgnoreSentenceActionAsync(SentenceReport sentence)
+    {
+        if (_isSelectionModeActive)
+        {
+            return ExecuteSelectionBatchIgnoreAsync(
+                sentenceId: sentence.Id,
+                trigger: "ignore-button",
+                sourceSurface: "errors",
+                eventName: "explicit-ignore");
+        }
+
+        return HandleIgnoreFromErrors(sentence);
     }
 
     private async Task HandleIgnoreFromErrors(SentenceReport sentence)
@@ -1735,6 +1848,17 @@
     [JSInvokable]
     public async Task OnIgnoreError()
     {
+        if (_isSelectionModeActive)
+        {
+            var anchorSentenceId = ResolveSelectionActionAnchorSentenceId();
+            await ExecuteSelectionBatchIgnoreAsync(
+                sentenceId: anchorSentenceId,
+                trigger: "ignore-shortcut",
+                sourceSurface: _currentView,
+                eventName: "explicit-ignore");
+            return;
+        }
+
         var sentence = GetActiveSentenceReport();
         if (sentence == null) return;
 

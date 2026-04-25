@@ -24,6 +24,18 @@
     opacity: 0.85;
 }
 
+.proof-selection-indicator[data-ams-proof-selection-last-event="swipe-left-ignore"],
+.proof-selection-indicator[data-ams-proof-selection-last-event="explicit-ignore"] {
+    border-color: #0f7b0f;
+    background: rgba(15, 123, 15, 0.12);
+}
+
+.proof-selection-indicator[data-ams-proof-selection-last-event*="ignore-failed"],
+.proof-selection-indicator[data-ams-proof-selection-last-event$="ignore-noop"] {
+    border-color: #8f6a00;
+    background: rgba(143, 106, 0, 0.12);
+}
+
 .proof-selection-indicator-text {
     display: block;
     line-height: 1.35;

@@ -346,6 +346,72 @@ public sealed class ProofEditingPlaybackSourceContractTests
     }
 
     [Fact]
+    public void ChapterReview_BatchIgnore_RoutesSwipeAndExplicitActionsThroughSharedExecutor()
+    {
+        var source = ReadRepoFile(ChapterReviewRelativePath);
+
+        AssertContains(
+            source,
+            ChapterReviewRelativePath,
+            "OnIgnoreSentence=\"HandleIgnoreSentenceActionAsync\"",
+            "errors view explicit ignore callback routes through selection-aware handler");
+
+        AssertContains(
+            source,
+            ChapterReviewRelativePath,
+            "private Task HandleIgnoreSentenceActionAsync(SentenceReport sentence)",
+            "selection-aware explicit ignore helper declaration");
+
+        AssertContains(
+            source,
+            ChapterReviewRelativePath,
+            "private async Task ExecuteSelectionBatchIgnoreAsync(",
+            "shared batch ignore executor declaration");
+
+        AssertContains(
+            source,
+            ChapterReviewRelativePath,
+            "return ExecuteSelectionBatchIgnoreAsync(",
+            "swipe-left and explicit ignore wrappers delegate to shared batch ignore executor");
+
+        AssertContains(
+            source,
+            ChapterReviewRelativePath,
+            "trigger: \"swipe-left\"",
+            "swipe-left trigger preserved while delegating to shared batch ignore executor");
+
+        AssertContains(
+            source,
+            ChapterReviewRelativePath,
+            "trigger: \"ignore-button\"",
+            "errors view explicit ignore trigger delegates to shared batch ignore executor");
+
+        AssertContains(
+            source,
+            ChapterReviewRelativePath,
+            "trigger: \"ignore-shortcut\"",
+            "keyboard explicit ignore trigger delegates to shared batch ignore executor");
+
+        AssertContains(
+            source,
+            ChapterReviewRelativePath,
+            "eventName: \"explicit-ignore\"",
+            "explicit ignore paths share explicit batch-ignore event contract");
+
+        AssertContains(
+            source,
+            ChapterReviewRelativePath,
+            "const string selectionPolicy = \"retain\";",
+            "batch ignore uses deterministic selection retention policy");
+
+        AssertContains(
+            source,
+            ChapterReviewRelativePath,
+            "[ProofBatchIgnore]",
+            "batch ignore diagnostics anchor emits selected/ignored/failure counts");
+    }
+
+    [Fact]
     public void AudioController_CorrectedEndpoints_UseSharedResolutionPath()
     {
         var source = ReadRepoFile(AudioControllerRelativePath);
