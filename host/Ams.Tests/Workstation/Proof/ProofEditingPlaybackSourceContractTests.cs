@@ -5,6 +5,7 @@ namespace Ams.Tests.Workstation.Proof;
 public sealed class ProofEditingPlaybackSourceContractTests
 {
     private const string ChapterReviewRelativePath = "host/Ams.Workstation.Server/Components/Pages/Proof/ChapterReview.razor";
+    private const string CrxModalRelativePath = "host/Ams.Workstation.Server/Components/Shared/CrxModal.razor";
     private const string AudioControllerRelativePath = "host/Ams.Workstation.Server/Controllers/AudioController.cs";
 
     [Fact]
@@ -58,6 +59,36 @@ public sealed class ProofEditingPlaybackSourceContractTests
         Assert.True(
             escapedChapterUsageCount >= 2,
             $"Expected corrected playback helpers to URI-escape chapter names in '{ChapterReviewRelativePath}'. Found {escapedChapterUsageCount} occurrence(s) of Uri.EscapeDataString(ChapterName).");
+    }
+
+    [Fact]
+    public void CrxModal_SubmitPath_CommitsAndValidatesPendingRangeInputs()
+    {
+        var source = ReadRepoFile(CrxModalRelativePath);
+
+        AssertContains(
+            source,
+            CrxModalRelativePath,
+            "private bool TryCommitPendingRangeInputs()",
+            "submit helper that commits active raw range text before request creation");
+
+        AssertContains(
+            source,
+            CrxModalRelativePath,
+            "if (!TryCommitPendingRangeInputs())",
+            "submit path guard that fail-closes when pending start/end text is invalid");
+
+        AssertContains(
+            source,
+            CrxModalRelativePath,
+            "if (_isVisible && !_submitting)",
+            "submit async gate delegates validation to submit helper instead of stale pre-check");
+
+        AssertDoesNotContain(
+            source,
+            CrxModalRelativePath,
+            "if (_isVisible && !_submitting && !HasRangeValidationError)",
+            "stale async pre-check that could skip active range text validation");
     }
 
     [Fact]

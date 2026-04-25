@@ -439,6 +439,28 @@
         StateHasChanged();
     }
 
+    private bool TryCommitPendingRangeInputs()
+    {
+        if (!TryParseTimeInput(_startInput, out var parsedStart))
+        {
+            _rangeValidationMessage = "Start time must use mm:ss.mmm format (example: 1:23.450).";
+            StateHasChanged();
+            return false;
+        }
+
+        if (!TryParseTimeInput(_endInput, out var parsedEnd))
+        {
+            _rangeValidationMessage = "End time must use mm:ss.mmm format (example: 1:23.450).";
+            StateHasChanged();
+            return false;
+        }
+
+        _startTime = Math.Max(0, parsedStart);
+        _endTime = Math.Max(0, parsedEnd);
+        CommitRangeChange();
+        return !HasRangeValidationError;
+    }
+
     private void ValidateRange()
     {
         if (_startTime < 0 || _endTime < 0)
@@ -516,12 +538,8 @@
 
     private async Task Submit()
     {
-        ValidateRange();
-        if (HasRangeValidationError)
-        {
-            StateHasChanged();
+        if (!TryCommitPendingRangeInputs())
             return;
-        }
 
         _submitting = true;
         StateHasChanged();
@@ -558,7 +576,7 @@
 
     public async Task SubmitAsync()
     {
-        if (_isVisible && !_submitting && !HasRangeValidationError)
+        if (_isVisible && !_submitting)
             await Submit();
     }
 
