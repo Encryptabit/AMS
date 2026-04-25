@@ -27,15 +27,19 @@ public sealed class StageShellCompositionContractTests
     }
 
     [Fact]
-    public void StageModuleRail_DeclaresStageAndModuleNavigationAnchors()
+    public void StageModuleRail_DeclaresModuleNavigationAnchorsAndStageDiagnostics()
     {
         var source = ReadRepoFile(StageModuleRailRelativePath);
 
-        AssertContains(source, StageModuleRailRelativePath, "data-stage-shell-nav=\"stages\"", "explicit stage navigation section");
         AssertContains(source, StageModuleRailRelativePath, "data-stage-shell-nav=\"modules\"", "explicit module navigation section");
-        AssertContains(source, StageModuleRailRelativePath, "StageRouteCatalog.Stages", "catalog-driven stage iteration");
-        AssertContains(source, StageModuleRailRelativePath, "stage-module-rail__stage-link", "stage link style hook");
+        AssertContains(source, StageModuleRailRelativePath, "data-stage-shell-stage=\"@_state.ActiveStageId\"", "active stage diagnostic marker");
+        AssertContains(source, StageModuleRailRelativePath, "data-stage-shell-module=\"@_state.ActiveModuleId\"", "active module diagnostic marker");
+        AssertContains(source, StageModuleRailRelativePath, "data-stage-shell-marker=\"@_state.DiagnosticMarker\"", "stage-module diagnostic marker");
+        AssertContains(source, StageModuleRailRelativePath, "match.Stage.Modules", "catalog-driven module iteration");
         AssertContains(source, StageModuleRailRelativePath, "stage-module-rail__module-link", "module link style hook");
+
+        AssertDoesNotContain(source, StageModuleRailRelativePath, "data-stage-shell-nav=\"stages\"", "legacy stage section should not duplicate header stage nav");
+        AssertDoesNotContain(source, StageModuleRailRelativePath, "stage-module-rail__stage-link", "legacy stage-link class should not exist in module rail");
     }
 
     [Fact]
@@ -67,6 +71,36 @@ public sealed class StageShellCompositionContractTests
         AssertContains(css, HeaderControlsCssRelativePath, ".header-nav", "header stage nav style block");
 
         AssertDoesNotContain(source, HeaderControlsRelativePath, "data-stage-module-id", "module links should remain in sidebar rail, not header");
+    }
+
+    [Fact]
+    public void HeaderControls_MobileOverflowSecondaryActions_AreDiagnosableAndAccessible()
+    {
+        var source = ReadRepoFile(HeaderControlsRelativePath);
+        var css = ReadRepoFile(HeaderControlsCssRelativePath);
+        var mainLayout = ReadRepoFile(MainLayoutRelativePath);
+
+        AssertContains(source, HeaderControlsRelativePath, "data-ams-mobile-overflow-state=", "mobile overflow state marker");
+        AssertContains(source, HeaderControlsRelativePath, "data-ams-mobile-overflow-open=", "mobile overflow trigger-open marker");
+        AssertContains(source, HeaderControlsRelativePath, "aria-haspopup=\"dialog\"", "overflow trigger dialog semantics");
+        AssertContains(source, HeaderControlsRelativePath, "aria-controls=\"@MobileOverflowPanelId\"", "overflow trigger controls relationship");
+        AssertContains(source, HeaderControlsRelativePath, "aria-expanded=\"@(isMobileOverflowOpen ? \"true\" : \"false\")\"", "overflow expanded state expression");
+        AssertContains(source, HeaderControlsRelativePath, "id=\"@MobileOverflowPanelId\"", "overflow panel id expression");
+        AssertContains(source, HeaderControlsRelativePath, "aria-labelledby=\"@MobileOverflowTitleId\"", "overflow panel labelled-by expression");
+        AssertContains(source, HeaderControlsRelativePath, "@ref=\"mobileOverflowPanelRef\"", "overflow panel focus target");
+        AssertContains(source, HeaderControlsRelativePath, "OnAfterRenderAsync", "post-render focus handoff for keyboard users");
+        AssertContains(source, HeaderControlsRelativePath, "focusMobileOverflowPanel", "focus state tracking");
+        AssertContains(source, HeaderControlsRelativePath, "data-ams-header-control=\"directory-actions-mobile\"", "mobile directory action host");
+
+        AssertContains(css, HeaderControlsCssRelativePath, ".header-mobile-overflow-trigger", "mobile overflow trigger style");
+        AssertContains(css, HeaderControlsCssRelativePath, ".header-mobile-overflow-overlay", "mobile overflow overlay style");
+        AssertContains(css, HeaderControlsCssRelativePath, ".header-mobile-overflow-panel", "mobile overflow panel style");
+        AssertContains(css, HeaderControlsCssRelativePath, ".header-mobile-overflow-panel:focus", "mobile overflow keyboard focus style");
+        AssertContains(css, HeaderControlsCssRelativePath, ".header-secondary-optional", "desktop secondary control group selector");
+        AssertContains(css, HeaderControlsCssRelativePath, "display: none !important;", "mobile hide rule for inline secondary controls");
+
+        AssertContains(mainLayout, MainLayoutRelativePath, "data-ams-shell-region=\"header-controls\"", "header controls shell region marker");
+        AssertContains(mainLayout, MainLayoutRelativePath, "data-ams-mobile-overflow-contract=\"secondary-actions\"", "header overflow contract marker");
     }
 
     private static void AssertContains(string source, string relativePath, string anchor, string anchorDescription)
