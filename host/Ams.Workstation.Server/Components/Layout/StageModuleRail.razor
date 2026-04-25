@@ -4,47 +4,69 @@
 
 @if (_state.IsVisible)
 {
-    <BitStack Class="stage-module-rail"
-              Horizontal="false"
-              Gap="1rem"
-              Style="width: 100%;"
-              AriaLabel="Stage module navigation"
-              data-stage-shell="active"
-              data-stage-shell-stage="@_state.ActiveStageId"
-              data-stage-shell-module="@_state.ActiveModuleId"
-              data-stage-shell-path="@_state.NormalizedPath"
-              data-stage-shell-marker="@_state.DiagnosticMarker">
+    <nav class="stage-module-rail"
+         aria-label="Stage module navigation"
+         data-stage-shell="active"
+         data-stage-shell-stage="@_state.ActiveStageId"
+         data-stage-shell-module="@_state.ActiveModuleId"
+         data-stage-shell-path="@_state.NormalizedPath"
+         data-stage-shell-marker="@_state.DiagnosticMarker">
 
-        <BitStack Class="stage-module-rail__section" Horizontal="false" Gap="0.45rem" data-stage-shell-nav="modules">
-            <BitText Class="stage-module-rail__section-label">Modules</BitText>
-            <BitStack Class="stage-module-rail__module-list" Horizontal="false" Gap="0.35rem">
+        <section class="stage-module-rail__section" data-stage-shell-nav="stages" aria-labelledby="stage-module-rail-stages-label">
+            <h2 id="stage-module-rail-stages-label" class="stage-module-rail__section-label">Stages</h2>
+            <ul class="stage-module-rail__stage-list" role="list">
+                @foreach (var stage in StageRouteCatalog.Stages)
+                {
+                    var isActiveStage = string.Equals(stage.Id, _state.ActiveStageId, StringComparison.OrdinalIgnoreCase);
+                    var stageLinkClass = isActiveStage
+                        ? "stage-module-rail__stage-link stage-module-rail__stage-link--active"
+                        : "stage-module-rail__stage-link";
+
+                    <li>
+                        <a class="@stageLinkClass"
+                           href="@stage.EntryPath"
+                           data-stage-id="@stage.Id"
+                           data-stage-active="@(isActiveStage ? "true" : "false")"
+                           aria-current="@(isActiveStage ? "page" : null)">
+                            @stage.DisplayName
+                        </a>
+                    </li>
+                }
+            </ul>
+        </section>
+
+        <section class="stage-module-rail__section" data-stage-shell-nav="modules" aria-labelledby="stage-module-rail-modules-label">
+            <h2 id="stage-module-rail-modules-label" class="stage-module-rail__section-label">Modules</h2>
+            <ul class="stage-module-rail__module-list" role="list">
                 @foreach (var module in _state.Modules)
                 {
-                    <BitButton Href="@module.Path"
-                               Variant="@(module.IsActive ? BitVariant.Fill : BitVariant.Text)"
-                               Color="BitColor.Primary"
-                               FullWidth="true"
-                               Style="justify-content: center;"
-                               Class="@(module.IsActive ? "stage-module-rail__module-link stage-module-rail__module-link--active bit-btn-flw" : "stage-module-rail__module-link bit-btn-flw")"
-                               data-stage-module-id="@module.Id"
-                               data-stage-module-active="@(module.IsActive ? "true" : "false")">
-                        @module.DisplayName
-                    </BitButton>
+                    var moduleLinkClass = module.IsActive
+                        ? "stage-module-rail__module-link stage-module-rail__module-link--active"
+                        : "stage-module-rail__module-link";
+
+                    <li>
+                        <a class="@moduleLinkClass"
+                           href="@module.Path"
+                           data-stage-module-id="@module.Id"
+                           data-stage-module-active="@(module.IsActive ? "true" : "false")"
+                           aria-current="@(module.IsActive ? "page" : null)">
+                            @module.DisplayName
+                        </a>
+                    </li>
                 }
-            </BitStack>
-        </BitStack>
-    </BitStack>
+            </ul>
+        </section>
+    </nav>
 }
 else
 {
-    <BitStack Class="stage-module-rail stage-module-rail--hidden"
-              Horizontal="false"
-              AriaHidden="true"
-              data-stage-shell="inactive"
-              data-stage-shell-path="@_state.NormalizedPath"
-              data-stage-shell-warning="@_state.WarningMessage">
-        <BitText Class="stage-module-rail__fallback-text">@_state.WarningMessage</BitText>
-    </BitStack>
+    <div class="stage-module-rail stage-module-rail--hidden"
+         aria-hidden="true"
+         data-stage-shell="inactive"
+         data-stage-shell-path="@_state.NormalizedPath"
+         data-stage-shell-warning="@_state.WarningMessage">
+        <span class="stage-module-rail__fallback-text">@_state.WarningMessage</span>
+    </div>
 }
 
 @code {

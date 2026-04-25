@@ -10,12 +10,12 @@
 .workstation-header {
     display: flex;
     align-items: center;
-    height: var(--header-height);
-    min-height: var(--header-height);
+    height: var(--ams-header-height);
+    min-height: var(--ams-header-height);
     padding: 0 1rem;
     gap: 1.5rem;
     z-index: 100;
-    border-bottom: 1px solid var(--bit-clr-border-sec, #333);
+    border-bottom: 1px solid var(--ams-color-border-subtle);
 }
 
 .header-title {
@@ -36,8 +36,8 @@
     width: 17rem;
     flex-shrink: 0;
     min-height: 0;
-    border-right: 1px solid var(--bit-clr-border-sec, #333);
-    background: var(--bit-clr-bg-secondary, rgba(255, 255, 255, 0.015));
+    border-right: 1px solid var(--ams-color-border-subtle);
+    background: var(--ams-color-surface-2);
 }
 
 .workstation-body {
@@ -61,8 +61,8 @@
     flex-shrink: 0;
     min-height: 0;
     overflow-y: auto;
-    border-left: 1px solid var(--bit-clr-border-sec, #333);
-    background: var(--bit-clr-bg-secondary, rgba(255, 255, 255, 0.015));
+    border-left: 1px solid var(--ams-color-border-subtle);
+    background: var(--ams-color-surface-2);
 }
 
 .workstation-inspector:empty {
@@ -87,7 +87,7 @@
     .workstation-sidebar {
         width: 100%;
         border-right: 0;
-        border-bottom: 1px solid var(--bit-clr-border-sec, #333);
+        border-bottom: 1px solid var(--ams-color-border-subtle);
     }
 
     .workstation-inspector {

@@ -7,7 +7,7 @@
     align-items: stretch;
     gap: 1rem;
     padding: 0.9rem;
-    background: var(--bit-clr-bg-secondary, rgba(255, 255, 255, 0.015));
+    background: var(--ams-color-surface-2);
 }
 
 .stage-module-rail__section {
@@ -19,10 +19,11 @@
 }
 
 .stage-module-rail__section-label {
+    margin: 0;
     font-size: 0.72rem;
     text-transform: uppercase;
     letter-spacing: 0.07em;
-    color: var(--bit-clr-fg-secondary, #b0b0b0);
+    color: var(--ams-color-text-secondary);
     text-align: center;
     width: 100%;
 }
@@ -41,7 +42,7 @@
 
 .stage-module-rail__stage-link,
 .stage-module-rail__module-link {
-    display: block;
+    display: flex;
     align-items: center;
     justify-content: center;
     width: 100%;
@@ -50,46 +51,37 @@
     margin: 0;
     text-align: center;
     padding: 0.45rem 0.6rem;
-    border: 1px solid var(--bit-clr-border-sec, #444);
-    color: var(--bit-clr-fg-primary, #fff);
+    border: 1px solid var(--ams-color-border-subtle);
+    border-radius: 0.35rem;
+    background-color: transparent;
+    color: var(--ams-color-text-primary);
     text-decoration: none;
     font-size: 0.82rem;
     font-weight: 500;
-    transition: background-color 120ms ease, border-color 120ms ease;
-}
-
-.stage-module-rail__module-link,
-.stage-module-rail__module-link.bit-btn {
-    justify-content: center !important;
-}
-
-.stage-module-rail__module-link .bit-btn-lbl,
-.stage-module-rail__module-link .bit-btn-ldg {
-    width: 100%;
-    text-align: center;
-}
-
-.stage-module-rail::deep .bit-btn-flw,
-.stage-module-rail::deep .bit-btn {
-    width: 100% !important;
-}
-
-.stage-module-rail::deep .bit-btn-lbl,
-.stage-module-rail::deep .bit-btn-ldg {
-    width: 100%;
-    text-align: center;
+    line-height: 1.3;
+    overflow-wrap: anywhere;
+    transition:
+        background-color 120ms ease,
+        border-color 120ms ease,
+        color 120ms ease;
 }
 
 .stage-module-rail__stage-link:hover,
 .stage-module-rail__module-link:hover {
-    background-color: var(--bit-clr-bg-sec-hover, rgba(255, 255, 255, 0.08));
+    background-color: var(--ams-color-surface-3);
+}
+
+.stage-module-rail__stage-link:focus-visible,
+.stage-module-rail__module-link:focus-visible {
+    outline: 2px solid var(--ams-color-accent);
+    outline-offset: 2px;
 }
 
 .stage-module-rail__stage-link--active,
 .stage-module-rail__module-link--active {
-    background-color: var(--bit-clr-pri-main, #1e88e5);
-    border-color: var(--bit-clr-pri-main, #1e88e5);
-    color: var(--bit-clr-pri-fore, #fff);
+    background-color: var(--ams-color-accent);
+    border-color: var(--ams-color-accent);
+    color: #fff;
 }
 
 .stage-module-rail__diagnostic {
@@ -99,20 +91,20 @@
     width: 100%;
     gap: 0.25rem 0.5rem;
     padding-top: 0.75rem;
-    border-top: 1px solid var(--bit-clr-border-sec, #333);
+    border-top: 1px solid var(--ams-color-border-subtle);
 }
 
 .stage-module-rail__diagnostic-label {
     font-size: 0.68rem;
     text-transform: uppercase;
     letter-spacing: 0.06em;
-    color: var(--bit-clr-fg-secondary, #b0b0b0);
+    color: var(--ams-color-text-secondary);
     text-align: center;
 }
 
 .stage-module-rail__diagnostic-value {
     font-size: 0.75rem;
-    color: var(--bit-clr-fg-primary, #fff);
+    color: var(--ams-color-text-primary);
     overflow-wrap: anywhere;
     text-align: center;
 }
@@ -140,6 +132,12 @@
         flex-direction: row;
         align-items: flex-start;
         overflow-x: auto;
+        overflow-y: hidden;
+    }
+
+    .stage-module-rail__section {
+        flex: 0 0 auto;
+        min-width: 11rem;
     }
 
     .stage-module-rail__diagnostic {

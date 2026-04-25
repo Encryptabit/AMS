@@ -1,0 +1,142 @@
+[
+  {
+    "route": "/proof",
+    "viewport": "mobile-360",
+    "url": "http://127.0.0.1:33015/proof",
+    "context": "proof-route",
+    "themeAttr": "dark",
+    "root": {
+      "scrollWidth": 318,
+      "clientWidth": 318,
+      "offsetHeight": 225
+    },
+    "routeInfoMessage": true,
+    "proofNoWorkspaceVisible": true,
+    "visibleMdLgButtons": [],
+    "runtimePickupsAnchors": []
+  },
+  {
+    "route": "/proof/pickups",
+    "viewport": "mobile-360",
+    "url": "http://127.0.0.1:33015/proof/pickups",
+    "context": "proof-route",
+    "themeAttr": "dark",
+    "root": {
+      "scrollWidth": 318,
+      "clientWidth": 318,
+      "offsetHeight": 244
+    },
+    "routeInfoMessage": true,
+    "proofNoWorkspaceVisible": false,
+    "visibleMdLgButtons": [
+      {
+        "className": "ams-btn ams-btn--secondary ams-btn--md",
+        "text": "Return to Editing",
+        "offsetHeight": 44
+      }
+    ],
+    "runtimePickupsAnchors": [
+      "data-proof-pickups-page=true",
+      "data-proof-pickups-handoff=editing",
+      "data-proof-pickups-action=return-editing"
+    ]
+  },
+  {
+    "route": "/proof",
+    "viewport": "tablet-768",
+    "url": "http://127.0.0.1:33015/proof",
+    "context": "proof-route",
+    "themeAttr": "dark",
+    "root": {
+      "scrollWidth": 726,
+      "clientWidth": 726,
+      "offsetHeight": 207
+    },
+    "routeInfoMessage": true,
+    "proofNoWorkspaceVisible": true,
+    "visibleMdLgButtons": [],
+    "runtimePickupsAnchors": []
+  },
+  {
+    "route": "/proof/pickups",
+    "viewport": "tablet-768",
+    "url": "http://127.0.0.1:33015/proof/pickups",
+    "context": "proof-route",
+    "themeAttr": "dark",
+    "root": {
+      "scrollWidth": 726,
+      "clientWidth": 726,
+      "offsetHeight": 189
+    },
+    "routeInfoMessage": true,
+    "proofNoWorkspaceVisible": false,
+    "visibleMdLgButtons": [
+      {
+        "className": "ams-btn ams-btn--secondary ams-btn--md",
+        "text": "Return to Editing",
+        "offsetHeight": 44
+      }
+    ],
+    "runtimePickupsAnchors": [
+      "data-proof-pickups-page=true",
+      "data-proof-pickups-handoff=editing",
+      "data-proof-pickups-action=return-editing"
+    ]
+  },
+  {
+    "route": "/proof",
+    "viewport": "desktop-1280",
+    "url": "http://127.0.0.1:33015/proof",
+    "context": "proof-route",
+    "themeAttr": "dark",
+    "root": {
+      "scrollWidth": 1000,
+      "clientWidth": 1000,
+      "offsetHeight": 207
+    },
+    "routeInfoMessage": true,
+    "proofNoWorkspaceVisible": true,
+    "visibleMdLgButtons": [],
+    "runtimePickupsAnchors": []
+  },
+  {
+    "route": "/proof/pickups",
+    "viewport": "desktop-1280",
+    "url": "http://127.0.0.1:33015/proof/pickups",
+    "context": "proof-route",
+    "themeAttr": "dark",
+    "root": {
+      "scrollWidth": 1000,
+      "clientWidth": 1000,
+      "offsetHeight": 189
+    },
+    "routeInfoMessage": true,
+    "proofNoWorkspaceVisible": false,
+    "visibleMdLgButtons": [
+      {
+        "className": "ams-btn ams-btn--secondary ams-btn--md",
+        "text": "Return to Editing",
+        "offsetHeight": 44
+      }
+    ],
+    "runtimePickupsAnchors": [
+      "data-proof-pickups-page=true",
+      "data-proof-pickups-handoff=editing",
+      "data-proof-pickups-action=return-editing"
+    ]
+  },
+  {
+    "context": "theme-toggle",
+    "route": "/proof",
+    "viewport": "desktop-1280",
+    "url": "http://127.0.0.1:33015/proof",
+    "before": {
+      "theme": "dark",
+      "bg": "rgb(17, 21, 28)"
+    },
+    "after": {
+      "theme": "light",
+      "bg": "rgb(255, 255, 255)"
+    }
+  }
+]

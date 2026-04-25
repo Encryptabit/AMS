@@ -1,0 +1,257 @@
+[
+  {
+    "t": 1,
+    "kind": "driver",
+    "detail": "launch chromium"
+  },
+  {
+    "t": 236,
+    "kind": "check",
+    "detail": "PASS proof.pickups.source_anchor_contract :: 16 source anchor snippets present"
+  },
+  {
+    "t": 238,
+    "kind": "check",
+    "detail": "PASS proof.overview.loading_spinner_contract :: Overview loading spinner anchor present in source"
+  },
+  {
+    "t": 244,
+    "kind": "route",
+    "detail": "/proof @ mobile-360"
+  },
+  {
+    "t": 879,
+    "kind": "check",
+    "detail": "PASS proof.load @mobile-360 [/proof] :: status=200"
+  },
+  {
+    "t": 2387,
+    "kind": "check",
+    "detail": "PASS proof.theme_attr @mobile-360 [/proof] :: data-ams-theme=dark"
+  },
+  {
+    "t": 2387,
+    "kind": "check",
+    "detail": "PASS proof.no_horizontal_overflow @mobile-360 [/proof] :: scrollWidth=318 clientWidth=318"
+  },
+  {
+    "t": 2387,
+    "kind": "check",
+    "detail": "PASS proof.touch_targets_md_lg @mobile-360 [/proof] :: no visible md/lg buttons on route"
+  },
+  {
+    "t": 2387,
+    "kind": "check",
+    "detail": "PASS proof.empty_workspace_info @mobile-360 [/proof] :: .ams-message.ams-message--info visible"
+  },
+  {
+    "t": 2387,
+    "kind": "check",
+    "detail": "PASS proof.empty_workspace_anchor @mobile-360 [/proof] :: [data-ams-proof='no-workspace-message'] visible"
+  },
+  {
+    "t": 2387,
+    "kind": "route",
+    "detail": "/proof/pickups @ mobile-360"
+  },
+  {
+    "t": 2960,
+    "kind": "check",
+    "detail": "PASS pickups.load @mobile-360 [/proof/pickups] :: status=200"
+  },
+  {
+    "t": 4468,
+    "kind": "check",
+    "detail": "PASS pickups.theme_attr @mobile-360 [/proof/pickups] :: data-ams-theme=dark"
+  },
+  {
+    "t": 4468,
+    "kind": "check",
+    "detail": "PASS pickups.no_horizontal_overflow @mobile-360 [/proof/pickups] :: scrollWidth=318 clientWidth=318"
+  },
+  {
+    "t": 4468,
+    "kind": "check",
+    "detail": "PASS pickups.touch_targets_md_lg @mobile-360 [/proof/pickups] :: all 1 md/lg buttons >=44px"
+  },
+  {
+    "t": 4468,
+    "kind": "check",
+    "detail": "PASS pickups.empty_workspace_info @mobile-360 [/proof/pickups] :: .ams-message.ams-message--info visible"
+  },
+  {
+    "t": 4468,
+    "kind": "check",
+    "detail": "PASS pickups.runtime_anchors_empty_workspace @mobile-360 [/proof/pickups] :: base pickups anchors visible in empty-workspace DOM"
+  },
+  {
+    "t": 4483,
+    "kind": "route",
+    "detail": "/proof @ tablet-768"
+  },
+  {
+    "t": 5023,
+    "kind": "check",
+    "detail": "PASS proof.load @tablet-768 [/proof] :: status=200"
+  },
+  {
+    "t": 6530,
+    "kind": "check",
+    "detail": "PASS proof.theme_attr @tablet-768 [/proof] :: data-ams-theme=dark"
+  },
+  {
+    "t": 6530,
+    "kind": "check",
+    "detail": "PASS proof.no_horizontal_overflow @tablet-768 [/proof] :: scrollWidth=726 clientWidth=726"
+  },
+  {
+    "t": 6530,
+    "kind": "check",
+    "detail": "PASS proof.touch_targets_md_lg @tablet-768 [/proof] :: no visible md/lg buttons on route"
+  },
+  {
+    "t": 6530,
+    "kind": "check",
+    "detail": "PASS proof.empty_workspace_info @tablet-768 [/proof] :: .ams-message.ams-message--info visible"
+  },
+  {
+    "t": 6530,
+    "kind": "check",
+    "detail": "PASS proof.empty_workspace_anchor @tablet-768 [/proof] :: [data-ams-proof='no-workspace-message'] visible"
+  },
+  {
+    "t": 6530,
+    "kind": "route",
+    "detail": "/proof/pickups @ tablet-768"
+  },
+  {
+    "t": 7073,
+    "kind": "check",
+    "detail": "PASS pickups.load @tablet-768 [/proof/pickups] :: status=200"
+  },
+  {
+    "t": 8576,
+    "kind": "check",
+    "detail": "PASS pickups.theme_attr @tablet-768 [/proof/pickups] :: data-ams-theme=dark"
+  },
+  {
+    "t": 8576,
+    "kind": "check",
+    "detail": "PASS pickups.no_horizontal_overflow @tablet-768 [/proof/pickups] :: scrollWidth=726 clientWidth=726"
+  },
+  {
+    "t": 8576,
+    "kind": "check",
+    "detail": "PASS pickups.touch_targets_md_lg @tablet-768 [/proof/pickups] :: all 1 md/lg buttons >=44px"
+  },
+  {
+    "t": 8576,
+    "kind": "check",
+    "detail": "PASS pickups.empty_workspace_info @tablet-768 [/proof/pickups] :: .ams-message.ams-message--info visible"
+  },
+  {
+    "t": 8576,
+    "kind": "check",
+    "detail": "PASS pickups.runtime_anchors_empty_workspace @tablet-768 [/proof/pickups] :: base pickups anchors visible in empty-workspace DOM"
+  },
+  {
+    "t": 8590,
+    "kind": "route",
+    "detail": "/proof @ desktop-1280"
+  },
+  {
+    "t": 9130,
+    "kind": "check",
+    "detail": "PASS proof.load @desktop-1280 [/proof] :: status=200"
+  },
+  {
+    "t": 10635,
+    "kind": "check",
+    "detail": "PASS proof.theme_attr @desktop-1280 [/proof] :: data-ams-theme=dark"
+  },
+  {
+    "t": 10635,
+    "kind": "check",
+    "detail": "PASS proof.no_horizontal_overflow @desktop-1280 [/proof] :: scrollWidth=1000 clientWidth=1000"
+  },
+  {
+    "t": 10635,
+    "kind": "check",
+    "detail": "PASS proof.touch_targets_md_lg @desktop-1280 [/proof] :: no visible md/lg buttons on route"
+  },
+  {
+    "t": 10635,
+    "kind": "check",
+    "detail": "PASS proof.empty_workspace_info @desktop-1280 [/proof] :: .ams-message.ams-message--info visible"
+  },
+  {
+    "t": 10635,
+    "kind": "check",
+    "detail": "PASS proof.empty_workspace_anchor @desktop-1280 [/proof] :: [data-ams-proof='no-workspace-message'] visible"
+  },
+  {
+    "t": 10635,
+    "kind": "route",
+    "detail": "/proof/pickups @ desktop-1280"
+  },
+  {
+    "t": 11179,
+    "kind": "check",
+    "detail": "PASS pickups.load @desktop-1280 [/proof/pickups] :: status=200"
+  },
+  {
+    "t": 12684,
+    "kind": "check",
+    "detail": "PASS pickups.theme_attr @desktop-1280 [/proof/pickups] :: data-ams-theme=dark"
+  },
+  {
+    "t": 12684,
+    "kind": "check",
+    "detail": "PASS pickups.no_horizontal_overflow @desktop-1280 [/proof/pickups] :: scrollWidth=1000 clientWidth=1000"
+  },
+  {
+    "t": 12684,
+    "kind": "check",
+    "detail": "PASS pickups.touch_targets_md_lg @desktop-1280 [/proof/pickups] :: all 1 md/lg buttons >=44px"
+  },
+  {
+    "t": 12684,
+    "kind": "check",
+    "detail": "PASS pickups.empty_workspace_info @desktop-1280 [/proof/pickups] :: .ams-message.ams-message--info visible"
+  },
+  {
+    "t": 12684,
+    "kind": "check",
+    "detail": "PASS pickups.runtime_anchors_empty_workspace @desktop-1280 [/proof/pickups] :: base pickups anchors visible in empty-workspace DOM"
+  },
+  {
+    "t": 12685,
+    "kind": "check",
+    "detail": "PASS seeded.blocks :: PRECONDITION_WORKING_DIR not set; seeded assertion blocks skipped by contract"
+  },
+  {
+    "t": 12685,
+    "kind": "theme",
+    "detail": "starting theme toggle inheritance check on /proof"
+  },
+  {
+    "t": 14814,
+    "kind": "check",
+    "detail": "PASS proof.theme.attribute_flip :: dark -> light"
+  },
+  {
+    "t": 14814,
+    "kind": "check",
+    "detail": "PASS proof.theme.body_bg_changed :: rgb(17, 21, 28) -> rgb(255, 255, 255)"
+  },
+  {
+    "t": 14879,
+    "kind": "check",
+    "detail": "PASS proof.console.no_pageerror :: zero pageerror entries across all viewports/routes"
+  },
+  {
+    "t": 14966,
+    "kind": "driver",
+    "detail": "closed chromium"
+  }
+]

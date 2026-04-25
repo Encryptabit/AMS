@@ -1,0 +1,142 @@
+[
+  {
+    "t": 0,
+    "kind": "driver",
+    "detail": "launch chromium"
+  },
+  {
+    "t": 1369,
+    "kind": "check",
+    "detail": "PASS prep.initial_load :: status=200"
+  },
+  {
+    "t": 1371,
+    "kind": "viewport",
+    "detail": "/prep @ mobile-360"
+  },
+  {
+    "t": 1963,
+    "kind": "check",
+    "detail": "PASS prep.load @mobile-360 :: status=200"
+  },
+  {
+    "t": 3474,
+    "kind": "check",
+    "detail": "PASS prep.theme_attr @mobile-360 :: data-ams-theme=dark"
+  },
+  {
+    "t": 3474,
+    "kind": "check",
+    "detail": "PASS prep.no_horizontal_overflow @mobile-360 :: scrollWidth=318 clientWidth=318"
+  },
+  {
+    "t": 3474,
+    "kind": "check",
+    "detail": "PASS prep.touch_target_any @mobile-360 :: no md/lg .ams-btn on /prep (6 sm buttons; R020 applies to md/lg only)"
+  },
+  {
+    "t": 3474,
+    "kind": "check",
+    "detail": "PASS prep.touch_target_all @mobile-360 :: no md/lg .ams-btn to enforce 44px against (6 sm buttons present)"
+  },
+  {
+    "t": 3474,
+    "kind": "check",
+    "detail": "PASS prep.state.empty_workspace_message @mobile-360 :: [data-ams-prep='no-workspace-message'] present"
+  },
+  {
+    "t": 3474,
+    "kind": "viewport",
+    "detail": "/prep @ tablet-768"
+  },
+  {
+    "t": 4030,
+    "kind": "check",
+    "detail": "PASS prep.load @tablet-768 :: status=200"
+  },
+  {
+    "t": 5536,
+    "kind": "check",
+    "detail": "PASS prep.theme_attr @tablet-768 :: data-ams-theme=dark"
+  },
+  {
+    "t": 5536,
+    "kind": "check",
+    "detail": "PASS prep.no_horizontal_overflow @tablet-768 :: scrollWidth=726 clientWidth=726"
+  },
+  {
+    "t": 5536,
+    "kind": "check",
+    "detail": "PASS prep.touch_target_any @tablet-768 :: no md/lg .ams-btn on /prep (6 sm buttons; R020 applies to md/lg only)"
+  },
+  {
+    "t": 5536,
+    "kind": "check",
+    "detail": "PASS prep.touch_target_all @tablet-768 :: no md/lg .ams-btn to enforce 44px against (6 sm buttons present)"
+  },
+  {
+    "t": 5536,
+    "kind": "check",
+    "detail": "PASS prep.state.empty_workspace_message @tablet-768 :: [data-ams-prep='no-workspace-message'] present"
+  },
+  {
+    "t": 5536,
+    "kind": "viewport",
+    "detail": "/prep @ desktop-1280"
+  },
+  {
+    "t": 6091,
+    "kind": "check",
+    "detail": "PASS prep.load @desktop-1280 :: status=200"
+  },
+  {
+    "t": 7601,
+    "kind": "check",
+    "detail": "PASS prep.theme_attr @desktop-1280 :: data-ams-theme=dark"
+  },
+  {
+    "t": 7601,
+    "kind": "check",
+    "detail": "PASS prep.no_horizontal_overflow @desktop-1280 :: scrollWidth=1000 clientWidth=1000"
+  },
+  {
+    "t": 7601,
+    "kind": "check",
+    "detail": "PASS prep.touch_target_any @desktop-1280 :: no md/lg .ams-btn on /prep (6 sm buttons; R020 applies to md/lg only)"
+  },
+  {
+    "t": 7601,
+    "kind": "check",
+    "detail": "PASS prep.touch_target_all @desktop-1280 :: no md/lg .ams-btn to enforce 44px against (6 sm buttons present)"
+  },
+  {
+    "t": 7601,
+    "kind": "check",
+    "detail": "PASS prep.state.empty_workspace_message @desktop-1280 :: [data-ams-prep='no-workspace-message'] present"
+  },
+  {
+    "t": 7603,
+    "kind": "theme",
+    "detail": "starting theme toggle inheritance check"
+  },
+  {
+    "t": 9732,
+    "kind": "check",
+    "detail": "PASS prep.theme.attribute_flip :: dark -> light"
+  },
+  {
+    "t": 9732,
+    "kind": "check",
+    "detail": "PASS prep.theme.bg_changed :: bg: rgb(17, 21, 28) -> rgb(255, 255, 255)"
+  },
+  {
+    "t": 9795,
+    "kind": "check",
+    "detail": "PASS prep.console.no_pageerror :: no pageerror entries across all viewports"
+  },
+  {
+    "t": 9889,
+    "kind": "driver",
+    "detail": "closed chromium"
+  }
+]

@@ -55,6 +55,27 @@ public sealed class StageShellCompositionContractTests
     }
 
     [Fact]
+    public void StageModuleRail_PreservesFailClosedFallbackAnchorsForResolveFailures()
+    {
+        var source = ReadRepoFile(StageModuleRailRelativePath);
+
+        AssertContains(source, StageModuleRailRelativePath, "StageModuleRailState.Hidden(", "hidden-state fallback constructor");
+        AssertContains(source, StageModuleRailRelativePath, "No stage-module rail mapping for path", "unknown route fallback warning");
+        AssertContains(source, StageModuleRailRelativePath, "Route resolved without active module for", "resolved-without-active-module fallback warning");
+        AssertContains(source, StageModuleRailRelativePath, "data-stage-shell-warning=\"@_state.WarningMessage\"", "hidden-state warning marker");
+    }
+
+    [Fact]
+    public void StageModuleRailStyles_PreserveNarrowViewportOverflowGuardrails()
+    {
+        var railCss = ReadRepoFile(StageModuleRailCssRelativePath);
+
+        AssertContains(railCss, StageModuleRailCssRelativePath, "@media (max-width: 960px)", "narrow viewport rail media query");
+        AssertContains(railCss, StageModuleRailCssRelativePath, "overflow-x: auto", "horizontal rail overflow behavior");
+        AssertContains(railCss, StageModuleRailCssRelativePath, "min-width: 11rem", "minimum section width to avoid clipped labels");
+    }
+
+    [Fact]
     public void HeaderControls_PreservesStageTopNavWhileSidebarOwnsModuleLinks()
     {
         var source = ReadRepoFile(HeaderControlsRelativePath);
