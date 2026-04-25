@@ -1,314 +1,272 @@
+using System.Reflection;
 using Xunit.Sdk;
+using Ams.Workstation.Server.Components.Pages.Proof;
+using Ams.Workstation.Server.Models;
+using Ams.Workstation.Server.Services;
 
 namespace Ams.Tests.Workstation.Proof;
 
 public sealed class ProofGestureSelectionContractTests
 {
-    private const string ChapterReviewRelativePath = "host/Ams.Workstation.Server/Components/Pages/Proof/ChapterReview.razor";
-    private const string TouchGesturesRelativePath = "host/Ams.Workstation.Server/wwwroot/js/touch-gestures.js";
-    private const string CrxServiceRelativePath = "host/Ams.Workstation.Server/Services/CrxService.cs";
-    private const string ReviewedStatusServiceRelativePath = "host/Ams.Workstation.Server/Services/ReviewedStatusService.cs";
-
     [Fact]
-    public void ChapterReview_LongPressSelectionContract_EntersThenClearsAndResumesPlayback()
+    public async Task OnSentenceLongPress_EntersSelectionMode_AndSeedsPressedSentence()
     {
-        var source = ReadRepoFile(ChapterReviewRelativePath);
+        var sut = new ChapterReview();
+        SetPrivateField(sut, "_sentences", CreateSentences(1, 2));
 
-        AssertContains(
-            source,
-            ChapterReviewRelativePath,
-            "public async Task OnSentenceLongPress(int sentenceId)",
-            "JS invokable long-press entry point");
+        await InvokeComponentStateTransitionAsync(() => sut.OnSentenceLongPress(2));
 
-        AssertContains(
-            source,
-            ChapterReviewRelativePath,
-            "if (_isSelectionModeActive)",
-            "long-press toggle branch for active selection mode");
+        Assert.True(GetPrivateField<bool>(sut, "_isSelectionModeActive"));
+        Assert.False(GetPrivateField<bool>(sut, "_resumePlaybackOnSelectionExit"));
+        Assert.Equal("long-press-enter", GetPrivateField<string>(sut, "_lastSelectionGestureEvent"));
 
-        AssertContains(
-            source,
-            ChapterReviewRelativePath,
-            "await ClearSelectionModeAndResumeAsync(sentenceId, \"long-press\");",
-            "active-mode long-press clears selection and triggers resume flow");
-
-        AssertContains(
-            source,
-            ChapterReviewRelativePath,
-            "await EnterSelectionModeAsync(sentenceId, \"long-press\");",
-            "inactive-mode long-press enters selection mode");
-
-        AssertContains(
-            source,
-            ChapterReviewRelativePath,
-            "private async Task EnterSelectionModeAsync(int sentenceId, string trigger)",
-            "selection-mode enter helper");
-
-        AssertContains(
-            source,
-            ChapterReviewRelativePath,
-            "_selectedSentenceIds.Add(resolvedSentenceId);",
-            "selection mode seeds pressed sentence");
-
-        AssertContains(
-            source,
-            ChapterReviewRelativePath,
-            "var autoPaused = await TryPausePlaybackForSelectionModeAsync();",
-            "long-press enter auto-pause check");
-
-        AssertContains(
-            source,
-            ChapterReviewRelativePath,
-            "_resumePlaybackOnSelectionExit = autoPaused;",
-            "enter helper records resume guard based on auto-pause result");
-
-        AssertContains(
-            source,
-            ChapterReviewRelativePath,
-            "_lastSelectionGestureEvent = \"long-press-enter\";",
-            "selection diagnostics event for long-press entry");
-
-        AssertContains(
-            source,
-            ChapterReviewRelativePath,
-            "private async Task ClearSelectionModeAndResumeAsync(int sentenceId, string trigger)",
-            "selection-mode clear helper");
-
-        AssertContains(
-            source,
-            ChapterReviewRelativePath,
-            "_selectedSentenceIds.Clear();",
-            "clear helper empties selected sentence set");
-
-        AssertContains(
-            source,
-            ChapterReviewRelativePath,
-            "_isSelectionModeActive = false;",
-            "clear helper exits selection mode");
-
-        AssertContains(
-            source,
-            ChapterReviewRelativePath,
-            "var resumedPlayback = await TryResumePlaybackAfterSelectionModeAsync();",
-            "clear helper runs guarded playback resume path");
-
-        AssertContains(
-            source,
-            ChapterReviewRelativePath,
-            "_resumePlaybackOnSelectionExit = false;",
-            "clear helper resets resume guard after exit");
-
-        AssertContains(
-            source,
-            ChapterReviewRelativePath,
-            "_lastSelectionGestureEvent = \"long-press-exit\";",
-            "selection diagnostics event for long-press exit");
-
-        AssertContains(
-            source,
-            ChapterReviewRelativePath,
-            "Long-press again to clear and resume playback.",
-            "selection mode affordance text documents clear+resume behavior");
+        var selected = GetPrivateField<HashSet<int>>(sut, "_selectedSentenceIds");
+        Assert.Equal(new[] { 2 }, selected.OrderBy(id => id).ToArray());
     }
 
     [Fact]
-    public void GestureDispatcher_MultiSelectSwipeContract_CoversPlaybackSwipeLeftIgnorePath()
+    public async Task OnSentenceLongPress_WhenSelectionAlreadyActive_ClearsSelectionAndResetsResumeGuard()
     {
-        var chapterReviewSource = ReadRepoFile(ChapterReviewRelativePath);
-        var touchGestureSource = ReadRepoFile(TouchGesturesRelativePath);
+        var sut = new ChapterReview();
+        SetPrivateField(sut, "_sentences", CreateSentences(3, 4));
 
-        AssertContains(
-            touchGestureSource,
-            TouchGesturesRelativePath,
-            "const playbackRow = target.closest('[data-ams-proof-gesture-surface=\"playback\"] [id^=\"sentence-\"]')",
-            "gesture context resolves playback sentence rows");
+        await InvokeComponentStateTransitionAsync(() => sut.OnSentenceLongPress(3));
 
-        AssertContains(
-            touchGestureSource,
-            TouchGesturesRelativePath,
-            "surface: 'playback',",
-            "playback gesture context tags surface as playback");
+        // Simulate a real second long-press (not same-touch duplicate dispatch).
+        SetPrivateField(sut, "_lastLongPressDispatchAtUtc", DateTimeOffset.UtcNow - TimeSpan.FromSeconds(1));
+        SetPrivateField(sut, "_resumePlaybackOnSelectionExit", true);
 
-        AssertContains(
-            touchGestureSource,
-            TouchGesturesRelativePath,
-            "void dispatchGesture('OnSelectionSwipeRight', gesture.sentenceId, gesture.surface);",
-            "swipe-right dispatch forwards sentence id and source surface");
+        await InvokeComponentStateTransitionAsync(() => sut.OnSentenceLongPress(3));
 
-        AssertContains(
-            touchGestureSource,
-            TouchGesturesRelativePath,
-            "void dispatchGesture('OnSelectionSwipeLeft', gesture.sentenceId, gesture.surface);",
-            "swipe-left dispatch forwards sentence id and source surface");
+        Assert.False(GetPrivateField<bool>(sut, "_isSelectionModeActive"));
+        Assert.False(GetPrivateField<bool>(sut, "_resumePlaybackOnSelectionExit"));
+        Assert.Equal("long-press-exit", GetPrivateField<string>(sut, "_lastSelectionGestureEvent"));
 
-        AssertContains(
-            chapterReviewSource,
-            ChapterReviewRelativePath,
-            "public Task OnSelectionSwipeRight(int sentenceId, string sourceSurface)",
-            "ChapterReview exposes swipe-right JS invokable with source-surface context");
-
-        AssertContains(
-            chapterReviewSource,
-            ChapterReviewRelativePath,
-            "public Task OnSelectionSwipeLeft(int sentenceId, string sourceSurface)",
-            "ChapterReview exposes swipe-left JS invokable with source-surface context");
-
-        AssertContains(
-            chapterReviewSource,
-            ChapterReviewRelativePath,
-            "=> HandleSelectionSwipeLeftAsync(sentenceId, sourceSurface);",
-            "swipe-left invokable routes into ignore path handler");
-
-        AssertContains(
-            chapterReviewSource,
-            ChapterReviewRelativePath,
-            "const string eventName = \"swipe-left-ignore\";",
-            "swipe-left ignore event contract");
-
-        AssertContains(
-            chapterReviewSource,
-            ChapterReviewRelativePath,
-            "if (!TryValidateBatchGestureContext(eventName, trigger, sentenceId, sourceSurface, out var selectedSentenceIds))",
-            "swipe-left path validates batch context with explicit source-surface input");
-
-        AssertContains(
-            chapterReviewSource,
-            ChapterReviewRelativePath,
-            "surface={sourceSurface};selectedCount={selectedReports.Count};ignoredCount={ignoredPatternCount}",
-            "swipe-left ignore diagnostics preserve playback/errors source surface in emitted contract text");
+        var selected = GetPrivateField<HashSet<int>>(sut, "_selectedSentenceIds");
+        Assert.Empty(selected);
     }
 
     [Fact]
-    public void GestureLayer_PersistenceContract_DoesNotIntroduceNewArtifactSeams()
+    public async Task SelectionSwipeHandlers_FromPlaybackSurface_UseExportAndIgnorePipelines()
     {
-        var chapterReviewSource = ReadRepoFile(ChapterReviewRelativePath);
-        var touchGestureSource = ReadRepoFile(TouchGesturesRelativePath);
-        var crxServiceSource = ReadRepoFile(CrxServiceRelativePath);
-        var reviewedStatusServiceSource = ReadRepoFile(ReviewedStatusServiceRelativePath);
-
-        AssertContains(
-            crxServiceSource,
-            CrxServiceRelativePath,
-            "private string GetCrxJsonPath(bool createDir = true)",
-            "CRX JSON persistence seam remains service-owned");
-
-        AssertContains(
-            crxServiceSource,
-            CrxServiceRelativePath,
-            "return Path.Combine(crxFolder, $\"{bookName}_CRX.json\");",
-            "CRX JSON artifact naming contract remains unchanged");
-
-        AssertContains(
-            reviewedStatusServiceSource,
-            ReviewedStatusServiceRelativePath,
-            "private string GetFilePath() => Path.Combine(BasePath, \"reviewed-status.json\");",
-            "reviewed-status persistence seam remains service-owned");
-
-        AssertContains(
-            reviewedStatusServiceSource,
-            ReviewedStatusServiceRelativePath,
-            "private static readonly string BasePath = AmsAppDataPaths.Resolve(\"workstation\");",
-            "reviewed-status base path contract remains unchanged");
-
-        AssertDoesNotContain(
-            chapterReviewSource,
-            ChapterReviewRelativePath,
-            "reviewed-status.json",
-            "gesture UI wiring must not define reviewed persistence artifacts");
-
-        AssertDoesNotContain(
-            chapterReviewSource,
-            ChapterReviewRelativePath,
-            "_CRX.json",
-            "gesture UI wiring must not define CRX JSON persistence artifacts");
-
-        AssertDoesNotContain(
-            chapterReviewSource,
-            ChapterReviewRelativePath,
-            "_CRX.xlsx",
-            "gesture UI wiring must not define CRX workbook persistence artifacts");
-
-        AssertDoesNotContain(
-            chapterReviewSource,
-            ChapterReviewRelativePath,
-            "AmsAppDataPaths.Resolve",
-            "gesture UI wiring must not own app-data persistence roots");
-
-        AssertDoesNotContain(
-            touchGestureSource,
-            TouchGesturesRelativePath,
-            "localStorage",
-            "touch gesture dispatcher must stay persistence-free");
-
-        AssertDoesNotContain(
-            touchGestureSource,
-            TouchGesturesRelativePath,
-            "sessionStorage",
-            "touch gesture dispatcher must stay persistence-free");
-
-        AssertDoesNotContain(
-            touchGestureSource,
-            TouchGesturesRelativePath,
-            "reviewed-status.json",
-            "touch gesture dispatcher must not introduce reviewed persistence seams");
-
-        AssertDoesNotContain(
-            touchGestureSource,
-            TouchGesturesRelativePath,
-            "_CRX.json",
-            "touch gesture dispatcher must not introduce CRX persistence seams");
-    }
-
-    private static void AssertContains(string source, string relativePath, string anchor, string description)
-    {
-        Assert.True(
-            source.Contains(anchor, StringComparison.Ordinal),
-            $"Missing proof gesture selection contract anchor '{description}' in '{relativePath}'. Expected snippet: {anchor}");
-    }
-
-    private static void AssertDoesNotContain(string source, string relativePath, string anchor, string description)
-    {
-        Assert.False(
-            source.Contains(anchor, StringComparison.Ordinal),
-            $"Found stale or forbidden proof gesture selection anchor '{description}' in '{relativePath}'. Remove snippet: {anchor}");
-    }
-
-    private static string ReadRepoFile(string relativePath)
-    {
-        var repoRoot = FindRepoRoot();
-        var fullPath = Path.Combine(repoRoot, relativePath);
-
-        if (!File.Exists(fullPath))
+        var sut = new ChapterReview();
+        SetPrivateField(sut, "_currentView", "playback");
+        SetPrivateField(sut, "_sentences", CreateSentences(5));
+        SetPrivateField(sut, "_isSelectionModeActive", true);
+        SetPrivateField(sut, "_selectedSentenceIds", new HashSet<int> { 5 });
+        SetPrivateField(sut, "_report", CreateChapterReport(new[]
         {
-            throw new XunitException($"Required proof gesture selection source file is missing: relative='{relativePath}', full='{fullPath}'.");
-        }
+            CreateSentenceReport(id: 5, diff: null)
+        }));
+
+        await sut.OnSelectionSwipeRight(5, "playback");
+        Assert.Equal(
+            "swipe-right-export-failed-missing-chapter",
+            GetPrivateField<string>(sut, "_lastSelectionGestureEvent"));
+
+        await sut.OnSelectionSwipeLeft(5, "playback");
+        Assert.Equal(
+            "swipe-left-ignore-noop",
+            GetPrivateField<string>(sut, "_lastSelectionGestureEvent"));
+    }
+
+    [Fact]
+    public async Task SelectionSwipeLeft_RejectsUnselectedGestureOrigin()
+    {
+        var sut = new ChapterReview();
+        SetPrivateField(sut, "_currentView", "playback");
+        SetPrivateField(sut, "_isSelectionModeActive", true);
+        SetPrivateField(sut, "_selectedSentenceIds", new HashSet<int> { 7 });
+        SetPrivateField(sut, "_report", CreateChapterReport(new[]
+        {
+            CreateSentenceReport(id: 7, diff: null)
+        }));
+
+        await sut.OnSelectionSwipeLeft(9, "playback");
+
+        Assert.Equal(
+            "swipe-left-ignore-ignored-unselected-context",
+            GetPrivateField<string>(sut, "_lastSelectionGestureEvent"));
+    }
+
+    [Fact]
+    public async Task GestureFlows_KeepPersistenceBoundaries_ServiceOwnedAndArtifactFree()
+    {
+        var root = CreateTempDirectory();
+        var statePath = Path.Combine(root, ".workstation-state.json");
 
         try
         {
-            return File.ReadAllText(fullPath);
+            using var workspace = new BlazorWorkspace(statePath, loadPersistedState: false);
+            Assert.True(workspace.SetWorkingDirectory(root));
+
+            var crxService = new CrxService(workspace, new AudioExportService(workspace));
+            var reviewedStatusService = new ReviewedStatusService(workspace);
+
+            var crxJsonPath = InvokeNonPublicMethod<string>(crxService, "GetCrxJsonPath", false);
+            var reviewedStatusPath = InvokeNonPublicMethod<string>(reviewedStatusService, "GetFilePath");
+
+            Assert.StartsWith(
+                Path.Combine(root, "CRX"),
+                crxJsonPath,
+                StringComparison.OrdinalIgnoreCase);
+            Assert.EndsWith("_CRX.json", crxJsonPath, StringComparison.OrdinalIgnoreCase);
+
+            Assert.Equal("reviewed-status.json", Path.GetFileName(reviewedStatusPath));
+            Assert.DoesNotContain(root, reviewedStatusPath, StringComparison.OrdinalIgnoreCase);
+
+            var sut = new ChapterReview();
+            SetPrivateField(sut, "_sentences", CreateSentences(11));
+            SetPrivateField(sut, "_isSelectionModeActive", true);
+            SetPrivateField(sut, "_selectedSentenceIds", new HashSet<int> { 11 });
+            SetPrivateField(sut, "_report", CreateChapterReport(new[]
+            {
+                CreateSentenceReport(id: 11, diff: null)
+            }));
+
+            await InvokeComponentStateTransitionAsync(() => sut.OnSentenceLongPress(11));
+            await sut.OnSelectionSwipeRight(11, "playback");
+            await sut.OnSelectionSwipeLeft(11, "playback");
+
+            Assert.False(File.Exists(crxJsonPath));
+            Assert.False(Directory.Exists(Path.Combine(root, "CRX")));
+            Assert.Empty(crxService.GetEntries());
+            Assert.Empty(reviewedStatusService.GetAll());
         }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        finally
         {
-            throw new XunitException($"Failed to read proof gesture selection source file: relative='{relativePath}', full='{fullPath}', error='{ex.Message}'.");
+            TryDeleteDirectory(root);
         }
     }
 
-    private static string FindRepoRoot()
+    private static async Task InvokeComponentStateTransitionAsync(Func<Task> action)
     {
-        var current = new DirectoryInfo(AppContext.BaseDirectory);
-
-        while (current is not null)
+        try
         {
-            if (File.Exists(Path.Combine(current.FullName, "CODE-STYLE.md"))
-                && Directory.Exists(Path.Combine(current.FullName, "host"))
-                && Directory.Exists(Path.Combine(current.FullName, ".gsd")))
-            {
-                return current.FullName;
-            }
+            await action();
+        }
+        catch (InvalidOperationException ex) when (ex.Message.Contains("render handle is not yet assigned", StringComparison.OrdinalIgnoreCase))
+        {
+            // These tests intentionally exercise state-machine behavior without bootstrapping a full Blazor renderer.
+            // State mutations happen before StateHasChanged() throws this framework-level lifecycle exception.
+        }
+    }
 
-            current = current.Parent;
+    private static List<SentenceViewModel> CreateSentences(params int[] sentenceIds)
+    {
+        return sentenceIds
+            .Select((id, index) => new SentenceViewModel
+            {
+                Id = id,
+                Text = $"Sentence {id}",
+                StartTime = index,
+                EndTime = index + 0.8,
+                Status = "error"
+            })
+            .ToList();
+    }
+
+    private static ChapterReport CreateChapterReport(IEnumerable<SentenceReport> sentences)
+    {
+        var list = sentences.ToList();
+
+        return new ChapterReport(
+            ChapterName: "Chapter 01",
+            AudioPath: "chapter.wav",
+            ScriptPath: "chapter.md",
+            Created: DateTime.UtcNow,
+            Stats: new ChapterStats(
+                SentenceCount: list.Count,
+                FlaggedCount: list.Count,
+                AvgWer: "0%",
+                MaxWer: "0%",
+                ParagraphCount: 0,
+                ParagraphAvgWer: "0%",
+                AvgCoverage: "0%"),
+            Sentences: list,
+            Paragraphs: Array.Empty<ParagraphReport>());
+    }
+
+    private static SentenceReport CreateSentenceReport(int id, DiffReport? diff)
+    {
+        return new SentenceReport(
+            Id: id,
+            Wer: "0%",
+            Cer: "0%",
+            Status: "error",
+            BookRange: string.Empty,
+            ScriptRange: string.Empty,
+            Timing: string.Empty,
+            BookText: $"Book sentence {id}",
+            ScriptText: $"Script sentence {id}",
+            Excerpt: $"Excerpt {id}",
+            Diff: diff,
+            StartTime: id,
+            EndTime: id + 0.8,
+            ParagraphId: null);
+    }
+
+    private static void SetPrivateField(object target, string fieldName, object? value)
+    {
+        var field = target.GetType().GetField(fieldName, BindingFlags.Instance | BindingFlags.NonPublic)
+            ?? throw new XunitException($"Could not find private field '{fieldName}' on type '{target.GetType().FullName}'.");
+
+        field.SetValue(target, value);
+    }
+
+    private static T GetPrivateField<T>(object target, string fieldName)
+    {
+        var field = target.GetType().GetField(fieldName, BindingFlags.Instance | BindingFlags.NonPublic)
+            ?? throw new XunitException($"Could not find private field '{fieldName}' on type '{target.GetType().FullName}'.");
+
+        var value = field.GetValue(target);
+        if (value is T typed)
+        {
+            return typed;
         }
 
-        throw new DirectoryNotFoundException("Could not locate repo root containing CODE-STYLE.md, host/, and .gsd/.");
+        throw new XunitException(
+            $"Private field '{fieldName}' on type '{target.GetType().FullName}' was not of expected type '{typeof(T).FullName}'. Actual type: '{value?.GetType().FullName ?? "null"}'.");
+    }
+
+    private static T InvokeNonPublicMethod<T>(object target, string methodName, params object?[] args)
+    {
+        var method = target.GetType()
+            .GetMethods(BindingFlags.Instance | BindingFlags.NonPublic)
+            .FirstOrDefault(candidate =>
+                string.Equals(candidate.Name, methodName, StringComparison.Ordinal)
+                && candidate.GetParameters().Length == args.Length)
+            ?? throw new XunitException($"Could not find non-public method '{methodName}' on type '{target.GetType().FullName}'.");
+
+        var result = method.Invoke(target, args);
+        if (result is T typed)
+        {
+            return typed;
+        }
+
+        throw new XunitException(
+            $"Non-public method '{methodName}' on type '{target.GetType().FullName}' did not return expected type '{typeof(T).FullName}'. Actual type: '{result?.GetType().FullName ?? "null"}'.");
+    }
+
+    private static string CreateTempDirectory()
+    {
+        var path = Path.Combine(Path.GetTempPath(), $"ams-proof-gesture-tests-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(path);
+        return path;
+    }
+
+    private static void TryDeleteDirectory(string path)
+    {
+        try
+        {
+            if (Directory.Exists(path))
+            {
+                Directory.Delete(path, recursive: true);
+            }
+        }
+        catch
+        {
+            // best-effort cleanup
+        }
     }
 }
