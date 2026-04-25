@@ -32,8 +32,8 @@ public sealed class M007FoundationContractTests
     private static readonly Regex BitPackageSeamPattern = new("Bit\\.BlazorUI", RegexOptions.CultureInvariant | RegexOptions.Compiled);
     private static readonly Regex BitAssetSeamPattern = new("_content/Bit\\.BlazorUI(?:\\.Icons)?", RegexOptions.CultureInvariant | RegexOptions.Compiled);
     private static readonly Regex BitImportSeamPattern = new("@using\\s+Bit\\.BlazorUI", RegexOptions.CultureInvariant | RegexOptions.Compiled);
-    private static readonly Regex BitCssVariablePattern = new("var\\(--bit-clr-[A-Za-z0-9-]+\\)", RegexOptions.CultureInvariant | RegexOptions.Compiled);
-    private static readonly Regex BitClassPattern = new("(?<![A-Za-z0-9_-])\\.bit-[A-Za-z0-9_-]+", RegexOptions.CultureInvariant | RegexOptions.Compiled);
+    private static readonly Regex BitCssVariablePattern = new("--bit-clr(?:-[A-Za-z0-9-]+)*(?![A-Za-z0-9-])", RegexOptions.CultureInvariant | RegexOptions.Compiled);
+    private static readonly Regex BitClassPattern = new("(?<![A-Za-z0-9_-])(?:\\.bit-[A-Za-z0-9_-]+|bit-[A-Za-z0-9_-]+)(?![A-Za-z0-9_-])", RegexOptions.CultureInvariant | RegexOptions.Compiled);
 
     [Fact]
     public void MigratedRazorFiles_ContainNoBitBlazorUiTags()
