@@ -1,3 +1,4 @@
+@using System.Globalization
 @using Ams.Workstation.Server.Models
 @using Ams.Workstation.Server.Services
 @inject CrxService CrxService
@@ -11,7 +12,7 @@
 
         <div class="crx-modal-body">
             <div class="crx-grid">
-                @* ── Left column: Error Type, Error Checkboxes, Padding ── *@
+                @* ── Left column: Error Type, Error Checkboxes, Export Range ── *@
                 <div class="crx-col-left">
                     <BitDropdown TItem="BitDropdownItem<string>" TValue="string"
                                  @bind-Value="_errorType"
@@ -46,12 +47,59 @@
                         </div>
                     }
 
-                    <div class="padding-control">
-                        <BitText Typography="BitTypography.Body2">Tail Padding: @_paddingMs ms</BitText>
-                        <input type="range" min="0" max="200" step="10"
-                               value="@_paddingMs"
-                               @oninput="OnPaddingInput"
-                               @onchange="OnPaddingCommit" />
+                    <div class="crx-range-controls" data-ams-crx-range-controls="true">
+                        <BitText Typography="BitTypography.Body2">Export Range</BitText>
+
+                        <div class="crx-range-row" data-ams-crx-range-start-control="true">
+                            <label class="crx-range-label" for="crx-range-start">Start</label>
+                            <div class="crx-range-input-wrap">
+                                <input id="crx-range-start"
+                                       class="crx-range-input"
+                                       data-ams-crx-range-start-input="true"
+                                       type="text"
+                                       value="@_startInput"
+                                       @oninput="OnStartInputTyping"
+                                       @onchange="OnStartInputChanged"
+                                       @onkeydown="OnStartInputKeyDown"
+                                       @onpointerdown="OnStartDragPointerDown"
+                                       @onpointermove="OnRangeDragPointerMove"
+                                       @onpointermove:preventDefault="true"
+                                       @onpointerup="OnRangeDragPointerUp"
+                                       @onpointercancel="OnRangeDragPointerCancel" />
+                                <span class="crx-range-drag-hint" aria-hidden="true">↕</span>
+                            </div>
+                        </div>
+
+                        <div class="crx-range-row" data-ams-crx-range-end-control="true">
+                            <label class="crx-range-label" for="crx-range-end">End</label>
+                            <div class="crx-range-input-wrap">
+                                <input id="crx-range-end"
+                                       class="crx-range-input"
+                                       data-ams-crx-range-end-input="true"
+                                       type="text"
+                                       value="@_endInput"
+                                       @oninput="OnEndInputTyping"
+                                       @onchange="OnEndInputChanged"
+                                       @onkeydown="OnEndInputKeyDown"
+                                       @onpointerdown="OnEndDragPointerDown"
+                                       @onpointermove="OnRangeDragPointerMove"
+                                       @onpointermove:preventDefault="true"
+                                       @onpointerup="OnRangeDragPointerUp"
+                                       @onpointercancel="OnRangeDragPointerCancel" />
+                                <span class="crx-range-drag-hint" aria-hidden="true">↕</span>
+                            </div>
+                        </div>
+
+                        <BitText Typography="BitTypography.Caption1" Color="BitColor.SecondaryForeground" class="crx-range-help">
+                            Drag up/down in each time field to nudge that bound.
+                        </BitText>
+
+                        @if (!string.IsNullOrWhiteSpace(_rangeValidationMessage))
+                        {
+                            <BitText Typography="BitTypography.Caption1" Color="BitColor.Error" class="crx-range-validation" data-ams-crx-range-validation="true">
+                                @_rangeValidationMessage
+                            </BitText>
+                        }
                     </div>
                 </div>
 
@@ -65,7 +113,7 @@
                                     OnReady="FocusPlayButton" />
                     <BitText Typography="BitTypography.Caption2" Color="BitColor.SecondaryForeground"
                              Style="text-align: center;">
-                        @FormatTime(_startTime) → @FormatTime(_endTime + _paddingMs / 1000.0)
+                        @FormatTime(_startTime) → @FormatTime(_endTime)
                     </BitText>
                 </div>
             </div>
@@ -80,7 +128,7 @@
         <div class="crx-modal-footer">
             <BitButton Variant="BitVariant.Outline" OnClick="Close">Cancel</BitButton>
             <BitButton Variant="BitVariant.Fill" Color="BitColor.Primary"
-                       OnClick="Submit" IsEnabled="@(!_submitting)">
+                       OnClick="Submit" IsEnabled="@(!_submitting && !HasRangeValidationError)">
                 @(_submitting ? "Submitting..." : "Add to CRX")
             </BitButton>
         </div>
@@ -91,6 +139,9 @@
 
 @code {
     private const int PeakPxPerSec = 1200;
+    private const double MinRangeDurationSec = 0.001;
+    private const double DragSecondsPerPixel = 0.02;
+
     private bool _isVisible;
     private string _chapterName = "";
     private double _startTime;
@@ -99,12 +150,15 @@
     private string _excerpt = "";
     private string _errorType = "MR";
     private string _comments = "";
-    private int _paddingMs = 50;
+    private string _startInput = "";
+    private string _endInput = "";
+    private string? _rangeValidationMessage;
     private bool _submitting;
     private string _audioUrl = "";
     private string? _peaksUrl;
     private SentenceReport? _sentenceReport;
     private WaveformPlayer? _waveformPlayer;
+    private RangeDragState? _activeRangeDrag;
 
     // Error checkboxes built from diff ops
     private List<ErrorOpItem> _errorOps = new();
@@ -126,8 +180,12 @@
         _excerpt = excerpt;
         _sentenceReport = sentenceReport;
         _errorType = "MR";
-        _paddingMs = 50;
         _isVisible = true;
+
+        _startInput = FormatTime(_startTime);
+        _endInput = FormatTime(_endTime);
+        _rangeValidationMessage = null;
+        _activeRangeDrag = null;
 
         // Build error checkboxes from diff ops
         BuildErrorOps();
@@ -136,9 +194,8 @@
         // Generate initial comment
         _comments = GenerateComment();
 
-        // Set audio URL
-        _audioUrl = BuildAudioUrl();
-        _peaksUrl = BuildPeaksUrl();
+        // Set audio URL / validation based on initial bounds
+        CommitRangeChange();
 
         StateHasChanged();
         _ = ActivateFocusTrapAsync();
@@ -162,6 +219,8 @@
         _isVisible = false;
         _audioUrl = "";
         _peaksUrl = null;
+        _rangeValidationMessage = null;
+        _activeRangeDrag = null;
         JS.InvokeVoidAsync("window.modalFocusTrap.deactivate");
         StateHasChanged();
     }
@@ -270,38 +329,200 @@
         return $"Should be: {shouldBe}{Environment.NewLine}{Environment.NewLine}Read as: {readAs}";
     }
 
-    private void OnPaddingInput(ChangeEventArgs e)
+    private bool HasRangeValidationError => !string.IsNullOrWhiteSpace(_rangeValidationMessage);
+
+    private void OnStartInputTyping(ChangeEventArgs e)
+        => _startInput = e.Value?.ToString() ?? string.Empty;
+
+    private void OnEndInputTyping(ChangeEventArgs e)
+        => _endInput = e.Value?.ToString() ?? string.Empty;
+
+    private void OnStartInputChanged(ChangeEventArgs e)
+        => CommitRangeInput(isStart: true, e.Value?.ToString() ?? _startInput);
+
+    private void OnEndInputChanged(ChangeEventArgs e)
+        => CommitRangeInput(isStart: false, e.Value?.ToString() ?? _endInput);
+
+    private void OnStartInputKeyDown(KeyboardEventArgs e)
     {
-        if (int.TryParse(e.Value?.ToString(), out var val))
-            _paddingMs = val;
+        if (string.Equals(e.Key, "Enter", StringComparison.Ordinal))
+            CommitRangeInput(isStart: true, _startInput);
     }
 
-    private void OnPaddingCommit(ChangeEventArgs e)
+    private void OnEndInputKeyDown(KeyboardEventArgs e)
     {
-        // Rebuild audio URL only on slider release to avoid excessive reloads
-        if (int.TryParse(e.Value?.ToString(), out var val))
+        if (string.Equals(e.Key, "Enter", StringComparison.Ordinal))
+            CommitRangeInput(isStart: false, _endInput);
+    }
+
+    private void OnStartDragPointerDown(PointerEventArgs e)
+        => BeginRangeDrag(RangeBound.Start, e);
+
+    private void OnEndDragPointerDown(PointerEventArgs e)
+        => BeginRangeDrag(RangeBound.End, e);
+
+    private void OnRangeDragPointerMove(PointerEventArgs e)
+    {
+        if (_activeRangeDrag is null || _activeRangeDrag.PointerId != e.PointerId)
+            return;
+
+        var deltaSeconds = (_activeRangeDrag.StartY - e.ClientY) * DragSecondsPerPixel;
+        if (_activeRangeDrag.Bound == RangeBound.Start)
+            _startTime = Math.Max(0, _activeRangeDrag.StartValue - deltaSeconds);
+        else
+            _endTime = Math.Max(0, _activeRangeDrag.StartValue + deltaSeconds);
+
+        _startInput = FormatTime(_startTime);
+        _endInput = FormatTime(_endTime);
+        ValidateRange();
+        StateHasChanged();
+    }
+
+    private void OnRangeDragPointerUp(PointerEventArgs e)
+    {
+        if (_activeRangeDrag is null || _activeRangeDrag.PointerId != e.PointerId)
+            return;
+
+        _activeRangeDrag = null;
+        CommitRangeChange();
+    }
+
+    private void OnRangeDragPointerCancel(PointerEventArgs e)
+    {
+        if (_activeRangeDrag is null || _activeRangeDrag.PointerId != e.PointerId)
+            return;
+
+        _activeRangeDrag = null;
+        CommitRangeChange();
+    }
+
+    private void BeginRangeDrag(RangeBound bound, PointerEventArgs e)
+    {
+        var currentValue = bound == RangeBound.Start ? _startTime : _endTime;
+        _activeRangeDrag = new RangeDragState(bound, e.PointerId, e.ClientY, currentValue);
+    }
+
+    private void CommitRangeInput(bool isStart, string raw)
+    {
+        if (!TryParseTimeInput(raw, out var seconds))
         {
-            _paddingMs = val;
+            _rangeValidationMessage = $"{(isStart ? "Start" : "End")} time must use mm:ss.mmm format (example: 1:23.450).";
+            StateHasChanged();
+            return;
+        }
+
+        if (isStart)
+            _startTime = Math.Max(0, seconds);
+        else
+            _endTime = Math.Max(0, seconds);
+
+        CommitRangeChange();
+    }
+
+    private void CommitRangeChange()
+    {
+        _startInput = FormatTime(_startTime);
+        _endInput = FormatTime(_endTime);
+
+        ValidateRange();
+        if (HasRangeValidationError)
+        {
+            _audioUrl = string.Empty;
+            _peaksUrl = null;
+        }
+        else
+        {
             _audioUrl = BuildAudioUrl();
             _peaksUrl = BuildPeaksUrl();
-            StateHasChanged();
         }
+
+        StateHasChanged();
+    }
+
+    private void ValidateRange()
+    {
+        if (_startTime < 0 || _endTime < 0)
+        {
+            _rangeValidationMessage = "Start and End must be 0 or greater.";
+            return;
+        }
+
+        var duration = _endTime - _startTime;
+        if (duration < 0)
+        {
+            _rangeValidationMessage = "Start must be before End. Adjust either bound to create a positive export range.";
+            return;
+        }
+
+        if (duration <= MinRangeDurationSec)
+        {
+            _rangeValidationMessage = "Range is zero-duration. Adjust Start earlier or End later before submitting this CRX entry.";
+            return;
+        }
+
+        _rangeValidationMessage = null;
+    }
+
+    private static bool TryParseTimeInput(string raw, out double seconds)
+    {
+        seconds = 0;
+        if (string.IsNullOrWhiteSpace(raw))
+            return false;
+
+        var value = raw.Trim();
+
+        if (double.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out var asSeconds) && asSeconds >= 0)
+        {
+            seconds = asSeconds;
+            return true;
+        }
+
+        var parts = value.Split(':', StringSplitOptions.TrimEntries);
+        if (parts.Length is < 2 or > 3)
+            return false;
+
+        if (!double.TryParse(parts[^1], NumberStyles.Float, CultureInfo.InvariantCulture, out var secPart) || secPart < 0 || secPart >= 60)
+            return false;
+
+        if (!int.TryParse(parts[^2], NumberStyles.Integer, CultureInfo.InvariantCulture, out var minPart) || minPart < 0)
+            return false;
+
+        var hours = 0;
+        if (parts.Length == 3)
+        {
+            if (!int.TryParse(parts[0], NumberStyles.Integer, CultureInfo.InvariantCulture, out hours) || hours < 0)
+                return false;
+            if (minPart >= 60)
+                return false;
+        }
+
+        seconds = (hours * 3600) + (minPart * 60) + secPart;
+        return true;
     }
 
     private string BuildAudioUrl()
     {
-        var end = _endTime + (_paddingMs / 1000.0);
-        return $"/api/audio/chapter/{Uri.EscapeDataString(_chapterName)}?start={_startTime}&end={end}";
+        var start = _startTime.ToString("0.###", CultureInfo.InvariantCulture);
+        var end = _endTime.ToString("0.###", CultureInfo.InvariantCulture);
+        return $"/api/audio/chapter/{Uri.EscapeDataString(_chapterName)}?start={start}&end={end}";
     }
 
     private string BuildPeaksUrl()
     {
-        var end = _endTime + (_paddingMs / 1000.0);
-        return $"/api/audio/chapter/{Uri.EscapeDataString(_chapterName)}/peaks?start={_startTime}&end={end}&pxPerSec={PeakPxPerSec}";
+        var start = _startTime.ToString("0.###", CultureInfo.InvariantCulture);
+        var end = _endTime.ToString("0.###", CultureInfo.InvariantCulture);
+        return $"/api/audio/chapter/{Uri.EscapeDataString(_chapterName)}/peaks?start={start}&end={end}&pxPerSec={PeakPxPerSec}";
     }
 
     private async Task Submit()
     {
+        ValidateRange();
+        if (HasRangeValidationError)
+        {
+            StateHasChanged();
+            return;
+        }
+
         _submitting = true;
         StateHasChanged();
         try
@@ -314,7 +535,7 @@
                 ErrorType: _errorType,
                 Comments: _comments,
                 Excerpt: _excerpt,
-                PaddingMs: _paddingMs,
+                PaddingMs: 0,
                 ShouldBe: CrxCommentParser.TryParseShouldBe(_comments),
                 ReadAs: CrxCommentParser.TryParseReadAs(_comments)
             );
@@ -337,9 +558,17 @@
 
     public async Task SubmitAsync()
     {
-        if (_isVisible && !_submitting)
+        if (_isVisible && !_submitting && !HasRangeValidationError)
             await Submit();
     }
+
+    private enum RangeBound
+    {
+        Start,
+        End
+    }
+
+    private sealed record RangeDragState(RangeBound Bound, long PointerId, double StartY, double StartValue);
 
     private record ErrorOpItem(string Op, string Text, bool Selected);
 }
@@ -401,8 +630,56 @@
         padding: 1rem;
         border-top: 1px solid var(--bit-clr-brd-sec);
     }
-    .padding-control input {
+    .crx-range-controls {
+        display: flex;
+        flex-direction: column;
+        gap: 0.35rem;
+        padding: 0.45rem;
+        border: 1px solid var(--bit-clr-brd-sec);
+        border-radius: 6px;
+        background: var(--bit-clr-bg-sec);
+    }
+    .crx-range-row {
+        display: grid;
+        grid-template-columns: 42px 1fr;
+        align-items: center;
+        gap: 0.45rem;
+    }
+    .crx-range-label {
+        font-size: 0.8rem;
+        color: var(--bit-clr-fg-sec);
+    }
+    .crx-range-input-wrap {
+        position: relative;
+        display: flex;
+        align-items: center;
+    }
+    .crx-range-input {
         width: 100%;
+        background: var(--bit-clr-bg-pri);
+        color: var(--bit-clr-fg-pri);
+        border: 1px solid var(--bit-clr-brd-pri);
+        border-radius: 4px;
+        padding: 0.4rem 1.7rem 0.4rem 0.5rem;
+        font-family: inherit;
+        font-size: 0.85rem;
+        font-variant-numeric: tabular-nums;
+        touch-action: none;
+        user-select: none;
+    }
+    .crx-range-drag-hint {
+        position: absolute;
+        right: 0.45rem;
+        color: var(--bit-clr-fg-sec);
+        font-size: 0.9rem;
+        pointer-events: none;
+    }
+    .crx-range-help {
+        margin-top: 0.15rem;
+        line-height: 1.25;
+    }
+    .crx-range-validation {
+        line-height: 1.25;
     }
     .crx-errors-section {
         display: flex;
@@ -457,5 +734,16 @@
         font-size: 0.875rem;
         resize: vertical;
         box-sizing: border-box;
+    }
+
+    @@media (max-width: 768px) {
+        .crx-range-input,
+        .crx-comments-textarea {
+            font-size: 16px;
+        }
+
+        .crx-error-item {
+            min-height: 44px;
+        }
     }
 </style>
