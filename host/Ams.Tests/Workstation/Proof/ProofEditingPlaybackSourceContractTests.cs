@@ -5,6 +5,8 @@ namespace Ams.Tests.Workstation.Proof;
 public sealed class ProofEditingPlaybackSourceContractTests
 {
     private const string ChapterReviewRelativePath = "host/Ams.Workstation.Server/Components/Pages/Proof/ChapterReview.razor";
+    private const string ChapterReviewCssRelativePath = "host/Ams.Workstation.Server/Components/Pages/Proof/ChapterReview.razor.css";
+    private const string SentenceListRelativePath = "host/Ams.Workstation.Server/Components/Shared/SentenceList.razor";
     private const string CrxModalRelativePath = "host/Ams.Workstation.Server/Components/Shared/CrxModal.razor";
     private const string AudioControllerRelativePath = "host/Ams.Workstation.Server/Controllers/AudioController.cs";
 
@@ -167,6 +169,50 @@ public sealed class ProofEditingPlaybackSourceContractTests
             ChapterReviewRelativePath,
             "Manual keyboard seeking should stay silent.",
             "playback alert contract notes silent manual navigation");
+    }
+
+    [Fact]
+    public void ChapterReview_SelectionMode_LongPressIsWiredToSentenceRows_AndSelectionIndicatorUsesValidBorderToken()
+    {
+        var chapterReviewSource = ReadRepoFile(ChapterReviewRelativePath);
+        var sentenceListSource = ReadRepoFile(SentenceListRelativePath);
+        var chapterReviewCss = ReadRepoFile(ChapterReviewCssRelativePath);
+
+        AssertContains(
+            chapterReviewSource,
+            ChapterReviewRelativePath,
+            "OnSentenceLongPress=\"OnSentenceLongPress\"",
+            "ChapterReview wires sentence list long-press callback to selection state machine");
+
+        AssertContains(
+            sentenceListSource,
+            SentenceListRelativePath,
+            "public EventCallback<int> OnSentenceLongPress { get; set; }",
+            "SentenceList exposes long-press callback for sentence rows");
+
+        AssertContains(
+            sentenceListSource,
+            SentenceListRelativePath,
+            "@onpointerdown=\"@(args => HandleSentencePointerDown(sentence.Id, args))\"",
+            "SentenceList row template arms long-press timer on pointer-down");
+
+        AssertContains(
+            sentenceListSource,
+            SentenceListRelativePath,
+            "if (_longPressTriggeredSentenceIds.Remove(sentence.Id))",
+            "SentenceList suppresses click toggle after long-press gesture fires");
+
+        AssertContains(
+            chapterReviewCss,
+            ChapterReviewCssRelativePath,
+            "border: 1px solid var(--bit-clr-brd-pri);",
+            "selection indicator border uses valid Bit token");
+
+        AssertDoesNotContain(
+            chapterReviewCss,
+            ChapterReviewCssRelativePath,
+            "var(--bit-clr-bdr-pri)",
+            "selection indicator no longer uses typo bit border token");
     }
 
     [Fact]

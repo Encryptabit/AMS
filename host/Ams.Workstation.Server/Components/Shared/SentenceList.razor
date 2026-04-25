@@ -1,5 +1,6 @@
 @using Ams.Workstation.Server.Models
 @inject IJSRuntime JS
+@implements IDisposable
 
 <BitCard Class="sentence-list-card" FullWidth="true">
     <BitStack Horizontal="false" Gap="0">
@@ -31,6 +32,10 @@
                 <RowTemplate Context="sentence">
                     <div class="@GetSentenceClasses(sentence)"
                          id="@GetSentenceElementId(sentence.Id)"
+                         @onpointerdown="@(args => HandleSentencePointerDown(sentence.Id, args))"
+                         @onpointerup="@(() => HandleSentencePointerUp(sentence.Id))"
+                         @onpointercancel="@(() => HandleSentencePointerCancel(sentence.Id))"
+                         @onpointerleave="@(() => HandleSentencePointerCancel(sentence.Id))"
                          @onclick="() => HandleSentenceClick(sentence)">
                         <BitStack Horizontal="true" HorizontalAlign="BitAlignment.SpaceBetween" VerticalAlign="BitAlignment.Center">
                             <BitText Typography="BitTypography.Caption1" Color="BitColor.SecondaryForeground">
@@ -58,7 +63,10 @@
 </BitCard>
 
 @code {
+    private const int MinLongPressDelayMs = 250;
     private int? _lastScrolledToId;
+    private readonly Dictionary<int, CancellationTokenSource> _pendingLongPressTimers = new();
+    private readonly HashSet<int> _longPressTriggeredSentenceIds = new();
 
     /// <summary>
     /// The list of sentences to display.
@@ -83,6 +91,18 @@
     /// </summary>
     [Parameter]
     public EventCallback<SentenceViewModel> OnSentenceSelected { get; set; }
+
+    /// <summary>
+    /// Callback fired when a touch/pen long-press is detected on a sentence row.
+    /// </summary>
+    [Parameter]
+    public EventCallback<int> OnSentenceLongPress { get; set; }
+
+    /// <summary>
+    /// Long-press threshold in milliseconds.
+    /// </summary>
+    [Parameter]
+    public int LongPressDelayMs { get; set; } = 450;
 
     /// <summary>
     /// Gets the sentence containing the current time, or the ActiveSentenceId if set.
@@ -178,8 +198,89 @@
         }
     }
 
+    private Task HandleSentencePointerDown(int sentenceId, PointerEventArgs args)
+    {
+        if (!ShouldTrackLongPress(args))
+        {
+            return Task.CompletedTask;
+        }
+
+        _ = ArmLongPressTimerAsync(sentenceId);
+        return Task.CompletedTask;
+    }
+
+    private void HandleSentencePointerUp(int sentenceId)
+    {
+        CancelLongPressTimer(sentenceId);
+    }
+
+    private void HandleSentencePointerCancel(int sentenceId)
+    {
+        CancelLongPressTimer(sentenceId);
+    }
+
+    private bool ShouldTrackLongPress(PointerEventArgs args)
+    {
+        if (!OnSentenceLongPress.HasDelegate)
+        {
+            return false;
+        }
+
+        return string.Equals(args.PointerType, "touch", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(args.PointerType, "pen", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private async Task ArmLongPressTimerAsync(int sentenceId)
+    {
+        CancelLongPressTimer(sentenceId);
+
+        var timer = new CancellationTokenSource();
+        _pendingLongPressTimers[sentenceId] = timer;
+        var delayMs = Math.Max(MinLongPressDelayMs, LongPressDelayMs);
+
+        try
+        {
+            await Task.Delay(delayMs, timer.Token);
+
+            if (timer.IsCancellationRequested)
+            {
+                return;
+            }
+
+            _longPressTriggeredSentenceIds.Add(sentenceId);
+            await OnSentenceLongPress.InvokeAsync(sentenceId);
+        }
+        catch (TaskCanceledException)
+        {
+            // Pointer released/cancelled before long-press threshold elapsed.
+        }
+        finally
+        {
+            if (_pendingLongPressTimers.TryGetValue(sentenceId, out var activeTimer)
+                && ReferenceEquals(activeTimer, timer))
+            {
+                _pendingLongPressTimers.Remove(sentenceId);
+            }
+
+            timer.Dispose();
+        }
+    }
+
+    private void CancelLongPressTimer(int sentenceId)
+    {
+        if (_pendingLongPressTimers.TryGetValue(sentenceId, out var timer))
+        {
+            timer.Cancel();
+        }
+    }
+
     private async Task HandleSentenceClick(SentenceViewModel sentence)
     {
+        if (_longPressTriggeredSentenceIds.Remove(sentence.Id))
+        {
+            return;
+        }
+
         await OnSentenceSelected.InvokeAsync(sentence);
     }
 
@@ -191,5 +292,17 @@
         var mins = (int)(seconds / 60);
         var secs = (int)(seconds % 60);
         return $"{mins}:{secs:D2}";
+    }
+
+    public void Dispose()
+    {
+        foreach (var timer in _pendingLongPressTimers.Values)
+        {
+            timer.Cancel();
+            timer.Dispose();
+        }
+
+        _pendingLongPressTimers.Clear();
+        _longPressTriggeredSentenceIds.Clear();
     }
 }
