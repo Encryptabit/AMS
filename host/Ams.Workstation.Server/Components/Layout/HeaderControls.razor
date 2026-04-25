@@ -30,7 +30,7 @@
             </BitButton>
         </div>
 
-        <div class="header-chapter">
+        <div class="header-chapter" data-ams-header-control="chapter">
             @if (Workspace.AvailableChapters.Count > 0)
             {
                 <BitDropdown TItem="BitDropdownItem<string>"
@@ -49,7 +49,7 @@
     </div>
 
     <div class="header-row header-row--secondary header-directory">
-        <div class="header-field header-field--workspace">
+        <div class="header-field header-field--workspace" data-ams-header-control="workspace">
             <BitDropdown TItem="BitDropdownItem<string>"
                          TValue="string"
                          Items="@savedWorkspaceItems"
@@ -59,35 +59,37 @@
                          OnChange="OnSavedWorkspaceChange" />
         </div>
 
-        <div class="header-field header-field--directory">
-            <BitTextField @bind-Value="workingDirectory"
-                          Immediate="true"
-                          Placeholder="Working directory..."
-                          Style="width: 100%; min-width: 0;"
-                          OnKeyDown="OnDirectoryKeyDown" />
-        </div>
+        <div class="header-secondary-optional" data-ams-header-optional="mobile-overflow-hidden">
+            <div class="header-field header-field--directory" data-ams-header-control="directory">
+                <BitTextField @bind-Value="workingDirectory"
+                              Immediate="true"
+                              Placeholder="Working directory..."
+                              Style="width: 100%; min-width: 0;"
+                              OnKeyDown="OnDirectoryKeyDown" />
+            </div>
 
-        <div class="header-actions">
-            <BitButton Variant="BitVariant.Fill"
-                       Color="BitColor.Primary"
-                       Size="BitSize.Small"
-                       OnClick="SetDirectory"
-                       IsEnabled="@(!string.IsNullOrWhiteSpace(workingDirectory))">
-                Set
-            </BitButton>
-            <BitButton Variant="BitVariant.Outline"
-                       Color="BitColor.Warning"
-                       Size="BitSize.Small"
-                       OnClick="ResetMetadataAsync"
-                       IsEnabled="@Workspace.IsInitialized">
-                Reset Metadata
-            </BitButton>
-        </div>
+            <div class="header-actions" data-ams-header-control="directory-actions">
+                <BitButton Variant="BitVariant.Fill"
+                           Color="BitColor.Primary"
+                           Size="BitSize.Small"
+                           OnClick="SetDirectory"
+                           IsEnabled="@(!string.IsNullOrWhiteSpace(workingDirectory))">
+                    Set
+                </BitButton>
+                <BitButton Variant="BitVariant.Outline"
+                           Color="BitColor.Warning"
+                           Size="BitSize.Small"
+                           OnClick="ResetMetadataAsync"
+                           IsEnabled="@Workspace.IsInitialized">
+                    Reset Metadata
+                </BitButton>
+            </div>
 
-        <div class="header-options">
-            <BitCheckbox Label="Precompute Peaks In Background"
-                         Value="@Workspace.PrecomputePeaksInBackground"
-                         OnChange="HandlePrecomputePeaksToggle" />
+            <div class="header-options" data-ams-header-control="settings">
+                <BitCheckbox Label="Precompute Peaks In Background"
+                             Value="@Workspace.PrecomputePeaksInBackground"
+                             OnChange="HandlePrecomputePeaksToggle" />
+            </div>
         </div>
     </div>
 </div>

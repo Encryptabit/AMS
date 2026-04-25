@@ -50,6 +50,13 @@
     gap: 0.5rem;
 }
 
+.header-secondary-optional {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    min-width: 0;
+}
+
 .header-field {
     min-width: 0;
 }
@@ -114,6 +121,15 @@
 
     .header-field {
         flex: 1 1 12rem;
+    }
+
+    .header-field--workspace {
+        flex: 1 1 100%;
+        width: 100%;
+    }
+
+    .header-secondary-optional {
+        display: none;
     }
 
     .header-field--directory {

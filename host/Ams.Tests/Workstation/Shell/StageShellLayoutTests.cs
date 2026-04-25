@@ -11,6 +11,8 @@ namespace Ams.Tests.Workstation.Shell;
 
 public sealed class StageShellLayoutTests
 {
+    private const string HeaderControlsRelativePath = "host/Ams.Workstation.Server/Components/Layout/HeaderControls.razor";
+    private const string HeaderControlsCssRelativePath = "host/Ams.Workstation.Server/Components/Layout/HeaderControls.razor.css";
     [Theory]
     [InlineData("/prep", StageRouteCatalog.StageIds.Prep, StageRouteCatalog.ModuleIds.PrepPipeline)]
     [InlineData("/prep/", StageRouteCatalog.StageIds.Prep, StageRouteCatalog.ModuleIds.PrepPipeline)]
@@ -154,6 +156,23 @@ public sealed class StageShellLayoutTests
             $"Expected no shell-visible batching modules for polish scaffold, but found: {string.Join(", ", modulesWithBatching)}. Context: {DescribeState(state)}.");
     }
 
+    [Fact]
+    public void HeaderControls_MobileContract_KeepChapterWorkspaceReachableAndHideSecondaryControls()
+    {
+        var source = ReadRepoFile(HeaderControlsRelativePath);
+        var css = ReadRepoFile(HeaderControlsCssRelativePath);
+
+        AssertSourceContains(source, HeaderControlsRelativePath, "data-ams-header-control=\"chapter\"", "chapter selector anchor");
+        AssertSourceContains(source, HeaderControlsRelativePath, "data-ams-header-control=\"workspace\"", "workspace selector anchor");
+        AssertSourceContains(source, HeaderControlsRelativePath, "data-ams-header-optional=\"mobile-overflow-hidden\"", "mobile-hide optional controls anchor");
+
+        AssertSourceContains(css, HeaderControlsCssRelativePath, "@media (max-width: 768px)", "mobile breakpoint rule");
+        AssertSourceContains(css, HeaderControlsCssRelativePath, ".header-field--workspace", "workspace mobile style block");
+        AssertSourceContains(css, HeaderControlsCssRelativePath, "flex: 1 1 100%;", "workspace full-width mobile reachability");
+        AssertSourceContains(css, HeaderControlsCssRelativePath, ".header-secondary-optional", "secondary controls container selector");
+        AssertSourceContains(css, HeaderControlsCssRelativePath, "display: none;", "mobile hide rule for secondary controls");
+    }
+
     private static void AssertVisibleState(
         StageModuleRail.StageModuleRailState state,
         string path,
@@ -200,6 +219,42 @@ public sealed class StageShellLayoutTests
                 declaredTemplates.Contains(expectedTemplate, StringComparer.OrdinalIgnoreCase),
                 $"Missing route template '{expectedTemplate}' on component '{componentType.FullName}'. Declared templates: {string.Join(", ", declaredTemplates)}.");
         }
+    }
+
+    private static void AssertSourceContains(string source, string relativePath, string anchor, string anchorDescription)
+    {
+        Assert.True(
+            source.Contains(anchor, StringComparison.Ordinal),
+            $"Missing shell/mobile anchor '{anchorDescription}' in '{relativePath}'. Expected snippet: {anchor}");
+    }
+
+    private static string ReadRepoFile(string relativePath)
+    {
+        var repoRoot = FindRepoRoot();
+        var fullPath = Path.Combine(repoRoot, relativePath);
+
+        Assert.True(
+            File.Exists(fullPath),
+            $"Required shell/mobile contract file is missing: relative='{relativePath}', full='{fullPath}'.");
+
+        return File.ReadAllText(fullPath);
+    }
+
+    private static string FindRepoRoot()
+    {
+        var current = new DirectoryInfo(AppContext.BaseDirectory);
+        while (current is not null)
+        {
+            if (File.Exists(Path.Combine(current.FullName, "host", "Ams.sln"))
+                && Directory.Exists(Path.Combine(current.FullName, "host")))
+            {
+                return current.FullName;
+            }
+
+            current = current.Parent;
+        }
+
+        throw new DirectoryNotFoundException("Could not locate repo root containing host/Ams.sln.");
     }
 
     private static string DescribeState(StageModuleRail.StageModuleRailState state)
