@@ -6,33 +6,32 @@
 
 <PageTitle>Polish - AMS Workstation</PageTitle>
 
-<div class="polish-index">
-    <BitStack Horizontal="false" HorizontalAlign="BitAlignment.Center" Gap="1.5rem">
-        <div class="polish-header">
-            <BitText Typography="BitTypography.H4">Polish Area</BitText>
-            <BitText Typography="BitTypography.Body1" Color="BitColor.SecondaryForeground">
+<div class="polish-index" data-polish-scaffold-page="true">
+    <div class="polish-index__stack">
+        <header class="polish-header">
+            <h1>Polish Area</h1>
+            <p class="polish-header__summary">
                 Polish remains scaffold-only in shared shell. Pickup workflow now owned by Proof module.
-            </BitText>
-        </div>
+            </p>
+        </header>
 
-        <BitCard Class="polish-scaffold-card">
-            <BitStack Horizontal="false" Gap="0.75rem">
-                <BitTag Color="BitColor.Info">Scaffold</BitTag>
-                <BitText Typography="BitTypography.Body2">
+        <section class="ams-card polish-scaffold-card" aria-labelledby="polish-scaffold-summary">
+            <div class="polish-scaffold-card__stack">
+                <span class="ams-tag ams-tag--info ams-tag--md">Scaffold</span>
+                <p id="polish-scaffold-summary" class="polish-scaffold-card__summary">
                     Use this page to confirm stage continuity while Prep → Proof → Polish transitions remain stable.
-                </BitText>
-                <BitText Typography="BitTypography.Caption1" Color="BitColor.SecondaryForeground">
+                </p>
+                <p class="polish-scaffold-card__caption">
                     Legacy pickup pages were removed. Use Proof Pickups for import/match/stage.
-                </BitText>
-                <BitButton Variant="BitVariant.Outline"
-                           Color="BitColor.Primary"
-                           Href="@GetProofPickupsPath()"
-                           data-polish-scaffold-link="proof-pickups">
+                </p>
+                <a href="@GetProofPickupsPath()"
+                   class="ams-btn ams-btn--secondary ams-btn--md polish-scaffold-card__action"
+                   data-polish-scaffold-link="proof-pickups">
                     Open Proof Pickups
-                </BitButton>
-            </BitStack>
-        </BitCard>
-    </BitStack>
+                </a>
+            </div>
+        </section>
+    </div>
 </div>
 
 @code {
@@ -41,20 +40,3 @@
             StageRouteCatalog.StageIds.Proof,
             StageRouteCatalog.ModuleIds.ProofPickups);
 }
-
-<style>
-    .polish-index {
-        max-width: 800px;
-        margin: 0 auto;
-    }
-
-    .polish-header {
-        display: flex;
-        flex-direction: column;
-        gap: 0.25rem;
-    }
-
-    .polish-scaffold-card {
-        border: 1px dashed var(--bit-clr-brd-sec);
-    }
-</style>

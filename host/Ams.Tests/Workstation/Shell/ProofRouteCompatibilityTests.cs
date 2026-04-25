@@ -1,4 +1,5 @@
 using System.Reflection;
+using System.Text.RegularExpressions;
 using Ams.Workstation.Server.Components.Navigation;
 using Microsoft.AspNetCore.Components;
 using PolishScaffoldPage = Ams.Workstation.Server.Components.Pages.Polish.Index;
@@ -12,6 +13,9 @@ namespace Ams.Tests.Workstation.Shell;
 
 public sealed class ProofRouteCompatibilityTests
 {
+    private const string PolishScaffoldPageRelativePath = "host/Ams.Workstation.Server/Components/Pages/Polish/Index.razor";
+    private const string PolishScaffoldScssRelativePath = "host/Ams.Workstation.Server/Components/Pages/Polish/Index.razor.scss";
+
     [Theory]
     [InlineData("/proof", StageRouteCatalog.StageIds.Proof, StageRouteCatalog.ModuleIds.ProofEditing, true)]
     [InlineData("/proof/", StageRouteCatalog.StageIds.Proof, StageRouteCatalog.ModuleIds.ProofEditing, true)]
@@ -205,6 +209,50 @@ public sealed class ProofRouteCompatibilityTests
     }
 
     [Fact]
+    public void PolishScaffoldPage_PreservesProofHandoffAnchorWithNonBlankHref()
+    {
+        var source = ReadRepoFile(PolishScaffoldPageRelativePath);
+
+        Assert.Contains("data-polish-scaffold-link=\"proof-pickups\"", source, StringComparison.Ordinal);
+
+        var anchorMatch = Regex.Match(
+            source,
+            "<a\\s+[^>]*data-polish-scaffold-link=\"proof-pickups\"[^>]*>",
+            RegexOptions.CultureInvariant | RegexOptions.IgnoreCase);
+
+        Assert.True(
+            anchorMatch.Success,
+            $"Expected polish scaffold page to declare an <a> proof handoff anchor in '{PolishScaffoldPageRelativePath}', but none matched data-polish-scaffold-link=\"proof-pickups\".");
+
+        var hrefMatch = Regex.Match(
+            anchorMatch.Value,
+            "href\\s*=\\s*\"(?<href>[^\"]*)\"",
+            RegexOptions.CultureInvariant | RegexOptions.IgnoreCase);
+
+        Assert.True(
+            hrefMatch.Success,
+            $"Expected polish scaffold proof handoff anchor to declare href in '{PolishScaffoldPageRelativePath}', but anchor was '{anchorMatch.Value}'.");
+
+        var href = hrefMatch.Groups["href"].Value;
+        Assert.True(
+            !string.IsNullOrWhiteSpace(href),
+            $"Expected polish scaffold proof handoff href to be non-empty in '{PolishScaffoldPageRelativePath}', but anchor was '{anchorMatch.Value}'.");
+
+        Assert.Equal("@GetProofPickupsPath()", href);
+    }
+
+    [Fact]
+    public void PolishScaffoldStyles_EncodeNarrowViewportOverflowGuardrails()
+    {
+        var source = ReadRepoFile(PolishScaffoldScssRelativePath);
+
+        Assert.Contains("@media (max-width: 360px)", source, StringComparison.Ordinal);
+        Assert.Matches(new Regex("overflow-x\\s*:\\s*(clip|hidden)\\s*;", RegexOptions.CultureInvariant), source);
+        Assert.Contains(".polish-scaffold-card__action", source, StringComparison.Ordinal);
+        Assert.Contains("width: 100%", source, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void LegacyPolishPickupRoutes_AreNotResolvedByStageRouteCatalog()
     {
         var legacyPaths = new[]
@@ -320,6 +368,38 @@ public sealed class ProofRouteCompatibilityTests
         return resolvesToEditing
             ? handoffPath
             : StageRouteCatalog.BuildProofChapterCanonicalPath(activeChapterName);
+    }
+
+    private static string ReadRepoFile(string relativePath)
+    {
+        var repoRoot = FindRepoRoot();
+        var fullPath = Path.Combine(repoRoot, relativePath);
+
+        if (!File.Exists(fullPath))
+        {
+            throw new FileNotFoundException($"Required proof route contract source file is missing: relative='{relativePath}', full='{fullPath}'.", fullPath);
+        }
+
+        return File.ReadAllText(fullPath);
+    }
+
+    private static string FindRepoRoot()
+    {
+        var current = new DirectoryInfo(AppContext.BaseDirectory);
+
+        while (current is not null)
+        {
+            if (File.Exists(Path.Combine(current.FullName, "CODE-STYLE.md"))
+                && Directory.Exists(Path.Combine(current.FullName, "host"))
+                && Directory.Exists(Path.Combine(current.FullName, ".gsd")))
+            {
+                return current.FullName;
+            }
+
+            current = current.Parent;
+        }
+
+        throw new DirectoryNotFoundException("Could not locate repo root containing CODE-STYLE.md, host/, and .gsd/.");
     }
 
     private static StageRouteMatch AssertResolves(
