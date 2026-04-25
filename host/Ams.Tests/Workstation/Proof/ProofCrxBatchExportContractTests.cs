@@ -19,8 +19,20 @@ public sealed class ProofCrxBatchExportContractTests
         AssertContains(
             swipeRightBody,
             ChapterReviewRelativePath,
-            "const string eventName = \"swipe-right-export\";",
-            "batch export swipe-right contract event anchor");
+            "var isFallbackAction = sourceSurface.StartsWith(\"mobile-action-bar-\", StringComparison.Ordinal);",
+            "batch export classifies fallback actions by mobile action bar source surface");
+
+        AssertContains(
+            swipeRightBody,
+            ChapterReviewRelativePath,
+            "var trigger = isFallbackAction ? \"export-button\" : \"swipe-right\";",
+            "batch export trigger distinguishes explicit fallback button from swipe gesture");
+
+        AssertContains(
+            swipeRightBody,
+            ChapterReviewRelativePath,
+            "var eventName = isFallbackAction ? \"explicit-export\" : \"swipe-right-export\";",
+            "batch export event naming preserves explicit fallback versus swipe diagnostics");
 
         AssertContains(
             swipeRightBody,
@@ -100,6 +112,7 @@ public sealed class ProofCrxBatchExportContractTests
     public void ChapterReview_BatchIgnore_UsesSharedExecutorAcrossSwipeButtonAndShortcut()
     {
         var source = ReadRepoFile(ChapterReviewRelativePath);
+        var swipeLeftBody = ExtractMethodBody(source, "private Task HandleSelectionSwipeLeftAsync(");
 
         AssertContains(
             source,
@@ -114,16 +127,34 @@ public sealed class ProofCrxBatchExportContractTests
             "batch ignore wrappers delegate through shared executor");
 
         AssertContains(
-            source,
+            swipeLeftBody,
             ChapterReviewRelativePath,
-            "trigger: \"swipe-left\"",
-            "swipe-left dispatch uses shared batch-ignore executor");
+            "var isFallbackAction = sourceSurface.StartsWith(\"mobile-action-bar-\", StringComparison.Ordinal);",
+            "batch ignore classifies fallback actions by mobile action bar source surface");
 
         AssertContains(
-            source,
+            swipeLeftBody,
             ChapterReviewRelativePath,
-            "trigger: \"ignore-button\"",
-            "errors-card ignore dispatch uses shared batch-ignore executor");
+            "var trigger = isFallbackAction ? \"ignore-button\" : \"swipe-left\";",
+            "batch ignore trigger distinguishes explicit fallback button from swipe gesture");
+
+        AssertContains(
+            swipeLeftBody,
+            ChapterReviewRelativePath,
+            "var eventName = isFallbackAction ? \"explicit-ignore\" : \"swipe-left-ignore\";",
+            "batch ignore event naming preserves explicit fallback versus swipe diagnostics");
+
+        AssertContains(
+            swipeLeftBody,
+            ChapterReviewRelativePath,
+            "trigger: trigger,",
+            "batch ignore wrapper forwards computed trigger into shared executor");
+
+        AssertContains(
+            swipeLeftBody,
+            ChapterReviewRelativePath,
+            "eventName: eventName);",
+            "batch ignore wrapper forwards computed event name into shared executor");
 
         AssertContains(
             source,
@@ -135,7 +166,7 @@ public sealed class ProofCrxBatchExportContractTests
             source,
             ChapterReviewRelativePath,
             "eventName: \"explicit-ignore\"",
-            "explicit ignore paths share same event contract");
+            "keyboard explicit ignore path preserves shared event contract");
 
         AssertContains(
             source,
