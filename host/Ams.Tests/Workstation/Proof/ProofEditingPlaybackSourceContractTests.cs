@@ -217,6 +217,48 @@ public sealed class ProofEditingPlaybackSourceContractTests
     }
 
     [Fact]
+    public void ChapterReview_LongPressFromJsDispatcher_ConsumesReleaseTapBeforeSelectionToggle()
+    {
+        var chapterReviewSource = ReadRepoFile(ChapterReviewRelativePath);
+
+        AssertContains(
+            chapterReviewSource,
+            ChapterReviewRelativePath,
+            "private static readonly TimeSpan PostLongPressTapSuppressionWindow = TimeSpan.FromMilliseconds(700);",
+            "ChapterReview declares post-long-press tap suppression window for JS/Blazor release-click race");
+
+        AssertContains(
+            chapterReviewSource,
+            ChapterReviewRelativePath,
+            "private readonly Dictionary<int, DateTimeOffset> _suppressedSelectionTapSentenceIds = new();",
+            "ChapterReview tracks per-sentence suppression tokens for post-long-press release taps");
+
+        AssertContains(
+            chapterReviewSource,
+            ChapterReviewRelativePath,
+            "RememberPostLongPressTapSuppression(sentenceId);",
+            "OnSentenceLongPress records suppression token before mode transitions");
+
+        AssertContains(
+            chapterReviewSource,
+            ChapterReviewRelativePath,
+            "if (TryConsumePostLongPressTapSuppression(sentence.Id, \"tap\"))",
+            "playback sentence click path consumes release tap triggered by long-press");
+
+        AssertContains(
+            chapterReviewSource,
+            ChapterReviewRelativePath,
+            "if (TryConsumePostLongPressTapSuppression(sentence.Id, \"errors-view\"))",
+            "errors-view click path also consumes release tap triggered by long-press");
+
+        AssertContains(
+            chapterReviewSource,
+            ChapterReviewRelativePath,
+            "_lastSelectionGestureEvent = \"selection-tap-consumed-after-long-press\";",
+            "selection diagnostics expose long-press release tap suppression event");
+    }
+
+    [Fact]
     public void ChapterReview_TouchGestureDispatcher_WiresLongPressAndSwipeBatchActionsAcrossPlaybackAndErrorsSurfaces()
     {
         var chapterReviewSource = ReadRepoFile(ChapterReviewRelativePath);

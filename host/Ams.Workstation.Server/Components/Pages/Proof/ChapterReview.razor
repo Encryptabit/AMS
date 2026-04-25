@@ -180,12 +180,14 @@
 
     // Touch selection state
     private static readonly TimeSpan DuplicateLongPressWindow = TimeSpan.FromMilliseconds(250);
+    private static readonly TimeSpan PostLongPressTapSuppressionWindow = TimeSpan.FromMilliseconds(700);
     private bool _isSelectionModeActive;
     private HashSet<int> _selectedSentenceIds = new();
     private bool _resumePlaybackOnSelectionExit;
     private string _lastSelectionGestureEvent = "idle";
     private DateTimeOffset _lastLongPressDispatchAtUtc = DateTimeOffset.MinValue;
     private int _lastLongPressDispatchSentenceId;
+    private readonly Dictionary<int, DateTimeOffset> _suppressedSelectionTapSentenceIds = new();
     private string SelectionModeState => _isSelectionModeActive ? "active" : "inactive";
 
     // Keyboard navigation state
@@ -227,6 +229,7 @@
                 _lastSelectionGestureEvent = "chapter-reset";
                 _lastLongPressDispatchAtUtc = DateTimeOffset.MinValue;
                 _lastLongPressDispatchSentenceId = 0;
+                _suppressedSelectionTapSentenceIds.Clear();
             }
             if (Workspace.CurrentChapterName != decodedName)
             {
@@ -586,6 +589,11 @@
 
     private async Task HandleSentenceSelected(SentenceViewModel sentence)
     {
+        if (TryConsumePostLongPressTapSuppression(sentence.Id, "tap"))
+        {
+            return;
+        }
+
         if (_isSelectionModeActive)
         {
             ToggleSelectionMembership(sentence.Id, "tap");
@@ -791,6 +799,62 @@
         _lastLongPressDispatchSentenceId = sentenceId;
         _lastLongPressDispatchAtUtc = nowUtc;
         return isDuplicate;
+    }
+
+    private void RememberPostLongPressTapSuppression(int sentenceId)
+    {
+        if (sentenceId <= 0)
+        {
+            return;
+        }
+
+        _suppressedSelectionTapSentenceIds[sentenceId] = DateTimeOffset.UtcNow;
+    }
+
+    private bool TryConsumePostLongPressTapSuppression(int sentenceId, string trigger)
+    {
+        if (sentenceId <= 0)
+        {
+            return false;
+        }
+
+        var nowUtc = DateTimeOffset.UtcNow;
+        PruneExpiredPostLongPressTapSuppressions(nowUtc);
+
+        if (!_suppressedSelectionTapSentenceIds.TryGetValue(sentenceId, out var suppressedAtUtc))
+        {
+            return false;
+        }
+
+        _suppressedSelectionTapSentenceIds.Remove(sentenceId);
+
+        var age = nowUtc - suppressedAtUtc;
+        if (age > PostLongPressTapSuppressionWindow)
+        {
+            return false;
+        }
+
+        _lastSelectionGestureEvent = "selection-tap-consumed-after-long-press";
+        LogSelectionModeDiagnostic(_lastSelectionGestureEvent, trigger, sentenceId, $"suppressionAgeMs={age.TotalMilliseconds:F0}");
+        return true;
+    }
+
+    private void PruneExpiredPostLongPressTapSuppressions(DateTimeOffset nowUtc)
+    {
+        if (_suppressedSelectionTapSentenceIds.Count == 0)
+        {
+            return;
+        }
+
+        var expiredSentenceIds = _suppressedSelectionTapSentenceIds
+            .Where(entry => (nowUtc - entry.Value) > PostLongPressTapSuppressionWindow)
+            .Select(entry => entry.Key)
+            .ToList();
+
+        foreach (var expiredSentenceId in expiredSentenceIds)
+        {
+            _suppressedSelectionTapSentenceIds.Remove(expiredSentenceId);
+        }
     }
 
     private bool TryValidateBatchGestureContext(
@@ -1091,6 +1155,11 @@
 
     private void HandleViewFromErrors(SentenceReport sentence)
     {
+        if (TryConsumePostLongPressTapSuppression(sentence.Id, "errors-view"))
+        {
+            return;
+        }
+
         if (_isSelectionModeActive)
         {
             ToggleSelectionMembership(sentence.Id, "errors-view");
@@ -1109,6 +1178,8 @@
     [JSInvokable]
     public async Task OnSentenceLongPress(int sentenceId)
     {
+        RememberPostLongPressTapSuppression(sentenceId);
+
         if (IsDuplicateLongPressDispatch(sentenceId))
         {
             _lastSelectionGestureEvent = "long-press-duplicate-ignored";
