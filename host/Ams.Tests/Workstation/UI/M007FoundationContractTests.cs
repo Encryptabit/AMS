@@ -32,8 +32,28 @@ public sealed class M007FoundationContractTests
     private static readonly Regex BitPackageSeamPattern = new("Bit\\.BlazorUI", RegexOptions.CultureInvariant | RegexOptions.Compiled);
     private static readonly Regex BitAssetSeamPattern = new("_content/Bit\\.BlazorUI(?:\\.Icons)?", RegexOptions.CultureInvariant | RegexOptions.Compiled);
     private static readonly Regex BitImportSeamPattern = new("@using\\s+Bit\\.BlazorUI", RegexOptions.CultureInvariant | RegexOptions.Compiled);
-    private static readonly Regex BitCssVariablePattern = new("--bit-clr(?:-[A-Za-z0-9-]+)*(?![A-Za-z0-9-])", RegexOptions.CultureInvariant | RegexOptions.Compiled);
-    private static readonly Regex BitClassPattern = new("(?<![A-Za-z0-9_-])(?:\\.bit-[A-Za-z0-9_-]+|bit-[A-Za-z0-9_-]+)(?![A-Za-z0-9_-])", RegexOptions.CultureInvariant | RegexOptions.Compiled);
+    private static readonly Regex BitCssVariablePattern = new("(?<![A-Za-z0-9-])--bit-clr[A-Za-z0-9-]*", RegexOptions.CultureInvariant | RegexOptions.Compiled);
+    private static readonly Regex BitClassPattern = new("(?<![A-Za-z0-9_-])(?:\\.bit-[A-Za-z0-9_-]+|bit-[A-Za-z0-9_-]+)(?![A-Za-z0-9_-])", RegexOptions.CultureInvariant | RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
+    [Theory]
+    [InlineData("color: var(--bit-clr-primary);", true)]
+    [InlineData(":root { --bit-clrAccent: #fff; }", true)]
+    [InlineData("color: var(--ams-color-accent);", false)]
+    public void BitCssVariablePattern_CatchesAnyBitClrReference(string source, bool expectedMatch)
+    {
+        Assert.Equal(expectedMatch, BitCssVariablePattern.IsMatch(source));
+    }
+
+    [Theory]
+    [InlineData(".bit-crd-cnt { border: 0; }", true)]
+    [InlineData(".Bit-Crd-Cnt { border: 0; }", true)]
+    [InlineData("<div class=\"bit-crd-cnt stage\"></div>", true)]
+    [InlineData("<div class=\"Bit-Crd-Cnt stage\"></div>", true)]
+    [InlineData("<div class=\"ams-shell\"></div>", false)]
+    public void BitClassPattern_CatchesSelectorAndMarkupTokens(string source, bool expectedMatch)
+    {
+        Assert.Equal(expectedMatch, BitClassPattern.IsMatch(source));
+    }
 
     [Fact]
     public void MigratedRazorFiles_ContainNoBitBlazorUiTags()
