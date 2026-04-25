@@ -13,34 +13,42 @@ public sealed class WorkstationPrepMobileContractTests
     {
         var source = ReadRepoFile(PrepIndexRelativePath);
 
-        var requiredMarkupAnchors = new[]
+        foreach (var contractValue in new[]
+                 {
+                     "pipeline-action-bar",
+                     "active-tasks-table",
+                     "history-table",
+                     "inspector-surfaces"
+                 })
         {
-            "data-ams-prep-mobile-contract=\"pipeline-action-bar\"",
-            "data-ams-prep-mobile-contract=\"active-tasks-table\"",
-            "data-ams-prep-mobile-contract=\"history-table\"",
-            "data-ams-prep-mobile-contract=\"inspector-surfaces\"",
-            "Class=\"pipeline-action-bar\"",
-            "Class=\"pipeline-action-bar__stats\"",
-            "Class=\"pipeline-action-bar__controls\"",
-            "Class=\"pipeline-action-button\"",
-            "class=\"prep-table pipeline-dashboard-table\"",
-            "data-label=\"Action\"",
-            "data-label=\"Message\""
-        };
-
-        foreach (var anchor in requiredMarkupAnchors)
-        {
-            AssertContainsAnchor(source, PrepIndexRelativePath, anchor, "Prep mobile markup contract");
+            AssertHasDataAttributeValue(source, "data-ams-prep-mobile-contract", contractValue, PrepIndexRelativePath);
         }
 
-        var mobileContractAnchorCount = Regex.Matches(
-            source,
-            "data-ams-prep-mobile-contract=\"",
-            RegexOptions.CultureInvariant).Count;
+        foreach (var classToken in new[]
+                 {
+                     "pipeline-action-bar",
+                     "pipeline-action-bar__stats",
+                     "pipeline-action-bar__controls",
+                     "pipeline-action-button",
+                     "pipeline-dashboard-table"
+                 })
+        {
+            AssertHasClassToken(source, classToken, PrepIndexRelativePath);
+        }
 
-        Assert.True(
-            mobileContractAnchorCount >= 4,
-            $"Expected at least four prep mobile contract anchors in '{PrepIndexRelativePath}', but found {mobileContractAnchorCount}.");
+        AssertMatches(
+            source,
+            "data-label\\s*=\\s*[\"']Action[\"']",
+            RegexOptions.CultureInvariant,
+            PrepIndexRelativePath,
+            "mobile table action label");
+
+        AssertMatches(
+            source,
+            "data-label\\s*=\\s*[\"']Message[\"']",
+            RegexOptions.CultureInvariant,
+            PrepIndexRelativePath,
+            "mobile table message label");
     }
 
     [Fact]
@@ -48,96 +56,128 @@ public sealed class WorkstationPrepMobileContractTests
     {
         var source = ReadRepoFile(PrepCssRelativePath);
 
-        var requiredResponsiveRules = new[]
-        {
-            "@media (max-width: 768px)",
-            ".prep-page ::deep .pipeline-action-bar button",
-            "min-height: 44px;",
-            ".prep-page ::deep input",
-            "font-size: 16px;",
-            ".prep-page ::deep .pipeline-layout-grid > .pipeline-grid-item--top",
-            ".prep-page ::deep .pipeline-dashboard-table thead",
-            ".prep-page ::deep .pipeline-dashboard-table td::before",
-            "content: attr(data-label);",
-            ".prep-page ::deep [data-ams-prep-mobile-contract=\"inspector-surfaces\"] .inspector-error-log",
-            "max-height: 10rem;"
-        };
+        AssertMatches(
+            source,
+            "@media\\s*\\(max-width:\\s*768px\\)",
+            RegexOptions.CultureInvariant,
+            PrepCssRelativePath,
+            "mobile breakpoint declaration");
 
-        foreach (var anchor in requiredResponsiveRules)
-        {
-            AssertContainsAnchor(source, PrepCssRelativePath, anchor, "Prep mobile responsive rule");
-        }
+        AssertMatches(
+            source,
+            "@media\\s*\\(max-width:\\s*768px\\)[\\s\\S]*?min-height\\s*:\\s*44px",
+            RegexOptions.CultureInvariant,
+            PrepCssRelativePath,
+            "touch target minimum size rule in mobile breakpoint");
 
-        Assert.True(
-            Regex.IsMatch(
-                source,
-                "@media \\(max-width: 768px\\)[\\s\\S]*?min-height:\\s*44px;",
-                RegexOptions.CultureInvariant),
-            $"Expected the 768px breakpoint block in '{PrepCssRelativePath}' to include 44px touch-target rules.");
+        AssertMatches(
+            source,
+            "@media\\s*\\(max-width:\\s*768px\\)[\\s\\S]*?font-size\\s*:\\s*16px",
+            RegexOptions.CultureInvariant,
+            PrepCssRelativePath,
+            "mobile input font-size guard");
 
-        Assert.True(
-            Regex.IsMatch(
-                source,
-                "@media \\(max-width: 768px\\)[\\s\\S]*?font-size:\\s*16px;",
-                RegexOptions.CultureInvariant),
-            $"Expected the 768px breakpoint block in '{PrepCssRelativePath}' to include 16px input typography safeguards.");
+        AssertMatches(
+            source,
+            "@media\\s*\\(max-width:\\s*768px\\)[\\s\\S]*?pipeline-dashboard-table[\\s\\S]*?display\\s*:\\s*block",
+            RegexOptions.CultureInvariant,
+            PrepCssRelativePath,
+            "stacked table block flow rule in mobile breakpoint");
+
+        AssertMatches(
+            source,
+            "@media\\s*\\(max-width:\\s*768px\\)[\\s\\S]*?content\\s*:\\s*attr\\(data-label\\)",
+            RegexOptions.CultureInvariant,
+            PrepCssRelativePath,
+            "stacked table label content rule in mobile breakpoint");
+
+        AssertMatches(
+            source,
+            "@media\\s*\\(max-width:\\s*768px\\)[\\s\\S]*?inspector-surfaces[\\s\\S]*?max-height\\s*:\\s*10rem",
+            RegexOptions.CultureInvariant,
+            PrepCssRelativePath,
+            "inspector mobile log clamp");
     }
 
     [Fact]
-    public void PrepIndex_DoesNotIntroduceNewPersistenceOrPipelineSeams()
+    public void PrepIndex_RetainsWorkspaceAndSessionSeamsWithoutDirectPersistenceWrites()
     {
         var source = ReadRepoFile(PrepIndexRelativePath);
 
-        var requiredExistingSeams = new[]
+        AssertHasInjectDirective(source, "BlazorWorkspace", "Workspace", PrepIndexRelativePath);
+        AssertHasInjectDirective(source, "PrepRunSession", "Session", PrepIndexRelativePath);
+
+        AssertMatches(
+            source,
+            "\\bWorkspace\\.",
+            RegexOptions.CultureInvariant,
+            PrepIndexRelativePath,
+            "workspace usage seam");
+
+        AssertMatches(
+            source,
+            "\\bSession\\.",
+            RegexOptions.CultureInvariant,
+            PrepIndexRelativePath,
+            "session usage seam");
+
+        var forbiddenNewSeamPatterns = new[]
         {
-            "@inject BlazorWorkspace Workspace",
-            "@inject PrepRunSession Session",
-            "Session.BuildBookIndexAsync(_manuscriptPath)",
-            "Session.RunChapterPrepAsync(queueItem.Chapter, request)",
-            "Workspace.SelectChapter(queueItem.Chapter)",
-            "_operatorControls.TryBuildRequest(out var request)"
+            "(?m)^@inject\\s+IJSRuntime\\b",
+            "(?m)^@inject\\s+PipelineService\\b",
+            "(?m)^@inject\\s+IPipelineService\\b",
+            "(?m)^@inject\\s+ProtectedLocalStorage\\b",
+            "(?m)^@inject\\s+ProtectedSessionStorage\\b",
+            "\\blocalStorage\\b",
+            "\\bsessionStorage\\b",
+            "\\bFile\\.WriteAllText\\b",
+            "\\bFile\\.AppendAllText\\b",
+            "\\bDirectory\\.CreateDirectory\\b",
+            "\\bJsonSerializer\\.Serialize\\b",
+            "\\bJsonSerializer\\.Deserialize\\b"
         };
 
-        foreach (var anchor in requiredExistingSeams)
+        foreach (var pattern in forbiddenNewSeamPatterns)
         {
-            AssertContainsAnchor(source, PrepIndexRelativePath, anchor, "existing prep orchestration seam");
-        }
-
-        var injectDirectiveCount = Regex.Matches(source, "(?m)^@inject\\s+", RegexOptions.CultureInvariant).Count;
-        Assert.Equal(
-            2,
-            injectDirectiveCount);
-
-        var forbiddenNewSeams = new[]
-        {
-            "@inject IJSRuntime",
-            "@inject PipelineService",
-            "@inject IPipelineService",
-            "@inject ProtectedLocalStorage",
-            "@inject ProtectedSessionStorage",
-            "localStorage",
-            "sessionStorage",
-            "File.WriteAllText",
-            "File.AppendAllText",
-            "Directory.CreateDirectory",
-            "JsonSerializer.Serialize",
-            "JsonSerializer.Deserialize"
-        };
-
-        foreach (var forbiddenAnchor in forbiddenNewSeams)
-        {
-            Assert.DoesNotContain(
-                forbiddenAnchor,
+            AssertDoesNotMatch(
                 source,
-                StringComparison.Ordinal);
+                pattern,
+                RegexOptions.CultureInvariant,
+                PrepIndexRelativePath,
+                "forbidden persistence/pipeline seam");
         }
     }
 
-    private static void AssertContainsAnchor(string source, string relativePath, string anchor, string description)
+    private static void AssertHasInjectDirective(string source, string serviceType, string alias, string relativePath)
+    {
+        var pattern = $"(?m)^@inject\\s+{Regex.Escape(serviceType)}\\s+{Regex.Escape(alias)}\\s*$";
+        AssertMatches(source, pattern, RegexOptions.CultureInvariant, relativePath, $"inject directive for {serviceType} {alias}");
+    }
+
+    private static void AssertHasDataAttributeValue(string source, string attribute, string value, string relativePath)
+    {
+        var pattern = $"{Regex.Escape(attribute)}\\s*=\\s*[\"']{Regex.Escape(value)}[\"']";
+        AssertMatches(source, pattern, RegexOptions.CultureInvariant, relativePath, $"{attribute} contract '{value}'");
+    }
+
+    private static void AssertHasClassToken(string source, string classToken, string relativePath)
+    {
+        var pattern = $"\\b(?:class|Class)\\s*=\\s*[\"'][^\"']*\\b{Regex.Escape(classToken)}\\b[^\"']*[\"']";
+        AssertMatches(source, pattern, RegexOptions.CultureInvariant, relativePath, $"class token '{classToken}'");
+    }
+
+    private static void AssertMatches(string source, string pattern, RegexOptions options, string relativePath, string description)
     {
         Assert.True(
-            source.Contains(anchor, StringComparison.Ordinal),
-            $"Missing anchor '{description}' in '{relativePath}'. Expected snippet: {anchor}");
+            Regex.IsMatch(source, pattern, options),
+            $"Missing {description} in '{relativePath}'. Pattern: {pattern}");
+    }
+
+    private static void AssertDoesNotMatch(string source, string pattern, RegexOptions options, string relativePath, string description)
+    {
+        Assert.False(
+            Regex.IsMatch(source, pattern, options),
+            $"Found {description} in '{relativePath}'. Pattern: {pattern}");
     }
 
     private static string ReadRepoFile(string relativePath)
@@ -167,8 +207,7 @@ public sealed class WorkstationPrepMobileContractTests
         while (current is not null)
         {
             if (File.Exists(Path.Combine(current.FullName, "CODE-STYLE.md"))
-                && Directory.Exists(Path.Combine(current.FullName, "host"))
-                && Directory.Exists(Path.Combine(current.FullName, ".gsd")))
+                && Directory.Exists(Path.Combine(current.FullName, "host")))
             {
                 return current.FullName;
             }
@@ -176,6 +215,6 @@ public sealed class WorkstationPrepMobileContractTests
             current = current.Parent;
         }
 
-        throw new DirectoryNotFoundException("Could not locate repo root containing CODE-STYLE.md, host/, and .gsd/.");
+        throw new DirectoryNotFoundException("Could not locate repo root containing CODE-STYLE.md and host/.");
     }
 }

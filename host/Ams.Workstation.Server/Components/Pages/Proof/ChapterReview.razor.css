@@ -1,5 +1,21 @@
 .proof-review {
     width: 100%;
+    min-width: 0;
+}
+
+.proof-view-switcher {
+    width: 100%;
+}
+
+.proof-playback-shell {
+    width: 100%;
+    min-width: 0;
+}
+
+.proof-playback-alert,
+.proof-playback-waveform,
+.proof-playback-sentences {
+    min-width: 0;
 }
 
 .playback-alert-settings {
@@ -9,4 +25,94 @@
 .playback-alert-status {
     margin-top: 0.4rem;
     display: block;
+}
+
+.proof-playback-sentences ::deep .sentence-list-card {
+    min-height: 18rem;
+    max-height: clamp(20rem, 52vh, 40rem);
+}
+
+@media (max-width: 768px) {
+    .proof-view-switcher {
+        margin-bottom: 0.55rem;
+    }
+
+    .proof-view-switcher ::deep .bit-stack {
+        width: 100%;
+        justify-content: stretch;
+        gap: 0.45rem;
+        flex-wrap: wrap;
+    }
+
+    .proof-view-switcher ::deep button,
+    .proof-view-switcher ::deep .bit-btn {
+        min-height: 44px;
+        line-height: 1.15;
+        padding-inline: 0.7rem;
+    }
+
+    .proof-playback-shell {
+        display: flex;
+        flex-direction: column;
+        gap: 0.35rem;
+        min-height: calc(100dvh - 13.5rem);
+    }
+
+    .proof-playback-alert {
+        flex: 0 0 auto;
+    }
+
+    .playback-alert-settings {
+        margin-bottom: 0;
+    }
+
+    .playback-alert-settings ::deep .bit-card-content,
+    .playback-alert-settings ::deep .bit-crd-cnt {
+        padding: 0.55rem 0.6rem;
+    }
+
+    .playback-alert-settings ::deep button,
+    .playback-alert-settings ::deep .bit-btn,
+    .playback-alert-settings ::deep input,
+    .playback-alert-settings ::deep .bit-txt-fld {
+        min-height: 44px;
+        font-size: 16px;
+    }
+
+    .playback-alert-status {
+        margin-top: 0.3rem;
+        line-height: 1.3;
+    }
+
+    .proof-playback-waveform {
+        flex: 0 0 auto;
+    }
+
+    .proof-playback-sentences {
+        flex: 1 1 auto;
+        min-height: 0;
+    }
+
+    .proof-playback-sentences ::deep .sentence-list-card {
+        height: clamp(18rem, 58dvh, 34rem);
+        min-height: 16rem;
+        max-height: 70dvh;
+    }
+
+    .proof-playback-sentences ::deep .sentence-list-header {
+        padding: 0.55rem 0.75rem;
+    }
+
+    .proof-playback-sentences ::deep .sentence-items {
+        padding: 0.35rem;
+    }
+
+    .proof-playback-sentences ::deep .sentence-item {
+        padding: 0.65rem 0.8rem;
+        margin-bottom: 0.2rem;
+    }
+
+    .proof-playback-sentences ::deep .sentence-text {
+        line-height: 1.4;
+    }
 }

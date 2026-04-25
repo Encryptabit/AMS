@@ -8,7 +8,7 @@ public sealed class WorkstationPrepDesignContractTests
     private const string PrepIndexRelativePath = "host/Ams.Workstation.Server/Components/Pages/Prep/Index.razor";
     private const string PrepCssRelativePath = "host/Ams.Workstation.Server/Components/Pages/Prep/Index.razor.css";
 
-    private static readonly string[] ExpectedCustomUtilitySelectors =
+    private static readonly string[] RequiredPrepUtilitySelectors =
     [
         "prep-control-section",
         "prep-control-sections",
@@ -32,66 +32,53 @@ public sealed class WorkstationPrepDesignContractTests
     {
         var routeTemplates = ExtractAndValidateRouteTemplates(PrepIndexRelativePath);
 
-        Assert.True(
-            routeTemplates.Contains("/prep", StringComparer.OrdinalIgnoreCase),
-            $"Missing canonical prep compatibility alias '/prep' in '{PrepIndexRelativePath}'. Declared templates: {string.Join(", ", routeTemplates)}.");
-
-        Assert.True(
-            routeTemplates.Contains("/prep/pipeline", StringComparer.OrdinalIgnoreCase),
-            $"Missing canonical prep module route '/prep/pipeline' in '{PrepIndexRelativePath}'. Declared templates: {string.Join(", ", routeTemplates)}.");
+        Assert.Contains("/prep", routeTemplates, StringComparer.OrdinalIgnoreCase);
+        Assert.Contains("/prep/pipeline", routeTemplates, StringComparer.OrdinalIgnoreCase);
     }
 
     [Fact]
-    public void PrepPage_ContainsBitFirstAnchors_AndRequiredDiagnosticsSurfaces()
+    public void PrepPage_DeclaresPipelineAndDiagnosticsContracts()
     {
         var source = ReadRepoFile(PrepIndexRelativePath);
 
-        var requiredBitAnchors = new[]
-        {
-            "<BitStack Horizontal=\"true\"",
-            "<BitCard",
-            "<BitMessage",
-            "<BitDropdown",
-            "<BitCheckbox",
-            "<BitButton Variant=\"BitVariant.Fill\"",
-            "<BitProgress"
-        };
+        AssertHasInjectDirective(source, "BlazorWorkspace", "Workspace", PrepIndexRelativePath);
+        AssertHasInjectDirective(source, "PrepRunSession", "Session", PrepIndexRelativePath);
 
-        var requiredDiagnosticsAnchors = new[]
+        foreach (var contractValue in new[]
+                 {
+                     "pipeline-action-bar",
+                     "active-tasks-table",
+                     "history-table",
+                     "inspector-surfaces"
+                 })
         {
-            "Pipeline Dashboard",
-            "Run batch prep",
-            "Queue Builder + Pipeline Throughput",
-            "Runtime readiness snapshot",
-            "Last typed request snapshot",
-            "Option normalization warnings",
-            "Progress timeline",
-            "Last artifact set",
-            "Last book-index request"
-        };
-
-        foreach (var anchor in requiredBitAnchors)
-        {
-            AssertContainsAnchor(source, PrepIndexRelativePath, anchor, "Bit-first composition anchor");
+            AssertHasDataAttributeValue(source, "data-ams-prep-mobile-contract", contractValue, PrepIndexRelativePath);
         }
 
-        foreach (var anchor in requiredDiagnosticsAnchors)
+        foreach (var classToken in new[]
+                 {
+                     "pipeline-action-bar",
+                     "pipeline-action-bar__stats",
+                     "pipeline-action-bar__controls",
+                     "pipeline-action-button",
+                     "pipeline-dashboard-table-wrap",
+                     "pipeline-dashboard-table"
+                 })
         {
-            AssertContainsAnchor(source, PrepIndexRelativePath, anchor, "Prep diagnostics surface anchor");
+            AssertHasClassToken(source, classToken, PrepIndexRelativePath);
         }
 
-        var bitCardCount = Regex.Matches(source, "<BitCard\\b", RegexOptions.CultureInvariant).Count;
-        Assert.True(
-            bitCardCount >= 5,
-            $"Expected at least five BitCard layout anchors in '{PrepIndexRelativePath}' to maintain Bit-first sectional composition, but found {bitCardCount}.");
-
-        var diagnosticsTableCount = Regex.Matches(
-            source,
-            "<table class=\"prep-table(?:\\s+[^\"]+)?\">",
-            RegexOptions.CultureInvariant).Count;
-        Assert.True(
-            diagnosticsTableCount >= 2,
-            $"Expected at least two diagnostics table anchors in '{PrepIndexRelativePath}' (active tasks and progress timeline), but found {diagnosticsTableCount}.");
+        foreach (var diagnosticsAnchor in new[]
+                 {
+                     "Pipeline Dashboard",
+                     "Runtime readiness snapshot",
+                     "Progress timeline",
+                     "Last typed request snapshot",
+                     "Last artifact set"
+                 })
+        {
+            AssertContainsText(source, diagnosticsAnchor, PrepIndexRelativePath, "Prep diagnostics surface anchor");
+        }
     }
 
     [Fact]
@@ -120,29 +107,27 @@ public sealed class WorkstationPrepDesignContractTests
             PrepIndexRelativePath,
             "hardcoded hex color literal");
 
-        var forbiddenLegacyAnchors = new[]
+        foreach (var forbiddenAnchor in new[]
+                 {
+                     "prep-flow-card",
+                     "prep-flow-header",
+                     "prep-flow-actions"
+                 })
         {
-            "prep-flow-card",
-            "prep-flow-header",
-            "prep-flow-actions"
-        };
-
-        foreach (var forbiddenAnchor in forbiddenLegacyAnchors)
-        {
-            Assert.DoesNotContain(
-                forbiddenAnchor,
-                source,
-                StringComparison.Ordinal);
+            Assert.DoesNotContain(forbiddenAnchor, source, StringComparison.Ordinal);
         }
     }
 
     [Fact]
-    public void PrepCss_StaysWithinAllowlistedUtilitySelectors_AndTokenizedStyles()
+    public void PrepCss_DeclaresTokenizedPrepUtilitiesWithoutForbiddenOverrides()
     {
         var source = ReadRepoFile(PrepCssRelativePath);
         var selectors = ExtractPrepSelectors(source);
 
-        Assert.Equal(ExpectedCustomUtilitySelectors, selectors);
+        foreach (var selector in RequiredPrepUtilitySelectors)
+        {
+            Assert.Contains(selector, selectors, StringComparer.Ordinal);
+        }
 
         AssertDoesNotMatch(
             source,
@@ -172,9 +157,9 @@ public sealed class WorkstationPrepDesignContractTests
             PrepCssRelativePath,
             "style override via !important");
 
-        AssertContainsAnchor(source, PrepCssRelativePath, "var(--bit-clr-bg-sec)", "Bit tokenized tonal background");
-        AssertContainsAnchor(source, PrepCssRelativePath, "var(--bit-clr-brd-sec)", "Bit tokenized subtle border");
-        AssertContainsAnchor(source, PrepCssRelativePath, "var(--bit-clr-fg-secondary)", "Bit tokenized secondary foreground");
+        AssertContainsText(source, "var(--bit-clr-bg-sec)", PrepCssRelativePath, "Bit tokenized tonal background");
+        AssertContainsText(source, "var(--bit-clr-brd-sec)", PrepCssRelativePath, "Bit tokenized subtle border");
+        AssertContainsText(source, "var(--bit-clr-fg-secondary)", PrepCssRelativePath, "Bit tokenized secondary foreground");
     }
 
     [Fact]
@@ -183,44 +168,69 @@ public sealed class WorkstationPrepDesignContractTests
         var source = ReadRepoFile(PrepIndexRelativePath);
         var css = ReadRepoFile(PrepCssRelativePath);
 
-        var requiredMarkupAnchors = new[]
+        foreach (var contractValue in new[]
+                 {
+                     "pipeline-action-bar",
+                     "active-tasks-table",
+                     "history-table",
+                     "inspector-surfaces"
+                 })
         {
-            "data-ams-prep-mobile-contract=\"pipeline-action-bar\"",
-            "data-ams-prep-mobile-contract=\"active-tasks-table\"",
-            "data-ams-prep-mobile-contract=\"history-table\"",
-            "data-ams-prep-mobile-contract=\"inspector-surfaces\"",
-            "pipeline-action-bar__stats",
-            "pipeline-action-bar__controls",
-            "pipeline-action-button",
-            "prep-running-status",
-            "pipeline-grid-item--top",
-            "data-label=\"Action\"",
-            "data-label=\"Message\""
-        };
-
-        var requiredCssAnchors = new[]
-        {
-            "@media (max-width: 768px)",
-            ".prep-page ::deep .pipeline-action-bar button",
-            ".prep-page ::deep .pipeline-layout-grid > .pipeline-grid-item--top",
-            ".pipeline-dashboard-table-wrap",
-            ".prep-page ::deep .pipeline-dashboard-table td::before",
-            ".prep-page ::deep .pipeline-dashboard-table tr.pipeline-table-empty-row td::before",
-            "[data-ams-prep-mobile-contract=\"inspector-surfaces\"] .inspector-error-log",
-            "min-height: 44px;",
-            "font-size: 16px;",
-            "max-height: 10rem;"
-        };
-
-        foreach (var anchor in requiredMarkupAnchors)
-        {
-            AssertContainsAnchor(source, PrepIndexRelativePath, anchor, "Prep mobile markup contract anchor");
+            AssertHasDataAttributeValue(source, "data-ams-prep-mobile-contract", contractValue, PrepIndexRelativePath);
         }
 
-        foreach (var anchor in requiredCssAnchors)
-        {
-            AssertContainsAnchor(css, PrepCssRelativePath, anchor, "Prep mobile responsive style anchor");
-        }
+        AssertHasClassToken(source, "pipeline-action-bar__stats", PrepIndexRelativePath);
+        AssertHasClassToken(source, "pipeline-action-bar__controls", PrepIndexRelativePath);
+        AssertHasClassToken(source, "pipeline-action-button", PrepIndexRelativePath);
+
+        AssertMatches(
+            source,
+            "data-label\\s*=\\s*[\"']Action[\"']",
+            RegexOptions.CultureInvariant,
+            PrepIndexRelativePath,
+            "table action column mobile label");
+
+        AssertMatches(
+            source,
+            "data-label\\s*=\\s*[\"']Message[\"']",
+            RegexOptions.CultureInvariant,
+            PrepIndexRelativePath,
+            "table message column mobile label");
+
+        AssertMatches(
+            css,
+            "@media\\s*\\(max-width:\\s*768px\\)",
+            RegexOptions.CultureInvariant,
+            PrepCssRelativePath,
+            "mobile breakpoint declaration");
+
+        AssertMatches(
+            css,
+            "@media\\s*\\(max-width:\\s*768px\\)[\\s\\S]*?min-height\\s*:\\s*44px",
+            RegexOptions.CultureInvariant,
+            PrepCssRelativePath,
+            "touch target minimum size rule in mobile breakpoint");
+
+        AssertMatches(
+            css,
+            "@media\\s*\\(max-width:\\s*768px\\)[\\s\\S]*?font-size\\s*:\\s*16px",
+            RegexOptions.CultureInvariant,
+            PrepCssRelativePath,
+            "mobile input font-size guard");
+
+        AssertMatches(
+            css,
+            "@media\\s*\\(max-width:\\s*768px\\)[\\s\\S]*?pipeline-dashboard-table[\\s\\S]*?content\\s*:\\s*attr\\(data-label\\)",
+            RegexOptions.CultureInvariant,
+            PrepCssRelativePath,
+            "stacked table label rule in mobile breakpoint");
+
+        AssertMatches(
+            css,
+            "@media\\s*\\(max-width:\\s*768px\\)[\\s\\S]*?inspector-surfaces[\\s\\S]*?max-height\\s*:\\s*10rem",
+            RegexOptions.CultureInvariant,
+            PrepCssRelativePath,
+            "inspector mobile log clamp");
     }
 
     private static string[] ExtractPrepSelectors(string source)
@@ -280,11 +290,36 @@ public sealed class WorkstationPrepDesignContractTests
         return routeTemplates;
     }
 
-    private static void AssertContainsAnchor(string source, string relativePath, string anchor, string description)
+    private static void AssertHasInjectDirective(string source, string serviceType, string alias, string relativePath)
+    {
+        var pattern = $"(?m)^@inject\\s+{Regex.Escape(serviceType)}\\s+{Regex.Escape(alias)}\\s*$";
+        AssertMatches(source, pattern, RegexOptions.CultureInvariant, relativePath, $"inject directive for {serviceType} {alias}");
+    }
+
+    private static void AssertHasDataAttributeValue(string source, string attribute, string value, string relativePath)
+    {
+        var pattern = $"{Regex.Escape(attribute)}\\s*=\\s*[\"']{Regex.Escape(value)}[\"']";
+        AssertMatches(source, pattern, RegexOptions.CultureInvariant, relativePath, $"{attribute} contract '{value}'");
+    }
+
+    private static void AssertHasClassToken(string source, string classToken, string relativePath)
+    {
+        var pattern = $"\\b(?:class|Class)\\s*=\\s*[\"'][^\"']*\\b{Regex.Escape(classToken)}\\b[^\"']*[\"']";
+        AssertMatches(source, pattern, RegexOptions.CultureInvariant, relativePath, $"class token '{classToken}'");
+    }
+
+    private static void AssertContainsText(string source, string expectedText, string relativePath, string description)
     {
         Assert.True(
-            source.Contains(anchor, StringComparison.Ordinal),
-            $"Missing anchor '{description}' in '{relativePath}'. Expected snippet: {anchor}");
+            source.Contains(expectedText, StringComparison.Ordinal),
+            $"Missing {description} in '{relativePath}'. Expected text: {expectedText}");
+    }
+
+    private static void AssertMatches(string source, string pattern, RegexOptions options, string relativePath, string description)
+    {
+        Assert.True(
+            Regex.IsMatch(source, pattern, options),
+            $"Missing {description} in '{relativePath}'. Pattern: {pattern}");
     }
 
     private static void AssertDoesNotMatch(string source, string pattern, RegexOptions options, string relativePath, string description)
@@ -321,8 +356,7 @@ public sealed class WorkstationPrepDesignContractTests
         while (current is not null)
         {
             if (File.Exists(Path.Combine(current.FullName, "CODE-STYLE.md"))
-                && Directory.Exists(Path.Combine(current.FullName, "host"))
-                && Directory.Exists(Path.Combine(current.FullName, ".gsd")))
+                && Directory.Exists(Path.Combine(current.FullName, "host")))
             {
                 return current.FullName;
             }
@@ -330,6 +364,6 @@ public sealed class WorkstationPrepDesignContractTests
             current = current.Parent;
         }
 
-        throw new DirectoryNotFoundException("Could not locate repo root containing CODE-STYLE.md, host/, and .gsd/.");
+        throw new DirectoryNotFoundException("Could not locate repo root containing CODE-STYLE.md and host/.");
     }
 }

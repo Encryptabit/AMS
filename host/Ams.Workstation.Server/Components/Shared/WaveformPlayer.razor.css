@@ -30,6 +30,7 @@
     font-family: monospace;
     font-size: 0.875rem;
     color: var(--bit-clr-fg-sec);
+    font-variant-numeric: tabular-nums;
 }
 
 .waveform-container {
@@ -63,6 +64,12 @@
     align-items: center;
     gap: 0.5rem;
     flex-wrap: wrap;
+}
+
+.waveform-controls ::deep button,
+.waveform-controls ::deep .bit-btn {
+    min-height: 40px;
+    min-width: 40px;
 }
 
 .waveform-zoom-section {
@@ -184,4 +191,96 @@
     border-radius: 4px;
     color: var(--bit-clr-err);
     font-size: 0.875rem;
+}
+
+@media (max-width: 768px) {
+    .waveform-player {
+        gap: 0.4rem;
+        padding: 0.65rem 0.75rem;
+        border-radius: 5px;
+    }
+
+    .waveform-title {
+        font-size: 0.8rem;
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+
+    .waveform-time {
+        font-size: 0.8rem;
+        white-space: nowrap;
+    }
+
+    .waveform-container {
+        height: min(var(--wfp-height, 128px), 82px);
+        min-height: min(var(--wfp-height, 128px), 82px);
+    }
+
+    .waveform-controls {
+        gap: 0.45rem;
+        align-items: stretch;
+    }
+
+    .waveform-controls ::deep button,
+    .waveform-controls ::deep .bit-btn {
+        min-height: 44px;
+        min-width: 44px;
+        padding-inline: 0.55rem;
+    }
+
+    .waveform-zoom-section {
+        order: 3;
+        flex: 1 1 100%;
+        gap: 0.4rem;
+    }
+
+    .waveform-zoom-slider {
+        width: 100%;
+        min-width: 0;
+        height: 8px;
+    }
+
+    .waveform-zoom-slider::-webkit-slider-thumb {
+        width: 20px;
+        height: 20px;
+    }
+
+    .waveform-zoom-slider::-moz-range-thumb {
+        width: 20px;
+        height: 20px;
+    }
+
+    .waveform-zoom-value {
+        min-width: 58px;
+        font-size: 0.72rem;
+    }
+
+    .waveform-speed-section {
+        margin-left: 0;
+        padding-left: 0;
+        justify-content: flex-end;
+        gap: 0.4rem;
+    }
+
+    .waveform-speed-slider {
+        width: min(110px, 38vw);
+        height: 8px;
+    }
+
+    .waveform-speed-slider::-webkit-slider-thumb {
+        width: 20px;
+        height: 20px;
+    }
+
+    .waveform-speed-slider::-moz-range-thumb {
+        width: 20px;
+        height: 20px;
+    }
+
+    .waveform-speed-value {
+        min-width: 38px;
+        font-size: 0.78rem;
+    }
 }
