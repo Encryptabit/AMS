@@ -22,9 +22,25 @@
     margin-bottom: 0.5rem;
 }
 
+.playback-alert-header {
+    align-items: center;
+}
+
+.playback-alert-summary {
+    display: inline-flex;
+    align-items: center;
+    min-height: 2rem;
+    line-height: 1.3;
+}
+
+.playback-alert-editor {
+    margin-top: 0.45rem;
+}
+
 .playback-alert-status {
-    margin-top: 0.4rem;
+    margin-top: 0.3rem;
     display: block;
+    line-height: 1.35;
 }
 
 .proof-playback-sentences ::deep .sentence-list-card {
@@ -77,6 +93,19 @@
     .playback-alert-settings ::deep .bit-txt-fld {
         min-height: 44px;
         font-size: 16px;
+    }
+
+    .playback-alert-header {
+        gap: 0.4rem;
+    }
+
+    .playback-alert-summary {
+        flex: 1 1 100%;
+        min-height: 0;
+    }
+
+    .playback-alert-editor {
+        margin-top: 0.35rem;
     }
 
     .playback-alert-status {

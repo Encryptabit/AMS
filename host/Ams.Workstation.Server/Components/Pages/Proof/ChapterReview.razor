@@ -48,30 +48,53 @@
         <div class="proof-playback-shell" data-ams-proof-mobile-contract="sentence-first">
             <BitGrid Columns="12">
                 <BitGridItem ColumnSpan="12">
-                    <div class="proof-playback-alert">
+                    <div class="proof-playback-alert" data-ams-proof-alert-settings-state="@PlaybackAlertSettingsState">
                         <BitCard Class="playback-alert-settings" FullWidth="true">
-                            <BitStack Horizontal="true" Gap="0.6rem" VerticalAlign="BitAlignment.End" Wrap="true">
-                                <BitTextField @bind-Value="_playbackErrorAlertSourcePath"
-                                              Immediate="true"
-                                              Placeholder="Alert sound file path (.wav, .mp3, .ogg, .flac, .m4a)"
-                                              Style="min-width: 18rem; flex: 1;" />
-                                <BitButton Variant="BitVariant.Fill"
-                                           Color="BitColor.Primary"
-                                           OnClick="SavePlaybackErrorAlertSound">
-                                    Save Alert Sound
-                                </BitButton>
-                                <BitButton Variant="BitVariant.Outline"
-                                           Color="BitColor.Secondary"
-                                           IsEnabled="@(_playbackErrorAlertSoundSetting is not null)"
-                                           OnClick="ClearPlaybackErrorAlertSound">
-                                    Clear
-                                </BitButton>
+                            <BitStack Horizontal="true"
+                                      Gap="0.5rem"
+                                      Wrap="true"
+                                      VerticalAlign="BitAlignment.Center"
+                                      Class="playback-alert-header">
+                                <span data-ams-proof-alert-settings-toggle="true">
+                                    <BitButton Variant="BitVariant.Outline"
+                                               Color="BitColor.Secondary"
+                                               OnClick="TogglePlaybackAlertSettings">
+                                        @(_isPlaybackAlertSettingsExpanded ? "Hide alert settings" : "Alert settings")
+                                    </BitButton>
+                                </span>
+                                <BitText Typography="BitTypography.Caption1"
+                                         Color="BitColor.SecondaryForeground"
+                                         Class="playback-alert-summary">
+                                    @GetPlaybackErrorAlertSummaryText()
+                                </BitText>
                             </BitStack>
                             <BitText Typography="BitTypography.Caption1"
                                      Color="BitColor.SecondaryForeground"
                                      Class="playback-alert-status">
                                 @GetPlaybackErrorAlertStatusText()
                             </BitText>
+                            @if (_isPlaybackAlertSettingsExpanded)
+                            {
+                                <div class="playback-alert-editor" data-ams-proof-alert-settings-panel="true">
+                                    <BitStack Horizontal="true" Gap="0.6rem" VerticalAlign="BitAlignment.End" Wrap="true">
+                                        <BitTextField @bind-Value="_playbackErrorAlertSourcePath"
+                                                      Immediate="true"
+                                                      Placeholder="Alert sound file path (.wav, .mp3, .ogg, .flac, .m4a)"
+                                                      Style="min-width: 18rem; flex: 1;" />
+                                        <BitButton Variant="BitVariant.Fill"
+                                                   Color="BitColor.Primary"
+                                                   OnClick="SavePlaybackErrorAlertSound">
+                                            Save Alert Sound
+                                        </BitButton>
+                                        <BitButton Variant="BitVariant.Outline"
+                                                   Color="BitColor.Secondary"
+                                                   IsEnabled="@(_playbackErrorAlertSoundSetting is not null)"
+                                                   OnClick="ClearPlaybackErrorAlertSound">
+                                            Clear
+                                        </BitButton>
+                                    </BitStack>
+                                </div>
+                            }
                         </BitCard>
                     </div>
                 </BitGridItem>
@@ -136,6 +159,8 @@
     private IJSObjectReference? _alertSoundPlayer;
     private string _playbackErrorAlertSourcePath = string.Empty;
     private AppPlaybackAlertSoundSettings? _playbackErrorAlertSoundSetting;
+    private bool _isPlaybackAlertSettingsExpanded;
+    private string PlaybackAlertSettingsState => _isPlaybackAlertSettingsExpanded ? "expanded" : "collapsed";
     private string? _lastRenderedChapter;
     private bool _scrollToTopPending;
 
@@ -170,6 +195,7 @@
                 _playbackNavigationIndex = null;
                 _pendingSeekTime = null;
                 _pendingKeyboardSeekTime = null;
+                _isPlaybackAlertSettingsExpanded = false;
             }
             if (Workspace.CurrentChapterName != decodedName)
             {
@@ -406,6 +432,21 @@
         }
 
         return $"/api/audio/alerts/playback-error?v={_playbackErrorAlertSoundSetting.UpdatedAtUtc.Ticks}";
+    }
+
+    private void TogglePlaybackAlertSettings()
+    {
+        _isPlaybackAlertSettingsExpanded = !_isPlaybackAlertSettingsExpanded;
+    }
+
+    private string GetPlaybackErrorAlertSummaryText()
+    {
+        if (_playbackErrorAlertSoundSetting is null)
+        {
+            return "Alert sound: not configured";
+        }
+
+        return $"Alert sound: {_playbackErrorAlertSoundSetting.SourceFileName}";
     }
 
     private void SavePlaybackErrorAlertSound()
