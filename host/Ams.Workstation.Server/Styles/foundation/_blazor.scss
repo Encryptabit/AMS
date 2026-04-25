@@ -1,7 +1,6 @@
-// Blazor-framework visuals + lingering global shims from the pre-M007 app.css.
-// Per M007-UI-FOUNDATION.md §1.2, the framework error/validation visuals live
-// in the global stylesheet. The Bit-specific shim below is retained verbatim
-// from the legacy app.css until S04 removes BitCard usages.
+// Blazor-framework visuals retained from the legacy app.css.
+// Per M007-UI-FOUNDATION.md §1.2, framework error/validation visuals stay
+// in the global stylesheet with AMS tokens only.
 
 #blazor-error-ui {
   background: var(--ams-color-danger);
@@ -51,11 +50,4 @@
   color: var(--ams-color-danger);
   font-size: 0.875rem;
   margin-top: var(--ams-space-1);
-}
-
-// Retained Bit-specific shim until S04 migration removes BitCard usages.
-.pipeline-card--top > .bit-crd-cnt {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
 }

@@ -5,9 +5,6 @@
   </ItemGroup>
 
   <ItemGroup>
-    <!-- Kept until S04 removes them entirely. -->
-    <PackageReference Include="Bit.BlazorUI" Version="10.3.0" />
-    <PackageReference Include="Bit.BlazorUI.Icons" Version="10.3.0" />
     <PackageReference Include="ClosedXML" Version="0.104.2" />
     <PackageReference Include="Toolbelt.Blazor.HotKeys2" Version="6.1.0" />
 

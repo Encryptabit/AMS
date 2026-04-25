@@ -13,6 +13,9 @@ public sealed class M007FoundationContractTests
     private const string WorkstationRelativeRoot = "host/Ams.Workstation.Server";
     private const string GeneratedAppCssRelativePath = "host/Ams.Workstation.Server/wwwroot/css/app.css";
     private const string AppRazorRelativePath = "host/Ams.Workstation.Server/Components/App.razor";
+    private const string WorkstationProjectRelativePath = "host/Ams.Workstation.Server/Ams.Workstation.Server.csproj";
+    private const string ImportsRazorRelativePath = "host/Ams.Workstation.Server/Components/_Imports.razor";
+    private const string BlazorFoundationScssRelativePath = "host/Ams.Workstation.Server/Styles/foundation/_blazor.scss";
 
     // Allowlist of fully-migrated .razor files. S02/S03/S04 tasks append here as they migrate.
     private static readonly string[] MigratedRazorFiles =
@@ -32,6 +35,9 @@ public sealed class M007FoundationContractTests
     ];
 
     private static readonly Regex BitTagPattern = new("<Bit[A-Z]", RegexOptions.CultureInvariant | RegexOptions.Compiled);
+    private static readonly Regex BitDependencySeamPattern = new(
+        "Bit\\.BlazorUI|_content/Bit\\.BlazorUI|@using\\s+Bit\\.BlazorUI|bit-crd-cnt|var\\(--bit-clr|\\.bit-",
+        RegexOptions.CultureInvariant | RegexOptions.Compiled);
 
     [Fact]
     public void MigratedRazorFiles_ContainNoBitBlazorUiTags()
@@ -102,7 +108,7 @@ public sealed class M007FoundationContractTests
         var match = Regex.Match(source, @"_content/Bit\.BlazorUI(?:\.Icons)?/", RegexOptions.CultureInvariant);
         Assert.False(
             match.Success,
-            $"Generated '{GeneratedAppCssRelativePath}' references '{(match.Success ? match.Value : "_content/Bit.BlazorUI/")}' at offset {match.Index}. Project-owned global CSS must not import Bit.BlazorUI content assets. Bit asset <link> / <script> tags in App.razor are still permitted until S04, but the generated app.css is project-owned and must stay clean.");
+            $"Generated '{GeneratedAppCssRelativePath}' references '{(match.Success ? match.Value : "_content/Bit.BlazorUI/")}' at offset {match.Index}. Project-owned global CSS must not import Bit.BlazorUI content assets, and S04 extraction requires App.razor to stay free of Bit asset links/scripts.");
     }
 
     [Fact]
@@ -117,6 +123,37 @@ public sealed class M007FoundationContractTests
         Assert.False(
             Regex.IsMatch(source, "bit-theme-default\\s*=", RegexOptions.CultureInvariant | RegexOptions.IgnoreCase),
             $"'{AppRazorRelativePath}' still declares 'bit-theme-default='. The Bit.BlazorUI theme attribute has been replaced by data-ams-theme for M007. Remove the bit-theme-default attribute.");
+    }
+
+    [Fact]
+    public void DependencySeamFiles_DoNotContainBitSeams()
+    {
+        var seamFiles = new[]
+        {
+            WorkstationProjectRelativePath,
+            AppRazorRelativePath,
+            ImportsRazorRelativePath,
+            BlazorFoundationScssRelativePath,
+        };
+
+        var violations = new List<string>();
+
+        foreach (var relativePath in seamFiles)
+        {
+            var source = ReadRepoFile(relativePath);
+            var matches = BitDependencySeamPattern.Matches(source);
+
+            for (var i = 0; i < matches.Count; i++)
+            {
+                var match = matches[i];
+                var lineNumber = GetLineNumber(source, match.Index);
+                violations.Add($"'{relativePath}':{lineNumber} contains forbidden Bit seam '{match.Value}'.");
+            }
+        }
+
+        Assert.True(
+            violations.Count == 0,
+            $"M007 dependency seam contract failed. Workstation foundation extraction must stay Bit-free.\n{string.Join("\n", violations)}");
     }
 
     private static IEnumerable<string> EnumerateMigratedRazorFiles()
