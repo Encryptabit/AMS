@@ -123,7 +123,7 @@
                     </div>
                 </BitGridItem>
                 <BitGridItem ColumnSpan="12">
-                    <div class="proof-playback-sentences">
+                    <div class="proof-playback-sentences" data-ams-proof-gesture-surface="playback">
                         <SentenceList
                             Sentences="@_sentences"
                             CurrentTime="@_currentTime"
@@ -137,16 +137,18 @@
     }
     else
     {
-        <ErrorsView Report="_report" ChapterPatterns="_chapterPatterns"
-                    IgnoredKeys="IgnoredPatternsService.GetIgnoredKeys()"
-                    ExportedSentenceIds="_exportedSentenceIds"
-                    SelectedIndex="_selectedErrorIndex"
-                    OnPlaySentence="HandlePlayFromErrors"
-                    OnExportSentence="HandleExportFromErrors"
-                    OnCrxSentence="HandleCrxFromErrors"
-                    OnIgnoreSentence="HandleIgnoreFromErrors"
-                    OnTogglePatternIgnore="HandleTogglePatternIgnore"
-                    OnViewSentence="HandleViewFromErrors" />
+        <div class="proof-errors-shell" data-ams-proof-gesture-surface="errors">
+            <ErrorsView Report="_report" ChapterPatterns="_chapterPatterns"
+                        IgnoredKeys="IgnoredPatternsService.GetIgnoredKeys()"
+                        ExportedSentenceIds="_exportedSentenceIds"
+                        SelectedIndex="_selectedErrorIndex"
+                        OnPlaySentence="HandlePlayFromErrors"
+                        OnExportSentence="HandleExportFromErrors"
+                        OnCrxSentence="HandleCrxFromErrors"
+                        OnIgnoreSentence="HandleIgnoreFromErrors"
+                        OnTogglePatternIgnore="HandleTogglePatternIgnore"
+                        OnViewSentence="HandleViewFromErrors" />
+        </div>
     }
 
     <CrxModal @ref="_crxModal" OnSubmitted="HandleCrxSubmitted" />
@@ -177,10 +179,13 @@
     private bool _scrollToTopPending;
 
     // Touch selection state
+    private static readonly TimeSpan DuplicateLongPressWindow = TimeSpan.FromMilliseconds(250);
     private bool _isSelectionModeActive;
     private HashSet<int> _selectedSentenceIds = new();
     private bool _resumePlaybackOnSelectionExit;
     private string _lastSelectionGestureEvent = "idle";
+    private DateTimeOffset _lastLongPressDispatchAtUtc = DateTimeOffset.MinValue;
+    private int _lastLongPressDispatchSentenceId;
     private string SelectionModeState => _isSelectionModeActive ? "active" : "inactive";
 
     // Keyboard navigation state
@@ -190,6 +195,7 @@
     private int? _lastPlaybackAlertSentenceId;
     private int? _playbackNavigationIndex;
     private IJSObjectReference? _keyboardModule;
+    private IJSObjectReference? _touchGesturesModule;
     private DotNetObjectReference<ChapterReview>? _dotNetRef;
     private List<SentenceReport> _errorSentencesList = new();
     private double? _pendingSeekTime;
@@ -219,6 +225,8 @@
                 _selectedSentenceIds.Clear();
                 _resumePlaybackOnSelectionExit = false;
                 _lastSelectionGestureEvent = "chapter-reset";
+                _lastLongPressDispatchAtUtc = DateTimeOffset.MinValue;
+                _lastLongPressDispatchSentenceId = 0;
             }
             if (Workspace.CurrentChapterName != decodedName)
             {
@@ -247,8 +255,12 @@
         if (firstRender)
         {
             _dotNetRef = DotNetObjectReference.Create(this);
+
             _keyboardModule = await JS.InvokeAsync<IJSObjectReference>("import", "./js/keyboard-shortcuts.js");
             await _keyboardModule.InvokeVoidAsync("init", _dotNetRef);
+
+            _touchGesturesModule = await JS.InvokeAsync<IJSObjectReference>("import", "./js/touch-gestures.js");
+            await _touchGesturesModule.InvokeVoidAsync("init", _dotNetRef);
         }
 
         if (_scrollToTopPending)
@@ -769,6 +781,188 @@
         Console.WriteLine($"[ProofSelectionMode] event={eventName}; trigger={trigger}; view={_currentView}; sentenceId={sentenceId}; mode={SelectionModeState}; selectedCount={_selectedSentenceIds.Count}; details={details}");
     }
 
+    private bool IsDuplicateLongPressDispatch(int sentenceId)
+    {
+        var nowUtc = DateTimeOffset.UtcNow;
+        var isDuplicate = sentenceId > 0
+            && sentenceId == _lastLongPressDispatchSentenceId
+            && (nowUtc - _lastLongPressDispatchAtUtc) <= DuplicateLongPressWindow;
+
+        _lastLongPressDispatchSentenceId = sentenceId;
+        _lastLongPressDispatchAtUtc = nowUtc;
+        return isDuplicate;
+    }
+
+    private bool TryValidateBatchGestureContext(
+        string eventName,
+        string trigger,
+        int sentenceId,
+        string sourceSurface,
+        out HashSet<int> selectedSentenceIds)
+    {
+        selectedSentenceIds = _selectedSentenceIds
+            .Where(id => id > 0)
+            .ToHashSet();
+
+        if (!_isSelectionModeActive)
+        {
+            _lastSelectionGestureEvent = $"{eventName}-ignored-inactive";
+            LogSelectionModeDiagnostic(_lastSelectionGestureEvent, trigger, sentenceId, $"surface={sourceSurface};reason=selection-mode-inactive");
+            return false;
+        }
+
+        if (selectedSentenceIds.Count == 0)
+        {
+            _lastSelectionGestureEvent = $"{eventName}-ignored-empty-selection";
+            LogSelectionModeDiagnostic(_lastSelectionGestureEvent, trigger, sentenceId, $"surface={sourceSurface};reason=no-selected-sentences");
+            return false;
+        }
+
+        if (sentenceId > 0 && !selectedSentenceIds.Contains(sentenceId))
+        {
+            _lastSelectionGestureEvent = $"{eventName}-ignored-unselected-context";
+            LogSelectionModeDiagnostic(_lastSelectionGestureEvent, trigger, sentenceId, $"surface={sourceSurface};reason=gesture-origin-not-selected");
+            return false;
+        }
+
+        return true;
+    }
+
+    private Task HandleSelectionSwipeRightAsync(int sentenceId, string sourceSurface)
+    {
+        const string eventName = "swipe-right-export";
+        const string trigger = "swipe-right";
+
+        if (!TryValidateBatchGestureContext(eventName, trigger, sentenceId, sourceSurface, out var selectedSentenceIds))
+        {
+            return Task.CompletedTask;
+        }
+
+        if (string.IsNullOrEmpty(ChapterName))
+        {
+            _lastSelectionGestureEvent = $"{eventName}-failed-missing-chapter";
+            LogSelectionModeDiagnostic(_lastSelectionGestureEvent, trigger, sentenceId, $"surface={sourceSurface};selectedCount={selectedSentenceIds.Count}");
+            return Task.CompletedTask;
+        }
+
+        var selectedSentences = _sentences
+            .Where(sentence => selectedSentenceIds.Contains(sentence.Id))
+            .OrderBy(sentence => sentence.StartTime)
+            .ToList();
+
+        if (selectedSentences.Count == 0)
+        {
+            _lastSelectionGestureEvent = $"{eventName}-failed-missing-sentences";
+            LogSelectionModeDiagnostic(_lastSelectionGestureEvent, trigger, sentenceId, $"surface={sourceSurface};selectedCount={selectedSentenceIds.Count}");
+            return Task.CompletedTask;
+        }
+
+        if (_crxModal is null)
+        {
+            _lastSelectionGestureEvent = $"{eventName}-failed-modal-unavailable";
+            LogSelectionModeDiagnostic(_lastSelectionGestureEvent, trigger, sentenceId, $"surface={sourceSurface};selectedCount={selectedSentenceIds.Count}");
+            return Task.CompletedTask;
+        }
+
+        var batchStart = selectedSentences.First().StartTime;
+        var batchEnd = selectedSentences.Last().EndTime;
+        var anchorSentence = selectedSentences.First();
+        var anchorReport = _report?.Sentences.FirstOrDefault(sentence => sentence.Id == anchorSentence.Id);
+        var excerpt = BuildBatchCrxExcerpt(selectedSentences);
+
+        var decodedChapter = Uri.UnescapeDataString(ChapterName);
+        _crxModal.Open(decodedChapter, batchStart, batchEnd, anchorSentence.Id, excerpt, anchorReport);
+
+        _lastSelectionGestureEvent = eventName;
+        LogSelectionModeDiagnostic(
+            _lastSelectionGestureEvent,
+            trigger,
+            sentenceId,
+            $"surface={sourceSurface};selectedCount={selectedSentenceIds.Count};range={FormatTime(batchStart)}-{FormatTime(batchEnd)}");
+
+        StateHasChanged();
+        return Task.CompletedTask;
+    }
+
+    private async Task HandleSelectionSwipeLeftAsync(int sentenceId, string sourceSurface)
+    {
+        const string eventName = "swipe-left-ignore";
+        const string trigger = "swipe-left";
+
+        if (!TryValidateBatchGestureContext(eventName, trigger, sentenceId, sourceSurface, out var selectedSentenceIds))
+        {
+            return;
+        }
+
+        if (_report is null)
+        {
+            _lastSelectionGestureEvent = $"{eventName}-failed-missing-report";
+            LogSelectionModeDiagnostic(_lastSelectionGestureEvent, trigger, sentenceId, $"surface={sourceSurface};selectedCount={selectedSentenceIds.Count}");
+            return;
+        }
+
+        var selectedReports = _report.Sentences
+            .Where(sentence => selectedSentenceIds.Contains(sentence.Id))
+            .OrderBy(sentence => sentence.Id)
+            .ToList();
+
+        if (selectedReports.Count == 0)
+        {
+            _lastSelectionGestureEvent = $"{eventName}-failed-missing-sentences";
+            LogSelectionModeDiagnostic(_lastSelectionGestureEvent, trigger, sentenceId, $"surface={sourceSurface};selectedCount={selectedSentenceIds.Count}");
+            return;
+        }
+
+        var ignoredPatternCount = 0;
+        foreach (var selectedSentence in selectedReports)
+        {
+            ignoredPatternCount += IgnorePatternsForSentence(selectedSentence);
+        }
+
+        if (ignoredPatternCount <= 0)
+        {
+            _lastSelectionGestureEvent = $"{eventName}-noop";
+            LogSelectionModeDiagnostic(_lastSelectionGestureEvent, trigger, sentenceId, $"surface={sourceSurface};selectedCount={selectedReports.Count};ignoredCount=0");
+            return;
+        }
+
+        if (!string.IsNullOrEmpty(ChapterName))
+        {
+            var decoded = Uri.UnescapeDataString(ChapterName);
+            LoadReport(decoded);
+            await LoadSentencesAsync(decoded);
+        }
+
+        _lastSelectionGestureEvent = eventName;
+        LogSelectionModeDiagnostic(
+            _lastSelectionGestureEvent,
+            trigger,
+            sentenceId,
+            $"surface={sourceSurface};selectedCount={selectedReports.Count};ignoredCount={ignoredPatternCount}");
+
+        var sentenceNoun = selectedReports.Count == 1 ? "sentence" : "sentences";
+        var patternNoun = ignoredPatternCount == 1 ? "pattern" : "patterns";
+        ToastService.Info($"Ignored {ignoredPatternCount} error {patternNoun} across {selectedReports.Count} selected {sentenceNoun}.");
+        StateHasChanged();
+    }
+
+    private static string BuildBatchCrxExcerpt(IReadOnlyList<SentenceViewModel> selectedSentences)
+    {
+        if (selectedSentences.Count == 0)
+        {
+            return "Batch export";
+        }
+
+        if (selectedSentences.Count == 1)
+        {
+            return selectedSentences[0].Text;
+        }
+
+        var firstSentence = selectedSentences[0];
+        var lastSentence = selectedSentences[^1];
+        return $"Batch export sentences #{firstSentence.Id} through #{lastSentence.Id} ({selectedSentences.Count} total).";
+    }
+
     private async Task HandlePlayFromErrors(SentenceReport sentence)
     {
         _snippetPlayer ??= await JS.InvokeAsync<IJSObjectReference>("import", "./js/snippet-player.js");
@@ -831,11 +1025,30 @@
 
     private async Task HandleIgnoreFromErrors(SentenceReport sentence)
     {
-        if (sentence.Diff?.Ops is null) return;
+        var count = IgnorePatternsForSentence(sentence);
+
+        if (count > 0)
+        {
+            var decoded = Uri.UnescapeDataString(ChapterName!);
+            LoadReport(decoded);
+            await LoadSentencesAsync(decoded);
+            ToastService.Info($"Ignored {count} error pattern{(count == 1 ? "" : "s")} for entire book");
+        }
+
+        StateHasChanged();
+    }
+
+    private int IgnorePatternsForSentence(SentenceReport sentence)
+    {
+        if (sentence.Diff?.Ops is null)
+        {
+            return 0;
+        }
 
         var ops = sentence.Diff.Ops.ToList();
         var count = 0;
-        for (int i = 0; i < ops.Count; i++)
+
+        for (var i = 0; i < ops.Count; i++)
         {
             var op = ops[i];
             if (op.Op == "delete")
@@ -850,26 +1063,19 @@
                 }
                 else
                 {
-                    IgnoredPatternsService.SetIgnored(Services.ErrorPatternService.BuildKey("del", bookText, ""), true);
+                    IgnoredPatternsService.SetIgnored(Services.ErrorPatternService.BuildKey("del", bookText, string.Empty), true);
                     count++;
                 }
             }
             else if (op.Op == "insert")
             {
                 var scriptText = string.Join(" ", op.Tokens);
-                IgnoredPatternsService.SetIgnored(Services.ErrorPatternService.BuildKey("ins", "", scriptText), true);
+                IgnoredPatternsService.SetIgnored(Services.ErrorPatternService.BuildKey("ins", string.Empty, scriptText), true);
                 count++;
             }
         }
 
-        if (count > 0)
-        {
-            var decoded = Uri.UnescapeDataString(ChapterName!);
-            LoadReport(decoded);
-            await LoadSentencesAsync(decoded);
-            ToastService.Info($"Ignored {count} error pattern{(count == 1 ? "" : "s")} for entire book");
-        }
-        StateHasChanged();
+        return count;
     }
 
     private void HandleTogglePatternIgnore(ErrorPattern pattern)
@@ -903,6 +1109,13 @@
     [JSInvokable]
     public async Task OnSentenceLongPress(int sentenceId)
     {
+        if (IsDuplicateLongPressDispatch(sentenceId))
+        {
+            _lastSelectionGestureEvent = "long-press-duplicate-ignored";
+            LogSelectionModeDiagnostic(_lastSelectionGestureEvent, "long-press", sentenceId, "Ignored duplicate long-press dispatch within de-duplication window.");
+            return;
+        }
+
         if (_isSelectionModeActive)
         {
             await ClearSelectionModeAndResumeAsync(sentenceId, "long-press");
@@ -924,6 +1137,14 @@
 
         ToggleSelectionMembership(sentenceId, "selection-tap");
     }
+
+    [JSInvokable]
+    public Task OnSelectionSwipeRight(int sentenceId, string sourceSurface)
+        => HandleSelectionSwipeRightAsync(sentenceId, sourceSurface);
+
+    [JSInvokable]
+    public Task OnSelectionSwipeLeft(int sentenceId, string sourceSurface)
+        => HandleSelectionSwipeLeftAsync(sentenceId, sourceSurface);
 
     // ── Keyboard JSInvokable handlers ──
 
@@ -1301,6 +1522,17 @@
             }
             catch (JSDisconnectedException) { }
         }
+
+        if (_touchGesturesModule is not null)
+        {
+            try
+            {
+                await _touchGesturesModule.InvokeVoidAsync("dispose");
+                await _touchGesturesModule.DisposeAsync();
+            }
+            catch (JSDisconnectedException) { }
+        }
+
         _dotNetRef?.Dispose();
 
         if (_alertSoundPlayer is not null)

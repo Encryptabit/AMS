@@ -7,6 +7,7 @@ public sealed class ProofEditingPlaybackSourceContractTests
     private const string ChapterReviewRelativePath = "host/Ams.Workstation.Server/Components/Pages/Proof/ChapterReview.razor";
     private const string ChapterReviewCssRelativePath = "host/Ams.Workstation.Server/Components/Pages/Proof/ChapterReview.razor.css";
     private const string SentenceListRelativePath = "host/Ams.Workstation.Server/Components/Shared/SentenceList.razor";
+    private const string TouchGesturesRelativePath = "host/Ams.Workstation.Server/wwwroot/js/touch-gestures.js";
     private const string CrxModalRelativePath = "host/Ams.Workstation.Server/Components/Shared/CrxModal.razor";
     private const string AudioControllerRelativePath = "host/Ams.Workstation.Server/Controllers/AudioController.cs";
 
@@ -213,6 +214,91 @@ public sealed class ProofEditingPlaybackSourceContractTests
             ChapterReviewCssRelativePath,
             "var(--bit-clr-bdr-pri)",
             "selection indicator no longer uses typo bit border token");
+    }
+
+    [Fact]
+    public void ChapterReview_TouchGestureDispatcher_WiresLongPressAndSwipeBatchActionsAcrossPlaybackAndErrorsSurfaces()
+    {
+        var chapterReviewSource = ReadRepoFile(ChapterReviewRelativePath);
+        var touchGestureSource = ReadRepoFile(TouchGesturesRelativePath);
+
+        AssertContains(
+            chapterReviewSource,
+            ChapterReviewRelativePath,
+            "_touchGesturesModule = await JS.InvokeAsync<IJSObjectReference>(\"import\", \"./js/touch-gestures.js\");",
+            "ChapterReview imports touch gesture module for proof selection interactions");
+
+        AssertContains(
+            chapterReviewSource,
+            ChapterReviewRelativePath,
+            "await _touchGesturesModule.InvokeVoidAsync(\"init\", _dotNetRef);",
+            "ChapterReview initializes touch gesture module with DotNet callback bridge");
+
+        AssertContains(
+            chapterReviewSource,
+            ChapterReviewRelativePath,
+            "await _touchGesturesModule.InvokeVoidAsync(\"dispose\");",
+            "ChapterReview disposes touch gesture module during component teardown");
+
+        AssertContains(
+            chapterReviewSource,
+            ChapterReviewRelativePath,
+            "data-ams-proof-gesture-surface=\"playback\"",
+            "playback sentence surface exposes explicit gesture anchor");
+
+        AssertContains(
+            chapterReviewSource,
+            ChapterReviewRelativePath,
+            "data-ams-proof-gesture-surface=\"errors\"",
+            "errors sentence surface exposes explicit gesture anchor");
+
+        AssertContains(
+            chapterReviewSource,
+            ChapterReviewRelativePath,
+            "public Task OnSelectionSwipeRight(int sentenceId, string sourceSurface)",
+            "ChapterReview exposes swipe-right JS-invokable batch export handler");
+
+        AssertContains(
+            chapterReviewSource,
+            ChapterReviewRelativePath,
+            "public Task OnSelectionSwipeLeft(int sentenceId, string sourceSurface)",
+            "ChapterReview exposes swipe-left JS-invokable batch ignore handler");
+
+        AssertContains(
+            chapterReviewSource,
+            ChapterReviewRelativePath,
+            "if (IsDuplicateLongPressDispatch(sentenceId))",
+            "long-press dispatcher de-duplicates dual Blazor+JS dispatches");
+
+        AssertContains(
+            touchGestureSource,
+            TouchGesturesRelativePath,
+            "void dispatchGesture('OnSentenceLongPress', gesture.sentenceId);",
+            "touch dispatcher sends long-press gestures to selection mode handler");
+
+        AssertContains(
+            touchGestureSource,
+            TouchGesturesRelativePath,
+            "void dispatchGesture('OnSelectionSwipeRight', gesture.sentenceId, gesture.surface);",
+            "touch dispatcher maps right swipe to batch export handler");
+
+        AssertContains(
+            touchGestureSource,
+            TouchGesturesRelativePath,
+            "void dispatchGesture('OnSelectionSwipeLeft', gesture.sentenceId, gesture.surface);",
+            "touch dispatcher maps left swipe to batch ignore handler");
+
+        AssertContains(
+            touchGestureSource,
+            TouchGesturesRelativePath,
+            "if (!isSelectionModeActive())",
+            "swipe dispatch is gated behind active selection mode for scroll coexistence");
+
+        AssertContains(
+            touchGestureSource,
+            TouchGesturesRelativePath,
+            "document.addEventListener('touchmove', handleTouchMove, { passive: true });",
+            "touch move listener remains passive to preserve native vertical scrolling");
     }
 
     [Fact]
