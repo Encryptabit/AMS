@@ -482,6 +482,9 @@
     }
 
     private void CommitRangeChange()
+        => CommitRangeChange(shouldRender: true);
+
+    private void CommitRangeChange(bool shouldRender)
     {
         _startInput = FormatTime(_startTime);
         _endInput = FormatTime(_endTime);
@@ -498,22 +501,34 @@
             _peaksUrl = BuildPeaksUrl();
         }
 
-        StateHasChanged();
+        if (shouldRender)
+        {
+            StateHasChanged();
+        }
     }
 
     private bool TryCommitPendingRangeInputs()
+        => TryCommitPendingRangeInputs(shouldRender: true);
+
+    private bool TryCommitPendingRangeInputs(bool shouldRender)
     {
         if (!TryParseTimeInput(_startInput, out var parsedStart))
         {
             _rangeValidationMessage = "Start time must use mm:ss.mmm format (example: 1:23.450).";
-            StateHasChanged();
+            if (shouldRender)
+            {
+                StateHasChanged();
+            }
             return false;
         }
 
         if (!TryParseTimeInput(_endInput, out var parsedEnd))
         {
             _rangeValidationMessage = "End time must use mm:ss.mmm format (example: 1:23.450).";
-            StateHasChanged();
+            if (shouldRender)
+            {
+                StateHasChanged();
+            }
             return false;
         }
 
@@ -529,9 +544,12 @@
 
         _startTime = normalizedStart;
         _endTime = normalizedEnd;
-        CommitRangeChange();
+        CommitRangeChange(shouldRender);
         return !HasRangeValidationError && !HasPendingRangeConfirmation;
     }
+
+    internal bool TryCommitPendingRangeInputsForTest()
+        => TryCommitPendingRangeInputs(shouldRender: false);
 
     private static bool DidRangeBoundChange(double currentSeconds, double nextSeconds)
         => currentSeconds != nextSeconds;
@@ -611,6 +629,21 @@
         return $"/api/audio/chapter/{Uri.EscapeDataString(_chapterName)}/peaks?start={start}&end={end}&pxPerSec={PeakPxPerSec}";
     }
 
+    private CrxSubmitRequest BuildSubmitRequest()
+        => new(
+            Start: _startTime,
+            End: _endTime,
+            SentenceId: _sentenceId,
+            ErrorType: _errorType,
+            Comments: _comments,
+            Excerpt: _excerpt,
+            PaddingMs: 0,
+            ShouldBe: CrxCommentParser.TryParseShouldBe(_comments),
+            ReadAs: CrxCommentParser.TryParseReadAs(_comments));
+
+    internal CrxSubmitRequest BuildSubmitRequestForTest()
+        => BuildSubmitRequest();
+
     private async Task Submit()
     {
         if (!TryCommitPendingRangeInputs())
@@ -621,18 +654,7 @@
         try
         {
             await Task.Yield();
-            var request = new CrxSubmitRequest(
-                Start: _startTime,
-                End: _endTime,
-                SentenceId: _sentenceId,
-                ErrorType: _errorType,
-                Comments: _comments,
-                Excerpt: _excerpt,
-                PaddingMs: 0,
-                ShouldBe: CrxCommentParser.TryParseShouldBe(_comments),
-                ReadAs: CrxCommentParser.TryParseReadAs(_comments)
-            );
-
+            var request = BuildSubmitRequest();
             var result = CrxService.Submit(_chapterName, request);
             await OnSubmitted.InvokeAsync(result);
             Close();
