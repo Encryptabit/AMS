@@ -43,6 +43,21 @@ public sealed class ProofMobileCrxRangeContractTests
     }
 
     [Fact]
+    public void CrxModal_FallbackConfirmation_ResetsOnAnyCommittedStartOrEndChange()
+    {
+        var source = ReadRepoFile(CrxModalRelativePath);
+
+        AssertContains(source, CrxModalRelativePath, "private static bool DidRangeBoundChange(double currentSeconds, double nextSeconds)", "range change helper for confirmation reset");
+        AssertContains(source, CrxModalRelativePath, "if (DidRangeBoundChange(currentSeconds, normalizedSeconds))", "range confirmation resets on any committed start/end input change");
+        AssertContains(source, CrxModalRelativePath, "DidRangeBoundChange(_startTime, normalizedStart)", "submit-time pending start input change resets fallback confirmation");
+        AssertContains(source, CrxModalRelativePath, "DidRangeBoundChange(_endTime, normalizedEnd)", "submit-time pending end input change resets fallback confirmation");
+
+        AssertDoesNotContain(source, CrxModalRelativePath, "Math.Abs(currentSeconds - normalizedSeconds) > MinRangeDurationSec", "stale threshold-gated start/end confirmation reset");
+        AssertDoesNotContain(source, CrxModalRelativePath, "Math.Abs(_startTime - normalizedStart) > MinRangeDurationSec", "stale submit-time threshold-gated start confirmation reset");
+        AssertDoesNotContain(source, CrxModalRelativePath, "Math.Abs(_endTime - normalizedEnd) > MinRangeDurationSec", "stale submit-time threshold-gated end confirmation reset");
+    }
+
+    [Fact]
     public void CrxModal_SubmitContract_PreservesAbsoluteBoundsWithZeroPaddingRequestShape()
     {
         var source = ReadRepoFile(CrxModalRelativePath);

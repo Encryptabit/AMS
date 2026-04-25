@@ -467,7 +467,7 @@
         if (_requiresRangeConfirmation)
         {
             var currentSeconds = isStart ? _startTime : _endTime;
-            if (Math.Abs(currentSeconds - normalizedSeconds) > MinRangeDurationSec)
+            if (DidRangeBoundChange(currentSeconds, normalizedSeconds))
             {
                 _isRangeConfirmed = false;
             }
@@ -521,8 +521,8 @@
         var normalizedEnd = Math.Max(0, parsedEnd);
 
         if (_requiresRangeConfirmation
-            && (Math.Abs(_startTime - normalizedStart) > MinRangeDurationSec
-                || Math.Abs(_endTime - normalizedEnd) > MinRangeDurationSec))
+            && (DidRangeBoundChange(_startTime, normalizedStart)
+                || DidRangeBoundChange(_endTime, normalizedEnd)))
         {
             _isRangeConfirmed = false;
         }
@@ -532,6 +532,9 @@
         CommitRangeChange();
         return !HasRangeValidationError && !HasPendingRangeConfirmation;
     }
+
+    private static bool DidRangeBoundChange(double currentSeconds, double nextSeconds)
+        => !string.Equals(FormatTime(currentSeconds), FormatTime(nextSeconds), StringComparison.Ordinal);
 
     private void ValidateRange()
     {
