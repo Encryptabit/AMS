@@ -11,33 +11,29 @@ namespace Ams.Tests.Workstation.UI;
 public sealed class M007FoundationContractTests
 {
     private const string WorkstationRelativeRoot = "host/Ams.Workstation.Server";
+    private const string ComponentsRelativeRoot = "host/Ams.Workstation.Server/Components";
+    private const string StylesRelativeRoot = "host/Ams.Workstation.Server/Styles";
     private const string GeneratedAppCssRelativePath = "host/Ams.Workstation.Server/wwwroot/css/app.css";
     private const string AppRazorRelativePath = "host/Ams.Workstation.Server/Components/App.razor";
     private const string WorkstationProjectRelativePath = "host/Ams.Workstation.Server/Ams.Workstation.Server.csproj";
     private const string ImportsRazorRelativePath = "host/Ams.Workstation.Server/Components/_Imports.razor";
-    private const string BlazorFoundationScssRelativePath = "host/Ams.Workstation.Server/Styles/foundation/_blazor.scss";
 
-    // Allowlist of fully-migrated .razor files. S02/S03/S04 tasks append here as they migrate.
-    private static readonly string[] MigratedRazorFiles =
-    [
-        "host/Ams.Workstation.Server/Components/App.razor",
-        "host/Ams.Workstation.Server/Components/Pages/Home.razor",
-        "host/Ams.Workstation.Server/Components/Layout/HeaderControls.razor",
-    ];
+    // Additional one-off .razor files can be listed here when a directory-level rollout is incomplete.
+    // S04 final hardening moves to whole-tree directory scanning, so this list is intentionally empty.
+    private static readonly string[] MigratedRazorFiles = [];
 
-    // Directories whose .razor files are entirely migrated. All *.razor under these must be Bit-free.
+    // Directories whose .razor files are entirely migrated. M007 S04 hardens this to full Components scope.
     private static readonly string[] MigratedRazorDirectories =
     [
-        "host/Ams.Workstation.Server/Components/UI",
-        "host/Ams.Workstation.Server/Components/Pages/Prep",
-        "host/Ams.Workstation.Server/Components/Pages/Proof",
-        "host/Ams.Workstation.Server/Components/Shared",
+        ComponentsRelativeRoot,
     ];
 
     private static readonly Regex BitTagPattern = new("<Bit[A-Z]", RegexOptions.CultureInvariant | RegexOptions.Compiled);
-    private static readonly Regex BitDependencySeamPattern = new(
-        "Bit\\.BlazorUI|_content/Bit\\.BlazorUI|@using\\s+Bit\\.BlazorUI|bit-crd-cnt|var\\(--bit-clr|\\.bit-",
-        RegexOptions.CultureInvariant | RegexOptions.Compiled);
+    private static readonly Regex BitPackageSeamPattern = new("Bit\\.BlazorUI", RegexOptions.CultureInvariant | RegexOptions.Compiled);
+    private static readonly Regex BitAssetSeamPattern = new("_content/Bit\\.BlazorUI(?:\\.Icons)?", RegexOptions.CultureInvariant | RegexOptions.Compiled);
+    private static readonly Regex BitImportSeamPattern = new("@using\\s+Bit\\.BlazorUI", RegexOptions.CultureInvariant | RegexOptions.Compiled);
+    private static readonly Regex BitCssVariablePattern = new("var\\(--bit-clr-[A-Za-z0-9-]+\\)", RegexOptions.CultureInvariant | RegexOptions.Compiled);
+    private static readonly Regex BitClassPattern = new("(?<![A-Za-z0-9_-])\\.bit-[A-Za-z0-9_-]+", RegexOptions.CultureInvariant | RegexOptions.Compiled);
 
     [Fact]
     public void MigratedRazorFiles_ContainNoBitBlazorUiTags()
@@ -128,27 +124,24 @@ public sealed class M007FoundationContractTests
     [Fact]
     public void DependencySeamFiles_DoNotContainBitSeams()
     {
-        var seamFiles = new[]
+        var seamChecks = new (string RelativePath, Regex Pattern, string SeamDescription)[]
         {
-            WorkstationProjectRelativePath,
-            AppRazorRelativePath,
-            ImportsRazorRelativePath,
-            BlazorFoundationScssRelativePath,
+            (WorkstationProjectRelativePath, BitPackageSeamPattern, "Bit package reference"),
+            (AppRazorRelativePath, BitAssetSeamPattern, "Bit static asset path"),
+            (ImportsRazorRelativePath, BitImportSeamPattern, "Bit import directive"),
         };
 
         var violations = new List<string>();
 
-        foreach (var relativePath in seamFiles)
+        foreach (var seamCheck in seamChecks)
         {
-            var source = ReadRepoFile(relativePath);
-            var matches = BitDependencySeamPattern.Matches(source);
-
-            for (var i = 0; i < matches.Count; i++)
-            {
-                var match = matches[i];
-                var lineNumber = GetLineNumber(source, match.Index);
-                violations.Add($"'{relativePath}':{lineNumber} contains forbidden Bit seam '{match.Value}'.");
-            }
+            var source = ReadRepoFile(seamCheck.RelativePath);
+            CollectPatternViolations(
+                violations,
+                seamCheck.RelativePath,
+                source,
+                seamCheck.Pattern,
+                seamCheck.SeamDescription);
         }
 
         Assert.True(
@@ -156,11 +149,51 @@ public sealed class M007FoundationContractTests
             $"M007 dependency seam contract failed. Workstation foundation extraction must stay Bit-free.\n{string.Join("\n", violations)}");
     }
 
+    [Fact]
+    public void AuthoredComponentAndStyleSources_DoNotContainLegacyBitStyleSeams()
+    {
+        var sourceFiles = EnumerateAuthoredComponentAndStyleSources().ToArray();
+
+        Assert.True(
+            sourceFiles.Length > 0,
+            $"No authored source files found under '{ComponentsRelativeRoot}' and '{StylesRelativeRoot}'. Cannot evaluate style anti-Bit contract.");
+
+        var violations = new List<string>();
+
+        foreach (var relativePath in sourceFiles)
+        {
+            var source = ReadRepoFile(relativePath);
+
+            CollectPatternViolations(
+                violations,
+                relativePath,
+                source,
+                BitCssVariablePattern,
+                "legacy Bit CSS variable seam");
+
+            CollectPatternViolations(
+                violations,
+                relativePath,
+                source,
+                BitClassPattern,
+                "legacy Bit class seam");
+        }
+
+        Assert.True(
+            violations.Count == 0,
+            $"M007 style seam contract failed. Authored Components/Styles sources must not contain Bit token/class seams.\n{string.Join("\n", violations)}");
+    }
+
     private static IEnumerable<string> EnumerateMigratedRazorFiles()
     {
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+
         foreach (var file in MigratedRazorFiles)
         {
-            yield return file;
+            if (seen.Add(file))
+            {
+                yield return file;
+            }
         }
 
         var repoRoot = FindRepoRoot();
@@ -174,8 +207,61 @@ public sealed class M007FoundationContractTests
 
             foreach (var razorPath in Directory.EnumerateFiles(fullDir, "*.razor", SearchOption.AllDirectories).OrderBy(p => p, StringComparer.Ordinal))
             {
-                yield return Path.GetRelativePath(repoRoot, razorPath).Replace('\\', '/');
+                var relativePath = Path.GetRelativePath(repoRoot, razorPath).Replace('\\', '/');
+                if (seen.Add(relativePath))
+                {
+                    yield return relativePath;
+                }
             }
+        }
+    }
+
+    private static IEnumerable<string> EnumerateAuthoredComponentAndStyleSources()
+    {
+        var repoRoot = FindRepoRoot();
+        var sourceRoots = new[] { ComponentsRelativeRoot, StylesRelativeRoot };
+        var allowedExtensions = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            ".razor",
+            ".css",
+            ".scss",
+        };
+
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+
+        foreach (var relativeRoot in sourceRoots)
+        {
+            var fullRoot = Path.Combine(repoRoot, relativeRoot);
+            if (!Directory.Exists(fullRoot))
+            {
+                throw new XunitException($"Authored source root '{relativeRoot}' does not exist at '{fullRoot}'.");
+            }
+
+            foreach (var sourcePath in Directory.EnumerateFiles(fullRoot, "*", SearchOption.AllDirectories).OrderBy(p => p, StringComparer.Ordinal))
+            {
+                if (!allowedExtensions.Contains(Path.GetExtension(sourcePath)))
+                {
+                    continue;
+                }
+
+                var relativePath = Path.GetRelativePath(repoRoot, sourcePath).Replace('\\', '/');
+                if (seen.Add(relativePath))
+                {
+                    yield return relativePath;
+                }
+            }
+        }
+    }
+
+    private static void CollectPatternViolations(List<string> violations, string relativePath, string source, Regex pattern, string seamDescription)
+    {
+        var matches = pattern.Matches(source);
+
+        for (var i = 0; i < matches.Count; i++)
+        {
+            var match = matches[i];
+            var lineNumber = GetLineNumber(source, match.Index);
+            violations.Add($"'{relativePath}':{lineNumber} contains forbidden {seamDescription} '{match.Value}'.");
         }
     }
 
