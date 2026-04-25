@@ -85,7 +85,10 @@ public sealed class WorkstationPrepDesignContractTests
             bitCardCount >= 5,
             $"Expected at least five BitCard layout anchors in '{PrepIndexRelativePath}' to maintain Bit-first sectional composition, but found {bitCardCount}.");
 
-        var diagnosticsTableCount = Regex.Matches(source, "<table class=\"prep-table\">", RegexOptions.CultureInvariant).Count;
+        var diagnosticsTableCount = Regex.Matches(
+            source,
+            "<table class=\"prep-table(?:\\s+[^\"]+)?\">",
+            RegexOptions.CultureInvariant).Count;
         Assert.True(
             diagnosticsTableCount >= 2,
             $"Expected at least two diagnostics table anchors in '{PrepIndexRelativePath}' (active tasks and progress timeline), but found {diagnosticsTableCount}.");
@@ -183,11 +186,16 @@ public sealed class WorkstationPrepDesignContractTests
         var requiredMarkupAnchors = new[]
         {
             "data-ams-prep-mobile-contract=\"pipeline-action-bar\"",
+            "data-ams-prep-mobile-contract=\"active-tasks-table\"",
+            "data-ams-prep-mobile-contract=\"history-table\"",
+            "data-ams-prep-mobile-contract=\"inspector-surfaces\"",
             "pipeline-action-bar__stats",
             "pipeline-action-bar__controls",
             "pipeline-action-button",
             "prep-running-status",
-            "pipeline-grid-item--top"
+            "pipeline-grid-item--top",
+            "data-label=\"Action\"",
+            "data-label=\"Message\""
         };
 
         var requiredCssAnchors = new[]
@@ -195,8 +203,13 @@ public sealed class WorkstationPrepDesignContractTests
             "@media (max-width: 768px)",
             ".prep-page ::deep .pipeline-action-bar button",
             ".prep-page ::deep .pipeline-layout-grid > .pipeline-grid-item--top",
+            ".pipeline-dashboard-table-wrap",
+            ".prep-page ::deep .pipeline-dashboard-table td::before",
+            ".prep-page ::deep .pipeline-dashboard-table tr.pipeline-table-empty-row td::before",
+            "[data-ams-prep-mobile-contract=\"inspector-surfaces\"] .inspector-error-log",
             "min-height: 44px;",
-            "font-size: 16px;"
+            "font-size: 16px;",
+            "max-height: 10rem;"
         };
 
         foreach (var anchor in requiredMarkupAnchors)

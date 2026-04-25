@@ -43,7 +43,10 @@
 <SectionContent SectionName="module-inspector">
     @if (HasWorkingDirectory && Workspace.HasBookIndex)
     {
-        <BitStack Horizontal="false" Gap="0rem" Class="prep-header-extra">
+        <BitStack Horizontal="false"
+                  Gap="0rem"
+                  Class="prep-header-extra"
+                  data-ams-prep-mobile-contract="inspector-surfaces">
             <div class="inspector-header">
                 <BitText Typography="BitTypography.Subtitle2">
                     @if (SelectedQueueItem is not null)
@@ -363,74 +366,77 @@
                             <BitText Typography="BitTypography.Overline">Pipeline Dashboard</BitText>
                             <BitPivot>
                                 <BitPivotItem HeaderText="Active Tasks" IconName="@BitIconName.TaskGroup">
-                                    <table class="prep-table">
-                                        <thead>
-                                            <tr>
-                                                <th>#</th>
-                                                <th>Chapter</th>
-                                                <th>Status</th>
-                                                <th>Stage</th>
-                                                <th>Progress</th>
-                                                <th>Action</th>
-                                            </tr>
-                                        </thead>
-                                        <tbody>
-                                            @if (_batchQueue.Count == 0)
-                                            {
+                                    <div class="pipeline-dashboard-table-wrap"
+                                         data-ams-prep-mobile-contract="active-tasks-table">
+                                        <table class="prep-table pipeline-dashboard-table">
+                                            <thead>
                                                 <tr>
-                                                    <td colspan="6">Queue is empty. Add chapters to start batch processing.</td>
+                                                    <th>#</th>
+                                                    <th>Chapter</th>
+                                                    <th>Status</th>
+                                                    <th>Stage</th>
+                                                    <th>Progress</th>
+                                                    <th>Action</th>
                                                 </tr>
-                                            }
-                                            else
-                                            {
-                                                var rowIndex = 0;
-                                                @foreach (var item in _batchQueue)
+                                            </thead>
+                                            <tbody>
+                                                @if (_batchQueue.Count == 0)
                                                 {
-                                                    rowIndex++;
-                                                    var isSelected = string.Equals(item.Chapter, _selectedQueueChapter, StringComparison.OrdinalIgnoreCase);
-                                                    <tr class="@(isSelected ? "pipeline-row--selected" : "")">
-                                                        <td>@rowIndex.ToString("D3")</td>
-                                                        <td><strong>@item.Chapter</strong></td>
-                                                        <td><BitTag Color="@GetRunStateColor(item.State)">@item.State</BitTag></td>
-                                                        <td>@DisplayOrPlaceholder(item.Stage, "n/a")</td>
-                                                        <td>
-                                                            @if (item.State == RunState.Running)
-                                                            {
-                                                                <BitProgress Percent="50" />
-                                                            }
-                                                            else if (item.State == RunState.Completed)
-                                                            {
-                                                                <BitProgress Percent="100" Color="BitColor.Success" />
-                                                            }
-                                                            else if (item.State == RunState.Failed)
-                                                            {
-                                                                <BitProgress Percent="75" Color="BitColor.Error" />
-                                                            }
-                                                        </td>
-                                                        <td>
-                                                            <BitStack Horizontal="true" Gap="0.25rem" Class="pipeline-row-actions">
-                                                                <BitButton Variant="BitVariant.Text"
-                                                                           Size="BitSize.Small"
-                                                                           Color="BitColor.Primary"
-                                                                           IconName="@BitIconName.EntryView"
-                                                                           OnClick="@(() => SelectQueueItem(item.Chapter))">
-                                                                    Inspect
-                                                                </BitButton>
-                                                                <BitButton Variant="BitVariant.Text"
-                                                                           Size="BitSize.Small"
-                                                                           Color="BitColor.Secondary"
-                                                                           IconName="@BitIconName.Delete"
-                                                                           OnClick="@(() => RemoveQueueItem(item.Chapter))"
-                                                                           IsEnabled="@(!_isBatchRunning)">
-                                                                    Remove
-                                                                </BitButton>
-                                                            </BitStack>
-                                                        </td>
+                                                    <tr class="pipeline-table-empty-row">
+                                                        <td colspan="6" data-label="Queue">Queue is empty. Add chapters to start batch processing.</td>
                                                     </tr>
                                                 }
-                                            }
-                                        </tbody>
-                                    </table>
+                                                else
+                                                {
+                                                    var rowIndex = 0;
+                                                    @foreach (var item in _batchQueue)
+                                                    {
+                                                        rowIndex++;
+                                                        var isSelected = string.Equals(item.Chapter, _selectedQueueChapter, StringComparison.OrdinalIgnoreCase);
+                                                        <tr class="@(isSelected ? "pipeline-row--selected" : "")">
+                                                            <td data-label="#">@rowIndex.ToString("D3")</td>
+                                                            <td data-label="Chapter"><strong>@item.Chapter</strong></td>
+                                                            <td data-label="Status"><BitTag Color="@GetRunStateColor(item.State)">@item.State</BitTag></td>
+                                                            <td data-label="Stage">@DisplayOrPlaceholder(item.Stage, "n/a")</td>
+                                                            <td data-label="Progress">
+                                                                @if (item.State == RunState.Running)
+                                                                {
+                                                                    <BitProgress Percent="50" />
+                                                                }
+                                                                else if (item.State == RunState.Completed)
+                                                                {
+                                                                    <BitProgress Percent="100" Color="BitColor.Success" />
+                                                                }
+                                                                else if (item.State == RunState.Failed)
+                                                                {
+                                                                    <BitProgress Percent="75" Color="BitColor.Error" />
+                                                                }
+                                                            </td>
+                                                            <td data-label="Action" class="pipeline-row-actions-cell">
+                                                                <BitStack Horizontal="true" Gap="0.25rem" Class="pipeline-row-actions">
+                                                                    <BitButton Variant="BitVariant.Text"
+                                                                               Size="BitSize.Small"
+                                                                               Color="BitColor.Primary"
+                                                                               IconName="@BitIconName.EntryView"
+                                                                               OnClick="@(() => SelectQueueItem(item.Chapter))">
+                                                                        Inspect
+                                                                    </BitButton>
+                                                                    <BitButton Variant="BitVariant.Text"
+                                                                               Size="BitSize.Small"
+                                                                               Color="BitColor.Secondary"
+                                                                               IconName="@BitIconName.Delete"
+                                                                               OnClick="@(() => RemoveQueueItem(item.Chapter))"
+                                                                               IsEnabled="@(!_isBatchRunning)">
+                                                                        Remove
+                                                                    </BitButton>
+                                                                </BitStack>
+                                                            </td>
+                                                        </tr>
+                                                    }
+                                                }
+                                            </tbody>
+                                        </table>
+                                    </div>
                                 </BitPivotItem>
                                 <BitPivotItem HeaderText="History" IconName="@BitIconName.History">
                                     <BitText Typography="BitTypography.Caption1"
@@ -467,37 +473,40 @@
                                                        IsEnabled="@(_historyPageIndex < chapters.Count - 1)" />
                                         </BitStack>
 
-                                        <table class="prep-table">
-                                            <thead>
-                                                <tr>
-                                                    <th>Module</th>
-                                                    <th>Stage</th>
-                                                    <th>State</th>
-                                                    <th>Message</th>
-                                                    <th>Progress</th>
-                                                </tr>
-                                            </thead>
-                                            <tbody>
-                                                @foreach (var update in pageUpdates)
-                                                {
+                                        <div class="pipeline-dashboard-table-wrap"
+                                             data-ams-prep-mobile-contract="history-table">
+                                            <table class="prep-table pipeline-dashboard-table">
+                                                <thead>
                                                     <tr>
-                                                        <td>@update.ModuleId.Value</td>
-                                                        <td>@DisplayOrPlaceholder(update.Stage, "n/a")</td>
-                                                        <td>
-                                                            <BitTag Color="@GetRunStateColor(update.State)">@update.State</BitTag>
-                                                        </td>
-                                                        <td>
-                                                            <div>@update.Message</div>
-                                                            @if (update.Failure is not null)
-                                                            {
-                                                                <div class="prep-inline-note">@update.Failure.Kind: @update.Failure.Message</div>
-                                                            }
-                                                        </td>
-                                                        <td>@FormatProgress(update.Progress)</td>
+                                                        <th>Module</th>
+                                                        <th>Stage</th>
+                                                        <th>State</th>
+                                                        <th>Message</th>
+                                                        <th>Progress</th>
                                                     </tr>
-                                                }
-                                            </tbody>
-                                        </table>
+                                                </thead>
+                                                <tbody>
+                                                    @foreach (var update in pageUpdates)
+                                                    {
+                                                        <tr>
+                                                            <td data-label="Module">@update.ModuleId.Value</td>
+                                                            <td data-label="Stage">@DisplayOrPlaceholder(update.Stage, "n/a")</td>
+                                                            <td data-label="State">
+                                                                <BitTag Color="@GetRunStateColor(update.State)">@update.State</BitTag>
+                                                            </td>
+                                                            <td data-label="Message">
+                                                                <div>@update.Message</div>
+                                                                @if (update.Failure is not null)
+                                                                {
+                                                                    <div class="prep-inline-note">@update.Failure.Kind: @update.Failure.Message</div>
+                                                                }
+                                                            </td>
+                                                            <td data-label="Progress">@FormatProgress(update.Progress)</td>
+                                                        </tr>
+                                                    }
+                                                </tbody>
+                                            </table>
+                                        </div>
                                     }
                                     else
                                     {
