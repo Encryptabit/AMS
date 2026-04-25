@@ -191,6 +191,8 @@ public sealed class StageShellLayoutTests
         var mobileActionBar = ReadRepoFile(MobileActionBarRelativePath);
 
         AssertSourceContains(layout, MainLayoutRelativePath, "data-ams-shell-region=\"mobile-action-bar\"", "mobile action bar shell region anchor");
+        AssertSourceContains(layout, MainLayoutRelativePath, "data-ams-shell-region=\"mobile-action-bar\"\n         inert=\"@(isMobileModuleRailOpen ? \"inert\" : null)\"", "mobile action bar host inert state while module rail is open");
+        AssertSourceContains(layout, MainLayoutRelativePath, "inert=\"@(isMobileModuleRailOpen ? \"inert\" : null)\"\n         aria-hidden=\"@(isMobileModuleRailOpen ? \"true\" : null)\"", "mobile action bar host aria-hidden state while module rail is open");
         AssertSourceContains(layout, MainLayoutRelativePath, "<SectionOutlet SectionName=\"mobile-action-bar\" />", "mobile action bar section outlet");
 
         AssertSourceContains(mobileActionBar, MobileActionBarRelativePath, "data-ams-proof-mobile-action-bar=\"selection-workflow\"", "selection workflow contract marker");

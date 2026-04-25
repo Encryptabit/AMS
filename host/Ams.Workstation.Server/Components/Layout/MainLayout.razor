@@ -80,7 +80,9 @@
     </div>
 
     <div class="workstation-mobile-action-bar-host"
-         data-ams-shell-region="mobile-action-bar">
+         data-ams-shell-region="mobile-action-bar"
+         inert="@(isMobileModuleRailOpen ? "inert" : null)"
+         aria-hidden="@(isMobileModuleRailOpen ? "true" : null)">
         <SectionOutlet SectionName="mobile-action-bar" />
     </div>
 
