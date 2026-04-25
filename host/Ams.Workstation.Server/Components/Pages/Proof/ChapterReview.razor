@@ -20,7 +20,7 @@
 
 <div class="proof-review">
     <div class="proof-view-switcher">
-        <BitStack Horizontal="true" Gap="0.5rem" AutoHeight="true" HorizontalAlign="BitAlignment.Center" Style="margin-bottom: 1rem;">
+        <BitStack Horizontal="true" Wrap="true" Class="proof-view-switcher-stack" Gap="0.5rem" AutoHeight="true" HorizontalAlign="BitAlignment.Center" Style="margin-bottom: 1rem;">
             <BitButton Variant="@(_currentView == "errors" ? BitVariant.Fill : BitVariant.Outline)"
                        OnClick="@(() => SwitchView("errors"))">
                 Errors View

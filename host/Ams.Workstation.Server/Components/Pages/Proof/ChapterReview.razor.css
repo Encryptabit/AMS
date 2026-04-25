@@ -37,7 +37,7 @@
         margin-bottom: 0.55rem;
     }
 
-    .proof-view-switcher ::deep .bit-stack {
+    .proof-view-switcher ::deep .proof-view-switcher-stack {
         width: 100%;
         justify-content: stretch;
         gap: 0.45rem;
