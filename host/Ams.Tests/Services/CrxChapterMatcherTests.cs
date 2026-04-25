@@ -42,6 +42,10 @@ public class CrxChapterMatcherTests
         var modal = new CrxModal();
         SeedFallbackRangeState(modal, isRangeConfirmed: false);
 
+        // Simulate stored sub-millisecond drift from prior drag math while inputs remain unedited.
+        SetPrivateField(modal, "_startTime", 0.1509);
+        SetPrivateField(modal, "_endTime", 1.1509);
+
         InvokePrivateIgnoringRenderHandle(
             modal,
             "OnRangeConfirmationChanged",
@@ -51,6 +55,7 @@ public class CrxChapterMatcherTests
 
         var canSubmit = modal.TryCommitPendingRangeInputsForTest();
         Assert.True(canSubmit);
+        Assert.True(GetPrivateField<bool>(modal, "_isRangeConfirmed"));
 
         var request = modal.BuildSubmitRequestForTest();
         Assert.Equal(0.15, request.Start, precision: 3);
@@ -88,11 +93,11 @@ public class CrxChapterMatcherTests
 
         if (mutateStart)
         {
-            Assert.Equal(0.1505, GetPrivateField<double>(modal, "_startTime"), precision: 4);
+            Assert.Equal(0.15, GetPrivateField<double>(modal, "_startTime"), precision: 3);
         }
         else
         {
-            Assert.Equal(1.1505, GetPrivateField<double>(modal, "_endTime"), precision: 4);
+            Assert.Equal(1.15, GetPrivateField<double>(modal, "_endTime"), precision: 3);
         }
     }
 

@@ -486,6 +486,8 @@
 
     private void CommitRangeChange(bool shouldRender)
     {
+        _startTime = CanonicalizeRangeBound(_startTime);
+        _endTime = CanonicalizeRangeBound(_endTime);
         _startInput = FormatTime(_startTime);
         _endInput = FormatTime(_endTime);
 
@@ -552,7 +554,17 @@
         => TryCommitPendingRangeInputs(shouldRender: false);
 
     private static bool DidRangeBoundChange(double currentSeconds, double nextSeconds)
-        => currentSeconds != nextSeconds;
+        => CanonicalizeRangeBound(currentSeconds) != nextSeconds;
+
+    private static double CanonicalizeRangeBound(double seconds)
+    {
+        if (double.IsNaN(seconds) || double.IsInfinity(seconds))
+            return 0;
+
+        var nonNegative = Math.Max(0, seconds);
+        var canonical = decimal.Truncate((decimal)nonNegative * 1000m) / 1000m;
+        return (double)canonical;
+    }
 
     private void ValidateRange()
     {

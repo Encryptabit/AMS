@@ -48,7 +48,9 @@ public sealed class ProofMobileCrxRangeContractTests
         var source = ReadRepoFile(CrxModalRelativePath);
 
         AssertContains(source, CrxModalRelativePath, "private static bool DidRangeBoundChange(double currentSeconds, double nextSeconds)", "range change helper for confirmation reset");
-        AssertContains(source, CrxModalRelativePath, "=> currentSeconds != nextSeconds;", "range confirmation helper compares parsed numeric bounds directly");
+        AssertContains(source, CrxModalRelativePath, "=> CanonicalizeRangeBound(currentSeconds) != nextSeconds;", "range confirmation compares parsed numeric edits against canonical stored precision");
+        AssertContains(source, CrxModalRelativePath, "private static double CanonicalizeRangeBound(double seconds)", "stored range bounds canonicalized to input precision");
+        AssertContains(source, CrxModalRelativePath, "decimal.Truncate((decimal)nonNegative * 1000m) / 1000m;", "canonicalization truncates to millisecond precision used by inputs");
         AssertContains(source, CrxModalRelativePath, "if (DidRangeBoundChange(currentSeconds, normalizedSeconds))", "range confirmation resets on any committed start/end input change");
         AssertContains(source, CrxModalRelativePath, "DidRangeBoundChange(_startTime, normalizedStart)", "submit-time pending start input change resets fallback confirmation");
         AssertContains(source, CrxModalRelativePath, "DidRangeBoundChange(_endTime, normalizedEnd)", "submit-time pending end input change resets fallback confirmation");
