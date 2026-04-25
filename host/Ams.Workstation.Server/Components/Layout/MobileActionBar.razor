@@ -1,0 +1,109 @@
+<div class="mobile-action-bar"
+     data-ams-proof-mobile-action-bar="selection-workflow"
+     data-ams-proof-mobile-action-bar-view="@CurrentView"
+     data-ams-proof-mobile-action-bar-selection-mode="@(IsSelectionModeActive ? "active" : "inactive")"
+     data-ams-proof-mobile-action-bar-selection-count="@SelectedCount">
+    <div class="mobile-action-bar__status"
+         data-ams-proof-mobile-selection-summary="@SelectionSummaryState">
+        <BitText Typography="BitTypography.Caption1"
+                 Color="BitColor.SecondaryForeground">
+            @SelectionSummaryText
+        </BitText>
+    </div>
+
+    <div class="mobile-action-bar__actions"
+         data-ams-proof-mobile-action-grid="true">
+        <BitButton Variant="@(IsErrorsView ? BitVariant.Fill : BitVariant.Outline)"
+                   Color="BitColor.Primary"
+                   Size="BitSize.Small"
+                   data-ams-proof-mobile-action="errors"
+                   OnClick="HandleSwitchToErrorsAsync">
+            Errors
+        </BitButton>
+
+        <BitButton Variant="@(IsPlaybackView ? BitVariant.Fill : BitVariant.Outline)"
+                   Color="BitColor.Primary"
+                   Size="BitSize.Small"
+                   data-ams-proof-mobile-action="playback"
+                   OnClick="HandleSwitchToPlaybackAsync">
+            Playback
+        </BitButton>
+
+        <BitButton Variant="BitVariant.Fill"
+                   Color="BitColor.Primary"
+                   Size="BitSize.Small"
+                   data-ams-proof-mobile-action="export"
+                   IsEnabled="@IsBatchActionsEnabled"
+                   OnClick="HandleExportSelectionAsync">
+            Export
+        </BitButton>
+
+        <BitButton Variant="BitVariant.Outline"
+                   Color="BitColor.Warning"
+                   Size="BitSize.Small"
+                   data-ams-proof-mobile-action="ignore"
+                   IsEnabled="@IsBatchActionsEnabled"
+                   OnClick="HandleIgnoreSelectionAsync">
+            Ignore
+        </BitButton>
+
+        <BitButton Variant="@(IsReviewed ? BitVariant.Fill : BitVariant.Outline)"
+                   Color="@(IsReviewed ? BitColor.Success : BitColor.Primary)"
+                   Size="BitSize.Small"
+                   data-ams-proof-mobile-action="reviewed"
+                   OnClick="HandleToggleReviewedAsync">
+            @(IsReviewed ? "Reviewed" : "Reviewed?")
+        </BitButton>
+
+        <BitButton Variant="BitVariant.Outline"
+                   Color="BitColor.Secondary"
+                   Size="BitSize.Small"
+                   data-ams-proof-mobile-action="modules"
+                   OnClick="HandleToggleModulesAsync">
+            Modules
+        </BitButton>
+    </div>
+</div>
+
+@code {
+    [Parameter] public string CurrentView { get; set; } = "playback";
+    [Parameter] public bool IsSelectionModeActive { get; set; }
+    [Parameter] public int SelectedCount { get; set; }
+    [Parameter] public bool IsBatchActionsEnabled { get; set; }
+    [Parameter] public bool IsReviewed { get; set; }
+
+    [Parameter] public EventCallback OnSwitchToErrors { get; set; }
+    [Parameter] public EventCallback OnSwitchToPlayback { get; set; }
+    [Parameter] public EventCallback OnExportSelection { get; set; }
+    [Parameter] public EventCallback OnIgnoreSelection { get; set; }
+    [Parameter] public EventCallback OnToggleReviewed { get; set; }
+    [Parameter] public EventCallback OnToggleModules { get; set; }
+
+    private string SelectionSummaryState => IsSelectionModeActive ? "active" : "inactive";
+
+    private string SelectionSummaryText
+        => IsSelectionModeActive
+            ? $"Selected: {SelectedCount} sentence{(SelectedCount == 1 ? string.Empty : "s")}."
+            : "Selection mode inactive.";
+
+    private bool IsErrorsView => string.Equals(CurrentView, "errors", StringComparison.Ordinal);
+
+    private bool IsPlaybackView => string.Equals(CurrentView, "playback", StringComparison.Ordinal);
+
+    private Task HandleSwitchToErrorsAsync() => InvokeCallbackAsync(OnSwitchToErrors);
+
+    private Task HandleSwitchToPlaybackAsync() => InvokeCallbackAsync(OnSwitchToPlayback);
+
+    private Task HandleExportSelectionAsync() => InvokeCallbackAsync(OnExportSelection);
+
+    private Task HandleIgnoreSelectionAsync() => InvokeCallbackAsync(OnIgnoreSelection);
+
+    private Task HandleToggleReviewedAsync() => InvokeCallbackAsync(OnToggleReviewed);
+
+    private Task HandleToggleModulesAsync() => InvokeCallbackAsync(OnToggleModules);
+
+    private static Task InvokeCallbackAsync(EventCallback callback)
+        => callback.HasDelegate
+            ? callback.InvokeAsync()
+            : Task.CompletedTask;
+}

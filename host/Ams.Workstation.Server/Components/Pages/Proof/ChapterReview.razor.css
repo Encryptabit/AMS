@@ -71,6 +71,10 @@
 }
 
 @media (max-width: 768px) {
+    .proof-review {
+        padding-bottom: calc(9rem + env(safe-area-inset-bottom));
+    }
+
     .proof-view-switcher {
         margin-bottom: 0.55rem;
     }

@@ -18,7 +18,21 @@
 
 <PageTitle>@ChapterName - Proof - AMS Workstation</PageTitle>
 
-<div class="proof-review">
+<SectionContent SectionName="mobile-action-bar">
+    <MobileActionBar CurrentView="@_currentView"
+                     IsSelectionModeActive="@_isSelectionModeActive"
+                     SelectedCount="@SelectionCount"
+                     IsBatchActionsEnabled="@CanRunSelectionBatchActions"
+                     IsReviewed="@_isReviewed"
+                     OnSwitchToErrors="SwitchToErrorsFromMobileActionBar"
+                     OnSwitchToPlayback="SwitchToPlaybackFromMobileActionBar"
+                     OnExportSelection="ExportSelectionFromMobileActionBarAsync"
+                     OnIgnoreSelection="IgnoreSelectionFromMobileActionBarAsync"
+                     OnToggleReviewed="ToggleReviewedFromMobileActionBar"
+                     OnToggleModules="ToggleModulesFromMobileActionBarAsync" />
+</SectionContent>
+
+<div class="proof-review" data-ams-proof-mobile-action-bar-contract="selection-workflows">
     <div class="proof-view-switcher">
         <BitStack Horizontal="true" Wrap="true" Class="proof-view-switcher-stack" Gap="0.5rem" AutoHeight="true" HorizontalAlign="BitAlignment.Center" Style="margin-bottom: 1rem;">
             <BitButton Variant="@(_currentView == "errors" ? BitVariant.Fill : BitVariant.Outline)"
@@ -45,7 +59,7 @@
 
     <div class="proof-selection-indicator"
          data-ams-proof-selection-mode-state="@SelectionModeState"
-         data-ams-proof-selection-count="@_selectedSentenceIds.Count"
+         data-ams-proof-selection-count="@SelectionCount"
          data-ams-proof-selection-last-event="@_lastSelectionGestureEvent">
         <BitText Typography="BitTypography.Caption1"
                  Color="BitColor.SecondaryForeground"
@@ -181,6 +195,7 @@
     // Touch selection state
     private static readonly TimeSpan DuplicateLongPressWindow = TimeSpan.FromMilliseconds(250);
     private static readonly TimeSpan PostLongPressTapSuppressionWindow = TimeSpan.FromMilliseconds(700);
+    private const string MobileModuleRailToggleElementId = "workstation-mobile-module-rail-toggle";
     private bool _isSelectionModeActive;
     private HashSet<int> _selectedSentenceIds = new();
     private bool _resumePlaybackOnSelectionExit;
@@ -189,6 +204,9 @@
     private int _lastLongPressDispatchSentenceId;
     private readonly Dictionary<int, DateTimeOffset> _suppressedSelectionTapSentenceIds = new();
     private string SelectionModeState => _isSelectionModeActive ? "active" : "inactive";
+    private int SelectionCount => _selectedSentenceIds.Count;
+    private bool CanRunSelectionBatchActions => _isSelectionModeActive && _selectedSentenceIds.Count > 0;
+    private string CurrentMobileActionSurface => _currentView == "errors" ? "errors" : "playback";
 
     // Keyboard navigation state
     private int _selectedErrorIndex;
@@ -342,6 +360,199 @@
 
         _currentView = view;
         StateHasChanged();
+    }
+
+    private void SwitchToErrorsFromMobileActionBar()
+    {
+        ApplyCrossNav("playback-to-errors", "mobile-action-errors");
+    }
+
+    private void SwitchToPlaybackFromMobileActionBar()
+    {
+        ApplyCrossNav("errors-to-playback", "mobile-action-playback");
+    }
+
+    private Task ToggleReviewedFromMobileActionBar()
+    {
+        ToggleReviewed();
+        return Task.CompletedTask;
+    }
+
+    private Task ExportSelectionFromMobileActionBarAsync()
+    {
+        var anchorSentenceId = ResolveSelectionActionAnchorSentenceId();
+        return HandleSelectionSwipeRightAsync(anchorSentenceId, $"mobile-action-bar-{CurrentMobileActionSurface}");
+    }
+
+    private Task IgnoreSelectionFromMobileActionBarAsync()
+    {
+        var anchorSentenceId = ResolveSelectionActionAnchorSentenceId();
+        return HandleSelectionSwipeLeftAsync(anchorSentenceId, $"mobile-action-bar-{CurrentMobileActionSurface}");
+    }
+
+    private async Task ToggleModulesFromMobileActionBarAsync()
+    {
+        try
+        {
+            await JS.InvokeVoidAsync("eval", $"document.getElementById('{MobileModuleRailToggleElementId}')?.click();");
+            LogSelectionModeDiagnostic("mobile-action-modules-toggle", "mobile-action-modules", ResolveSelectionActionAnchorSentenceId(), $"view={_currentView}");
+        }
+        catch (JSDisconnectedException)
+        {
+            // Ignore disconnect races during navigation.
+        }
+        catch (Exception ex)
+        {
+            LogSelectionModeDiagnostic("mobile-action-modules-toggle-failed", "mobile-action-modules", ResolveSelectionActionAnchorSentenceId(), ex.Message);
+        }
+    }
+
+    private int ResolveSelectionActionAnchorSentenceId()
+    {
+        if (_selectedSentenceId.HasValue && _selectedSentenceIds.Contains(_selectedSentenceId.Value))
+        {
+            return _selectedSentenceId.Value;
+        }
+
+        return _selectedSentenceIds
+            .OrderBy(id => id)
+            .FirstOrDefault();
+    }
+
+    private int? ResolvePlaybackSelectionSentenceId()
+    {
+        if (_selectedSentenceId.HasValue && _sentences.Any(sentence => sentence.Id == _selectedSentenceId.Value))
+        {
+            return _selectedSentenceId.Value;
+        }
+
+        if (_lastTimeBasedSentenceId.HasValue && _sentences.Any(sentence => sentence.Id == _lastTimeBasedSentenceId.Value))
+        {
+            return _lastTimeBasedSentenceId.Value;
+        }
+
+        var sentenceAtCurrentTime = _sentences.FirstOrDefault(sentence => _currentTime >= sentence.StartTime && _currentTime < sentence.EndTime);
+        if (sentenceAtCurrentTime is not null)
+        {
+            return sentenceAtCurrentTime.Id;
+        }
+
+        return _sentences.Count > 0 ? _sentences[0].Id : null;
+    }
+
+    private bool TryResolveCrossNavPlaybackSentence(int? preferredSentenceId, out SentenceViewModel? sentence)
+    {
+        sentence = null;
+
+        if (preferredSentenceId.HasValue)
+        {
+            sentence = _sentences.FirstOrDefault(candidate => candidate.Id == preferredSentenceId.Value);
+        }
+
+        if (sentence is null)
+        {
+            var fallbackSentenceId = ResolvePlaybackSelectionSentenceId();
+            if (fallbackSentenceId.HasValue)
+            {
+                sentence = _sentences.FirstOrDefault(candidate => candidate.Id == fallbackSentenceId.Value);
+            }
+        }
+
+        if (sentence is null && _sentences.Count > 0)
+        {
+            sentence = _sentences[0];
+        }
+
+        return sentence is not null;
+    }
+
+    private int ResolveCrossNavErrorIndex()
+    {
+        if (_errorSentencesList.Count == 0)
+        {
+            return 0;
+        }
+
+        var sentenceId = ResolvePlaybackSelectionSentenceId();
+        if (sentenceId.HasValue)
+        {
+            var mappedIndex = _errorSentencesList.FindIndex(sentence => sentence.Id == sentenceId.Value);
+            if (mappedIndex >= 0)
+            {
+                return mappedIndex;
+            }
+        }
+
+        if (_selectedErrorIndex >= 0 && _selectedErrorIndex < _errorSentencesList.Count)
+        {
+            return _selectedErrorIndex;
+        }
+
+        return 0;
+    }
+
+    private void ApplyCrossNav(string direction, string trigger)
+    {
+        if (string.Equals(direction, "errors-to-playback", StringComparison.Ordinal))
+        {
+            int? preferredSentenceId = null;
+            if (_errorSentencesList.Count > 0)
+            {
+                var clampedIndex = Math.Clamp(_selectedErrorIndex, 0, _errorSentencesList.Count - 1);
+                preferredSentenceId = _errorSentencesList[clampedIndex].Id;
+            }
+
+            _currentView = "playback";
+
+            if (TryResolveCrossNavPlaybackSentence(preferredSentenceId, out var playbackSentence) && playbackSentence is not null)
+            {
+                _selectedSentenceId = playbackSentence.Id;
+                _playbackNavigationIndex = _sentences.FindIndex(sentence => sentence.Id == playbackSentence.Id);
+                _pendingSeekTime = playbackSentence.StartTime;
+
+                LogSelectionModeDiagnostic(
+                    "cross-nav-errors-to-playback",
+                    trigger,
+                    playbackSentence.Id,
+                    $"autoSelected=true;selectedCount={_selectedSentenceIds.Count}");
+            }
+            else
+            {
+                _selectedSentenceId = null;
+                _playbackNavigationIndex = null;
+                _pendingSeekTime = null;
+
+                LogSelectionModeDiagnostic(
+                    "cross-nav-errors-to-playback",
+                    trigger,
+                    0,
+                    "autoSelected=false;reason=no-playback-sentences");
+            }
+
+            StateHasChanged();
+            return;
+        }
+
+        if (string.Equals(direction, "playback-to-errors", StringComparison.Ordinal))
+        {
+            _currentView = "errors";
+            _selectedErrorIndex = ResolveCrossNavErrorIndex();
+
+            var selectedErrorSentenceId = _errorSentencesList.Count > 0
+                ? _errorSentencesList[_selectedErrorIndex].Id
+                : 0;
+
+            LogSelectionModeDiagnostic(
+                "cross-nav-playback-to-errors",
+                trigger,
+                selectedErrorSentenceId,
+                $"autoSelected={_errorSentencesList.Count > 0};errorCount={_errorSentencesList.Count}");
+
+            StateHasChanged();
+            return;
+        }
+
+        LogSelectionModeDiagnostic("cross-nav-invalid-direction", trigger, 0, $"direction={direction}");
     }
 
     private void NavigateToPickups()
@@ -625,8 +836,8 @@
             return "Selection mode inactive.";
         }
 
-        var noun = _selectedSentenceIds.Count == 1 ? "sentence" : "sentences";
-        return $"Selection mode active: {_selectedSentenceIds.Count} {noun} selected. Long-press again to clear and resume playback.";
+        var noun = SelectionCount == 1 ? "sentence" : "sentences";
+        return $"Selection mode active: {SelectionCount} {noun} selected. Long-press again to clear and resume playback.";
     }
 
     private void ToggleSelectionMembership(int sentenceId, string trigger)
@@ -1332,39 +1543,7 @@
     [JSInvokable]
     public void OnCrossNav(string direction)
     {
-        if (direction == "errors-to-playback")
-        {
-            if (_errorSentencesList.Count == 0) return;
-            var errorSentence = _errorSentencesList[_selectedErrorIndex];
-            _currentView = "playback";
-
-            var sentence = _sentences.FirstOrDefault(s => s.Id == errorSentence.Id);
-            if (sentence != null)
-                _pendingSeekTime = sentence.StartTime;
-        }
-        else // playback-to-errors
-        {
-            // Get current sentence Id
-            int? sentenceId = _selectedSentenceId;
-            if (!sentenceId.HasValue && _sentences.Count > 0)
-            {
-                var timeSentence = _sentences.FirstOrDefault(s => _currentTime >= s.StartTime && _currentTime < s.EndTime);
-                sentenceId = timeSentence?.Id;
-            }
-
-            _currentView = "errors";
-
-            if (sentenceId.HasValue)
-            {
-                var errorIndex = _errorSentencesList.FindIndex(s => s.Id == sentenceId.Value);
-                if (errorIndex >= 0)
-                {
-                    _selectedErrorIndex = errorIndex;
-                }
-                // If not found, keep existing _selectedErrorIndex (saved position fallback)
-            }
-        }
-        StateHasChanged();
+        ApplyCrossNav(direction, "keyboard-shortcut");
     }
 
     [JSInvokable]

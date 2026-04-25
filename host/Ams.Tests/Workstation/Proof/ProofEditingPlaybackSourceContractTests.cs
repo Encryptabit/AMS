@@ -8,6 +8,7 @@ public sealed class ProofEditingPlaybackSourceContractTests
     private const string ChapterReviewCssRelativePath = "host/Ams.Workstation.Server/Components/Pages/Proof/ChapterReview.razor.css";
     private const string SentenceListRelativePath = "host/Ams.Workstation.Server/Components/Shared/SentenceList.razor";
     private const string TouchGesturesRelativePath = "host/Ams.Workstation.Server/wwwroot/js/touch-gestures.js";
+    private const string MobileActionBarRelativePath = "host/Ams.Workstation.Server/Components/Layout/MobileActionBar.razor";
     private const string CrxModalRelativePath = "host/Ams.Workstation.Server/Components/Shared/CrxModal.razor";
     private const string AudioControllerRelativePath = "host/Ams.Workstation.Server/Controllers/AudioController.cs";
 
@@ -341,6 +342,133 @@ public sealed class ProofEditingPlaybackSourceContractTests
             TouchGesturesRelativePath,
             "document.addEventListener('touchmove', handleTouchMove, { passive: true });",
             "touch move listener remains passive to preserve native vertical scrolling");
+    }
+
+    [Fact]
+    public void ChapterReview_MobileActionBar_UsesCrossNavDefaultsAndSelectionAwareBatchActions()
+    {
+        var chapterReviewSource = ReadRepoFile(ChapterReviewRelativePath);
+        var mobileActionBarSource = ReadRepoFile(MobileActionBarRelativePath);
+
+        AssertContains(
+            chapterReviewSource,
+            ChapterReviewRelativePath,
+            "<SectionContent SectionName=\"mobile-action-bar\">",
+            "ChapterReview provides mobile action bar section content");
+
+        AssertContains(
+            chapterReviewSource,
+            ChapterReviewRelativePath,
+            "<MobileActionBar CurrentView=\"@_currentView\"",
+            "ChapterReview renders MobileActionBar with current view binding");
+
+        AssertContains(
+            chapterReviewSource,
+            ChapterReviewRelativePath,
+            "IsBatchActionsEnabled=\"@CanRunSelectionBatchActions\"",
+            "mobile action bar binds batch action enablement to selection context");
+
+        AssertContains(
+            chapterReviewSource,
+            ChapterReviewRelativePath,
+            "private bool CanRunSelectionBatchActions => _isSelectionModeActive && _selectedSentenceIds.Count > 0;",
+            "selection-aware enablement guard for export/ignore mobile actions");
+
+        AssertContains(
+            chapterReviewSource,
+            ChapterReviewRelativePath,
+            "private void ApplyCrossNav(string direction, string trigger)",
+            "cross-nav helper centralizes keyboard and mobile action behavior");
+
+        AssertContains(
+            chapterReviewSource,
+            ChapterReviewRelativePath,
+            "ApplyCrossNav(direction, \"keyboard-shortcut\");",
+            "keyboard cross-nav path delegates to shared helper");
+
+        AssertContains(
+            chapterReviewSource,
+            ChapterReviewRelativePath,
+            "ApplyCrossNav(\"playback-to-errors\", \"mobile-action-errors\");",
+            "mobile errors action reuses playback-to-errors cross-nav semantics");
+
+        AssertContains(
+            chapterReviewSource,
+            ChapterReviewRelativePath,
+            "ApplyCrossNav(\"errors-to-playback\", \"mobile-action-playback\");",
+            "mobile playback action reuses errors-to-playback cross-nav semantics");
+
+        AssertContains(
+            chapterReviewSource,
+            ChapterReviewRelativePath,
+            "private int ResolveCrossNavErrorIndex()",
+            "cross-nav fallback computes deterministic default error selection index");
+
+        AssertContains(
+            chapterReviewSource,
+            ChapterReviewRelativePath,
+            "TryResolveCrossNavPlaybackSentence(preferredSentenceId, out var playbackSentence)",
+            "cross-nav fallback auto-selects a playback sentence when switching from errors");
+
+        AssertContains(
+            chapterReviewSource,
+            ChapterReviewRelativePath,
+            "return HandleSelectionSwipeRightAsync(anchorSentenceId, $\"mobile-action-bar-{CurrentMobileActionSurface}\");",
+            "mobile export action reuses swipe-right batch semantics");
+
+        AssertContains(
+            chapterReviewSource,
+            ChapterReviewRelativePath,
+            "return HandleSelectionSwipeLeftAsync(anchorSentenceId, $\"mobile-action-bar-{CurrentMobileActionSurface}\");",
+            "mobile ignore action reuses swipe-left batch semantics");
+
+        AssertContains(
+            chapterReviewSource,
+            ChapterReviewRelativePath,
+            "await JS.InvokeVoidAsync(\"eval\", $\"document.getElementById('{MobileModuleRailToggleElementId}')?.click();\");",
+            "mobile modules action forwards to module rail toggle control");
+
+        AssertContains(
+            mobileActionBarSource,
+            MobileActionBarRelativePath,
+            "data-ams-proof-mobile-action=\"errors\"",
+            "mobile action bar errors button anchor");
+
+        AssertContains(
+            mobileActionBarSource,
+            MobileActionBarRelativePath,
+            "data-ams-proof-mobile-action=\"playback\"",
+            "mobile action bar playback button anchor");
+
+        AssertContains(
+            mobileActionBarSource,
+            MobileActionBarRelativePath,
+            "data-ams-proof-mobile-action=\"export\"",
+            "mobile action bar export button anchor");
+
+        AssertContains(
+            mobileActionBarSource,
+            MobileActionBarRelativePath,
+            "data-ams-proof-mobile-action=\"ignore\"",
+            "mobile action bar ignore button anchor");
+
+        AssertContains(
+            mobileActionBarSource,
+            MobileActionBarRelativePath,
+            "data-ams-proof-mobile-action=\"reviewed\"",
+            "mobile action bar reviewed button anchor");
+
+        AssertContains(
+            mobileActionBarSource,
+            MobileActionBarRelativePath,
+            "data-ams-proof-mobile-action=\"modules\"",
+            "mobile action bar modules button anchor");
+
+        AssertContains(
+            mobileActionBarSource,
+            MobileActionBarRelativePath,
+            "data-ams-proof-mobile-action-bar-selection-count=\"@SelectedCount\"",
+            "mobile action bar selection-count diagnostic marker");
     }
 
     [Fact]

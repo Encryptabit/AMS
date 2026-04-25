@@ -13,6 +13,9 @@ public sealed class StageShellLayoutTests
 {
     private const string HeaderControlsRelativePath = "host/Ams.Workstation.Server/Components/Layout/HeaderControls.razor";
     private const string HeaderControlsCssRelativePath = "host/Ams.Workstation.Server/Components/Layout/HeaderControls.razor.css";
+    private const string MainLayoutRelativePath = "host/Ams.Workstation.Server/Components/Layout/MainLayout.razor";
+    private const string MainLayoutCssRelativePath = "host/Ams.Workstation.Server/Components/Layout/MainLayout.razor.css";
+    private const string MobileActionBarRelativePath = "host/Ams.Workstation.Server/Components/Layout/MobileActionBar.razor";
     [Theory]
     [InlineData("/prep", StageRouteCatalog.StageIds.Prep, StageRouteCatalog.ModuleIds.PrepPipeline)]
     [InlineData("/prep/", StageRouteCatalog.StageIds.Prep, StageRouteCatalog.ModuleIds.PrepPipeline)]
@@ -178,6 +181,31 @@ public sealed class StageShellLayoutTests
         AssertSourceContains(css, HeaderControlsCssRelativePath, ".header-mobile-overflow-overlay", "mobile overflow overlay style block");
         AssertSourceContains(css, HeaderControlsCssRelativePath, ".header-secondary-optional", "secondary controls container selector");
         AssertSourceContains(css, HeaderControlsCssRelativePath, "display: none !important;", "mobile hide rule for inline secondary controls");
+    }
+
+    [Fact]
+    public void MainLayout_MobileActionBarContract_ExposesSelectionWorkflowAnchors()
+    {
+        var layout = ReadRepoFile(MainLayoutRelativePath);
+        var layoutCss = ReadRepoFile(MainLayoutCssRelativePath);
+        var mobileActionBar = ReadRepoFile(MobileActionBarRelativePath);
+
+        AssertSourceContains(layout, MainLayoutRelativePath, "data-ams-shell-region=\"mobile-action-bar\"", "mobile action bar shell region anchor");
+        AssertSourceContains(layout, MainLayoutRelativePath, "<SectionOutlet SectionName=\"mobile-action-bar\" />", "mobile action bar section outlet");
+
+        AssertSourceContains(mobileActionBar, MobileActionBarRelativePath, "data-ams-proof-mobile-action-bar=\"selection-workflow\"", "selection workflow contract marker");
+        AssertSourceContains(mobileActionBar, MobileActionBarRelativePath, "data-ams-proof-mobile-action-bar-selection-count=\"@SelectedCount\"", "selection count diagnostic marker");
+        AssertSourceContains(mobileActionBar, MobileActionBarRelativePath, "data-ams-proof-mobile-action=\"errors\"", "errors action anchor");
+        AssertSourceContains(mobileActionBar, MobileActionBarRelativePath, "data-ams-proof-mobile-action=\"playback\"", "playback action anchor");
+        AssertSourceContains(mobileActionBar, MobileActionBarRelativePath, "data-ams-proof-mobile-action=\"export\"", "export action anchor");
+        AssertSourceContains(mobileActionBar, MobileActionBarRelativePath, "data-ams-proof-mobile-action=\"ignore\"", "ignore action anchor");
+        AssertSourceContains(mobileActionBar, MobileActionBarRelativePath, "data-ams-proof-mobile-action=\"reviewed\"", "reviewed action anchor");
+        AssertSourceContains(mobileActionBar, MobileActionBarRelativePath, "data-ams-proof-mobile-action=\"modules\"", "modules action anchor");
+        AssertSourceContains(mobileActionBar, MobileActionBarRelativePath, "IsEnabled=\"@IsBatchActionsEnabled\"", "selection-aware batch action enablement");
+
+        AssertSourceContains(layoutCss, MainLayoutCssRelativePath, ".workstation-mobile-action-bar-host", "mobile action bar host style block");
+        AssertSourceContains(layoutCss, MainLayoutCssRelativePath, ".workstation-mobile-action-bar-host ::deep .mobile-action-bar__actions", "mobile action bar action-grid selector");
+        AssertSourceContains(layoutCss, MainLayoutCssRelativePath, "min-height: 44px;", "touch target minimum height contract");
     }
 
     private static void AssertVisibleState(

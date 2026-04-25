@@ -79,6 +79,11 @@
                aria-hidden="@(isMobileModuleRailOpen ? "true" : null)"><SectionOutlet SectionName="module-inspector" /></aside>
     </div>
 
+    <div class="workstation-mobile-action-bar-host"
+         data-ams-shell-region="mobile-action-bar">
+        <SectionOutlet SectionName="mobile-action-bar" />
+    </div>
+
     @if (isMobileModuleRailOpen)
     {
         <div class="workstation-module-rail-overlay"

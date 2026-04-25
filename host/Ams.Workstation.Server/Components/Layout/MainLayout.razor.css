@@ -45,6 +45,10 @@
     text-transform: uppercase;
 }
 
+.workstation-mobile-action-bar-host {
+    display: none;
+}
+
 .workstation-shell {
     display: flex;
     flex: 1;
@@ -156,6 +160,49 @@
     .workstation-shell {
         position: relative;
         flex-direction: column;
+    }
+
+    .workstation-mobile-action-bar-host {
+        display: block;
+        position: fixed;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        z-index: 1150;
+        padding: 0.4rem 0.55rem calc(0.4rem + env(safe-area-inset-bottom));
+        pointer-events: none;
+    }
+
+    .workstation-mobile-action-bar-host ::deep .mobile-action-bar {
+        pointer-events: auto;
+        border: 1px solid var(--bit-clr-border-sec, #333);
+        border-radius: 0.75rem;
+        background: var(--bit-clr-bg-primary, #101010);
+        box-shadow: 0 -12px 24px rgba(0, 0, 0, 0.24);
+        padding: 0.5rem 0.55rem;
+        display: flex;
+        flex-direction: column;
+        gap: 0.45rem;
+    }
+
+    .workstation-mobile-action-bar-host ::deep .mobile-action-bar__status {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 0.35rem;
+    }
+
+    .workstation-mobile-action-bar-host ::deep .mobile-action-bar__actions {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 0.35rem;
+    }
+
+    .workstation-mobile-action-bar-host ::deep .mobile-action-bar__actions button,
+    .workstation-mobile-action-bar-host ::deep .mobile-action-bar__actions .bit-btn {
+        min-height: 44px;
+        width: 100%;
+        padding-inline: 0.45rem;
     }
 
     .workstation-sidebar {
