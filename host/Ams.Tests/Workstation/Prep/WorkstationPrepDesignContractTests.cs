@@ -193,8 +193,8 @@ public sealed class WorkstationPrepDesignContractTests
         var requiredCssAnchors = new[]
         {
             "@media (max-width: 768px)",
-            ".pipeline-action-bar ::deep button",
-            ".prep-page::deep .pipeline-layout-grid > .pipeline-grid-item--top",
+            ".prep-page ::deep .pipeline-action-bar button",
+            ".prep-page ::deep .pipeline-layout-grid > .pipeline-grid-item--top",
             "min-height: 44px;",
             "font-size: 16px;"
         };

@@ -130,55 +130,55 @@
 
 /* Pipeline dashboard layout */
 
-.prep-page::deep .pipeline-layout-grid.bit-grd {
+.prep-page ::deep .pipeline-layout-grid.bit-grd {
     align-items: stretch;
 }
 
-.prep-page::deep .pipeline-layout-grid > .bit-grd-itm {
+.prep-page ::deep .pipeline-layout-grid > .bit-grd-itm {
     min-width: 0;
 }
 
-.prep-page::deep .pipeline-layout-grid > .pipeline-grid-item--top {
+.prep-page ::deep .pipeline-layout-grid > .pipeline-grid-item--top {
     display: flex;
 }
 
-.prep-page::deep .pipeline-card--top {
+.prep-page ::deep .pipeline-card--top {
     height: 100%;
     display: flex;
     flex-direction: column;
 }
 
-.prep-page::deep .pipeline-card--top > .bit-crd-cnt {
+.prep-page ::deep .pipeline-card--top > .bit-crd-cnt {
     display: flex;
     flex: 1;
 }
 
-.prep-page::deep .pipeline-card {
+.prep-page ::deep .pipeline-card {
     width: 100%;
 }
 
 /* Pipeline Dashboard card - force full width on inner content */
 
-.prep-page::deep .pipeline-card > .bit-crd-cnt {
+.prep-page ::deep .pipeline-card > .bit-crd-cnt {
     width: 100%;
     box-sizing: border-box;
 }
 
-.prep-page::deep .pipeline-card .bit-stk {
+.prep-page ::deep .pipeline-card .bit-stk {
     width: 100%;
 }
 
-.prep-page::deep .pipeline-card .bit-pvt {
+.prep-page ::deep .pipeline-card .bit-pvt {
     width: 100%;
 }
 
-.prep-page::deep .pipeline-card .bit-pvt-bdy {
+.prep-page ::deep .pipeline-card .bit-pvt-bdy {
     width: 100%;
 }
 
 /* Queue Builder */
 
-.prep-page::deep .queue-builder-stack {
+.prep-page ::deep .queue-builder-stack {
     height: 100%;
     justify-content: space-between;
 }
@@ -197,7 +197,7 @@
 
 /* Pipeline Throughput - fill container */
 
-.prep-page::deep .throughput-stack {
+.prep-page ::deep .throughput-stack {
     height: 100%;
     justify-content: space-between;
 }
@@ -307,7 +307,7 @@
 
 /* Pipeline settings dialog - wider layout */
 
-.prep-page::deep .pipeline-settings-dialog .bit-dlg-cnt {
+.prep-page ::deep .pipeline-settings-dialog .bit-dlg-cnt {
     max-width: 720px;
     width: 90vw;
 }
@@ -355,10 +355,10 @@
         min-width: 0;
     }
 
-    .pipeline-action-bar ::deep button,
-    .queue-builder-actions ::deep button,
-    .pipeline-row-actions ::deep button,
-    .history-pager ::deep button {
+    .prep-page ::deep .pipeline-action-bar button,
+    .prep-page ::deep .queue-builder-actions button,
+    .prep-page ::deep .pipeline-row-actions button,
+    .prep-page ::deep .history-pager button {
         min-height: 44px;
     }
 
@@ -368,7 +368,8 @@
         font-size: 16px;
     }
 
-    .prep-page::deep .pipeline-layout-grid > .pipeline-grid-item--top {
+    .prep-page ::deep .pipeline-layout-grid > .pipeline-grid-item--top {
+        --span: 12;
         grid-column: span 12;
     }
 
@@ -389,11 +390,11 @@
         flex-basis: 100%;
     }
 
-    .prep-page::deep .bit-pvt-bdy {
+    .prep-page ::deep .bit-pvt-bdy {
         overflow-x: auto;
     }
 
-    .prep-page::deep .prep-table {
+    .prep-page ::deep .prep-table {
         min-width: 680px;
     }
 }
