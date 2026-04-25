@@ -1,9 +1,28 @@
 @inherits LayoutComponentBase
 @using Ams.Workstation.Server.Components.Shared
+@implements IDisposable
+@inject NavigationManager NavigationManager
 
-<div class="workstation-layout">
+<div class="workstation-layout"
+     data-ams-mobile-module-rail-state="@(isMobileModuleRailOpen ? "open" : "closed")">
     <header class="workstation-header">
         <div class="header-title">AMS Workstation</div>
+
+        <div class="workstation-module-rail-toggle"
+             data-ams-header-control="module-rail-toggle"
+             data-ams-mobile-module-rail-open="@(isMobileModuleRailOpen ? "true" : "false")">
+            <BitButton Variant="BitVariant.Outline"
+                       Color="BitColor.Secondary"
+                       Size="BitSize.Small"
+                       id="@MobileModuleRailToggleId"
+                       aria-haspopup="dialog"
+                       aria-controls="@MobileModuleRailPanelId"
+                       aria-expanded="@(isMobileModuleRailOpen ? "true" : "false")"
+                       OnClick="ToggleMobileModuleRail">
+                @(isMobileModuleRailOpen ? "Close Modules" : "Modules")
+            </BitButton>
+        </div>
+
         <div class="workstation-header-controls-host"
              data-ams-shell-region="header-controls"
              data-ams-mobile-overflow-contract="secondary-actions"
@@ -13,7 +32,10 @@
     </header>
 
     <div class="workstation-shell">
-        <aside class="workstation-sidebar" data-stage-shell-region="left">
+        <aside class="workstation-sidebar @SidebarMobileStateClass"
+               id="@MobileModuleRailPanelId"
+               data-stage-shell-region="left"
+               data-ams-mobile-module-rail="@(isMobileModuleRailOpen ? "open" : "closed")">
             <StageModuleRail />
         </aside>
 
@@ -25,7 +47,59 @@
 
         <aside class="workstation-inspector" data-stage-shell-region="right"><SectionOutlet SectionName="module-inspector" /></aside>
     </div>
+
+    @if (isMobileModuleRailOpen)
+    {
+        <button type="button"
+                class="workstation-module-rail-overlay"
+                aria-label="Close module navigation"
+                data-ams-mobile-module-rail-overlay="visible"
+                @onclick="CloseMobileModuleRail"></button>
+    }
 </div>
+
+@code {
+    private const string MobileModuleRailPanelId = "workstation-mobile-module-rail";
+    private const string MobileModuleRailToggleId = "workstation-mobile-module-rail-toggle";
+
+    private bool isMobileModuleRailOpen;
+
+    private string SidebarMobileStateClass
+        => isMobileModuleRailOpen
+            ? "workstation-sidebar--mobile-open"
+            : "workstation-sidebar--mobile-closed";
+
+    protected override void OnInitialized()
+    {
+        NavigationManager.LocationChanged += HandleLocationChanged;
+    }
+
+    private void ToggleMobileModuleRail()
+    {
+        isMobileModuleRailOpen = !isMobileModuleRailOpen;
+    }
+
+    private void CloseMobileModuleRail()
+    {
+        isMobileModuleRailOpen = false;
+    }
+
+    private void HandleLocationChanged(object? sender, LocationChangedEventArgs args)
+    {
+        if (!isMobileModuleRailOpen)
+        {
+            return;
+        }
+
+        isMobileModuleRailOpen = false;
+        _ = InvokeAsync(StateHasChanged);
+    }
+
+    public void Dispose()
+    {
+        NavigationManager.LocationChanged -= HandleLocationChanged;
+    }
+}
 
 <ToastContainer />
 

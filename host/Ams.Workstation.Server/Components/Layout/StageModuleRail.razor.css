@@ -149,3 +149,27 @@
         border-top: 0;
     }
 }
+
+@media (max-width: 768px) {
+    .stage-module-rail {
+        flex-direction: column;
+        align-items: stretch;
+        gap: 0.75rem;
+        padding: 1rem 0.85rem 1.25rem;
+        overflow-y: auto;
+        overflow-x: hidden;
+    }
+
+    .stage-module-rail__section-label,
+    .stage-module-rail__diagnostic-label,
+    .stage-module-rail__diagnostic-value {
+        text-align: left;
+    }
+
+    .stage-module-rail__module-link,
+    .stage-module-rail__module-link.bit-btn,
+    .stage-module-rail::deep .bit-btn,
+    .stage-module-rail::deep button {
+        min-height: 44px;
+    }
+}

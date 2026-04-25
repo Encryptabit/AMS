@@ -6,6 +6,11 @@ namespace Ams.Tests.Workstation.Shell;
 
 public sealed class StageShellPathResolutionTests
 {
+    private const string MainLayoutRelativePath = "host/Ams.Workstation.Server/Components/Layout/MainLayout.razor";
+    private const string MainLayoutCssRelativePath = "host/Ams.Workstation.Server/Components/Layout/MainLayout.razor.css";
+    private const string StageModuleRailRelativePath = "host/Ams.Workstation.Server/Components/Layout/StageModuleRail.razor";
+    private const string StageModuleRailCssRelativePath = "host/Ams.Workstation.Server/Components/Layout/StageModuleRail.razor.css";
+
     [Theory]
     [InlineData("/proof", StageRouteCatalog.StageIds.Proof, StageRouteCatalog.ModuleIds.ProofEditing)]
     [InlineData("/proof/pickups", StageRouteCatalog.StageIds.Proof, StageRouteCatalog.ModuleIds.ProofPickups)]
@@ -110,6 +115,33 @@ public sealed class StageShellPathResolutionTests
         }
     }
 
+    [Fact]
+    public void MobileModuleRailContract_ToggleDiagnosticsAndHideByDefaultAnchors_ArePresent()
+    {
+        var layout = ReadRepoFile(MainLayoutRelativePath);
+        var layoutCss = ReadRepoFile(MainLayoutCssRelativePath);
+        var moduleRail = ReadRepoFile(StageModuleRailRelativePath);
+        var moduleRailCss = ReadRepoFile(StageModuleRailCssRelativePath);
+
+        AssertSourceContains(layout, MainLayoutRelativePath, "data-ams-mobile-module-rail-state=", "layout-level rail open/closed diagnostic marker");
+        AssertSourceContains(layout, MainLayoutRelativePath, "data-ams-header-control=\"module-rail-toggle\"", "mobile module-rail toggle anchor");
+        AssertSourceContains(layout, MainLayoutRelativePath, "data-ams-mobile-module-rail-open=", "mobile module-rail toggle-state marker");
+        AssertSourceContains(layout, MainLayoutRelativePath, "data-ams-mobile-module-rail=", "sidebar rail state marker");
+        AssertSourceContains(layout, MainLayoutRelativePath, "data-ams-mobile-module-rail-overlay=\"visible\"", "drawer overlay diagnostic marker");
+        AssertSourceContains(layout, MainLayoutRelativePath, "HandleLocationChanged", "route-change handler used to auto-close mobile drawer");
+        AssertSourceContains(layout, MainLayoutRelativePath, "isMobileModuleRailOpen = false;", "mobile drawer close assignment");
+
+        AssertSourceContains(layoutCss, MainLayoutCssRelativePath, "@media (max-width: 768px)", "mobile breakpoint for rail drawer behavior");
+        AssertSourceContains(layoutCss, MainLayoutCssRelativePath, ".workstation-module-rail-toggle", "mobile module-rail toggle style block");
+        AssertSourceContains(layoutCss, MainLayoutCssRelativePath, ".workstation-sidebar.workstation-sidebar--mobile-open", "mobile-open sidebar selector");
+        AssertSourceContains(layoutCss, MainLayoutCssRelativePath, "transform: translateX(-106%);", "default hidden mobile drawer transform");
+        AssertSourceContains(layoutCss, MainLayoutCssRelativePath, ".workstation-module-rail-overlay", "mobile drawer overlay style block");
+
+        AssertSourceContains(moduleRail, StageModuleRailRelativePath, "data-ams-mobile-module-rail-contract=\"collapsible\"", "collapsible module-rail contract marker");
+        AssertSourceContains(moduleRail, StageModuleRailRelativePath, "data-ams-mobile-module-rail-link=\"module\"", "module-selection anchor");
+        AssertSourceContains(moduleRailCss, StageModuleRailCssRelativePath, "min-height: 44px;", "touch-target minimum size");
+    }
+
     private static StageRouteMatch AssertRouteContract(
         string path,
         string expectedStageId,
@@ -130,5 +162,41 @@ public sealed class StageShellPathResolutionTests
             $"Path resolution contract failure for path '{path}'. Expected stage='{expectedStageId}', module='{expectedModuleId}'. Resolved stage='{resolvedStageId}', module='{resolvedModuleId}', normalized='{resolvedNormalizedPath}', template='{resolvedTemplate}', compatibility='{resolvedCompatibility}'.");
 
         return match!;
+    }
+
+    private static void AssertSourceContains(string source, string relativePath, string anchor, string anchorDescription)
+    {
+        Assert.True(
+            source.Contains(anchor, StringComparison.Ordinal),
+            $"Missing shell/mobile anchor '{anchorDescription}' in '{relativePath}'. Expected snippet: {anchor}");
+    }
+
+    private static string ReadRepoFile(string relativePath)
+    {
+        var repoRoot = FindRepoRoot();
+        var fullPath = Path.Combine(repoRoot, relativePath);
+
+        Assert.True(
+            File.Exists(fullPath),
+            $"Required shell/mobile contract file is missing: relative='{relativePath}', full='{fullPath}'.");
+
+        return File.ReadAllText(fullPath);
+    }
+
+    private static string FindRepoRoot()
+    {
+        var current = new DirectoryInfo(AppContext.BaseDirectory);
+        while (current is not null)
+        {
+            if (File.Exists(Path.Combine(current.FullName, "host", "Ams.sln"))
+                && Directory.Exists(Path.Combine(current.FullName, "host")))
+            {
+                return current.FullName;
+            }
+
+            current = current.Parent;
+        }
+
+        throw new DirectoryNotFoundException("Could not locate repo root containing host/Ams.sln.");
     }
 }

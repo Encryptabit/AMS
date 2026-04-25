@@ -19,7 +19,7 @@ public sealed class StageShellCompositionContractTests
         AssertContains(source, MainLayoutRelativePath, "data-stage-shell-region=\"left\"", "left shell region marker");
         AssertContains(source, MainLayoutRelativePath, "data-stage-shell-region=\"center\"", "center shell region marker");
         AssertContains(source, MainLayoutRelativePath, "data-stage-shell-region=\"right\"", "right shell region marker");
-        AssertContains(source, MainLayoutRelativePath, "<aside class=\"workstation-sidebar\"", "left sidebar shell host");
+        AssertContains(source, MainLayoutRelativePath, "<aside class=\"workstation-sidebar @SidebarMobileStateClass\"", "left sidebar shell host");
         AssertContains(source, MainLayoutRelativePath, "<StageModuleRail />", "sidebar module rail host");
         AssertContains(source, MainLayoutRelativePath, "<SectionOutlet SectionName=\"module-inspector\" />", "optional inspector outlet host");
 

@@ -13,7 +13,8 @@
               data-stage-shell-stage="@_state.ActiveStageId"
               data-stage-shell-module="@_state.ActiveModuleId"
               data-stage-shell-path="@_state.NormalizedPath"
-              data-stage-shell-marker="@_state.DiagnosticMarker">
+              data-stage-shell-marker="@_state.DiagnosticMarker"
+              data-ams-mobile-module-rail-contract="collapsible">
 
         <BitStack Class="stage-module-rail__section" Horizontal="false" Gap="0.45rem" data-stage-shell-nav="modules">
             <BitText Class="stage-module-rail__section-label">Modules</BitText>
@@ -27,7 +28,8 @@
                                Style="justify-content: center;"
                                Class="@(module.IsActive ? "stage-module-rail__module-link stage-module-rail__module-link--active bit-btn-flw" : "stage-module-rail__module-link bit-btn-flw")"
                                data-stage-module-id="@module.Id"
-                               data-stage-module-active="@(module.IsActive ? "true" : "false")">
+                               data-stage-module-active="@(module.IsActive ? "true" : "false")"
+                               data-ams-mobile-module-rail-link="module">
                         @module.DisplayName
                     </BitButton>
                 }
@@ -42,7 +44,8 @@ else
               AriaHidden="true"
               data-stage-shell="inactive"
               data-stage-shell-path="@_state.NormalizedPath"
-              data-stage-shell-warning="@_state.WarningMessage">
+              data-stage-shell-warning="@_state.WarningMessage"
+              data-ams-mobile-module-rail-contract="collapsible">
         <BitText Class="stage-module-rail__fallback-text">@_state.WarningMessage</BitText>
     </BitStack>
 }

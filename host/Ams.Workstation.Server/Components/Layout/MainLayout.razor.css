@@ -25,6 +25,15 @@
     flex-shrink: 0;
 }
 
+.workstation-module-rail-toggle {
+    display: none;
+    flex-shrink: 0;
+}
+
+.workstation-module-rail-overlay {
+    display: none;
+}
+
 .workstation-shell {
     display: flex;
     flex: 1;
@@ -92,5 +101,84 @@
 
     .workstation-inspector {
         display: none;
+    }
+}
+
+@media (max-width: 768px) {
+    .workstation-layout {
+        position: relative;
+    }
+
+    .workstation-header {
+        height: auto;
+        min-height: var(--header-height);
+        padding: 0.5rem 0.75rem;
+        gap: 0.75rem;
+        flex-wrap: wrap;
+        align-items: flex-start;
+    }
+
+    .header-title {
+        flex: 1 1 auto;
+        min-height: 44px;
+        display: inline-flex;
+        align-items: center;
+    }
+
+    .workstation-module-rail-toggle {
+        display: flex;
+        flex: 0 0 auto;
+        min-height: 44px;
+    }
+
+    .workstation-module-rail-toggle ::deep button,
+    .workstation-module-rail-toggle ::deep .bit-btn {
+        min-height: 44px;
+    }
+
+    .workstation-header-controls-host {
+        flex: 1 1 100%;
+        width: 100%;
+        min-width: 0;
+    }
+
+    .workstation-shell {
+        position: relative;
+        flex-direction: column;
+    }
+
+    .workstation-sidebar {
+        position: fixed;
+        top: 0;
+        left: 0;
+        bottom: 0;
+        width: min(18rem, 86vw);
+        max-width: 100%;
+        border-right: 1px solid var(--bit-clr-border-sec, #333);
+        border-bottom: 0;
+        background: var(--bit-clr-bg-primary, #101010);
+        z-index: 1250;
+        box-shadow: 0 16px 32px rgba(0, 0, 0, 0.35);
+        transform: translateX(-106%);
+        transition: transform 160ms ease-in-out;
+        visibility: hidden;
+        pointer-events: none;
+    }
+
+    .workstation-sidebar.workstation-sidebar--mobile-open {
+        transform: translateX(0);
+        visibility: visible;
+        pointer-events: auto;
+    }
+
+    .workstation-module-rail-overlay {
+        display: block;
+        position: fixed;
+        inset: 0;
+        border: 0;
+        margin: 0;
+        padding: 0;
+        background: rgba(15, 23, 42, 0.38);
+        z-index: 1200;
     }
 }
