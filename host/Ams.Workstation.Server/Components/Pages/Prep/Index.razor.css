@@ -53,6 +53,10 @@
     overflow-wrap: anywhere;
 }
 
+.prep-running-status {
+    align-self: center;
+}
+
 .prep-warning-list {
     margin: 0;
     padding-left: 1.25rem;
@@ -95,7 +99,33 @@
 /* Pipeline action bar */
 
 .pipeline-action-bar {
-    padding: 0.5rem 0;
+    padding: 0.5rem 0 0.75rem;
+}
+
+.pipeline-action-bar__stats,
+.pipeline-action-bar__controls {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    min-width: 0;
+}
+
+.pipeline-action-bar__controls {
+    justify-content: flex-end;
+}
+
+.pipeline-action-button {
+    min-width: 8.5rem;
+}
+
+.pipeline-top-summary {
+    margin: 0 0 0.25rem;
+}
+
+.pipeline-history-label,
+.pipeline-settings-contract {
+    display: block;
+    margin-bottom: 0.35rem;
 }
 
 /* Pipeline dashboard layout */
@@ -112,6 +142,16 @@
     display: flex;
 }
 
+.prep-page::deep .pipeline-card--top {
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+}
+
+.prep-page::deep .pipeline-card--top > .bit-crd-cnt {
+    display: flex;
+    flex: 1;
+}
 
 .prep-page::deep .pipeline-card {
     width: 100%;
@@ -148,6 +188,11 @@
     flex-direction: column;
     gap: 0.25rem;
     flex: 1;
+}
+
+.queue-builder-actions,
+.pipeline-row-actions {
+    min-width: 0;
 }
 
 /* Pipeline Throughput - fill container */
@@ -286,5 +331,69 @@
 
     .prep-control-sections {
         grid-template-columns: 1fr;
+    }
+}
+
+@media (max-width: 768px) {
+    .pipeline-action-bar {
+        align-items: stretch;
+        gap: 0.75rem;
+    }
+
+    .pipeline-action-bar__stats,
+    .pipeline-action-bar__controls {
+        width: 100%;
+        justify-content: space-between;
+    }
+
+    .pipeline-action-bar__controls {
+        justify-content: flex-start;
+    }
+
+    .pipeline-action-button {
+        flex: 1 1 9.5rem;
+        min-width: 0;
+    }
+
+    .pipeline-action-bar ::deep button,
+    .queue-builder-actions ::deep button,
+    .pipeline-row-actions ::deep button,
+    .history-pager ::deep button {
+        min-height: 44px;
+    }
+
+    .prep-page ::deep input,
+    .prep-page ::deep select,
+    .prep-page ::deep textarea {
+        font-size: 16px;
+    }
+
+    .prep-page::deep .pipeline-layout-grid > .pipeline-grid-item--top {
+        grid-column: span 12;
+    }
+
+    .queue-builder-range {
+        gap: 0.5rem;
+    }
+
+    .pipeline-throughput-row {
+        gap: 0.5rem;
+    }
+
+    .pipeline-throughput-box {
+        flex: 1 1 calc(50% - 0.25rem);
+        min-height: 5rem;
+    }
+
+    .pipeline-throughput-box--wide {
+        flex-basis: 100%;
+    }
+
+    .prep-page::deep .bit-pvt-bdy {
+        overflow-x: auto;
+    }
+
+    .prep-page::deep .prep-table {
+        min-width: 680px;
     }
 }

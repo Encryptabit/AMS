@@ -110,7 +110,7 @@
                      && string.Equals(Session.LastChapterId, SelectedQueueItem.Chapter, StringComparison.OrdinalIgnoreCase))
                 {
                     <div class="inspector-section">
-                        <BitText Typography="BitTypography.Overline">Artifacts</BitText>
+                        <BitText Typography="BitTypography.Overline">Last artifact set</BitText>
                         @foreach (var artifact in Session.LastArtifacts)
                         {
                             <div class="inspector-asset-row">
@@ -162,7 +162,7 @@
             {
                 var readiness = Session.LastRuntimeReadiness;
                 <div class="inspector-section">
-                    <BitText Typography="BitTypography.Overline">Runtime</BitText>
+                    <BitText Typography="BitTypography.Overline">Runtime readiness snapshot</BitText>
                     <div class="inspector-runtime-row">
                         <BitText Typography="BitTypography.Caption2" Color="BitColor.SecondaryForeground">ASR</BitText>
                         <BitTag Color="@GetRuntimeReadinessColor(readiness.ModelProvenance.State)" Size="BitSize.Small">@readiness.ModelProvenance.State</BitTag>
@@ -215,41 +215,67 @@
         @if (HasWorkingDirectory && Workspace.HasBookIndex)
         {
             <BitStack Horizontal="true"
-                      HorizontalAlign="BitAlignment.Center"
+                      HorizontalAlign="BitAlignment.SpaceBetween"
                       VerticalAlign="BitAlignment.Center"
                       Gap="0.75rem"
                       Wrap="true"
-                      Class="pipeline-action-bar">
-                <BitText Typography="BitTypography.Body2">
-                    <strong>@Workspace.AvailableChapters.Count</strong> CHAPTERS
-                </BitText>
-                <BitButton Variant="BitVariant.Outline"
-                           Size="BitSize.Small"
-                           Color="BitColor.Secondary"
-                           IconName="@BitIconName.Equalizer"
-                           Title="Pipeline settings"
-                           AriaLabel="Pipeline settings"
-                           OnClick="@(() => _isPipelineSettingsOpen = true)" />
-                <BitButton Variant="BitVariant.Fill"
-                           Color="BitColor.Primary"
-                           Size="BitSize.Small"
-                           OnClick="HandleRunBatchPrepAsync"
-                           IsEnabled="@CanRunBatchQueue">
-                    Run batch prep
-                </BitButton>
-                <BitButton Variant="BitVariant.Outline"
-                           Color="BitColor.Warning"
-                           Size="BitSize.Small"
-                           OnClick="HandleCancelBatch"
-                           IsEnabled="@(_isBatchRunning || (Session.IsRunning && !Session.IsCancellationRequested))">
-                    Cancel batch
-                </BitButton>
+                      Class="pipeline-action-bar"
+                      data-ams-prep-mobile-contract="pipeline-action-bar">
+                <BitStack Horizontal="true"
+                          VerticalAlign="BitAlignment.Center"
+                          Gap="0.5rem"
+                          Wrap="true"
+                          Class="pipeline-action-bar__stats">
+                    <BitText Typography="BitTypography.Body2">
+                        <strong>@Workspace.AvailableChapters.Count</strong> CHAPTERS
+                    </BitText>
+                    <BitTag Color="@(_isBatchRunning ? BitColor.Primary : BitColor.Secondary)"
+                            Class="prep-running-status">
+                        @(_isBatchRunning ? "Batch running" : "Batch idle")
+                    </BitTag>
+                </BitStack>
+                <BitStack Horizontal="true"
+                          VerticalAlign="BitAlignment.Center"
+                          Gap="0.5rem"
+                          Wrap="true"
+                          Class="pipeline-action-bar__controls">
+                    <BitButton Variant="BitVariant.Outline"
+                               Size="BitSize.Small"
+                               Color="BitColor.Secondary"
+                               IconName="@BitIconName.Equalizer"
+                               Title="Pipeline settings"
+                               AriaLabel="Pipeline settings"
+                               Class="pipeline-action-button"
+                               OnClick="@(() => _isPipelineSettingsOpen = true)" />
+                    <BitButton Variant="BitVariant.Fill"
+                               Color="BitColor.Primary"
+                               Size="BitSize.Small"
+                               Class="pipeline-action-button"
+                               OnClick="HandleRunBatchPrepAsync"
+                               IsEnabled="@CanRunBatchQueue">
+                        Run batch prep
+                    </BitButton>
+                    <BitButton Variant="BitVariant.Outline"
+                               Color="BitColor.Warning"
+                               Size="BitSize.Small"
+                               Class="pipeline-action-button"
+                               OnClick="HandleCancelBatch"
+                               IsEnabled="@(_isBatchRunning || (Session.IsRunning && !Session.IsCancellationRequested))">
+                        Cancel batch
+                    </BitButton>
+                </BitStack>
             </BitStack>
+
+            <BitText Typography="BitTypography.Caption1"
+                     Color="BitColor.SecondaryForeground"
+                     Class="pipeline-top-summary">
+                Queue Builder + Pipeline Throughput
+            </BitText>
 
             <BitGrid Columns="12" Gap="1rem" Class="pipeline-layout-grid">
 
                 <BitGridItem ColumnSpan="4" Class="pipeline-grid-item--top">
-                    <BitCard FullWidth="true" Class="pipeline-card pipeline-card--top" Style="height:100%;display:flex;flex-direction:column">
+                    <BitCard FullWidth="true" Class="pipeline-card pipeline-card--top">
                         <BitStack Horizontal="false" Gap="0.75rem" Class="queue-builder-stack">
                             <BitText Typography="BitTypography.Overline">Queue Builder</BitText>
                             <div class="queue-builder-range">
@@ -272,7 +298,7 @@
                                            Step="1"
                                            IsEnabled="@(!Session.IsRunning && !_isBatchRunning)" />
                             </div>
-                            <BitStack Horizontal="true" Gap="0.5rem" Wrap="true">
+                            <BitStack Horizontal="true" Gap="0.5rem" Wrap="true" Class="queue-builder-actions">
                                 <BitButton Variant="BitVariant.Fill"
                                            Color="BitColor.Primary"
                                            Size="BitSize.Small"
@@ -294,7 +320,7 @@
                 </BitGridItem>
 
                 <BitGridItem ColumnSpan="8" Class="pipeline-grid-item--top">
-                    <BitCard FullWidth="true" Class="pipeline-card pipeline-card--top" Style="height:100%;display:flex;flex-direction:column">
+                    <BitCard FullWidth="true" Class="pipeline-card pipeline-card--top">
                         <BitStack Horizontal="false" Gap="0.75rem" Class="throughput-stack">
                             <BitStack Horizontal="true" HorizontalAlign="BitAlignment.SpaceBetween" VerticalAlign="BitAlignment.Center">
                                 <BitText Typography="BitTypography.Overline">Pipeline Throughput</BitText>
@@ -382,7 +408,7 @@
                                                             }
                                                         </td>
                                                         <td>
-                                                            <BitStack Horizontal="true" Gap="0.25rem">
+                                                            <BitStack Horizontal="true" Gap="0.25rem" Class="pipeline-row-actions">
                                                                 <BitButton Variant="BitVariant.Text"
                                                                            Size="BitSize.Small"
                                                                            Color="BitColor.Primary"
@@ -407,6 +433,11 @@
                                     </table>
                                 </BitPivotItem>
                                 <BitPivotItem HeaderText="History" IconName="@BitIconName.History">
+                                    <BitText Typography="BitTypography.Caption1"
+                                             Color="BitColor.SecondaryForeground"
+                                             Class="pipeline-history-label">
+                                        Progress timeline
+                                    </BitText>
                                     @if (Session.ProgressUpdates.Count > 0)
                                     {
                                         var chapters = HistoryChapterKeys;
@@ -613,6 +644,11 @@
             <BitText Typography="BitTypography.Body2" Color="BitColor.SecondaryForeground">
                 Configure pipeline execution options. Changes apply immediately to the next run.
             </BitText>
+            <BitText Typography="BitTypography.Caption1"
+                     Color="BitColor.SecondaryForeground"
+                     Class="pipeline-settings-contract">
+                Last typed request snapshot
+            </BitText>
 
             <div class="prep-control-sections">
                 <div class="prep-control-section">
@@ -784,7 +820,7 @@
             {
                 <BitMessage Color="BitColor.Warning">
                     <BitStack Horizontal="false" Gap="0.25rem">
-                        <BitText Typography="BitTypography.Body2">Option warnings</BitText>
+                        <BitText Typography="BitTypography.Body2">Option normalization warnings</BitText>
                         <ul class="prep-warning-list">
                             @foreach (var warning in OperatorWarnings)
                             {

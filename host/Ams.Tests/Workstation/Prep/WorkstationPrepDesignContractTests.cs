@@ -49,7 +49,7 @@ public sealed class WorkstationPrepDesignContractTests
         var requiredBitAnchors = new[]
         {
             "<BitStack Horizontal=\"true\"",
-            "<BitCard>",
+            "<BitCard",
             "<BitMessage",
             "<BitDropdown",
             "<BitCheckbox",
@@ -80,15 +80,15 @@ public sealed class WorkstationPrepDesignContractTests
             AssertContainsAnchor(source, PrepIndexRelativePath, anchor, "Prep diagnostics surface anchor");
         }
 
-        var bitCardCount = Regex.Matches(source, "<BitCard>", RegexOptions.CultureInvariant).Count;
+        var bitCardCount = Regex.Matches(source, "<BitCard\\b", RegexOptions.CultureInvariant).Count;
         Assert.True(
             bitCardCount >= 5,
             $"Expected at least five BitCard layout anchors in '{PrepIndexRelativePath}' to maintain Bit-first sectional composition, but found {bitCardCount}.");
 
         var diagnosticsTableCount = Regex.Matches(source, "<table class=\"prep-table\">", RegexOptions.CultureInvariant).Count;
         Assert.True(
-            diagnosticsTableCount >= 3,
-            $"Expected at least three diagnostics table anchors in '{PrepIndexRelativePath}' (stage results, progress timeline, artifacts), but found {diagnosticsTableCount}.");
+            diagnosticsTableCount >= 2,
+            $"Expected at least two diagnostics table anchors in '{PrepIndexRelativePath}' (active tasks and progress timeline), but found {diagnosticsTableCount}.");
     }
 
     [Fact]
@@ -172,6 +172,42 @@ public sealed class WorkstationPrepDesignContractTests
         AssertContainsAnchor(source, PrepCssRelativePath, "var(--bit-clr-bg-sec)", "Bit tokenized tonal background");
         AssertContainsAnchor(source, PrepCssRelativePath, "var(--bit-clr-brd-sec)", "Bit tokenized subtle border");
         AssertContainsAnchor(source, PrepCssRelativePath, "var(--bit-clr-fg-secondary)", "Bit tokenized secondary foreground");
+    }
+
+    [Fact]
+    public void PrepMobileLayout_DeclaresResponsiveDensityContracts()
+    {
+        var source = ReadRepoFile(PrepIndexRelativePath);
+        var css = ReadRepoFile(PrepCssRelativePath);
+
+        var requiredMarkupAnchors = new[]
+        {
+            "data-ams-prep-mobile-contract=\"pipeline-action-bar\"",
+            "pipeline-action-bar__stats",
+            "pipeline-action-bar__controls",
+            "pipeline-action-button",
+            "prep-running-status",
+            "pipeline-grid-item--top"
+        };
+
+        var requiredCssAnchors = new[]
+        {
+            "@media (max-width: 768px)",
+            ".pipeline-action-bar ::deep button",
+            ".prep-page::deep .pipeline-layout-grid > .pipeline-grid-item--top",
+            "min-height: 44px;",
+            "font-size: 16px;"
+        };
+
+        foreach (var anchor in requiredMarkupAnchors)
+        {
+            AssertContainsAnchor(source, PrepIndexRelativePath, anchor, "Prep mobile markup contract anchor");
+        }
+
+        foreach (var anchor in requiredCssAnchors)
+        {
+            AssertContainsAnchor(css, PrepCssRelativePath, anchor, "Prep mobile responsive style anchor");
+        }
     }
 
     private static string[] ExtractPrepSelectors(string source)
