@@ -7,7 +7,7 @@
 @inject Ams.Workstation.Server.Services.WorkspaceHistoryService WorkspaceHistory
 @inject Ams.Workstation.Server.Services.BookMetadataResetService MetadataReset
 
-<div class="header-controls">
+<div class="header-controls" data-ams-mobile-overflow-state="@(isMobileOverflowOpen ? "open" : "closed")">
     <div class="header-row header-row--primary">
         <div class="header-nav">
             <BitButton Variant="@(IsActive(StageRouteCatalog.StageIds.Prep) ? BitVariant.Fill : BitVariant.Text)"
@@ -59,6 +59,15 @@
                          OnChange="OnSavedWorkspaceChange" />
         </div>
 
+        <div class="header-mobile-overflow-trigger" data-ams-header-control="mobile-overflow-trigger">
+            <BitButton Variant="BitVariant.Outline"
+                       Color="BitColor.Secondary"
+                       Size="BitSize.Small"
+                       OnClick="ToggleMobileOverflow">
+                More
+            </BitButton>
+        </div>
+
         <div class="header-secondary-optional" data-ams-header-optional="mobile-overflow-hidden">
             <div class="header-field header-field--directory" data-ams-header-control="directory">
                 <BitTextField @bind-Value="workingDirectory"
@@ -94,6 +103,66 @@
     </div>
 </div>
 
+@if (isMobileOverflowOpen)
+{
+    <div class="header-mobile-overflow-overlay"
+         data-ams-header-control="mobile-overflow-overlay"
+         @onclick="CloseMobileOverflow">
+        <div id="header-mobile-overflow-panel"
+             class="header-mobile-overflow-panel"
+             role="dialog"
+             aria-modal="true"
+             aria-label="Header secondary controls"
+             data-ams-header-control="mobile-overflow-panel"
+             @onkeydown="HandleMobileOverflowKeyDown"
+             @onclick:stopPropagation="true"
+             tabindex="0">
+            <div class="header-mobile-overflow-header">
+                <span>Header controls</span>
+                <BitButton Variant="BitVariant.Text"
+                           Color="BitColor.Secondary"
+                           Size="BitSize.Small"
+                           OnClick="CloseMobileOverflow">
+                    Close
+                </BitButton>
+            </div>
+
+            <div class="header-mobile-overflow-body">
+                <div class="header-field header-field--directory" data-ams-header-control="directory-mobile">
+                    <BitTextField @bind-Value="workingDirectory"
+                                  Immediate="true"
+                                  Placeholder="Working directory..."
+                                  Style="width: 100%; min-width: 0;"
+                                  OnKeyDown="OnDirectoryKeyDown" />
+                </div>
+
+                <div class="header-actions" data-ams-header-control="directory-actions-mobile">
+                    <BitButton Variant="BitVariant.Fill"
+                               Color="BitColor.Primary"
+                               Size="BitSize.Small"
+                               OnClick="SetDirectoryFromOverflow"
+                               IsEnabled="@(!string.IsNullOrWhiteSpace(workingDirectory))">
+                        Set
+                    </BitButton>
+                    <BitButton Variant="BitVariant.Outline"
+                               Color="BitColor.Warning"
+                               Size="BitSize.Small"
+                               OnClick="ResetMetadataFromOverflow"
+                               IsEnabled="@Workspace.IsInitialized">
+                        Reset Metadata
+                    </BitButton>
+                </div>
+
+                <div class="header-options" data-ams-header-control="settings-mobile">
+                    <BitCheckbox Label="Precompute Peaks In Background"
+                                 Value="@Workspace.PrecomputePeaksInBackground"
+                                 OnChange="HandlePrecomputePeaksToggle" />
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
 @if (!string.IsNullOrEmpty(message))
 {
     <div class="error-toast">
@@ -122,6 +191,7 @@
     private List<BitDropdownItem<string>> chapterItems = new();
     private List<BitDropdownItem<string>> savedWorkspaceItems = new();
     private bool isResetDialogOpen;
+    private bool isMobileOverflowOpen;
     private string resetDialogMessage = string.Empty;
 
     protected override void OnInitialized()
@@ -150,6 +220,7 @@
     {
         UpdateCurrentPath();
         SyncSelectedChapter();
+        isMobileOverflowOpen = false;
         StateHasChanged();
     }
 
@@ -176,7 +247,37 @@
             return;
         }
 
+        isMobileOverflowOpen = false;
         NavigationManager.NavigateTo(StageRouteCatalog.GetStageEntryPath(stageId));
+    }
+
+    private void ToggleMobileOverflow()
+    {
+        isMobileOverflowOpen = !isMobileOverflowOpen;
+    }
+
+    private void CloseMobileOverflow()
+    {
+        isMobileOverflowOpen = false;
+    }
+
+    private void HandleMobileOverflowKeyDown(KeyboardEventArgs e)
+    {
+        if (string.Equals(e.Key, "Escape", StringComparison.OrdinalIgnoreCase))
+        {
+            CloseMobileOverflow();
+        }
+    }
+
+    private void SetDirectoryFromOverflow()
+    {
+        SetDirectory();
+    }
+
+    private void ResetMetadataFromOverflow()
+    {
+        CloseMobileOverflow();
+        ResetMetadataAsync();
     }
 
     private void OnDirectoryKeyDown(KeyboardEventArgs e)
@@ -214,6 +315,7 @@
         WorkspaceHistory.RememberWorkspace(workingDirectory);
 
         // Force full page reload at root so stale chapter URLs don't persist
+        isMobileOverflowOpen = false;
         NavigationManager.NavigateTo("/", forceLoad: true);
     }
 
@@ -273,6 +375,7 @@
         }
 
         workingDirectory = path;
+        isMobileOverflowOpen = false;
         SetDirectory();
     }
 
@@ -280,6 +383,7 @@
     {
         if (!string.IsNullOrEmpty(chapter) && Workspace.SelectChapter(chapter))
         {
+            isMobileOverflowOpen = false;
             NavigationManager.NavigateTo(StageRouteCatalog.BuildProofChapterCompatibilityPath(chapter));
         }
     }
@@ -292,6 +396,7 @@
     private void ResetMetadataAsync()
     {
         message = null;
+        isMobileOverflowOpen = false;
 
         if (!Workspace.IsInitialized || string.IsNullOrWhiteSpace(Workspace.WorkingDirectory))
         {
