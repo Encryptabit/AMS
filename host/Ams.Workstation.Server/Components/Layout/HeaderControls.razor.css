@@ -3,10 +3,10 @@
 .header-controls {
     display: flex;
     align-items: center;
-    gap: 0.75rem;
+    gap: 0.5rem;
     flex: 1 1 auto;
     min-width: 0;
-    flex-wrap: wrap;
+    flex-wrap: nowrap;
 }
 
 .header-row {
@@ -17,15 +17,16 @@
 }
 
 .header-row--primary {
-    flex: 0 1 auto;
-    flex-wrap: wrap;
+    flex: 1 1 auto;
+    min-width: 0;
+    justify-content: center;
 }
 
 .header-row--secondary {
-    margin-left: auto;
-    flex: 0 1 auto;
+    flex: 0 0 auto;
     justify-content: flex-end;
-    flex-wrap: wrap;
+    flex-wrap: nowrap;
+    margin-left: auto;
 }
 
 .header-nav {
@@ -38,8 +39,14 @@
 .header-chapter {
     flex: 0 1 18rem;
     width: 18rem;
-    max-width: 28vw;
+    max-width: 32vw;
     min-width: 12rem;
+    margin: 0 auto;
+}
+
+.header-chapter ::deep [id$="-text-container"] {
+    text-align: center;
+    justify-content: center;
 }
 
 .header-extra {
@@ -55,17 +62,30 @@
     gap: 0.5rem;
 }
 
+/* Inline secondary controls are hidden everywhere; they live inside the more drawer. */
 .header-secondary-optional {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    min-width: 0;
-    flex: 0 1 auto;
-    flex-wrap: wrap;
+    display: none !important;
+}
+
+/* Hide the inline saved-workspaces dropdown on desktop too — moved into the drawer. */
+.header-field--workspace[data-ams-header-control="workspace"] {
+    display: none;
 }
 
 .header-mobile-overflow-trigger {
-    display: none;
+    display: flex;
+    flex: 0 0 auto;
+}
+
+.header-mobile-overflow-trigger ::deep .header-settings-trigger {
+    min-width: 3rem;
+    min-height: 36px;
+}
+
+.header-mobile-overflow-trigger ::deep .header-settings-trigger i,
+.header-mobile-overflow-trigger ::deep .header-settings-trigger .bit-icon {
+    font-size: 0.85rem;
+    line-height: 1;
 }
 
 .header-mobile-overflow-trigger[data-ams-mobile-overflow-open="true"] ::deep button,
@@ -74,7 +94,7 @@
 }
 
 .header-mobile-overflow-overlay {
-    display: none;
+    display: block;
     position: fixed;
     inset: 0;
     background: rgba(15, 23, 42, 0.35);
@@ -85,7 +105,8 @@
     position: absolute;
     top: calc(var(--header-height) + 0.4rem);
     right: 0.6rem;
-    width: min(22rem, 92vw);
+    width: max-content;
+    max-width: min(48rem, 92vw);
     max-height: calc(100vh - var(--header-height) - 1rem);
     background: var(--bit-clr-bg-pri, #1a1a1a);
     border: 1px solid var(--bit-clr-brd-pri, #3a3a3a);
@@ -95,7 +116,7 @@
     display: flex;
     flex-direction: column;
     gap: 0.6rem;
-    overflow-y: auto;
+    overflow: auto;
 }
 
 .header-mobile-overflow-panel:focus {
@@ -110,10 +131,34 @@
     gap: 0.75rem;
 }
 
+/* Drawer body: lay items out horizontally on desktop. Mobile overrides to vertical. */
 .header-mobile-overflow-body {
     display: flex;
-    flex-direction: column;
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-items: center;
     gap: 0.75rem;
+}
+
+.header-mobile-overflow-body .header-field--workspace,
+.header-mobile-overflow-body .header-field--directory {
+    flex: 0 0 14rem;
+    min-width: 12rem;
+}
+
+.header-mobile-overflow-body .header-actions {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    gap: 0.5rem;
+    flex: 0 0 auto;
+}
+
+.header-mobile-overflow-body .header-options {
+    display: flex;
+    align-items: center;
+    flex: 0 0 auto;
+    white-space: nowrap;
 }
 
 .header-settings-extra {
@@ -121,6 +166,7 @@
     flex-direction: column;
     padding-top: 0.6rem;
     border-top: 1px solid var(--bit-clr-border-sec, #333);
+    flex-basis: 100%;
 }
 
 .header-settings-extra:empty {
@@ -184,9 +230,6 @@
         width: 50vw;
         max-width: 50vw;
         min-width: 0;
-    }
-
-    .header-chapter {
         text-align: center;
     }
 
@@ -225,16 +268,6 @@
         display: none;
     }
 
-    /* Hide only the inline (header-row) workspace dropdown; the drawer copy keeps its own instance. */
-    .header-field--workspace[data-ams-header-control="workspace"] {
-        display: none;
-    }
-
-    .header-mobile-overflow-trigger {
-        display: flex;
-        flex: 0 0 auto;
-    }
-
     .header-mobile-overflow-trigger ::deep button,
     .header-mobile-overflow-trigger ::deep .bit-btn {
         min-height: 44px;
@@ -244,31 +277,84 @@
         padding: 0;
     }
 
-    .header-mobile-overflow-overlay {
-        display: block;
+    .header-mobile-overflow-panel {
+        width: min(22rem, 92vw);
+        max-width: min(22rem, 92vw);
     }
 
-    .header-secondary-optional {
-        display: none !important;
+    .header-mobile-overflow-body {
+        flex-direction: column;
+        align-items: stretch;
     }
 
-    .header-field--directory {
-        flex-basis: 100%;
+    .header-mobile-overflow-body .header-field--workspace,
+    .header-mobile-overflow-body .header-field--directory {
+        flex: 1 1 auto;
+        width: 100%;
+        max-width: 100%;
+        min-width: 0;
     }
 
-    .header-actions {
+    /* Mirror the chapter dropdown styling onto the workspace dropdown in the
+       More drawer: full-width Bit trigger plus centered text inside both the
+       chosen-value display and the popup options. */
+    .header-mobile-overflow-body .header-field--workspace ::deep [id^="Dropdown-"]:not([id*="-callout"]):not([id*="-text-container"]):not([id*="-scroll-container"]):not([id*="-header"]):not([id*="-footer"]):not([id*="-label"]) {
+        width: 100%;
+        margin: 0 auto;
+        display: flex;
+        align-items: center;
+    }
+
+    .header-mobile-overflow-body .header-field--workspace ::deep [id$="-text-container"] {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        text-align: center;
+        height: 100%;
+        flex: 1 1 auto;
+        min-width: 0;
+    }
+
+    .header-mobile-overflow-body .header-field--workspace ::deep .bit-drp-iwr,
+    .header-mobile-overflow-body .header-field--workspace ::deep .bit-drp-itm {
+        text-align: center;
+        justify-content: center;
+    }
+
+    .header-mobile-overflow-body .header-field--workspace ::deep .bit-drp-itm-txt {
+        text-align: center;
+        width: 100%;
+    }
+
+    /* Force the directory text field to fill the drawer width too. */
+    .header-mobile-overflow-body .header-field--directory ::deep .bit-tfl,
+    .header-mobile-overflow-body .header-field--directory ::deep .bit-tfl-fgp,
+    .header-mobile-overflow-body .header-field--directory ::deep .bit-tfl-inp,
+    .header-mobile-overflow-body .header-field--directory ::deep input {
+        width: 100% !important;
+        min-width: 0 !important;
+        max-width: 100% !important;
+        box-sizing: border-box;
+    }
+
+    .header-mobile-overflow-body .header-actions {
         width: 100%;
         flex-wrap: wrap;
     }
 
-    .header-actions ::deep button,
-    .header-actions ::deep .bit-btn {
+    .header-mobile-overflow-body .header-actions ::deep button,
+    .header-mobile-overflow-body .header-actions ::deep .bit-btn {
         min-height: 44px;
         flex: 1 1 calc(50% - 0.5rem);
     }
 
-    .header-options {
+    .header-mobile-overflow-body .header-options {
         width: 100%;
+        min-height: 44px;
+    }
+
+    .header-actions ::deep button,
+    .header-actions ::deep .bit-btn {
         min-height: 44px;
     }
 
@@ -276,6 +362,12 @@
         min-height: 44px;
         display: inline-flex;
         align-items: center;
+    }
+
+    /* Ensure the legacy stage-nav touch-target rule keeps its anchor for contract tests. */
+    .header-nav ::deep button,
+    .header-nav ::deep .bit-btn {
+        min-height: 44px;
     }
 
     .header-row ::deep input,

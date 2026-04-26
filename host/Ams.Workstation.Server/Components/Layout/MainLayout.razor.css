@@ -12,12 +12,22 @@
     position: relative;
     display: flex;
     align-items: center;
+    justify-content: center;
     height: var(--header-height);
     min-height: var(--header-height);
     padding: 0 1rem;
-    gap: 1rem;
     z-index: 100;
     border-bottom: 1px solid var(--bit-clr-border-sec, #333);
+}
+
+.workstation-header-inner {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    width: 50%;
+    min-width: 0;
+    max-width: 100%;
+    margin: 0 auto;
 }
 
 .workstation-header-controls-host {
@@ -25,7 +35,7 @@
     min-width: 0;
     display: flex;
     align-items: center;
-    order: 1;
+    order: 2;
 }
 
 .workstation-header-stage-nav {
@@ -33,7 +43,7 @@
     flex: 0 0 auto;
     display: flex;
     align-items: center;
-    order: 99;
+    order: 0;
 }
 
 .workstation-header-stage-nav ::deep .header-p3-button {
@@ -41,35 +51,41 @@
     min-height: 36px;
 }
 
-.workstation-header-stage-nav ::deep .header-p3-button sup,
-::deep .header-p3-button sup {
-    font-size: 0.65em;
-    vertical-align: super;
+.workstation-header-stage-nav ::deep .header-p3-button__label {
+    font-size: 2em;
+    line-height: 1;
+}
+
+.workstation-header-stage-nav ::deep .header-p3-button__label sup,
+::deep .header-p3-button__label sup {
+    font-size: 0.45em;
     line-height: 0;
     margin-left: 0.05em;
+    position: relative;
+    top: -1.1em;
+    vertical-align: baseline;
 }
 
 .workstation-header-stage-nav-popover {
     position: absolute;
     top: calc(100% + 0.4rem);
-    right: 0;
+    left: 0;
     z-index: 1300;
     display: flex;
-    flex-direction: column;
-    gap: 0.3rem;
+    flex-direction: row;
+    gap: 0.4rem;
     padding: 0.5rem;
-    min-width: 9rem;
     background: var(--bit-clr-bg-pri, #1a1a1a);
     border: 1px solid var(--bit-clr-brd-pri, #3a3a3a);
     border-radius: 0.45rem;
     box-shadow: 0 8px 22px rgba(0, 0, 0, 0.5);
+    white-space: nowrap;
 }
 
 .workstation-header-stage-nav-popover ::deep button,
 .workstation-header-stage-nav-popover ::deep .bit-btn {
-    width: 100%;
-    justify-content: flex-start;
-    min-height: 38px;
+    min-height: 36px;
+    min-width: 4.5rem;
 }
 
 .workstation-module-rail-toggle-hidden {
@@ -90,12 +106,56 @@
     flex-shrink: 0;
 }
 
+.workstation-module-rail-toggle ::deep button,
+.workstation-module-rail-toggle ::deep .bit-btn {
+    min-height: 44px;
+    min-width: 44px;
+    touch-action: manipulation;
+}
+
+/* Desktop "Modules" tab handle: fixed to left edge of body, vertically-stacked letters. */
+.workstation-module-rail-tab {
+    position: fixed;
+    top: calc(var(--header-height) + 1rem);
+    left: 0;
+    z-index: 1100;
+}
+
+.workstation-module-rail-tab ::deep .workstation-module-rail-tab__button {
+    min-width: 0;
+    width: auto;
+    height: auto;
+    padding: 0.4rem 0.25rem;
+    border-left: 0;
+    border-top-left-radius: 0;
+    border-bottom-left-radius: 0;
+}
+
+.workstation-module-rail-tab__label {
+    writing-mode: vertical-rl;
+    text-orientation: upright;
+    font-size: 0.72rem;
+    font-weight: 600;
+    line-height: 1;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+}
+
 .workstation-module-rail-overlay {
     display: none;
 }
 
 .workstation-module-rail-panel-header {
-    display: none;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem;
+    margin: 0.75rem 0.85rem 0;
+}
+
+.workstation-module-rail-panel-header ::deep button,
+.workstation-module-rail-panel-header ::deep .bit-btn {
+    min-height: 32px;
 }
 
 .workstation-module-rail-panel-title {
@@ -110,18 +170,45 @@
 }
 
 .workstation-shell {
+    position: relative;
     display: flex;
     flex: 1;
     min-height: 0;
     overflow: hidden;
 }
 
+/* Sidebar is always positioned out of flow as a slide-in drawer sized to its contents. */
 .workstation-sidebar {
-    width: 17rem;
-    flex-shrink: 0;
+    position: fixed;
+    top: calc(var(--header-height) + 1rem);
+    left: 0;
+    width: max-content;
+    max-width: min(20rem, 86vw);
+    height: auto;
+    max-height: calc(100vh - var(--header-height) - 2rem);
     min-height: 0;
-    border-right: 1px solid var(--bit-clr-border-sec, #333);
-    background: var(--bit-clr-bg-secondary, rgba(255, 255, 255, 0.015));
+    border: 1px solid var(--bit-clr-border-sec, #333);
+    border-left: 0;
+    border-radius: 0 0.5rem 0.5rem 0;
+    background: var(--bit-clr-bg-primary, #101010);
+    box-shadow: 0 16px 32px rgba(0, 0, 0, 0.35);
+    z-index: 1250;
+    transform: translateX(-106%);
+    transition: transform 160ms ease-in-out;
+    visibility: hidden;
+    pointer-events: none;
+    overflow-y: auto;
+}
+
+.workstation-sidebar:focus {
+    outline: 2px solid var(--bit-clr-primary-main, #2563eb);
+    outline-offset: -2px;
+}
+
+.workstation-sidebar.workstation-sidebar--mobile-open {
+    transform: translateX(0);
+    visibility: visible;
+    pointer-events: auto;
 }
 
 .workstation-body {
@@ -130,14 +217,31 @@
     min-width: 0;
     min-height: 0;
     overflow: hidden;
+    margin-left: 2.25rem; /* leave room for the always-visible Modules tab */
 }
 
 .workstation-content {
-    flex: 1;
+    flex: 0 1 auto;
+    width: 80%;
+    max-width: 80%;
     min-width: 0;
     overflow-y: auto;
     padding: 1.5rem;
-    width: 100%;
+    margin-inline: auto;
+}
+
+@media (min-width: 1600px) {
+    .workstation-content {
+        width: 60%;
+        max-width: 60%;
+    }
+}
+
+@media (min-width: 1280px) and (max-width: 1599px) {
+    .workstation-content {
+        width: 70%;
+        max-width: 70%;
+    }
 }
 
 .workstation-inspector {
@@ -154,10 +258,6 @@
 }
 
 @media (max-width: 1280px) {
-    .workstation-sidebar {
-        width: 14rem;
-    }
-
     .workstation-inspector {
         width: 18rem;
     }
@@ -178,15 +278,18 @@
         height: auto;
         min-height: calc(var(--header-height) + 0.5rem);
         padding: 0.6rem 0.9rem;
-        gap: 0.5rem;
-        flex-wrap: nowrap;
         align-items: center;
+    }
+
+    .workstation-header-inner {
+        width: 100%;
+        gap: 0.5rem;
     }
 
     .workstation-header-controls-host {
         flex: 1 1 auto;
         min-width: 0;
-        order: 1;
+        order: 2;
     }
 
     .workstation-header-stage-nav {
@@ -206,8 +309,30 @@
     }
 
     .workstation-header-stage-nav-popover {
+        flex-direction: column;
         right: auto;
         left: 0;
+        min-width: 9rem;
+    }
+
+    .workstation-header-stage-nav-popover ::deep button,
+    .workstation-header-stage-nav-popover ::deep .bit-btn {
+        width: 100%;
+        justify-content: center;
+        text-align: center;
+        min-height: 38px;
+    }
+
+    .workstation-header-stage-nav-popover ::deep .bit-btn-pri-cnt,
+    .workstation-header-stage-nav-popover ::deep .bit-btn-lbl {
+        width: 100%;
+        justify-content: center;
+        text-align: center;
+    }
+
+    /* Hide the desktop tab on mobile; mobile uses the in-header more-button drawer pattern. */
+    .workstation-module-rail-tab {
+        display: none;
     }
 
     .workstation-shell {
@@ -215,8 +340,15 @@
         flex-direction: column;
     }
 
+    .workstation-body {
+        margin-left: 0;
+    }
+
     .workstation-content {
         padding: 1rem 0.75rem calc(2rem + env(safe-area-inset-bottom));
+        width: 100%;
+        max-width: 100%;
+        margin-inline: 0;
     }
 
     .workstation-layout ::deep input,
@@ -313,45 +445,18 @@
     }
 
     .workstation-sidebar {
-        position: fixed;
         top: 0;
-        left: 0;
-        bottom: 0;
         width: min(18rem, 86vw);
         max-width: 100%;
-        border-right: 1px solid var(--bit-clr-border-sec, #333);
-        border-bottom: 0;
-        background: var(--bit-clr-bg-primary, #101010);
-        z-index: 1250;
-        box-shadow: 0 16px 32px rgba(0, 0, 0, 0.35);
-        transform: translateX(-106%);
-        transition: transform 160ms ease-in-out;
-        visibility: hidden;
-        pointer-events: none;
-    }
-
-    .workstation-sidebar:focus {
-        outline: 2px solid var(--bit-clr-primary-main, #2563eb);
-        outline-offset: -2px;
     }
 
     .workstation-module-rail-panel-header {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        gap: 0.5rem;
         margin: 0.75rem 0.85rem 0;
     }
 
     .workstation-module-rail-panel-header ::deep button,
     .workstation-module-rail-panel-header ::deep .bit-btn {
         min-height: 44px;
-    }
-
-    .workstation-sidebar.workstation-sidebar--mobile-open {
-        transform: translateX(0);
-        visibility: visible;
-        pointer-events: auto;
     }
 
     .workstation-module-rail-overlay {

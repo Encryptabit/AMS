@@ -4,6 +4,9 @@
     min-width: 0;
     overflow-x: hidden;
     touch-action: manipulation;
+    /* Inline padding lets BitCard box-shadows render without being clipped by
+       this container's overflow-x: hidden (kept to prevent horizontal scroll). */
+    padding-inline: 6px;
 }
 
 .proof-view-switcher {
@@ -57,35 +60,13 @@
     min-width: 0;
 }
 
-.proof-playback-alert,
 .proof-playback-waveform,
 .proof-playback-sentences {
     min-width: 0;
 }
 
-.playback-alert-settings {
-    margin-bottom: 0.5rem;
-}
-
-.playback-alert-header {
-    align-items: center;
-}
-
-.playback-alert-summary {
-    display: inline-flex;
-    align-items: center;
-    min-height: 2rem;
-    line-height: 1.3;
-}
-
-.playback-alert-editor {
-    margin-top: 0.45rem;
-}
-
-.playback-alert-status {
-    margin-top: 0.3rem;
-    display: block;
-    line-height: 1.35;
+.proof-playback-sentences {
+    margin-top: 10px;
 }
 
 .proof-playback-sentences ::deep .sentence-list-card {
@@ -95,14 +76,17 @@
 
 @media (max-width: 768px) {
     .proof-review {
-        padding-bottom: calc(2.5rem + env(safe-area-inset-bottom));
+        /* Fill the workstation-content area exactly, then lay children out
+           as a column so the playback shell flexes into whatever space is
+           left under the selection indicator. */
+        height: 100%;
+        min-height: 0;
+        display: flex;
+        flex-direction: column;
+        padding-bottom: calc(0.5rem + env(safe-area-inset-bottom));
     }
 
     .proof-view-switcher {
-        display: none;
-    }
-
-    .proof-playback-alert {
         display: none;
     }
 
@@ -146,46 +130,11 @@
         display: flex;
         flex-direction: column;
         gap: 0.35rem;
-        min-height: calc(100dvh - 13.5rem);
-    }
-
-    .proof-playback-alert {
-        flex: 0 0 auto;
-    }
-
-    .playback-alert-settings {
-        margin-bottom: 0;
-    }
-
-    .playback-alert-settings ::deep .bit-card-content,
-    .playback-alert-settings ::deep .bit-crd-cnt {
-        padding: 0.55rem 0.6rem;
-    }
-
-    .playback-alert-settings ::deep button,
-    .playback-alert-settings ::deep .bit-btn,
-    .playback-alert-settings ::deep input,
-    .playback-alert-settings ::deep .bit-txt-fld {
-        min-height: 44px;
-        font-size: 16px;
-    }
-
-    .playback-alert-header {
-        gap: 0.4rem;
-    }
-
-    .playback-alert-summary {
-        flex: 1 1 100%;
+        /* Take whatever vertical space is left in .proof-review after the
+           selection indicator. No fixed height, no clamp — the parent column
+           hands it the remainder. */
+        flex: 1 1 auto;
         min-height: 0;
-    }
-
-    .playback-alert-editor {
-        margin-top: 0.35rem;
-    }
-
-    .playback-alert-status {
-        margin-top: 0.3rem;
-        line-height: 1.3;
     }
 
     .proof-playback-waveform {
@@ -197,10 +146,12 @@
         min-height: 0;
     }
 
+    /* Sentence list fills the flex slot rather than being clamped to a fixed
+       max-height, which is what was leaving dead space below the card. */
     .proof-playback-sentences ::deep .sentence-list-card {
-        height: clamp(18rem, 58dvh, 34rem);
-        min-height: 16rem;
-        max-height: 70dvh;
+        height: 100%;
+        min-height: 0;
+        max-height: none;
     }
 
     .proof-playback-sentences ::deep .sentence-list-header {

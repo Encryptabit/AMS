@@ -1,7 +1,7 @@
 @using Ams.Workstation.Server.Models
 
-<BitCard Style="@GetBorderStyle()" FullWidth="true">
-    <BitStack Horizontal="false" Gap="0.5rem" Style="padding: 1rem;">
+<BitCard Class="sentence-error-card" Style="@GetBorderStyle()" FullWidth="true">
+    <BitStack Horizontal="false" Gap="0.5rem" Class="sentence-error-card__body" Style="padding: 1rem;">
         @* Header: ID + WER/CER + Status badge + metadata all horizontal *@
         <BitStack Horizontal="true" Gap="1rem" VerticalAlign="BitAlignment.Center" Style="justify-content: space-between;">
             <BitStack Horizontal="true" Gap="1rem" VerticalAlign="BitAlignment.Center" Wrap="true">
@@ -27,8 +27,8 @@
         </BitStack>
 
         @* Manuscript *@
-        <BitCard Background="BitColorKind.Primary" NoShadow="true" FullWidth="true">
-            <BitStack Horizontal="false" Gap="0.4rem" Style="padding: 0.75rem;">
+        <BitCard Background="BitColorKind.Primary" NoShadow="true" FullWidth="true" Class="sentence-error-card__inner">
+            <BitStack Horizontal="false" Gap="0.4rem" Class="sentence-error-card__inner-body" Style="padding: 0.75rem;">
                 <BitText Typography="BitTypography.Overline">MANUSCRIPT</BitText>
                 <BitText Typography="BitTypography.Body2" Style="line-height: 1.6;">@Sentence.BookText</BitText>
             </BitStack>
@@ -37,8 +37,8 @@
         @* Transcript (Diff) *@
         @if (Sentence.Diff != null)
         {
-            <BitCard Background="BitColorKind.Primary" NoShadow="true" FullWidth="true">
-                <BitStack Horizontal="false" Gap="0.4rem" Style="padding: 0.75rem;">
+            <BitCard Background="BitColorKind.Primary" NoShadow="true" FullWidth="true" Class="sentence-error-card__inner">
+                <BitStack Horizontal="false" Gap="0.4rem" Class="sentence-error-card__inner-body" Style="padding: 0.75rem;">
                     <BitText Typography="BitTypography.Overline">TRANSCRIPT</BitText>
                     <DiffView Diff="Sentence.Diff" IgnoredKeys="IgnoredKeys" />
                 </BitStack>
@@ -87,12 +87,7 @@
     private string GetBorderStyle()
     {
         var outline = IsSelected ? "outline: 2px solid var(--bit-clr-pri); " : "";
-        return Sentence.Status switch
-        {
-            "unreliable" => $"{outline}border-left: 3px solid var(--bit-clr-err); margin-bottom: 0.75rem;",
-            "attention" => $"{outline}border-left: 3px solid var(--bit-clr-wrn); margin-bottom: 0.75rem;",
-            _ => $"{outline}border-left: 3px solid transparent; margin-bottom: 0.75rem;"
-        };
+        return $"{outline}margin-bottom: 0.75rem;";
     }
 
     private BitColor GetStatusColor() => Sentence.Status switch

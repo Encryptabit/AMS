@@ -11,66 +11,86 @@
         <button type="button"
                 id="@MobileModuleRailToggleId"
                 class="workstation-module-rail-toggle-hidden"
+                data-ams-header-control="module-rail-toggle"
+                data-ams-mobile-module-rail-open="@(isMobileModuleRailOpen ? "true" : "false")"
                 aria-hidden="true"
                 tabindex="-1"
                 @onclick="ToggleMobileModuleRail">
             modules
         </button>
 
-        <div class="workstation-header-stage-nav"
-             data-ams-header-control="stage-nav"
-             inert="@(isMobileModuleRailOpen ? "inert" : null)"
-             aria-hidden="@(isMobileModuleRailOpen ? "true" : null)">
-            <BitButton Variant="BitVariant.Outline"
-                       Color="BitColor.Primary"
-                       Size="BitSize.Small"
-                       Class="header-p3-button"
-                       aria-haspopup="menu"
-                       aria-expanded="@(isStageNavOpen ? "true" : "false")"
-                       aria-label="Open Prep / Proof / Polish navigation"
-                       title="Prep / Proof / Polish"
-                       OnClick="ToggleStageNav">
-                P<sup>3</sup>
-            </BitButton>
+        <div class="workstation-header-inner">
+            <div class="workstation-header-stage-nav"
+                 data-ams-header-control="stage-nav"
+                 inert="@(isMobileModuleRailOpen ? "inert" : null)"
+                 aria-hidden="@(isMobileModuleRailOpen ? "true" : null)">
+                <BitButton Variant="BitVariant.Outline"
+                           Color="BitColor.Primary"
+                           Size="BitSize.Small"
+                           Class="header-p3-button"
+                           aria-haspopup="menu"
+                           aria-expanded="@(isStageNavOpen ? "true" : "false")"
+                           aria-label="Open Prep / Proof / Polish navigation"
+                           title="Prep / Proof / Polish"
+                           OnClick="ToggleStageNav">
+                    <span class="header-p3-button__label">P<sup>3</sup></span>
+                </BitButton>
 
-            @if (isStageNavOpen)
-            {
-                <div class="workstation-header-stage-nav-popover"
-                     role="menu"
-                     aria-label="Stage navigation"
-                     @onclick:stopPropagation="true">
-                    <BitButton Variant="@(IsStageActive(StageRouteCatalog.StageIds.Prep) ? BitVariant.Fill : BitVariant.Text)"
-                               Color="BitColor.Primary"
-                               Size="BitSize.Small"
-                               OnClick="@(() => NavigateToStage(StageRouteCatalog.StageIds.Prep))">
-                        Prep
-                    </BitButton>
-                    <BitButton Variant="@(IsStageActive(StageRouteCatalog.StageIds.Proof) ? BitVariant.Fill : BitVariant.Text)"
-                               Color="BitColor.Primary"
-                               Size="BitSize.Small"
-                               OnClick="@(() => NavigateToStage(StageRouteCatalog.StageIds.Proof))">
-                        Proof
-                    </BitButton>
-                    <BitButton Variant="@(IsStageActive(StageRouteCatalog.StageIds.Polish) ? BitVariant.Fill : BitVariant.Text)"
-                               Color="BitColor.Primary"
-                               Size="BitSize.Small"
-                               OnClick="@(() => NavigateToStage(StageRouteCatalog.StageIds.Polish))">
-                        Polish
-                    </BitButton>
-                </div>
-            }
-        </div>
+                @if (isStageNavOpen)
+                {
+                    <div class="workstation-header-stage-nav-popover"
+                         role="menu"
+                         aria-label="Stage navigation"
+                         @onclick:stopPropagation="true">
+                        <BitButton Variant="@(IsStageActive(StageRouteCatalog.StageIds.Prep) ? BitVariant.Fill : BitVariant.Text)"
+                                   Color="BitColor.Primary"
+                                   Size="BitSize.Small"
+                                   OnClick="@(() => NavigateToStage(StageRouteCatalog.StageIds.Prep))">
+                            Prep
+                        </BitButton>
+                        <BitButton Variant="@(IsStageActive(StageRouteCatalog.StageIds.Proof) ? BitVariant.Fill : BitVariant.Text)"
+                                   Color="BitColor.Primary"
+                                   Size="BitSize.Small"
+                                   OnClick="@(() => NavigateToStage(StageRouteCatalog.StageIds.Proof))">
+                            Proof
+                        </BitButton>
+                        <BitButton Variant="@(IsStageActive(StageRouteCatalog.StageIds.Polish) ? BitVariant.Fill : BitVariant.Text)"
+                                   Color="BitColor.Primary"
+                                   Size="BitSize.Small"
+                                   OnClick="@(() => NavigateToStage(StageRouteCatalog.StageIds.Polish))">
+                            Polish
+                        </BitButton>
+                    </div>
+                }
+            </div>
 
-        <div class="workstation-header-controls-host"
-             data-ams-shell-region="header-controls"
-             data-ams-mobile-overflow-contract="secondary-actions"
-             inert="@(isMobileModuleRailOpen ? "inert" : null)"
-             aria-hidden="@(isMobileModuleRailOpen ? "true" : null)">
-            <HeaderControls />
+            <div class="workstation-header-controls-host"
+                 data-ams-shell-region="header-controls"
+                 data-ams-mobile-overflow-contract="secondary-actions"
+                 inert="@(isMobileModuleRailOpen ? "inert" : null)"
+                 aria-hidden="@(isMobileModuleRailOpen ? "true" : null)">
+                <HeaderControls />
+            </div>
         </div>
     </header>
 
     <div class="workstation-shell">
+        <div class="workstation-module-rail-tab"
+             data-ams-header-control="module-rail-desktop-tab"
+             data-ams-mobile-module-rail-open="@(isMobileModuleRailOpen ? "true" : "false")">
+            <BitButton Variant="BitVariant.Outline"
+                       Color="BitColor.Secondary"
+                       Size="BitSize.Small"
+                       Class="workstation-module-rail-tab__button"
+                       aria-controls="@MobileModuleRailPanelId"
+                       aria-expanded="@(isMobileModuleRailOpen ? "true" : "false")"
+                       aria-label="Toggle module navigation"
+                       title="Modules"
+                       OnClick="ToggleMobileModuleRail">
+                <span class="workstation-module-rail-tab__label">Modules</span>
+            </BitButton>
+        </div>
+
         <aside class="workstation-sidebar @SidebarMobileStateClass"
                id="@MobileModuleRailPanelId"
                data-stage-shell-region="left"

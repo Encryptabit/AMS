@@ -42,12 +42,14 @@
     <div class="proof-alert-settings-section" data-ams-proof-alert-settings-state="@PlaybackAlertSettingsState">
         <BitStack Horizontal="false" Gap="0.5rem">
             <BitStack Horizontal="true" Gap="0.5rem" Wrap="true" VerticalAlign="BitAlignment.Center">
-                <BitButton Variant="BitVariant.Outline"
-                           Color="BitColor.Secondary"
-                           Size="BitSize.Small"
-                           OnClick="TogglePlaybackAlertSettings">
-                    @(_isPlaybackAlertSettingsExpanded ? "Hide alert sound" : "Alert sound")
-                </BitButton>
+                <span data-ams-proof-alert-settings-toggle="true">
+                    <BitButton Variant="BitVariant.Outline"
+                               Color="BitColor.Secondary"
+                               Size="BitSize.Small"
+                               OnClick="TogglePlaybackAlertSettings">
+                        @(_isPlaybackAlertSettingsExpanded ? "Hide alert settings" : "Alert settings")
+                    </BitButton>
+                </span>
                 <BitText Typography="BitTypography.Caption1"
                          Color="BitColor.SecondaryForeground">
                     @GetPlaybackErrorAlertSummaryText()
@@ -59,27 +61,29 @@
             </BitText>
             @if (_isPlaybackAlertSettingsExpanded)
             {
-                <BitStack Horizontal="false" Gap="0.45rem">
-                    <BitTextField @bind-Value="_playbackErrorAlertSourcePath"
-                                  Immediate="true"
-                                  Placeholder="Alert sound file path (.wav, .mp3, .ogg, .flac, .m4a)"
-                                  Style="width: 100%;" />
-                    <BitStack Horizontal="true" Gap="0.45rem" Wrap="true">
-                        <BitButton Variant="BitVariant.Fill"
-                                   Color="BitColor.Primary"
-                                   Size="BitSize.Small"
-                                   OnClick="SavePlaybackErrorAlertSound">
-                            Save
-                        </BitButton>
-                        <BitButton Variant="BitVariant.Outline"
-                                   Color="BitColor.Secondary"
-                                   Size="BitSize.Small"
-                                   IsEnabled="@(_playbackErrorAlertSoundSetting is not null)"
-                                   OnClick="ClearPlaybackErrorAlertSound">
-                            Clear
-                        </BitButton>
+                <div class="proof-alert-settings-editor" data-ams-proof-alert-settings-panel="true">
+                    <BitStack Horizontal="false" Gap="0.45rem">
+                        <BitTextField @bind-Value="_playbackErrorAlertSourcePath"
+                                      Immediate="true"
+                                      Placeholder="Alert sound file path (.wav, .mp3, .ogg, .flac, .m4a)"
+                                      Style="width: 100%;" />
+                        <BitStack Horizontal="true" Gap="0.45rem" Wrap="true">
+                            <BitButton Variant="BitVariant.Fill"
+                                       Color="BitColor.Primary"
+                                       Size="BitSize.Small"
+                                       OnClick="SavePlaybackErrorAlertSound">
+                                Save
+                            </BitButton>
+                            <BitButton Variant="BitVariant.Outline"
+                                       Color="BitColor.Secondary"
+                                       Size="BitSize.Small"
+                                       IsEnabled="@(_playbackErrorAlertSoundSetting is not null)"
+                                       OnClick="ClearPlaybackErrorAlertSound">
+                                Clear
+                            </BitButton>
+                        </BitStack>
                     </BitStack>
-                </BitStack>
+                </div>
             }
         </BitStack>
     </div>
@@ -134,57 +138,6 @@
     {
         <div class="proof-playback-shell" data-ams-proof-mobile-contract="sentence-first">
             <BitGrid Columns="12">
-                <BitGridItem ColumnSpan="12">
-                    <div class="proof-playback-alert" data-ams-proof-alert-settings-state="@PlaybackAlertSettingsState">
-                        <BitCard Class="playback-alert-settings" FullWidth="true">
-                            <BitStack Horizontal="true"
-                                      Gap="0.5rem"
-                                      Wrap="true"
-                                      VerticalAlign="BitAlignment.Center"
-                                      Class="playback-alert-header">
-                                <span data-ams-proof-alert-settings-toggle="true">
-                                    <BitButton Variant="BitVariant.Outline"
-                                               Color="BitColor.Secondary"
-                                               OnClick="TogglePlaybackAlertSettings">
-                                        @(_isPlaybackAlertSettingsExpanded ? "Hide alert settings" : "Alert settings")
-                                    </BitButton>
-                                </span>
-                                <BitText Typography="BitTypography.Caption1"
-                                         Color="BitColor.SecondaryForeground"
-                                         Class="playback-alert-summary">
-                                    @GetPlaybackErrorAlertSummaryText()
-                                </BitText>
-                            </BitStack>
-                            <BitText Typography="BitTypography.Caption1"
-                                     Color="BitColor.SecondaryForeground"
-                                     Class="playback-alert-status">
-                                @GetPlaybackErrorAlertStatusText()
-                            </BitText>
-                            @if (_isPlaybackAlertSettingsExpanded)
-                            {
-                                <div class="playback-alert-editor" data-ams-proof-alert-settings-panel="true">
-                                    <BitStack Horizontal="true" Gap="0.6rem" VerticalAlign="BitAlignment.End" Wrap="true">
-                                        <BitTextField @bind-Value="_playbackErrorAlertSourcePath"
-                                                      Immediate="true"
-                                                      Placeholder="Alert sound file path (.wav, .mp3, .ogg, .flac, .m4a)"
-                                                      Style="min-width: 18rem; flex: 1;" />
-                                        <BitButton Variant="BitVariant.Fill"
-                                                   Color="BitColor.Primary"
-                                                   OnClick="SavePlaybackErrorAlertSound">
-                                            Save Alert Sound
-                                        </BitButton>
-                                        <BitButton Variant="BitVariant.Outline"
-                                                   Color="BitColor.Secondary"
-                                                   IsEnabled="@(_playbackErrorAlertSoundSetting is not null)"
-                                                   OnClick="ClearPlaybackErrorAlertSound">
-                                            Clear
-                                        </BitButton>
-                                    </BitStack>
-                                </div>
-                            }
-                        </BitCard>
-                    </div>
-                </BitGridItem>
                 <BitGridItem ColumnSpan="12" style="min-width: 0;">
                     <div class="proof-playback-waveform" data-ams-proof-mobile-waveform="compact">
                         <WaveformPlayer
@@ -444,6 +397,11 @@
 
     private void SwitchView(string view)
     {
+        if (string.Equals(_currentView, view, StringComparison.Ordinal))
+        {
+            return;
+        }
+
         // Save position before switching
         if (_currentView == "playback")
         {
@@ -451,6 +409,7 @@
         }
 
         _currentView = view;
+        _scrollToTopPending = true;
         StateHasChanged();
     }
 
