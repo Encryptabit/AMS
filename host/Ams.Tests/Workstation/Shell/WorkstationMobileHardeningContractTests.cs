@@ -1,7 +1,6 @@
 using System.Reflection;
 using System.Text.Json;
 using System.Text.RegularExpressions;
-using Ams.Core.Common;
 using Ams.Workstation.Server.Models;
 using Ams.Workstation.Server.Services;
 using Xunit.Sdk;
@@ -22,10 +21,10 @@ public sealed class WorkstationMobileHardeningContractTests
     public void ReviewedStatusService_UsesCanonicalArtifactPathAndBookScopedSchema()
     {
         using var harness = PersistenceHarness.Create("mobile-hardening-reviewed");
-        var service = new ReviewedStatusService(harness.Workspace);
+        var service = new ReviewedStatusService(harness.Workspace, harness.ReviewedStatusBasePath);
 
         var filePath = InvokePrivate<string>(service, "GetFilePath");
-        var expectedPath = Path.Combine(AmsAppDataPaths.Resolve("workstation"), "reviewed-status.json");
+        var expectedPath = Path.Combine(harness.ReviewedStatusBasePath, "reviewed-status.json");
 
         Assert.Equal(NormalizePath(expectedPath), NormalizePath(filePath));
         Assert.Equal("reviewed-status.json", Path.GetFileName(filePath));
@@ -204,14 +203,17 @@ public sealed class WorkstationMobileHardeningContractTests
 
     private sealed class PersistenceHarness : IDisposable
     {
-        private PersistenceHarness(string rootPath, BlazorWorkspace workspace)
+        private PersistenceHarness(string rootPath, string reviewedStatusBasePath, BlazorWorkspace workspace)
         {
             RootPath = rootPath;
+            ReviewedStatusBasePath = reviewedStatusBasePath;
             BookId = Path.GetFileName(rootPath.TrimEnd(Path.DirectorySeparatorChar));
             Workspace = workspace;
         }
 
         public string RootPath { get; }
+
+        public string ReviewedStatusBasePath { get; }
 
         public string BookId { get; }
 
@@ -228,6 +230,7 @@ public sealed class WorkstationMobileHardeningContractTests
 
             var workspaceStatePath = Path.Combine(rootPath, ".workstation-state.json");
             var workspace = new BlazorWorkspace(workspaceStatePath, loadPersistedState: false);
+            var reviewedStatusBasePath = Path.Combine(rootPath, ".test-appdata", "workstation");
 
             Assert.True(
                 workspace.SetWorkingDirectory(rootPath),
@@ -235,7 +238,7 @@ public sealed class WorkstationMobileHardeningContractTests
 
             workspace.SetPrecomputePeaksInBackground(false);
 
-            return new PersistenceHarness(rootPath, workspace);
+            return new PersistenceHarness(rootPath, reviewedStatusBasePath, workspace);
         }
 
         public void Dispose()

@@ -286,7 +286,8 @@ public sealed class ProofGestureSelectionContractTests
             var chapterDataService = new ChapterDataService(workspace);
             var proofReportService = new ProofReportService();
             var errorPatternService = new ErrorPatternService(workspace);
-            var reviewedStatusService = new ReviewedStatusService(workspace);
+            var reviewedStatusBasePath = Path.Combine(root, ".test-appdata", "workstation");
+            var reviewedStatusService = new ReviewedStatusService(workspace, reviewedStatusBasePath);
             var ignoredPatternsService = new IgnoredPatternsService(workspace);
             var toastService = new ToastService();
             var audioExportService = new AudioExportService(workspace);

@@ -13,15 +13,23 @@ namespace Ams.Workstation.Server.Services;
 /// </summary>
 public class ReviewedStatusService
 {
-    private static readonly string BasePath = AmsAppDataPaths.Resolve("workstation");
+    private readonly string BasePath;
 
     private readonly BlazorWorkspace _workspace;
     private Dictionary<string, ReviewedEntry> _status = new();
     private string? _currentBookId;
 
     public ReviewedStatusService(BlazorWorkspace workspace)
+        : this(workspace, basePathOverride: null)
+    {
+    }
+
+    internal ReviewedStatusService(BlazorWorkspace workspace, string? basePathOverride)
     {
         _workspace = workspace;
+        BasePath = string.IsNullOrWhiteSpace(basePathOverride)
+            ? AmsAppDataPaths.Resolve("workstation")
+            : basePathOverride;
     }
 
     public IReadOnlyDictionary<string, ReviewedEntry> GetAll()
