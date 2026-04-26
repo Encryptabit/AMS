@@ -6,12 +6,13 @@
     gap: 0.5rem;
     width: 100%;
     box-sizing: border-box;
-    background-color: var(--bit-clr-bg-pri);
-    border: 1px solid var(--bit-clr-brd-pri);
+    background-color: var(--bit-clr-bg-pri, #1a1a1a);
+    border: 1px solid var(--bit-clr-brd-pri, #3a3a3a);
     border-radius: 6px;
     padding: 1rem;
     overflow: hidden;
     min-width: 0;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.35);
 }
 
 .waveform-header {
@@ -22,14 +23,14 @@
 
 .waveform-title {
     font-weight: 600;
-    color: var(--bit-clr-fg-pri);
+    color: var(--bit-clr-fg-pri, #f4f4f4);
     font-size: 0.875rem;
 }
 
 .waveform-time {
     font-family: monospace;
     font-size: 0.875rem;
-    color: var(--bit-clr-fg-sec);
+    color: var(--bit-clr-fg-sec, #b8b8b8);
     font-variant-numeric: tabular-nums;
 }
 
@@ -38,7 +39,7 @@
     width: 100%;
     height: var(--wfp-height, 128px);
     min-height: var(--wfp-height, 128px);
-    background-color: var(--bit-clr-bg-sec);
+    background-color: var(--bit-clr-bg-sec, #0f0f0f);
     border-radius: 4px;
     overflow: hidden;
     box-sizing: border-box;
@@ -55,7 +56,7 @@
     align-items: center;
     justify-content: center;
     gap: 0.5rem;
-    color: var(--bit-clr-fg-sec);
+    color: var(--bit-clr-fg-sec, #b8b8b8);
     font-size: 0.875rem;
 }
 
@@ -83,7 +84,7 @@
     height: 4px;
     -webkit-appearance: none;
     appearance: none;
-    background: var(--bit-clr-bg-ter);
+    background: var(--bit-clr-bg-ter, #2a2a2a);
     border-radius: 2px;
     outline: none;
     cursor: pointer;
@@ -95,7 +96,7 @@
     width: 14px;
     height: 14px;
     border-radius: 50%;
-    background: var(--bit-clr-inf);
+    background: var(--bit-clr-inf, #4ac2c2);
     cursor: pointer;
     transition: transform 0.1s ease;
 }
@@ -108,7 +109,7 @@
     width: 14px;
     height: 14px;
     border-radius: 50%;
-    background: var(--bit-clr-inf);
+    background: var(--bit-clr-inf, #4ac2c2);
     cursor: pointer;
     border: none;
 }
@@ -121,7 +122,7 @@
 .waveform-zoom-value {
     font-family: monospace;
     font-size: 0.75rem;
-    color: var(--bit-clr-fg-sec);
+    color: var(--bit-clr-fg-sec, #b8b8b8);
     min-width: 68px;
 }
 
@@ -138,7 +139,7 @@
     height: 4px;
     -webkit-appearance: none;
     appearance: none;
-    background: var(--bit-clr-bg-ter);
+    background: var(--bit-clr-bg-ter, #2a2a2a);
     border-radius: 2px;
     outline: none;
     cursor: pointer;
@@ -150,7 +151,7 @@
     width: 14px;
     height: 14px;
     border-radius: 50%;
-    background: var(--bit-clr-pri);
+    background: var(--bit-clr-pri, #2563eb);
     cursor: pointer;
     transition: transform 0.1s ease;
 }
@@ -163,7 +164,7 @@
     width: 14px;
     height: 14px;
     border-radius: 50%;
-    background: var(--bit-clr-pri);
+    background: var(--bit-clr-pri, #2563eb);
     cursor: pointer;
     border: none;
 }
@@ -176,7 +177,7 @@
 .waveform-speed-value {
     font-family: monospace;
     font-size: 0.75rem;
-    color: var(--bit-clr-fg-sec);
+    color: var(--bit-clr-fg-sec, #b8b8b8);
     min-width: 32px;
     text-align: right;
 }
@@ -186,22 +187,26 @@
     align-items: center;
     gap: 0.5rem;
     padding: 0.5rem;
-    background-color: var(--bit-clr-err-bg);
-    border: 1px solid var(--bit-clr-err);
+    background-color: var(--bit-clr-err-bg, #4a1d1d);
+    border: 1px solid var(--bit-clr-err, #d13438);
     border-radius: 4px;
-    color: var(--bit-clr-err);
+    color: var(--bit-clr-err, #ff8a8a);
     font-size: 0.875rem;
 }
 
 @media (max-width: 768px) {
     .waveform-player {
-        gap: 0.4rem;
-        padding: 0.65rem 0.75rem;
+        gap: 0.3rem;
+        padding: 0.4rem 0.5rem;
         border-radius: 5px;
     }
 
+    .waveform-header {
+        gap: 0.4rem;
+    }
+
     .waveform-title {
-        font-size: 0.8rem;
+        font-size: 0.75rem;
         min-width: 0;
         overflow: hidden;
         text-overflow: ellipsis;
@@ -209,78 +214,59 @@
     }
 
     .waveform-time {
-        font-size: 0.8rem;
+        font-size: 0.75rem;
         white-space: nowrap;
     }
 
     .waveform-container {
-        height: min(var(--wfp-height, 128px), 82px);
-        min-height: min(var(--wfp-height, 128px), 82px);
+        height: var(--wfp-height, 125px);
+        min-height: var(--wfp-height, 125px);
     }
 
     .waveform-controls {
-        gap: 0.45rem;
-        align-items: stretch;
+        gap: 0.35rem;
+        align-items: center;
+        flex-wrap: nowrap;
     }
 
     .waveform-controls ::deep button,
     .waveform-controls ::deep .bit-btn {
-        min-height: 44px;
-        min-width: 44px;
-        padding-inline: 0.55rem;
+        min-height: 32px;
+        min-width: 32px;
+        height: 32px;
+        width: 32px;
+        padding-inline: 0;
     }
 
+    /* Drop the zoom slider entirely on mobile — pinch/touch is enough */
     .waveform-zoom-section {
-        order: 3;
-        flex: 1 1 100%;
-        gap: 0.4rem;
-    }
-
-    .waveform-zoom-slider {
-        width: 100%;
-        min-width: 0;
-        height: 8px;
-    }
-
-    .waveform-zoom-slider::-webkit-slider-thumb {
-        width: 20px;
-        height: 20px;
-    }
-
-    .waveform-zoom-slider::-moz-range-thumb {
-        width: 20px;
-        height: 20px;
-    }
-
-    .waveform-zoom-value {
-        min-width: 58px;
-        font-size: 0.72rem;
+        display: none;
     }
 
     .waveform-speed-section {
-        margin-left: 0;
+        margin-left: auto;
         padding-left: 0;
         justify-content: flex-end;
-        gap: 0.4rem;
+        gap: 0.3rem;
     }
 
     .waveform-speed-slider {
-        width: min(110px, 38vw);
-        height: 8px;
+        width: min(90px, 28vw);
+        height: 6px;
     }
 
     .waveform-speed-slider::-webkit-slider-thumb {
-        width: 20px;
-        height: 20px;
+        width: 16px;
+        height: 16px;
     }
 
     .waveform-speed-slider::-moz-range-thumb {
-        width: 20px;
-        height: 20px;
+        width: 16px;
+        height: 16px;
     }
 
     .waveform-speed-value {
-        min-width: 38px;
-        font-size: 0.78rem;
+        min-width: 30px;
+        font-size: 0.7rem;
     }
 }

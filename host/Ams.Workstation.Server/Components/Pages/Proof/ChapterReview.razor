@@ -33,7 +33,55 @@
                          OnExportSelection="ExportSelectionFromMobileActionBarAsync"
                          OnIgnoreSelection="IgnoreSelectionFromMobileActionBarAsync"
                          OnToggleReviewed="ToggleReviewedFromMobileActionBar"
-                         OnToggleModules="ToggleModulesFromMobileActionBarAsync" />
+                         OnToggleModules="ToggleModulesFromMobileActionBarAsync"
+                         OnNavigateToPickups="NavigateToPickupsFromMobileActionBar" />
+    </div>
+</SectionContent>
+
+<SectionContent SectionName="header-settings-extra">
+    <div class="proof-alert-settings-section" data-ams-proof-alert-settings-state="@PlaybackAlertSettingsState">
+        <BitStack Horizontal="false" Gap="0.5rem">
+            <BitStack Horizontal="true" Gap="0.5rem" Wrap="true" VerticalAlign="BitAlignment.Center">
+                <BitButton Variant="BitVariant.Outline"
+                           Color="BitColor.Secondary"
+                           Size="BitSize.Small"
+                           OnClick="TogglePlaybackAlertSettings">
+                    @(_isPlaybackAlertSettingsExpanded ? "Hide alert sound" : "Alert sound")
+                </BitButton>
+                <BitText Typography="BitTypography.Caption1"
+                         Color="BitColor.SecondaryForeground">
+                    @GetPlaybackErrorAlertSummaryText()
+                </BitText>
+            </BitStack>
+            <BitText Typography="BitTypography.Caption1"
+                     Color="BitColor.SecondaryForeground">
+                @GetPlaybackErrorAlertStatusText()
+            </BitText>
+            @if (_isPlaybackAlertSettingsExpanded)
+            {
+                <BitStack Horizontal="false" Gap="0.45rem">
+                    <BitTextField @bind-Value="_playbackErrorAlertSourcePath"
+                                  Immediate="true"
+                                  Placeholder="Alert sound file path (.wav, .mp3, .ogg, .flac, .m4a)"
+                                  Style="width: 100%;" />
+                    <BitStack Horizontal="true" Gap="0.45rem" Wrap="true">
+                        <BitButton Variant="BitVariant.Fill"
+                                   Color="BitColor.Primary"
+                                   Size="BitSize.Small"
+                                   OnClick="SavePlaybackErrorAlertSound">
+                            Save
+                        </BitButton>
+                        <BitButton Variant="BitVariant.Outline"
+                                   Color="BitColor.Secondary"
+                                   Size="BitSize.Small"
+                                   IsEnabled="@(_playbackErrorAlertSoundSetting is not null)"
+                                   OnClick="ClearPlaybackErrorAlertSound">
+                            Clear
+                        </BitButton>
+                    </BitStack>
+                </BitStack>
+            }
+        </BitStack>
     </div>
 </SectionContent>
 
@@ -144,6 +192,7 @@
                             AudioUrl="@GetAudioUrl()"
                             PeaksUrl="@GetPeaksUrl()"
                             Title="@GetDisplayTitle()"
+                            Height="125"
                             TimeUpdated="HandleTimeUpdate"
                             OnReady="HandleWaveformReady"
                             OnSeek="HandleSeek"
@@ -156,6 +205,7 @@
                             Sentences="@_sentences"
                             CurrentTime="@_currentTime"
                             ActiveSentenceId="@_selectedSentenceId"
+                            SelectedSentenceIds="@_selectedSentenceIds"
                             OnSentenceSelected="HandleSentenceSelected"
                             OnSentenceLongPress="OnSentenceLongPress" />
                     </div>
@@ -203,6 +253,7 @@
         int AnchorSentenceId,
         string Excerpt,
         SentenceReport? AnchorReport,
+        IReadOnlyList<SentenceReport> AllReports,
         bool RequiresRangeConfirmation,
         string RangeMode,
         int Cardinality);
@@ -217,6 +268,7 @@
     private CrxModal? _crxModal;
     private IgnoreErrorModal? _ignoreModal;
     private HashSet<int> _exportedSentenceIds = new();
+    private HashSet<int> _pendingExportSentenceIds = new();
     private HashSet<int> _visibleErrorSentenceIds = new();
     private IJSObjectReference? _snippetPlayer;
     private IJSObjectReference? _alertSoundPlayer;
@@ -626,6 +678,12 @@
     private void NavigateToPickups()
     {
         Navigation.NavigateTo(StageRouteCatalog.GetProofPickupsHandoffPath());
+    }
+
+    private void NavigateToPickupsFromMobileActionBar()
+    {
+        LogSelectionModeDiagnostic("mobile-action-pickups-navigate", "mobile-action-pickups", ResolveSelectionActionAnchorSentenceId(), $"view={_currentView}");
+        NavigateToPickups();
     }
 
     private void SnapshotPlaybackPosition()
@@ -1155,20 +1213,6 @@
             .Where(id => id > 0)
             .ToHashSet();
 
-        if (!_isSelectionModeActive)
-        {
-            _lastSelectionGestureEvent = $"{eventName}-ignored-inactive";
-            LogSelectionModeDiagnostic(_lastSelectionGestureEvent, trigger, sentenceId, $"surface={sourceSurface};reason=selection-mode-inactive");
-            return false;
-        }
-
-        if (selectedSentenceIds.Count == 0)
-        {
-            _lastSelectionGestureEvent = $"{eventName}-ignored-empty-selection";
-            LogSelectionModeDiagnostic(_lastSelectionGestureEvent, trigger, sentenceId, $"surface={sourceSurface};reason=no-selected-sentences");
-            return false;
-        }
-
         if (!IsFallbackActionSurface(sourceSurface)
             && !string.Equals(sourceSurface, CurrentMobileActionSurface, StringComparison.Ordinal))
         {
@@ -1178,6 +1222,28 @@
                 trigger,
                 sentenceId,
                 $"surface={sourceSurface};expectedSurface={CurrentMobileActionSurface};reason=surface-mismatch");
+            return false;
+        }
+
+        // Single-sentence path: when selection mode is inactive, treat the swiped sentence as a one-element batch.
+        // Fallback (mobile-action-bar) surfaces with no swipe origin still require active selection mode.
+        if (!_isSelectionModeActive)
+        {
+            if (sentenceId <= 0)
+            {
+                _lastSelectionGestureEvent = $"{eventName}-ignored-no-target";
+                LogSelectionModeDiagnostic(_lastSelectionGestureEvent, trigger, sentenceId, $"surface={sourceSurface};reason=no-sentence-target");
+                return false;
+            }
+
+            selectedSentenceIds = new HashSet<int> { sentenceId };
+            return true;
+        }
+
+        if (selectedSentenceIds.Count == 0)
+        {
+            _lastSelectionGestureEvent = $"{eventName}-ignored-empty-selection";
+            LogSelectionModeDiagnostic(_lastSelectionGestureEvent, trigger, sentenceId, $"surface={sourceSurface};reason=no-selected-sentences");
             return false;
         }
 
@@ -1245,14 +1311,33 @@
         var composition = ComposeCrxExportComposition(exportSeeds);
         var decodedChapter = Uri.UnescapeDataString(ChapterName);
 
-        _crxModal.Open(
-            decodedChapter,
-            composition.StartTime,
-            composition.EndTime,
-            composition.AnchorSentenceId,
-            composition.Excerpt,
-            composition.AnchorReport,
-            composition.RequiresRangeConfirmation);
+        _pendingExportSentenceIds = exportSeeds
+            .Select(seed => seed.SentenceId)
+            .Where(id => id > 0)
+            .ToHashSet();
+
+        if (composition.AllReports.Count > 1)
+        {
+            _crxModal.OpenMulti(
+                decodedChapter,
+                composition.StartTime,
+                composition.EndTime,
+                composition.AnchorSentenceId,
+                composition.Excerpt,
+                composition.AllReports,
+                composition.RequiresRangeConfirmation);
+        }
+        else
+        {
+            _crxModal.Open(
+                decodedChapter,
+                composition.StartTime,
+                composition.EndTime,
+                composition.AnchorSentenceId,
+                composition.Excerpt,
+                composition.AnchorReport,
+                composition.RequiresRangeConfirmation);
+        }
 
         _lastSelectionGestureEvent = eventName;
         LogSelectionModeDiagnostic(
@@ -1423,6 +1508,7 @@
                 AnchorSentenceId: 0,
                 Excerpt: "Batch export",
                 AnchorReport: null,
+                AllReports: Array.Empty<SentenceReport>(),
                 RequiresRangeConfirmation: true,
                 RangeMode: "fallback-empty",
                 Cardinality: 0);
@@ -1469,6 +1555,10 @@
             AnchorSentenceId: anchorSeed.SentenceId,
             Excerpt: BuildBatchCrxExcerpt(exportSeeds),
             AnchorReport: exportSeeds.Count == 1 ? anchorSeed.Report : null,
+            AllReports: orderedByStart
+                .Select(seed => seed.Report)
+                .Where(r => r is not null)
+                .ToList()!,
             RequiresRangeConfirmation: requiresRangeConfirmation,
             RangeMode: rangeMode,
             Cardinality: exportSeeds.Count);
@@ -1595,6 +1685,10 @@
 
         var composition = ComposeCrxExportComposition(new List<CrxExportSeed> { exportSeed });
 
+        _pendingExportSentenceIds = sentence.Id > 0
+            ? new HashSet<int> { sentence.Id }
+            : new HashSet<int>();
+
         _crxModal.Open(
             decoded,
             composition.StartTime,
@@ -1613,11 +1707,16 @@
         {
             ToastService.Success($"Error #{result.ErrorNumber} exported to CRX");
             LoadExportedSentenceIds();
+            foreach (var id in _pendingExportSentenceIds)
+            {
+                _exportedSentenceIds.Add(id);
+            }
         }
         else
         {
             ToastService.Error($"CRX failed: {result.Error}");
         }
+        _pendingExportSentenceIds = new HashSet<int>();
         StateHasChanged();
     }
 

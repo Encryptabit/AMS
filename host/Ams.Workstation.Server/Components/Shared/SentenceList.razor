@@ -81,6 +81,12 @@
     public int? ActiveSentenceId { get; set; }
 
     /// <summary>
+    /// IDs of sentences currently in the multi-selection set.
+    /// </summary>
+    [Parameter]
+    public IReadOnlySet<int>? SelectedSentenceIds { get; set; }
+
+    /// <summary>
     /// The current playback time in seconds (used for time-sync).
     /// </summary>
     [Parameter]
@@ -135,6 +141,19 @@
         if (IsPlaying(sentence))
         {
             classes.Add("playing");
+        }
+
+        if (SelectedSentenceIds is not null && SelectedSentenceIds.Contains(sentence.Id))
+        {
+            classes.Add("selected");
+
+            var prev = GetAdjacentSentenceId(sentence, -1);
+            var next = GetAdjacentSentenceId(sentence, +1);
+            var prevSelected = prev.HasValue && SelectedSentenceIds.Contains(prev.Value);
+            var nextSelected = next.HasValue && SelectedSentenceIds.Contains(next.Value);
+
+            if (prevSelected) classes.Add("selected--prev");
+            if (nextSelected) classes.Add("selected--next");
         }
 
         // Status-based styling
@@ -285,6 +304,21 @@
     }
 
     private static string GetSentenceElementId(int id) => $"sentence-{id}";
+
+    private int? GetAdjacentSentenceId(SentenceViewModel sentence, int offset)
+    {
+        if (Sentences is null) return null;
+        var list = Sentences as IList<SentenceViewModel> ?? Sentences.ToList();
+        var index = -1;
+        for (int i = 0; i < list.Count; i++)
+        {
+            if (list[i].Id == sentence.Id) { index = i; break; }
+        }
+        if (index < 0) return null;
+        var target = index + offset;
+        if (target < 0 || target >= list.Count) return null;
+        return list[target].Id;
+    }
 
     private static string FormatTime(double seconds)
     {

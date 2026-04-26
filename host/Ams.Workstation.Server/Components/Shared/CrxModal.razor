@@ -24,41 +24,14 @@
 
         <div class="crx-modal-body">
             <div class="crx-grid">
-                @* ── Left column: Error Type, Error Checkboxes, Export Range ── *@
+                @* ── Left column: Error Type, then a 50/50 row with Export Range + Errors ── *@
                 <div class="crx-col-left">
                     <BitDropdown TItem="BitDropdownItem<string>" TValue="string"
                                  @bind-Value="_errorType"
                                  Label="Error Type"
                                  Items="_errorTypeItems" />
 
-                    @if (_errorOps.Count > 0)
-                    {
-                        <div class="crx-errors-section">
-                            <div class="crx-errors-header">
-                                <BitText Typography="BitTypography.Body2">Errors to Highlight</BitText>
-                                <label class="crx-select-all">
-                                    <input type="checkbox" checked="@_allSelected"
-                                           @onchange="ToggleSelectAll" />
-                                    <BitText Typography="BitTypography.Caption1">Select All</BitText>
-                                </label>
-                            </div>
-                            <div class="crx-errors-list">
-                                @for (var i = 0; i < _errorOps.Count; i++)
-                                {
-                                    var idx = i;
-                                    var err = _errorOps[idx];
-                                    <label class="crx-error-item">
-                                        <input type="checkbox" checked="@err.Selected"
-                                               @onchange="@(() => ToggleError(idx))" />
-                                        <span class="@(err.Op == "delete" ? "crx-del" : "crx-ins")">
-                                            @(err.Op == "delete" ? "DEL" : "INS"): @err.Text
-                                        </span>
-                                    </label>
-                                }
-                            </div>
-                        </div>
-                    }
-
+                    <div class="crx-row-split">
                     <div class="crx-range-controls" data-ams-crx-range-controls="true">
                         <BitText Typography="BitTypography.Body2">Export Range</BitText>
 
@@ -134,6 +107,55 @@
                             }
                         }
                     </div>
+
+                    <div class="crx-errors-section">
+                        <div class="crx-errors-header">
+                            <BitText Typography="BitTypography.Body2">Errors to Highlight</BitText>
+                            @if (_errorOps.Count > 0)
+                            {
+                                <label class="crx-select-all">
+                                    <input type="checkbox" checked="@_allSelected"
+                                           @onchange="ToggleSelectAll" />
+                                    <BitText Typography="BitTypography.Caption1">Select All</BitText>
+                                </label>
+                            }
+                        </div>
+                        @if (_errorOps.Count > 0)
+                        {
+                            <div class="crx-errors-list">
+                                @{
+                                    var multipleSentences = _sentenceReports.Count > 1;
+                                    int? lastSentenceId = null;
+                                }
+                                @for (var i = 0; i < _errorOps.Count; i++)
+                                {
+                                    var idx = i;
+                                    var err = _errorOps[idx];
+                                    if (multipleSentences && err.SentenceId != lastSentenceId)
+                                    {
+                                        lastSentenceId = err.SentenceId;
+                                        <BitText Typography="BitTypography.Caption2" Color="BitColor.SecondaryForeground" Class="crx-error-sentence-heading">
+                                            Sentence #@err.SentenceId
+                                        </BitText>
+                                    }
+                                    <label class="crx-error-item">
+                                        <input type="checkbox" checked="@err.Selected"
+                                               @onchange="@(() => ToggleError(idx))" />
+                                        <span class="@(err.Op == "delete" ? "crx-del" : "crx-ins")">
+                                            @(err.Op == "delete" ? "DEL" : "INS"): @err.Text
+                                        </span>
+                                    </label>
+                                }
+                            </div>
+                        }
+                        else
+                        {
+                            <BitText Typography="BitTypography.Caption1" Color="BitColor.SecondaryForeground" Class="crx-errors-empty">
+                                No diff errors detected for this range.
+                            </BitText>
+                        }
+                    </div>
+                    </div>
                 </div>
 
                 @* ── Right column: Audio Preview ── *@
@@ -192,6 +214,7 @@
     private string _audioUrl = "";
     private string? _peaksUrl;
     private SentenceReport? _sentenceReport;
+    private List<SentenceReport> _sentenceReports = new();
     private WaveformPlayer? _waveformPlayer;
     private RangeDragState? _activeRangeDrag;
 
@@ -215,12 +238,51 @@
         SentenceReport? sentenceReport = null,
         bool requireRangeConfirmation = false)
     {
+        OpenInternal(
+            chapterName,
+            start,
+            end,
+            sentenceId,
+            excerpt,
+            sentenceReport is null ? new List<SentenceReport>() : new List<SentenceReport> { sentenceReport },
+            requireRangeConfirmation);
+    }
+
+    public void OpenMulti(
+        string chapterName,
+        double start,
+        double end,
+        int anchorSentenceId,
+        string excerpt,
+        IReadOnlyList<SentenceReport> sentenceReports,
+        bool requireRangeConfirmation = false)
+    {
+        OpenInternal(
+            chapterName,
+            start,
+            end,
+            anchorSentenceId,
+            excerpt,
+            sentenceReports?.Where(r => r is not null).ToList() ?? new List<SentenceReport>(),
+            requireRangeConfirmation);
+    }
+
+    private void OpenInternal(
+        string chapterName,
+        double start,
+        double end,
+        int sentenceId,
+        string excerpt,
+        List<SentenceReport> sentenceReports,
+        bool requireRangeConfirmation)
+    {
         _chapterName = chapterName;
         _startTime = start;
         _endTime = end;
         _sentenceId = sentenceId;
         _excerpt = excerpt;
-        _sentenceReport = sentenceReport;
+        _sentenceReports = sentenceReports;
+        _sentenceReport = sentenceReports.FirstOrDefault();
         _errorType = "MR";
         _isVisible = true;
         _requiresRangeConfirmation = requireRangeConfirmation;
@@ -274,13 +336,17 @@
     private void BuildErrorOps()
     {
         _errorOps.Clear();
-        if (_sentenceReport?.Diff?.Ops == null) return;
+        if (_sentenceReports.Count == 0) return;
 
-        foreach (var op in _sentenceReport.Diff.Ops)
+        foreach (var report in _sentenceReports)
         {
-            if (op.Op == "equal") continue;
-            var text = string.Join(" ", op.Tokens);
-            _errorOps.Add(new ErrorOpItem(op.Op, text, Selected: true));
+            if (report?.Diff?.Ops == null) continue;
+            foreach (var op in report.Diff.Ops)
+            {
+                if (op.Op == "equal") continue;
+                var text = string.Join(" ", op.Tokens);
+                _errorOps.Add(new ErrorOpItem(report.Id, op.Op, text, Selected: true));
+            }
         }
     }
 
@@ -304,32 +370,71 @@
     }
 
     /// <summary>
-    /// Port of generateCrxCommentWithSelection from validation-viewer app.js
+    /// Builds the comment text as a single "Should be: ... / Read as: ..." pair, concatenating across all
+    /// selected sentences. Selected delete ops are bracketed in Should-be, selected insert ops are bracketed
+    /// in Read-as, and sentences with no flagged differences contribute their book text to both lines.
+    /// When no sentence has any flagged difference, the joined book text is returned plain.
     /// </summary>
     private string GenerateComment()
     {
-        if (_sentenceReport?.Diff?.Ops == null || _errorOps.Count == 0)
+        if (_sentenceReports.Count == 0)
             return _excerpt;
 
-        // Build a set of selected op indices (non-equal ops only)
+        var combinedShouldBe = new List<string>();
+        var combinedReadAs = new List<string>();
+        var anyDifferences = false;
+        var bookTexts = new List<string>();
+
+        foreach (var report in _sentenceReports)
+        {
+            if (report is null) continue;
+            var (shouldBe, readAs, hasDifferences) = BuildSentenceLines(report);
+
+            if (!string.IsNullOrWhiteSpace(shouldBe)) combinedShouldBe.Add(shouldBe);
+            if (!string.IsNullOrWhiteSpace(readAs)) combinedReadAs.Add(readAs);
+            if (!string.IsNullOrEmpty(report.BookText)) bookTexts.Add(report.BookText);
+            anyDifferences |= hasDifferences;
+        }
+
+        if (!anyDifferences)
+        {
+            return bookTexts.Count > 0 ? string.Join(" ", bookTexts) : _excerpt;
+        }
+
+        var shouldBeJoined = string.Join(" ", combinedShouldBe);
+        var readAsJoined = string.Join(" ", combinedReadAs);
+        return $"Should be: {shouldBeJoined}{Environment.NewLine}{Environment.NewLine}Read as: {readAsJoined}";
+    }
+
+    private (string ShouldBe, string ReadAs, bool HasDifferences) BuildSentenceLines(SentenceReport report)
+    {
+        if (report.Diff?.Ops == null)
+        {
+            var bookText = report.BookText ?? string.Empty;
+            return (bookText, bookText, false);
+        }
+
+        var sentenceErrors = _errorOps.Where(e => e.SentenceId == report.Id).ToList();
+
+        // Map non-equal op indices in the report's Diff.Ops to the selected state from sentenceErrors (in order).
         var selectedSet = new HashSet<int>();
         var errorIdx = 0;
-        for (var i = 0; i < _sentenceReport.Diff.Ops.Count; i++)
+        for (var i = 0; i < report.Diff.Ops.Count; i++)
         {
-            var op = _sentenceReport.Diff.Ops[i];
+            var op = report.Diff.Ops[i];
             if (op.Op == "equal") continue;
-            if (_errorOps[errorIdx].Selected)
+            if (errorIdx < sentenceErrors.Count && sentenceErrors[errorIdx].Selected)
                 selectedSet.Add(i);
             errorIdx++;
         }
 
-        var shouldBeLine = new List<string>();
-        var readAsLine = new List<string>();
+        var shouldBeTokens = new List<string>();
+        var readAsTokens = new List<string>();
         var hasDifferences = false;
 
-        for (var i = 0; i < _sentenceReport.Diff.Ops.Count; i++)
+        for (var i = 0; i < report.Diff.Ops.Count; i++)
         {
-            var op = _sentenceReport.Diff.Ops[i];
+            var op = report.Diff.Ops[i];
             var tokens = op.Tokens;
             if (tokens.Count == 0) continue;
 
@@ -338,41 +443,25 @@
 
             if (op.Op == "equal")
             {
-                shouldBeLine.Add(text);
-                readAsLine.Add(text);
+                shouldBeTokens.Add(text);
+                readAsTokens.Add(text);
             }
             else if (op.Op == "delete")
             {
-                if (isSelected)
-                {
-                    shouldBeLine.Add($"[{text}]");
-                    hasDifferences = true;
-                }
-                else
-                {
-                    shouldBeLine.Add(text);
-                }
+                shouldBeTokens.Add(isSelected ? $"[{text}]" : text);
+                if (isSelected) hasDifferences = true;
             }
             else if (op.Op == "insert")
             {
-                if (isSelected)
-                {
-                    readAsLine.Add($"[{text}]");
-                    hasDifferences = true;
-                }
-                else
-                {
-                    readAsLine.Add(text);
-                }
+                readAsTokens.Add(isSelected ? $"[{text}]" : text);
+                if (isSelected) hasDifferences = true;
             }
         }
 
-        if (!hasDifferences)
-            return _sentenceReport.BookText;
-
-        var shouldBe = string.Join(" ", shouldBeLine);
-        var readAs = string.Join(" ", readAsLine);
-        return $"Should be: {shouldBe}{Environment.NewLine}{Environment.NewLine}Read as: {readAs}";
+        return (
+            string.Join(" ", shouldBeTokens),
+            string.Join(" ", readAsTokens),
+            hasDifferences);
     }
 
     private bool HasRangeValidationError => !string.IsNullOrWhiteSpace(_rangeValidationMessage);
@@ -709,7 +798,7 @@
 
     private sealed record RangeDragState(RangeBound Bound, long PointerId, double StartY, double StartValue);
 
-    private record ErrorOpItem(string Op, string Text, bool Selected);
+    private record ErrorOpItem(int SentenceId, string Op, string Text, bool Selected);
 }
 
 <style>
@@ -773,6 +862,20 @@
         flex-direction: column;
         gap: 0.75rem;
         min-width: 0;
+    }
+
+    .crx-row-split {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+        gap: 0.75rem;
+        align-items: stretch;
+    }
+
+    .crx-row-split > .crx-range-controls,
+    .crx-row-split > .crx-errors-section {
+        min-width: 0;
+        min-height: 0;
+        height: 100%;
     }
 
     .crx-col-right {
@@ -884,7 +987,27 @@
     .crx-errors-section {
         display: flex;
         flex-direction: column;
-        gap: 0.25rem;
+        gap: 0.35rem;
+        padding: 0.45rem;
+        border: 1px solid var(--bit-clr-brd-sec);
+        border-radius: 6px;
+        background: var(--bit-clr-bg-sec);
+    }
+
+    .crx-errors-empty {
+        line-height: 1.3;
+        padding: 0.25rem 0.1rem;
+    }
+
+    .crx-error-sentence-heading {
+        margin-top: 0.4rem;
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+        font-weight: 600;
+    }
+
+    .crx-error-sentence-heading:first-child {
+        margin-top: 0;
     }
 
     .crx-errors-header {
@@ -911,7 +1034,8 @@
         display: flex;
         flex-direction: column;
         gap: 0.25rem;
-        max-height: 160px;
+        flex: 1 1 0;
+        min-height: 0;
         overflow-y: auto;
         padding: 0.25rem;
         background: var(--bit-clr-bg-sec);

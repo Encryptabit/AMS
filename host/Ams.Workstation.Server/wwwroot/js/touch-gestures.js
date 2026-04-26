@@ -204,10 +204,6 @@ function isSwipeGesture(gesture, deltaX, deltaY, durationMs) {
         return false;
     }
 
-    if (!isSelectionModeActive()) {
-        return false;
-    }
-
     const absX = Math.abs(deltaX);
     const absY = Math.abs(deltaY);
 

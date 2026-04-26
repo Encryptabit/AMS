@@ -58,6 +58,32 @@
     border-left-color: var(--bit-clr-err);
 }
 
+/* Multi-selection: thin outline that visually merges across contiguous selected rows */
+.sentence-item.selected {
+    border: 2px solid var(--bit-clr-pri, #2563eb);
+    border-radius: 0.4rem;
+    background: rgba(37, 99, 235, 0.08);
+    margin-bottom: 0;
+}
+
+.sentence-item.selected + .sentence-item.selected,
+.sentence-item.selected.selected--prev {
+    border-top: 0;
+    border-top-left-radius: 0;
+    border-top-right-radius: 0;
+}
+
+.sentence-item.selected.selected--next {
+    border-bottom: 0;
+    border-bottom-left-radius: 0;
+    border-bottom-right-radius: 0;
+}
+
+/* Restore the row spacing only between non-adjacent selected groups and unselected items */
+.sentence-item.selected:not(.selected--next) {
+    margin-bottom: 0.25rem;
+}
+
 /* Sentence ID accent color */
 .sentence-id {
     font-weight: 600;

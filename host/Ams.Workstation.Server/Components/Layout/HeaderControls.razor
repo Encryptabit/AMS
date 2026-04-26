@@ -9,31 +9,11 @@
 
 <div class="header-controls" data-ams-mobile-overflow-state="@(isMobileOverflowOpen ? "open" : "closed")">
     <div class="header-row header-row--primary">
-        <div class="header-nav">
-            <BitButton Variant="@(IsActive(StageRouteCatalog.StageIds.Prep) ? BitVariant.Fill : BitVariant.Text)"
-                       Color="BitColor.Primary"
-                       Size="BitSize.Small"
-                       OnClick="@(() => NavigateToStage(StageRouteCatalog.StageIds.Prep))">
-                Prep
-            </BitButton>
-            <BitButton Variant="@(IsActive(StageRouteCatalog.StageIds.Proof) ? BitVariant.Fill : BitVariant.Text)"
-                       Color="BitColor.Primary"
-                       Size="BitSize.Small"
-                       OnClick="@(() => NavigateToStage(StageRouteCatalog.StageIds.Proof))">
-                Proof
-            </BitButton>
-            <BitButton Variant="@(IsActive(StageRouteCatalog.StageIds.Polish) ? BitVariant.Fill : BitVariant.Text)"
-                       Color="BitColor.Primary"
-                       Size="BitSize.Small"
-                       OnClick="@(() => NavigateToStage(StageRouteCatalog.StageIds.Polish))">
-                Polish
-            </BitButton>
-        </div>
-
         <div class="header-chapter" data-ams-header-control="chapter">
             @if (Workspace.AvailableChapters.Count > 0)
             {
                 <BitDropdown TItem="BitDropdownItem<string>"
+                             
                              TValue="string"
                              Items="@chapterItems"
                              @bind-Value="selectedChapter"
@@ -65,15 +45,15 @@
             <BitButton Variant="BitVariant.Outline"
                        Color="BitColor.Secondary"
                        Size="BitSize.Small"
+                       Class="header-settings-trigger"
+                       IconName="@BitIconName.ChevronDown"
                        id="@MobileOverflowTriggerId"
                        aria-haspopup="dialog"
                        aria-controls="@MobileOverflowPanelId"
                        aria-expanded="@(isMobileOverflowOpen ? "true" : "false")"
-                       aria-label="@(isMobileOverflowOpen ? "Close secondary header actions" : "Open secondary header actions")"
-                       title="@(isMobileOverflowOpen ? "Close secondary header actions" : "Open secondary header actions")"
-                       OnClick="ToggleMobileOverflow">
-                @(isMobileOverflowOpen ? "Close" : "More")
-            </BitButton>
+                       aria-label="@(isMobileOverflowOpen ? "Close settings" : "Open settings")"
+                       title="@(isMobileOverflowOpen ? "Close settings" : "Settings")"
+                       OnClick="ToggleMobileOverflow" />
         </div>
 
         <div class="header-secondary-optional" data-ams-header-optional="mobile-overflow-hidden">
@@ -139,6 +119,16 @@
             </div>
 
             <div class="header-mobile-overflow-body">
+                <div class="header-field header-field--workspace" data-ams-header-control="workspace-mobile">
+                    <BitDropdown TItem="BitDropdownItem<string>"
+                                 TValue="string"
+                                 Items="@savedWorkspaceItems"
+                                 @bind-Value="selectedSavedWorkspace"
+                                 Placeholder="Saved workspaces"
+                                 Style="width: 100%; min-width: 0;"
+                                 OnChange="OnSavedWorkspaceChangeFromOverflow" />
+                </div>
+
                 <div class="header-field header-field--directory" data-ams-header-control="directory-mobile">
                     <BitTextField @bind-Value="workingDirectory"
                                   Immediate="true"
@@ -168,6 +158,10 @@
                     <BitCheckbox Label="Precompute Peaks In Background"
                                  Value="@Workspace.PrecomputePeaksInBackground"
                                  OnChange="HandlePrecomputePeaksToggle" />
+                </div>
+
+                <div class="header-settings-extra" data-ams-header-control="settings-extra">
+                    <SectionOutlet SectionName="header-settings-extra" />
                 </div>
             </div>
         </div>
@@ -266,16 +260,6 @@
         => currentRoute is not null
            && string.Equals(currentRoute.Stage.Id, stageId, StringComparison.OrdinalIgnoreCase);
 
-    private void NavigateToStage(string stageId)
-    {
-        if (!StageRouteCatalog.TryGetStage(stageId, out _))
-        {
-            return;
-        }
-
-        CloseMobileOverflow();
-        NavigationManager.NavigateTo(StageRouteCatalog.GetStageEntryPath(stageId));
-    }
 
     private void ToggleMobileOverflow()
     {
@@ -405,6 +389,12 @@
 
         workingDirectory = path;
         SetDirectory();
+    }
+
+    private void OnSavedWorkspaceChangeFromOverflow(string? path)
+    {
+        CloseMobileOverflow();
+        OnSavedWorkspaceChange(path);
     }
 
     private void OnChapterChange(string? chapter)

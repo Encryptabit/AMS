@@ -2,67 +2,75 @@
      data-ams-proof-mobile-action-bar="selection-workflow"
      data-ams-proof-mobile-action-bar-view="@CurrentView"
      data-ams-proof-mobile-action-bar-selection-mode="@(IsSelectionModeActive ? "active" : "inactive")"
-     data-ams-proof-mobile-action-bar-selection-count="@SelectedCount">
-    <div class="mobile-action-bar__status"
-         data-ams-proof-mobile-selection-summary="@SelectionSummaryState">
-        <BitText Typography="BitTypography.Caption1"
-                 Color="BitColor.SecondaryForeground">
-            @SelectionSummaryText
-        </BitText>
-    </div>
+     data-ams-proof-mobile-action-bar-selection-count="@SelectedCount"
+     data-ams-proof-mobile-action-bar-expanded="@(_isExpanded ? "true" : "false")">
+    <button type="button"
+            class="mobile-action-bar__handle"
+            aria-label="@(_isExpanded ? "Hide quick actions" : "Show quick actions")"
+            aria-expanded="@(_isExpanded ? "true" : "false")"
+            data-ams-proof-mobile-action-bar-toggle="true"
+            @onclick="ToggleExpanded">
+        <span class="mobile-action-bar__handle-icon" aria-hidden="true">
+            @(_isExpanded ? "▾" : "▴")
+        </span>
+    </button>
 
-    <div class="mobile-action-bar__actions"
-         data-ams-proof-mobile-action-grid="true">
-        <BitButton Variant="@(IsErrorsView ? BitVariant.Fill : BitVariant.Outline)"
-                   Color="BitColor.Primary"
-                   Size="BitSize.Small"
-                   data-ams-proof-mobile-action="errors"
-                   OnClick="HandleSwitchToErrorsAsync">
-            Errors
-        </BitButton>
+    @if (_isExpanded)
+    {
+        @if (IsSelectionModeActive)
+        {
+            <div class="mobile-action-bar__status"
+                 data-ams-proof-mobile-selection-summary="@SelectionSummaryState">
+                <BitText Typography="BitTypography.Caption1"
+                         Color="BitColor.SecondaryForeground">
+                    @SelectionSummaryText
+                </BitText>
+            </div>
+        }
 
-        <BitButton Variant="@(IsPlaybackView ? BitVariant.Fill : BitVariant.Outline)"
-                   Color="BitColor.Primary"
-                   Size="BitSize.Small"
-                   data-ams-proof-mobile-action="playback"
-                   OnClick="HandleSwitchToPlaybackAsync">
-            Playback
-        </BitButton>
+        <div class="mobile-action-bar__actions"
+             data-ams-proof-mobile-action-grid="true">
+            <BitButton Variant="@(IsErrorsView ? BitVariant.Fill : BitVariant.Outline)"
+                       Color="BitColor.Primary"
+                       Size="BitSize.Small"
+                       data-ams-proof-mobile-action="errors"
+                       OnClick="HandleSwitchToErrorsAsync">
+                Errors
+            </BitButton>
 
-        <BitButton Variant="BitVariant.Fill"
-                   Color="BitColor.Primary"
-                   Size="BitSize.Small"
-                   data-ams-proof-mobile-action="export"
-                   IsEnabled="@IsBatchActionsEnabled"
-                   OnClick="HandleExportSelectionAsync">
-            Export
-        </BitButton>
+            <BitButton Variant="@(IsPlaybackView ? BitVariant.Fill : BitVariant.Outline)"
+                       Color="BitColor.Primary"
+                       Size="BitSize.Small"
+                       data-ams-proof-mobile-action="playback"
+                       OnClick="HandleSwitchToPlaybackAsync">
+                Playback
+            </BitButton>
 
-        <BitButton Variant="BitVariant.Outline"
-                   Color="BitColor.Warning"
-                   Size="BitSize.Small"
-                   data-ams-proof-mobile-action="ignore"
-                   IsEnabled="@IsBatchActionsEnabled"
-                   OnClick="HandleIgnoreSelectionAsync">
-            Ignore
-        </BitButton>
+            <BitButton Variant="@(IsReviewed ? BitVariant.Fill : BitVariant.Outline)"
+                       Color="@(IsReviewed ? BitColor.Success : BitColor.Primary)"
+                       Size="BitSize.Small"
+                       data-ams-proof-mobile-action="reviewed"
+                       OnClick="HandleToggleReviewedAsync">
+                @(IsReviewed ? "Reviewed" : "Review")
+            </BitButton>
 
-        <BitButton Variant="@(IsReviewed ? BitVariant.Fill : BitVariant.Outline)"
-                   Color="@(IsReviewed ? BitColor.Success : BitColor.Primary)"
-                   Size="BitSize.Small"
-                   data-ams-proof-mobile-action="reviewed"
-                   OnClick="HandleToggleReviewedAsync">
-            @(IsReviewed ? "Reviewed" : "Reviewed?")
-        </BitButton>
+            <BitButton Variant="BitVariant.Outline"
+                       Color="BitColor.Secondary"
+                       Size="BitSize.Small"
+                       data-ams-proof-mobile-action="pickups"
+                       OnClick="HandleNavigateToPickupsAsync">
+                Pickups
+            </BitButton>
 
-        <BitButton Variant="BitVariant.Outline"
-                   Color="BitColor.Secondary"
-                   Size="BitSize.Small"
-                   data-ams-proof-mobile-action="modules"
-                   OnClick="HandleToggleModulesAsync">
-            Modules
-        </BitButton>
-    </div>
+            <BitButton Variant="BitVariant.Outline"
+                       Color="BitColor.Secondary"
+                       Size="BitSize.Small"
+                       data-ams-proof-mobile-action="modules"
+                       OnClick="HandleToggleModulesAsync">
+                Modules
+            </BitButton>
+        </div>
+    }
 </div>
 
 @code {
@@ -78,6 +86,9 @@
     [Parameter] public EventCallback OnIgnoreSelection { get; set; }
     [Parameter] public EventCallback OnToggleReviewed { get; set; }
     [Parameter] public EventCallback OnToggleModules { get; set; }
+    [Parameter] public EventCallback OnNavigateToPickups { get; set; }
+
+    private bool _isExpanded;
 
     private string SelectionSummaryState => IsSelectionModeActive ? "active" : "inactive";
 
@@ -90,17 +101,17 @@
 
     private bool IsPlaybackView => string.Equals(CurrentView, "playback", StringComparison.Ordinal);
 
+    private void ToggleExpanded() => _isExpanded = !_isExpanded;
+
     private Task HandleSwitchToErrorsAsync() => InvokeCallbackAsync(OnSwitchToErrors);
 
     private Task HandleSwitchToPlaybackAsync() => InvokeCallbackAsync(OnSwitchToPlayback);
 
-    private Task HandleExportSelectionAsync() => InvokeCallbackAsync(OnExportSelection);
-
-    private Task HandleIgnoreSelectionAsync() => InvokeCallbackAsync(OnIgnoreSelection);
-
     private Task HandleToggleReviewedAsync() => InvokeCallbackAsync(OnToggleReviewed);
 
     private Task HandleToggleModulesAsync() => InvokeCallbackAsync(OnToggleModules);
+
+    private Task HandleNavigateToPickupsAsync() => InvokeCallbackAsync(OnNavigateToPickups);
 
     private static Task InvokeCallbackAsync(EventCallback callback)
         => callback.HasDelegate

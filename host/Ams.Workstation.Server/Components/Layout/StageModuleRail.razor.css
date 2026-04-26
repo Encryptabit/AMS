@@ -19,12 +19,15 @@
 }
 
 .stage-module-rail__section-label {
-    font-size: 0.72rem;
-    text-transform: uppercase;
-    letter-spacing: 0.07em;
-    color: var(--bit-clr-fg-secondary, #b0b0b0);
-    text-align: center;
-    width: 100%;
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
 }
 
 .stage-module-rail__stage-list,
@@ -133,21 +136,6 @@
     clip: rect(0, 0, 0, 0);
     white-space: nowrap;
     border: 0;
-}
-
-@media (max-width: 960px) {
-    .stage-module-rail {
-        flex-direction: row;
-        align-items: flex-start;
-        overflow-x: auto;
-    }
-
-    .stage-module-rail__diagnostic {
-        min-width: 16rem;
-        margin-top: 0;
-        padding-top: 0;
-        border-top: 0;
-    }
 }
 
 @media (max-width: 768px) {

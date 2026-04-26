@@ -1,4 +1,5 @@
 @inherits LayoutComponentBase
+@using Ams.Workstation.Server.Components.Navigation
 @using Ams.Workstation.Server.Components.Shared
 @using Microsoft.AspNetCore.Components.Web
 @implements IDisposable
@@ -7,33 +8,64 @@
 <div class="workstation-layout"
      data-ams-mobile-module-rail-state="@(isMobileModuleRailOpen ? "open" : "closed")">
     <header class="workstation-header">
-        <div class="header-title">AMS Workstation</div>
+        <button type="button"
+                id="@MobileModuleRailToggleId"
+                class="workstation-module-rail-toggle-hidden"
+                aria-hidden="true"
+                tabindex="-1"
+                @onclick="ToggleMobileModuleRail">
+            modules
+        </button>
 
-        <div class="workstation-module-rail-toggle"
-             data-ams-header-control="module-rail-toggle"
-             data-ams-mobile-module-rail-open="@(isMobileModuleRailOpen ? "true" : "false")"
+        <div class="workstation-header-stage-nav"
+             data-ams-header-control="stage-nav"
              inert="@(isMobileModuleRailOpen ? "inert" : null)"
              aria-hidden="@(isMobileModuleRailOpen ? "true" : null)">
             <BitButton Variant="BitVariant.Outline"
-                       Color="BitColor.Secondary"
+                       Color="BitColor.Primary"
                        Size="BitSize.Small"
-                       id="@MobileModuleRailToggleId"
-                       aria-haspopup="dialog"
-                       aria-controls="@MobileModuleRailPanelId"
-                       aria-expanded="@(isMobileModuleRailOpen ? "true" : "false")"
-                       aria-label="@(isMobileModuleRailOpen ? "Close module navigation" : "Open module navigation")"
-                       title="@(isMobileModuleRailOpen ? "Close module navigation" : "Open module navigation")"
-                       OnClick="ToggleMobileModuleRail">
-                @(isMobileModuleRailOpen ? "Close Modules" : "Modules")
+                       Class="header-p3-button"
+                       aria-haspopup="menu"
+                       aria-expanded="@(isStageNavOpen ? "true" : "false")"
+                       aria-label="Open Prep / Proof / Polish navigation"
+                       title="Prep / Proof / Polish"
+                       OnClick="ToggleStageNav">
+                P<sup>3</sup>
             </BitButton>
+
+            @if (isStageNavOpen)
+            {
+                <div class="workstation-header-stage-nav-popover"
+                     role="menu"
+                     aria-label="Stage navigation"
+                     @onclick:stopPropagation="true">
+                    <BitButton Variant="@(IsStageActive(StageRouteCatalog.StageIds.Prep) ? BitVariant.Fill : BitVariant.Text)"
+                               Color="BitColor.Primary"
+                               Size="BitSize.Small"
+                               OnClick="@(() => NavigateToStage(StageRouteCatalog.StageIds.Prep))">
+                        Prep
+                    </BitButton>
+                    <BitButton Variant="@(IsStageActive(StageRouteCatalog.StageIds.Proof) ? BitVariant.Fill : BitVariant.Text)"
+                               Color="BitColor.Primary"
+                               Size="BitSize.Small"
+                               OnClick="@(() => NavigateToStage(StageRouteCatalog.StageIds.Proof))">
+                        Proof
+                    </BitButton>
+                    <BitButton Variant="@(IsStageActive(StageRouteCatalog.StageIds.Polish) ? BitVariant.Fill : BitVariant.Text)"
+                               Color="BitColor.Primary"
+                               Size="BitSize.Small"
+                               OnClick="@(() => NavigateToStage(StageRouteCatalog.StageIds.Polish))">
+                        Polish
+                    </BitButton>
+                </div>
+            }
         </div>
 
         <div class="workstation-header-controls-host"
              data-ams-shell-region="header-controls"
              data-ams-mobile-overflow-contract="secondary-actions"
              inert="@(isMobileModuleRailOpen ? "inert" : null)"
-             aria-hidden="@(isMobileModuleRailOpen ? "true" : null)"
-             style="flex: 1; min-width: 0;">
+             aria-hidden="@(isMobileModuleRailOpen ? "true" : null)">
             <HeaderControls />
         </div>
     </header>
@@ -107,7 +139,9 @@
 
     private bool isMobileModuleRailOpen;
     private bool focusMobileModuleRailPanel;
+    private bool isStageNavOpen;
     private ElementReference mobileModuleRailPanelRef;
+    private StageRouteMatch? currentStageRoute;
 
     private string SidebarMobileStateClass
         => isMobileModuleRailOpen
@@ -116,7 +150,33 @@
 
     protected override void OnInitialized()
     {
+        UpdateStageRoute();
         NavigationManager.LocationChanged += HandleLocationChanged;
+    }
+
+    private void UpdateStageRoute()
+    {
+        var uri = new Uri(NavigationManager.Uri);
+        currentStageRoute = StageRouteCatalog.Resolve(uri.AbsolutePath);
+    }
+
+    private bool IsStageActive(string stageId)
+        => currentStageRoute is not null
+           && string.Equals(currentStageRoute.Stage.Id, stageId, StringComparison.OrdinalIgnoreCase);
+
+    private void ToggleStageNav() => isStageNavOpen = !isStageNavOpen;
+
+    private void CloseStageNav() => isStageNavOpen = false;
+
+    private void NavigateToStage(string stageId)
+    {
+        if (!StageRouteCatalog.TryGetStage(stageId, out _))
+        {
+            return;
+        }
+
+        CloseStageNav();
+        NavigationManager.NavigateTo(StageRouteCatalog.GetStageEntryPath(stageId));
     }
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
@@ -159,12 +219,14 @@
 
     private void HandleLocationChanged(object? sender, LocationChangedEventArgs args)
     {
-        if (!isMobileModuleRailOpen)
+        UpdateStageRoute();
+        CloseStageNav();
+
+        if (isMobileModuleRailOpen)
         {
-            return;
+            CloseMobileModuleRail();
         }
 
-        CloseMobileModuleRail();
         _ = InvokeAsync(StateHasChanged);
     }
 
