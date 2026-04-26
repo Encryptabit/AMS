@@ -1140,6 +1140,10 @@
         }
     }
 
+    private static bool IsFallbackActionSurface(string sourceSurface)
+        => !string.IsNullOrWhiteSpace(sourceSurface)
+           && sourceSurface.StartsWith("mobile-action-bar-", StringComparison.Ordinal);
+
     private bool TryValidateBatchGestureContext(
         string eventName,
         string trigger,
@@ -1162,6 +1166,18 @@
         {
             _lastSelectionGestureEvent = $"{eventName}-ignored-empty-selection";
             LogSelectionModeDiagnostic(_lastSelectionGestureEvent, trigger, sentenceId, $"surface={sourceSurface};reason=no-selected-sentences");
+            return false;
+        }
+
+        if (!IsFallbackActionSurface(sourceSurface)
+            && !string.Equals(sourceSurface, CurrentMobileActionSurface, StringComparison.Ordinal))
+        {
+            _lastSelectionGestureEvent = $"{eventName}-ignored-surface-mismatch";
+            LogSelectionModeDiagnostic(
+                _lastSelectionGestureEvent,
+                trigger,
+                sentenceId,
+                $"surface={sourceSurface};expectedSurface={CurrentMobileActionSurface};reason=surface-mismatch");
             return false;
         }
 
@@ -1784,17 +1800,31 @@
     [JSInvokable]
     public async Task OnNavigateItem(string direction)
     {
+        var shouldRender = false;
+
         if (_currentView == "errors")
         {
             if (_errorSentencesList.Count == 0) return;
-            if (direction == "prev")
-                _selectedErrorIndex = Math.Max(0, _selectedErrorIndex - 1);
-            else
-                _selectedErrorIndex = Math.Min(_errorSentencesList.Count - 1, _selectedErrorIndex + 1);
+
+            var nextIndex = direction == "prev"
+                ? Math.Max(0, _selectedErrorIndex - 1)
+                : Math.Min(_errorSentencesList.Count - 1, _selectedErrorIndex + 1);
+
+            if (nextIndex == _selectedErrorIndex)
+            {
+                return;
+            }
+
+            _selectedErrorIndex = nextIndex;
+            shouldRender = true;
         }
         else
         {
             if (_sentences.Count == 0) return;
+
+            var previousNavigationIndex = _playbackNavigationIndex;
+            var previousSelectedSentenceId = _selectedSentenceId;
+            var previousCurrentTime = _currentTime;
 
             var currentIndex = ResolvePlaybackNavigationIndex();
 
@@ -1820,8 +1850,24 @@
             {
                 _pendingKeyboardSeekTime = null;
             }
+
+            var navigationChanged =
+                previousNavigationIndex != _playbackNavigationIndex
+                || previousSelectedSentenceId != _selectedSentenceId
+                || Math.Abs(previousCurrentTime - _currentTime) > 0.0005;
+
+            if (!navigationChanged && !shouldSeek)
+            {
+                return;
+            }
+
+            shouldRender = true;
         }
-        StateHasChanged();
+
+        if (shouldRender)
+        {
+            StateHasChanged();
+        }
     }
 
     private int ResolvePlaybackNavigationIndex()

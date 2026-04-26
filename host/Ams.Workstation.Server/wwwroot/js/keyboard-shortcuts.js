@@ -3,6 +3,7 @@
 
 let _dotNetRef = null;
 let _handler = null;
+const KEYDOWN_LISTENER_OPTIONS = { passive: false };
 
 function isModalOpen() {
     return document.querySelector('.crx-modal-overlay.visible') !== null
@@ -135,15 +136,20 @@ function handleKeydown(e) {
 }
 
 export function init(dotNetRef) {
+    if (_handler) {
+        document.removeEventListener('keydown', _handler, KEYDOWN_LISTENER_OPTIONS);
+    }
+
     _dotNetRef = dotNetRef;
     _handler = handleKeydown;
-    document.addEventListener('keydown', _handler);
+    document.addEventListener('keydown', _handler, KEYDOWN_LISTENER_OPTIONS);
 }
 
 export function dispose() {
     if (_handler) {
-        document.removeEventListener('keydown', _handler);
+        document.removeEventListener('keydown', _handler, KEYDOWN_LISTENER_OPTIONS);
         _handler = null;
     }
+
     _dotNetRef = null;
 }

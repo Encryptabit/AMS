@@ -8,6 +8,8 @@ const DEFAULT_WHEEL_ZOOM_SCALE = 0.5;
 const DEFAULT_WHEEL_DELTA_THRESHOLD = 5;
 const DEFAULT_MAX_ZOOM = 5000;
 const DEFAULT_BAR_HEIGHT_SCALE = 0.01;
+const DEFAULT_TAP_SUPPRESSION_MOVE_TOLERANCE_PX = 12;
+const DEFAULT_TAP_SUPPRESSION_WINDOW_MS = 280;
 
 /**
  * Creates a new WaveSurfer instance and stores it in the registry.
@@ -86,6 +88,8 @@ export function createWaveSurfer(elementId, options) {
         barHeightScale: options.barHeightWheelScale || DEFAULT_BAR_HEIGHT_SCALE,
         heightDeltaThreshold: options.heightWheelDeltaThreshold || DEFAULT_WHEEL_DELTA_THRESHOLD,
         heightAccumulatedDelta: 0,
+        tapSuppressionMoveTolerancePx: options.tapSuppressionMoveTolerancePx || DEFAULT_TAP_SUPPRESSION_MOVE_TOLERANCE_PX,
+        tapSuppressionWindowMs: options.tapSuppressionWindowMs || DEFAULT_TAP_SUPPRESSION_WINDOW_MS,
         zoomSyncTimerId: null,
         cleanupHandlers: [],
     };
@@ -459,6 +463,7 @@ export function registerCallbacks(elementId, dotNetRef) {
     }
 
     attachCtrlWheelHeightHandler(instance, dotNetRef);
+    attachTapSeekGuard(instance);
 }
 
 /**
@@ -867,6 +872,84 @@ function attachCtrlWheelHeightHandler(instance, dotNetRef) {
 
     wheelTarget.addEventListener('wheel', onWheel, { passive: false, capture: true });
     instance.cleanupHandlers.push(() => wheelTarget.removeEventListener('wheel', onWheel, true));
+}
+
+function attachTapSeekGuard(instance) {
+    if (!instance || !instance.wavesurfer) return;
+
+    const wrapper = instance.wavesurfer.getWrapper();
+    if (!wrapper) return;
+
+    const guardState = {
+        pointerId: null,
+        startX: 0,
+        startY: 0,
+        suppressUntilMs: 0,
+    };
+
+    const markTapSeekSuppressed = (reason) => {
+        guardState.pointerId = null;
+        guardState.suppressUntilMs = performance.now() + instance.tapSuppressionWindowMs;
+        console.info(
+            `[waveform-interop] tap-seek suppressed reason=${reason}; tolerancePx=${instance.tapSuppressionMoveTolerancePx}; windowMs=${instance.tapSuppressionWindowMs}`
+        );
+    };
+
+    const onPointerDown = (event) => {
+        if (event.pointerType !== 'touch' && event.pointerType !== 'pen') {
+            return;
+        }
+
+        guardState.pointerId = event.pointerId;
+        guardState.startX = event.clientX;
+        guardState.startY = event.clientY;
+    };
+
+    const onPointerMove = (event) => {
+        if (guardState.pointerId === null || event.pointerId !== guardState.pointerId) {
+            return;
+        }
+
+        const deltaX = event.clientX - guardState.startX;
+        const deltaY = event.clientY - guardState.startY;
+        const movedDistance = Math.hypot(deltaX, deltaY);
+        if (movedDistance < instance.tapSuppressionMoveTolerancePx) {
+            return;
+        }
+
+        if (Math.abs(deltaY) <= Math.abs(deltaX)) {
+            return;
+        }
+
+        markTapSeekSuppressed('vertical-scroll');
+    };
+
+    const clearPointerTracking = (event) => {
+        if (guardState.pointerId !== null && event.pointerId === guardState.pointerId) {
+            guardState.pointerId = null;
+        }
+    };
+
+    const onClickCapture = (event) => {
+        if (performance.now() > guardState.suppressUntilMs) {
+            return;
+        }
+
+        event.preventDefault();
+        event.stopImmediatePropagation();
+    };
+
+    wrapper.addEventListener('pointerdown', onPointerDown, { passive: true });
+    wrapper.addEventListener('pointermove', onPointerMove, { passive: true });
+    wrapper.addEventListener('pointerup', clearPointerTracking, { passive: true });
+    wrapper.addEventListener('pointercancel', clearPointerTracking, { passive: true });
+    wrapper.addEventListener('click', onClickCapture, { passive: false, capture: true });
+
+    instance.cleanupHandlers.push(() => wrapper.removeEventListener('pointerdown', onPointerDown));
+    instance.cleanupHandlers.push(() => wrapper.removeEventListener('pointermove', onPointerMove));
+    instance.cleanupHandlers.push(() => wrapper.removeEventListener('pointerup', clearPointerTracking));
+    instance.cleanupHandlers.push(() => wrapper.removeEventListener('pointercancel', clearPointerTracking));
+    instance.cleanupHandlers.push(() => wrapper.removeEventListener('click', onClickCapture, true));
 }
 
 function clampNumber(value, min, max) {
