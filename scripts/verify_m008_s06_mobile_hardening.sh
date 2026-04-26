@@ -123,7 +123,7 @@ fi
 add_check "responsive-shell-prep" "FullyQualifiedName~StageShellLayoutTests|FullyQualifiedName~StageShellMobileContractTests|FullyQualifiedName~StageShellCompositionContractTests|FullyQualifiedName~WorkstationPrepMobileContractTests"
 add_check "gesture-hardening" "FullyQualifiedName~ProofMobileInteractionContractTests|FullyQualifiedName~ProofGestureSelectionContractTests"
 add_check "accessibility-fallbacks" "FullyQualifiedName~ProofMobileAccessibilityContractTests|FullyQualifiedName~ProofMobileCrxRangeContractTests"
-add_check "persistence-seams" "FullyQualifiedName~ProofCrxBatchExportContractTests|FullyQualifiedName~WorkstationMobileHardeningContractTests"
+add_check "persistence-seams" "FullyQualifiedName~WorkstationMobileHardeningContractTests|FullyQualifiedName~CrxChapterMatcherTests"
 
 for index in "${!CHECK_NAMES[@]}"; do
     run_check "${CHECK_NAMES[$index]}" "${CHECK_FILTERS[$index]}"
