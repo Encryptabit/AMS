@@ -23,6 +23,8 @@ public sealed class StageShellLayoutTests
     [InlineData("/prep/", StageRouteCatalog.StageIds.Prep, StageRouteCatalog.ModuleIds.PrepPipeline)]
     [InlineData("/prep/pipeline", StageRouteCatalog.StageIds.Prep, StageRouteCatalog.ModuleIds.PrepPipeline)]
     [InlineData("/proof", StageRouteCatalog.StageIds.Proof, StageRouteCatalog.ModuleIds.ProofEditing)]
+    // /proof/editing is now treated as a chapter literally named "editing"
+    // (via the parameterized template) and still maps to the editing module.
     [InlineData("/proof/editing", StageRouteCatalog.StageIds.Proof, StageRouteCatalog.ModuleIds.ProofEditing)]
     [InlineData("/proof/pickups", StageRouteCatalog.StageIds.Proof, StageRouteCatalog.ModuleIds.ProofPickups)]
     [InlineData("/proof/overview", StageRouteCatalog.StageIds.Proof, StageRouteCatalog.ModuleIds.ProofOverview)]
@@ -113,8 +115,7 @@ public sealed class StageShellLayoutTests
 
         AssertRoutes(
             typeof(ProofIndexPage),
-            "/proof",
-            "/proof/editing");
+            "/proof");
 
         AssertRoutes(
             typeof(ProofPickupsPage),
@@ -177,7 +178,8 @@ public sealed class StageShellLayoutTests
 
         AssertSourceContains(css, HeaderControlsCssRelativePath, "@media (max-width: 768px)", "mobile breakpoint rule");
         AssertSourceContains(css, HeaderControlsCssRelativePath, ".header-field--workspace", "workspace mobile style block");
-        AssertSourceContains(css, HeaderControlsCssRelativePath, "flex: 1 1 100%;", "workspace full-width mobile reachability");
+        AssertSourceContains(css, HeaderControlsCssRelativePath, ".header-mobile-overflow-body .header-field--workspace", "workspace drawer mobile reachability selector");
+        AssertSourceContains(css, HeaderControlsCssRelativePath, "width: 100%;", "workspace drawer full-width mobile reachability");
         AssertSourceContains(css, HeaderControlsCssRelativePath, ".header-mobile-overflow-trigger", "mobile overflow trigger style block");
         AssertSourceContains(css, HeaderControlsCssRelativePath, "[data-ams-mobile-overflow-open=\"true\"]", "mobile overflow trigger-open style selector");
         AssertSourceContains(css, HeaderControlsCssRelativePath, ".header-mobile-overflow-overlay", "mobile overflow overlay style block");
@@ -201,11 +203,16 @@ public sealed class StageShellLayoutTests
         AssertSourceContains(mobileActionBar, MobileActionBarRelativePath, "data-ams-proof-mobile-action-bar-selection-count=\"@SelectedCount\"", "selection count diagnostic marker");
         AssertSourceContains(mobileActionBar, MobileActionBarRelativePath, "data-ams-proof-mobile-action=\"errors\"", "errors action anchor");
         AssertSourceContains(mobileActionBar, MobileActionBarRelativePath, "data-ams-proof-mobile-action=\"playback\"", "playback action anchor");
-        AssertSourceContains(mobileActionBar, MobileActionBarRelativePath, "data-ams-proof-mobile-action=\"export\"", "export action anchor");
-        AssertSourceContains(mobileActionBar, MobileActionBarRelativePath, "data-ams-proof-mobile-action=\"ignore\"", "ignore action anchor");
         AssertSourceContains(mobileActionBar, MobileActionBarRelativePath, "data-ams-proof-mobile-action=\"reviewed\"", "reviewed action anchor");
+        AssertSourceContains(mobileActionBar, MobileActionBarRelativePath, "data-ams-proof-mobile-action=\"pickups\"", "pickups action anchor");
         AssertSourceContains(mobileActionBar, MobileActionBarRelativePath, "data-ams-proof-mobile-action=\"modules\"", "modules action anchor");
-        AssertSourceContains(mobileActionBar, MobileActionBarRelativePath, "IsEnabled=\"@IsBatchActionsEnabled\"", "selection-aware batch action enablement");
+
+        // Long-press hosts wrap the Errors and Playback buttons so a held
+        // press jumps to the active item; tap remains a plain navigate.
+        AssertSourceContains(mobileActionBar, MobileActionBarRelativePath, "data-ams-proof-mobile-action-host=\"errors\"", "errors long-press pointer host anchor");
+        AssertSourceContains(mobileActionBar, MobileActionBarRelativePath, "data-ams-proof-mobile-action-host=\"playback\"", "playback long-press pointer host anchor");
+        AssertSourceContains(mobileActionBar, MobileActionBarRelativePath, "OnSwitchToErrorsLongPress", "errors long-press callback parameter");
+        AssertSourceContains(mobileActionBar, MobileActionBarRelativePath, "OnSwitchToPlaybackLongPress", "playback long-press callback parameter");
 
         AssertSourceContains(layoutCss, MainLayoutCssRelativePath, ".workstation-mobile-action-bar-host", "mobile action bar host style block");
         AssertSourceContains(layoutCss, MainLayoutCssRelativePath, ".workstation-mobile-action-bar-host ::deep .mobile-action-bar__actions", "mobile action bar action-grid selector");

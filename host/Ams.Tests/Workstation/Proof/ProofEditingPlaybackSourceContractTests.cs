@@ -261,17 +261,32 @@ public sealed class ProofEditingPlaybackSourceContractTests
             "ApplyCrossNav(direction, \"keyboard-shortcut\");",
             "keyboard cross-nav path delegates to shared helper");
 
+        // Mobile action-bar gestures were split: a tap is a plain SwitchView
+        // (page-reset, no auto-scroll), and a long-press triggers ApplyCrossNav
+        // so the destination view auto-scrolls to the active sentence/error.
         AssertContains(
             chapterReviewSource,
             ChapterReviewRelativePath,
-            "ApplyCrossNav(\"playback-to-errors\", \"mobile-action-errors\");",
-            "mobile errors action reuses playback-to-errors cross-nav semantics");
+            "ApplyCrossNav(\"playback-to-errors\", \"mobile-action-errors-longpress\");",
+            "mobile errors long-press reuses playback-to-errors cross-nav semantics");
 
         AssertContains(
             chapterReviewSource,
             ChapterReviewRelativePath,
-            "ApplyCrossNav(\"errors-to-playback\", \"mobile-action-playback\");",
-            "mobile playback action reuses errors-to-playback cross-nav semantics");
+            "ApplyCrossNav(\"errors-to-playback\", \"mobile-action-playback-longpress\");",
+            "mobile playback long-press reuses errors-to-playback cross-nav semantics");
+
+        AssertContains(
+            chapterReviewSource,
+            ChapterReviewRelativePath,
+            "SwitchView(\"errors\");",
+            "mobile errors tap delegates to plain SwitchView");
+
+        AssertContains(
+            chapterReviewSource,
+            ChapterReviewRelativePath,
+            "SwitchView(\"playback\");",
+            "mobile playback tap delegates to plain SwitchView");
 
         AssertContains(
             chapterReviewSource,
@@ -315,23 +330,21 @@ public sealed class ProofEditingPlaybackSourceContractTests
             "data-ams-proof-mobile-action=\"playback\"",
             "mobile action bar playback button anchor");
 
-        AssertContains(
-            mobileActionBarSource,
-            MobileActionBarRelativePath,
-            "data-ams-proof-mobile-action=\"export\"",
-            "mobile action bar export button anchor");
-
-        AssertContains(
-            mobileActionBarSource,
-            MobileActionBarRelativePath,
-            "data-ams-proof-mobile-action=\"ignore\"",
-            "mobile action bar ignore button anchor");
-
+        // Export and ignore buttons were removed from the mobile action bar
+        // when selection batch actions moved to swipe-left/swipe-right
+        // gestures on the sentence list. The bar now exposes view switching,
+        // review state, pickups handoff, and module drawer toggle.
         AssertContains(
             mobileActionBarSource,
             MobileActionBarRelativePath,
             "data-ams-proof-mobile-action=\"reviewed\"",
             "mobile action bar reviewed button anchor");
+
+        AssertContains(
+            mobileActionBarSource,
+            MobileActionBarRelativePath,
+            "data-ams-proof-mobile-action=\"pickups\"",
+            "mobile action bar pickups handoff anchor");
 
         AssertContains(
             mobileActionBarSource,
@@ -372,8 +385,8 @@ public sealed class ProofEditingPlaybackSourceContractTests
         AssertContains(
             css,
             ChapterReviewCssRelativePath,
-            "padding-bottom: calc(9rem + env(safe-area-inset-bottom));",
-            "proof safe-area bottom spacing for mobile action bar");
+            "padding-bottom: calc(0.5rem + env(safe-area-inset-bottom));",
+            "proof safe-area bottom spacing — slim padding now that the action bar is fixed-positioned and overlays the viewport bottom");
 
         AssertContains(
             css,

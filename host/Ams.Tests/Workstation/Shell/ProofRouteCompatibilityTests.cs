@@ -13,8 +13,9 @@ namespace Ams.Tests.Workstation.Shell;
 public sealed class ProofRouteCompatibilityTests
 {
     [Theory]
-    [InlineData("/proof", StageRouteCatalog.StageIds.Proof, StageRouteCatalog.ModuleIds.ProofEditing, true)]
-    [InlineData("/proof/", StageRouteCatalog.StageIds.Proof, StageRouteCatalog.ModuleIds.ProofEditing, true)]
+    // /proof is now the editing module's canonical entry — no longer a compat alias.
+    [InlineData("/proof", StageRouteCatalog.StageIds.Proof, StageRouteCatalog.ModuleIds.ProofEditing, false)]
+    [InlineData("/proof/", StageRouteCatalog.StageIds.Proof, StageRouteCatalog.ModuleIds.ProofEditing, false)]
     [InlineData("/proof/pickups", StageRouteCatalog.StageIds.Proof, StageRouteCatalog.ModuleIds.ProofPickups, true)]
     [InlineData("/proof/pickups/", StageRouteCatalog.StageIds.Proof, StageRouteCatalog.ModuleIds.ProofPickups, true)]
     [InlineData("/proof/pickups?sort=asc#top", StageRouteCatalog.StageIds.Proof, StageRouteCatalog.ModuleIds.ProofPickups, true)]
@@ -23,11 +24,13 @@ public sealed class ProofRouteCompatibilityTests
     [InlineData("/proof/Chapter%201", StageRouteCatalog.StageIds.Proof, StageRouteCatalog.ModuleIds.ProofEditing, true)]
     [InlineData("/proof/Chapter%2F01", StageRouteCatalog.StageIds.Proof, StageRouteCatalog.ModuleIds.ProofEditing, true)]
     [InlineData("/proof/Chapter%2f01", StageRouteCatalog.StageIds.Proof, StageRouteCatalog.ModuleIds.ProofEditing, true)]
-    [InlineData("/proof/editing", StageRouteCatalog.StageIds.Proof, StageRouteCatalog.ModuleIds.ProofEditing, false)]
-    [InlineData("/proof/editing/Chapter%201", StageRouteCatalog.StageIds.Proof, StageRouteCatalog.ModuleIds.ProofEditing, true)]
+    // /proof/editing now matches the parameterized chapter template — i.e. it
+    // is treated as a chapter literally named "editing" — so it routes to the
+    // ProofEditing module via the compatibility-alias path.
+    [InlineData("/proof/editing", StageRouteCatalog.StageIds.Proof, StageRouteCatalog.ModuleIds.ProofEditing, true)]
     [InlineData("/PrOoF/PaTtErNs", StageRouteCatalog.StageIds.Proof, StageRouteCatalog.ModuleIds.ProofPatterns, true)]
     [InlineData("/PrOoF/PiCkUpS", StageRouteCatalog.StageIds.Proof, StageRouteCatalog.ModuleIds.ProofPickups, true)]
-    [InlineData("/proof//", StageRouteCatalog.StageIds.Proof, StageRouteCatalog.ModuleIds.ProofEditing, true)]
+    [InlineData("/proof//", StageRouteCatalog.StageIds.Proof, StageRouteCatalog.ModuleIds.ProofEditing, false)]
     [InlineData("/proof/%20", StageRouteCatalog.StageIds.Proof, StageRouteCatalog.ModuleIds.ProofEditing, true)]
     public void Resolve_ProofCompatibilityAndCanonicalAliases_ReturnExpectedContract(
         string path,
@@ -36,6 +39,19 @@ public sealed class ProofRouteCompatibilityTests
         bool expectedCompatibilityAlias)
     {
         _ = AssertResolves(path, expectedStageId, expectedModuleId, expectedCompatibilityAlias);
+    }
+
+    [Theory]
+    // The /proof/editing/{chapter} prefix was retired. Anything below it must
+    // not resolve so that callers stop relying on the old hierarchy.
+    [InlineData("/proof/editing/Chapter%201")]
+    [InlineData("/proof/editing/anything/else")]
+    public void Resolve_RetiredProofEditingPrefixes_DoNotMatch(string path)
+    {
+        var match = StageRouteCatalog.Resolve(path);
+        Assert.True(
+            match is null,
+            $"Expected retired path '{path}' to resolve to nothing, but got {match?.DiagnosticContext}.");
     }
 
     [Theory]
@@ -66,31 +82,30 @@ public sealed class ProofRouteCompatibilityTests
     }
 
     [Theory]
-    [InlineData("overview", StageRouteCatalog.ModuleIds.ProofOverview, true, StageRouteCatalog.ModuleIds.ProofEditing, true)]
-    [InlineData("patterns", StageRouteCatalog.ModuleIds.ProofPatterns, true, StageRouteCatalog.ModuleIds.ProofEditing, true)]
-    [InlineData("pickups", StageRouteCatalog.ModuleIds.ProofPickups, true, StageRouteCatalog.ModuleIds.ProofEditing, true)]
-    [InlineData("editing", StageRouteCatalog.ModuleIds.ProofEditing, false, StageRouteCatalog.ModuleIds.ProofEditing, true)]
+    // With the /proof/editing prefix removed, BuildProofChapterCanonicalPath
+    // and BuildProofChapterCompatibilityPath both produce /proof/{slug}, so
+    // reserved-slug chapters now shadow the same-named modules through exact-
+    // path matching. "editing" still resolves to the editing module — but via
+    // the parameterized chapter template, hence compat=true.
+    [InlineData("overview", StageRouteCatalog.ModuleIds.ProofOverview, true)]
+    [InlineData("patterns", StageRouteCatalog.ModuleIds.ProofPatterns, true)]
+    [InlineData("pickups", StageRouteCatalog.ModuleIds.ProofPickups, true)]
+    [InlineData("editing", StageRouteCatalog.ModuleIds.ProofEditing, true)]
     public void ReservedChapterSlugs_ResolveToExpectedCompatibilityAndCanonicalTargets(
         string chapterName,
-        string expectedCompatibilityModuleId,
-        bool expectedCompatibilityAlias,
-        string expectedCanonicalModuleId,
-        bool expectedCanonicalAlias)
+        string expectedModuleId,
+        bool expectedCompatibilityAlias)
     {
         var compatibilityPath = StageRouteCatalog.BuildProofChapterCompatibilityPath(chapterName);
         var canonicalAliasPath = StageRouteCatalog.BuildProofChapterCanonicalPath(chapterName);
 
+        Assert.Equal(compatibilityPath, canonicalAliasPath);
+
         _ = AssertResolves(
             compatibilityPath,
             StageRouteCatalog.StageIds.Proof,
-            expectedCompatibilityModuleId,
+            expectedModuleId,
             expectedCompatibilityAlias);
-
-        _ = AssertResolves(
-            canonicalAliasPath,
-            StageRouteCatalog.StageIds.Proof,
-            expectedCanonicalModuleId,
-            expectedCanonicalAlias);
     }
 
     [Fact]
@@ -114,6 +129,9 @@ public sealed class ProofRouteCompatibilityTests
     }
 
     [Theory]
+    // For null/whitespace input, GetProofEditingHandoffPath returns the
+    // editing module's canonical path — now /proof itself rather than
+    // /proof/editing.
     [InlineData(null, StageRouteCatalog.ModuleIds.ProofEditing, false)]
     [InlineData("", StageRouteCatalog.ModuleIds.ProofEditing, false)]
     [InlineData("   ", StageRouteCatalog.ModuleIds.ProofEditing, false)]
@@ -142,15 +160,13 @@ public sealed class ProofRouteCompatibilityTests
             var expectedCompatibilityPath = StageRouteCatalog.BuildProofChapterCompatibilityPath(chapterName);
             var expectedCanonicalAliasPath = StageRouteCatalog.BuildProofChapterCanonicalPath(chapterName);
 
+            // The canonical/compatibility helpers are now aliases of one
+            // another; assert that the compose stays self-consistent.
+            Assert.Equal(expectedCompatibilityPath, expectedCanonicalAliasPath);
+
             Assert.True(
                 string.Equals(handoffPath, expectedCompatibilityPath, StringComparison.Ordinal),
                 $"Expected chapter-aware editing handoff helper to return compatibility path '{expectedCompatibilityPath}' for chapter '{chapterName}', but got '{handoffPath}'.");
-
-            _ = AssertResolves(
-                expectedCanonicalAliasPath,
-                StageRouteCatalog.StageIds.Proof,
-                StageRouteCatalog.ModuleIds.ProofEditing,
-                expectedCompatibilityAlias: true);
         }
 
         _ = AssertResolves(
@@ -161,14 +177,19 @@ public sealed class ProofRouteCompatibilityTests
     }
 
     [Theory]
-    [InlineData(null, "/proof/editing", StageRouteCatalog.ModuleIds.ProofEditing, false)]
-    [InlineData("", "/proof/editing", StageRouteCatalog.ModuleIds.ProofEditing, false)]
-    [InlineData("   ", "/proof/editing", StageRouteCatalog.ModuleIds.ProofEditing, false)]
+    // After /proof/editing was removed, the round-trip helper can no longer
+    // disambiguate reserved chapter slugs ("pickups", "overview", "patterns")
+    // from the same-named modules — those slugs now legitimately shadow them.
+    // The compose function falls through to whatever the chapter-shaped path
+    // resolves to, which the parameters below assert.
+    [InlineData(null, "/proof", StageRouteCatalog.ModuleIds.ProofEditing, false)]
+    [InlineData("", "/proof", StageRouteCatalog.ModuleIds.ProofEditing, false)]
+    [InlineData("   ", "/proof", StageRouteCatalog.ModuleIds.ProofEditing, false)]
     [InlineData("Chapter 01 - Intro", "/proof/chapter%2001%20-%20intro", StageRouteCatalog.ModuleIds.ProofEditing, true)]
     [InlineData("Chapter 03 / Finale", "/proof/chapter%2003%20%2f%20finale", StageRouteCatalog.ModuleIds.ProofEditing, true)]
-    [InlineData("pickups", "/proof/editing/pickups", StageRouteCatalog.ModuleIds.ProofEditing, true)]
-    [InlineData("overview", "/proof/editing/overview", StageRouteCatalog.ModuleIds.ProofEditing, true)]
-    [InlineData("patterns", "/proof/editing/patterns", StageRouteCatalog.ModuleIds.ProofEditing, true)]
+    [InlineData("pickups", "/proof/pickups", StageRouteCatalog.ModuleIds.ProofPickups, true)]
+    [InlineData("overview", "/proof/overview", StageRouteCatalog.ModuleIds.ProofOverview, true)]
+    [InlineData("patterns", "/proof/patterns", StageRouteCatalog.ModuleIds.ProofPatterns, true)]
     public void ProofEditingRoundTripComposePath_PreventsRouteOwnershipDrift(
         string? activeChapterName,
         string expectedPath,
@@ -196,12 +217,16 @@ public sealed class ProofRouteCompatibilityTests
     [Fact]
     public void ProofAndPolishPages_DeclareExpectedCanonicalAndCompatibilityTemplates()
     {
-        AssertRoutes(typeof(ProofIndexPage), "/proof", "/proof/editing");
+        AssertRoutes(typeof(ProofIndexPage), "/proof");
         AssertRoutes(typeof(ProofPickupsPage), "/proof/pickups");
         AssertRoutes(typeof(ProofOverviewPage), "/proof/overview");
         AssertRoutes(typeof(ProofPatternsPage), "/proof/patterns");
-        AssertRoutes(typeof(ProofChapterReviewPage), "/proof/{ChapterName}", "/proof/editing/{ChapterName}");
+        AssertRoutes(typeof(ProofChapterReviewPage), "/proof/{ChapterName}");
         AssertRoutes(typeof(PolishScaffoldPage), "/polish", "/polish/scaffold", "/polish/pickups", "/polish/batch");
+
+        // /proof/editing prefix was retired — guard against it sneaking back.
+        AssertRoutesAbsent(typeof(ProofIndexPage), "/proof/editing");
+        AssertRoutesAbsent(typeof(ProofChapterReviewPage), "/proof/editing/{ChapterName}");
     }
 
     [Fact]
@@ -223,9 +248,11 @@ public sealed class ProofRouteCompatibilityTests
     [Fact]
     public void ProofCompatibilityAliasCatalog_IncludesLegacyDeepLinksAndCanonicalChapterAlias()
     {
+        // /proof itself is no longer a compat alias — it became the canonical
+        // entry point for the editing module. Module-specific aliases plus the
+        // chapter compatibility/canonical templates remain.
         var expectedAliases = new[]
         {
-            "/proof",
             "/proof/pickups",
             "/proof/overview",
             "/proof/patterns",
@@ -242,6 +269,11 @@ public sealed class ProofRouteCompatibilityTests
         Assert.True(
             missingAliases.Length == 0,
             $"Missing proof compatibility aliases: {string.Join(", ", missingAliases)}. Declared aliases: {string.Join(", ", declaredAliases)}.");
+
+        Assert.DoesNotContain(
+            "/proof/editing",
+            declaredAliases,
+            StringComparer.OrdinalIgnoreCase);
     }
 
     [Fact]
@@ -357,6 +389,21 @@ public sealed class ProofRouteCompatibilityTests
             Assert.True(
                 declaredTemplates.Contains(expectedTemplate, StringComparer.OrdinalIgnoreCase),
                 $"Missing route template '{expectedTemplate}' on component '{componentType.FullName}'. Declared templates: {string.Join(", ", declaredTemplates)}.");
+        }
+    }
+
+    private static void AssertRoutesAbsent(Type componentType, params string[] forbiddenTemplates)
+    {
+        var declaredTemplates = componentType
+            .GetCustomAttributes<RouteAttribute>(inherit: true)
+            .Select(route => route.Template)
+            .ToArray();
+
+        foreach (var forbiddenTemplate in forbiddenTemplates)
+        {
+            Assert.False(
+                declaredTemplates.Contains(forbiddenTemplate, StringComparer.OrdinalIgnoreCase),
+                $"Component '{componentType.FullName}' still declares the retired route template '{forbiddenTemplate}'. Declared templates: {string.Join(", ", declaredTemplates)}.");
         }
     }
 

@@ -48,7 +48,13 @@ public static class StageRouteCatalog
 
     public const string RootPath = "/";
     public const string ProofChapterCompatibilityTemplate = "/proof/{chapter}";
-    public const string ProofChapterCanonicalTemplate = "/proof/editing/{chapter}";
+
+    /// <summary>
+    /// Canonical path template for a chapter inside the Proof / Editing module.
+    /// Historically "/proof/editing/{chapter}"; now collapsed to "/proof/{chapter}"
+    /// since the /proof/editing prefix has been removed.
+    /// </summary>
+    public const string ProofChapterCanonicalTemplate = ProofChapterCompatibilityTemplate;
 
     public static StageRouteDescriptor Prep { get; } = new(
         StageIds.Prep,
@@ -72,26 +78,6 @@ public static class StageRouteCatalog
         "/proof",
         [
             new StageModuleRouteDescriptor(
-                ModuleIds.ProofEditing,
-                "Editing",
-                "/proof/editing",
-                SupportsBatching: false,
-                CompatibilityPaths:
-                [
-                    "/proof",
-                    ProofChapterCompatibilityTemplate,
-                    ProofChapterCanonicalTemplate
-                ]),
-            new StageModuleRouteDescriptor(
-                ModuleIds.ProofPickups,
-                "Pickups",
-                "/proof/pickups",
-                SupportsBatching: false,
-                CompatibilityPaths:
-                [
-                    "/proof/pickups"
-                ]),
-            new StageModuleRouteDescriptor(
                 ModuleIds.ProofOverview,
                 "Overview",
                 "/proof/overview",
@@ -108,6 +94,24 @@ public static class StageRouteCatalog
                 CompatibilityPaths:
                 [
                     "/proof/patterns"
+                ]),
+            new StageModuleRouteDescriptor(
+                ModuleIds.ProofEditing,
+                "Editing",
+                "/proof",
+                SupportsBatching: false,
+                CompatibilityPaths:
+                [
+                    ProofChapterCompatibilityTemplate
+                ]),
+            new StageModuleRouteDescriptor(
+                ModuleIds.ProofPickups,
+                "Pickups",
+                "/proof/pickups",
+                SupportsBatching: false,
+                CompatibilityPaths:
+                [
+                    "/proof/pickups"
                 ])
         ]);
 
@@ -289,8 +293,10 @@ public static class StageRouteCatalog
 
     public static string BuildProofChapterCanonicalPath(string chapterName)
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(chapterName);
-        return $"/proof/editing/{Uri.EscapeDataString(chapterName)}";
+        // "/proof/editing/{chapter}" was collapsed into "/proof/{chapter}" when
+        // the explicit /proof/editing prefix was retired. Both helpers now
+        // produce the same path; the API is kept for source compatibility.
+        return BuildProofChapterCompatibilityPath(chapterName);
     }
 
     public static bool IsValidTemplate(string template, out string reason)

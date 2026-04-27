@@ -38,9 +38,15 @@
     transition: background-color 0.15s ease, border-color 0.15s ease;
 }
 
-.sentence-item:hover {
-    background: var(--bit-clr-bg-sec-hover);
-    border-left-color: var(--bit-clr-pri);
+/* Only apply hover styling on devices with a true hover-capable pointer.
+   On touch devices, :hover sticks on the last tapped element until the next
+   tap elsewhere, which made the previously-tapped sentence look like it was
+   still the active "playing" row (both states share the left-border color). */
+@media (hover: hover) and (pointer: fine) {
+    .sentence-item:hover {
+        background: var(--bit-clr-bg-sec-hover);
+        border-left-color: var(--bit-clr-pri);
+    }
 }
 
 /* Active/playing state */

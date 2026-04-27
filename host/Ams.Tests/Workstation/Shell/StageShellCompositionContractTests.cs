@@ -61,16 +61,22 @@ public sealed class StageShellCompositionContractTests
     [Fact]
     public void HeaderControls_PreservesStageTopNavWhileSidebarOwnsModuleLinks()
     {
-        var source = ReadRepoFile(HeaderControlsRelativePath);
-        var css = ReadRepoFile(HeaderControlsCssRelativePath);
+        // Stage navigation (P3 -> Prep / Proof / Polish) was lifted out of
+        // HeaderControls into MainLayout's header so the chapter dropdown
+        // could centre between the P3 button and the More-actions trigger.
+        // The contract is now: MainLayout owns the stage popover + the
+        // NavigateToStage callbacks; HeaderControls hosts only the chapter
+        // and the secondary-actions overflow.
+        var headerControls = ReadRepoFile(HeaderControlsRelativePath);
+        var mainLayout = ReadRepoFile(MainLayoutRelativePath);
 
-        AssertContains(source, HeaderControlsRelativePath, "<div class=\"header-nav\"", "top-header stage nav row");
-        AssertContains(source, HeaderControlsRelativePath, "NavigateToStage(StageRouteCatalog.StageIds.Prep)", "prep stage nav callback");
-        AssertContains(source, HeaderControlsRelativePath, "NavigateToStage(StageRouteCatalog.StageIds.Proof)", "proof stage nav callback");
-        AssertContains(source, HeaderControlsRelativePath, "NavigateToStage(StageRouteCatalog.StageIds.Polish)", "polish stage nav callback");
-        AssertContains(css, HeaderControlsCssRelativePath, ".header-nav", "header stage nav style block");
+        AssertContains(mainLayout, MainLayoutRelativePath, "data-ams-header-control=\"stage-nav\"", "stage nav region marker");
+        AssertContains(mainLayout, MainLayoutRelativePath, "NavigateToStage(StageRouteCatalog.StageIds.Prep)", "prep stage nav callback");
+        AssertContains(mainLayout, MainLayoutRelativePath, "NavigateToStage(StageRouteCatalog.StageIds.Proof)", "proof stage nav callback");
+        AssertContains(mainLayout, MainLayoutRelativePath, "NavigateToStage(StageRouteCatalog.StageIds.Polish)", "polish stage nav callback");
 
-        AssertDoesNotContain(source, HeaderControlsRelativePath, "data-stage-module-id", "module links should remain in sidebar rail, not header");
+        AssertDoesNotContain(headerControls, HeaderControlsRelativePath, "data-stage-module-id", "module links should remain in sidebar rail, not header");
+        AssertDoesNotContain(headerControls, HeaderControlsRelativePath, "NavigateToStage(", "stage nav callbacks now live in MainLayout, not HeaderControls");
     }
 
     [Fact]

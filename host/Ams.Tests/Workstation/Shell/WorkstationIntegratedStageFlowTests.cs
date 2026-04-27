@@ -216,17 +216,23 @@ public sealed class WorkstationIntegratedStageFlowTests
     }
 
     [Theory]
-    [InlineData("pickups")]
-    [InlineData("overview")]
-    [InlineData("patterns")]
-    public void ResolveStateForPath_EditingRoundTripFallback_PreventsReservedSlugOwnershipDrift(string chapterName)
+    [InlineData("overview", StageRouteCatalog.ModuleIds.ProofOverview)]
+    [InlineData("patterns", StageRouteCatalog.ModuleIds.ProofPatterns)]
+    [InlineData("pickups", StageRouteCatalog.ModuleIds.ProofPickups)]
+    public void ResolveStateForPath_EditingRoundTripFallback_ReservedSlugsRouteToOwningModule(
+        string chapterName,
+        string expectedModuleId)
     {
-        var pickupsPath = StageRouteCatalog.GetProofPickupsHandoffPath();
+        // The /proof/editing/{chapter} prefix that previously disambiguated
+        // reserved chapter slugs has been retired. Round-tripping a reserved
+        // slug now lands on the matching module (overview, patterns, pickups)
+        // instead of falling back to the editing module.
         var editingReturnPath = ComposeProofEditingRoundTripPath(chapterName);
         var expectedCanonicalChapterPath = StageRouteCatalog.BuildProofChapterCanonicalPath(chapterName);
 
         Assert.Equal(expectedCanonicalChapterPath, editingReturnPath);
 
+        var pickupsPath = StageRouteCatalog.GetProofPickupsHandoffPath();
         AssertVisibleState(
             StageModuleRail.ResolveStateForPath(pickupsPath),
             pickupsPath,
@@ -237,16 +243,14 @@ public sealed class WorkstationIntegratedStageFlowTests
             StageModuleRail.ResolveStateForPath(editingReturnPath),
             editingReturnPath,
             StageRouteCatalog.StageIds.Proof,
-            StageRouteCatalog.ModuleIds.ProofEditing);
+            expectedModuleId);
 
         var returnMatch = StageRouteCatalog.Resolve(editingReturnPath);
         Assert.True(
             returnMatch is not null
             && string.Equals(returnMatch.Stage.Id, StageRouteCatalog.StageIds.Proof, StringComparison.OrdinalIgnoreCase)
-            && string.Equals(returnMatch.Module.Id, StageRouteCatalog.ModuleIds.ProofEditing, StringComparison.OrdinalIgnoreCase),
-            $"Expected reserved slug return path '{editingReturnPath}' to resolve to proof-editing. Diagnostics: {returnMatch?.DiagnosticContext ?? "(none)"}.");
-
-        Assert.Contains("template='/proof/editing/{chapter}'", returnMatch!.DiagnosticContext, StringComparison.OrdinalIgnoreCase);
+            && string.Equals(returnMatch.Module.Id, expectedModuleId, StringComparison.OrdinalIgnoreCase),
+            $"Expected reserved slug return path '{editingReturnPath}' to resolve to module '{expectedModuleId}'. Diagnostics: {returnMatch?.DiagnosticContext ?? "(none)"}.");
     }
 
     private static string ComposeProofEditingRoundTripPath(string? activeChapterName)

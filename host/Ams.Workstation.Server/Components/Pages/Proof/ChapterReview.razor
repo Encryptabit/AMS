@@ -1,5 +1,4 @@
 @page "/proof/{ChapterName}"
-@page "/proof/editing/{ChapterName}"
 @inject Ams.Workstation.Server.Services.BlazorWorkspace Workspace
 @inject Ams.Workstation.Server.Services.ChapterDataService ChapterDataService
 @inject Ams.Workstation.Server.Services.ProofReportService ProofReportService
@@ -29,7 +28,9 @@
                          IsBatchActionsEnabled="@CanRunSelectionBatchActions"
                          IsReviewed="@_isReviewed"
                          OnSwitchToErrors="SwitchToErrorsFromMobileActionBar"
+                         OnSwitchToErrorsLongPress="SwitchToErrorsLongPressFromMobileActionBar"
                          OnSwitchToPlayback="SwitchToPlaybackFromMobileActionBar"
+                         OnSwitchToPlaybackLongPress="SwitchToPlaybackLongPressFromMobileActionBar"
                          OnExportSelection="ExportSelectionFromMobileActionBarAsync"
                          OnIgnoreSelection="IgnoreSelectionFromMobileActionBarAsync"
                          OnToggleReviewed="ToggleReviewedFromMobileActionBar"
@@ -137,33 +138,27 @@
     @if (_currentView == "playback")
     {
         <div class="proof-playback-shell" data-ams-proof-mobile-contract="sentence-first">
-            <BitGrid Columns="12">
-                <BitGridItem ColumnSpan="12" style="min-width: 0;">
-                    <div class="proof-playback-waveform" data-ams-proof-mobile-waveform="compact">
-                        <WaveformPlayer
-                            @ref="_waveformPlayer"
-                            AudioUrl="@GetAudioUrl()"
-                            PeaksUrl="@GetPeaksUrl()"
-                            Title="@GetDisplayTitle()"
-                            Height="125"
-                            TimeUpdated="HandleTimeUpdate"
-                            OnReady="HandleWaveformReady"
-                            OnSeek="HandleSeek"
-                            OnFinished="HandlePlaybackFinished" />
-                    </div>
-                </BitGridItem>
-                <BitGridItem ColumnSpan="12">
-                    <div class="proof-playback-sentences" data-ams-proof-gesture-surface="playback">
-                        <SentenceList
-                            Sentences="@_sentences"
-                            CurrentTime="@_currentTime"
-                            ActiveSentenceId="@_selectedSentenceId"
-                            SelectedSentenceIds="@_selectedSentenceIds"
-                            OnSentenceSelected="HandleSentenceSelected"
-                            OnSentenceLongPress="OnSentenceLongPress" />
-                    </div>
-                </BitGridItem>
-            </BitGrid>
+            <div class="proof-playback-waveform" data-ams-proof-mobile-waveform="compact">
+                <WaveformPlayer
+                    @ref="_waveformPlayer"
+                    AudioUrl="@GetAudioUrl()"
+                    PeaksUrl="@GetPeaksUrl()"
+                    Title="@GetDisplayTitle()"
+                    Height="125"
+                    TimeUpdated="HandleTimeUpdate"
+                    OnReady="HandleWaveformReady"
+                    OnSeek="HandleSeek"
+                    OnFinished="HandlePlaybackFinished" />
+            </div>
+            <div class="proof-playback-sentences" data-ams-proof-gesture-surface="playback">
+                <SentenceList
+                    Sentences="@_sentences"
+                    CurrentTime="@_currentTime"
+                    ActiveSentenceId="@_selectedSentenceId"
+                    SelectedSentenceIds="@_selectedSentenceIds"
+                    OnSentenceSelected="HandleSentenceSelected"
+                    OnSentenceLongPress="OnSentenceLongPress" />
+            </div>
         </div>
     }
     else
@@ -415,12 +410,30 @@
 
     private void SwitchToErrorsFromMobileActionBar()
     {
-        ApplyCrossNav("playback-to-errors", "mobile-action-errors");
+        // Plain tap: just flip the view and reset the page scroll.
+        // Selection state is untouched, so neither ErrorsView nor SentenceList
+        // will trigger an auto-scroll to an active item.
+        SwitchView("errors");
     }
 
     private void SwitchToPlaybackFromMobileActionBar()
     {
-        ApplyCrossNav("errors-to-playback", "mobile-action-playback");
+        SwitchView("playback");
+    }
+
+    private void SwitchToErrorsLongPressFromMobileActionBar()
+    {
+        // Long-press: cross-nav so _selectedErrorIndex is set to the error
+        // that corresponds to the current playback context. The ErrorsView's
+        // OnAfterRenderAsync will then auto-scroll to that error card.
+        ApplyCrossNav("playback-to-errors", "mobile-action-errors-longpress");
+    }
+
+    private void SwitchToPlaybackLongPressFromMobileActionBar()
+    {
+        // Long-press: cross-nav sets _selectedSentenceId so SentenceList
+        // auto-scrolls the matching sentence into view.
+        ApplyCrossNav("errors-to-playback", "mobile-action-playback-longpress");
     }
 
     private Task ToggleReviewedFromMobileActionBar()

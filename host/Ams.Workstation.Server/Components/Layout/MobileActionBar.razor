@@ -30,21 +30,35 @@
 
         <div class="mobile-action-bar__actions"
              data-ams-proof-mobile-action-grid="true">
-            <BitButton Variant="@(IsErrorsView ? BitVariant.Fill : BitVariant.Outline)"
-                       Color="BitColor.Primary"
-                       Size="BitSize.Small"
-                       data-ams-proof-mobile-action="errors"
-                       OnClick="HandleSwitchToErrorsAsync">
-                Errors
-            </BitButton>
+            <span class="mobile-action-bar__action-host"
+                  data-ams-proof-mobile-action-host="errors"
+                  @onpointerdown="@(args => HandleErrorsPointerDown(args))"
+                  @onpointerup="HandleErrorsPointerEnd"
+                  @onpointercancel="HandleErrorsPointerEnd"
+                  @onpointerleave="HandleErrorsPointerEnd">
+                <BitButton Variant="@(IsErrorsView ? BitVariant.Fill : BitVariant.Outline)"
+                           Color="BitColor.Primary"
+                           Size="BitSize.Small"
+                           data-ams-proof-mobile-action="errors"
+                           OnClick="HandleSwitchToErrorsAsync">
+                    Errors
+                </BitButton>
+            </span>
 
-            <BitButton Variant="@(IsPlaybackView ? BitVariant.Fill : BitVariant.Outline)"
-                       Color="BitColor.Primary"
-                       Size="BitSize.Small"
-                       data-ams-proof-mobile-action="playback"
-                       OnClick="HandleSwitchToPlaybackAsync">
-                Playback
-            </BitButton>
+            <span class="mobile-action-bar__action-host"
+                  data-ams-proof-mobile-action-host="playback"
+                  @onpointerdown="@(args => HandlePlaybackPointerDown(args))"
+                  @onpointerup="HandlePlaybackPointerEnd"
+                  @onpointercancel="HandlePlaybackPointerEnd"
+                  @onpointerleave="HandlePlaybackPointerEnd">
+                <BitButton Variant="@(IsPlaybackView ? BitVariant.Fill : BitVariant.Outline)"
+                           Color="BitColor.Primary"
+                           Size="BitSize.Small"
+                           data-ams-proof-mobile-action="playback"
+                           OnClick="HandleSwitchToPlaybackAsync">
+                    Playback
+                </BitButton>
+            </span>
 
             <BitButton Variant="@(IsReviewed ? BitVariant.Fill : BitVariant.Outline)"
                        Color="@(IsReviewed ? BitColor.Success : BitColor.Primary)"
@@ -74,6 +88,8 @@
 </div>
 
 @code {
+    private const int LongPressDelayMs = 450;
+
     [Parameter] public string CurrentView { get; set; } = "playback";
     [Parameter] public bool IsSelectionModeActive { get; set; }
     [Parameter] public int SelectedCount { get; set; }
@@ -81,7 +97,9 @@
     [Parameter] public bool IsReviewed { get; set; }
 
     [Parameter] public EventCallback OnSwitchToErrors { get; set; }
+    [Parameter] public EventCallback OnSwitchToErrorsLongPress { get; set; }
     [Parameter] public EventCallback OnSwitchToPlayback { get; set; }
+    [Parameter] public EventCallback OnSwitchToPlaybackLongPress { get; set; }
     [Parameter] public EventCallback OnExportSelection { get; set; }
     [Parameter] public EventCallback OnIgnoreSelection { get; set; }
     [Parameter] public EventCallback OnToggleReviewed { get; set; }
@@ -89,6 +107,10 @@
     [Parameter] public EventCallback OnNavigateToPickups { get; set; }
 
     private bool _isExpanded;
+    private CancellationTokenSource? _errorsLongPressCts;
+    private CancellationTokenSource? _playbackLongPressCts;
+    private bool _errorsLongPressFired;
+    private bool _playbackLongPressFired;
 
     private string SelectionSummaryState => IsSelectionModeActive ? "active" : "inactive";
 
@@ -103,15 +125,90 @@
 
     private void ToggleExpanded() => _isExpanded = !_isExpanded;
 
-    private Task HandleSwitchToErrorsAsync() => InvokeCallbackAsync(OnSwitchToErrors);
+    private async Task HandleSwitchToErrorsAsync()
+    {
+        if (_errorsLongPressFired)
+        {
+            // The long-press fired during this gesture; the BitButton's
+            // synthesised click follows pointerup — swallow it so we don't
+            // also run the plain-navigate path.
+            _errorsLongPressFired = false;
+            return;
+        }
+        await InvokeCallbackAsync(OnSwitchToErrors);
+    }
 
-    private Task HandleSwitchToPlaybackAsync() => InvokeCallbackAsync(OnSwitchToPlayback);
+    private async Task HandleSwitchToPlaybackAsync()
+    {
+        if (_playbackLongPressFired)
+        {
+            _playbackLongPressFired = false;
+            return;
+        }
+        await InvokeCallbackAsync(OnSwitchToPlayback);
+    }
 
     private Task HandleToggleReviewedAsync() => InvokeCallbackAsync(OnToggleReviewed);
 
     private Task HandleToggleModulesAsync() => InvokeCallbackAsync(OnToggleModules);
 
     private Task HandleNavigateToPickupsAsync() => InvokeCallbackAsync(OnNavigateToPickups);
+
+    private async Task HandleErrorsPointerDown(PointerEventArgs args)
+    {
+        _errorsLongPressFired = false;
+        if (!IsTouchOrPen(args)) return;
+        if (!OnSwitchToErrorsLongPress.HasDelegate) return;
+
+        _errorsLongPressCts?.Cancel();
+        var cts = new CancellationTokenSource();
+        _errorsLongPressCts = cts;
+        try
+        {
+            await Task.Delay(LongPressDelayMs, cts.Token);
+            if (cts.IsCancellationRequested) return;
+            _errorsLongPressFired = true;
+            await OnSwitchToErrorsLongPress.InvokeAsync();
+        }
+        catch (TaskCanceledException) { }
+        finally
+        {
+            if (ReferenceEquals(_errorsLongPressCts, cts)) _errorsLongPressCts = null;
+            cts.Dispose();
+        }
+    }
+
+    private void HandleErrorsPointerEnd() => _errorsLongPressCts?.Cancel();
+
+    private async Task HandlePlaybackPointerDown(PointerEventArgs args)
+    {
+        _playbackLongPressFired = false;
+        if (!IsTouchOrPen(args)) return;
+        if (!OnSwitchToPlaybackLongPress.HasDelegate) return;
+
+        _playbackLongPressCts?.Cancel();
+        var cts = new CancellationTokenSource();
+        _playbackLongPressCts = cts;
+        try
+        {
+            await Task.Delay(LongPressDelayMs, cts.Token);
+            if (cts.IsCancellationRequested) return;
+            _playbackLongPressFired = true;
+            await OnSwitchToPlaybackLongPress.InvokeAsync();
+        }
+        catch (TaskCanceledException) { }
+        finally
+        {
+            if (ReferenceEquals(_playbackLongPressCts, cts)) _playbackLongPressCts = null;
+            cts.Dispose();
+        }
+    }
+
+    private void HandlePlaybackPointerEnd() => _playbackLongPressCts?.Cancel();
+
+    private static bool IsTouchOrPen(PointerEventArgs args)
+        => string.Equals(args.PointerType, "touch", StringComparison.OrdinalIgnoreCase)
+           || string.Equals(args.PointerType, "pen", StringComparison.OrdinalIgnoreCase);
 
     private static Task InvokeCallbackAsync(EventCallback callback)
         => callback.HasDelegate

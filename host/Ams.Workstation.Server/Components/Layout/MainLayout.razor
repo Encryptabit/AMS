@@ -84,8 +84,8 @@
                        Class="workstation-module-rail-tab__button"
                        aria-controls="@MobileModuleRailPanelId"
                        aria-expanded="@(isMobileModuleRailOpen ? "true" : "false")"
-                       aria-label="Toggle module navigation"
-                       title="Modules"
+                       aria-label="@(isMobileModuleRailOpen ? "Close module navigation" : "Open module navigation")"
+                       title="@(isMobileModuleRailOpen ? "Close module navigation" : "Open module navigation")"
                        OnClick="ToggleMobileModuleRail">
                 <span class="workstation-module-rail-tab__label">Modules</span>
             </BitButton>

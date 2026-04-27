@@ -14,9 +14,14 @@ public sealed class ProofEditingContinuityTests
     [Fact]
     public void ProofPages_DeclareExpectedContinuityRouteTemplates()
     {
-        AssertRouteTemplates(IndexRelativePath, "/proof", "/proof/editing");
+        // The "/proof/editing" prefix was retired; the Editing module is now
+        // canonically served from "/proof" itself, with "/proof/{ChapterName}"
+        // remaining as the per-chapter route handled by ChapterReview.
+        AssertRouteTemplates(IndexRelativePath, "/proof");
         AssertRouteTemplates(OverviewRelativePath, "/proof/overview");
-        AssertRouteTemplates(ChapterReviewRelativePath, "/proof/{ChapterName}", "/proof/editing/{ChapterName}");
+        AssertRouteTemplates(ChapterReviewRelativePath, "/proof/{ChapterName}");
+        AssertRouteTemplatesAbsent(IndexRelativePath, "/proof/editing");
+        AssertRouteTemplatesAbsent(ChapterReviewRelativePath, "/proof/editing/{ChapterName}");
     }
 
     [Fact]
@@ -251,6 +256,19 @@ public sealed class ProofEditingContinuityTests
         Assert.True(
             missingTemplates.Length == 0,
             $"Missing route template anchor(s) in '{relativePath}': {string.Join(", ", missingTemplates)}. Declared @page templates: {string.Join(", ", declaredTemplates)}.");
+    }
+
+    private static void AssertRouteTemplatesAbsent(string relativePath, params string[] forbiddenTemplates)
+    {
+        var declaredTemplates = ExtractAndValidateRouteTemplates(relativePath);
+
+        var present = forbiddenTemplates
+            .Where(forbidden => declaredTemplates.Contains(forbidden, StringComparer.OrdinalIgnoreCase))
+            .ToArray();
+
+        Assert.True(
+            present.Length == 0,
+            $"Found stale @page route template(s) in '{relativePath}': {string.Join(", ", present)}. These were retired with /proof/editing.");
     }
 
     private static IReadOnlyList<string> ExtractAndValidateRouteTemplates(string relativePath)

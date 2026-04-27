@@ -30,9 +30,10 @@ public sealed class StageRouteCatalogTests
     [Fact]
     public void ProofCompatibilityAliasesAreExplicitlyDeclared()
     {
+        // /proof is no longer a compat alias — it is now the canonical path
+        // of the editing module.
         var requiredAliases = new[]
         {
-            "/proof",
             "/proof/pickups",
             "/proof/overview",
             "/proof/patterns",
@@ -78,7 +79,9 @@ public sealed class StageRouteCatalogTests
     }
 
     [Theory]
-    [InlineData(StageRouteCatalog.StageIds.Proof, StageRouteCatalog.ModuleIds.ProofEditing, "/proof/editing")]
+    // ProofEditing's canonical path is now "/proof" — the "/proof/editing"
+    // prefix was retired with the routing simplification.
+    [InlineData(StageRouteCatalog.StageIds.Proof, StageRouteCatalog.ModuleIds.ProofEditing, "/proof")]
     [InlineData(StageRouteCatalog.StageIds.Proof, StageRouteCatalog.ModuleIds.ProofPickups, "/proof/pickups")]
     [InlineData(StageRouteCatalog.StageIds.Proof, StageRouteCatalog.ModuleIds.ProofOverview, "/proof/overview")]
     [InlineData(StageRouteCatalog.StageIds.Proof, StageRouteCatalog.ModuleIds.ProofPatterns, "/proof/patterns")]
@@ -256,8 +259,10 @@ public sealed class StageRouteCatalogTests
     }
 
     [Theory]
-    [InlineData("/proof", StageRouteCatalog.StageIds.Proof, StageRouteCatalog.ModuleIds.ProofEditing, true)]
-    [InlineData("/proof/", StageRouteCatalog.StageIds.Proof, StageRouteCatalog.ModuleIds.ProofEditing, true)]
+    // /proof is now the canonical entry of the editing module rather than a
+    // compatibility alias.
+    [InlineData("/proof", StageRouteCatalog.StageIds.Proof, StageRouteCatalog.ModuleIds.ProofEditing, false)]
+    [InlineData("/proof/", StageRouteCatalog.StageIds.Proof, StageRouteCatalog.ModuleIds.ProofEditing, false)]
     [InlineData("/proof/pickups", StageRouteCatalog.StageIds.Proof, StageRouteCatalog.ModuleIds.ProofPickups, true)]
     [InlineData("/proof/pickups/", StageRouteCatalog.StageIds.Proof, StageRouteCatalog.ModuleIds.ProofPickups, true)]
     [InlineData("/PrOoF/PiCkUpS?sort=asc#top", StageRouteCatalog.StageIds.Proof, StageRouteCatalog.ModuleIds.ProofPickups, true)]

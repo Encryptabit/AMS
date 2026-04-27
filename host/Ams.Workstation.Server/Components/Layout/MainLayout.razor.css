@@ -345,7 +345,10 @@
     }
 
     .workstation-content {
-        padding: 1rem 0.75rem calc(2rem + env(safe-area-inset-bottom));
+        /* Small top padding for breathing room under the nav; bottom is just
+           the safe-area inset (the fixed-position action bar overlays the
+           viewport bottom and doesn't need flow padding). */
+        padding: 0.5rem 0.75rem env(safe-area-inset-bottom);
         width: 100%;
         max-width: 100%;
         margin-inline: 0;
