@@ -120,7 +120,8 @@ public sealed class AudioTreatmentService
             silenceIntervals,
             opts.TitleContentGapThreshold,
             chapter.Documents.HydratedTranscript,
-            sectionTitle);
+            sectionTitle,
+            opts.ClickImmunityBurstSec);
         // Add crossfade duration on top of user padding so the splice blend lands in
         // silence and the user's --padding-ms value represents the actual safety margin
         // *after* the crossfade, preventing fricative tails from being faded out.
@@ -355,11 +356,12 @@ public sealed class AudioTreatmentService
         IReadOnlyList<SilenceInterval> silenceIntervals,
         double gapThreshold,
         IReadOnlyList<HydratedSentence>? hydratedSentences = null,
-        string? sectionTitle = null)
+        string? sectionTitle = null,
+        double boundaryToleranceSec = 0.1)
     {
         double audioDuration = buffer.Length / (double)buffer.SampleRate;
-        double contentEnd = FindContentEnd(audioDuration, silenceIntervals);
-        double speechStart = FindSpeechStart(silenceIntervals, audioDuration);
+        double contentEnd = FindContentEnd(audioDuration, silenceIntervals, boundaryToleranceSec);
+        double speechStart = FindSpeechStart(silenceIntervals, audioDuration, boundaryToleranceSec);
 
         if (TryFindBoundariesFromHydrate(
                 hydratedSentences,
@@ -466,11 +468,12 @@ public sealed class AudioTreatmentService
         IReadOnlyList<SilenceInterval> silenceIntervals,
         double gapThreshold,
         HydratedTranscript? hydratedTranscript = null,
-        string? sectionTitle = null)
+        string? sectionTitle = null,
+        double boundaryToleranceSec = 0.1)
     {
         double audioDuration = buffer.Length / (double)buffer.SampleRate;
-        double contentEnd = FindContentEnd(audioDuration, silenceIntervals);
-        double speechStart = FindSpeechStart(silenceIntervals, audioDuration);
+        double contentEnd = FindContentEnd(audioDuration, silenceIntervals, boundaryToleranceSec);
+        double speechStart = FindSpeechStart(silenceIntervals, audioDuration, boundaryToleranceSec);
 
         if (TryFindDecoratorTitleLayoutFromHydrate(
                 hydratedTranscript,
@@ -488,7 +491,8 @@ public sealed class AudioTreatmentService
             silenceIntervals,
             gapThreshold,
             hydratedTranscript?.Sentences,
-            sectionTitle);
+            sectionTitle,
+            boundaryToleranceSec);
 
         return (boundaries.TitleStart, boundaries.TitleEnd, boundaries.ContentStart, boundaries.ContentEnd, null, null);
     }
@@ -744,27 +748,73 @@ public sealed class AudioTreatmentService
         return timed;
     }
 
-    private static double FindSpeechStart(IReadOnlyList<SilenceInterval> silenceIntervals, double audioDuration)
+    // The head/tail finders apply click-immunity locally: starting from the file edge, they
+    // absorb subsequent silences separated by short non-silent bursts (mic pops, breaths, page
+    // rustles). Coalescing happens only here — the silence list passed to structural-gap
+    // detection (FindSpeechBoundaries, decorator/title walks) stays raw, so brief mid-content
+    // utterances cannot merge two paragraph pauses into a fake title-body gap.
+    private static double FindSpeechStart(
+        IReadOnlyList<SilenceInterval> silenceIntervals,
+        double audioDuration,
+        double boundaryToleranceSec = 0.1)
     {
-        if (silenceIntervals.Count > 0 && silenceIntervals[0].Start.TotalSeconds < 0.1)
+        if (silenceIntervals.Count == 0)
         {
-            return Math.Clamp(silenceIntervals[0].End.TotalSeconds, 0.0, audioDuration);
+            return 0.0;
         }
 
-        return 0.0;
+        var leading = silenceIntervals[0];
+        if (leading.Start.TotalSeconds >= boundaryToleranceSec)
+        {
+            return 0.0;
+        }
+
+        var speechStartSec = leading.End.TotalSeconds;
+        for (int i = 1; i < silenceIntervals.Count; i++)
+        {
+            var next = silenceIntervals[i];
+            var burstSec = next.Start.TotalSeconds - speechStartSec;
+            if (burstSec > boundaryToleranceSec)
+            {
+                break;
+            }
+
+            speechStartSec = next.End.TotalSeconds;
+        }
+
+        return Math.Clamp(speechStartSec, 0.0, audioDuration);
     }
 
-    private static double FindContentEnd(double audioDuration, IReadOnlyList<SilenceInterval> silenceIntervals)
+    private static double FindContentEnd(
+        double audioDuration,
+        IReadOnlyList<SilenceInterval> silenceIntervals,
+        double boundaryToleranceSec = 0.1)
     {
-        var contentEnd = audioDuration;
-        var lastSilence = silenceIntervals.LastOrDefault();
-        if (lastSilence != default &&
-            Math.Abs(lastSilence.End.TotalSeconds - audioDuration) < 0.1)
+        if (silenceIntervals.Count == 0)
         {
-            contentEnd = lastSilence.Start.TotalSeconds;
+            return audioDuration;
         }
 
-        return Math.Clamp(contentEnd, 0.0, audioDuration);
+        var trailing = silenceIntervals[^1];
+        if (Math.Abs(trailing.End.TotalSeconds - audioDuration) > boundaryToleranceSec)
+        {
+            return audioDuration;
+        }
+
+        var trimStartSec = trailing.Start.TotalSeconds;
+        for (int i = silenceIntervals.Count - 2; i >= 0; i--)
+        {
+            var prev = silenceIntervals[i];
+            var burstSec = trimStartSec - prev.End.TotalSeconds;
+            if (burstSec > boundaryToleranceSec)
+            {
+                break;
+            }
+
+            trimStartSec = prev.Start.TotalSeconds;
+        }
+
+        return Math.Clamp(trimStartSec, 0.0, audioDuration);
     }
 
     private static string? ResolveSectionTitle(ChapterContext chapter)

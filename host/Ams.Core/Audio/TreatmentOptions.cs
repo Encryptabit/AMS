@@ -42,6 +42,15 @@ public sealed record TreatmentOptions
     public double TitleContentGapThreshold { get; init; } = 1.0;
 
     /// <summary>
+    /// Maximum non-silent burst duration to absorb when coalescing fragmented silence regions.
+    /// Brief blips (mic pops, mouth clicks, page rustles, breath pulses) at or below this duration
+    /// are treated as silence so that head, tail, and title-body boundary detection sees the
+    /// perceptual silence rather than the literal one. Default 150ms covers observed
+    /// end-of-chapter noise transients while staying under the duration of any plausible word.
+    /// </summary>
+    public double ClickImmunityBurstSec { get; init; } = 0.150;
+
+    /// <summary>
     /// Crossfade duration in seconds used when splicing treatment segments.
     /// </summary>
     public double SpliceCrossfadeDurationSec { get; init; } = 0.070;

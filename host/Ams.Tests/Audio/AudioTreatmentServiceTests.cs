@@ -312,6 +312,140 @@ public sealed class AudioTreatmentServiceTests
         Assert.Equal(16, bitDepth);
     }
 
+    // Regression guard for the click-immunity refactor: the head/tail finders apply burst-merge
+    // locally, but mid-content structural-gap detection must still see raw silences. Two ~0.65s
+    // silences separated by a 100ms (sub-tolerance) "word" must not coalesce into a fake 1.4s
+    // title-body gap that would shift contentStart from 10.65 (after first silence) to 11.40
+    // (after merged region).
+    [Fact]
+    public void FindSpeechBoundaries_DoesNotMergeMidContentSilencesAcrossSubToleranceBlips()
+    {
+        var buffer = new AudioBuffer(channels: 1, sampleRate: 1000, length: 60_000); // 60s
+        var silences = new[]
+        {
+            new SilenceInterval(TimeSpan.FromSeconds(0.0), TimeSpan.FromSeconds(0.30), TimeSpan.FromSeconds(0.30)),
+            new SilenceInterval(TimeSpan.FromSeconds(10.00), TimeSpan.FromSeconds(10.65), TimeSpan.FromSeconds(0.65)),
+            new SilenceInterval(TimeSpan.FromSeconds(10.75), TimeSpan.FromSeconds(11.40), TimeSpan.FromSeconds(0.65)),
+            new SilenceInterval(TimeSpan.FromSeconds(59.5), TimeSpan.FromSeconds(60.0), TimeSpan.FromSeconds(0.5))
+        };
+
+        var result = AudioTreatmentService.FindSpeechBoundaries(
+            buffer,
+            silences,
+            gapThreshold: 1.0,
+            hydratedSentences: null,
+            sectionTitle: null,
+            boundaryToleranceSec: 0.150);
+
+        // Heuristic falls through to the first ≥0.3s silence after speechStart. With raw silences
+        // (no global coalesce), that's the [10.00–10.65] silence so contentStart = 10.65, NOT
+        // 11.40 which is what the legacy global coalesce produced by absorbing the 100ms blip.
+        Assert.Equal(0.30, result.TitleStart, precision: 2);
+        Assert.Equal(10.00, result.TitleEnd, precision: 2);
+        Assert.Equal(10.65, result.ContentStart, precision: 2);
+        Assert.Equal(59.5, result.ContentEnd, precision: 2);
+    }
+
+    [Fact]
+    public void FindContentEnd_AbsorbsTrailingSilencesFragmentedByShortBlips()
+    {
+        var buffer = new AudioBuffer(channels: 1, sampleRate: 1000, length: 30_000); // 30s
+        // Clear title-body gap at 5–6.5s suppresses FindSpeechBoundaries' fallback heuristic so
+        // trailing silences aren't mis-classified as title boundary. Trailing region [26.0–30.0]
+        // is fragmented by ~10-50ms blips; tail trim should walk back to 26.0.
+        var silences = new[]
+        {
+            new SilenceInterval(TimeSpan.FromSeconds(0.0), TimeSpan.FromSeconds(0.30), TimeSpan.FromSeconds(0.30)),
+            new SilenceInterval(TimeSpan.FromSeconds(5.00), TimeSpan.FromSeconds(6.50), TimeSpan.FromSeconds(1.50)),
+            new SilenceInterval(TimeSpan.FromSeconds(26.00), TimeSpan.FromSeconds(27.50), TimeSpan.FromSeconds(1.50)),
+            new SilenceInterval(TimeSpan.FromSeconds(27.55), TimeSpan.FromSeconds(28.70), TimeSpan.FromSeconds(1.15)),
+            new SilenceInterval(TimeSpan.FromSeconds(28.71), TimeSpan.FromSeconds(30.00), TimeSpan.FromSeconds(1.29))
+        };
+
+        var result = AudioTreatmentService.FindSpeechBoundaries(
+            buffer,
+            silences,
+            gapThreshold: 1.0,
+            hydratedSentences: null,
+            sectionTitle: null,
+            boundaryToleranceSec: 0.150);
+
+        Assert.Equal(26.00, result.ContentEnd, precision: 2);
+    }
+
+    [Fact]
+    public void FindContentEnd_TrimsWhenLastSilenceEndsWithinToleranceOfEof()
+    {
+        var buffer = new AudioBuffer(channels: 1, sampleRate: 1000, length: 30_000); // 30s
+        // Last silence ends 120ms before EOF — past the legacy 100ms anchor but inside the new
+        // 150ms click-immunity tolerance. Trailing 120ms burst is treated as part of the trailing
+        // silence so the chapter is still trimmed at 28.83. Clear title-body gap suppresses the
+        // fallback heuristic.
+        var silences = new[]
+        {
+            new SilenceInterval(TimeSpan.FromSeconds(0.0), TimeSpan.FromSeconds(0.30), TimeSpan.FromSeconds(0.30)),
+            new SilenceInterval(TimeSpan.FromSeconds(5.00), TimeSpan.FromSeconds(6.50), TimeSpan.FromSeconds(1.50)),
+            new SilenceInterval(TimeSpan.FromSeconds(28.83), TimeSpan.FromSeconds(29.88), TimeSpan.FromSeconds(1.05))
+        };
+
+        var result = AudioTreatmentService.FindSpeechBoundaries(
+            buffer,
+            silences,
+            gapThreshold: 1.0,
+            hydratedSentences: null,
+            sectionTitle: null,
+            boundaryToleranceSec: 0.150);
+
+        Assert.Equal(28.83, result.ContentEnd, precision: 2);
+    }
+
+    [Fact]
+    public void FindContentEnd_DoesNotTrimWhenLastSilenceFarFromEof()
+    {
+        var buffer = new AudioBuffer(channels: 1, sampleRate: 1000, length: 30_000); // 30s
+        // Last silence ends at 25.0s — far beyond the click-immunity tolerance of EOF.
+        // No tail trim; content runs to the end of the buffer.
+        var silences = new[]
+        {
+            new SilenceInterval(TimeSpan.FromSeconds(0.0), TimeSpan.FromSeconds(0.20), TimeSpan.FromSeconds(0.20)),
+            new SilenceInterval(TimeSpan.FromSeconds(20.0), TimeSpan.FromSeconds(25.0), TimeSpan.FromSeconds(5.0))
+        };
+
+        var result = AudioTreatmentService.FindSpeechBoundaries(
+            buffer,
+            silences,
+            gapThreshold: 10.0,
+            hydratedSentences: null,
+            sectionTitle: null,
+            boundaryToleranceSec: 0.150);
+
+        Assert.Equal(30.0, result.ContentEnd, precision: 2);
+    }
+
+    [Fact]
+    public void FindSpeechStart_AbsorbsLeadingSilencesFragmentedByShortBlips()
+    {
+        var buffer = new AudioBuffer(channels: 1, sampleRate: 1000, length: 30_000); // 30s
+        // Symmetrical head case: studio pre-roll silence is fragmented by a 50ms click.
+        // Speech start should walk forward across the blip to 0.95s.
+        var silences = new[]
+        {
+            new SilenceInterval(TimeSpan.FromSeconds(0.00), TimeSpan.FromSeconds(0.50), TimeSpan.FromSeconds(0.50)),
+            new SilenceInterval(TimeSpan.FromSeconds(0.55), TimeSpan.FromSeconds(0.95), TimeSpan.FromSeconds(0.40)),
+            new SilenceInterval(TimeSpan.FromSeconds(29.5), TimeSpan.FromSeconds(30.0), TimeSpan.FromSeconds(0.5))
+        };
+
+        var result = AudioTreatmentService.FindSpeechBoundaries(
+            buffer,
+            silences,
+            gapThreshold: 5.0,
+            hydratedSentences: null,
+            sectionTitle: null,
+            boundaryToleranceSec: 0.150);
+
+        Assert.Equal(0.95, result.ContentStart, precision: 2);
+    }
+
     private static HydratedSentence BuildSentence(
         int id,
         double startSec,
