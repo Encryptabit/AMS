@@ -32,8 +32,9 @@ public sealed record TreatmentOptions
 
     /// <summary>
     /// Minimum duration of silence to consider as a gap (seconds).
+    /// Matches the QC analyze default so treated output is judged at the same resolution it was produced at.
     /// </summary>
-    public double MinimumSilenceDuration { get; init; } = 0.05;
+    public double MinimumSilenceDuration { get; init; } = 0.25;
 
     /// <summary>
     /// Minimum gap duration to consider as title/content boundary (seconds).
