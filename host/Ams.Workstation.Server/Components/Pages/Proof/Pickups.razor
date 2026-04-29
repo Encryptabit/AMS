@@ -15,7 +15,7 @@
         <BitStack Horizontal="false" Gap="0.25rem">
             <BitText Typography="BitTypography.H4">Proof Pickups</BitText>
             <BitText Typography="BitTypography.Body1" Color="BitColor.SecondaryForeground">
-                Import stitched pickup source, match CRX targets, stage replacements, and commit/revert lifecycle ops for active chapter.
+                Import one stitched pickup batch as batch Pick truth, resolve every CRX target, then keep stage/commit lifecycle ops available for downstream chapters.
             </BitText>
         </BitStack>
 
@@ -58,10 +58,11 @@
 
                         <BitButton Variant="BitVariant.Fill"
                                    Color="BitColor.Primary"
-                                   OnClick="HandleImportAsync"
-                                   IsEnabled="@CanImport"
-                                   data-proof-pickups-action="import">
-                            Import + Match
+                                   OnClick="HandleImportPickMapAsync"
+                                   IsEnabled="@CanImportPickMap"
+                                   data-proof-pickups-action="import"
+                                   data-proof-pick-import="true">
+                            Import Batch Pick
                         </BitButton>
 
                         <BitButton Variant="BitVariant.Outline"
@@ -76,7 +77,7 @@
                     @if (!_snapshot.HasActiveChapter)
                     {
                         <BitMessage Color="BitColor.Warning">
-                            Active chapter required before import/stage actions.
+                            Active chapter is required for workspace sync and stage/commit actions. Batch Pick import still scans all available chapters.
                         </BitMessage>
                     }
                 </BitStack>
@@ -95,6 +96,147 @@
                     @_snapshot.LastError
                 </BitMessage>
             }
+
+            <BitCard data-proof-pick-map="true">
+                <BitStack Horizontal="false" Gap="0.75rem">
+                    <BitStack Horizontal="true" Gap="0.75rem" VerticalAlign="BitAlignment.Center" Wrap="true">
+                        <BitStack Horizontal="false" Gap="0.15rem">
+                            <BitText Typography="BitTypography.Subtitle2">Batch Pick map</BitText>
+                            <BitText Typography="BitTypography.Caption1" Color="BitColor.SecondaryForeground">
+                                Confirm inferred rows, assign unresolved segments to known CRX targets, or choose an explicit disposition before saving canonical truth.
+                            </BitText>
+                        </BitStack>
+                        <BitTag Color="BitColor.Info" data-proof-pick-revision="true">
+                            Revision @(_snapshot.PickMapRevision?.ToString() ?? "(none)")
+                        </BitTag>
+                        <BitButton Variant="BitVariant.Fill"
+                                   Color="BitColor.Primary"
+                                   OnClick="HandleSavePickMapAsync"
+                                   IsEnabled="@CanSavePickMap"
+                                   data-proof-pick-save="true">
+                            Save Canonical Pick Map
+                        </BitButton>
+                    </BitStack>
+
+                    @if (!string.IsNullOrWhiteSpace(_snapshot.PickMapReadError))
+                    {
+                        <BitMessage Color="BitColor.Error" data-proof-pick-read-error="true">
+                            @_snapshot.PickMapReadError
+                        </BitMessage>
+                    }
+
+                    @if (!string.IsNullOrWhiteSpace(_snapshot.LastPickValidationError))
+                    {
+                        <BitMessage Color="BitColor.Warning" data-proof-pick-validation-error="true">
+                            @_snapshot.LastPickValidationError
+                        </BitMessage>
+                    }
+
+                    @if (_snapshot.PickMap is null)
+                    {
+                        <BitText Typography="BitTypography.Caption1" Color="BitColor.SecondaryForeground">
+                            No batch Pick map loaded. Import a stitched pickup batch to create draft truth.
+                        </BitText>
+                    }
+                    else if (_snapshot.PickMap.Assignments.Count == 0)
+                    {
+                        <BitText Typography="BitTypography.Caption1" Color="BitColor.SecondaryForeground" data-proof-pick-row-empty="true">
+                            Pick map has zero rows. Import again when pickup candidates are available.
+                        </BitText>
+                    }
+                    else
+                    {
+                        @foreach (var group in PickChapterGroups)
+                        {
+                            <BitCard Class="proof-pickups-pick-group" data-proof-pick-chapter-group="true" data-proof-pick-chapter-stem="@group.ChapterStem">
+                                <BitStack Horizontal="false" Gap="0.5rem">
+                                    <BitStack Horizontal="true" Gap="0.5rem" VerticalAlign="BitAlignment.Center" Wrap="true">
+                                        <BitText Typography="BitTypography.Subtitle2">@FormatPickChapterGroupTitle(group.ChapterStem)</BitText>
+                                        <BitTag Color="BitColor.Info">@group.Assignments.Count</BitTag>
+                                    </BitStack>
+
+                                    @foreach (var assignment in group.Assignments)
+                                    {
+                                        <BitCard Class="proof-pickups-pick-row" data-proof-pick-row="true" data-proof-pick-assignment-id="@assignment.Id">
+                                            <BitStack Horizontal="false" Gap="0.4rem">
+                                                <BitStack Horizontal="true" Gap="0.5rem" VerticalAlign="BitAlignment.Center" Wrap="true">
+                                                    <BitText Typography="BitTypography.Body2">
+                                                        @DescribePickAssignment(assignment)
+                                                    </BitText>
+                                                    <BitTag Color="@PickStatusColor(assignment.Status)" data-proof-pick-status="true">
+                                                        @FormatPickStatus(assignment.Status)
+                                                    </BitTag>
+                                                </BitStack>
+
+                                                <BitText Typography="BitTypography.Caption1" Color="BitColor.SecondaryForeground">
+                                                    Target: @DescribePickTarget(assignment.EffectiveTarget)
+                                                </BitText>
+
+                                                @if (!string.IsNullOrWhiteSpace(assignment.ValidationError))
+                                                {
+                                                    <BitText Typography="BitTypography.Caption1" Color="BitColor.Error">
+                                                        @assignment.ValidationError
+                                                    </BitText>
+                                                }
+
+                                                <div class="proof-pickups-pick-controls">
+                                                    <label class="proof-pickups-pick-target">
+                                                        <span>Manual target</span>
+                                                        <select class="proof-pickups-pick-select"
+                                                                value="@GetSelectedPickTargetValue(assignment)"
+                                                                disabled="@(!CanEditPickMap)"
+                                                                aria-label="Manual CRX target for pickup assignment @assignment.Id"
+                                                                data-proof-pick-manual-target="true"
+                                                                @onchange="args => TrackPickTargetSelection(assignment.Id, args.Value?.ToString())">
+                                                            <option value="">Select CRX target</option>
+                                                            @foreach (var target in AvailablePickTargets)
+                                                            {
+                                                                <option value="@BuildPickTargetOptionValue(target)">@DescribePickTarget(target)</option>
+                                                            }
+                                                        </select>
+                                                    </label>
+
+                                                    <BitButton Variant="BitVariant.Outline"
+                                                               Size="BitSize.Small"
+                                                               Color="BitColor.Primary"
+                                                               OnClick="() => HandlePickTargetAsync(assignment.Id)"
+                                                               IsEnabled="@CanApplyPickTarget(assignment)">
+                                                        Assign Target
+                                                    </BitButton>
+                                                    <BitButton Variant="BitVariant.Outline"
+                                                               Size="BitSize.Small"
+                                                               Color="BitColor.Warning"
+                                                               OnClick="() => HandlePickDispositionAsync(assignment.Id, PickupPickMapAssignmentStatus.Rejected)"
+                                                               IsEnabled="@CanEditPickMap"
+                                                               data-proof-pick-disposition="rejected">
+                                                        Reject
+                                                    </BitButton>
+                                                    <BitButton Variant="BitVariant.Outline"
+                                                               Size="BitSize.Small"
+                                                               Color="BitColor.Warning"
+                                                               OnClick="() => HandlePickDispositionAsync(assignment.Id, PickupPickMapAssignmentStatus.Deferred)"
+                                                               IsEnabled="@CanEditPickMap"
+                                                               data-proof-pick-disposition="deferred">
+                                                        Defer
+                                                    </BitButton>
+                                                    <BitButton Variant="BitVariant.Outline"
+                                                               Size="BitSize.Small"
+                                                               Color="BitColor.Secondary"
+                                                               OnClick="() => HandlePickDispositionAsync(assignment.Id, PickupPickMapAssignmentStatus.NotApplicable)"
+                                                               IsEnabled="@CanEditPickMap"
+                                                               data-proof-pick-disposition="not-applicable">
+                                                        Not Applicable
+                                                    </BitButton>
+                                                </div>
+                                            </BitStack>
+                                        </BitCard>
+                                    }
+                                </BitStack>
+                            </BitCard>
+                        }
+                    }
+                </BitStack>
+            </BitCard>
 
             <BitGrid Columns="3" Gap="1rem">
                 <BitGridItem>
@@ -367,6 +509,30 @@
                             <BitText Typography="BitTypography.Caption1" Color="BitColor.SecondaryForeground">Last validation error</BitText>
                             <BitText Typography="BitTypography.Body2">@(_snapshot.LastValidationError ?? "(none)")</BitText>
                         </BitGridItem>
+                        <BitGridItem>
+                            <BitText Typography="BitTypography.Caption1" Color="BitColor.SecondaryForeground">Pick map revision</BitText>
+                            <BitText Typography="BitTypography.Body2" data-proof-pick-revision="true">@(_snapshot.PickMapRevision?.ToString() ?? "(none)")</BitText>
+                        </BitGridItem>
+                        <BitGridItem>
+                            <BitText Typography="BitTypography.Caption1" Color="BitColor.SecondaryForeground">Pick source</BitText>
+                            <BitText Typography="BitTypography.Body2" data-proof-pick-source="true">@(_snapshot.PickMap?.Source.Path ?? _snapshot.SourcePath ?? "(none)")</BitText>
+                        </BitGridItem>
+                        <BitGridItem>
+                            <BitText Typography="BitTypography.Caption1" Color="BitColor.SecondaryForeground">Last Pick op id</BitText>
+                            <BitText Typography="BitTypography.Body2" data-proof-pick-last-op="true">@(_snapshot.LastPickOperationId ?? "(none)")</BitText>
+                        </BitGridItem>
+                        <BitGridItem>
+                            <BitText Typography="BitTypography.Caption1" Color="BitColor.SecondaryForeground">Last Pick validation error</BitText>
+                            <BitText Typography="BitTypography.Body2" data-proof-pick-validation-diagnostic="true">@(_snapshot.LastPickValidationError ?? "(none)")</BitText>
+                        </BitGridItem>
+                        <BitGridItem>
+                            <BitText Typography="BitTypography.Caption1" Color="BitColor.SecondaryForeground">Pick status counts</BitText>
+                            <BitText Typography="BitTypography.Body2" data-proof-pick-status-counts="true">@FormatPickStatusCounts()</BitText>
+                        </BitGridItem>
+                        <BitGridItem>
+                            <BitText Typography="BitTypography.Caption1" Color="BitColor.SecondaryForeground">Pick chapter counts</BitText>
+                            <BitText Typography="BitTypography.Body2" data-proof-pick-chapter-counts="true">@FormatPickChapterCounts()</BitText>
+                        </BitGridItem>
                     </BitGrid>
 
                     @if (!string.IsNullOrWhiteSpace(_snapshot.DeterministicOrderingDiagnostics))
@@ -430,6 +596,7 @@
     private string? _selectedChapter;
     private ProofPickupsSessionSnapshot _snapshot = ProofPickupsSessionSnapshot.Empty;
     private CancellationTokenSource? _actionCts;
+    private readonly Dictionary<string, string> _selectedPickTargets = new(StringComparer.Ordinal);
 
     private ICollection<BitDropdownItem<string>> ChapterItems
         => Workspace.AvailableChapters
@@ -458,7 +625,51 @@
         }
     }
 
-    private bool CanImport
+    private IReadOnlyList<PickupPickMapChapterGroup> PickChapterGroups
+        => _snapshot.PickMap?.GetDeterministicChapterGroups() ?? Array.Empty<PickupPickMapChapterGroup>();
+
+    private IReadOnlyList<PickupPickMapTargetReference> AvailablePickTargets
+    {
+        get
+        {
+            var targets = _snapshot.Targets
+                .Select(target => new PickupPickMapTargetReference(
+                    chapterStem: target.ChapterStem,
+                    chapterName: target.ChapterName,
+                    errorNumber: target.ErrorNumber,
+                    sentenceId: target.SentenceId,
+                    originalStartSec: target.OriginalStartSec,
+                    originalEndSec: target.OriginalEndSec));
+
+            var mapTargets = (_snapshot.PickMap?.Assignments ?? Array.Empty<PickupPickMapAssignment>())
+                .SelectMany(assignment => new[] { assignment.InferredTarget, assignment.SelectedTarget })
+                .Where(target => target is not null)
+                .Select(target => target!);
+
+            return targets
+                .Concat(mapTargets)
+                .GroupBy(target => target.TargetKey, StringComparer.OrdinalIgnoreCase)
+                .Select(group => group.First())
+                .OrderBy(target => target.ChapterStem, StringComparer.OrdinalIgnoreCase)
+                .ThenBy(target => target.ErrorNumber)
+                .ThenBy(target => target.SentenceId)
+                .ToArray();
+        }
+    }
+
+    private bool CanSavePickMap
+        => !_snapshot.IsBusy
+           && _snapshot.PickMap is { Assignments.Count: > 0 }
+           && _snapshot.PickMap.Assignments.All(assignment => assignment.Status != PickupPickMapAssignmentStatus.Unresolved)
+           && string.IsNullOrWhiteSpace(_snapshot.LastPickValidationError)
+           && string.IsNullOrWhiteSpace(_snapshot.PickMapReadError);
+
+    private bool CanEditPickMap
+        => !_snapshot.IsBusy
+           && _snapshot.PickMap is not null
+           && string.IsNullOrWhiteSpace(_snapshot.PickMapReadError);
+
+    private bool CanImportPickMap
         => !_snapshot.IsBusy
            && _snapshot.HasActiveChapter
            && !string.IsNullOrWhiteSpace(_pickupSourcePath);
@@ -468,6 +679,7 @@
         _pickupSourcePath = AmsPathResolver.NormalizeOptionalPath(Workspace.PickupSessionPath);
         _selectedChapter = Workspace.CurrentChapterName;
         _snapshot = Session.SyncToWorkspace();
+        SyncPickTargetSelections();
 
         if (string.IsNullOrWhiteSpace(_pickupSourcePath))
         {
@@ -514,6 +726,7 @@
 
         _selectedChapter = chapterName;
         _snapshot = Session.SyncToWorkspace();
+        SyncPickTargetSelections();
 
         if (string.IsNullOrWhiteSpace(_pickupSourcePath))
         {
@@ -524,16 +737,16 @@
         return Task.CompletedTask;
     }
 
-    private async Task HandleImportAsync()
+    private async Task HandleImportPickMapAsync()
     {
-        if (!CanImport)
+        if (!CanImportPickMap)
         {
             return;
         }
 
         ReplaceActionCts();
         _snapshot = await Session
-            .ImportAsync(_pickupSourcePath ?? string.Empty, _actionCts!.Token)
+            .ImportPickMapAsync(_pickupSourcePath ?? string.Empty, _actionCts!.Token)
             .ConfigureAwait(false);
 
         if (!string.IsNullOrWhiteSpace(_snapshot.SourcePath))
@@ -541,7 +754,149 @@
             _pickupSourcePath = _snapshot.SourcePath;
         }
 
+        SyncPickTargetSelections();
         await InvokeAsync(StateHasChanged);
+    }
+
+    private async Task HandleSavePickMapAsync()
+    {
+        if (!CanSavePickMap || _snapshot.PickMap is null)
+        {
+            return;
+        }
+
+        ReplaceActionCts();
+        _snapshot = await Session
+            .ConfirmPickMapAsync(_snapshot.PickMap.Revision, _actionCts!.Token)
+            .ConfigureAwait(false);
+
+        SyncPickTargetSelections();
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private async Task HandlePickTargetAsync(string assignmentId)
+    {
+        if (!CanEditPickMap || _snapshot.PickMap is null)
+        {
+            return;
+        }
+
+        var selectedValue = _selectedPickTargets.TryGetValue(assignmentId, out var value)
+            ? value
+            : string.Empty;
+        if (!TryParsePickTargetOptionValue(selectedValue, out var chapterStem, out var errorNumber))
+        {
+            return;
+        }
+
+        _snapshot = await Session
+            .SetPickAssignmentTargetAsync(assignmentId, _snapshot.PickMap.Revision, chapterStem, errorNumber)
+            .ConfigureAwait(false);
+
+        SyncPickTargetSelections();
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private async Task HandlePickDispositionAsync(string assignmentId, PickupPickMapAssignmentStatus disposition)
+    {
+        if (!CanEditPickMap || _snapshot.PickMap is null)
+        {
+            return;
+        }
+
+        _snapshot = await Session
+            .SetPickAssignmentDispositionAsync(assignmentId, _snapshot.PickMap.Revision, disposition)
+            .ConfigureAwait(false);
+
+        SyncPickTargetSelections();
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private void TrackPickTargetSelection(string assignmentId, string? selectedValue)
+    {
+        if (string.IsNullOrWhiteSpace(assignmentId))
+        {
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(selectedValue))
+        {
+            _selectedPickTargets.Remove(assignmentId);
+            return;
+        }
+
+        _selectedPickTargets[assignmentId] = selectedValue;
+    }
+
+    private bool CanApplyPickTarget(PickupPickMapAssignment assignment)
+        => CanEditPickMap
+           && _snapshot.PickMap is not null
+           && _selectedPickTargets.TryGetValue(assignment.Id, out var selectedValue)
+           && TryParsePickTargetOptionValue(selectedValue, out _, out _);
+
+    private string GetSelectedPickTargetValue(PickupPickMapAssignment assignment)
+    {
+        if (_selectedPickTargets.TryGetValue(assignment.Id, out var selectedValue))
+        {
+            return selectedValue;
+        }
+
+        return assignment.SelectedTarget is null
+            ? string.Empty
+            : BuildPickTargetOptionValue(assignment.SelectedTarget);
+    }
+
+    private void SyncPickTargetSelections()
+    {
+        if (_snapshot.PickMap is null)
+        {
+            _selectedPickTargets.Clear();
+            return;
+        }
+
+        var assignmentIds = _snapshot.PickMap.Assignments
+            .Select(assignment => assignment.Id)
+            .ToHashSet(StringComparer.Ordinal);
+
+        foreach (var staleId in _selectedPickTargets.Keys.Where(id => !assignmentIds.Contains(id)).ToArray())
+        {
+            _selectedPickTargets.Remove(staleId);
+        }
+
+        foreach (var assignment in _snapshot.PickMap.Assignments)
+        {
+            if (assignment.SelectedTarget is not null)
+            {
+                _selectedPickTargets[assignment.Id] = BuildPickTargetOptionValue(assignment.SelectedTarget);
+            }
+            else if (!_selectedPickTargets.ContainsKey(assignment.Id))
+            {
+                _selectedPickTargets[assignment.Id] = string.Empty;
+            }
+        }
+    }
+
+    private static string BuildPickTargetOptionValue(PickupPickMapTargetReference target)
+        => $"{target.ChapterStem}|{target.ErrorNumber}";
+
+    private static bool TryParsePickTargetOptionValue(string? value, out string chapterStem, out int errorNumber)
+    {
+        chapterStem = string.Empty;
+        errorNumber = 0;
+
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return false;
+        }
+
+        var separatorIndex = value.LastIndexOf('|');
+        if (separatorIndex <= 0 || separatorIndex == value.Length - 1)
+        {
+            return false;
+        }
+
+        chapterStem = value[..separatorIndex];
+        return int.TryParse(value[(separatorIndex + 1)..], out errorNumber) && errorNumber > 0;
     }
 
     private async Task HandleStageAsync(string assetId)
@@ -636,14 +991,65 @@
         return $"Error #{error} — sentence {sentenceId}";
     }
 
+    private static string DescribePickAssignment(PickupPickMapAssignment assignment)
+        => $"Segment {ShortId(assignment.PickupSegmentId)} — source {FormatRange(assignment.SourceStartSec, assignment.SourceEndSec)}";
+
+    private static string DescribePickTarget(PickupPickMapTargetReference? target)
+        => target is null
+            ? "Unassigned"
+            : $"{target.ChapterStem} · error #{target.ErrorNumber} · sentence {target.SentenceId}";
+
+    private static string FormatPickChapterGroupTitle(string chapterStem)
+        => string.Equals(chapterStem, PickupPickMapDocument.UnassignedChapterGroup, StringComparison.OrdinalIgnoreCase)
+            ? "Unassigned / manual disposition"
+            : $"Chapter {chapterStem}";
+
+    private static string FormatPickStatus(PickupPickMapAssignmentStatus status)
+        => status switch
+        {
+            PickupPickMapAssignmentStatus.NotApplicable => "not applicable",
+            _ => status.ToString().ToLowerInvariant()
+        };
+
+    private string FormatPickStatusCounts()
+        => _snapshot.PickAssignmentCountsByStatus.Count == 0
+            ? "(none)"
+            : string.Join(", ", _snapshot.PickAssignmentCountsByStatus
+                .OrderBy(item => item.Key)
+                .Select(item => $"{FormatPickStatus(item.Key)}={item.Value}"));
+
+    private string FormatPickChapterCounts()
+        => _snapshot.PickAssignmentCountsByChapter.Count == 0
+            ? "(none)"
+            : string.Join(", ", _snapshot.PickAssignmentCountsByChapter
+                .OrderBy(item => item.Key, StringComparer.OrdinalIgnoreCase)
+                .Select(item => $"{item.Key}={item.Value}"));
+
+    private static BitColor PickStatusColor(PickupPickMapAssignmentStatus status)
+        => status switch
+        {
+            PickupPickMapAssignmentStatus.Inferred => BitColor.Info,
+            PickupPickMapAssignmentStatus.Confirmed => BitColor.Success,
+            PickupPickMapAssignmentStatus.Override => BitColor.Primary,
+            PickupPickMapAssignmentStatus.Rejected => BitColor.Error,
+            PickupPickMapAssignmentStatus.Deferred => BitColor.Warning,
+            PickupPickMapAssignmentStatus.NotApplicable => BitColor.Secondary,
+            PickupPickMapAssignmentStatus.Unresolved => BitColor.Warning,
+            _ => BitColor.Secondary
+        };
+
+    private static string ShortId(string value)
+        => string.IsNullOrWhiteSpace(value) ? "(none)" : value[..Math.Min(8, value.Length)];
+
     private static string FormatRange(double startSec, double endSec)
         => $"{startSec:F3}s to {endSec:F3}s";
 
     private string GetProgressLabel()
         => _snapshot.Phase switch
         {
-            ProofPickupsSessionPhase.ResolvingTargets => "Resolving CRX targets",
-            ProofPickupsSessionPhase.Importing => "Matching stitched pickups",
+            ProofPickupsSessionPhase.ResolvingTargets => "Resolving batch Pick targets",
+            ProofPickupsSessionPhase.Importing => "Importing stitched pickup batch",
+            ProofPickupsSessionPhase.Picking => "Updating Pick map",
             ProofPickupsSessionPhase.Staging => "Staging pickup operation",
             ProofPickupsSessionPhase.Unstaging => "Unstaging pickup operation",
             ProofPickupsSessionPhase.Committing => "Committing staged pickup",
@@ -695,6 +1101,43 @@
 
     .proof-pickups-item {
         border: 1px solid var(--bit-clr-brd-sec);
+    }
+
+    .proof-pickups-pick-group,
+    .proof-pickups-pick-row {
+        border: 1px solid var(--bit-clr-brd-sec);
+        box-shadow: 0 1px 2px rgb(0 0 0 / 0.04), 0 8px 24px rgb(0 0 0 / 0.04);
+    }
+
+    .proof-pickups-pick-controls {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: end;
+        gap: 0.5rem;
+    }
+
+    .proof-pickups-pick-target {
+        min-width: min(24rem, 100%);
+        display: flex;
+        flex-direction: column;
+        gap: 0.2rem;
+        color: var(--bit-clr-fg-sec);
+        font-size: 0.78rem;
+    }
+
+    .proof-pickups-pick-select {
+        min-height: 2.5rem;
+        border: 1px solid var(--bit-clr-brd-sec);
+        border-radius: 0.5rem;
+        padding: 0.45rem 0.65rem;
+        color: var(--bit-clr-fg-pri);
+        background: var(--bit-clr-bg-pri);
+        font: inherit;
+    }
+
+    .proof-pickups-pick-select:focus-visible {
+        outline: 2px solid var(--bit-clr-pri);
+        outline-offset: 2px;
     }
 
     .proof-pickups-diagnostics-text {

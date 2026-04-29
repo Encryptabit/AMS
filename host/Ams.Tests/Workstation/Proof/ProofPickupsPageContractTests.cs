@@ -36,6 +36,30 @@ public sealed class ProofPickupsPageContractTests
     }
 
     [Fact]
+    public void PickupsPage_ExposesBatchPickMapControlsAndDiagnostics()
+    {
+        var source = ReadRepoFile(PickupsPageRelativePath);
+
+        AssertContains(source, PickupsPageRelativePath, "batch Pick", "batch Pick wording");
+        AssertContains(source, PickupsPageRelativePath, "data-proof-pick-map=\"true\"", "Pick map panel marker");
+        AssertContains(source, PickupsPageRelativePath, "data-proof-pick-chapter-group=\"true\"", "Pick chapter group marker");
+        AssertContains(source, PickupsPageRelativePath, "data-proof-pick-row=\"true\"", "Pick assignment row marker");
+        AssertContains(source, PickupsPageRelativePath, "data-proof-pick-status=\"true\"", "Pick assignment status marker");
+        AssertContains(source, PickupsPageRelativePath, "data-proof-pick-manual-target=\"true\"", "Pick manual target control marker");
+        AssertContains(source, PickupsPageRelativePath, "data-proof-pick-save=\"true\"", "Pick canonical save marker");
+        AssertContains(source, PickupsPageRelativePath, "data-proof-pick-revision=\"true\"", "Pick revision diagnostic marker");
+        AssertContains(source, PickupsPageRelativePath, "data-proof-pick-read-error=\"true\"", "Pick read error marker");
+        AssertContains(source, PickupsPageRelativePath, "Import Batch Pick", "batch import action copy");
+        AssertContains(source, PickupsPageRelativePath, "Save Canonical Pick Map", "canonical save action copy");
+        AssertContains(source, PickupsPageRelativePath, "SetPickAssignmentTargetAsync", "manual target session binding");
+        AssertContains(source, PickupsPageRelativePath, "SetPickAssignmentDispositionAsync", "manual disposition session binding");
+        AssertContains(source, PickupsPageRelativePath, "ConfirmPickMapAsync", "canonical save session binding");
+
+        Assert.DoesNotContain("Import + Match", source, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("/polish/legacy/", source, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public void PickupsPage_UsesEditingHandoffHelperWithDeterministicFallbackSeam()
     {
         var source = ReadRepoFile(PickupsPageRelativePath);
