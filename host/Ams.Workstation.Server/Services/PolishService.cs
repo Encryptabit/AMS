@@ -1006,6 +1006,122 @@ public class PolishService
         }
     }
 
+    public Task<FitReplacementPreviewResult> GenerateFitPreviewAsync(
+        PickupFitPlanDocument fitPlan,
+        PickupFitPlanItem fitItem,
+        string? roomtoneFilePath,
+        CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(fitPlan);
+        ArgumentNullException.ThrowIfNull(fitItem);
+        ct.ThrowIfCancellationRequested();
+
+        var operationHandle = GetActiveChapterHandleOrThrow();
+        var operationStem = operationHandle.Chapter.Descriptor.ChapterId;
+        if (!string.Equals(operationStem, fitPlan.ChapterStem, StringComparison.OrdinalIgnoreCase) ||
+            !string.Equals(operationStem, fitItem.Target.ChapterStem, StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException(
+                $"Pickup Fit preview rejected: active chapter='{operationStem}', fitPlan='{fitPlan.ChapterStem}', itemTarget='{fitItem.Target.ChapterStem}'.");
+        }
+
+        var source = BuildPickupEdlSourceReference(fitPlan.Source);
+        var pickupSource = _pickupSourceBufferCache.GetSourceBuffer(source, operationStem, fitItem.ReplacementId, ct);
+        var render = RenderFitReplacement(operationHandle, fitItem, pickupSource, roomtoneFilePath);
+        var chapterBuffer = GetChapterBuffer(operationHandle);
+        var chapterDurationSec = (double)chapterBuffer.Length / chapterBuffer.SampleRate;
+        var maxClipStartSec = Math.Max(0, chapterDurationSec - MinAuditionClipDurationSec);
+
+        var currentOuterStartSec = MapBaselineToCurrentTime(operationStem, fitItem.OuterRange.StartSec);
+        var currentOuterEndSec = MapBaselineToCurrentTime(operationStem, fitItem.OuterRange.EndSec);
+        var clipStartSec = Math.Clamp(currentOuterStartSec, 0, maxClipStartSec);
+        var clipEndSec = Math.Clamp(currentOuterEndSec, 0, chapterDurationSec);
+
+        var hydrate = GetCurrentHydratedTranscript();
+        if (hydrate is not null)
+        {
+            var sentences = hydrate.Sentences;
+            var sentenceIndex = -1;
+            for (var i = 0; i < sentences.Count; i++)
+            {
+                if (sentences[i].Id == fitItem.Target.SentenceId)
+                {
+                    sentenceIndex = i;
+                    break;
+                }
+            }
+
+            if (sentenceIndex > 0)
+            {
+                var previousStart = MapBaselineToCurrentTime(
+                    operationStem,
+                    sentences[sentenceIndex - 1].Timing?.StartSec);
+                if (previousStart.HasValue)
+                {
+                    clipStartSec = Math.Min(clipStartSec, previousStart.Value);
+                }
+            }
+
+            if (sentenceIndex >= 0 && sentenceIndex < sentences.Count - 1)
+            {
+                var nextEnd = MapBaselineToCurrentTime(
+                    operationStem,
+                    sentences[sentenceIndex + 1].Timing?.EndSec);
+                if (nextEnd.HasValue)
+                {
+                    clipEndSec = Math.Max(clipEndSec, nextEnd.Value);
+                }
+            }
+        }
+
+        clipStartSec = Math.Clamp(clipStartSec, 0, maxClipStartSec);
+        clipEndSec = Math.Clamp(clipEndSec, 0, chapterDurationSec);
+        if (clipEndSec <= clipStartSec)
+        {
+            clipEndSec = Math.Min(chapterDurationSec, clipStartSec + MinAuditionClipDurationSec);
+        }
+
+        var contextClip = AudioProcessor.Trim(
+            chapterBuffer,
+            TimeSpan.FromSeconds(clipStartSec),
+            TimeSpan.FromSeconds(clipEndSec));
+        var clipDurationSec = (double)contextClip.Length / contextClip.SampleRate;
+        if (clipDurationSec <= 0)
+        {
+            throw new InvalidOperationException("Unable to generate Fit preview for an empty chapter context segment.");
+        }
+
+        var replaceStartSec = Math.Clamp(currentOuterStartSec - clipStartSec, 0, clipDurationSec);
+        var replaceEndSec = Math.Clamp(currentOuterEndSec - clipStartSec, 0, clipDurationSec);
+        if (replaceEndSec <= replaceStartSec)
+        {
+            replaceEndSec = Math.Min(clipDurationSec, replaceStartSec + MinAuditionClipDurationSec);
+        }
+
+        var resultBuffer = AudioSpliceService.ReplaceSegment(
+            contextClip,
+            replaceStartSec,
+            replaceEndSec,
+            render.Buffer,
+            render.EffectiveCrossfadeDurationSec,
+            render.CrossfadeCurve);
+
+        _previewBuffer.Set(resultBuffer);
+        if (_previewBuffer.Version > int.MaxValue)
+        {
+            throw new InvalidOperationException(
+                $"Pickup Fit preview version '{_previewBuffer.Version}' exceeds supported persisted range.");
+        }
+
+        var renderedDurationSec = (double)resultBuffer.Length / resultBuffer.SampleRate;
+        return Task.FromResult(new FitReplacementPreviewResult(
+            ResultBuffer: resultBuffer,
+            PreviewVersion: (int)_previewBuffer.Version,
+            RenderedDurationSec: renderedDurationSec,
+            ChapterStartSec: clipStartSec,
+            ChapterEndSec: clipEndSec));
+    }
+
     public async Task<FitReplacementCommitResult> CommitFitReplacementAsync(
         PickupFitPlanDocument fitPlan,
         PickupFitPlanItem fitItem,

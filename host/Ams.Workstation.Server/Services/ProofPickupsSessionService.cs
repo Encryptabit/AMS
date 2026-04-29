@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
 using Ams.Core.Artifacts.Hydrate;
+using Ams.Core.Audio;
 using Ams.Core.Common;
 using Ams.Workstation.Server.Models;
 using Ams.Workstation.Server.Services.Pickups.Edl;
@@ -161,7 +162,11 @@ public sealed class ProofPickupsSessionService
                 SavePickMap: (source, document, ct) => pickupPickMapStore.Save(source, document, ct),
                 ReadFitPlanDocument: (chapterStem, ct) => pickupFitPlanStore.TryRead(chapterStem, ct),
                 LoadOrCreateFitPlan: (chapterStem, pickMap, ct) => pickupFitPlanStore.LoadOrCreate(chapterStem, pickMap, ct),
-                SaveFitPlan: (chapterStem, pickMap, document, ct) => pickupFitPlanStore.Save(chapterStem, pickMap, document, ct)))
+                SaveFitPlan: (chapterStem, pickMap, document, ct) => pickupFitPlanStore.Save(chapterStem, pickMap, document, ct),
+                GenerateFitPreviewAsync: (fitPlan, fitItem, roomtonePath, ct) =>
+                    polishService.GenerateFitPreviewAsync(fitPlan, fitItem, roomtonePath, ct),
+                CommitFitReplacementAsync: (fitPlan, fitItem, roomtonePath, ct) =>
+                    polishService.CommitFitReplacementAsync(fitPlan, fitItem, roomtonePath, ct)))
     {
     }
 
@@ -852,6 +857,444 @@ public sealed class ProofPickupsSessionService
         }
     }
 
+    public Task<ProofPickupsSessionSnapshot> SetFitOuterBoundaryAsync(
+        string fitItemId,
+        int expectedRevision,
+        double startSec,
+        double endSec,
+        CancellationToken ct = default)
+    {
+        var previousChapterStem = _snapshot.ActiveChapterStem;
+        var synced = SyncToWorkspace(ct);
+        if (!synced.HasActiveChapter)
+        {
+            return Task.FromResult(_snapshot);
+        }
+
+        var operationId = CreateFitOperationId("outer-boundary");
+        return Task.FromResult(MutateFitPlan(
+            synced,
+            previousChapterStem,
+            operationId,
+            expectedRevision,
+            ct,
+            action: "outer boundary update",
+            mutation: document =>
+            {
+                var outerRange = new PickupFitPlanRange(startSec, endSec);
+                return ReplaceFitItem(
+                    document,
+                    fitItemId,
+                    item =>
+                    {
+                        EnsureFitItemNotCommitted(item, "outer boundary update");
+                        if (!outerRange.Contains(item.Placement))
+                        {
+                            throw new InvalidOperationException(
+                                $"Cannot update Fit item '{item.FitItemId}' outer boundary: placement " +
+                                $"[{item.Placement.StartSec:F3}, {item.Placement.EndSec:F3}] is outside requested outer range " +
+                                $"[{outerRange.StartSec:F3}, {outerRange.EndSec:F3}].");
+                        }
+
+                        return ClearFitPreviewAcceptance(
+                            item,
+                            PickupFitPlanItemStatus.Fitted,
+                            outerRange: outerRange);
+                    },
+                    operationId,
+                    validationError: null);
+            }));
+    }
+
+    public Task<ProofPickupsSessionSnapshot> SetFitInnerBoundaryAsync(
+        string fitItemId,
+        int expectedRevision,
+        double startSec,
+        double endSec,
+        CancellationToken ct = default)
+    {
+        var previousChapterStem = _snapshot.ActiveChapterStem;
+        var synced = SyncToWorkspace(ct);
+        if (!synced.HasActiveChapter)
+        {
+            return Task.FromResult(_snapshot);
+        }
+
+        var operationId = CreateFitOperationId("inner-boundary");
+        return Task.FromResult(MutateFitPlan(
+            synced,
+            previousChapterStem,
+            operationId,
+            expectedRevision,
+            ct,
+            action: "inner boundary update",
+            mutation: document =>
+            {
+                var innerRange = new PickupFitPlanRange(startSec, endSec);
+                return ReplaceFitItem(
+                    document,
+                    fitItemId,
+                    item =>
+                    {
+                        EnsureFitItemNotCommitted(item, "inner boundary update");
+                        return ClearFitPreviewAcceptance(
+                            item,
+                            PickupFitPlanItemStatus.Fitted,
+                            innerRange: innerRange);
+                    },
+                    operationId,
+                    validationError: null);
+            }));
+    }
+
+    public Task<ProofPickupsSessionSnapshot> SetFitPolicyAsync(
+        string fitItemId,
+        int expectedRevision,
+        PickupFitTransitionPolicy transitionPolicy,
+        CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(transitionPolicy);
+
+        var previousChapterStem = _snapshot.ActiveChapterStem;
+        var synced = SyncToWorkspace(ct);
+        if (!synced.HasActiveChapter)
+        {
+            return Task.FromResult(_snapshot);
+        }
+
+        var operationId = CreateFitOperationId("policy");
+        return Task.FromResult(MutateFitPlan(
+            synced,
+            previousChapterStem,
+            operationId,
+            expectedRevision,
+            ct,
+            action: "policy update",
+            mutation: document => ReplaceFitItem(
+                document,
+                fitItemId,
+                item =>
+                {
+                    EnsureFitItemNotCommitted(item, "policy update");
+                    try
+                    {
+                        _ = AudioSpliceService.NormalizeCrossfadeCurve(transitionPolicy.CrossfadeCurve);
+                    }
+                    catch (ArgumentOutOfRangeException ex)
+                    {
+                        throw new InvalidOperationException(
+                            $"Cannot update Fit item '{item.FitItemId}' policy: crossfade curve '{transitionPolicy.CrossfadeCurve}' is unsupported.",
+                            ex);
+                    }
+
+                    return ClearFitPreviewAcceptance(
+                        item,
+                        PickupFitPlanItemStatus.Fitted,
+                        transitionPolicy: transitionPolicy);
+                },
+                operationId,
+                validationError: null)));
+    }
+
+    public async Task<ProofPickupsSessionSnapshot> GenerateFitPreviewAsync(
+        string fitItemId,
+        int expectedRevision,
+        CancellationToken ct = default)
+    {
+        var previousChapterStem = _snapshot.ActiveChapterStem;
+        var synced = SyncToWorkspace(ct);
+        if (!synced.HasActiveChapter)
+        {
+            return _snapshot;
+        }
+
+        var chapterName = synced.ActiveChapterName!;
+        var chapterStem = synced.ActiveChapterStem!;
+        var baseline = synced;
+        var operationId = CreateFitOperationId("preview");
+
+        try
+        {
+            EnsureNoStaleFitChapterSwitch(previousChapterStem, chapterStem, "preview");
+            var (document, pickMap) = PrepareFitPlanForMutation(baseline, expectedRevision, chapterStem);
+            var item = FindFitItem(document, fitItemId);
+            EnsureFitItemNotCommitted(item, "preview generation");
+
+            _snapshot = baseline with
+            {
+                Phase = ProofPickupsSessionPhase.Picking,
+                Progress = 0.88d,
+                LastError = null,
+                LastFitOperationId = operationId,
+                LastFitValidationError = null
+            };
+
+            var runtimePreview = await GenerateFitPreviewOrThrow(document, item, ct).ConfigureAwait(false);
+            var previewEvidence = new PickupFitPreviewEvidence(
+                previewVersion: runtimePreview.PreviewVersion,
+                pickMapRevision: document.PickMapRevision,
+                pickAssignmentsFingerprint: document.PickAssignmentsFingerprint,
+                previewArtifactRef: BuildFitPreviewArtifactRef(chapterStem, item.FitItemId, runtimePreview.PreviewVersion),
+                renderedDurationSec: runtimePreview.RenderedDurationSec,
+                generatedAtUtc: DateTime.UtcNow,
+                previousFitItemId: ResolveAdjacentFitItem(document, item, previous: true)?.FitItemId,
+                nextFitItemId: ResolveAdjacentFitItem(document, item, previous: false)?.FitItemId,
+                fitStateFingerprint: ComputeFitStateFingerprint(document, item),
+                sentenceContexts: BuildFitPreviewContexts(chapterName, document, item));
+
+            var next = ReplaceFitItem(
+                document,
+                fitItemId,
+                current => WithFitPreview(current, previewEvidence),
+                operationId,
+                validationError: null);
+            var saved = SaveFitPlanOrThrow(chapterStem, pickMap, next, ct);
+
+            _snapshot = ApplyFitPlanToSnapshot(
+                baseline with
+                {
+                    Phase = ProofPickupsSessionPhase.Completed,
+                    Progress = 1d,
+                    LastError = null
+                },
+                saved,
+                readError: null,
+                operationId,
+                validationError: null);
+
+            return _snapshot;
+        }
+        catch (OperationCanceledException)
+        {
+            _snapshot = baseline with
+            {
+                ActiveChapterName = chapterName,
+                ActiveChapterStem = chapterStem,
+                Phase = ProofPickupsSessionPhase.Cancelled,
+                LastError = "Pickup Fit preview cancelled. Prior Fit item state preserved.",
+                LastFitOperationId = operationId,
+                LastFitValidationError = "Pickup Fit preview cancelled."
+            };
+
+            return _snapshot;
+        }
+        catch (Exception ex)
+        {
+            return FailFitAndPreserve(
+                baseline,
+                chapterName,
+                chapterStem,
+                $"Fit preview failed for chapter '{chapterStem}', item '{fitItemId}': {ex.Message}",
+                operationId);
+        }
+    }
+
+    public Task<ProofPickupsSessionSnapshot> AcceptFitPreviewAsync(
+        string fitItemId,
+        int expectedRevision,
+        int previewVersion,
+        string? acceptedBy = null,
+        CancellationToken ct = default)
+    {
+        var previousChapterStem = _snapshot.ActiveChapterStem;
+        var synced = SyncToWorkspace(ct);
+        if (!synced.HasActiveChapter)
+        {
+            return Task.FromResult(_snapshot);
+        }
+
+        var operationId = CreateFitOperationId("accept");
+        return Task.FromResult(MutateFitPlan(
+            synced,
+            previousChapterStem,
+            operationId,
+            expectedRevision,
+            ct,
+            action: "preview accept",
+            mutation: document => ReplaceFitItem(
+                document,
+                fitItemId,
+                item =>
+                {
+                    EnsureFitItemNotCommitted(item, "preview accept");
+                    var preview = item.PreviewEvidence
+                        ?? throw new InvalidOperationException(
+                            $"Cannot accept Fit item '{item.FitItemId}': no preview evidence is stored.");
+                    if (previewVersion <= 0 || previewVersion != preview.PreviewVersion)
+                    {
+                        throw new InvalidOperationException(
+                            $"Cannot accept Fit item '{item.FitItemId}': requested preview version '{previewVersion}' does not match current preview version '{preview.PreviewVersion}'.");
+                    }
+
+                    if (!preview.MatchesPickTruth(document.PickMapRevision, document.PickAssignmentsFingerprint))
+                    {
+                        throw new InvalidOperationException(
+                            $"Cannot accept Fit item '{item.FitItemId}': preview evidence is stale for Pick truth.");
+                    }
+
+                    var fitStateFingerprint = ComputeFitStateFingerprint(document, item);
+                    if (!preview.MatchesFitState(fitStateFingerprint))
+                    {
+                        throw new InvalidOperationException(
+                            $"Cannot accept Fit item '{item.FitItemId}': preview is stale after boundary or policy mutation.");
+                    }
+
+                    return WithFitAcceptance(
+                        item,
+                        new PickupFitAcceptanceState(
+                            isAccepted: true,
+                            acceptedPreviewVersion: preview.PreviewVersion,
+                            acceptedAtUtc: DateTime.UtcNow,
+                            acceptedBy: acceptedBy),
+                        new PickupFitCommitState(
+                            status: PickupFitCommitStatus.Ready,
+                            operationId: item.ReplacementId,
+                            edlRevision: null,
+                            ledgerSequence: null,
+                            committedAtUtc: null,
+                            error: null));
+                },
+                operationId,
+                validationError: null)));
+    }
+
+    public async Task<ProofPickupsSessionSnapshot> CommitFitAsync(
+        string fitItemId,
+        int expectedRevision,
+        CancellationToken ct = default)
+    {
+        var previousChapterStem = _snapshot.ActiveChapterStem;
+        var synced = SyncToWorkspace(ct);
+        if (!synced.HasActiveChapter)
+        {
+            return _snapshot;
+        }
+
+        var chapterName = synced.ActiveChapterName!;
+        var chapterStem = synced.ActiveChapterStem!;
+        var baseline = synced;
+        var operationId = CreateFitOperationId("commit");
+        PickupFitPlanDocument? document = null;
+        PickupPickMapDocument? pickMap = null;
+        PickupFitPlanItem? item = null;
+        var runtimeStarted = false;
+
+        try
+        {
+            EnsureNoStaleFitChapterSwitch(previousChapterStem, chapterStem, "commit");
+            (document, pickMap) = PrepareFitPlanForMutation(baseline, expectedRevision, chapterStem);
+            item = FindFitItem(document, fitItemId);
+            EnsureFitItemReadyForSessionCommit(document, item);
+
+            _snapshot = baseline with
+            {
+                Phase = ProofPickupsSessionPhase.Committing,
+                Progress = 0.9d,
+                LastError = null,
+                LastFitOperationId = operationId,
+                LastFitValidationError = null
+            };
+
+            runtimeStarted = true;
+            var commitResult = await CommitFitReplacementOrThrow(document, item, ct).ConfigureAwait(false);
+            ValidateFitCommitResult(chapterStem, item, commitResult);
+
+            var (staged, applied, reverted, failed) = GetLifecycleQueues(chapterStem);
+            var (edlRevision, orderingDiagnostics, lastValidationError, edlReadError) = ReadEdlDiagnostics(
+                chapterStem,
+                ct,
+                baseline.EdlRevision,
+                baseline.DeterministicOrderingDiagnostics,
+                baseline.LastValidationError);
+            var (ledgerRevision, ledgerEntries, ledgerReadError) = ReadLedgerDiagnostics(
+                chapterStem,
+                ct,
+                baseline.ArtifactLedgerRevision,
+                baseline.ArtifactLedgerEntries);
+            var ledgerSequence = ResolveLedgerSequence(ledgerEntries, commitResult.OperationId)
+                ?? throw new InvalidOperationException(
+                    $"Pickup Fit commit returned no artifact-ledger evidence for chapter '{chapterStem}', op '{commitResult.OperationId}'.");
+
+            var committedDocument = ReplaceFitItem(
+                document,
+                fitItemId,
+                current => WithFitCommitSuccess(
+                    current,
+                    commitResult.OperationId,
+                    edlRevision ?? commitResult.EdlRevision,
+                    ledgerSequence),
+                operationId,
+                validationError: null);
+            var saved = SaveFitPlanOrThrow(chapterStem, pickMap, committedDocument, ct);
+
+            _snapshot = ApplyFitPlanToSnapshot(
+                baseline with
+                {
+                    ActiveChapterName = chapterName,
+                    ActiveChapterStem = chapterStem,
+                    Staged = staged,
+                    Applied = applied,
+                    Reverted = reverted,
+                    Failed = failed,
+                    EdlRevision = edlRevision,
+                    DeterministicOrderingDiagnostics = orderingDiagnostics,
+                    LastValidationError = lastValidationError,
+                    ArtifactLedgerRevision = ledgerRevision,
+                    ArtifactLedgerEntries = ledgerEntries,
+                    ArtifactLedgerReadError = ledgerReadError,
+                    Phase = ProofPickupsSessionPhase.Completed,
+                    Progress = 1d,
+                    LastError = edlReadError ?? ledgerReadError,
+                    LastOperationId = commitResult.OperationId
+                },
+                saved,
+                readError: null,
+                operationId,
+                validationError: null);
+
+            return _snapshot;
+        }
+        catch (OperationCanceledException)
+        {
+            _snapshot = baseline with
+            {
+                ActiveChapterName = chapterName,
+                ActiveChapterStem = chapterStem,
+                Phase = ProofPickupsSessionPhase.Cancelled,
+                LastError = "Pickup Fit commit cancelled. Runtime rollback/ledger diagnostics refreshed on next sync.",
+                LastFitOperationId = operationId,
+                LastFitValidationError = "Pickup Fit commit cancelled."
+            };
+
+            return _snapshot;
+        }
+        catch (Exception ex)
+        {
+            var message = $"Fit commit failed for chapter '{chapterStem}', item '{fitItemId}': {ex.Message}";
+            if (runtimeStarted && document is not null && pickMap is not null && item is not null)
+            {
+                return PersistFitCommitFailure(
+                    baseline,
+                    chapterName,
+                    chapterStem,
+                    pickMap,
+                    document,
+                    item,
+                    fitItemId,
+                    operationId,
+                    message,
+                    ct);
+            }
+
+            return FailFitAndPreserve(
+                baseline,
+                chapterName,
+                chapterStem,
+                message,
+                operationId);
+        }
+    }
+
     public Task<ProofPickupsSessionSnapshot> StageAsync(string assetId, CancellationToken ct = default)
     {
         var previousChapterStem = _snapshot.ActiveChapterStem;
@@ -1493,6 +1936,643 @@ public sealed class ProofPickupsSessionService
 
         return _snapshot;
     }
+
+    private ProofPickupsSessionSnapshot MutateFitPlan(
+        ProofPickupsSessionSnapshot baseline,
+        string? previousChapterStem,
+        string operationId,
+        int expectedRevision,
+        CancellationToken ct,
+        string action,
+        Func<PickupFitPlanDocument, PickupFitPlanDocument> mutation)
+    {
+        var chapterName = baseline.ActiveChapterName ?? string.Empty;
+        var chapterStem = baseline.ActiveChapterStem ?? string.Empty;
+
+        try
+        {
+            EnsureNoStaleFitChapterSwitch(previousChapterStem, chapterStem, action);
+            var (document, pickMap) = PrepareFitPlanForMutation(baseline, expectedRevision, chapterStem);
+
+            _snapshot = baseline with
+            {
+                Phase = ProofPickupsSessionPhase.Picking,
+                Progress = 0.78d,
+                LastError = null,
+                LastFitOperationId = operationId,
+                LastFitValidationError = null
+            };
+
+            var next = mutation(document);
+            var saved = SaveFitPlanOrThrow(chapterStem, pickMap, next, ct);
+
+            _snapshot = ApplyFitPlanToSnapshot(
+                baseline with
+                {
+                    Phase = ProofPickupsSessionPhase.Completed,
+                    Progress = 1d,
+                    LastError = null
+                },
+                saved,
+                readError: null,
+                operationId,
+                saved.LastValidationError);
+
+            return _snapshot;
+        }
+        catch (OperationCanceledException)
+        {
+            _snapshot = baseline with
+            {
+                ActiveChapterName = chapterName,
+                ActiveChapterStem = chapterStem,
+                Phase = ProofPickupsSessionPhase.Cancelled,
+                LastError = $"Pickup Fit {action} cancelled. Prior Fit plan preserved.",
+                LastFitOperationId = operationId,
+                LastFitValidationError = $"Pickup Fit {action} cancelled."
+            };
+
+            return _snapshot;
+        }
+        catch (Exception ex)
+        {
+            return FailFitAndPreserve(
+                baseline,
+                chapterName,
+                chapterStem,
+                $"Fit {action} failed for chapter '{chapterStem}': {ex.Message}",
+                operationId);
+        }
+    }
+
+    private (PickupFitPlanDocument Document, PickupPickMapDocument PickMap) PrepareFitPlanForMutation(
+        ProofPickupsSessionSnapshot baseline,
+        int expectedRevision,
+        string chapterStem)
+    {
+        if (!string.IsNullOrWhiteSpace(baseline.PickMapReadError))
+        {
+            throw new InvalidOperationException(
+                $"Cannot update Fit plan while Pick map read error is active: {baseline.PickMapReadError}");
+        }
+
+        if (!string.IsNullOrWhiteSpace(baseline.FitPlanReadError))
+        {
+            throw new InvalidOperationException(
+                $"Cannot update Fit plan while Fit-plan read error is active: {baseline.FitPlanReadError}");
+        }
+
+        var pickMap = baseline.PickMap
+            ?? throw new InvalidOperationException("No canonical Pick map is loaded. Import and confirm Pick truth before Fit.");
+        var document = baseline.FitPlan
+            ?? throw new InvalidOperationException("No Fit plan is loaded. Create a Fit plan before editing or committing Fit items.");
+
+        if (expectedRevision != document.Revision)
+        {
+            throw new InvalidOperationException(
+                $"Stale Fit plan revision: expected '{expectedRevision}', current '{document.Revision}'. Reload Fit plan before updating.");
+        }
+
+        EnsurePickMapReadyForFit(chapterStem, pickMap);
+        var targets = BuildBatchCrxTargets();
+        var currentSource = BuildPickMapSourceReference(pickMap.Source.Path, targets);
+        EnsurePickMapSourceCurrent(pickMap, currentSource);
+
+        return (document, pickMap);
+    }
+
+    private static void EnsureNoStaleFitChapterSwitch(
+        string? previousChapterStem,
+        string currentChapterStem,
+        string action)
+    {
+        if (!string.IsNullOrWhiteSpace(previousChapterStem)
+            && !string.Equals(previousChapterStem, currentChapterStem, StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException(
+                $"Active chapter changed from '{previousChapterStem}' to '{currentChapterStem}'. Reload pickups before Fit {action}.");
+        }
+    }
+
+    private async Task<FitReplacementPreviewResult> GenerateFitPreviewOrThrow(
+        PickupFitPlanDocument document,
+        PickupFitPlanItem item,
+        CancellationToken ct)
+    {
+        if (_hooks.GenerateFitPreviewAsync is null)
+        {
+            throw new InvalidOperationException("Fit preview runtime hook is not configured.");
+        }
+
+        var result = await _hooks
+            .GenerateFitPreviewAsync(document, item, _workspace.RoomtoneFilePath, ct)
+            .ConfigureAwait(false);
+
+        if (result is null || result.ResultBuffer is null ||
+            result.PreviewVersion <= 0 ||
+            !double.IsFinite(result.RenderedDurationSec) ||
+            result.RenderedDurationSec <= 0)
+        {
+            throw new InvalidOperationException(
+                $"Pickup Fit preview returned malformed runtime payload for chapter '{document.ChapterStem}', item '{item.FitItemId}'.");
+        }
+
+        return result;
+    }
+
+    private async Task<FitReplacementCommitResult> CommitFitReplacementOrThrow(
+        PickupFitPlanDocument document,
+        PickupFitPlanItem item,
+        CancellationToken ct)
+    {
+        if (_hooks.CommitFitReplacementAsync is null)
+        {
+            throw new InvalidOperationException("Fit commit runtime hook is not configured.");
+        }
+
+        return await _hooks
+            .CommitFitReplacementAsync(document, item, _workspace.RoomtoneFilePath, ct)
+            .ConfigureAwait(false);
+    }
+
+    private static void ValidateFitCommitResult(
+        string chapterStem,
+        PickupFitPlanItem item,
+        FitReplacementCommitResult? result)
+    {
+        if (result is null || result.ResultBuffer is null ||
+            string.IsNullOrWhiteSpace(result.OperationId) ||
+            !string.Equals(result.OperationId, item.ReplacementId, StringComparison.Ordinal) ||
+            !double.IsFinite(result.TimingDeltaSec) ||
+            !double.IsFinite(result.RenderedReplacementDurationSec) ||
+            result.RenderedReplacementDurationSec <= 0 ||
+            result.EdlRevision < 0)
+        {
+            throw new InvalidOperationException(
+                $"Pickup Fit commit returned malformed runtime payload for chapter '{chapterStem}', item '{item.FitItemId}', op '{item.ReplacementId}'.");
+        }
+    }
+
+    private ProofPickupsSessionSnapshot PersistFitCommitFailure(
+        ProofPickupsSessionSnapshot baseline,
+        string chapterName,
+        string chapterStem,
+        PickupPickMapDocument pickMap,
+        PickupFitPlanDocument document,
+        PickupFitPlanItem item,
+        string fitItemId,
+        string operationId,
+        string message,
+        CancellationToken ct)
+    {
+        try
+        {
+            var failedDocument = ReplaceFitItem(
+                document,
+                fitItemId,
+                current => WithFitCommitFailure(current, item.ReplacementId, message),
+                operationId,
+                validationError: message);
+            var saved = SaveFitPlanOrThrow(chapterStem, pickMap, failedDocument, ct);
+
+            var (staged, applied, reverted, failed) = GetLifecycleQueues(chapterStem);
+            var (edlRevision, orderingDiagnostics, lastValidationError, edlReadError) = ReadEdlDiagnostics(
+                chapterStem,
+                ct,
+                baseline.EdlRevision,
+                baseline.DeterministicOrderingDiagnostics,
+                baseline.LastValidationError);
+            var (ledgerRevision, ledgerEntries, ledgerReadError) = ReadLedgerDiagnostics(
+                chapterStem,
+                ct,
+                baseline.ArtifactLedgerRevision,
+                baseline.ArtifactLedgerEntries);
+
+            _snapshot = ApplyFitPlanToSnapshot(
+                baseline with
+                {
+                    ActiveChapterName = chapterName,
+                    ActiveChapterStem = chapterStem,
+                    Staged = staged,
+                    Applied = applied,
+                    Reverted = reverted,
+                    Failed = failed,
+                    EdlRevision = edlRevision,
+                    DeterministicOrderingDiagnostics = orderingDiagnostics,
+                    LastValidationError = lastValidationError,
+                    ArtifactLedgerRevision = ledgerRevision,
+                    ArtifactLedgerEntries = ledgerEntries,
+                    ArtifactLedgerReadError = ledgerReadError,
+                    Phase = ProofPickupsSessionPhase.Failed,
+                    Progress = baseline.Progress,
+                    LastError = message,
+                    LastOperationId = item.ReplacementId
+                },
+                saved,
+                readError: null,
+                operationId,
+                validationError: message);
+
+            return _snapshot;
+        }
+        catch (Exception saveEx) when (saveEx is not OperationCanceledException)
+        {
+            return FailFitAndPreserve(
+                baseline,
+                chapterName,
+                chapterStem,
+                $"{message} Fit failure state save failed: {saveEx.Message}",
+                operationId);
+        }
+    }
+
+    private static PickupFitPlanDocument ReplaceFitItem(
+        PickupFitPlanDocument document,
+        string fitItemId,
+        Func<PickupFitPlanItem, PickupFitPlanItem> replace,
+        string operationId,
+        string? validationError)
+    {
+        if (string.IsNullOrWhiteSpace(fitItemId))
+        {
+            throw new InvalidOperationException("Cannot update Fit item: fit item id is empty.");
+        }
+
+        var found = false;
+        var items = document.Items
+            .Select(item =>
+            {
+                if (!string.Equals(item.FitItemId, fitItemId, StringComparison.Ordinal))
+                {
+                    return item;
+                }
+
+                found = true;
+                return replace(item);
+            })
+            .ToArray();
+
+        if (!found)
+        {
+            throw new InvalidOperationException($"Fit item '{fitItemId}' was not found.");
+        }
+
+        return RebuildFitPlanDocument(document, items, operationId, validationError);
+    }
+
+    private static PickupFitPlanDocument RebuildFitPlanDocument(
+        PickupFitPlanDocument document,
+        IReadOnlyList<PickupFitPlanItem> items,
+        string operationId,
+        string? validationError)
+        => new(
+            schemaVersion: PickupFitPlanDocument.CurrentSchemaVersion,
+            chapterStem: document.ChapterStem,
+            revision: document.Revision,
+            source: document.Source,
+            pickMapRevision: document.PickMapRevision,
+            pickAssignmentsFingerprint: document.PickAssignmentsFingerprint,
+            items: items,
+            createdAtUtc: document.CreatedAtUtc,
+            updatedAtUtc: DateTime.UtcNow,
+            lastOperationId: operationId,
+            lastValidationError: validationError,
+            isDraft: document.IsDraft);
+
+    private static PickupFitPlanItem FindFitItem(PickupFitPlanDocument document, string fitItemId)
+    {
+        if (string.IsNullOrWhiteSpace(fitItemId))
+        {
+            throw new InvalidOperationException("Cannot update Fit item: fit item id is empty.");
+        }
+
+        return document.Items.FirstOrDefault(item => string.Equals(item.FitItemId, fitItemId, StringComparison.Ordinal))
+            ?? throw new InvalidOperationException($"Fit item '{fitItemId}' was not found.");
+    }
+
+    private static void EnsureFitItemNotCommitted(PickupFitPlanItem item, string action)
+    {
+        if (item.Status == PickupFitPlanItemStatus.Committed || item.Commit.Status == PickupFitCommitStatus.Committed)
+        {
+            throw new InvalidOperationException(
+                $"Cannot perform Fit {action} for item '{item.FitItemId}': item is already committed.");
+        }
+    }
+
+    private static void EnsureFitItemReadyForSessionCommit(
+        PickupFitPlanDocument document,
+        PickupFitPlanItem item)
+    {
+        if (item.Commit.Status == PickupFitCommitStatus.Committed || item.Status == PickupFitPlanItemStatus.Committed)
+        {
+            throw new InvalidOperationException(
+                $"Cannot commit Fit item '{item.FitItemId}': item is already committed.");
+        }
+
+        if (!item.Acceptance.IsAccepted || item.PreviewEvidence is null)
+        {
+            throw new InvalidOperationException(
+                $"Cannot commit Fit item '{item.FitItemId}': accepted preview evidence is required before commit.");
+        }
+
+        if (item.Acceptance.AcceptedPreviewVersion != item.PreviewEvidence.PreviewVersion)
+        {
+            throw new InvalidOperationException(
+                $"Cannot commit Fit item '{item.FitItemId}': accepted preview version does not match stored preview evidence.");
+        }
+
+        if (!item.PreviewEvidence.MatchesPickTruth(document.PickMapRevision, document.PickAssignmentsFingerprint))
+        {
+            throw new InvalidOperationException(
+                $"Cannot commit Fit item '{item.FitItemId}': preview evidence is stale for Pick truth.");
+        }
+
+        if (!item.PreviewEvidence.MatchesFitState(ComputeFitStateFingerprint(document, item)))
+        {
+            throw new InvalidOperationException(
+                $"Cannot commit Fit item '{item.FitItemId}': accepted preview is stale after boundary or policy mutation.");
+        }
+    }
+
+    private static PickupFitPlanItem ClearFitPreviewAcceptance(
+        PickupFitPlanItem item,
+        PickupFitPlanItemStatus status,
+        PickupFitPlanRange? outerRange = null,
+        PickupFitPlanRange? innerRange = null,
+        PickupFitTransitionPolicy? transitionPolicy = null)
+        => new(
+            fitItemId: item.FitItemId,
+            replacementId: item.ReplacementId,
+            pickAssignmentId: item.PickAssignmentId,
+            pickupSegmentId: item.PickupSegmentId,
+            target: item.Target,
+            outerRange: outerRange ?? item.OuterRange,
+            innerRange: innerRange ?? item.InnerRange,
+            placement: item.Placement,
+            transitionPolicy: transitionPolicy ?? item.TransitionPolicy,
+            status: status,
+            previewEvidence: null,
+            acceptance: PickupFitAcceptanceState.None,
+            commit: PickupFitCommitState.NotReady,
+            validationError: null,
+            commitError: null,
+            updatedAtUtc: DateTime.UtcNow);
+
+    private static PickupFitPlanItem WithFitPreview(
+        PickupFitPlanItem item,
+        PickupFitPreviewEvidence previewEvidence)
+        => new(
+            fitItemId: item.FitItemId,
+            replacementId: item.ReplacementId,
+            pickAssignmentId: item.PickAssignmentId,
+            pickupSegmentId: item.PickupSegmentId,
+            target: item.Target,
+            outerRange: item.OuterRange,
+            innerRange: item.InnerRange,
+            placement: item.Placement,
+            transitionPolicy: item.TransitionPolicy,
+            status: PickupFitPlanItemStatus.Previewed,
+            previewEvidence: previewEvidence,
+            acceptance: PickupFitAcceptanceState.None,
+            commit: PickupFitCommitState.NotReady,
+            validationError: null,
+            commitError: null,
+            updatedAtUtc: DateTime.UtcNow);
+
+    private static PickupFitPlanItem WithFitAcceptance(
+        PickupFitPlanItem item,
+        PickupFitAcceptanceState acceptance,
+        PickupFitCommitState commit)
+        => new(
+            fitItemId: item.FitItemId,
+            replacementId: item.ReplacementId,
+            pickAssignmentId: item.PickAssignmentId,
+            pickupSegmentId: item.PickupSegmentId,
+            target: item.Target,
+            outerRange: item.OuterRange,
+            innerRange: item.InnerRange,
+            placement: item.Placement,
+            transitionPolicy: item.TransitionPolicy,
+            status: PickupFitPlanItemStatus.CommitReady,
+            previewEvidence: item.PreviewEvidence,
+            acceptance: acceptance,
+            commit: commit,
+            validationError: null,
+            commitError: null,
+            updatedAtUtc: DateTime.UtcNow);
+
+    private static PickupFitPlanItem WithFitCommitSuccess(
+        PickupFitPlanItem item,
+        string operationId,
+        int edlRevision,
+        long ledgerSequence)
+        => new(
+            fitItemId: item.FitItemId,
+            replacementId: item.ReplacementId,
+            pickAssignmentId: item.PickAssignmentId,
+            pickupSegmentId: item.PickupSegmentId,
+            target: item.Target,
+            outerRange: item.OuterRange,
+            innerRange: item.InnerRange,
+            placement: item.Placement,
+            transitionPolicy: item.TransitionPolicy,
+            status: PickupFitPlanItemStatus.Committed,
+            previewEvidence: item.PreviewEvidence,
+            acceptance: item.Acceptance,
+            commit: new PickupFitCommitState(
+                status: PickupFitCommitStatus.Committed,
+                operationId: operationId,
+                edlRevision: edlRevision,
+                ledgerSequence: ledgerSequence,
+                committedAtUtc: DateTime.UtcNow,
+                error: null),
+            validationError: null,
+            commitError: null,
+            updatedAtUtc: DateTime.UtcNow);
+
+    private static PickupFitPlanItem WithFitCommitFailure(
+        PickupFitPlanItem item,
+        string operationId,
+        string error)
+        => new(
+            fitItemId: item.FitItemId,
+            replacementId: item.ReplacementId,
+            pickAssignmentId: item.PickAssignmentId,
+            pickupSegmentId: item.PickupSegmentId,
+            target: item.Target,
+            outerRange: item.OuterRange,
+            innerRange: item.InnerRange,
+            placement: item.Placement,
+            transitionPolicy: item.TransitionPolicy,
+            status: PickupFitPlanItemStatus.Failed,
+            previewEvidence: item.PreviewEvidence,
+            acceptance: item.Acceptance,
+            commit: new PickupFitCommitState(
+                status: PickupFitCommitStatus.Failed,
+                operationId: operationId,
+                edlRevision: null,
+                ledgerSequence: null,
+                committedAtUtc: null,
+                error: error),
+            validationError: null,
+            commitError: error,
+            updatedAtUtc: DateTime.UtcNow);
+
+    private IReadOnlyList<PickupFitPreviewContext> BuildFitPreviewContexts(
+        string chapterName,
+        PickupFitPlanDocument document,
+        PickupFitPlanItem item)
+    {
+        if (!_workspace.TryGetHydratedTranscript(chapterName, out var hydrated) || hydrated is null)
+        {
+            return
+            [
+                new PickupFitPreviewContext(
+                    role: "current",
+                    sentenceId: item.Target.SentenceId,
+                    startSec: item.Target.OriginalStartSec,
+                    endSec: item.Target.OriginalEndSec,
+                    fitItemId: item.FitItemId)
+            ];
+        }
+
+        var sentences = hydrated.Sentences;
+        var index = -1;
+        for (var i = 0; i < sentences.Count; i++)
+        {
+            if (sentences[i].Id == item.Target.SentenceId)
+            {
+                index = i;
+                break;
+            }
+        }
+
+        if (index < 0)
+        {
+            return
+            [
+                new PickupFitPreviewContext(
+                    role: "current",
+                    sentenceId: item.Target.SentenceId,
+                    startSec: item.Target.OriginalStartSec,
+                    endSec: item.Target.OriginalEndSec,
+                    fitItemId: item.FitItemId)
+            ];
+        }
+
+        var contexts = new List<PickupFitPreviewContext>(3);
+        if (index > 0)
+        {
+            contexts.Add(CreatePreviewContext("previous", sentences[index - 1], ResolveFitItemForSentence(document, sentences[index - 1].Id)?.FitItemId));
+        }
+
+        contexts.Add(CreatePreviewContext("current", sentences[index], item.FitItemId));
+
+        if (index < sentences.Count - 1)
+        {
+            contexts.Add(CreatePreviewContext("next", sentences[index + 1], ResolveFitItemForSentence(document, sentences[index + 1].Id)?.FitItemId));
+        }
+
+        return contexts;
+    }
+
+    private static PickupFitPreviewContext CreatePreviewContext(
+        string role,
+        HydratedSentence sentence,
+        string? fitItemId)
+    {
+        double? startSec = null;
+        double? endSec = null;
+        if (sentence.Timing is not null && sentence.Timing.EndSec > sentence.Timing.StartSec)
+        {
+            startSec = sentence.Timing.StartSec;
+            endSec = sentence.Timing.EndSec;
+        }
+
+        return new PickupFitPreviewContext(
+            role: role,
+            sentenceId: sentence.Id,
+            startSec: startSec,
+            endSec: endSec,
+            fitItemId: fitItemId);
+    }
+
+    private static PickupFitPlanItem? ResolveFitItemForSentence(
+        PickupFitPlanDocument document,
+        int sentenceId)
+        => document.Items.FirstOrDefault(item => item.Target.SentenceId == sentenceId);
+
+    private static PickupFitPlanItem? ResolveAdjacentFitItem(
+        PickupFitPlanDocument document,
+        PickupFitPlanItem item,
+        bool previous)
+    {
+        var items = document.GetDeterministicItemOrder().ToArray();
+        var index = Array.FindIndex(items, candidate => string.Equals(candidate.FitItemId, item.FitItemId, StringComparison.Ordinal));
+        if (index < 0)
+        {
+            return null;
+        }
+
+        var adjacentIndex = previous ? index - 1 : index + 1;
+        return adjacentIndex >= 0 && adjacentIndex < items.Length
+            ? items[adjacentIndex]
+            : null;
+    }
+
+    private static string ComputeFitStateFingerprint(
+        PickupFitPlanDocument document,
+        PickupFitPlanItem item)
+    {
+        var builder = new StringBuilder();
+        builder.Append("pickup-fit-state/v1").Append('\n');
+        builder.Append("chapter=").Append(document.ChapterStem).Append('\n');
+        builder.Append("pickRevision=").Append(document.PickMapRevision).Append('\n');
+        builder.Append("assignments=").Append(document.PickAssignmentsFingerprint).Append('\n');
+        builder.Append("fitItem=").Append(item.FitItemId).Append('\n');
+        builder.Append("replacement=").Append(item.ReplacementId).Append('\n');
+        builder.Append("target=").Append(item.Target.TargetKey).Append('\n');
+        AppendRange(builder, "outer", item.OuterRange);
+        AppendRange(builder, "inner", item.InnerRange);
+        AppendRange(builder, "placement", item.Placement);
+        builder.Append("policy.before=").Append(item.TransitionPolicy.RoomtoneBeforeSec.ToString("R", CultureInfo.InvariantCulture)).Append('\n');
+        builder.Append("policy.after=").Append(item.TransitionPolicy.RoomtoneAfterSec.ToString("R", CultureInfo.InvariantCulture)).Append('\n');
+        builder.Append("policy.crossfade=").Append(item.TransitionPolicy.CrossfadeDurationSec.ToString("R", CultureInfo.InvariantCulture)).Append('\n');
+        builder.Append("policy.curve=").Append(item.TransitionPolicy.CrossfadeCurve).Append('\n');
+        builder.Append("policy.roomtone=").Append(item.TransitionPolicy.RoomtoneAssetId ?? string.Empty).Append('\n');
+
+        var bytes = SHA256.HashData(Encoding.UTF8.GetBytes(builder.ToString()));
+        return Convert.ToHexString(bytes).ToLowerInvariant();
+    }
+
+    private static void AppendRange(StringBuilder builder, string name, PickupFitPlanRange range)
+    {
+        builder.Append(name).Append(".start=").Append(range.StartSec.ToString("R", CultureInfo.InvariantCulture)).Append('\n');
+        builder.Append(name).Append(".end=").Append(range.EndSec.ToString("R", CultureInfo.InvariantCulture)).Append('\n');
+    }
+
+    private static string BuildFitPreviewArtifactRef(
+        string chapterStem,
+        string fitItemId,
+        int previewVersion)
+        => $"proof/pickups/fit-preview/{SanitizeArtifactSegment(chapterStem)}/{SanitizeArtifactSegment(fitItemId)}/v{previewVersion}";
+
+    private static string SanitizeArtifactSegment(string value)
+    {
+        var escaped = Uri.EscapeDataString(value.Trim());
+        return string.IsNullOrWhiteSpace(escaped)
+            ? "unknown"
+            : escaped.Replace("%", "_", StringComparison.Ordinal);
+    }
+
+    private static long? ResolveLedgerSequence(
+        IReadOnlyList<PickupArtifactLedgerEntry> ledgerEntries,
+        string operationId)
+        => ledgerEntries
+            .Where(entry => string.Equals(entry.OperationId, operationId, StringComparison.Ordinal))
+            .OrderByDescending(entry => entry.Sequence)
+            .Select(entry => (long?)entry.Sequence)
+            .FirstOrDefault();
 
     private ProofPickupsSessionSnapshot MutatePickMap(
         ProofPickupsSessionSnapshot baseline,
@@ -2452,5 +3532,7 @@ public sealed class ProofPickupsSessionService
         Func<PickupPickMapSourceReference, PickupPickMapDocument, CancellationToken, PickupPickMapDocument>? SavePickMap = null,
         Func<string, CancellationToken, PickupFitPlanDocument?>? ReadFitPlanDocument = null,
         Func<string, PickupPickMapDocument, CancellationToken, PickupFitPlanDocument>? LoadOrCreateFitPlan = null,
-        Func<string, PickupPickMapDocument, PickupFitPlanDocument, CancellationToken, PickupFitPlanDocument>? SaveFitPlan = null);
+        Func<string, PickupPickMapDocument, PickupFitPlanDocument, CancellationToken, PickupFitPlanDocument>? SaveFitPlan = null,
+        Func<PickupFitPlanDocument, PickupFitPlanItem, string?, CancellationToken, Task<FitReplacementPreviewResult>>? GenerateFitPreviewAsync = null,
+        Func<PickupFitPlanDocument, PickupFitPlanItem, string?, CancellationToken, Task<FitReplacementCommitResult>>? CommitFitReplacementAsync = null);
 }

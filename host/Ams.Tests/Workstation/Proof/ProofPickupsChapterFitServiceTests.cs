@@ -273,10 +273,258 @@ public sealed class ProofPickupsChapterFitServiceTests
         Assert.Equal(0, harness.StageCallCount);
     }
 
+    [Fact]
+    public async Task FitPreviewAcceptCommitAsync_Success_PersistsContextAcceptanceAndCommitState()
+    {
+        using var harness = await ChapterFitHarness.CreateAsync(["chapter-01"]);
+        harness.CrxEntries.Add(harness.CreateCrxEntry("chapter-01", errorNumber: 101, sentenceId: 11));
+        harness.CrxEntries.Add(harness.CreateCrxEntry("chapter-01", errorNumber: 202, sentenceId: 21));
+        harness.CrxEntries.Add(harness.CreateCrxEntry("chapter-01", errorNumber: 303, sentenceId: 31));
+        harness.ImportPickAssetsBehavior = (sourcePath, targets, _) =>
+        {
+            var ordered = targets.OrderBy(target => target.SentenceId).ToArray();
+            return Task.FromResult((
+                Matched: (IReadOnlyList<PickupAsset>)[
+                    harness.CreateAsset("seg-101", sourcePath, ordered[0], 0.10, 0.40),
+                    harness.CreateAsset("seg-202", sourcePath, ordered[1], 0.50, 0.90),
+                    harness.CreateAsset("seg-303", sourcePath, ordered[2], 1.00, 1.30)
+                ],
+                Unmatched: (IReadOnlyList<PickupAsset>)Array.Empty<PickupAsset>()));
+        };
+        harness.GenerateFitPreviewBehavior = static (_, _, _, _) => Task.FromResult(new FitReplacementPreviewResult(
+            ResultBuffer: new AudioBuffer(channels: 1, sampleRate: 1_000, length: 1_250),
+            PreviewVersion: 42,
+            RenderedDurationSec: 1.250,
+            ChapterStartSec: 0.10,
+            ChapterEndSec: 1.70));
+
+        var imported = await harness.Service.ImportPickMapAsync(harness.PickupPath, CancellationToken.None);
+        _ = await harness.Service.ConfirmPickMapAsync(imported.PickMapRevision!.Value, CancellationToken.None);
+        var loaded = await harness.Service.LoadOrCreateFitPlanAsync(CancellationToken.None);
+        var middle = loaded.FitPlan!.Items.Single(item => item.Target.SentenceId == 21);
+
+        var previewed = await harness.Service.GenerateFitPreviewAsync(
+            middle.FitItemId,
+            loaded.FitPlanRevision!.Value,
+            CancellationToken.None);
+        var previewedItem = previewed.FitPlan!.Items.Single(item => item.FitItemId == middle.FitItemId);
+
+        Assert.Equal(ProofPickupsSessionPhase.Completed, previewed.Phase);
+        Assert.Equal(1, harness.FitPreviewCallCount);
+        Assert.Equal(PickupFitPlanItemStatus.Previewed, previewedItem.Status);
+        Assert.NotNull(previewedItem.PreviewEvidence);
+        Assert.Equal(42, previewedItem.PreviewEvidence!.PreviewVersion);
+        Assert.NotNull(previewedItem.PreviewEvidence.FitStateFingerprint);
+        Assert.Equal(["previous", "current", "next"], previewedItem.PreviewEvidence.SentenceContexts.Select(context => context.Role));
+        Assert.False(previewedItem.Acceptance.IsAccepted);
+        Assert.Equal(PickupFitCommitStatus.NotReady, previewedItem.Commit.Status);
+
+        var accepted = await harness.Service.AcceptFitPreviewAsync(
+            middle.FitItemId,
+            previewed.FitPlanRevision!.Value,
+            previewedItem.PreviewEvidence.PreviewVersion,
+            acceptedBy: "operator-1",
+            ct: CancellationToken.None);
+        var acceptedItem = accepted.FitPlan!.Items.Single(item => item.FitItemId == middle.FitItemId);
+
+        Assert.Equal(PickupFitPlanItemStatus.CommitReady, acceptedItem.Status);
+        Assert.True(acceptedItem.Acceptance.IsAccepted);
+        Assert.Equal(42, acceptedItem.Acceptance.AcceptedPreviewVersion);
+        Assert.Equal(PickupFitCommitStatus.Ready, acceptedItem.Commit.Status);
+        Assert.Equal(middle.ReplacementId, acceptedItem.Commit.OperationId);
+
+        harness.CommitFitBehavior = (fitPlan, fitItem, _, _) =>
+        {
+            harness.SetArtifactLedgerDocument(
+                fitPlan.ChapterStem,
+                harness.CreateLedgerDocument(
+                    fitPlan.ChapterStem,
+                    [harness.CreateLedgerEntry(1, fitItem.ReplacementId, PickupArtifactLedgerTransitions.CommitSuccess, edlRevision: 7)],
+                    revision: 3));
+
+            return Task.FromResult(new FitReplacementCommitResult(
+                ResultBuffer: new AudioBuffer(channels: 1, sampleRate: 1_000, length: 1_000),
+                TimingDeltaSec: 0.100,
+                OperationId: fitItem.ReplacementId,
+                RenderedReplacementDurationSec: 0.500,
+                EdlRevision: 7));
+        };
+
+        var committed = await harness.Service.CommitFitAsync(
+            middle.FitItemId,
+            accepted.FitPlanRevision!.Value,
+            CancellationToken.None);
+        var committedItem = committed.FitPlan!.Items.Single(item => item.FitItemId == middle.FitItemId);
+
+        Assert.Equal(ProofPickupsSessionPhase.Completed, committed.Phase);
+        Assert.Equal(1, harness.FitCommitCallCount);
+        Assert.Equal(PickupFitPlanItemStatus.Committed, committedItem.Status);
+        Assert.Equal(PickupFitCommitStatus.Committed, committedItem.Commit.Status);
+        Assert.Equal(middle.ReplacementId, committedItem.Commit.OperationId);
+        Assert.Equal(7, committedItem.Commit.EdlRevision);
+        Assert.Equal(1, committedItem.Commit.LedgerSequence);
+        Assert.Equal(middle.ReplacementId, committed.LastOperationId);
+        Assert.Equal(3, committed.ArtifactLedgerRevision);
+        Assert.Single(committed.ArtifactLedgerEntries);
+        Assert.Null(committed.LastFitValidationError);
+    }
+
+    [Fact]
+    public async Task SetFitInnerBoundaryAsync_AfterPreview_ClearsAcceptanceAndBlocksOldPreviewAccept()
+    {
+        using var harness = await ChapterFitHarness.CreateAsync(["chapter-01"]);
+        harness.CrxEntries.Add(harness.CreateCrxEntry("chapter-01", errorNumber: 101, sentenceId: 11));
+        harness.ImportPickAssetsBehavior = (sourcePath, targets, _) =>
+        {
+            var target = targets.Single();
+            return Task.FromResult((
+                Matched: (IReadOnlyList<PickupAsset>)[harness.CreateAsset("seg-101", sourcePath, target, 0.10, 0.40)],
+                Unmatched: (IReadOnlyList<PickupAsset>)Array.Empty<PickupAsset>()));
+        };
+        harness.GenerateFitPreviewBehavior = static (_, _, _, _) => Task.FromResult(new FitReplacementPreviewResult(
+            ResultBuffer: new AudioBuffer(channels: 1, sampleRate: 1_000, length: 500),
+            PreviewVersion: 5,
+            RenderedDurationSec: 0.500,
+            ChapterStartSec: 0.10,
+            ChapterEndSec: 0.50));
+
+        var imported = await harness.Service.ImportPickMapAsync(harness.PickupPath, CancellationToken.None);
+        _ = await harness.Service.ConfirmPickMapAsync(imported.PickMapRevision!.Value, CancellationToken.None);
+        var loaded = await harness.Service.LoadOrCreateFitPlanAsync(CancellationToken.None);
+        var item = Assert.Single(loaded.FitPlan!.Items);
+        var previewed = await harness.Service.GenerateFitPreviewAsync(item.FitItemId, loaded.FitPlanRevision!.Value, CancellationToken.None);
+        var previewVersion = Assert.Single(previewed.FitPlan!.Items).PreviewEvidence!.PreviewVersion;
+
+        var changed = await harness.Service.SetFitInnerBoundaryAsync(
+            item.FitItemId,
+            previewed.FitPlanRevision!.Value,
+            startSec: 0.12,
+            endSec: 0.38,
+            ct: CancellationToken.None);
+        var changedItem = Assert.Single(changed.FitPlan!.Items);
+
+        Assert.Equal(PickupFitPlanItemStatus.Fitted, changedItem.Status);
+        Assert.Null(changedItem.PreviewEvidence);
+        Assert.False(changedItem.Acceptance.IsAccepted);
+        Assert.Equal(PickupFitCommitStatus.NotReady, changedItem.Commit.Status);
+
+        var rejected = await harness.Service.AcceptFitPreviewAsync(
+            item.FitItemId,
+            changed.FitPlanRevision!.Value,
+            previewVersion,
+            ct: CancellationToken.None);
+
+        Assert.Equal(ProofPickupsSessionPhase.Failed, rejected.Phase);
+        Assert.Contains("no preview evidence", rejected.LastFitValidationError ?? string.Empty, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(1, harness.FitPreviewCallCount);
+    }
+
+    [Fact]
+    public async Task CommitFitAsync_RuntimeFailure_PersistsFailedStateAndStableReplacementId()
+    {
+        using var harness = await ChapterFitHarness.CreateAsync(["chapter-01"]);
+        harness.CrxEntries.Add(harness.CreateCrxEntry("chapter-01", errorNumber: 101, sentenceId: 11));
+        harness.ImportPickAssetsBehavior = (sourcePath, targets, _) =>
+        {
+            var target = targets.Single();
+            return Task.FromResult((
+                Matched: (IReadOnlyList<PickupAsset>)[harness.CreateAsset("seg-101", sourcePath, target, 0.10, 0.40)],
+                Unmatched: (IReadOnlyList<PickupAsset>)Array.Empty<PickupAsset>()));
+        };
+        harness.CommitFitBehavior = static (_, _, _, _) => throw new InvalidOperationException("simulated fit runtime failure");
+
+        var imported = await harness.Service.ImportPickMapAsync(harness.PickupPath, CancellationToken.None);
+        _ = await harness.Service.ConfirmPickMapAsync(imported.PickMapRevision!.Value, CancellationToken.None);
+        var loaded = await harness.Service.LoadOrCreateFitPlanAsync(CancellationToken.None);
+        var item = Assert.Single(loaded.FitPlan!.Items);
+        var previewed = await harness.Service.GenerateFitPreviewAsync(item.FitItemId, loaded.FitPlanRevision!.Value, CancellationToken.None);
+        var previewedItem = Assert.Single(previewed.FitPlan!.Items);
+        var accepted = await harness.Service.AcceptFitPreviewAsync(
+            item.FitItemId,
+            previewed.FitPlanRevision!.Value,
+            previewedItem.PreviewEvidence!.PreviewVersion,
+            ct: CancellationToken.None);
+
+        var failed = await harness.Service.CommitFitAsync(
+            item.FitItemId,
+            accepted.FitPlanRevision!.Value,
+            CancellationToken.None);
+        var failedItem = Assert.Single(failed.FitPlan!.Items);
+
+        Assert.Equal(ProofPickupsSessionPhase.Failed, failed.Phase);
+        Assert.Equal(1, harness.FitCommitCallCount);
+        Assert.Equal(PickupFitPlanItemStatus.Failed, failedItem.Status);
+        Assert.Equal(PickupFitCommitStatus.Failed, failedItem.Commit.Status);
+        Assert.Equal(item.ReplacementId, failedItem.Commit.OperationId);
+        Assert.Equal(item.ReplacementId, failedItem.ReplacementId);
+        Assert.Contains("simulated fit runtime failure", failed.LastFitValidationError ?? string.Empty, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("simulated fit runtime failure", failedItem.CommitError ?? string.Empty, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task CommitFitAsync_UnacceptedItem_FailsClosedWithoutRuntimeCall()
+    {
+        using var harness = await ChapterFitHarness.CreateAsync(["chapter-01"]);
+        harness.CrxEntries.Add(harness.CreateCrxEntry("chapter-01", errorNumber: 101, sentenceId: 11));
+        harness.ImportPickAssetsBehavior = (sourcePath, targets, _) =>
+        {
+            var target = targets.Single();
+            return Task.FromResult((
+                Matched: (IReadOnlyList<PickupAsset>)[harness.CreateAsset("seg-101", sourcePath, target, 0.10, 0.40)],
+                Unmatched: (IReadOnlyList<PickupAsset>)Array.Empty<PickupAsset>()));
+        };
+
+        var imported = await harness.Service.ImportPickMapAsync(harness.PickupPath, CancellationToken.None);
+        _ = await harness.Service.ConfirmPickMapAsync(imported.PickMapRevision!.Value, CancellationToken.None);
+        var loaded = await harness.Service.LoadOrCreateFitPlanAsync(CancellationToken.None);
+        var item = Assert.Single(loaded.FitPlan!.Items);
+
+        var rejected = await harness.Service.CommitFitAsync(
+            item.FitItemId,
+            loaded.FitPlanRevision!.Value,
+            CancellationToken.None);
+
+        Assert.Equal(ProofPickupsSessionPhase.Failed, rejected.Phase);
+        Assert.Contains("accepted preview evidence is required", rejected.LastFitValidationError ?? string.Empty, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(0, harness.FitCommitCallCount);
+        Assert.Equal(PickupFitPlanItemStatus.Draft, Assert.Single(rejected.FitPlan!.Items).Status);
+    }
+
+    [Fact]
+    public async Task CommitFitAsync_StaleChapterSwitch_IsRejectedBeforeRuntimeCall()
+    {
+        using var harness = await ChapterFitHarness.CreateAsync(["chapter-01", "chapter-02"]);
+        harness.CrxEntries.Add(harness.CreateCrxEntry("chapter-01", errorNumber: 101, sentenceId: 11));
+        harness.ImportPickAssetsBehavior = (sourcePath, targets, _) =>
+        {
+            var target = targets.Single(target => target.ChapterStem == "chapter-01");
+            return Task.FromResult((
+                Matched: (IReadOnlyList<PickupAsset>)[harness.CreateAsset("seg-101", sourcePath, target, 0.10, 0.40)],
+                Unmatched: (IReadOnlyList<PickupAsset>)Array.Empty<PickupAsset>()));
+        };
+
+        var imported = await harness.Service.ImportPickMapAsync(harness.PickupPath, CancellationToken.None);
+        _ = await harness.Service.ConfirmPickMapAsync(imported.PickMapRevision!.Value, CancellationToken.None);
+        var loaded = await harness.Service.LoadOrCreateFitPlanAsync(CancellationToken.None);
+        var item = Assert.Single(loaded.FitPlan!.Items);
+        harness.SelectChapterByStem("chapter-02");
+
+        var rejected = await harness.Service.CommitFitAsync(
+            item.FitItemId,
+            loaded.FitPlanRevision!.Value,
+            CancellationToken.None);
+
+        Assert.Equal(ProofPickupsSessionPhase.Failed, rejected.Phase);
+        Assert.Contains("Active chapter changed", rejected.LastFitValidationError ?? string.Empty, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("Reload pickups before Fit commit", rejected.LastFitValidationError ?? string.Empty, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(0, harness.FitCommitCallCount);
+    }
+
     private sealed class ChapterFitHarness : IDisposable
     {
         private readonly string _root;
         private readonly Dictionary<string, List<StagedReplacement>> _queues = new(StringComparer.OrdinalIgnoreCase);
+        private readonly Dictionary<string, PickupArtifactLedgerDocument?> _ledgerByChapter = new(StringComparer.OrdinalIgnoreCase);
 
         private ChapterFitHarness(string root, BlazorWorkspace workspace, PickupPickMapStore pickMapStore, PickupFitPlanStore fitPlanStore)
         {
@@ -289,6 +537,18 @@ public sealed class ProofPickupsChapterFitServiceTests
             ReadFitPlanBehavior = (chapterStem, ct) => FitPlanStore.TryRead(chapterStem, ct);
             LoadOrCreateFitPlanBehavior = (chapterStem, pickMap, ct) => FitPlanStore.LoadOrCreate(chapterStem, pickMap, ct);
             SaveFitPlanBehavior = (chapterStem, pickMap, document, ct) => FitPlanStore.Save(chapterStem, pickMap, document, ct);
+            GenerateFitPreviewBehavior = static (_, _, _, _) => Task.FromResult(new FitReplacementPreviewResult(
+                ResultBuffer: new AudioBuffer(channels: 1, sampleRate: 1_000, length: 100),
+                PreviewVersion: 1,
+                RenderedDurationSec: 0.100,
+                ChapterStartSec: 0,
+                ChapterEndSec: 0.100));
+            CommitFitBehavior = static (_, fitItem, _, _) => Task.FromResult(new FitReplacementCommitResult(
+                ResultBuffer: new AudioBuffer(channels: 1, sampleRate: 1_000, length: 100),
+                TimingDeltaSec: 0,
+                OperationId: fitItem.ReplacementId,
+                RenderedReplacementDurationSec: fitItem.InnerRange.DurationSec,
+                EdlRevision: 1));
             Service = CreateSessionService();
         }
 
@@ -306,6 +566,10 @@ public sealed class ProofPickupsChapterFitServiceTests
 
         public int StageCallCount { get; private set; }
 
+        public int FitPreviewCallCount { get; private set; }
+
+        public int FitCommitCallCount { get; private set; }
+
         public Func<string, IReadOnlyList<CrxPickupTarget>, CancellationToken, Task<(IReadOnlyList<PickupAsset> Matched, IReadOnlyList<PickupAsset> Unmatched)>> ImportPickAssetsBehavior { get; set; }
 
         public Func<string, CancellationToken, PickupFitPlanDocument?> ReadFitPlanBehavior { get; set; }
@@ -313,6 +577,10 @@ public sealed class ProofPickupsChapterFitServiceTests
         public Func<string, PickupPickMapDocument, CancellationToken, PickupFitPlanDocument> LoadOrCreateFitPlanBehavior { get; set; }
 
         public Func<string, PickupPickMapDocument, PickupFitPlanDocument, CancellationToken, PickupFitPlanDocument> SaveFitPlanBehavior { get; set; }
+
+        public Func<PickupFitPlanDocument, PickupFitPlanItem, string?, CancellationToken, Task<FitReplacementPreviewResult>> GenerateFitPreviewBehavior { get; set; }
+
+        public Func<PickupFitPlanDocument, PickupFitPlanItem, string?, CancellationToken, Task<FitReplacementCommitResult>> CommitFitBehavior { get; set; }
 
         public string ActiveChapterStem
             => Workspace.CurrentChapterHandle?.Chapter.Descriptor.ChapterId
@@ -373,7 +641,7 @@ public sealed class ProofPickupsChapterFitServiceTests
                     CommitReplacementAsync: static (_, _) => Task.FromResult((HasResult: true, TimingDeltaSec: 0.0)),
                     RevertReplacementAsync: static (_, _) => Task.FromResult((HasResult: true, TimingDeltaSec: 0.0)),
                     ReadEdlDocument: static (_, _) => null,
-                    ReadArtifactLedgerDocument: static (_, _) => null,
+                    ReadArtifactLedgerDocument: (chapterStem, _) => _ledgerByChapter.TryGetValue(chapterStem, out var ledger) ? ledger : null,
                     MutateEdlDocument: static (_, _, _, _) => throw new InvalidOperationException("EDL mutation must not be called during Fit plan tests."),
                     TryGetOperation: static (_, _) => null,
                     TransitionOperationState: static (document, _, _) => document,
@@ -384,7 +652,9 @@ public sealed class ProofPickupsChapterFitServiceTests
                     SavePickMap: (source, document, ct) => PickMapStore.Save(source, document, ct),
                     ReadFitPlanDocument: (chapterStem, ct) => ReadFitPlanBehavior(chapterStem, ct),
                     LoadOrCreateFitPlan: (chapterStem, pickMap, ct) => LoadOrCreateFitPlanBehavior(chapterStem, pickMap, ct),
-                    SaveFitPlan: (chapterStem, pickMap, document, ct) => SaveFitPlanBehavior(chapterStem, pickMap, document, ct)));
+                    SaveFitPlan: (chapterStem, pickMap, document, ct) => SaveFitPlanBehavior(chapterStem, pickMap, document, ct),
+                    GenerateFitPreviewAsync: InvokeFitPreviewAsync,
+                    CommitFitReplacementAsync: InvokeFitCommitAsync));
 
         public void SelectChapterByStem(string chapterStem)
         {
@@ -401,8 +671,18 @@ public sealed class ProofPickupsChapterFitServiceTests
                 ErrorType: "MR",
                 Comments: string.Empty,
                 SentenceId: sentenceId,
-                StartTime: sentenceId == 21 ? 0.70 : 0.10,
-                EndTime: sentenceId == 21 ? 1.10 : 0.50,
+                StartTime: sentenceId switch
+                {
+                    21 => 0.70,
+                    31 => 1.30,
+                    _ => 0.10
+                },
+                EndTime: sentenceId switch
+                {
+                    21 => 1.10,
+                    31 => 1.70,
+                    _ => 0.50
+                },
                 AudioFile: string.Empty,
                 CreatedAt: DateTime.UtcNow,
                 ShouldBe: $"replacement {errorNumber}",
@@ -442,6 +722,45 @@ public sealed class ProofPickupsChapterFitServiceTests
             File.SetLastWriteTimeUtc(PickupPath, DateTime.UtcNow.AddSeconds(5));
         }
 
+        public void SetArtifactLedgerDocument(string chapterStem, PickupArtifactLedgerDocument document)
+        {
+            _ledgerByChapter[chapterStem] = document;
+        }
+
+        public PickupArtifactLedgerDocument CreateLedgerDocument(
+            string chapterStem,
+            IReadOnlyList<PickupArtifactLedgerEntry> entries,
+            int revision)
+            => new(
+                schemaVersion: PickupArtifactLedgerDocument.CurrentSchemaVersion,
+                chapterStem: chapterStem,
+                revision: revision,
+                lastSequence: entries.Count == 0 ? 0 : entries[^1].Sequence,
+                entries: entries);
+
+        public PickupArtifactLedgerEntry CreateLedgerEntry(
+            long sequence,
+            string operationId,
+            string transition,
+            int edlRevision,
+            string? failureReason = null)
+            => new(
+                sequence: sequence,
+                operationId: operationId,
+                transition: transition,
+                phase: "fit-apply",
+                edlRevision: edlRevision,
+                queueStatus: ReplacementStatus.Applied,
+                edlState: PickupEdlOperationState.Applied,
+                rollbackVerdict: PickupArtifactLedgerRollbackVerdict.NotRequired,
+                artifactRefs:
+                [
+                    $".polish/edl/{ActiveChapterStem}.edl.json",
+                    $".polish/edl/{ActiveChapterStem}.artifact-ledger.json"
+                ],
+                failureReason: failureReason,
+                occurredAtUtc: DateTime.UtcNow);
+
         public void Dispose()
         {
             Workspace.Dispose();
@@ -463,6 +782,26 @@ public sealed class ProofPickupsChapterFitServiceTests
                 ? queue
                 : Array.Empty<StagedReplacement>();
 
+        private Task<FitReplacementPreviewResult> InvokeFitPreviewAsync(
+            PickupFitPlanDocument fitPlan,
+            PickupFitPlanItem fitItem,
+            string? roomtonePath,
+            CancellationToken ct)
+        {
+            FitPreviewCallCount++;
+            return GenerateFitPreviewBehavior(fitPlan, fitItem, roomtonePath, ct);
+        }
+
+        private Task<FitReplacementCommitResult> InvokeFitCommitAsync(
+            PickupFitPlanDocument fitPlan,
+            PickupFitPlanItem fitItem,
+            string? roomtonePath,
+            CancellationToken ct)
+        {
+            FitCommitCallCount++;
+            return CommitFitBehavior(fitPlan, fitItem, roomtonePath, ct);
+        }
+
         private static HydratedTranscript CreateHydratedTranscript(string root, string chapterStem)
         {
             var words = new List<HydratedWord>
@@ -478,21 +817,28 @@ public sealed class ProofPickupsChapterFitServiceTests
                     StartSec = 0.70,
                     EndSec = 1.10,
                     DurationSec = 0.40
+                },
+                new(BookIdx: 2, AsrIdx: 2, BookWord: "book", AsrWord: "script", Op: "sub", Reason: "fit-test", Score: 0)
+                {
+                    StartSec = 1.30,
+                    EndSec = 1.70,
+                    DurationSec = 0.40
                 }
             };
 
             var sentences = new List<HydratedSentence>
             {
                 CreateSentence(11, 0, 1, $"{chapterStem} sentence 11", 0.10, 0.50),
-                CreateSentence(21, 1, 2, $"{chapterStem} sentence 21", 0.70, 1.10)
+                CreateSentence(21, 1, 2, $"{chapterStem} sentence 21", 0.70, 1.10),
+                CreateSentence(31, 2, 3, $"{chapterStem} sentence 31", 1.30, 1.70)
             };
 
             var paragraphs = new List<HydratedParagraph>
             {
                 new(
                     Id: 1,
-                    BookRange: new HydratedRange(0, 2),
-                    SentenceIds: [11, 21],
+                    BookRange: new HydratedRange(0, 3),
+                    SentenceIds: [11, 21, 31],
                     BookText: $"{chapterStem} paragraph",
                     Metrics: new ParagraphMetrics(Wer: 0, Cer: 0, Coverage: 1),
                     Status: "ok",

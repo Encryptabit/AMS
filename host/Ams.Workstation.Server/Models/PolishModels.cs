@@ -266,6 +266,13 @@ public static class StagedReplacementExtensions
         r.OriginalStartSec + r.ReplacementDuration();
 }
 
+public sealed record FitReplacementPreviewResult(
+    AudioBuffer ResultBuffer,
+    int PreviewVersion,
+    double RenderedDurationSec,
+    double ChapterStartSec,
+    double ChapterEndSec);
+
 public sealed record FitReplacementCommitResult(
     AudioBuffer ResultBuffer,
     double TimingDeltaSec,

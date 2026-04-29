@@ -141,6 +141,59 @@ public sealed record PickupFitTransitionPolicy
 }
 
 /// <summary>
+/// Redacted previous/current/next sentence context included in a Fit preview.
+/// Carries ids and timings only; full transcript text stays out of durable diagnostics.
+/// </summary>
+public sealed record PickupFitPreviewContext
+{
+    [JsonConstructor]
+    public PickupFitPreviewContext(
+        string role,
+        int sentenceId,
+        double? startSec,
+        double? endSec,
+        string? fitItemId = null)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(role);
+        if (sentenceId <= 0)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(sentenceId),
+                sentenceId,
+                "Pickup fit preview context sentence id must be greater than zero.");
+        }
+
+        if (startSec.HasValue != endSec.HasValue)
+        {
+            throw new ArgumentException(
+                "Pickup fit preview context must provide both start and end timing, or neither.",
+                nameof(startSec));
+        }
+
+        if (startSec.HasValue)
+        {
+            PickupFitPlanRange.EnsureRange(startSec.Value, endSec!.Value, "preview context");
+        }
+
+        Role = role.Trim();
+        SentenceId = sentenceId;
+        StartSec = startSec;
+        EndSec = endSec;
+        FitItemId = string.IsNullOrWhiteSpace(fitItemId) ? null : fitItemId.Trim();
+    }
+
+    public string Role { get; }
+
+    public int SentenceId { get; }
+
+    public double? StartSec { get; }
+
+    public double? EndSec { get; }
+
+    public string? FitItemId { get; }
+}
+
+/// <summary>
 /// Bounded evidence that a preview was produced from a specific Pick truth snapshot.
 /// </summary>
 public sealed record PickupFitPreviewEvidence
@@ -154,7 +207,9 @@ public sealed record PickupFitPreviewEvidence
         double renderedDurationSec,
         DateTime generatedAtUtc,
         string? previousFitItemId = null,
-        string? nextFitItemId = null)
+        string? nextFitItemId = null,
+        string? fitStateFingerprint = null,
+        IReadOnlyList<PickupFitPreviewContext>? sentenceContexts = null)
     {
         if (previewVersion <= 0)
         {
@@ -191,6 +246,8 @@ public sealed record PickupFitPreviewEvidence
         GeneratedAtUtc = generatedAtUtc.ToUniversalTime();
         PreviousFitItemId = string.IsNullOrWhiteSpace(previousFitItemId) ? null : previousFitItemId.Trim();
         NextFitItemId = string.IsNullOrWhiteSpace(nextFitItemId) ? null : nextFitItemId.Trim();
+        FitStateFingerprint = string.IsNullOrWhiteSpace(fitStateFingerprint) ? null : fitStateFingerprint.Trim();
+        SentenceContexts = (sentenceContexts ?? Array.Empty<PickupFitPreviewContext>()).ToArray();
     }
 
     public int PreviewVersion { get; }
@@ -209,9 +266,17 @@ public sealed record PickupFitPreviewEvidence
 
     public string? NextFitItemId { get; }
 
+    public string? FitStateFingerprint { get; }
+
+    public IReadOnlyList<PickupFitPreviewContext> SentenceContexts { get; }
+
     public bool MatchesPickTruth(int pickMapRevision, string pickAssignmentsFingerprint)
         => PickMapRevision == pickMapRevision &&
            string.Equals(PickAssignmentsFingerprint, pickAssignmentsFingerprint, StringComparison.Ordinal);
+
+    public bool MatchesFitState(string fitStateFingerprint)
+        => !string.IsNullOrWhiteSpace(FitStateFingerprint) &&
+           string.Equals(FitStateFingerprint, fitStateFingerprint, StringComparison.Ordinal);
 
     private static string NormalizeArtifactRef(string artifactRef, string paramName)
     {
