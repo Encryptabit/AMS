@@ -369,6 +369,7 @@ public sealed class AudioTreatmentService
                 speechStart,
                 contentEnd,
                 audioDuration,
+                silenceIntervals,
                 out var hydrateBoundaries))
         {
             return hydrateBoundaries;
@@ -481,6 +482,7 @@ public sealed class AudioTreatmentService
                 speechStart,
                 contentEnd,
                 audioDuration,
+                silenceIntervals,
                 out var layout))
         {
             return layout;
@@ -547,6 +549,7 @@ public sealed class AudioTreatmentService
         double speechStart,
         double contentEnd,
         double audioDuration,
+        IReadOnlyList<SilenceInterval> silenceIntervals,
         out (double TitleStart, double TitleEnd, double ContentStart, double ContentEnd) boundaries)
     {
         boundaries = default;
@@ -605,6 +608,18 @@ public sealed class AudioTreatmentService
         var titleEnd = Math.Max(titleStart, titleSentence.EndSec);
         var contentStart = Math.Max(titleEnd, nextSentence.Value.StartSec);
 
+        // Defensive snap: any long silence within (titleStart, contentStart) is the structural
+        // title-body gap. If hydrate stretched titleEnd past it, pull titleEnd back to silence.Start.
+        // If contentStart sits before silence.End, push contentStart forward. See FindLongestSilenceInWindow.
+        var structuralSilence = FindLongestSilenceInWindow(titleStart, contentStart, silenceIntervals);
+        if (structuralSilence is not null)
+        {
+            titleEnd = Math.Min(titleEnd, structuralSilence.Start.TotalSeconds);
+            contentStart = Math.Max(contentStart, structuralSilence.End.TotalSeconds);
+        }
+        titleEnd = Math.Max(titleEnd, titleStart);
+        contentStart = Math.Max(contentStart, titleEnd);
+
         if (contentEnd <= contentStart)
         {
             return false;
@@ -620,6 +635,7 @@ public sealed class AudioTreatmentService
         double speechStart,
         double contentEnd,
         double audioDuration,
+        IReadOnlyList<SilenceInterval> silenceIntervals,
         out (double TitleStart, double TitleEnd, double ContentStart, double ContentEnd, double? DecoratorEnd, double? TitleResumeStart) layout)
     {
         layout = default;
@@ -670,6 +686,35 @@ public sealed class AudioTreatmentService
             var firstContentSentence = timedSentences[headingSentenceIndex + 2];
             var headingEnd = Math.Max(headingStart, nextSentence.EndSec);
             var contentStart = Math.Max(headingEnd, firstContentSentence.StartSec);
+
+            // Snap stretched hydrate boundaries around any contained silence (see TryFindBoundariesFromHydrate).
+            // Window starts at the title sentence's StartSec, not headingStart — otherwise the
+            // decorator/title pause (between headingSentence and nextSentence) could be selected
+            // as the structural title/body silence and collapse the split layout.
+            var headingSilence = FindLongestSilenceInWindow(nextSentence.StartSec, contentStart, silenceIntervals);
+            if (headingSilence is not null)
+            {
+                headingEnd = Math.Min(headingEnd, headingSilence.Start.TotalSeconds);
+                // Re-derive contentStart from the body sentence: the original Math.Max above can
+                // bump contentStart past the body when nextSentence.EndSec is stretched, and the
+                // snap needs to be able to pull it back to the natural body start.
+                contentStart = Math.Max(headingSilence.End.TotalSeconds, firstContentSentence.StartSec);
+            }
+            headingEnd = Math.Max(headingEnd, headingStart);
+            contentStart = Math.Max(contentStart, headingEnd);
+
+            var rawSplitDecoratorEnd = Math.Max(headingStart, headingSentence.EndSec);
+            var rawSplitTitleResumeStart = Math.Max(headingSentence.EndSec, nextSentence.StartSec);
+            var splitDecoratorEnd = rawSplitDecoratorEnd;
+            var splitTitleResumeStart = rawSplitTitleResumeStart;
+            var splitSilence = FindLongestSilenceInWindow(headingSentence.StartSec, nextSentence.EndSec, silenceIntervals);
+            if (splitSilence is not null)
+            {
+                splitDecoratorEnd = Math.Min(splitDecoratorEnd, splitSilence.Start.TotalSeconds);
+                splitTitleResumeStart = Math.Max(splitTitleResumeStart, splitSilence.End.TotalSeconds);
+            }
+            splitTitleResumeStart = Math.Max(splitTitleResumeStart, splitDecoratorEnd);
+
             if (contentEnd <= contentStart)
             {
                 return false;
@@ -680,8 +725,8 @@ public sealed class AudioTreatmentService
                 headingEnd,
                 contentStart,
                 contentEnd,
-                Math.Max(headingStart, headingSentence.EndSec),
-                Math.Max(headingSentence.EndSec, nextSentence.StartSec));
+                splitDecoratorEnd,
+                splitTitleResumeStart);
             return true;
         }
 
@@ -702,6 +747,31 @@ public sealed class AudioTreatmentService
 
         var overallTitleEnd = Math.Max(headingStart, headingSentence.EndSec);
         var overallContentStart = Math.Max(overallTitleEnd, nextSentence.StartSec);
+
+        // Snap stretched hydrate boundaries around any contained silence (see TryFindBoundariesFromHydrate).
+        // Window starts at titleResumeStart (where the title words resume after the decorator),
+        // not headingStart — otherwise the decorator/title intra-heading pause could be selected
+        // as the structural title/body silence and clamp the title end into the decorator region.
+        var overallSilence = FindLongestSilenceInWindow(titleResumeStart, overallContentStart, silenceIntervals);
+        if (overallSilence is not null)
+        {
+            overallTitleEnd = Math.Min(overallTitleEnd, overallSilence.Start.TotalSeconds);
+            // Re-derive overallContentStart from the body sentence (see split path above).
+            overallContentStart = Math.Max(overallSilence.End.TotalSeconds, nextSentence.StartSec);
+        }
+        overallTitleEnd = Math.Max(overallTitleEnd, headingStart);
+        overallContentStart = Math.Max(overallContentStart, overallTitleEnd);
+
+        var snappedDecoratorEnd = decoratorEnd;
+        var snappedTitleResumeStart = titleResumeStart;
+        var decoratorSilence = FindLongestSilenceInWindow(headingStart, overallTitleEnd, silenceIntervals);
+        if (decoratorSilence is not null)
+        {
+            snappedDecoratorEnd = Math.Min(snappedDecoratorEnd, decoratorSilence.Start.TotalSeconds);
+            snappedTitleResumeStart = Math.Max(snappedTitleResumeStart, decoratorSilence.End.TotalSeconds);
+        }
+        snappedTitleResumeStart = Math.Max(snappedTitleResumeStart, snappedDecoratorEnd);
+
         if (contentEnd <= overallContentStart)
         {
             return false;
@@ -712,8 +782,8 @@ public sealed class AudioTreatmentService
             overallTitleEnd,
             overallContentStart,
             contentEnd,
-            decoratorEnd,
-            titleResumeStart);
+            snappedDecoratorEnd,
+            snappedTitleResumeStart);
         return true;
     }
 
@@ -746,6 +816,50 @@ public sealed class AudioTreatmentService
         });
 
         return timed;
+    }
+
+    // Find the longest silence interval overlapping the open window (windowStart, windowEnd).
+    // Used by the hydrate boundary snap to identify the structural pause that should separate
+    // a title from its body. Silences abutting either window edge are excluded — they're not
+    // the structural gap. Returns null if no silence overlaps the window.
+    //
+    // Defensive snap rationale: MFA's chunked aligner can stretch a sparse-text chunk's word
+    // intervals so the title sentence's reported endSec lands at or past a natural silence
+    // (e.g., titleEnd=4.05 with the actual silence at [1.13–3.94]). Treat's hydrate path would
+    // then extract a title segment that swallows the silence and appends a roomtone gap on top
+    // of it. Callers detect this by searching for a contained silence and clamping titleEnd to
+    // its Start / contentStart to its End.
+    private static SilenceInterval? FindLongestSilenceInWindow(
+        double windowStart,
+        double windowEnd,
+        IReadOnlyList<SilenceInterval> silenceIntervals)
+    {
+        if (silenceIntervals.Count == 0 || windowEnd <= windowStart)
+        {
+            return null;
+        }
+
+        SilenceInterval? selected = null;
+        var selectedDuration = 0.0;
+
+        foreach (var interval in silenceIntervals)
+        {
+            var startSec = interval.Start.TotalSeconds;
+            var endSec = interval.End.TotalSeconds;
+            if (endSec <= windowStart || startSec >= windowEnd || endSec <= startSec)
+            {
+                continue;
+            }
+
+            var duration = endSec - startSec;
+            if (duration > selectedDuration)
+            {
+                selectedDuration = duration;
+                selected = interval;
+            }
+        }
+
+        return selected;
     }
 
     // The head/tail finders apply click-immunity locally: starting from the file edge, they

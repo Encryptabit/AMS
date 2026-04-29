@@ -446,6 +446,187 @@ public sealed class AudioTreatmentServiceTests
         Assert.Equal(0.95, result.ContentStart, precision: 2);
     }
 
+    [Fact]
+    public void FindSpeechBoundaries_SnapsStretchedHydrateTitleEndOutOfSilence()
+    {
+        // Reproduces the Chapter 3 / 8 / 38 case: MFA's chunked aligner stretched the title
+        // sentence's last word so its endSec lands deep inside the natural title-body silence.
+        // Without the snap, treat would extract a title segment that swallows the silence.
+        var buffer = new AudioBuffer(channels: 1, sampleRate: 1000, length: 60_000); // 60s
+        var silences = new[]
+        {
+            new SilenceInterval(TimeSpan.FromSeconds(0.0), TimeSpan.FromSeconds(0.44), TimeSpan.FromSeconds(0.44)),
+            new SilenceInterval(TimeSpan.FromSeconds(1.13), TimeSpan.FromSeconds(3.94), TimeSpan.FromSeconds(2.81)),
+            new SilenceInterval(TimeSpan.FromSeconds(59.5), TimeSpan.FromSeconds(60.0), TimeSpan.FromSeconds(0.5))
+        };
+
+        var hydratedSentences = new[]
+        {
+            // titleSentence.EndSec=4.05 stretches past the [1.13–3.94] silence; snap should pull
+            // it back to 1.13 (silence.Start). nextSentence.StartSec=4.07 is past silence.End so
+            // remains untouched; the asymmetric snap reflects MFA's tendency to stretch the trailing
+            // word of a sparse-text chunk while leaving the next chunk's leading word tight.
+            BuildSentence(0, 0.44, 4.05, 0, 1, 0, 1, "Chapter 3", "Chapter 3."),
+            BuildSentence(1, 4.07, 7.07, 2, 7, 2, 7, "A few days passed", "A few days passed."),
+            BuildSentence(2, 7.97, 9.34, 8, 12, 8, 12, "I told myself", "I told myself.")
+        };
+
+        var result = AudioTreatmentService.FindSpeechBoundaries(
+            buffer,
+            silences,
+            gapThreshold: 1.0,
+            hydratedSentences);
+
+        Assert.Equal(0.44, result.TitleStart, precision: 2);
+        Assert.Equal(1.13, result.TitleEnd, precision: 2);    // snapped from 4.05 to silence start
+        Assert.Equal(4.07, result.ContentStart, precision: 2); // already past silence end, untouched
+    }
+
+    [Fact]
+    public void FindTreatmentLayout_SplitDecoratorTitle_PrefersTitleBodySilenceWhenDecoratorTitlePauseIsLonger()
+    {
+        // Reviewer's regression case for the split decorator-title hydrate path: the
+        // decorator/title pause is LONGER than the title/body pause AND the title sentence's
+        // EndSec is stretched past the title/body silence. The structural title/body snap must
+        // exclude the decorator/title pause from its search window — otherwise it would clamp
+        // headingEnd into the decorator gap and collapse the split layout.
+        var buffer = new AudioBuffer(channels: 1, sampleRate: 1000, length: 10_000);
+        var silences = new[]
+        {
+            new SilenceInterval(TimeSpan.FromSeconds(0.0), TimeSpan.FromSeconds(0.28), TimeSpan.FromSeconds(0.28)),
+            // Long decorator/title pause (2.65 s) — between "Chapter 1" and "Back".
+            new SilenceInterval(TimeSpan.FromSeconds(0.85), TimeSpan.FromSeconds(3.50), TimeSpan.FromSeconds(2.65)),
+            // Short title/body pause (0.40 s) — between "Back" and the body. This is the silence
+            // the structural snap should select.
+            new SilenceInterval(TimeSpan.FromSeconds(5.20), TimeSpan.FromSeconds(5.60), TimeSpan.FromSeconds(0.40)),
+            new SilenceInterval(TimeSpan.FromSeconds(9.0), TimeSpan.FromSeconds(10.0), TimeSpan.FromSeconds(1.0))
+        };
+        var hydrate = BuildTranscript(
+            words:
+            [
+                BuildWord(0, "Chapter", 0.29, 0.55),
+                BuildWord(1, "1", 0.57, 0.85),
+                // "Back" word EndSec stretched past the title/body silence at [5.20–5.60].
+                BuildWord(2, "Back", 3.50, 6.10),
+                BuildWord(3, "The", 5.60, 5.86),
+                BuildWord(4, "first", 5.88, 6.18)
+            ],
+            sentences:
+            [
+                BuildSentence(0, 0.29, 0.85, 0, 1, 0, 1, "Chapter 1", "Chapter 1."),
+                // Title sentence end stretched to 6.10, deep past the title/body silence.
+                BuildSentence(1, 3.50, 6.10, 2, 2, 2, 2, "Back", "Back."),
+                BuildSentence(2, 5.60, 6.18, 3, 4, 3, 4, "The first", "The first.")
+            ]);
+
+        var result = AudioTreatmentService.FindTreatmentLayout(
+            buffer,
+            silences,
+            gapThreshold: 1.0,
+            hydrate,
+            sectionTitle: "Chapter 1: Back");
+
+        // Heading end snaps to the title/body silence start (5.20), NOT the decorator/title
+        // silence start (0.85) which would have collapsed the split layout.
+        Assert.Equal(0.29, result.TitleStart, precision: 2);
+        Assert.Equal(5.20, result.TitleEnd, precision: 2);
+        Assert.Equal(5.60, result.ContentStart, precision: 2);
+        Assert.Equal(9.0, result.ContentEnd, precision: 3);
+        // Split layout preserved: decorator ends at the "1" word edge, title resumes at "Back".
+        Assert.NotNull(result.DecoratorEnd);
+        Assert.NotNull(result.TitleResumeStart);
+        Assert.Equal(0.85, result.DecoratorEnd!.Value, precision: 2);
+        Assert.Equal(3.50, result.TitleResumeStart!.Value, precision: 2);
+    }
+
+    [Fact]
+    public void FindTreatmentLayout_NonSplitDecoratorTitle_PrefersTitleBodySilenceOverIntraHeadingPause()
+    {
+        // Reviewer's regression case for the single-sentence decorator-title hydrate path: the
+        // narrator paused between "Chapter 1" and "Back" inside the same heading sentence,
+        // creating an intra-heading silence longer than the title/body silence. The structural
+        // title/body snap must exclude that intra-heading silence — otherwise it would clamp
+        // overallTitleEnd back to the decorator end and chop off the title.
+        var buffer = new AudioBuffer(channels: 1, sampleRate: 1000, length: 10_000);
+        var silences = new[]
+        {
+            new SilenceInterval(TimeSpan.FromSeconds(0.0), TimeSpan.FromSeconds(0.28), TimeSpan.FromSeconds(0.28)),
+            // Long intra-heading pause (2.65 s) between the decorator words and the title word.
+            new SilenceInterval(TimeSpan.FromSeconds(0.85), TimeSpan.FromSeconds(3.50), TimeSpan.FromSeconds(2.65)),
+            // Shorter title/body pause (1.00 s) — but still the structural one we want to snap to.
+            new SilenceInterval(TimeSpan.FromSeconds(5.20), TimeSpan.FromSeconds(6.20), TimeSpan.FromSeconds(1.00)),
+            new SilenceInterval(TimeSpan.FromSeconds(9.0), TimeSpan.FromSeconds(10.0), TimeSpan.FromSeconds(1.0))
+        };
+        var hydrate = BuildTranscript(
+            words:
+            [
+                BuildWord(0, "Chapter", 0.29, 0.55),
+                BuildWord(1, "1", 0.57, 0.85),
+                // Title word "Back" with EndSec stretched past the title/body silence at [5.20–6.20].
+                BuildWord(2, "Back", 3.50, 6.10),
+                BuildWord(3, "The", 6.20, 6.50),
+                BuildWord(4, "first", 6.52, 6.80)
+            ],
+            sentences:
+            [
+                // Single-sentence heading "Chapter 1: Back" with EndSec stretched to 6.10.
+                BuildSentence(0, 0.29, 6.10, 0, 2, 0, 2, "Chapter 1: Back", "Chapter 1: Back."),
+                BuildSentence(1, 6.20, 6.80, 3, 4, 3, 4, "The first", "The first.")
+            ]);
+
+        var result = AudioTreatmentService.FindTreatmentLayout(
+            buffer,
+            silences,
+            gapThreshold: 1.0,
+            hydrate,
+            sectionTitle: "Chapter 1: Back");
+
+        // overallTitleEnd snaps to the title/body silence start (5.20), NOT the intra-heading
+        // silence start (0.85) which would have clamped the title into the decorator.
+        Assert.Equal(0.29, result.TitleStart, precision: 2);
+        Assert.Equal(5.20, result.TitleEnd, precision: 2);
+        Assert.Equal(6.20, result.ContentStart, precision: 2);
+        Assert.Equal(9.0, result.ContentEnd, precision: 3);
+        // Decorator/title boundary preserved at the word edges.
+        Assert.NotNull(result.DecoratorEnd);
+        Assert.NotNull(result.TitleResumeStart);
+        Assert.Equal(0.85, result.DecoratorEnd!.Value, precision: 2);
+        Assert.Equal(3.50, result.TitleResumeStart!.Value, precision: 2);
+    }
+
+    [Fact]
+    public void FindSpeechBoundaries_DoesNotMutateHydrateBoundariesAlreadyOutsideSilences()
+    {
+        // Non-regression: when hydrate sentence boundaries are already tight to actual speech edges
+        // (i.e., not inside any detected silence), the snap is a no-op.
+        var buffer = new AudioBuffer(channels: 1, sampleRate: 1000, length: 60_000);
+        var silences = new[]
+        {
+            new SilenceInterval(TimeSpan.FromSeconds(0.0), TimeSpan.FromSeconds(0.44), TimeSpan.FromSeconds(0.44)),
+            new SilenceInterval(TimeSpan.FromSeconds(1.13), TimeSpan.FromSeconds(3.94), TimeSpan.FromSeconds(2.81)),
+            new SilenceInterval(TimeSpan.FromSeconds(59.5), TimeSpan.FromSeconds(60.0), TimeSpan.FromSeconds(0.5))
+        };
+
+        var hydratedSentences = new[]
+        {
+            // Tight: title ends at 1.10 (just before silence start), next sentence starts at 3.96
+            // (just past silence end). Both boundaries are outside the silence; snap is a no-op.
+            BuildSentence(0, 0.44, 1.10, 0, 1, 0, 1, "Chapter 3", "Chapter 3."),
+            BuildSentence(1, 3.96, 7.07, 2, 7, 2, 7, "A few days passed", "A few days passed."),
+            BuildSentence(2, 7.97, 9.34, 8, 12, 8, 12, "I told myself", "I told myself.")
+        };
+
+        var result = AudioTreatmentService.FindSpeechBoundaries(
+            buffer,
+            silences,
+            gapThreshold: 1.0,
+            hydratedSentences);
+
+        Assert.Equal(0.44, result.TitleStart, precision: 2);
+        Assert.Equal(1.10, result.TitleEnd, precision: 2);
+        Assert.Equal(3.96, result.ContentStart, precision: 2);
+    }
+
     private static HydratedSentence BuildSentence(
         int id,
         double startSec,
