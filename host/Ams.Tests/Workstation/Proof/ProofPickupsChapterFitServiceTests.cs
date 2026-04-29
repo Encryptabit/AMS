@@ -462,6 +462,74 @@ public sealed class ProofPickupsChapterFitServiceTests
     }
 
     [Fact]
+    public async Task CommitFitAsync_RuntimeCancellationAfterStart_PersistsFailedStateAndRefreshesDiagnostics()
+    {
+        using var harness = await ChapterFitHarness.CreateAsync(["chapter-01"]);
+        harness.CrxEntries.Add(harness.CreateCrxEntry("chapter-01", errorNumber: 101, sentenceId: 11));
+        using var cts = new CancellationTokenSource();
+        harness.ImportPickAssetsBehavior = (sourcePath, targets, _) =>
+        {
+            var target = targets.Single();
+            return Task.FromResult((
+                Matched: (IReadOnlyList<PickupAsset>)[harness.CreateAsset("seg-101", sourcePath, target, 0.10, 0.40)],
+                Unmatched: (IReadOnlyList<PickupAsset>)Array.Empty<PickupAsset>()));
+        };
+        harness.CommitFitBehavior = (fitPlan, fitItem, _, _) =>
+        {
+            harness.SetArtifactLedgerDocument(
+                fitPlan.ChapterStem,
+                harness.CreateLedgerDocument(
+                    fitPlan.ChapterStem,
+                    [
+                        harness.CreateLedgerEntry(
+                            sequence: 1,
+                            operationId: fitItem.ReplacementId,
+                            transition: PickupArtifactLedgerTransitions.CommitCancelled,
+                            edlRevision: 9,
+                            queueStatus: ReplacementStatus.Failed,
+                            edlState: PickupEdlOperationState.Failed,
+                            rollbackVerdict: PickupArtifactLedgerRollbackVerdict.Succeeded,
+                            failureReason: "runtime cancellation after rollback")
+                    ],
+                    revision: 5));
+
+            cts.Cancel();
+            throw new OperationCanceledException("runtime cancellation after start", cts.Token);
+        };
+
+        var imported = await harness.Service.ImportPickMapAsync(harness.PickupPath, CancellationToken.None);
+        _ = await harness.Service.ConfirmPickMapAsync(imported.PickMapRevision!.Value, CancellationToken.None);
+        var loaded = await harness.Service.LoadOrCreateFitPlanAsync(CancellationToken.None);
+        var item = Assert.Single(loaded.FitPlan!.Items);
+        var previewed = await harness.Service.GenerateFitPreviewAsync(item.FitItemId, loaded.FitPlanRevision!.Value, CancellationToken.None);
+        var previewedItem = Assert.Single(previewed.FitPlan!.Items);
+        var accepted = await harness.Service.AcceptFitPreviewAsync(
+            item.FitItemId,
+            previewed.FitPlanRevision!.Value,
+            previewedItem.PreviewEvidence!.PreviewVersion,
+            ct: CancellationToken.None);
+
+        var failed = await harness.Service.CommitFitAsync(
+            item.FitItemId,
+            accepted.FitPlanRevision!.Value,
+            cts.Token);
+        var failedItem = Assert.Single(failed.FitPlan!.Items);
+
+        Assert.Equal(ProofPickupsSessionPhase.Failed, failed.Phase);
+        Assert.Equal(1, harness.FitCommitCallCount);
+        Assert.Equal(PickupFitPlanItemStatus.Failed, failedItem.Status);
+        Assert.Equal(PickupFitCommitStatus.Failed, failedItem.Commit.Status);
+        Assert.Equal(item.ReplacementId, failedItem.Commit.OperationId);
+        Assert.Equal(item.ReplacementId, failed.LastOperationId);
+        Assert.Equal(5, failed.ArtifactLedgerRevision);
+        var ledgerEntry = Assert.Single(failed.ArtifactLedgerEntries);
+        Assert.Equal(PickupArtifactLedgerTransitions.CommitCancelled, ledgerEntry.Transition);
+        Assert.Contains("runtime cancellation", ledgerEntry.FailureReason ?? string.Empty, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("cancelled after start", failed.LastFitValidationError ?? string.Empty, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("cancelled after start", failedItem.CommitError ?? string.Empty, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public async Task CommitFitAsync_UnacceptedItem_FailsClosedWithoutRuntimeCall()
     {
         using var harness = await ChapterFitHarness.CreateAsync(["chapter-01"]);
@@ -743,6 +811,9 @@ public sealed class ProofPickupsChapterFitServiceTests
             string operationId,
             string transition,
             int edlRevision,
+            ReplacementStatus queueStatus = ReplacementStatus.Applied,
+            PickupEdlOperationState edlState = PickupEdlOperationState.Applied,
+            PickupArtifactLedgerRollbackVerdict rollbackVerdict = PickupArtifactLedgerRollbackVerdict.NotRequired,
             string? failureReason = null)
             => new(
                 sequence: sequence,
@@ -750,9 +821,9 @@ public sealed class ProofPickupsChapterFitServiceTests
                 transition: transition,
                 phase: "fit-apply",
                 edlRevision: edlRevision,
-                queueStatus: ReplacementStatus.Applied,
-                edlState: PickupEdlOperationState.Applied,
-                rollbackVerdict: PickupArtifactLedgerRollbackVerdict.NotRequired,
+                queueStatus: queueStatus,
+                edlState: edlState,
+                rollbackVerdict: rollbackVerdict,
                 artifactRefs:
                 [
                     $".polish/edl/{ActiveChapterStem}.edl.json",

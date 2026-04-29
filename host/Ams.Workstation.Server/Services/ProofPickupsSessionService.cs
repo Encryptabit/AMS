@@ -1254,6 +1254,24 @@ public sealed class ProofPickupsSessionService
 
             return _snapshot;
         }
+        catch (OperationCanceledException ex) when (runtimeStarted && document is not null && pickMap is not null && item is not null)
+        {
+            var message =
+                $"Fit commit failed for chapter '{chapterStem}', item '{fitItemId}': " +
+                $"commit runtime cancelled after start ({ex.Message}). Polish rollback/ledger diagnostics refreshed; item left uncommitted for retry.";
+
+            return PersistFitCommitFailure(
+                baseline,
+                chapterName,
+                chapterStem,
+                pickMap,
+                document,
+                item,
+                fitItemId,
+                operationId,
+                message,
+                CancellationToken.None);
+        }
         catch (OperationCanceledException)
         {
             _snapshot = baseline with
@@ -1261,9 +1279,9 @@ public sealed class ProofPickupsSessionService
                 ActiveChapterName = chapterName,
                 ActiveChapterStem = chapterStem,
                 Phase = ProofPickupsSessionPhase.Cancelled,
-                LastError = "Pickup Fit commit cancelled. Runtime rollback/ledger diagnostics refreshed on next sync.",
+                LastError = "Pickup Fit commit cancelled before runtime start. Prior Fit item state preserved.",
                 LastFitOperationId = operationId,
-                LastFitValidationError = "Pickup Fit commit cancelled."
+                LastFitValidationError = "Pickup Fit commit cancelled before runtime start."
             };
 
             return _snapshot;
