@@ -198,45 +198,54 @@ public static class QcCommand
                     files = [new FileInfo(treated.Path)];
                 }
 
-                // Analyze each file
-                var results = new List<ChapterQcResult>();
-                for (int i = 0; i < files.Count; i++)
-                {
-                    var file = files[i];
-                    Log.Info("Analyzing {Index}/{Total}: {FileName}...",
-                        i + 1, files.Count, file.Name);
-
-                    try
+                // Analyze files in parallel; results assigned by index to preserve sort order.
+                var resultsByIndex = new ChapterQcResult[files.Count];
+                var completed = 0;
+                Parallel.For(0, files.Count,
+                    new ParallelOptions
                     {
-                        var result = AudioQcAnalyzer.AnalyzeFile(
-                            file.FullName,
-                            noiseDb,
-                            minSilenceSec,
-                            thresholds,
-                            ResolveSectionTitle(file, bookIndex));
-
-                        if (TryResolveRawDuration(file, rawLookup, result.DurationSec, out var rawDurationSec))
+                        MaxDegreeOfParallelism = Environment.ProcessorCount,
+                        CancellationToken = ct
+                    },
+                    i =>
+                    {
+                        var file = files[i];
+                        try
                         {
-                            result = result with
+                            var result = AudioQcAnalyzer.AnalyzeFile(
+                                file.FullName,
+                                noiseDb,
+                                minSilenceSec,
+                                thresholds,
+                                ResolveSectionTitle(file, bookIndex));
+
+                            if (TryResolveRawDuration(file, rawLookup, result.DurationSec, out var rawDurationSec))
                             {
-                                RawDurationSec = rawDurationSec,
-                                RuntimeDeltaSec = result.DurationSec - rawDurationSec
+                                result = result with
+                                {
+                                    RawDurationSec = rawDurationSec,
+                                    RuntimeDeltaSec = result.DurationSec - rawDurationSec
+                                };
+                            }
+
+                            resultsByIndex[i] = result;
+                        }
+                        catch (Exception ex)
+                        {
+                            Log.Error(ex, "Failed to analyze {FileName}", file.Name);
+                            resultsByIndex[i] = new ChapterQcResult
+                            {
+                                FileName = file.Name,
+                                DurationSec = 0,
+                                Flags = ["ANALYSIS_FAILED"]
                             };
                         }
 
-                        results.Add(result);
-                    }
-                    catch (Exception ex)
-                    {
-                        Log.Error(ex, "Failed to analyze {FileName}", file.Name);
-                        results.Add(new ChapterQcResult
-                        {
-                            FileName = file.Name,
-                            DurationSec = 0,
-                            Flags = ["ANALYSIS_FAILED"]
-                        });
-                    }
-                }
+                        var done = Interlocked.Increment(ref completed);
+                        Log.Info("Analyzed {Index}/{Total}: {FileName}", done, files.Count, file.Name);
+                    });
+
+                var results = resultsByIndex.ToList();
 
                 // Render console table
                 RenderTable(results);
