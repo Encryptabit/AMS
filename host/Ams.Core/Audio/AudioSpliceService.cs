@@ -11,6 +11,47 @@ namespace Ams.Core.Audio;
 /// </summary>
 public static class AudioSpliceService
 {
+    private static readonly HashSet<string> SupportedCrossfadeCurves = new(StringComparer.Ordinal)
+    {
+        "nofade",
+        "tri",
+        "qsin",
+        "esin",
+        "hsin",
+        "log",
+        "ipar",
+        "qua",
+        "cub",
+        "squ",
+        "cbr",
+        "par",
+        "exp",
+        "iqsin",
+        "ihsin",
+        "dese",
+        "desi",
+        "losi",
+        "sinc",
+        "isinc",
+        "quat",
+        "quatr",
+        "qsin2",
+        "hsin2"
+    };
+
+    private static readonly Dictionary<string, string> CrossfadeCurveAliases = new(StringComparer.Ordinal)
+    {
+        ["equal-power"] = "hsin",
+        ["equal_power"] = "hsin",
+        ["equalpower"] = "hsin",
+        ["half-sine"] = "hsin",
+        ["half_sine"] = "hsin",
+        ["half-sin"] = "hsin",
+        ["linear"] = "tri",
+        ["triangle"] = "tri",
+        ["triangular"] = "tri"
+    };
+
     /// <summary>
     /// Computes the duration in seconds of an <see cref="AudioBuffer"/>.
     /// </summary>
@@ -18,6 +59,35 @@ public static class AudioSpliceService
     {
         ArgumentNullException.ThrowIfNull(buffer);
         return (double)buffer.Length / buffer.SampleRate;
+    }
+
+    /// <summary>
+    /// Normalizes operator-facing crossfade curve names to FFmpeg acrossfade curve ids.
+    /// </summary>
+    public static string NormalizeCrossfadeCurve(string? curve)
+    {
+        if (string.IsNullOrWhiteSpace(curve))
+        {
+            return "tri";
+        }
+
+        var normalized = curve.Trim().ToLowerInvariant();
+        if (CrossfadeCurveAliases.TryGetValue(normalized, out var aliasTarget))
+        {
+            return aliasTarget;
+        }
+
+        if (SupportedCrossfadeCurves.Contains(normalized))
+        {
+            return normalized;
+        }
+
+        var supported = string.Join(", ", SupportedCrossfadeCurves.OrderBy(value => value, StringComparer.Ordinal));
+        var aliases = string.Join(", ", CrossfadeCurveAliases.Keys.OrderBy(value => value, StringComparer.Ordinal));
+        throw new ArgumentOutOfRangeException(
+            nameof(curve),
+            curve,
+            $"Crossfade curve '{curve}' is not supported. Supported FFmpeg curves: {supported}. Aliases: {aliases}.");
     }
 
     /// <summary>
@@ -116,8 +186,7 @@ public static class AudioSpliceService
             throw new ArgumentOutOfRangeException(nameof(startSec), "Start time must be non-negative.");
         if (endSec <= startSec)
             throw new ArgumentOutOfRangeException(nameof(endSec), "End time must be greater than start time.");
-        if (string.IsNullOrWhiteSpace(curve))
-            curve = "tri";
+        var normalizedCurve = NormalizeCrossfadeCurve(curve);
 
         // Step 1: Resample replacement if sample rates differ
         var resampled = replacement.SampleRate != original.SampleRate
@@ -135,7 +204,7 @@ public static class AudioSpliceService
             DurationSeconds(resampled));
 
         // Step 4: Crossfade before + replacement
-        var joined = Crossfade(before, resampled, clampedCrossfade1, curve);
+        var joined = Crossfade(before, resampled, clampedCrossfade1, normalizedCurve);
 
         // Step 5: Clamp crossfade for second join (joined + after)
         double clampedCrossfade2 = ClampCrossfadeDuration(
@@ -144,7 +213,7 @@ public static class AudioSpliceService
             DurationSeconds(after));
 
         // Step 6: Crossfade joined + after
-        return Crossfade(joined, after, clampedCrossfade2, curve);
+        return Crossfade(joined, after, clampedCrossfade2, normalizedCurve);
     }
 
     /// <summary>
@@ -215,8 +284,7 @@ public static class AudioSpliceService
             throw new ArgumentOutOfRangeException(nameof(startSec), "Start time must be non-negative.");
         if (endSec <= startSec)
             throw new ArgumentOutOfRangeException(nameof(endSec), "End time must be greater than start time.");
-        if (string.IsNullOrWhiteSpace(curve))
-            curve = "tri";
+        var normalizedCurve = NormalizeCrossfadeCurve(curve);
 
         var before = AudioProcessor.Trim(original, TimeSpan.Zero, TimeSpan.FromSeconds(startSec));
         var after = AudioProcessor.Trim(original, TimeSpan.FromSeconds(endSec));
@@ -235,7 +303,7 @@ public static class AudioSpliceService
             DurationSeconds(before),
             DurationSeconds(after));
 
-        return Crossfade(before, after, clampedCrossfade, curve);
+        return Crossfade(before, after, clampedCrossfade, normalizedCurve);
     }
 
     /// <summary>
@@ -261,8 +329,7 @@ public static class AudioSpliceService
 
         if (insertPointSec < 0)
             throw new ArgumentOutOfRangeException(nameof(insertPointSec), "Insert point must be non-negative.");
-        if (string.IsNullOrWhiteSpace(curve))
-            curve = "tri";
+        var normalizedCurve = NormalizeCrossfadeCurve(curve);
 
         // Resample insertion if sample rates differ
         var resampled = insertion.SampleRate != original.SampleRate
@@ -278,7 +345,7 @@ public static class AudioSpliceService
             DurationSeconds(before),
             DurationSeconds(resampled));
 
-        var joined = Crossfade(before, resampled, clampedCrossfade1, curve);
+        var joined = Crossfade(before, resampled, clampedCrossfade1, normalizedCurve);
 
         // Crossfade joined + after
         double clampedCrossfade2 = ClampCrossfadeDuration(
@@ -286,7 +353,7 @@ public static class AudioSpliceService
             DurationSeconds(joined),
             DurationSeconds(after));
 
-        return Crossfade(joined, after, clampedCrossfade2, curve);
+        return Crossfade(joined, after, clampedCrossfade2, normalizedCurve);
     }
 
     /// <summary>

@@ -323,6 +323,62 @@ public sealed class PickupCommitRevertReliabilityTests
     }
 
     [Fact]
+    public async Task CommitFitReplacementAsync_DefaultTransitionPolicy_CommitsWithNormalizedCurveWithoutRoomtoneFile()
+    {
+        using var runtime = await CreateRuntimeAsync(withActiveChapter: true, withValidAudio: true);
+        var fitPlan = CreateAcceptedFitPlan(
+            runtime,
+            transitionPolicy: PickupFitTransitionPolicy.Default,
+            outerStartSec: 1.0,
+            outerEndSec: 2.0,
+            innerStartSec: 1.0,
+            innerEndSec: 2.0,
+            placementStartSec: 1.0,
+            placementEndSec: 2.0,
+            previewRenderedDurationSec: 1.0);
+        var fitItem = Assert.Single(fitPlan.Items);
+
+        var result = await runtime.PolishService.CommitFitReplacementAsync(
+            fitPlan,
+            fitItem,
+            roomtoneFilePath: null,
+            CancellationToken.None);
+
+        Assert.Equal(fitItem.ReplacementId, result.OperationId);
+        Assert.Equal(1.0, result.RenderedReplacementDurationSec, precision: 3);
+        Assert.Equal(0.0, result.TimingDeltaSec, precision: 3);
+
+        var documentAfter = runtime.Store.TryRead(runtime.ChapterStem, CancellationToken.None);
+        Assert.NotNull(documentAfter);
+        var operation = Assert.Single(documentAfter!.Operations);
+        Assert.Equal(PickupEdlOperationState.Applied, operation.State);
+        Assert.Equal(fitItem.OuterRange.StartSec, operation.BaselineStartSec, precision: 6);
+        Assert.Equal(fitItem.OuterRange.EndSec, operation.BaselineEndSec, precision: 6);
+        Assert.Equal(0.025, operation.CrossfadeDurationSec, precision: 6);
+        Assert.Equal("hsin", operation.CrossfadeCurve);
+        Assert.Equal(1.0, operation.ExplicitReplacementDurationSec!.Value, precision: 3);
+
+        var edit = Assert.Single(runtime.EditListService.GetEdits(runtime.ChapterStem), e => e.Operation == EditOperation.PickupReplace);
+        Assert.Equal(fitItem.ReplacementId, edit.Id);
+        Assert.Equal("hsin", edit.CrossfadeCurve);
+        Assert.Equal(1.0, edit.ReplacementDurationSec, precision: 3);
+
+        var undoRecord = runtime.UndoService.GetUndoRecord(fitItem.ReplacementId);
+        Assert.NotNull(undoRecord);
+        Assert.Equal(1.0, undoRecord!.OriginalDurationSec, precision: 3);
+        Assert.Equal(1.0, undoRecord.ReplacementDurationSec, precision: 3);
+        Assert.True(File.Exists(undoRecord.ReplacementSegmentPath));
+
+        var ledger = runtime.ArtifactLedgerStore.TryRead(runtime.ChapterStem, CancellationToken.None);
+        Assert.NotNull(ledger);
+        Assert.Contains(
+            ledger!.Entries,
+            entry =>
+                string.Equals(entry.OperationId, fitItem.ReplacementId, StringComparison.Ordinal) &&
+                string.Equals(entry.Transition, PickupArtifactLedgerTransitions.CommitSuccess, StringComparison.Ordinal));
+    }
+
+    [Fact]
     public async Task CommitFitReplacementAsync_MissingRoomtone_FailsBeforeEdlOrQueueMutation()
     {
         using var runtime = await CreateRuntimeAsync(withActiveChapter: true, withValidAudio: true);
@@ -479,7 +535,16 @@ public sealed class PickupCommitRevertReliabilityTests
         AudioProcessor.EncodeWav(path, buffer);
     }
 
-    private static PickupFitPlanDocument CreateAcceptedFitPlan(RuntimeFixture runtime)
+    private static PickupFitPlanDocument CreateAcceptedFitPlan(
+        RuntimeFixture runtime,
+        PickupFitTransitionPolicy? transitionPolicy = null,
+        double outerStartSec = 0.5,
+        double outerEndSec = 2.5,
+        double innerStartSec = 1.0,
+        double innerEndSec = 2.0,
+        double placementStartSec = 1.0,
+        double placementEndSec = 2.0,
+        double previewRenderedDurationSec = 2.3)
     {
         var source = runtime.SourceBufferCache.DescribeSource(runtime.PickupPath);
         var fitSource = new PickupPickMapSourceReference(
@@ -495,7 +560,7 @@ public sealed class PickupCommitRevertReliabilityTests
             pickMapRevision: pickMapRevision,
             pickAssignmentsFingerprint: assignmentFingerprint,
             previewArtifactRef: ".polish/pickups/preview/chapter-01/replacement.wav",
-            renderedDurationSec: 2.3,
+            renderedDurationSec: previewRenderedDurationSec,
             generatedAtUtc: DateTime.UtcNow);
         var accepted = new PickupFitAcceptanceState(
             isAccepted: true,
@@ -507,18 +572,18 @@ public sealed class PickupCommitRevertReliabilityTests
             chapterName: "Chapter 01",
             errorNumber: 7,
             sentenceId: 11,
-            originalStartSec: 0.5,
-            originalEndSec: 2.5);
+            originalStartSec: outerStartSec,
+            originalEndSec: outerEndSec);
         var item = new PickupFitPlanItem(
             fitItemId: "fit::assignment-runtime",
             replacementId: "replacement::assignment-runtime",
             pickAssignmentId: "assignment-runtime",
             pickupSegmentId: "segment-runtime",
             target: target,
-            outerRange: new PickupFitPlanRange(0.5, 2.5),
-            innerRange: new PickupFitPlanRange(1.0, 2.0),
-            placement: new PickupFitPlanRange(1.0, 2.0),
-            transitionPolicy: new PickupFitTransitionPolicy(
+            outerRange: new PickupFitPlanRange(outerStartSec, outerEndSec),
+            innerRange: new PickupFitPlanRange(innerStartSec, innerEndSec),
+            placement: new PickupFitPlanRange(placementStartSec, placementEndSec),
+            transitionPolicy: transitionPolicy ?? new PickupFitTransitionPolicy(
                 roomtoneBeforeSec: 0.1,
                 roomtoneAfterSec: 0.2,
                 crossfadeDurationSec: 0.05,

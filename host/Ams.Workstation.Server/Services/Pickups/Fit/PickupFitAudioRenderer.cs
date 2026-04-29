@@ -24,6 +24,7 @@ public static class PickupFitAudioRenderer
         EnsureValidBuffer(pickupSource, "pickup source", item.FitItemId);
 
         var policy = item.TransitionPolicy;
+        var crossfadeCurve = NormalizeCrossfadeCurve(policy.CrossfadeCurve, item.FitItemId);
         var pickupSlice = AudioSpliceService.SliceByTime(
             pickupSource,
             item.InnerRange.StartSec,
@@ -102,7 +103,21 @@ public static class PickupFitAudioRenderer
             RoomtoneAfterSec: roomtoneAfterSec,
             PlacementOffsetSec: Math.Max(0, placementOffsetSec),
             EffectiveCrossfadeDurationSec: effectiveCrossfadeSec,
-            CrossfadeCurve: policy.CrossfadeCurve);
+            CrossfadeCurve: crossfadeCurve);
+    }
+
+    private static string NormalizeCrossfadeCurve(string curve, string fitItemId)
+    {
+        try
+        {
+            return AudioSpliceService.NormalizeCrossfadeCurve(curve);
+        }
+        catch (ArgumentOutOfRangeException ex)
+        {
+            throw new InvalidOperationException(
+                $"Pickup fit renderer rejected item '{fitItemId}': crossfade curve '{curve}' is unsupported.",
+                ex);
+        }
     }
 
     private static AudioBuffer NormalizeRoomtone(AudioBuffer roomtoneSource, AudioBuffer reference, string fitItemId)

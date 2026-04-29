@@ -26,6 +26,49 @@ public sealed class PickupFitAudioRendererTests
         Assert.Equal(100f, result.Buffer[0, 0]);
         Assert.Equal(299f, result.Buffer[0, result.Buffer.Length - 1]);
         Assert.Equal(0.6, result.EffectiveCrossfadeDurationSec, precision: 6);
+        Assert.Equal("tri", result.CrossfadeCurve);
+    }
+
+    [Fact]
+    public void Render_DefaultTransitionPolicy_NormalizesEqualPowerCurveForFfmpeg()
+    {
+        var pickup = CreateRampBuffer(sampleRate: 100, length: 500);
+        var item = CreateFitItem(
+            outerStartSec: 1,
+            outerEndSec: 3,
+            innerStartSec: 1,
+            innerEndSec: 3,
+            placementStartSec: 1,
+            placementEndSec: 3,
+            policy: PickupFitTransitionPolicy.Default);
+
+        var result = PickupFitAudioRenderer.Render(item, pickup);
+
+        Assert.Equal(200, result.Buffer.Length);
+        Assert.Equal(2.0, result.RenderedDurationSec, precision: 6);
+        Assert.Equal(0.025, result.EffectiveCrossfadeDurationSec, precision: 6);
+        Assert.Equal("hsin", result.CrossfadeCurve);
+    }
+
+    [Fact]
+    public void Render_UnsupportedCrossfadeCurve_FailsClosedWithItemId()
+    {
+        var pickup = CreateRampBuffer(sampleRate: 100, length: 500);
+        var item = CreateFitItem(
+            outerStartSec: 1,
+            outerEndSec: 3,
+            innerStartSec: 1,
+            innerEndSec: 3,
+            placementStartSec: 1,
+            placementEndSec: 3,
+            policy: new PickupFitTransitionPolicy(0, 0, 0.025, "unsupported-curve"));
+
+        var ex = Assert.Throws<InvalidOperationException>(() => PickupFitAudioRenderer.Render(item, pickup));
+
+        Assert.Contains("crossfade curve", ex.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains(item.FitItemId, ex.Message, StringComparison.Ordinal);
+        Assert.NotNull(ex.InnerException);
+        Assert.IsType<ArgumentOutOfRangeException>(ex.InnerException);
     }
 
     [Fact]
