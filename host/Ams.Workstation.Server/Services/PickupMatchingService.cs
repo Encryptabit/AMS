@@ -18,6 +18,8 @@ using Ams.Workstation.Server.Models;
 
 namespace Ams.Workstation.Server.Services;
 
+internal sealed record PickupSegmentAssignment(PickupSegment Segment, CrxPickupTarget? Target);
+
 /// <summary>
 /// Runs ASR on pickup recording files and matches segmented pickup utterances to
 /// CRX targets. Session-file pairing is deterministic and CRX-driven: MFA-refined
@@ -80,6 +82,32 @@ public class PickupMatchingService
         IReadOnlyList<CrxPickupTarget> crxTargets,
         CancellationToken ct)
     {
+        var (segments, sortedTargets) = await ReadRefinedPickupSegmentsAsync(pickupFilePath, crxTargets, ct)
+            .ConfigureAwait(false);
+
+        return BuildDeterministicSegments(segments, sortedTargets);
+    }
+
+    /// <summary>
+    /// Produces Pick import segment assignments while preserving skipped/extra utterances
+    /// as unresolved rows for operator disposition.
+    /// </summary>
+    internal async Task<IReadOnlyList<PickupSegmentAssignment>> SegmentPickupCrxForPickAsync(
+        string pickupFilePath,
+        IReadOnlyList<CrxPickupTarget> crxTargets,
+        CancellationToken ct)
+    {
+        var (segments, sortedTargets) = await ReadRefinedPickupSegmentsAsync(pickupFilePath, crxTargets, ct)
+            .ConfigureAwait(false);
+
+        return BuildDeterministicSegmentAssignments(segments, sortedTargets);
+    }
+
+    private async Task<(IReadOnlyList<AsrSegment> Segments, IReadOnlyList<CrxPickupTarget> SortedTargets)> ReadRefinedPickupSegmentsAsync(
+        string pickupFilePath,
+        IReadOnlyList<CrxPickupTarget> crxTargets,
+        CancellationToken ct)
+    {
         ArgumentException.ThrowIfNullOrWhiteSpace(pickupFilePath);
         ArgumentNullException.ThrowIfNull(crxTargets);
 
@@ -132,7 +160,7 @@ public class PickupMatchingService
                 "Pickup import could not derive any MFA-refined pickup segments from the session file.");
         }
 
-        return BuildDeterministicSegments(asrResponse.Segments, sortedTargets);
+        return (asrResponse.Segments, sortedTargets);
     }
 
     /// <summary>
@@ -192,6 +220,25 @@ public class PickupMatchingService
         return MergeSegmentsToTargets(result, targets);
     }
 
+    internal static IReadOnlyList<PickupSegmentAssignment> BuildDeterministicSegmentAssignments(
+        IReadOnlyList<AsrSegment> segments,
+        IReadOnlyList<CrxPickupTarget> targets)
+    {
+        var converted = ConvertAsrSegments(segments);
+        if (converted.Count == 0)
+        {
+            return Array.Empty<PickupSegmentAssignment>();
+        }
+
+        if (targets.Count == 0 || converted.Count <= targets.Count)
+        {
+            return PairSegmentsForPickImport(converted, targets);
+        }
+
+        return MergeSegmentsToTargetAssignments(converted, targets)
+            ?? PairSegmentsForPickImport(converted, targets);
+    }
+
     private static List<PickupSegment> ConvertAsrSegments(IReadOnlyList<AsrSegment> segments)
     {
         var result = new List<PickupSegment>(segments.Count);
@@ -215,6 +262,22 @@ public class PickupMatchingService
     }
 
     private static List<PickupSegment> MergeSegmentsToTargets(
+        IReadOnlyList<PickupSegment> segments,
+        IReadOnlyList<CrxPickupTarget> targets)
+    {
+        var assignments = MergeSegmentsToTargetAssignments(segments, targets);
+        if (assignments is null)
+        {
+            return segments.ToList();
+        }
+
+        return assignments
+            .Where(assignment => assignment.Target is not null)
+            .Select(assignment => assignment.Segment)
+            .ToList();
+    }
+
+    private static IReadOnlyList<PickupSegmentAssignment>? MergeSegmentsToTargetAssignments(
         IReadOnlyList<PickupSegment> segments,
         IReadOnlyList<CrxPickupTarget> targets)
     {
@@ -250,7 +313,7 @@ public class PickupMatchingService
 
                 // Allow skipping unrelated utterances in stitched session WAVs while still
                 // preserving CRX-order determinism for the targets that belong to the
-                // active chapter.
+                // active chapter. Batch Pick keeps these skipped utterances as unresolved rows.
                 if (segmentIndex < segmentCount)
                 {
                     var skipCost = baseCost + ComputeSkipPenalty(segments[segmentIndex]);
@@ -291,10 +354,11 @@ public class PickupMatchingService
 
         if (double.IsPositiveInfinity(costs[segmentCount, targetCount]))
         {
-            return segments.ToList();
+            return null;
         }
 
-        var merged = new PickupSegment?[targetCount];
+        var assignments = new List<PickupSegmentAssignment>(segmentCount);
+        var assignedTargets = new bool[targetCount];
         var currentSegment = segmentCount;
         var currentTarget = targetCount;
 
@@ -304,25 +368,54 @@ public class PickupMatchingService
             var priorTarget = previousTarget[currentSegment, currentTarget];
             if (priorSegment < 0 || priorTarget < 0)
             {
-                return segments.ToList();
+                return null;
             }
 
             // Target index only advances when a contiguous segment span is assigned.
             if (priorTarget == currentTarget - 1)
             {
-                merged[priorTarget] = MergeSegmentRange(segments, priorSegment, currentSegment);
+                assignments.Add(new PickupSegmentAssignment(
+                    MergeSegmentRange(segments, priorSegment, currentSegment),
+                    targets[priorTarget]));
+                assignedTargets[priorTarget] = true;
+            }
+            else if (priorTarget == currentTarget && priorSegment == currentSegment - 1)
+            {
+                assignments.Add(new PickupSegmentAssignment(segments[priorSegment], null));
+            }
+            else
+            {
+                return null;
             }
 
             currentSegment = priorSegment;
             currentTarget = priorTarget;
         }
 
-        if (merged.Any(segment => segment is null))
+        if (assignedTargets.Any(assigned => !assigned))
         {
-            return segments.ToList();
+            return null;
         }
 
-        return merged.Select(segment => segment!).ToList();
+        return assignments
+            .OrderBy(assignment => assignment.Segment.StartSec)
+            .ThenBy(assignment => assignment.Segment.EndSec)
+            .ToArray();
+    }
+
+    private static IReadOnlyList<PickupSegmentAssignment> PairSegmentsForPickImport(
+        IReadOnlyList<PickupSegment> segments,
+        IReadOnlyList<CrxPickupTarget> targets)
+    {
+        var assignments = new List<PickupSegmentAssignment>(segments.Count);
+        for (var i = 0; i < segments.Count; i++)
+        {
+            assignments.Add(new PickupSegmentAssignment(
+                segments[i],
+                i < targets.Count ? targets[i] : null));
+        }
+
+        return assignments;
     }
 
     private static PickupSegment MergeSegmentRange(

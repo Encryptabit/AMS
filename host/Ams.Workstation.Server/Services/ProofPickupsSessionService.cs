@@ -607,7 +607,7 @@ public sealed class ProofPickupsSessionService
                         updatedAtUtc: DateTime.UtcNow),
                     source,
                     operationId,
-                    validationError: null,
+                    targets,
                     isDraft: true);
             }));
     }
@@ -631,7 +631,7 @@ public sealed class ProofPickupsSessionService
             operationId,
             expectedRevision,
             targetStatus: disposition,
-            mutation: (document, _, source) =>
+            mutation: (document, targets, source) =>
             {
                 if (string.IsNullOrWhiteSpace(assignmentId))
                 {
@@ -663,7 +663,7 @@ public sealed class ProofPickupsSessionService
                         updatedAtUtc: DateTime.UtcNow),
                     source,
                     operationId,
-                    validationError: null,
+                    targets,
                     isDraft: true);
             }));
     }
@@ -1420,7 +1420,7 @@ public sealed class ProofPickupsSessionService
         Func<PickupPickMapAssignment, PickupPickMapAssignment> replace,
         PickupPickMapSourceReference source,
         string operationId,
-        string? validationError,
+        IReadOnlyList<CrxPickupTarget> targets,
         bool isDraft)
     {
         var found = false;
@@ -1442,6 +1442,7 @@ public sealed class ProofPickupsSessionService
             throw new InvalidOperationException($"Pick assignment '{assignmentId}' was not found.");
         }
 
+        var validationError = isDraft ? BuildPickImportValidationError(assignments, targets) : null;
         return new PickupPickMapDocument(
             schemaVersion: PickupPickMapDocument.CurrentSchemaVersion,
             revision: document.Revision,

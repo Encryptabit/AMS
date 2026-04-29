@@ -92,6 +92,37 @@ public sealed class ProofPickupsBatchPickServiceTests
         Assert.Null(confirmed.LastPickValidationError);
     }
 
+    [Fact]
+    public async Task SetPickAssignmentDispositionAsync_WhenTargetStillMissing_PersistsValidationErrorInDraftMap()
+    {
+        using var harness = await BatchPickHarness.CreateAsync(["chapter-01", "chapter-02"]);
+        harness.CrxEntries.Add(harness.CreateCrxEntry("chapter-01", errorNumber: 101, sentenceId: 11));
+        harness.CrxEntries.Add(harness.CreateCrxEntry("chapter-02", errorNumber: 202, sentenceId: 21));
+        harness.ImportPickAssetsBehavior = (sourcePath, targets, _) =>
+        {
+            var first = targets.Single(target => target.ErrorNumber == 101);
+            return Task.FromResult((
+                Matched: (IReadOnlyList<PickupAsset>)[harness.CreateAsset("seg-101", sourcePath, first, 0.00, 0.40)],
+                Unmatched: (IReadOnlyList<PickupAsset>)[harness.CreateUnmatchedAsset("seg-extra", sourcePath, 0.55, 0.95)]));
+        };
+
+        var imported = await harness.Service.ImportPickMapAsync(harness.PickupPath, CancellationToken.None);
+
+        var updated = await harness.Service.SetPickAssignmentDispositionAsync(
+            assignmentId: "seg-extra",
+            expectedRevision: imported.PickMapRevision!.Value,
+            disposition: PickupPickMapAssignmentStatus.Rejected,
+            note: "not part of this batch",
+            ct: CancellationToken.None);
+        var reloaded = harness.Service.SyncToWorkspace(CancellationToken.None);
+
+        Assert.Equal(ProofPickupsSessionPhase.Completed, updated.Phase);
+        Assert.Contains("missing 1 target", updated.LastPickValidationError ?? string.Empty, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("chapter-02#202", updated.PickMap!.LastValidationError ?? string.Empty, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(updated.PickMap!.LastValidationError, reloaded.LastPickValidationError);
+        Assert.Equal(PickupPickMapAssignmentStatus.Rejected, updated.PickMap.Assignments.Single(item => item.Id == "seg-extra").Status);
+    }
+
     [Theory]
     [InlineData(PickupPickMapAssignmentStatus.Rejected)]
     [InlineData(PickupPickMapAssignmentStatus.Deferred)]

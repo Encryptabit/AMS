@@ -247,7 +247,7 @@ public sealed class PickupPickMapStore
             createdAtUtc: document.CreatedAtUtc,
             updatedAtUtc: DateTime.UtcNow,
             lastOperationId: document.LastOperationId,
-            lastValidationError: null,
+            lastValidationError: document.LastValidationError,
             isDraft: document.IsDraft);
     }
 

@@ -64,28 +64,25 @@ public class PickupAssetService
         }
 
         var fi = new FileInfo(sourcePath);
-        var segments = await _pickupMatching.SegmentPickupCrxAsync(sourcePath, crxTargets, ct)
+        var segmentAssignments = await _pickupMatching.SegmentPickupCrxForPickAsync(sourcePath, crxTargets, ct)
             .ConfigureAwait(false);
-        var sortedTargets = crxTargets
-            .OrderBy(target => target.ErrorNumber)
-            .ThenBy(target => target.ChapterStem, StringComparer.OrdinalIgnoreCase)
-            .ToArray();
-        var matched = new List<PickupAsset>(Math.Min(segments.Count, sortedTargets.Length));
-        var unmatched = new List<PickupAsset>(Math.Max(0, segments.Count - sortedTargets.Length));
+        var matched = new List<PickupAsset>(segmentAssignments.Count(assignment => assignment.Target is not null));
+        var unmatched = new List<PickupAsset>(segmentAssignments.Count(assignment => assignment.Target is null));
         var now = DateTime.UtcNow;
 
-        for (var i = 0; i < segments.Count; i++)
+        for (var i = 0; i < segmentAssignments.Count; i++)
         {
-            var segment = segments[i];
+            var segmentAssignment = segmentAssignments[i];
+            var segment = segmentAssignment.Segment;
             if (segment.EndSec <= segment.StartSec)
             {
                 throw new InvalidOperationException(
                     $"Pickup candidate at index {i} has invalid source timing [{segment.StartSec:F6}, {segment.EndSec:F6}].");
             }
 
-            if (i < sortedTargets.Length)
+            var target = segmentAssignment.Target;
+            if (target is not null)
             {
-                var target = sortedTargets[i];
                 matched.Add(new PickupAsset(
                     Id: $"segment-{i + 1:D4}",
                     SourceType: PickupSourceType.SessionSegment,

@@ -71,6 +71,36 @@ public class PickupMatchingServiceTests
     }
 
     [Fact]
+    public void BuildDeterministicSegmentAssignments_PreservesSkippedSegmentsForPickImport()
+    {
+        var segments = new[]
+        {
+            new AsrSegment(0.0, 0.8, "chapter one correction"),
+            new AsrSegment(0.9, 1.6, "the old gate was barred shut"),
+            new AsrSegment(1.7, 2.4, "they turned north toward camp"),
+            new AsrSegment(2.5, 3.2, "epilogue correction")
+        };
+
+        var targets = new[]
+        {
+            MakeTarget(21, "the old gate was barred shut"),
+            MakeTarget(22, "they turned north toward camp")
+        };
+
+        var assignments = PickupMatchingService.BuildDeterministicSegmentAssignments(segments, targets);
+
+        Assert.Equal(4, assignments.Count);
+        Assert.Null(assignments[0].Target);
+        Assert.Equal("chapter one correction", assignments[0].Segment.TranscribedText);
+        Assert.Equal(21, assignments[1].Target?.ErrorNumber);
+        Assert.Equal("the old gate was barred shut", assignments[1].Segment.TranscribedText);
+        Assert.Equal(22, assignments[2].Target?.ErrorNumber);
+        Assert.Equal("they turned north toward camp", assignments[2].Segment.TranscribedText);
+        Assert.Null(assignments[3].Target);
+        Assert.Equal("epilogue correction", assignments[3].Segment.TranscribedText);
+    }
+
+    [Fact]
     public void BuildDeterministicSegments_SingleTarget_SelectsBestRangeFromCombinedSessionFile()
     {
         var segments = new[]
