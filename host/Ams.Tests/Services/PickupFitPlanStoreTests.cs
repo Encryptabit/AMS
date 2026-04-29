@@ -62,6 +62,53 @@ public sealed class PickupFitPlanStoreTests
     }
 
     [Fact]
+    public void GetDocumentPath_SanitizesChapterStemBeforePathUse()
+    {
+        var root = CreateTempDirectory();
+        try
+        {
+            var chapterStem = "chapter-01/../../outside:name";
+            var store = new PickupFitPlanStore(() => root);
+            var documentPath = store.GetDocumentPath(chapterStem);
+            var fitDirectory = Path.Combine(root, ".polish", "pickups", "fit");
+            var fileName = Path.GetFileName(documentPath);
+
+            Assert.Equal(Path.GetFullPath(fitDirectory), Path.GetFullPath(Path.GetDirectoryName(documentPath)!));
+            Assert.EndsWith(".fit-plan.json", fileName, StringComparison.Ordinal);
+            Assert.DoesNotContain("/", fileName, StringComparison.Ordinal);
+            Assert.DoesNotContain("\\", fileName, StringComparison.Ordinal);
+            Assert.DoesNotContain(":", fileName, StringComparison.Ordinal);
+            Assert.Contains("%2F", fileName, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains("%3A", fileName, StringComparison.OrdinalIgnoreCase);
+
+            var pickMap = CreatePickMap(
+                assignments:
+                [
+                    CreateAssignment(
+                        id: "assign-001",
+                        pickupSegmentId: "pickup-segment-001",
+                        segmentStartSec: 10,
+                        segmentEndSec: 11,
+                        target: CreateTarget(chapterStem, errorNumber: 1))
+                ]);
+            var saved = store.Save(chapterStem, pickMap, PickupFitPlanDocument.CreateInitial(chapterStem, pickMap));
+            var persisted = Directory.GetFiles(
+                Path.Combine(root, ".polish", "pickups"),
+                "*.fit-plan.json",
+                SearchOption.AllDirectories);
+
+            Assert.Equal(chapterStem, saved.ChapterStem);
+            Assert.True(File.Exists(documentPath));
+            var persistedPath = Assert.Single(persisted);
+            Assert.Equal(Path.GetFullPath(documentPath), Path.GetFullPath(persistedPath));
+        }
+        finally
+        {
+            SafeDeleteDirectory(root);
+        }
+    }
+
+    [Fact]
     public void Document_DeterministicOrder_SortsByTargetThenPlacementThenFitItemId()
     {
         var pickMap = CreatePickMap(
@@ -203,6 +250,41 @@ public sealed class PickupFitPlanStoreTests
     }
 
     [Fact]
+    public void Save_StaleDocumentRevision_FailsClosedWithoutMutation()
+    {
+        var root = CreateTempDirectory();
+        try
+        {
+            var pickMap = CreatePickMap();
+            var store = new PickupFitPlanStore(() => root);
+            var original = PickupFitPlanDocument.CreateInitial("chapter-01", pickMap);
+            var saved = store.Save("chapter-01", pickMap, original);
+            var documentPath = store.GetDocumentPath("chapter-01");
+            var before = File.ReadAllText(documentPath);
+            var staleDocument = CreateFitDocument(
+                pickMap,
+                [CreateFitItem(status: PickupFitPlanItemStatus.Fitted)],
+                revision: original.Revision);
+
+            var ex = Assert.Throws<InvalidOperationException>(() => store.Save("chapter-01", pickMap, staleDocument));
+            var persisted = store.TryRead("chapter-01");
+
+            Assert.Equal(1, saved.Revision);
+            Assert.Contains("stale revision", ex.Message, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains("documentRevision='0'", ex.Message, StringComparison.Ordinal);
+            Assert.Contains("currentRevision='1'", ex.Message, StringComparison.Ordinal);
+            Assert.Equal(before, File.ReadAllText(documentPath));
+            Assert.NotNull(persisted);
+            Assert.Equal(1, persisted!.Revision);
+            Assert.Equal(PickupFitPlanItemStatus.Draft, Assert.Single(persisted.Items).Status);
+        }
+        finally
+        {
+            SafeDeleteDirectory(root);
+        }
+    }
+
+    [Fact]
     public void Save_StalePickAssignmentFingerprint_FailsClosedWithoutMutation()
     {
         var root = CreateTempDirectory();
@@ -310,7 +392,7 @@ public sealed class PickupFitPlanStoreTests
                     throw new IOException($"simulated corrupting fit-plan write failure {attempts}");
                 });
             var mutatedItem = CreateFitItem(status: PickupFitPlanItemStatus.Fitted);
-            var mutatedDocument = CreateFitDocument(pickMap, [mutatedItem]);
+            var mutatedDocument = CreateFitDocument(pickMap, [mutatedItem], revision: 1);
 
             var ex = Assert.Throws<InvalidOperationException>(() => failingStore.Save("chapter-01", pickMap, mutatedDocument));
             var loaded = stableStore.TryRead("chapter-01");
@@ -359,6 +441,7 @@ public sealed class PickupFitPlanStoreTests
         IReadOnlyList<PickupFitPlanItem>? items = null,
         bool isDraft = true,
         string chapterStem = "chapter-01",
+        int revision = 0,
         int? pickMapRevision = null,
         string? pickAssignmentsFingerprint = null)
     {
@@ -366,7 +449,7 @@ public sealed class PickupFitPlanStoreTests
         return new PickupFitPlanDocument(
             schemaVersion: PickupFitPlanDocument.CurrentSchemaVersion,
             chapterStem: chapterStem,
-            revision: 0,
+            revision: revision,
             source: pickMap.Source,
             pickMapRevision: pickMapRevision ?? pickMap.Revision,
             pickAssignmentsFingerprint: pickAssignmentsFingerprint ?? PickupFitPlanDocument.ComputePickAssignmentsFingerprint(chapterStem, pickMap),

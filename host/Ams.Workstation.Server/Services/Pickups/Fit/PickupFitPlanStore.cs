@@ -47,7 +47,8 @@ public sealed class PickupFitPlanStore
             throw new InvalidOperationException("Workspace root resolver returned an empty path for pickup fit-plan store.");
         }
 
-        return Path.Combine(root, ".polish", "pickups", "fit", $"{chapterStem.Trim()}.fit-plan.json");
+        var safeChapterStem = SanitizeChapterStemForPath(chapterStem);
+        return Path.Combine(root, ".polish", "pickups", "fit", $"{safeChapterStem}.fit-plan.json");
     }
 
     public PickupFitPlanDocument? TryRead(string chapterStem, CancellationToken ct = default)
@@ -96,6 +97,14 @@ public sealed class PickupFitPlanStore
         lock (gate)
         {
             var current = LoadOrCreateUnlocked(path, chapterStem, pickMap, ct);
+            if (document.Revision != current.Revision)
+            {
+                throw new InvalidOperationException(
+                    "Pickup fit-plan save rejected stale revision: " +
+                    $"chapter='{chapterStem}', documentRevision='{document.Revision}', currentRevision='{current.Revision}', " +
+                    $"pickRevision='{pickMap.Revision}', documentPath='{path}'.");
+            }
+
             var previousJson = File.Exists(path)
                 ? File.ReadAllText(path)
                 : null;
@@ -333,6 +342,58 @@ public sealed class PickupFitPlanStore
 
     private static bool IsRetriableIoFailure(Exception ex)
         => ex is IOException || ex is TimeoutException;
+
+    private static string SanitizeChapterStemForPath(string chapterStem)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(chapterStem);
+
+        var sanitized = Uri.EscapeDataString(chapterStem.Trim());
+        if (string.IsNullOrWhiteSpace(sanitized))
+        {
+            throw new ArgumentException("Pickup fit-plan chapter stem cannot be empty after path sanitization.", nameof(chapterStem));
+        }
+
+        var safeChars = sanitized
+            .Select(ch => IsUnsafeFileNameCharacter(ch) ? '-' : ch)
+            .ToArray();
+        sanitized = new string(safeChars);
+
+        if (string.IsNullOrWhiteSpace(sanitized) || sanitized is "." or "..")
+        {
+            sanitized = $"chapter-{Convert.ToHexString(System.Text.Encoding.UTF8.GetBytes(chapterStem.Trim()))}";
+        }
+
+        if (IsReservedWindowsDeviceName(sanitized))
+        {
+            sanitized = $"_{sanitized}";
+        }
+
+        return sanitized;
+    }
+
+    private static bool IsUnsafeFileNameCharacter(char ch)
+        => char.IsControl(ch) ||
+           ch == Path.DirectorySeparatorChar ||
+           ch == Path.AltDirectorySeparatorChar ||
+           ch == Path.VolumeSeparatorChar ||
+           Path.GetInvalidFileNameChars().Contains(ch) ||
+           "<>:\"/\\|?*".IndexOf(ch) >= 0;
+
+    private static bool IsReservedWindowsDeviceName(string sanitizedChapterStem)
+    {
+        var stem = sanitizedChapterStem.Split('.', 2)[0];
+        return string.Equals(stem, "CON", StringComparison.OrdinalIgnoreCase) ||
+               string.Equals(stem, "PRN", StringComparison.OrdinalIgnoreCase) ||
+               string.Equals(stem, "AUX", StringComparison.OrdinalIgnoreCase) ||
+               string.Equals(stem, "NUL", StringComparison.OrdinalIgnoreCase) ||
+               IsReservedWindowsDevicePrefix(stem, "COM") ||
+               IsReservedWindowsDevicePrefix(stem, "LPT");
+    }
+
+    private static bool IsReservedWindowsDevicePrefix(string stem, string prefix)
+        => stem.Length == 4 &&
+           stem.StartsWith(prefix, StringComparison.OrdinalIgnoreCase) &&
+           stem[3] is >= '1' and <= '9';
 
     private static bool IsMalformedDocumentException(Exception ex)
         => ex is JsonException || ex is ArgumentException || ex is InvalidOperationException;
