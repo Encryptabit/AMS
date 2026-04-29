@@ -52,6 +52,61 @@ public sealed class ProofPickupsChapterFitServiceTests
     }
 
     [Fact]
+    public async Task LoadOrCreateFitPlanAsync_StaleEmptyStoredPlan_PersistsRegeneratedRows()
+    {
+        using var harness = await ChapterFitHarness.CreateAsync(["chapter-01"]);
+        harness.CrxEntries.Add(harness.CreateCrxEntry("chapter-01", errorNumber: 101, sentenceId: 11));
+        harness.ImportPickAssetsBehavior = (sourcePath, targets, _) =>
+        {
+            var target = targets.Single();
+            return Task.FromResult((
+                Matched: (IReadOnlyList<PickupAsset>)[harness.CreateAsset("seg-101", sourcePath, target, 0.10, 0.40)],
+                Unmatched: (IReadOnlyList<PickupAsset>)Array.Empty<PickupAsset>()));
+        };
+
+        var imported = await harness.Service.ImportPickMapAsync(harness.PickupPath, CancellationToken.None);
+        var confirmed = await harness.Service.ConfirmPickMapAsync(imported.PickMapRevision!.Value, CancellationToken.None);
+        var oldPickMap = confirmed.PickMap!;
+        var now = DateTime.UtcNow;
+        var emptyPlan = new PickupFitPlanDocument(
+            schemaVersion: PickupFitPlanDocument.CurrentSchemaVersion,
+            chapterStem: harness.ActiveChapterStem,
+            revision: 0,
+            source: oldPickMap.Source,
+            pickMapRevision: oldPickMap.Revision,
+            pickAssignmentsFingerprint: PickupFitPlanDocument.ComputePickAssignmentsFingerprint(harness.ActiveChapterStem, oldPickMap),
+            items: Array.Empty<PickupFitPlanItem>(),
+            createdAtUtc: now,
+            updatedAtUtc: now,
+            lastOperationId: "fit-old-empty",
+            lastValidationError: null,
+            isDraft: true);
+        var savedEmpty = harness.FitPlanStore.Save(harness.ActiveChapterStem, oldPickMap, emptyPlan, CancellationToken.None);
+        Assert.Empty(savedEmpty.Items);
+
+        var overridden = await harness.Service.SetPickAssignmentTargetAsync(
+            assignmentId: "seg-101",
+            expectedRevision: confirmed.PickMapRevision!.Value,
+            chapterStem: harness.ActiveChapterStem,
+            errorNumber: 101,
+            note: "refresh pick fingerprint",
+            ct: CancellationToken.None);
+        var reconfirmed = await harness.Service.ConfirmPickMapAsync(overridden.PickMapRevision!.Value, CancellationToken.None);
+
+        var snapshot = await harness.Service.LoadOrCreateFitPlanAsync(CancellationToken.None);
+        var reloaded = harness.CreateSessionService().SyncToWorkspace(CancellationToken.None);
+
+        var item = Assert.Single(snapshot.FitPlan!.Items);
+        Assert.Equal("seg-101", item.PickAssignmentId);
+        Assert.Equal(["seg-101"], reloaded.FitPlan!.Items.Select(fit => fit.PickAssignmentId));
+        Assert.Equal(reconfirmed.PickMapRevision, reloaded.FitPlan.PickMapRevision);
+        Assert.Equal(
+            PickupFitPlanDocument.ComputePickAssignmentsFingerprint(harness.ActiveChapterStem, reconfirmed.PickMap!),
+            reloaded.FitPlan.PickAssignmentsFingerprint);
+        Assert.StartsWith("fit-load-or-create-", reloaded.FitPlan.LastOperationId, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task LoadOrCreateFitPlanAsync_DraftPickMap_FailsClosedWithoutFitMutation()
     {
         using var harness = await ChapterFitHarness.CreateAsync(["chapter-01"]);

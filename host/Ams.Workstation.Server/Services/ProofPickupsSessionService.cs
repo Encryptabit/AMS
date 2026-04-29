@@ -820,7 +820,7 @@ public sealed class ProofPickupsSessionService
 
             var existing = _hooks.ReadFitPlanDocument?.Invoke(chapterStem, ct);
             var document = LoadOrCreateFitPlanOrThrow(chapterStem, pickMap, ct);
-            if (existing is null)
+            if (ShouldPersistLoadedFitPlan(existing, document))
             {
                 var stamped = StampFitPlanOperation(document, operationId, validationError: null);
                 var saved = SaveFitPlanOrThrow(chapterStem, pickMap, stamped, ct);
@@ -1631,6 +1631,27 @@ public sealed class ProofPickupsSessionService
                 $"No Fit-ready Pick assignments target active chapter '{chapterStem}'. Confirmed, inferred, or override assignments with an EffectiveTarget are required.");
         }
     }
+
+    private static bool ShouldPersistLoadedFitPlan(
+        PickupFitPlanDocument? existing,
+        PickupFitPlanDocument loaded)
+        => existing is null || !HaveSamePersistedFitPlanState(existing, loaded);
+
+    private static bool HaveSamePersistedFitPlanState(
+        PickupFitPlanDocument left,
+        PickupFitPlanDocument right)
+        => string.Equals(left.SchemaVersion, right.SchemaVersion, StringComparison.Ordinal) &&
+           string.Equals(left.ChapterStem, right.ChapterStem, StringComparison.Ordinal) &&
+           left.Revision == right.Revision &&
+           EqualityComparer<PickupPickMapSourceReference>.Default.Equals(left.Source, right.Source) &&
+           left.PickMapRevision == right.PickMapRevision &&
+           string.Equals(left.PickAssignmentsFingerprint, right.PickAssignmentsFingerprint, StringComparison.Ordinal) &&
+           left.CreatedAtUtc.Equals(right.CreatedAtUtc) &&
+           left.UpdatedAtUtc.Equals(right.UpdatedAtUtc) &&
+           string.Equals(left.LastOperationId, right.LastOperationId, StringComparison.Ordinal) &&
+           string.Equals(left.LastValidationError, right.LastValidationError, StringComparison.Ordinal) &&
+           left.IsDraft == right.IsDraft &&
+           left.GetDeterministicItemOrder().SequenceEqual(right.GetDeterministicItemOrder());
 
     private static PickupFitPlanDocument StampFitPlanOperation(
         PickupFitPlanDocument document,
