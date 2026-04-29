@@ -6,6 +6,7 @@
 @using Ams.Workstation.Server.Components.Navigation
 @using Ams.Workstation.Server.Models
 @using Ams.Workstation.Server.Services
+@using System.Globalization
 @implements IDisposable
 
 <PageTitle>Pickups - Proof - AMS Workstation</PageTitle>
@@ -231,6 +232,276 @@
                                             </BitStack>
                                         </BitCard>
                                     }
+                                </BitStack>
+                            </BitCard>
+                        }
+                    }
+                </BitStack>
+            </BitCard>
+
+            <BitCard data-proof-fit-plan="true">
+                <BitStack Horizontal="false" Gap="0.75rem">
+                    <BitStack Horizontal="true" Gap="0.75rem" VerticalAlign="BitAlignment.Center" Wrap="true">
+                        <BitStack Horizontal="false" Gap="0.15rem">
+                            <BitText Typography="BitTypography.Subtitle2">Chapter Fit</BitText>
+                            <BitText Typography="BitTypography.Caption1" Color="BitColor.SecondaryForeground">
+                                Load chapter Fit truth from confirmed batch Pick map, adjust boundaries and policy, preview redacted previous/current/next context, accept, then commit.
+                            </BitText>
+                        </BitStack>
+                        <BitTag Color="BitColor.Info" data-proof-fit-revision="true">
+                            Revision @(_snapshot.FitPlanRevision?.ToString(CultureInfo.InvariantCulture) ?? "(none)")
+                        </BitTag>
+                        <BitTag Color="BitColor.Secondary" data-proof-fit-status-counts="true">
+                            @FormatFitStatusCounts()
+                        </BitTag>
+                        <BitButton Variant="BitVariant.Fill"
+                                   Color="BitColor.Primary"
+                                   OnClick="HandleLoadFitPlanAsync"
+                                   IsEnabled="@CanLoadFitPlan"
+                                   data-proof-fit-load="true">
+                            Load Chapter Fit
+                        </BitButton>
+                    </BitStack>
+
+                    @if (!string.IsNullOrWhiteSpace(_snapshot.FitPlanReadError))
+                    {
+                        <BitMessage Color="BitColor.Error" data-proof-fit-read-error="true">
+                            @_snapshot.FitPlanReadError
+                        </BitMessage>
+                    }
+
+                    @if (!string.IsNullOrWhiteSpace(FitValidationMessage))
+                    {
+                        <BitMessage Color="BitColor.Warning" data-proof-fit-validation-error="true">
+                            @FitValidationMessage
+                        </BitMessage>
+                    }
+
+                    @if (_snapshot.FitPlan is null)
+                    {
+                        <BitText Typography="BitTypography.Caption1" Color="BitColor.SecondaryForeground" data-proof-fit-empty="true">
+                            No Fit plan loaded for active chapter. Confirm batch Pick truth, then load chapter Fit.
+                        </BitText>
+                    }
+                    else if (ActiveFitItems.Count == 0)
+                    {
+                        <BitText Typography="BitTypography.Caption1" Color="BitColor.SecondaryForeground" data-proof-fit-row-empty="true">
+                            Active chapter has zero Fit rows. Pick truth has no target-bearing assignments for this chapter.
+                        </BitText>
+                    }
+                    else
+                    {
+                        @foreach (var fitItem in ActiveFitItems)
+                        {
+                            <BitCard Class="proof-pickups-fit-row" data-proof-fit-row="true" data-proof-fit-item-id="@fitItem.FitItemId">
+                                <BitStack Horizontal="false" Gap="0.55rem">
+                                    <BitStack Horizontal="true" Gap="0.5rem" VerticalAlign="BitAlignment.Center" Wrap="true">
+                                        <BitText Typography="BitTypography.Body2">
+                                            Error #@fitItem.Target.ErrorNumber — sentence @fitItem.Target.SentenceId — segment @ShortId(fitItem.PickupSegmentId)
+                                        </BitText>
+                                        <BitTag Color="@FitStatusColor(fitItem.Status)" data-proof-fit-status="true">
+                                            @FormatFitStatus(fitItem.Status)
+                                        </BitTag>
+                                        <BitTag Color="@FitCommitStatusColor(fitItem.Commit.Status)" data-proof-fit-commit-state="true">
+                                            Commit @FormatFitCommitStatus(fitItem.Commit.Status)
+                                        </BitTag>
+                                    </BitStack>
+
+                                    <BitGrid Columns="3" Gap="0.5rem">
+                                        <BitGridItem>
+                                            <BitText Typography="BitTypography.Caption1" Color="BitColor.SecondaryForeground">Target</BitText>
+                                            <BitText Typography="BitTypography.Body2">@DescribePickTarget(fitItem.Target)</BitText>
+                                        </BitGridItem>
+                                        <BitGridItem>
+                                            <BitText Typography="BitTypography.Caption1" Color="BitColor.SecondaryForeground">Placement</BitText>
+                                            <BitText Typography="BitTypography.Body2" data-proof-fit-placement="true">@FormatRange(fitItem.Placement.StartSec, fitItem.Placement.EndSec)</BitText>
+                                        </BitGridItem>
+                                        <BitGridItem>
+                                            <BitText Typography="BitTypography.Caption1" Color="BitColor.SecondaryForeground">Replacement id</BitText>
+                                            <BitText Typography="BitTypography.Body2">@ShortId(fitItem.ReplacementId)</BitText>
+                                        </BitGridItem>
+                                    </BitGrid>
+
+                                    <div class="proof-pickups-fit-controls">
+                                        <fieldset class="proof-pickups-fit-fieldset" data-proof-fit-outer-bounds="true">
+                                            <legend>Outer chapter cut</legend>
+                                            <label>
+                                                <span>Start sec</span>
+                                                <input type="number"
+                                                       step="0.001"
+                                                       min="0"
+                                                       value="@FormatSeconds(fitItem.OuterRange.StartSec)"
+                                                       disabled="@(!CanEditFitItem(fitItem))"
+                                                       data-proof-fit-outer-start="true"
+                                                       @onchange="args => HandleFitOuterBoundaryChangedAsync(fitItem, FitFieldStart, args.Value?.ToString())" />
+                                            </label>
+                                            <label>
+                                                <span>End sec</span>
+                                                <input type="number"
+                                                       step="0.001"
+                                                       min="0"
+                                                       value="@FormatSeconds(fitItem.OuterRange.EndSec)"
+                                                       disabled="@(!CanEditFitItem(fitItem))"
+                                                       data-proof-fit-outer-end="true"
+                                                       @onchange="args => HandleFitOuterBoundaryChangedAsync(fitItem, FitFieldEnd, args.Value?.ToString())" />
+                                            </label>
+                                        </fieldset>
+
+                                        <fieldset class="proof-pickups-fit-fieldset" data-proof-fit-inner-bounds="true">
+                                            <legend>Inner pickup cut</legend>
+                                            <label>
+                                                <span>Start sec</span>
+                                                <input type="number"
+                                                       step="0.001"
+                                                       min="0"
+                                                       value="@FormatSeconds(fitItem.InnerRange.StartSec)"
+                                                       disabled="@(!CanEditFitItem(fitItem))"
+                                                       data-proof-fit-inner-start="true"
+                                                       @onchange="args => HandleFitInnerBoundaryChangedAsync(fitItem, FitFieldStart, args.Value?.ToString())" />
+                                            </label>
+                                            <label>
+                                                <span>End sec</span>
+                                                <input type="number"
+                                                       step="0.001"
+                                                       min="0"
+                                                       value="@FormatSeconds(fitItem.InnerRange.EndSec)"
+                                                       disabled="@(!CanEditFitItem(fitItem))"
+                                                       data-proof-fit-inner-end="true"
+                                                       @onchange="args => HandleFitInnerBoundaryChangedAsync(fitItem, FitFieldEnd, args.Value?.ToString())" />
+                                            </label>
+                                        </fieldset>
+
+                                        <fieldset class="proof-pickups-fit-fieldset" data-proof-fit-roomtone-policy="true">
+                                            <legend>Roomtone policy</legend>
+                                            <label>
+                                                <span>Before sec</span>
+                                                <input type="number"
+                                                       step="0.001"
+                                                       min="0"
+                                                       value="@FormatSeconds(fitItem.TransitionPolicy.RoomtoneBeforeSec)"
+                                                       disabled="@(!CanEditFitItem(fitItem))"
+                                                       data-proof-fit-roomtone-before="true"
+                                                       @onchange="args => HandleFitPolicyChangedAsync(fitItem, FitFieldRoomtoneBefore, args.Value?.ToString())" />
+                                            </label>
+                                            <label>
+                                                <span>After sec</span>
+                                                <input type="number"
+                                                       step="0.001"
+                                                       min="0"
+                                                       value="@FormatSeconds(fitItem.TransitionPolicy.RoomtoneAfterSec)"
+                                                       disabled="@(!CanEditFitItem(fitItem))"
+                                                       data-proof-fit-roomtone-after="true"
+                                                       @onchange="args => HandleFitPolicyChangedAsync(fitItem, FitFieldRoomtoneAfter, args.Value?.ToString())" />
+                                            </label>
+                                            <label class="proof-pickups-fit-wide-input">
+                                                <span>Roomtone asset</span>
+                                                <input type="text"
+                                                       value="@(fitItem.TransitionPolicy.RoomtoneAssetId ?? string.Empty)"
+                                                       disabled="@(!CanEditFitItem(fitItem))"
+                                                       data-proof-fit-roomtone-asset="true"
+                                                       @onchange="args => HandleFitPolicyChangedAsync(fitItem, FitFieldRoomtoneAsset, args.Value?.ToString())" />
+                                            </label>
+                                        </fieldset>
+
+                                        <fieldset class="proof-pickups-fit-fieldset" data-proof-fit-crossfade="true">
+                                            <legend>Crossfade</legend>
+                                            <label>
+                                                <span>Duration sec</span>
+                                                <input type="number"
+                                                       step="0.001"
+                                                       min="0"
+                                                       value="@FormatSeconds(fitItem.TransitionPolicy.CrossfadeDurationSec)"
+                                                       disabled="@(!CanEditFitItem(fitItem))"
+                                                       data-proof-fit-crossfade-duration="true"
+                                                       @onchange="args => HandleFitPolicyChangedAsync(fitItem, FitFieldCrossfadeDuration, args.Value?.ToString())" />
+                                            </label>
+                                            <label>
+                                                <span>Curve</span>
+                                                <select value="@fitItem.TransitionPolicy.CrossfadeCurve"
+                                                        disabled="@(!CanEditFitItem(fitItem))"
+                                                        data-proof-fit-crossfade-curve="true"
+                                                        @onchange="args => HandleFitPolicyChangedAsync(fitItem, FitFieldCrossfadeCurve, args.Value?.ToString())">
+                                                    @foreach (var curve in FitCrossfadeCurves)
+                                                    {
+                                                        <option value="@curve">@curve</option>
+                                                    }
+                                                </select>
+                                            </label>
+                                        </fieldset>
+                                    </div>
+
+                                    <BitGrid Columns="4" Gap="0.5rem">
+                                        <BitGridItem>
+                                            <BitText Typography="BitTypography.Caption1" Color="BitColor.SecondaryForeground">Preview version</BitText>
+                                            <BitText Typography="BitTypography.Body2" data-proof-fit-preview-version="true">@(fitItem.PreviewEvidence?.PreviewVersion.ToString(CultureInfo.InvariantCulture) ?? "(none)")</BitText>
+                                        </BitGridItem>
+                                        <BitGridItem>
+                                            <BitText Typography="BitTypography.Caption1" Color="BitColor.SecondaryForeground">Accepted</BitText>
+                                            <BitText Typography="BitTypography.Body2" data-proof-fit-accepted-state="true">@FormatBool(fitItem.Acceptance.IsAccepted)</BitText>
+                                        </BitGridItem>
+                                        <BitGridItem>
+                                            <BitText Typography="BitTypography.Caption1" Color="BitColor.SecondaryForeground">Commit ready</BitText>
+                                            <BitText Typography="BitTypography.Body2" data-proof-fit-commit-ready="true">@FormatBool(IsFitItemCommitReady(fitItem))</BitText>
+                                        </BitGridItem>
+                                        <BitGridItem>
+                                            <BitText Typography="BitTypography.Caption1" Color="BitColor.SecondaryForeground">Commit result</BitText>
+                                            <BitText Typography="BitTypography.Body2" data-proof-fit-commit-result="true">@FormatFitCommitResult(fitItem)</BitText>
+                                        </BitGridItem>
+                                    </BitGrid>
+
+                                    @if (fitItem.PreviewEvidence?.SentenceContexts.Count > 0)
+                                    {
+                                        <BitStack Horizontal="false" Gap="0.2rem" data-proof-fit-preview-context="true">
+                                            <BitText Typography="BitTypography.Caption1" Color="BitColor.SecondaryForeground">Preview context</BitText>
+                                            @foreach (var context in fitItem.PreviewEvidence.SentenceContexts)
+                                            {
+                                                <BitText Typography="BitTypography.Caption1">
+                                                    @FormatPreviewContext(context)
+                                                </BitText>
+                                            }
+                                        </BitStack>
+                                    }
+
+                                    @if (!string.IsNullOrWhiteSpace(fitItem.ValidationError))
+                                    {
+                                        <BitText Typography="BitTypography.Caption1" Color="BitColor.Warning" data-proof-fit-item-validation-error="true">
+                                            @fitItem.ValidationError
+                                        </BitText>
+                                    }
+
+                                    @if (!string.IsNullOrWhiteSpace(fitItem.CommitError ?? fitItem.Commit.Error))
+                                    {
+                                        <BitText Typography="BitTypography.Caption1" Color="BitColor.Error" data-proof-fit-commit-failure="true">
+                                            @(fitItem.CommitError ?? fitItem.Commit.Error)
+                                        </BitText>
+                                    }
+
+                                    <BitStack Horizontal="true" Gap="0.4rem" Wrap="true">
+                                        <BitButton Variant="BitVariant.Outline"
+                                                   Size="BitSize.Small"
+                                                   Color="BitColor.Primary"
+                                                   OnClick="() => HandleFitPreviewAsync(fitItem)"
+                                                   IsEnabled="@CanPreviewFitItem(fitItem)"
+                                                   data-proof-fit-preview="true">
+                                            Preview Fit
+                                        </BitButton>
+                                        <BitButton Variant="BitVariant.Fill"
+                                                   Size="BitSize.Small"
+                                                   Color="BitColor.Success"
+                                                   OnClick="() => HandleFitAcceptAsync(fitItem)"
+                                                   IsEnabled="@CanAcceptFitPreview(fitItem)"
+                                                   data-proof-fit-accept="true">
+                                            Accept Preview
+                                        </BitButton>
+                                        <BitButton Variant="BitVariant.Fill"
+                                                   Size="BitSize.Small"
+                                                   Color="BitColor.Primary"
+                                                   OnClick="() => HandleFitCommitAsync(fitItem)"
+                                                   IsEnabled="@CanCommitFitItem(fitItem)"
+                                                   data-proof-fit-commit="true">
+                                            Commit Fit
+                                        </BitButton>
+                                    </BitStack>
                                 </BitStack>
                             </BitCard>
                         }
@@ -533,6 +804,38 @@
                             <BitText Typography="BitTypography.Caption1" Color="BitColor.SecondaryForeground">Pick chapter counts</BitText>
                             <BitText Typography="BitTypography.Body2" data-proof-pick-chapter-counts="true">@FormatPickChapterCounts()</BitText>
                         </BitGridItem>
+                        <BitGridItem>
+                            <BitText Typography="BitTypography.Caption1" Color="BitColor.SecondaryForeground">Fit plan revision</BitText>
+                            <BitText Typography="BitTypography.Body2" data-proof-fit-revision="true">@(_snapshot.FitPlanRevision?.ToString(CultureInfo.InvariantCulture) ?? "(none)")</BitText>
+                        </BitGridItem>
+                        <BitGridItem>
+                            <BitText Typography="BitTypography.Caption1" Color="BitColor.SecondaryForeground">Last Fit op id</BitText>
+                            <BitText Typography="BitTypography.Body2" data-proof-fit-last-op="true">@(_snapshot.LastFitOperationId ?? "(none)")</BitText>
+                        </BitGridItem>
+                        <BitGridItem>
+                            <BitText Typography="BitTypography.Caption1" Color="BitColor.SecondaryForeground">Last Fit validation error</BitText>
+                            <BitText Typography="BitTypography.Body2" data-proof-fit-validation-diagnostic="true">@(_snapshot.LastFitValidationError ?? "(none)")</BitText>
+                        </BitGridItem>
+                        <BitGridItem>
+                            <BitText Typography="BitTypography.Caption1" Color="BitColor.SecondaryForeground">Fit status counts</BitText>
+                            <BitText Typography="BitTypography.Body2" data-proof-fit-status-counts="true">@FormatFitStatusCounts()</BitText>
+                        </BitGridItem>
+                        <BitGridItem>
+                            <BitText Typography="BitTypography.Caption1" Color="BitColor.SecondaryForeground">Fit preview version</BitText>
+                            <BitText Typography="BitTypography.Body2" data-proof-fit-preview-version="true">@FormatFitPreviewVersionDiagnostic()</BitText>
+                        </BitGridItem>
+                        <BitGridItem>
+                            <BitText Typography="BitTypography.Caption1" Color="BitColor.SecondaryForeground">Fit accepted rows</BitText>
+                            <BitText Typography="BitTypography.Body2" data-proof-fit-accepted-count="true">@FormatFitAcceptedCount()</BitText>
+                        </BitGridItem>
+                        <BitGridItem>
+                            <BitText Typography="BitTypography.Caption1" Color="BitColor.SecondaryForeground">Fit commit-ready rows</BitText>
+                            <BitText Typography="BitTypography.Body2" data-proof-fit-commit-ready-count="true">@FormatFitCommitReadyCount()</BitText>
+                        </BitGridItem>
+                        <BitGridItem>
+                            <BitText Typography="BitTypography.Caption1" Color="BitColor.SecondaryForeground">Fit commit status</BitText>
+                            <BitText Typography="BitTypography.Body2" data-proof-fit-commit-status="true">@FormatFitCommitStateCounts()</BitText>
+                        </BitGridItem>
                     </BitGrid>
 
                     @if (!string.IsNullOrWhiteSpace(_snapshot.DeterministicOrderingDiagnostics))
@@ -597,6 +900,45 @@
     private ProofPickupsSessionSnapshot _snapshot = ProofPickupsSessionSnapshot.Empty;
     private CancellationTokenSource? _actionCts;
     private readonly Dictionary<string, string> _selectedPickTargets = new(StringComparer.Ordinal);
+    private string? _fitInputValidationError;
+
+    private const string FitFieldStart = "start";
+    private const string FitFieldEnd = "end";
+    private const string FitFieldRoomtoneBefore = "roomtone-before";
+    private const string FitFieldRoomtoneAfter = "roomtone-after";
+    private const string FitFieldRoomtoneAsset = "roomtone-asset";
+    private const string FitFieldCrossfadeDuration = "crossfade-duration";
+    private const string FitFieldCrossfadeCurve = "crossfade-curve";
+
+    private static readonly string[] FitCrossfadeCurves =
+    {
+        "equal-power",
+        "linear",
+        "nofade",
+        "tri",
+        "qsin",
+        "esin",
+        "hsin",
+        "log",
+        "ipar",
+        "qua",
+        "cub",
+        "squ",
+        "cbr",
+        "par",
+        "exp",
+        "iqsin",
+        "ihsin",
+        "dese",
+        "desi",
+        "losi",
+        "sinc",
+        "isinc",
+        "quat",
+        "quatr",
+        "qsin2",
+        "hsin2"
+    };
 
     private ICollection<BitDropdownItem<string>> ChapterItems
         => Workspace.AvailableChapters
@@ -655,6 +997,71 @@
                 .ThenBy(target => target.SentenceId)
                 .ToArray();
         }
+    }
+
+    private IReadOnlyList<PickupFitPlanItem> ActiveFitItems
+        => _snapshot.FitPlan?.GetDeterministicItemOrder() ?? Array.Empty<PickupFitPlanItem>();
+
+    private string? FitValidationMessage
+    {
+        get
+        {
+            var messages = new[]
+                {
+                    _fitInputValidationError,
+                    _snapshot.LastFitValidationError,
+                    _snapshot.FitPlan?.LastValidationError
+                }
+                .Where(message => !string.IsNullOrWhiteSpace(message))
+                .Select(message => message!.Trim())
+                .Distinct(StringComparer.Ordinal)
+                .ToArray();
+
+            return messages.Length == 0 ? null : string.Join(" ", messages);
+        }
+    }
+
+    private bool CanLoadFitPlan
+        => !_snapshot.IsBusy
+           && _snapshot.HasActiveChapter
+           && _snapshot.PickMap is { IsDraft: false }
+           && string.IsNullOrWhiteSpace(_snapshot.PickMapReadError)
+           && string.IsNullOrWhiteSpace(_snapshot.FitPlanReadError);
+
+    private bool CanEditFitItem(PickupFitPlanItem item)
+        => !_snapshot.IsBusy
+           && _snapshot.FitPlan is not null
+           && TryGetFitRevision(out _)
+           && string.IsNullOrWhiteSpace(_snapshot.FitPlanReadError)
+           && item.Status != PickupFitPlanItemStatus.Committed
+           && item.Commit.Status != PickupFitCommitStatus.Committed;
+
+    private bool CanPreviewFitItem(PickupFitPlanItem item)
+        => CanEditFitItem(item);
+
+    private bool CanAcceptFitPreview(PickupFitPlanItem item)
+        => CanEditFitItem(item)
+           && _snapshot.FitPlan is not null
+           && item.PreviewEvidence is not null
+           && item.PreviewEvidence.MatchesPickTruth(_snapshot.FitPlan.PickMapRevision, _snapshot.FitPlan.PickAssignmentsFingerprint);
+
+    private bool CanCommitFitItem(PickupFitPlanItem item)
+        => !_snapshot.IsBusy
+           && _snapshot.FitPlan is not null
+           && TryGetFitRevision(out _)
+           && string.IsNullOrWhiteSpace(_snapshot.FitPlanReadError)
+           && IsFitItemCommitReady(item);
+
+    private static bool IsFitItemCommitReady(PickupFitPlanItem item)
+        => item.Acceptance.IsAccepted
+           && item.PreviewEvidence is not null
+           && item.Acceptance.AcceptedPreviewVersion == item.PreviewEvidence.PreviewVersion
+           && item.Commit.Status == PickupFitCommitStatus.Ready;
+
+    private bool TryGetFitRevision(out int expectedRevision)
+    {
+        expectedRevision = _snapshot.FitPlanRevision ?? _snapshot.FitPlan?.Revision ?? -1;
+        return expectedRevision >= 0;
     }
 
     private bool CanSavePickMap
@@ -725,6 +1132,7 @@
         }
 
         _selectedChapter = chapterName;
+        _fitInputValidationError = null;
         _snapshot = Session.SyncToWorkspace();
         SyncPickTargetSelections();
 
@@ -744,6 +1152,7 @@
             return;
         }
 
+        _fitInputValidationError = null;
         ReplaceActionCts();
         _snapshot = await Session
             .ImportPickMapAsync(_pickupSourcePath ?? string.Empty, _actionCts!.Token)
@@ -765,6 +1174,7 @@
             return;
         }
 
+        _fitInputValidationError = null;
         ReplaceActionCts();
         _snapshot = await Session
             .ConfirmPickMapAsync(_snapshot.PickMap.Revision, _actionCts!.Token)
@@ -897,6 +1307,246 @@
 
         chapterStem = value[..separatorIndex];
         return int.TryParse(value[(separatorIndex + 1)..], out errorNumber) && errorNumber > 0;
+    }
+
+    private async Task HandleLoadFitPlanAsync()
+    {
+        if (!CanLoadFitPlan)
+        {
+            return;
+        }
+
+        _fitInputValidationError = null;
+        ReplaceActionCts();
+        _snapshot = await Session
+            .LoadOrCreateFitPlanAsync(_actionCts!.Token)
+            .ConfigureAwait(false);
+
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private async Task HandleFitOuterBoundaryChangedAsync(PickupFitPlanItem item, string field, string? rawValue)
+    {
+        if (!CanEditFitItem(item) || !TryGetFitRevision(out var expectedRevision))
+        {
+            return;
+        }
+
+        var startSec = item.OuterRange.StartSec;
+        var endSec = item.OuterRange.EndSec;
+        if (!TryApplyFitRangeField(field, rawValue, "outer chapter cut", ref startSec, ref endSec))
+        {
+            await InvokeAsync(StateHasChanged);
+            return;
+        }
+
+        _fitInputValidationError = null;
+        _snapshot = await Session
+            .SetFitOuterBoundaryAsync(item.FitItemId, expectedRevision, startSec, endSec)
+            .ConfigureAwait(false);
+
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private async Task HandleFitInnerBoundaryChangedAsync(PickupFitPlanItem item, string field, string? rawValue)
+    {
+        if (!CanEditFitItem(item) || !TryGetFitRevision(out var expectedRevision))
+        {
+            return;
+        }
+
+        var startSec = item.InnerRange.StartSec;
+        var endSec = item.InnerRange.EndSec;
+        if (!TryApplyFitRangeField(field, rawValue, "inner pickup cut", ref startSec, ref endSec))
+        {
+            await InvokeAsync(StateHasChanged);
+            return;
+        }
+
+        _fitInputValidationError = null;
+        _snapshot = await Session
+            .SetFitInnerBoundaryAsync(item.FitItemId, expectedRevision, startSec, endSec)
+            .ConfigureAwait(false);
+
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private async Task HandleFitPolicyChangedAsync(PickupFitPlanItem item, string field, string? rawValue)
+    {
+        if (!CanEditFitItem(item) || !TryGetFitRevision(out var expectedRevision))
+        {
+            return;
+        }
+
+        var roomtoneBeforeSec = item.TransitionPolicy.RoomtoneBeforeSec;
+        var roomtoneAfterSec = item.TransitionPolicy.RoomtoneAfterSec;
+        var crossfadeDurationSec = item.TransitionPolicy.CrossfadeDurationSec;
+        var crossfadeCurve = item.TransitionPolicy.CrossfadeCurve;
+        var roomtoneAssetId = item.TransitionPolicy.RoomtoneAssetId;
+
+        switch (field)
+        {
+            case FitFieldRoomtoneBefore:
+                if (!TryParseFitSeconds(rawValue, "roomtone before", out roomtoneBeforeSec))
+                {
+                    await InvokeAsync(StateHasChanged);
+                    return;
+                }
+
+                break;
+            case FitFieldRoomtoneAfter:
+                if (!TryParseFitSeconds(rawValue, "roomtone after", out roomtoneAfterSec))
+                {
+                    await InvokeAsync(StateHasChanged);
+                    return;
+                }
+
+                break;
+            case FitFieldCrossfadeDuration:
+                if (!TryParseFitSeconds(rawValue, "crossfade duration", out crossfadeDurationSec))
+                {
+                    await InvokeAsync(StateHasChanged);
+                    return;
+                }
+
+                break;
+            case FitFieldCrossfadeCurve:
+                if (!TryParseFitCrossfadeCurve(rawValue, out crossfadeCurve))
+                {
+                    await InvokeAsync(StateHasChanged);
+                    return;
+                }
+
+                break;
+            case FitFieldRoomtoneAsset:
+                roomtoneAssetId = string.IsNullOrWhiteSpace(rawValue) ? null : rawValue.Trim();
+                break;
+            default:
+                _fitInputValidationError = $"Unknown Fit policy field '{field}'.";
+                await InvokeAsync(StateHasChanged);
+                return;
+        }
+
+        var policy = new PickupFitTransitionPolicy(
+            roomtoneBeforeSec,
+            roomtoneAfterSec,
+            crossfadeDurationSec,
+            crossfadeCurve,
+            roomtoneAssetId);
+
+        _fitInputValidationError = null;
+        _snapshot = await Session
+            .SetFitPolicyAsync(item.FitItemId, expectedRevision, policy)
+            .ConfigureAwait(false);
+
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private async Task HandleFitPreviewAsync(PickupFitPlanItem item)
+    {
+        if (!CanPreviewFitItem(item) || !TryGetFitRevision(out var expectedRevision))
+        {
+            return;
+        }
+
+        _fitInputValidationError = null;
+        ReplaceActionCts();
+        _snapshot = await Session
+            .GenerateFitPreviewAsync(item.FitItemId, expectedRevision, _actionCts!.Token)
+            .ConfigureAwait(false);
+
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private async Task HandleFitAcceptAsync(PickupFitPlanItem item)
+    {
+        if (!CanAcceptFitPreview(item) || !TryGetFitRevision(out var expectedRevision) || item.PreviewEvidence is null)
+        {
+            return;
+        }
+
+        _fitInputValidationError = null;
+        _snapshot = await Session
+            .AcceptFitPreviewAsync(
+                item.FitItemId,
+                expectedRevision,
+                item.PreviewEvidence.PreviewVersion,
+                acceptedBy: "proof-pickups-page")
+            .ConfigureAwait(false);
+
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private async Task HandleFitCommitAsync(PickupFitPlanItem item)
+    {
+        if (!CanCommitFitItem(item) || !TryGetFitRevision(out var expectedRevision))
+        {
+            return;
+        }
+
+        _fitInputValidationError = null;
+        ReplaceActionCts();
+        _snapshot = await Session
+            .CommitFitAsync(item.FitItemId, expectedRevision, _actionCts!.Token)
+            .ConfigureAwait(false);
+
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private bool TryApplyFitRangeField(string field, string? rawValue, string rangeName, ref double startSec, ref double endSec)
+    {
+        if (!TryParseFitSeconds(rawValue, $"{rangeName} {field}", out var parsed))
+        {
+            return false;
+        }
+
+        switch (field)
+        {
+            case FitFieldStart:
+                startSec = parsed;
+                break;
+            case FitFieldEnd:
+                endSec = parsed;
+                break;
+            default:
+                _fitInputValidationError = $"Unknown Fit range field '{field}'.";
+                return false;
+        }
+
+        if (endSec <= startSec + 0.000_001d)
+        {
+            _fitInputValidationError = $"Invalid Fit {rangeName}: end must be greater than start.";
+            return false;
+        }
+
+        _fitInputValidationError = null;
+        return true;
+    }
+
+    private bool TryParseFitSeconds(string? rawValue, string fieldName, out double value)
+    {
+        if (!double.TryParse(rawValue, NumberStyles.Float, CultureInfo.InvariantCulture, out value)
+            || double.IsNaN(value)
+            || double.IsInfinity(value)
+            || value < 0)
+        {
+            _fitInputValidationError = $"Invalid Fit {fieldName}: enter a non-negative seconds value.";
+            return false;
+        }
+
+        return true;
+    }
+
+    private bool TryParseFitCrossfadeCurve(string? rawValue, out string curve)
+    {
+        curve = string.IsNullOrWhiteSpace(rawValue) ? string.Empty : rawValue.Trim();
+        if (!FitCrossfadeCurves.Contains(curve, StringComparer.Ordinal))
+        {
+            _fitInputValidationError = $"Unsupported Fit crossfade curve '{curve}'.";
+            return false;
+        }
+
+        return true;
     }
 
     private async Task HandleStageAsync(string assetId)
@@ -1038,6 +1688,98 @@
             _ => BitColor.Secondary
         };
 
+    private string FormatFitStatusCounts()
+        => _snapshot.FitAssignmentCountsByStatus.Count == 0
+            ? "fit=(none)"
+            : string.Join(", ", _snapshot.FitAssignmentCountsByStatus
+                .OrderBy(item => item.Key)
+                .Select(item => $"{FormatFitStatus(item.Key)}={item.Value}"));
+
+    private string FormatFitPreviewVersionDiagnostic()
+    {
+        var latest = ActiveFitItems
+            .Select(item => item.PreviewEvidence?.PreviewVersion)
+            .Where(version => version.HasValue)
+            .Select(version => version!.Value)
+            .DefaultIfEmpty(0)
+            .Max();
+
+        return latest <= 0 ? "(none)" : latest.ToString(CultureInfo.InvariantCulture);
+    }
+
+    private string FormatFitAcceptedCount()
+        => ActiveFitItems.Count(item => item.Acceptance.IsAccepted).ToString(CultureInfo.InvariantCulture);
+
+    private string FormatFitCommitReadyCount()
+        => ActiveFitItems.Count(IsFitItemCommitReady).ToString(CultureInfo.InvariantCulture);
+
+    private string FormatFitCommitStateCounts()
+        => ActiveFitItems.Count == 0
+            ? "(none)"
+            : string.Join(", ", ActiveFitItems
+                .GroupBy(item => item.Commit.Status)
+                .OrderBy(group => group.Key)
+                .Select(group => $"{FormatFitCommitStatus(group.Key)}={group.Count()}"));
+
+    private static string FormatFitStatus(PickupFitPlanItemStatus status)
+        => status switch
+        {
+            PickupFitPlanItemStatus.CommitReady => "commit ready",
+            _ => status.ToString().ToLowerInvariant()
+        };
+
+    private static string FormatFitCommitStatus(PickupFitCommitStatus status)
+        => status switch
+        {
+            PickupFitCommitStatus.NotReady => "not ready",
+            _ => status.ToString().ToLowerInvariant()
+        };
+
+    private static BitColor FitStatusColor(PickupFitPlanItemStatus status)
+        => status switch
+        {
+            PickupFitPlanItemStatus.Draft => BitColor.Secondary,
+            PickupFitPlanItemStatus.Fitted => BitColor.Info,
+            PickupFitPlanItemStatus.Previewed => BitColor.Primary,
+            PickupFitPlanItemStatus.Accepted => BitColor.Success,
+            PickupFitPlanItemStatus.CommitReady => BitColor.Success,
+            PickupFitPlanItemStatus.Committed => BitColor.Success,
+            PickupFitPlanItemStatus.Failed => BitColor.Error,
+            _ => BitColor.Secondary
+        };
+
+    private static BitColor FitCommitStatusColor(PickupFitCommitStatus status)
+        => status switch
+        {
+            PickupFitCommitStatus.Ready => BitColor.Success,
+            PickupFitCommitStatus.Committed => BitColor.Success,
+            PickupFitCommitStatus.Failed => BitColor.Error,
+            _ => BitColor.Secondary
+        };
+
+    private static string FormatFitCommitResult(PickupFitPlanItem item)
+    {
+        var operationId = item.Commit.OperationId ?? item.ReplacementId;
+        var edl = item.Commit.EdlRevision?.ToString(CultureInfo.InvariantCulture) ?? "none";
+        var ledger = item.Commit.LedgerSequence?.ToString(CultureInfo.InvariantCulture) ?? "none";
+        return $"{FormatFitCommitStatus(item.Commit.Status)} · op {ShortId(operationId)} · edl {edl} · ledger {ledger}";
+    }
+
+    private static string FormatPreviewContext(PickupFitPreviewContext context)
+    {
+        var timing = context.StartSec.HasValue && context.EndSec.HasValue
+            ? FormatRange(context.StartSec.Value, context.EndSec.Value)
+            : "untimed";
+        var fitItemId = string.IsNullOrWhiteSpace(context.FitItemId) ? "none" : ShortId(context.FitItemId);
+        return $"{context.Role}: sentence {context.SentenceId}, {timing}, fit {fitItemId}";
+    }
+
+    private static string FormatBool(bool value)
+        => value ? "yes" : "no";
+
+    private static string FormatSeconds(double value)
+        => value.ToString("0.###", CultureInfo.InvariantCulture);
+
     private static string ShortId(string value)
         => string.IsNullOrWhiteSpace(value) ? "(none)" : value[..Math.Min(8, value.Length)];
 
@@ -1114,6 +1856,65 @@
         flex-wrap: wrap;
         align-items: end;
         gap: 0.5rem;
+    }
+
+    .proof-pickups-fit-row {
+        border: 1px solid var(--bit-clr-brd-sec);
+        box-shadow: 0 1px 2px rgb(0 0 0 / 0.04), 0 8px 24px rgb(0 0 0 / 0.04);
+    }
+
+    .proof-pickups-fit-controls {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(13rem, 1fr));
+        gap: 0.6rem;
+    }
+
+    .proof-pickups-fit-fieldset {
+        margin: 0;
+        min-width: 0;
+        border: 1px solid var(--bit-clr-brd-sec);
+        border-radius: 0.6rem;
+        padding: 0.55rem;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.45rem;
+    }
+
+    .proof-pickups-fit-fieldset legend {
+        padding: 0 0.25rem;
+        color: var(--bit-clr-fg-sec);
+        font-size: 0.78rem;
+    }
+
+    .proof-pickups-fit-fieldset label {
+        display: flex;
+        flex-direction: column;
+        gap: 0.2rem;
+        min-width: 5.8rem;
+        flex: 1;
+        color: var(--bit-clr-fg-sec);
+        font-size: 0.78rem;
+    }
+
+    .proof-pickups-fit-fieldset input,
+    .proof-pickups-fit-fieldset select {
+        min-height: 2.25rem;
+        border: 1px solid var(--bit-clr-brd-sec);
+        border-radius: 0.45rem;
+        padding: 0.35rem 0.5rem;
+        color: var(--bit-clr-fg-pri);
+        background: var(--bit-clr-bg-pri);
+        font: inherit;
+    }
+
+    .proof-pickups-fit-fieldset input:focus-visible,
+    .proof-pickups-fit-fieldset select:focus-visible {
+        outline: 2px solid var(--bit-clr-pri);
+        outline-offset: 2px;
+    }
+
+    .proof-pickups-fit-wide-input {
+        flex-basis: 100%;
     }
 
     .proof-pickups-pick-target {

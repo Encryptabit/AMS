@@ -60,6 +60,44 @@ public sealed class ProofPickupsPageContractTests
     }
 
     [Fact]
+    public void PickupsPage_ExposesChapterFitControlsAndDiagnostics()
+    {
+        var source = ReadRepoFile(PickupsPageRelativePath);
+
+        AssertContains(source, PickupsPageRelativePath, "Chapter Fit", "chapter Fit panel copy");
+        AssertContains(source, PickupsPageRelativePath, "Load Chapter Fit", "chapter Fit load action copy");
+        AssertContains(source, PickupsPageRelativePath, "Preview Fit", "chapter Fit preview action copy");
+        AssertContains(source, PickupsPageRelativePath, "Accept Preview", "chapter Fit accept action copy");
+        AssertContains(source, PickupsPageRelativePath, "Commit Fit", "chapter Fit commit action copy");
+        AssertContains(source, PickupsPageRelativePath, "data-proof-fit-plan=\"true\"", "Fit plan panel marker");
+        AssertContains(source, PickupsPageRelativePath, "data-proof-fit-row=\"true\"", "Fit row marker");
+        AssertContains(source, PickupsPageRelativePath, "data-proof-fit-status=\"true\"", "Fit status marker");
+        AssertContains(source, PickupsPageRelativePath, "data-proof-fit-outer-bounds=\"true\"", "Fit outer bounds marker");
+        AssertContains(source, PickupsPageRelativePath, "data-proof-fit-inner-bounds=\"true\"", "Fit inner bounds marker");
+        AssertContains(source, PickupsPageRelativePath, "data-proof-fit-placement=\"true\"", "Fit placement marker");
+        AssertContains(source, PickupsPageRelativePath, "data-proof-fit-roomtone-policy=\"true\"", "Fit roomtone policy marker");
+        AssertContains(source, PickupsPageRelativePath, "data-proof-fit-crossfade=\"true\"", "Fit crossfade marker");
+        AssertContains(source, PickupsPageRelativePath, "data-proof-fit-preview=\"true\"", "Fit preview marker");
+        AssertContains(source, PickupsPageRelativePath, "data-proof-fit-accept=\"true\"", "Fit accept marker");
+        AssertContains(source, PickupsPageRelativePath, "data-proof-fit-commit=\"true\"", "Fit commit marker");
+        AssertContains(source, PickupsPageRelativePath, "data-proof-fit-read-error=\"true\"", "Fit read error marker");
+        AssertContains(source, PickupsPageRelativePath, "data-proof-fit-validation-error=\"true\"", "Fit validation error marker");
+        AssertContains(source, PickupsPageRelativePath, "data-proof-fit-preview-version=\"true\"", "Fit preview version marker");
+        AssertContains(source, PickupsPageRelativePath, "data-proof-fit-commit-ready=\"true\"", "Fit commit-ready marker");
+        AssertContains(source, PickupsPageRelativePath, "data-proof-fit-commit-result=\"true\"", "Fit commit result marker");
+        AssertContains(source, PickupsPageRelativePath, "data-proof-fit-last-op=\"true\"", "Fit last operation marker");
+        AssertContains(source, PickupsPageRelativePath, "data-proof-fit-status-counts=\"true\"", "Fit status count marker");
+        AssertContains(source, PickupsPageRelativePath, "LoadOrCreateFitPlanAsync", "Fit load/create session binding");
+        AssertContains(source, PickupsPageRelativePath, "SetFitOuterBoundaryAsync", "Fit outer boundary session binding");
+        AssertContains(source, PickupsPageRelativePath, "SetFitInnerBoundaryAsync", "Fit inner boundary session binding");
+        AssertContains(source, PickupsPageRelativePath, "SetFitPolicyAsync", "Fit policy session binding");
+        AssertContains(source, PickupsPageRelativePath, "GenerateFitPreviewAsync", "Fit preview session binding");
+        AssertContains(source, PickupsPageRelativePath, "AcceptFitPreviewAsync", "Fit accept session binding");
+        AssertContains(source, PickupsPageRelativePath, "CommitFitAsync", "Fit commit session binding");
+        AssertContains(source, PickupsPageRelativePath, "IsEnabled=\"@CanCommitFitItem(fitItem)\"", "Fit commit disabled until commit-ready state");
+    }
+
+    [Fact]
     public void PickupsPage_ManualTargetOptionsUseSessionTargetsAndLoadedMapFallback()
     {
         var source = ReadRepoFile(PickupsPageRelativePath);
