@@ -38,6 +38,86 @@ public class PickupAssetService
         return await ImportFromSessionFileAsync(sourcePath, crxTargets, ct).ConfigureAwait(false);
     }
 
+    public async Task<(IReadOnlyList<PickupAsset> Matched, IReadOnlyList<PickupAsset> Unmatched)> ImportForPickAsync(
+        string sourcePath,
+        IReadOnlyList<CrxPickupTarget> crxTargets,
+        CancellationToken ct)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(sourcePath);
+        ArgumentNullException.ThrowIfNull(crxTargets);
+
+        if (Directory.Exists(sourcePath))
+        {
+            throw new InvalidOperationException(
+                "Folder-based pickup import is no longer supported. Provide a single stitched pickup WAV.");
+        }
+
+        if (!File.Exists(sourcePath))
+        {
+            throw new FileNotFoundException($"Source path does not exist: '{sourcePath}'");
+        }
+
+        if (crxTargets.Count == 0)
+        {
+            throw new InvalidOperationException(
+                "Pickup import requires CRX targets. No CRX targets were resolved.");
+        }
+
+        var fi = new FileInfo(sourcePath);
+        var segments = await _pickupMatching.SegmentPickupCrxAsync(sourcePath, crxTargets, ct)
+            .ConfigureAwait(false);
+        var sortedTargets = crxTargets
+            .OrderBy(target => target.ErrorNumber)
+            .ThenBy(target => target.ChapterStem, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        var matched = new List<PickupAsset>(Math.Min(segments.Count, sortedTargets.Length));
+        var unmatched = new List<PickupAsset>(Math.Max(0, segments.Count - sortedTargets.Length));
+        var now = DateTime.UtcNow;
+
+        for (var i = 0; i < segments.Count; i++)
+        {
+            var segment = segments[i];
+            if (segment.EndSec <= segment.StartSec)
+            {
+                throw new InvalidOperationException(
+                    $"Pickup candidate at index {i} has invalid source timing [{segment.StartSec:F6}, {segment.EndSec:F6}].");
+            }
+
+            if (i < sortedTargets.Length)
+            {
+                var target = sortedTargets[i];
+                matched.Add(new PickupAsset(
+                    Id: $"segment-{i + 1:D4}",
+                    SourceType: PickupSourceType.SessionSegment,
+                    SourceFilePath: fi.FullName,
+                    TrimStartSec: segment.StartSec,
+                    TrimEndSec: segment.EndSec,
+                    TranscribedText: segment.TranscribedText,
+                    Confidence: 1.0,
+                    MatchedErrorNumber: target.ErrorNumber,
+                    MatchedSentenceId: target.SentenceId,
+                    MatchedChapterStem: target.ChapterStem,
+                    ImportedAtUtc: now));
+                continue;
+            }
+
+            unmatched.Add(new PickupAsset(
+                Id: $"segment-{i + 1:D4}",
+                SourceType: PickupSourceType.SessionSegment,
+                SourceFilePath: fi.FullName,
+                TrimStartSec: segment.StartSec,
+                TrimEndSec: segment.EndSec,
+                TranscribedText: segment.TranscribedText,
+                Confidence: 0.0,
+                MatchedErrorNumber: null,
+                MatchedSentenceId: null,
+                MatchedChapterStem: null,
+                ImportedAtUtc: now));
+        }
+
+        return (matched, unmatched);
+    }
+
     public async Task<(IReadOnlyList<PickupAsset> Matched, IReadOnlyList<PickupAsset> Unmatched)> ImportFromSessionFileAsync(
         string sessionFilePath,
         IReadOnlyList<CrxPickupTarget> crxTargets,

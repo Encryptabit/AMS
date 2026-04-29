@@ -1,7 +1,11 @@
+using System.Globalization;
+using System.Security.Cryptography;
+using System.Text;
 using Ams.Core.Artifacts.Hydrate;
 using Ams.Core.Common;
 using Ams.Workstation.Server.Models;
 using Ams.Workstation.Server.Services.Pickups.Edl;
+using Ams.Workstation.Server.Services.Pickups.Pick;
 
 namespace Ams.Workstation.Server.Services;
 
@@ -10,6 +14,7 @@ public enum ProofPickupsSessionPhase
     Idle,
     ResolvingTargets,
     Importing,
+    Picking,
     Staging,
     Unstaging,
     Committing,
@@ -39,7 +44,14 @@ public sealed record ProofPickupsSessionSnapshot(
     IReadOnlyList<CrxPickupTarget> Targets,
     int? ArtifactLedgerRevision,
     IReadOnlyList<PickupArtifactLedgerEntry> ArtifactLedgerEntries,
-    string? ArtifactLedgerReadError)
+    string? ArtifactLedgerReadError,
+    PickupPickMapDocument? PickMap,
+    int? PickMapRevision,
+    string? PickMapReadError,
+    IReadOnlyDictionary<PickupPickMapAssignmentStatus, int> PickAssignmentCountsByStatus,
+    IReadOnlyDictionary<string, int> PickAssignmentCountsByChapter,
+    string? LastPickOperationId,
+    string? LastPickValidationError)
 {
     public static ProofPickupsSessionSnapshot Empty { get; } = new(
         ActiveChapterName: null,
@@ -61,12 +73,20 @@ public sealed record ProofPickupsSessionSnapshot(
         Targets: Array.Empty<CrxPickupTarget>(),
         ArtifactLedgerRevision: null,
         ArtifactLedgerEntries: Array.Empty<PickupArtifactLedgerEntry>(),
-        ArtifactLedgerReadError: null);
+        ArtifactLedgerReadError: null,
+        PickMap: null,
+        PickMapRevision: null,
+        PickMapReadError: null,
+        PickAssignmentCountsByStatus: new Dictionary<PickupPickMapAssignmentStatus, int>(),
+        PickAssignmentCountsByChapter: new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase),
+        LastPickOperationId: null,
+        LastPickValidationError: null);
 
     public bool HasActiveChapter => !string.IsNullOrWhiteSpace(ActiveChapterStem);
 
     public bool IsBusy => Phase is ProofPickupsSessionPhase.ResolvingTargets
         or ProofPickupsSessionPhase.Importing
+        or ProofPickupsSessionPhase.Picking
         or ProofPickupsSessionPhase.Staging
         or ProofPickupsSessionPhase.Unstaging
         or ProofPickupsSessionPhase.Committing
@@ -88,6 +108,7 @@ public sealed class ProofPickupsSessionService
         StagingQueueService stagingQueueService,
         PickupEdlStore pickupEdlStore,
         PickupArtifactLedgerStore pickupArtifactLedgerStore,
+        PickupPickMapStore pickupPickMapStore,
         PickupEdlEngine pickupEdlEngine)
         : this(
             workspace,
@@ -119,7 +140,11 @@ public sealed class ProofPickupsSessionService
                 TryGetOperation: (document, operationId) => pickupEdlEngine.TryGetOperation(document, operationId),
                 TransitionOperationState: (document, operationId, nextState) =>
                     pickupEdlEngine.TransitionOperationState(document, operationId, nextState, DateTime.UtcNow),
-                BuildOrderingDiagnostics: document => pickupEdlEngine.BuildDeterministicOrderingDiagnostics(document)))
+                BuildOrderingDiagnostics: document => pickupEdlEngine.BuildDeterministicOrderingDiagnostics(document),
+                ImportPickAssetsAsync: (sourcePath, targets, ct) => pickupAssetService.ImportForPickAsync(sourcePath, targets, ct),
+                ReadPickMapDocument: ct => pickupPickMapStore.TryRead(ct),
+                LoadOrCreatePickMap: (source, ct) => pickupPickMapStore.LoadOrCreate(source, ct),
+                SavePickMap: (source, document, ct) => pickupPickMapStore.Save(source, document, ct)))
     {
     }
 
@@ -153,6 +178,13 @@ public sealed class ProofPickupsSessionService
                 ArtifactLedgerRevision = null,
                 ArtifactLedgerEntries = Array.Empty<PickupArtifactLedgerEntry>(),
                 ArtifactLedgerReadError = null,
+                PickMap = null,
+                PickMapRevision = null,
+                PickMapReadError = null,
+                PickAssignmentCountsByStatus = new Dictionary<PickupPickMapAssignmentStatus, int>(),
+                PickAssignmentCountsByChapter = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase),
+                LastPickOperationId = null,
+                LastPickValidationError = null,
                 LastError = chapterError,
                 LastOperationId = null,
                 Phase = ProofPickupsSessionPhase.Idle,
@@ -176,6 +208,12 @@ public sealed class ProofPickupsSessionService
             ct,
             chapterChanged ? null : _snapshot.ArtifactLedgerRevision,
             chapterChanged ? Array.Empty<PickupArtifactLedgerEntry>() : _snapshot.ArtifactLedgerEntries);
+        var pickDiagnostics = ReadPickMapDiagnostics(
+            ct,
+            _snapshot.PickMap,
+            _snapshot.PickMapRevision,
+            _snapshot.LastPickOperationId,
+            _snapshot.LastPickValidationError);
 
         _snapshot = _snapshot with
         {
@@ -197,7 +235,14 @@ public sealed class ProofPickupsSessionService
             ArtifactLedgerRevision = ledgerRevision,
             ArtifactLedgerEntries = ledgerEntries,
             ArtifactLedgerReadError = ledgerReadError,
-            LastError = edlReadError ?? (chapterChanged ? null : _snapshot.LastError),
+            PickMap = pickDiagnostics.Map,
+            PickMapRevision = pickDiagnostics.Revision,
+            PickMapReadError = pickDiagnostics.ReadError,
+            PickAssignmentCountsByStatus = pickDiagnostics.CountsByStatus,
+            PickAssignmentCountsByChapter = pickDiagnostics.CountsByChapter,
+            LastPickOperationId = pickDiagnostics.LastOperationId,
+            LastPickValidationError = pickDiagnostics.LastValidationError,
+            LastError = edlReadError ?? pickDiagnostics.ReadError ?? (chapterChanged ? null : _snapshot.LastError),
             LastOperationId = chapterChanged ? null : _snapshot.LastOperationId,
             Phase = chapterChanged ? ProofPickupsSessionPhase.Idle : _snapshot.Phase,
             Progress = chapterChanged ? 0d : _snapshot.Progress
@@ -349,6 +394,341 @@ public sealed class ProofPickupsSessionService
                 chapterStem,
                 $"Pickup import failed for chapter '{chapterStem}': {ex.Message}");
         }
+    }
+
+    public async Task<ProofPickupsSessionSnapshot> ImportPickMapAsync(string sourcePath, CancellationToken ct = default)
+    {
+        var synced = SyncToWorkspace(ct);
+        if (!synced.HasActiveChapter)
+        {
+            return _snapshot;
+        }
+
+        var chapterName = synced.ActiveChapterName!;
+        var chapterStem = synced.ActiveChapterStem!;
+        var baseline = synced;
+        var operationId = CreatePickOperationId("import");
+
+        sourcePath = AmsPathResolver.NormalizeOptionalPath(sourcePath) ?? sourcePath?.Trim() ?? string.Empty;
+        if (string.IsNullOrWhiteSpace(sourcePath))
+        {
+            return FailPickAndPreserve(
+                baseline,
+                chapterName,
+                chapterStem,
+                "Pickup source path is required.",
+                operationId);
+        }
+
+        if (Directory.Exists(sourcePath))
+        {
+            return FailPickAndPreserve(
+                baseline,
+                chapterName,
+                chapterStem,
+                "Directory pickup sources are not supported. Provide one stitched pickup WAV file.",
+                operationId);
+        }
+
+        if (!File.Exists(sourcePath))
+        {
+            return FailPickAndPreserve(
+                baseline,
+                chapterName,
+                chapterStem,
+                $"Pickup source file is missing: '{sourcePath}'.",
+                operationId);
+        }
+
+        _snapshot = baseline with
+        {
+            Phase = ProofPickupsSessionPhase.ResolvingTargets,
+            Progress = 0.12d,
+            LastError = null,
+            LastPickOperationId = operationId,
+            LastPickValidationError = null
+        };
+
+        List<CrxPickupTarget> targets;
+        PickupPickMapSourceReference source;
+        try
+        {
+            targets = BuildBatchCrxTargets();
+            if (targets.Count == 0)
+            {
+                throw new InvalidOperationException(
+                    "No CRX targets were resolved for the pickup batch. Import is blocked.");
+            }
+
+            source = BuildPickMapSourceReference(sourcePath, targets);
+        }
+        catch (Exception ex)
+        {
+            return FailPickAndPreserve(
+                baseline,
+                chapterName,
+                chapterStem,
+                ex.Message,
+                operationId);
+        }
+
+        _snapshot = _snapshot with
+        {
+            Phase = ProofPickupsSessionPhase.Importing,
+            Progress = 0.45d,
+            Targets = targets,
+            LastError = null,
+            LastPickOperationId = operationId,
+            LastPickValidationError = null
+        };
+
+        try
+        {
+            var importPickAssets = _hooks.ImportPickAssetsAsync ?? _hooks.ImportAssetsAsync;
+            var (matched, unmatched) = await importPickAssets(sourcePath, targets, ct).ConfigureAwait(false);
+            var assignments = BuildPickAssignments(matched, unmatched, targets);
+            var validationError = BuildPickImportValidationError(assignments, targets);
+            var now = DateTime.UtcNow;
+            var draft = new PickupPickMapDocument(
+                schemaVersion: PickupPickMapDocument.CurrentSchemaVersion,
+                revision: 0,
+                source: source,
+                assignments: assignments,
+                createdAtUtc: now,
+                updatedAtUtc: now,
+                lastOperationId: operationId,
+                lastValidationError: validationError,
+                isDraft: true);
+
+            var saved = SavePickMapOrThrow(source, draft, ct);
+            _workspace.SetPolishPaths(sourcePath, _workspace.RoomtoneFilePath);
+
+            _snapshot = ApplyPickMapToSnapshot(
+                baseline with
+                {
+                    SourcePath = sourcePath,
+                    Matched = matched.ToArray(),
+                    Unmatched = unmatched.ToArray(),
+                    Targets = targets,
+                    Phase = ProofPickupsSessionPhase.Completed,
+                    Progress = 1d,
+                    LastError = null
+                },
+                saved,
+                readError: null,
+                operationId,
+                validationError);
+
+            return _snapshot;
+        }
+        catch (OperationCanceledException)
+        {
+            _snapshot = baseline with
+            {
+                Phase = ProofPickupsSessionPhase.Cancelled,
+                LastError = "Pickup Pick import cancelled. Prior Pick map preserved.",
+                LastPickOperationId = operationId,
+                LastPickValidationError = "Pickup Pick import cancelled."
+            };
+
+            return _snapshot;
+        }
+        catch (Exception ex)
+        {
+            return FailPickAndPreserve(
+                baseline,
+                chapterName,
+                chapterStem,
+                $"Pickup Pick import failed for source '{sourcePath}': {ex.Message}",
+                operationId);
+        }
+    }
+
+    public Task<ProofPickupsSessionSnapshot> SetPickAssignmentTargetAsync(
+        string assignmentId,
+        int expectedRevision,
+        string chapterStem,
+        int errorNumber,
+        string? note = null,
+        CancellationToken ct = default)
+    {
+        var synced = SyncToWorkspace(ct);
+        if (!synced.HasActiveChapter)
+        {
+            return Task.FromResult(_snapshot);
+        }
+
+        var operationId = CreatePickOperationId("override");
+        return Task.FromResult(MutatePickMap(
+            synced,
+            operationId,
+            expectedRevision,
+            targetStatus: PickupPickMapAssignmentStatus.Override,
+            mutation: (document, targets, source) =>
+            {
+                if (string.IsNullOrWhiteSpace(assignmentId))
+                {
+                    throw new InvalidOperationException("Cannot update Pick assignment: assignment id is empty.");
+                }
+
+                if (string.IsNullOrWhiteSpace(chapterStem))
+                {
+                    throw new InvalidOperationException("Cannot update Pick assignment: target chapter stem is empty.");
+                }
+
+                if (errorNumber <= 0)
+                {
+                    throw new InvalidOperationException($"Cannot update Pick assignment '{assignmentId}': target error number must be greater than zero.");
+                }
+
+                var target = targets.FirstOrDefault(candidate =>
+                    string.Equals(candidate.ChapterStem, chapterStem, StringComparison.OrdinalIgnoreCase)
+                    && candidate.ErrorNumber == errorNumber);
+                if (target is null)
+                {
+                    throw new InvalidOperationException(
+                        $"Unknown Pick target chapter '{chapterStem}' error #{errorNumber} for assignment '{assignmentId}'.");
+                }
+
+                return ReplacePickAssignment(
+                    document,
+                    assignmentId,
+                    existing => new PickupPickMapAssignment(
+                        id: existing.Id,
+                        pickupSegmentId: existing.PickupSegmentId,
+                        sourceStartSec: existing.SourceStartSec,
+                        sourceEndSec: existing.SourceEndSec,
+                        status: PickupPickMapAssignmentStatus.Override,
+                        inferredTarget: existing.InferredTarget,
+                        selectedTarget: ToPickTargetReference(target),
+                        confidence: existing.Confidence,
+                        note: note,
+                        validationError: null,
+                        updatedAtUtc: DateTime.UtcNow),
+                    source,
+                    operationId,
+                    validationError: null,
+                    isDraft: true);
+            }));
+    }
+
+    public Task<ProofPickupsSessionSnapshot> SetPickAssignmentDispositionAsync(
+        string assignmentId,
+        int expectedRevision,
+        PickupPickMapAssignmentStatus disposition,
+        string? note = null,
+        CancellationToken ct = default)
+    {
+        var synced = SyncToWorkspace(ct);
+        if (!synced.HasActiveChapter)
+        {
+            return Task.FromResult(_snapshot);
+        }
+
+        var operationId = CreatePickOperationId("disposition");
+        return Task.FromResult(MutatePickMap(
+            synced,
+            operationId,
+            expectedRevision,
+            targetStatus: disposition,
+            mutation: (document, _, source) =>
+            {
+                if (string.IsNullOrWhiteSpace(assignmentId))
+                {
+                    throw new InvalidOperationException("Cannot update Pick assignment: assignment id is empty.");
+                }
+
+                if (disposition is not (PickupPickMapAssignmentStatus.Rejected
+                    or PickupPickMapAssignmentStatus.Deferred
+                    or PickupPickMapAssignmentStatus.NotApplicable))
+                {
+                    throw new InvalidOperationException(
+                        $"Invalid Pick disposition '{disposition}'. Use Rejected, Deferred, or NotApplicable.");
+                }
+
+                return ReplacePickAssignment(
+                    document,
+                    assignmentId,
+                    existing => new PickupPickMapAssignment(
+                        id: existing.Id,
+                        pickupSegmentId: existing.PickupSegmentId,
+                        sourceStartSec: existing.SourceStartSec,
+                        sourceEndSec: existing.SourceEndSec,
+                        status: disposition,
+                        inferredTarget: existing.InferredTarget,
+                        selectedTarget: null,
+                        confidence: existing.Confidence,
+                        note: note,
+                        validationError: null,
+                        updatedAtUtc: DateTime.UtcNow),
+                    source,
+                    operationId,
+                    validationError: null,
+                    isDraft: true);
+            }));
+    }
+
+    public Task<ProofPickupsSessionSnapshot> ConfirmPickMapAsync(int expectedRevision, CancellationToken ct = default)
+    {
+        var synced = SyncToWorkspace(ct);
+        if (!synced.HasActiveChapter)
+        {
+            return Task.FromResult(_snapshot);
+        }
+
+        var operationId = CreatePickOperationId("confirm");
+        return Task.FromResult(MutatePickMap(
+            synced,
+            operationId,
+            expectedRevision,
+            targetStatus: PickupPickMapAssignmentStatus.Confirmed,
+            mutation: (document, targets, source) =>
+            {
+                var unresolved = document.Assignments
+                    .Where(assignment => assignment.Status == PickupPickMapAssignmentStatus.Unresolved)
+                    .Select(assignment => assignment.Id)
+                    .ToArray();
+                if (unresolved.Length > 0)
+                {
+                    throw new InvalidOperationException(
+                        $"Cannot confirm Pick map: unresolved assignment(s) remain: {string.Join(", ", unresolved)}.");
+                }
+
+                var assignments = document.Assignments
+                    .Select(assignment => assignment.Status == PickupPickMapAssignmentStatus.Inferred
+                        ? new PickupPickMapAssignment(
+                            id: assignment.Id,
+                            pickupSegmentId: assignment.PickupSegmentId,
+                            sourceStartSec: assignment.SourceStartSec,
+                            sourceEndSec: assignment.SourceEndSec,
+                            status: PickupPickMapAssignmentStatus.Confirmed,
+                            inferredTarget: assignment.InferredTarget,
+                            selectedTarget: assignment.InferredTarget,
+                            confidence: assignment.Confidence,
+                            note: assignment.Note,
+                            validationError: null,
+                            updatedAtUtc: DateTime.UtcNow)
+                        : assignment)
+                    .ToArray();
+
+                var missingTargets = FindMissingPickTargets(assignments, targets);
+                if (missingTargets.Count > 0)
+                {
+                    throw new InvalidOperationException(
+                        $"Cannot confirm Pick map: missing {missingTargets.Count} target assignment(s): {string.Join(", ", missingTargets)}.");
+                }
+
+                return new PickupPickMapDocument(
+                    schemaVersion: PickupPickMapDocument.CurrentSchemaVersion,
+                    revision: document.Revision,
+                    source: source,
+                    assignments: assignments,
+                    createdAtUtc: document.CreatedAtUtc,
+                    updatedAtUtc: DateTime.UtcNow,
+                    lastOperationId: operationId,
+                    lastValidationError: null,
+                    isDraft: false);
+            }));
     }
 
     public Task<ProofPickupsSessionSnapshot> StageAsync(string assetId, CancellationToken ct = default)
@@ -938,6 +1318,348 @@ public sealed class ProofPickupsSessionService
         return _snapshot;
     }
 
+    private ProofPickupsSessionSnapshot FailPickAndPreserve(
+        ProofPickupsSessionSnapshot baseline,
+        string chapterName,
+        string chapterStem,
+        string message,
+        string? operationId = null)
+    {
+        _snapshot = baseline with
+        {
+            ActiveChapterName = chapterName,
+            ActiveChapterStem = chapterStem,
+            Phase = ProofPickupsSessionPhase.Failed,
+            Progress = baseline.Progress,
+            LastError = message,
+            LastPickOperationId = operationId ?? baseline.LastPickOperationId,
+            LastPickValidationError = message
+        };
+
+        return _snapshot;
+    }
+
+    private ProofPickupsSessionSnapshot MutatePickMap(
+        ProofPickupsSessionSnapshot baseline,
+        string operationId,
+        int expectedRevision,
+        PickupPickMapAssignmentStatus targetStatus,
+        Func<PickupPickMapDocument, IReadOnlyList<CrxPickupTarget>, PickupPickMapSourceReference, PickupPickMapDocument> mutation)
+    {
+        var chapterName = baseline.ActiveChapterName ?? string.Empty;
+        var chapterStem = baseline.ActiveChapterStem ?? string.Empty;
+
+        try
+        {
+            var document = baseline.PickMap
+                ?? throw new InvalidOperationException("No Pick map is loaded. Import a stitched pickup batch first.");
+
+            if (expectedRevision != document.Revision)
+            {
+                throw new InvalidOperationException(
+                    $"Stale Pick map revision: expected '{expectedRevision}', current '{document.Revision}'. Reload Pick map before updating.");
+            }
+
+            _snapshot = baseline with
+            {
+                Phase = ProofPickupsSessionPhase.Picking,
+                Progress = 0.72d,
+                LastError = null,
+                LastPickOperationId = operationId,
+                LastPickValidationError = null
+            };
+
+            var targets = BuildBatchCrxTargets();
+            var source = BuildPickMapSourceReference(document.Source.Path, targets);
+            EnsurePickMapSourceCurrent(document, source);
+            var next = mutation(document, targets, source);
+            var saved = SavePickMapOrThrow(source, next, CancellationToken.None);
+
+            _snapshot = ApplyPickMapToSnapshot(
+                baseline with
+                {
+                    Targets = targets,
+                    Phase = ProofPickupsSessionPhase.Completed,
+                    Progress = 1d,
+                    LastError = null
+                },
+                saved,
+                readError: null,
+                operationId,
+                saved.LastValidationError);
+
+            return _snapshot;
+        }
+        catch (Exception ex)
+        {
+            return FailPickAndPreserve(
+                baseline,
+                chapterName,
+                chapterStem,
+                $"Pick map update failed for status '{targetStatus}': {ex.Message}",
+                operationId);
+        }
+    }
+
+    private PickupPickMapDocument SavePickMapOrThrow(
+        PickupPickMapSourceReference source,
+        PickupPickMapDocument document,
+        CancellationToken ct)
+    {
+        if (_hooks.SavePickMap is null)
+        {
+            throw new InvalidOperationException("Pick map store save hook is not configured.");
+        }
+
+        return _hooks.SavePickMap(source, document, ct);
+    }
+
+    private static PickupPickMapDocument ReplacePickAssignment(
+        PickupPickMapDocument document,
+        string assignmentId,
+        Func<PickupPickMapAssignment, PickupPickMapAssignment> replace,
+        PickupPickMapSourceReference source,
+        string operationId,
+        string? validationError,
+        bool isDraft)
+    {
+        var found = false;
+        var assignments = document.Assignments
+            .Select(assignment =>
+            {
+                if (!string.Equals(assignment.Id, assignmentId, StringComparison.Ordinal))
+                {
+                    return assignment;
+                }
+
+                found = true;
+                return replace(assignment);
+            })
+            .ToArray();
+
+        if (!found)
+        {
+            throw new InvalidOperationException($"Pick assignment '{assignmentId}' was not found.");
+        }
+
+        return new PickupPickMapDocument(
+            schemaVersion: PickupPickMapDocument.CurrentSchemaVersion,
+            revision: document.Revision,
+            source: source,
+            assignments: assignments,
+            createdAtUtc: document.CreatedAtUtc,
+            updatedAtUtc: DateTime.UtcNow,
+            lastOperationId: operationId,
+            lastValidationError: validationError,
+            isDraft: isDraft);
+    }
+
+    private static IReadOnlyList<PickupPickMapAssignment> BuildPickAssignments(
+        IReadOnlyList<PickupAsset> matched,
+        IReadOnlyList<PickupAsset> unmatched,
+        IReadOnlyList<CrxPickupTarget> targets)
+    {
+        var assignments = new List<PickupPickMapAssignment>(matched.Count + unmatched.Count);
+        foreach (var asset in matched)
+        {
+            EnsureValidPickCandidate(asset);
+            var target = ResolveTargetForAsset(targets, asset);
+            var validationError = target is null
+                ? $"No CRX target could be resolved for pickup segment '{asset.Id}'."
+                : null;
+            assignments.Add(new PickupPickMapAssignment(
+                id: asset.Id,
+                pickupSegmentId: asset.Id,
+                sourceStartSec: asset.TrimStartSec,
+                sourceEndSec: asset.TrimEndSec,
+                status: target is null ? PickupPickMapAssignmentStatus.Unresolved : PickupPickMapAssignmentStatus.Inferred,
+                inferredTarget: target is null ? null : ToPickTargetReference(target),
+                selectedTarget: null,
+                confidence: asset.Confidence,
+                note: null,
+                validationError: validationError,
+                updatedAtUtc: asset.ImportedAtUtc));
+        }
+
+        foreach (var asset in unmatched)
+        {
+            EnsureValidPickCandidate(asset);
+            assignments.Add(new PickupPickMapAssignment(
+                id: asset.Id,
+                pickupSegmentId: asset.Id,
+                sourceStartSec: asset.TrimStartSec,
+                sourceEndSec: asset.TrimEndSec,
+                status: PickupPickMapAssignmentStatus.Unresolved,
+                inferredTarget: null,
+                selectedTarget: null,
+                confidence: asset.Confidence,
+                note: null,
+                validationError: $"Pickup segment '{asset.Id}' has no inferred CRX target.",
+                updatedAtUtc: asset.ImportedAtUtc));
+        }
+
+        return assignments;
+    }
+
+    private static void EnsureValidPickCandidate(PickupAsset asset)
+    {
+        if (string.IsNullOrWhiteSpace(asset.Id))
+        {
+            throw new InvalidOperationException("Pickup candidate has empty assignment id.");
+        }
+
+        if (asset.TrimEndSec <= asset.TrimStartSec)
+        {
+            throw new InvalidOperationException(
+                $"Pickup candidate '{asset.Id}' has invalid source timing [{asset.TrimStartSec:F6}, {asset.TrimEndSec:F6}].");
+        }
+    }
+
+    private static string? BuildPickImportValidationError(
+        IReadOnlyList<PickupPickMapAssignment> assignments,
+        IReadOnlyList<CrxPickupTarget> targets)
+    {
+        var messages = new List<string>();
+        var unresolved = assignments.Count(assignment => assignment.Status == PickupPickMapAssignmentStatus.Unresolved);
+        if (unresolved > 0)
+        {
+            messages.Add($"{unresolved} unresolved pickup segment(s) require manual target or disposition.");
+        }
+
+        var missingTargets = FindMissingPickTargets(assignments, targets);
+        if (missingTargets.Count > 0)
+        {
+            messages.Add($"Missing {missingTargets.Count} target assignment(s): {string.Join(", ", missingTargets)}.");
+        }
+
+        return messages.Count == 0 ? null : string.Join(" ", messages);
+    }
+
+    private static IReadOnlyList<string> FindMissingPickTargets(
+        IReadOnlyList<PickupPickMapAssignment> assignments,
+        IReadOnlyList<CrxPickupTarget> targets)
+    {
+        var assignedTargetKeys = assignments
+            .Where(assignment => assignment.RequiresUniqueTarget)
+            .Select(assignment => assignment.EffectiveTarget?.TargetKey)
+            .Where(key => !string.IsNullOrWhiteSpace(key))
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        return targets
+            .Select(ToPickTargetReference)
+            .Where(target => !assignedTargetKeys.Contains(target.TargetKey))
+            .Select(target => $"{target.ChapterStem}#{target.ErrorNumber}")
+            .ToArray();
+    }
+
+    private ProofPickupsSessionSnapshot ApplyPickMapToSnapshot(
+        ProofPickupsSessionSnapshot baseline,
+        PickupPickMapDocument? document,
+        string? readError,
+        string? operationId,
+        string? validationError)
+    {
+        var diagnostics = BuildPickMapDiagnostics(document, readError, operationId, validationError);
+        _snapshot = baseline with
+        {
+            PickMap = diagnostics.Map,
+            PickMapRevision = diagnostics.Revision,
+            PickMapReadError = diagnostics.ReadError,
+            PickAssignmentCountsByStatus = diagnostics.CountsByStatus,
+            PickAssignmentCountsByChapter = diagnostics.CountsByChapter,
+            LastPickOperationId = diagnostics.LastOperationId,
+            LastPickValidationError = diagnostics.LastValidationError
+        };
+
+        return _snapshot;
+    }
+
+    private PickMapDiagnostics ReadPickMapDiagnostics(
+        CancellationToken ct,
+        PickupPickMapDocument? fallbackMap,
+        int? fallbackRevision,
+        string? fallbackOperationId,
+        string? fallbackValidationError)
+    {
+        if (_hooks.ReadPickMapDocument is null)
+        {
+            return BuildPickMapDiagnostics(fallbackMap, null, fallbackOperationId, fallbackValidationError);
+        }
+
+        try
+        {
+            var document = _hooks.ReadPickMapDocument(ct);
+            return BuildPickMapDiagnostics(
+                document,
+                readError: null,
+                operationId: document?.LastOperationId,
+                validationError: document?.LastValidationError);
+        }
+        catch (Exception ex)
+        {
+            var preserved = fallbackMap is not null
+                ? fallbackMap
+                : fallbackRevision.HasValue
+                    ? _snapshot.PickMap
+                    : null;
+            return BuildPickMapDiagnostics(
+                preserved,
+                readError: $"Pick-map read failed: {ex.Message}",
+                operationId: fallbackOperationId,
+                validationError: fallbackValidationError);
+        }
+    }
+
+    private static PickMapDiagnostics BuildPickMapDiagnostics(
+        PickupPickMapDocument? document,
+        string? readError,
+        string? operationId,
+        string? validationError)
+        => new(
+            Map: document,
+            Revision: document?.Revision,
+            ReadError: readError,
+            CountsByStatus: document?.GetAssignmentCountsByStatus()
+                ?? new Dictionary<PickupPickMapAssignmentStatus, int>(),
+            CountsByChapter: document?.GetAssignmentCountsByChapter()
+                ?? new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase),
+            LastOperationId: operationId,
+            LastValidationError: validationError);
+
+    private static string CreatePickOperationId(string action)
+        => $"pick-{action}-{Guid.NewGuid():N}";
+
+    private static PickupPickMapTargetReference ToPickTargetReference(CrxPickupTarget target)
+        => new(
+            chapterStem: target.ChapterStem,
+            chapterName: target.ChapterName,
+            errorNumber: target.ErrorNumber,
+            sentenceId: target.SentenceId,
+            originalStartSec: target.OriginalStartSec,
+            originalEndSec: target.OriginalEndSec);
+
+    private static void EnsurePickMapSourceCurrent(PickupPickMapDocument document, PickupPickMapSourceReference currentSource)
+    {
+        if (!string.Equals(document.Source.Fingerprint, currentSource.Fingerprint, StringComparison.Ordinal) ||
+            !string.Equals(document.Source.CrxTargetsFingerprint, currentSource.CrxTargetsFingerprint, StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                "Pickup pick-map source is stale: " +
+                $"documentSource='{document.Source.Fingerprint}', currentSource='{currentSource.Fingerprint}', " +
+                $"documentCrx='{document.Source.CrxTargetsFingerprint}', currentCrx='{currentSource.CrxTargetsFingerprint}', " +
+                $"sourcePath='{document.Source.Path}'.");
+        }
+    }
+
+    private sealed record PickMapDiagnostics(
+        PickupPickMapDocument? Map,
+        int? Revision,
+        string? ReadError,
+        IReadOnlyDictionary<PickupPickMapAssignmentStatus, int> CountsByStatus,
+        IReadOnlyDictionary<string, int> CountsByChapter,
+        string? LastOperationId,
+        string? LastValidationError);
+
     private (int? Revision, string? OrderingDiagnostics, string? LastValidationError, string? ReadError) ReadEdlDiagnostics(
         string chapterStem,
         CancellationToken ct,
@@ -1049,21 +1771,43 @@ public sealed class ProofPickupsSessionService
         IReadOnlyList<CrxPickupTarget> targets,
         PickupAsset asset)
     {
+        if (!string.IsNullOrWhiteSpace(asset.MatchedChapterStem) && asset.MatchedErrorNumber is int chapterErrorNumber)
+        {
+            var byChapterAndError = targets.FirstOrDefault(target =>
+                string.Equals(target.ChapterStem, asset.MatchedChapterStem, StringComparison.OrdinalIgnoreCase)
+                && target.ErrorNumber == chapterErrorNumber);
+            if (byChapterAndError is not null)
+            {
+                return byChapterAndError;
+            }
+        }
+
+        if (!string.IsNullOrWhiteSpace(asset.MatchedChapterStem) && asset.MatchedSentenceId is int chapterSentenceId)
+        {
+            var byChapterAndSentence = targets.FirstOrDefault(target =>
+                string.Equals(target.ChapterStem, asset.MatchedChapterStem, StringComparison.OrdinalIgnoreCase)
+                && target.SentenceId == chapterSentenceId);
+            if (byChapterAndSentence is not null)
+            {
+                return byChapterAndSentence;
+            }
+        }
+
         if (asset.MatchedErrorNumber is int errorNumber)
         {
-            var byError = targets.FirstOrDefault(target => target.ErrorNumber == errorNumber);
-            if (byError is not null)
+            var matches = targets.Where(target => target.ErrorNumber == errorNumber).ToArray();
+            if (matches.Length == 1)
             {
-                return byError;
+                return matches[0];
             }
         }
 
         if (asset.MatchedSentenceId is int sentenceId)
         {
-            var bySentence = targets.FirstOrDefault(target => target.SentenceId == sentenceId);
-            if (bySentence is not null)
+            var matches = targets.Where(target => target.SentenceId == sentenceId).ToArray();
+            if (matches.Length == 1)
             {
-                return bySentence;
+                return matches[0];
             }
         }
 
@@ -1109,7 +1853,32 @@ public sealed class ProofPickupsSessionService
         return true;
     }
 
+    private List<CrxPickupTarget> BuildBatchCrxTargets()
+    {
+        var entries = _hooks.GetCrxEntries();
+        var targets = new List<CrxPickupTarget>();
+
+        foreach (var chapterName in _workspace.AvailableChapters)
+        {
+            var chapterStem = _workspace.GetStemForChapter(chapterName) ?? chapterName;
+            targets.AddRange(BuildCrxTargets(chapterName, chapterStem, entries, requireTargets: false));
+        }
+
+        return targets
+            .OrderBy(target => target.ErrorNumber)
+            .ThenBy(target => target.ChapterStem, StringComparer.OrdinalIgnoreCase)
+            .ThenBy(target => target.SentenceId)
+            .ToList();
+    }
+
     private List<CrxPickupTarget> BuildCrxTargets(string chapterName, string chapterStem)
+        => BuildCrxTargets(chapterName, chapterStem, _hooks.GetCrxEntries(), requireTargets: true);
+
+    private List<CrxPickupTarget> BuildCrxTargets(
+        string chapterName,
+        string chapterStem,
+        IReadOnlyList<CrxEntry> entries,
+        bool requireTargets)
     {
         if (!_workspace.TryGetHydratedTranscript(chapterName, out var hydrated) || hydrated is null)
         {
@@ -1117,13 +1886,18 @@ public sealed class ProofPickupsSessionService
                 $"Hydrated transcript is required for chapter '{chapterName}' before pickup import.");
         }
 
-        var chapterEntries = _hooks.GetCrxEntries()
+        var chapterEntries = entries
             .Where(entry => ChapterMatches(entry.Chapter, chapterName))
             .OrderBy(entry => entry.ErrorNumber)
             .ToList();
 
         if (chapterEntries.Count == 0)
         {
+            if (!requireTargets)
+            {
+                return [];
+            }
+
             throw new InvalidOperationException(
                 $"No CRX targets found for chapter '{chapterName}'.");
         }
@@ -1134,7 +1908,7 @@ public sealed class ProofPickupsSessionService
         for (var index = 0; index < chapterEntries.Count; index++)
         {
             var row = chapterEntries[index];
-            var rowContext = BuildRowContext(index, row);
+            var rowContext = BuildRowContext(index, row, chapterName);
 
             if (row.ErrorNumber <= 0)
             {
@@ -1182,10 +1956,57 @@ public sealed class ProofPickupsSessionService
         return targets;
     }
 
-    private static string BuildRowContext(int index, CrxEntry row)
+    private static PickupPickMapSourceReference BuildPickMapSourceReference(
+        string sourcePath,
+        IReadOnlyList<CrxPickupTarget> targets)
     {
-        var errorNumber = row.ErrorNumber <= 0 ? "n/a" : row.ErrorNumber.ToString();
-        return $"row {index + 1} (error #{errorNumber})";
+        var info = new FileInfo(sourcePath);
+        if (!info.Exists)
+        {
+            throw new FileNotFoundException($"Pickup source file is missing: '{sourcePath}'.", sourcePath);
+        }
+
+        var modifiedUtc = info.LastWriteTimeUtc;
+        return new PickupPickMapSourceReference(
+            path: info.FullName,
+            fingerprint: ComputePickSourceFingerprint(info.FullName, info.Length, modifiedUtc),
+            fileSizeBytes: info.Length,
+            modifiedAtUtc: modifiedUtc,
+            crxTargetsFingerprint: ComputePickCrxTargetsFingerprint(targets));
+    }
+
+    private static string ComputePickSourceFingerprint(string fullPath, long length, DateTime modifiedUtc)
+    {
+        var payload = $"{fullPath}|{length}|{modifiedUtc.ToUniversalTime().Ticks}";
+        var hashBytes = SHA256.HashData(Encoding.UTF8.GetBytes(payload));
+        return Convert.ToHexString(hashBytes)[..24].ToLowerInvariant();
+    }
+
+    private static string ComputePickCrxTargetsFingerprint(IReadOnlyList<CrxPickupTarget> targets)
+    {
+        var sb = new StringBuilder();
+        foreach (var target in targets
+            .OrderBy(target => target.ErrorNumber)
+            .ThenBy(target => target.ChapterStem, StringComparer.OrdinalIgnoreCase)
+            .ThenBy(target => target.SentenceId))
+        {
+            sb.Append(target.ChapterStem).Append('|')
+                .Append(target.ChapterName).Append('|')
+                .Append(target.ErrorNumber).Append('|')
+                .Append(target.SentenceId).Append('|')
+                .Append(target.ShouldBeText).Append('|')
+                .Append(target.OriginalStartSec.ToString("R", CultureInfo.InvariantCulture)).Append('|')
+                .Append(target.OriginalEndSec.ToString("R", CultureInfo.InvariantCulture)).Append('\n');
+        }
+
+        var hashBytes = SHA256.HashData(Encoding.UTF8.GetBytes(sb.ToString()));
+        return Convert.ToHexString(hashBytes)[..24].ToLowerInvariant();
+    }
+
+    private static string BuildRowContext(int index, CrxEntry row, string chapterName)
+    {
+        var errorNumber = row.ErrorNumber <= 0 ? "n/a" : row.ErrorNumber.ToString(CultureInfo.InvariantCulture);
+        return $"chapter '{chapterName}', row {index + 1} (error #{errorNumber})";
     }
 
     private static bool ChapterMatches(string? crxChapter, string? currentChapter)
@@ -1263,5 +2084,9 @@ public sealed class ProofPickupsSessionService
         Func<string, PickupEdlSourceReference, Func<PickupEdlDocument, PickupEdlDocument>, CancellationToken, PickupEdlDocument> MutateEdlDocument,
         Func<PickupEdlDocument, string, PickupEdlOperation?> TryGetOperation,
         Func<PickupEdlDocument, string, PickupEdlOperationState, PickupEdlDocument> TransitionOperationState,
-        Func<PickupEdlDocument, string> BuildOrderingDiagnostics);
+        Func<PickupEdlDocument, string> BuildOrderingDiagnostics,
+        Func<string, IReadOnlyList<CrxPickupTarget>, CancellationToken, Task<(IReadOnlyList<PickupAsset> Matched, IReadOnlyList<PickupAsset> Unmatched)>>? ImportPickAssetsAsync = null,
+        Func<CancellationToken, PickupPickMapDocument?>? ReadPickMapDocument = null,
+        Func<PickupPickMapSourceReference, CancellationToken, PickupPickMapDocument>? LoadOrCreatePickMap = null,
+        Func<PickupPickMapSourceReference, PickupPickMapDocument, CancellationToken, PickupPickMapDocument>? SavePickMap = null);
 }

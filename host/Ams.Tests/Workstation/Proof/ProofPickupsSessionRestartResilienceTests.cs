@@ -3,6 +3,7 @@ using Ams.Core.Services.Documents;
 using Ams.Workstation.Server.Models;
 using Ams.Workstation.Server.Services;
 using Ams.Workstation.Server.Services.Pickups.Edl;
+using Ams.Workstation.Server.Services.Pickups.Pick;
 
 namespace Ams.Tests.Workstation.Proof;
 
@@ -194,6 +195,91 @@ public sealed class ProofPickupsSessionRestartResilienceTests
         }
     }
 
+    [Fact]
+    public async Task SyncToWorkspace_RestartReloadsStoredPickMap()
+    {
+        var root = await CreateWorkspaceRootAsync(["chapter-01"]);
+
+        try
+        {
+            var pickupPath = Path.Combine(root, ".pickups", "session.wav");
+            WriteWavStub(pickupPath);
+
+            ProofPickupsSessionSnapshot baseline;
+            using (var firstBoot = await SessionBoot.OpenAsync(root, loadPersistedState: false))
+            {
+                var source = BuildPickSourceReference(pickupPath);
+                var document = CreatePickMapDocument(source, firstBoot.ActiveChapterStem, isDraft: false);
+                var saved = firstBoot.PickMapStore.Save(source, document, CancellationToken.None);
+                Assert.False(saved.IsDraft);
+
+                baseline = firstBoot.Service.SyncToWorkspace();
+                Assert.NotNull(baseline.PickMap);
+                Assert.Equal(saved.Revision, baseline.PickMapRevision);
+                Assert.Equal(1, baseline.PickAssignmentCountsByStatus[PickupPickMapAssignmentStatus.Confirmed]);
+                Assert.Null(baseline.PickMapReadError);
+            }
+
+            using var restartedBoot = await SessionBoot.OpenAsync(root, loadPersistedState: true);
+            var restarted = restartedBoot.Service.SyncToWorkspace();
+
+            Assert.NotNull(restarted.PickMap);
+            Assert.Equal(baseline.PickMapRevision, restarted.PickMapRevision);
+            Assert.Equal(baseline.PickMap!.Source.Fingerprint, restarted.PickMap!.Source.Fingerprint);
+            Assert.Equal(baseline.PickMap.Assignments.Select(item => item.Id), restarted.PickMap.Assignments.Select(item => item.Id));
+            Assert.Equal(1, restarted.PickAssignmentCountsByStatus[PickupPickMapAssignmentStatus.Confirmed]);
+            Assert.Null(restarted.PickMapReadError);
+        }
+        finally
+        {
+            SafeDeleteDirectory(root);
+        }
+    }
+
+    [Fact]
+    public async Task SyncToWorkspace_MalformedPickMapAfterBaseline_PreservesPriorPickMapAndQuarantinesFile()
+    {
+        var root = await CreateWorkspaceRootAsync(["chapter-01"]);
+
+        try
+        {
+            var pickupPath = Path.Combine(root, ".pickups", "session.wav");
+            WriteWavStub(pickupPath);
+
+            using var boot = await SessionBoot.OpenAsync(root, loadPersistedState: false);
+            var source = BuildPickSourceReference(pickupPath);
+            _ = boot.PickMapStore.Save(
+                source,
+                CreatePickMapDocument(source, boot.ActiveChapterStem, isDraft: false),
+                CancellationToken.None);
+
+            var baseline = boot.Service.SyncToWorkspace();
+            Assert.NotNull(baseline.PickMap);
+
+            var pickMapPath = boot.PickMapStore.GetDocumentPath();
+            Assert.True(File.Exists(pickMapPath));
+            await File.WriteAllTextAsync(pickMapPath, "{ malformed-pick-map-json");
+
+            var refreshed = boot.Service.SyncToWorkspace();
+
+            Assert.Equal(baseline.PickMapRevision, refreshed.PickMapRevision);
+            Assert.Equal(baseline.PickMap!.Assignments.Select(item => item.Id), refreshed.PickMap!.Assignments.Select(item => item.Id));
+            Assert.Contains("pick-map read failed", refreshed.PickMapReadError ?? string.Empty, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains("malformed pickup pick-map json", refreshed.PickMapReadError ?? string.Empty, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains("pick-map.json", refreshed.PickMapReadError ?? string.Empty, StringComparison.OrdinalIgnoreCase);
+
+            Assert.False(File.Exists(pickMapPath));
+            var quarantineFiles = Directory.GetFiles(
+                Path.GetDirectoryName(pickMapPath)!,
+                $"{Path.GetFileName(pickMapPath)}.malformed.*.json");
+            Assert.NotEmpty(quarantineFiles);
+        }
+        finally
+        {
+            SafeDeleteDirectory(root);
+        }
+    }
+
     private static void SeedPersistedArtifacts(
         SessionBoot boot,
         string chapterStem,
@@ -297,6 +383,56 @@ public sealed class ProofPickupsSessionRestartResilienceTests
             modifiedAtUtc: info.Exists ? info.LastWriteTimeUtc : DateTime.UtcNow);
     }
 
+    private static PickupPickMapSourceReference BuildPickSourceReference(string pickupPath)
+    {
+        var info = new FileInfo(pickupPath);
+        return new PickupPickMapSourceReference(
+            path: Path.GetFullPath(pickupPath),
+            fingerprint: $"pick-fp-{info.Length}-{info.LastWriteTimeUtc.Ticks}",
+            fileSizeBytes: info.Exists ? info.Length : 0,
+            modifiedAtUtc: info.Exists ? info.LastWriteTimeUtc : DateTime.UtcNow,
+            crxTargetsFingerprint: "crx-restart-fp");
+    }
+
+    private static PickupPickMapDocument CreatePickMapDocument(
+        PickupPickMapSourceReference source,
+        string chapterStem,
+        bool isDraft)
+    {
+        var target = new PickupPickMapTargetReference(
+            chapterStem: chapterStem,
+            chapterName: chapterStem,
+            errorNumber: 101,
+            sentenceId: 11,
+            originalStartSec: 0.10,
+            originalEndSec: 0.40);
+        var now = DateTime.UtcNow;
+        return new PickupPickMapDocument(
+            schemaVersion: PickupPickMapDocument.CurrentSchemaVersion,
+            revision: 0,
+            source: source,
+            assignments:
+            [
+                new PickupPickMapAssignment(
+                    id: "pick-assignment-001",
+                    pickupSegmentId: "segment-001",
+                    sourceStartSec: 0.00,
+                    sourceEndSec: 0.30,
+                    status: PickupPickMapAssignmentStatus.Confirmed,
+                    inferredTarget: target,
+                    selectedTarget: target,
+                    confidence: 1.0,
+                    note: null,
+                    validationError: null,
+                    updatedAtUtc: now)
+            ],
+            createdAtUtc: now,
+            updatedAtUtc: now,
+            lastOperationId: "pick-restart-seed",
+            lastValidationError: null,
+            isDraft: isDraft);
+    }
+
     private static void AssertSnapshotConverged(
         ProofPickupsSessionSnapshot expected,
         ProofPickupsSessionSnapshot actual)
@@ -322,6 +458,11 @@ public sealed class ProofPickupsSessionRestartResilienceTests
             actual.ArtifactLedgerEntries.Select(entry => (entry.Sequence, entry.OperationId, entry.Transition)));
 
         Assert.Equal(expected.ArtifactLedgerReadError, actual.ArtifactLedgerReadError);
+        Assert.Equal(expected.PickMapRevision, actual.PickMapRevision);
+        Assert.Equal(expected.PickMapReadError, actual.PickMapReadError);
+        Assert.Equal(expected.LastPickOperationId, actual.LastPickOperationId);
+        Assert.Equal(expected.LastPickValidationError, actual.LastPickValidationError);
+        Assert.Equal(expected.PickMap?.Assignments.Select(item => item.Id) ?? Array.Empty<string>(), actual.PickMap?.Assignments.Select(item => item.Id) ?? Array.Empty<string>());
         Assert.Equal(expected.LastError, actual.LastError);
     }
 
@@ -421,6 +562,7 @@ public sealed class ProofPickupsSessionRestartResilienceTests
             StagingQueueService stagingQueue,
             PickupEdlStore edlStore,
             PickupArtifactLedgerStore ledgerStore,
+            PickupPickMapStore pickMapStore,
             PickupEdlEngine engine)
         {
             Root = root;
@@ -428,6 +570,7 @@ public sealed class ProofPickupsSessionRestartResilienceTests
             StagingQueue = stagingQueue;
             EdlStore = edlStore;
             LedgerStore = ledgerStore;
+            PickMapStore = pickMapStore;
             Engine = engine;
 
             CommitBehavior = static (_, _) => Task.FromResult((HasResult: true, TimingDeltaSec: 0.0));
@@ -445,6 +588,8 @@ public sealed class ProofPickupsSessionRestartResilienceTests
         public PickupEdlStore EdlStore { get; }
 
         public PickupArtifactLedgerStore LedgerStore { get; }
+
+        public PickupPickMapStore PickMapStore { get; }
 
         public PickupEdlEngine Engine { get; }
 
@@ -476,10 +621,11 @@ public sealed class ProofPickupsSessionRestartResilienceTests
             var stagingQueue = new StagingQueueService(workspace, editList);
             var edlStore = new PickupEdlStore(workspace);
             var ledgerStore = new PickupArtifactLedgerStore(workspace);
+            var pickMapStore = new PickupPickMapStore(workspace);
             var engine = new PickupEdlEngine();
 
             await Task.Yield();
-            return new SessionBoot(root, workspace, stagingQueue, edlStore, ledgerStore, engine);
+            return new SessionBoot(root, workspace, stagingQueue, edlStore, ledgerStore, pickMapStore, engine);
         }
 
         public ProofPickupsSessionService CreateSessionService()
@@ -505,7 +651,10 @@ public sealed class ProofPickupsSessionRestartResilienceTests
                     TryGetOperation: (document, operationId) => Engine.TryGetOperation(document, operationId),
                     TransitionOperationState: (document, operationId, nextState) =>
                         Engine.TransitionOperationState(document, operationId, nextState, DateTime.UtcNow),
-                    BuildOrderingDiagnostics: document => Engine.BuildDeterministicOrderingDiagnostics(document)));
+                    BuildOrderingDiagnostics: document => Engine.BuildDeterministicOrderingDiagnostics(document),
+                    ReadPickMapDocument: ct => PickMapStore.TryRead(ct),
+                    LoadOrCreatePickMap: (source, ct) => PickMapStore.LoadOrCreate(source, ct),
+                    SavePickMap: (source, document, ct) => PickMapStore.Save(source, document, ct)));
         }
 
         public void Dispose()

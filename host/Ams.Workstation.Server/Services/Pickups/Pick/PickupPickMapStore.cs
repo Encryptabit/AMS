@@ -248,7 +248,7 @@ public sealed class PickupPickMapStore
             updatedAtUtc: DateTime.UtcNow,
             lastOperationId: document.LastOperationId,
             lastValidationError: null,
-            isDraft: document.IsDraft && document.Assignments.Count == 0);
+            isDraft: document.IsDraft);
     }
 
     private static bool IsRetriableIoFailure(Exception ex)

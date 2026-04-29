@@ -56,6 +56,30 @@ public class PickupMatchingService
         IReadOnlyList<CrxPickupTarget> crxTargets,
         CancellationToken ct)
     {
+        var sortedTargets = crxTargets
+            .OrderBy(t => t.ErrorNumber)
+            .ThenBy(t => t.ChapterStem, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        var segments = await SegmentPickupCrxAsync(pickupFilePath, sortedTargets, ct).ConfigureAwait(false);
+
+        if (segments.Count != crxTargets.Count)
+        {
+            throw new InvalidOperationException(
+                $"Deterministic CRX pairing requires equal counts, but MFA produced {segments.Count} pickup segments for {crxTargets.Count} CRX targets.");
+        }
+
+        return PairSegmentsToTargets(segments.ToList(), sortedTargets);
+    }
+
+    /// <summary>
+    /// Produces deterministic pickup candidates without enforcing target-count equality.
+    /// Batch Pick uses this to keep extra/unmatched segments visible for manual disposition.
+    /// </summary>
+    public async Task<IReadOnlyList<PickupSegment>> SegmentPickupCrxAsync(
+        string pickupFilePath,
+        IReadOnlyList<CrxPickupTarget> crxTargets,
+        CancellationToken ct)
+    {
         ArgumentException.ThrowIfNullOrWhiteSpace(pickupFilePath);
         ArgumentNullException.ThrowIfNull(crxTargets);
 
@@ -94,7 +118,10 @@ public class PickupMatchingService
             ct).ConfigureAwait(false);
         WriteNamedMfaCache(asrResponse);
 
-        var sortedTargets = crxTargets.OrderBy(t => t.ErrorNumber).ToList();
+        var sortedTargets = crxTargets
+            .OrderBy(t => t.ErrorNumber)
+            .ThenBy(t => t.ChapterStem, StringComparer.OrdinalIgnoreCase)
+            .ToList();
 
         // 3. Collapse ASR/MFA segments back to CRX-target utterances. Whisper sentence
         //    segments often split one pickup into multiple fragments, so deterministic
@@ -105,14 +132,7 @@ public class PickupMatchingService
                 "Pickup import could not derive any MFA-refined pickup segments from the session file.");
         }
 
-        var segments = BuildDeterministicSegments(asrResponse.Segments, sortedTargets);
-        if (segments.Count != crxTargets.Count)
-        {
-            throw new InvalidOperationException(
-                $"Deterministic CRX pairing requires equal counts, but MFA produced {segments.Count} pickup segments for {crxTargets.Count} CRX targets.");
-        }
-
-        return PairSegmentsToTargets(segments, sortedTargets);
+        return BuildDeterministicSegments(asrResponse.Segments, sortedTargets);
     }
 
     /// <summary>

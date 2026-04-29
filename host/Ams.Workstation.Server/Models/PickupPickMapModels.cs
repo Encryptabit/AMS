@@ -12,7 +12,8 @@ public enum PickupPickMapAssignmentStatus
     Override = 2,
     Rejected = 3,
     Deferred = 4,
-    NotApplicable = 5
+    NotApplicable = 5,
+    Unresolved = 6
 }
 
 /// <summary>
@@ -273,6 +274,7 @@ public sealed record PickupPickMapAssignment
             case PickupPickMapAssignmentStatus.Rejected:
             case PickupPickMapAssignmentStatus.Deferred:
             case PickupPickMapAssignmentStatus.NotApplicable:
+            case PickupPickMapAssignmentStatus.Unresolved:
                 if (selectedTarget is not null)
                 {
                     throw new InvalidOperationException(
