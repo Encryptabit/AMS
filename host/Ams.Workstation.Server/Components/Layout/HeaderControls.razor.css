@@ -120,8 +120,7 @@
 }
 
 .header-mobile-overflow-panel:focus {
-    outline: 2px solid var(--bit-clr-primary-main, #2563eb);
-    outline-offset: -2px;
+    outline: none;
 }
 
 .header-mobile-overflow-header {

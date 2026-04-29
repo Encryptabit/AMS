@@ -38,6 +38,9 @@
 
                 @if (isStageNavOpen)
                 {
+                    <div class="workstation-header-stage-nav-overlay"
+                         aria-hidden="true"
+                         @onclick="CloseStageNav"></div>
                     <div class="workstation-header-stage-nav-popover"
                          role="menu"
                          aria-label="Stage navigation"

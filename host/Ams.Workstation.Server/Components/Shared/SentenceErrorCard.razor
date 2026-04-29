@@ -86,7 +86,7 @@
 
     private string GetBorderStyle()
     {
-        var outline = IsSelected ? "outline: 2px solid var(--bit-clr-pri); " : "";
+        var outline = IsSelected ? "outline: 1px solid var(--bit-clr-pri); outline-offset: -1px; " : "";
         return $"{outline}margin-bottom: 0.75rem;";
     }
 

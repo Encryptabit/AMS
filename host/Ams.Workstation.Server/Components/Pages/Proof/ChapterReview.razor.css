@@ -4,9 +4,11 @@
     min-width: 0;
     overflow-x: hidden;
     touch-action: manipulation;
-    /* Inline padding lets BitCard box-shadows render without being clipped by
-       this container's overflow-x: hidden (kept to prevent horizontal scroll). */
+    /* overflow-x: hidden forces overflow-y to auto (CSS spec), which also
+       clips drop-shadows. Padding on every side gives BitCard's shadow room
+       without re-enabling scroll. */
     padding-inline: 6px;
+    padding-block-end: 14px;
 }
 
 .proof-view-switcher {
