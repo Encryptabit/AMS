@@ -3,6 +3,7 @@ using Ams.Core.Runtime.Audio;
 using Ams.Workstation.Server.Components;
 using Ams.Workstation.Server.Services;
 using Ams.Workstation.Server.Services.Pickups.Edl;
+using Ams.Workstation.Server.Services.Pickups.Pick;
 using Ams.Workstation.Server.Services.Prep;
 using Toolbelt.Blazor.Extensions.DependencyInjection;
 
@@ -49,6 +50,7 @@ builder.Services.AddSingleton<UndoService>();
 builder.Services.AddSingleton<PreviewBufferService>();
 builder.Services.AddSingleton<EditListService>();
 builder.Services.AddSingleton<PickupEdlStore>();
+builder.Services.AddSingleton<PickupPickMapStore>();
 builder.Services.AddSingleton<PickupArtifactLedgerStore>();
 builder.Services.AddSingleton<PickupEdlEngine>();
 builder.Services.AddSingleton<PickupSourceBufferCache>();

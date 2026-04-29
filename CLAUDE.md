@@ -1,5 +1,11 @@
 # AMS Project Memory
 
+## Immediate GSD Auto-Mode Rule: Use Serena First for C#
+
+- In AMS GSD auto-mode, before broad `rg`/`find` exploration for C# symbols or subsystem mapping, call `mcp_servers` and use the Serena MCP server for code intelligence when available.
+- Prefer Serena over the built-in `lsp` tool for C# navigation in this repo. The built-in OmniSharp adapter can partially index the solution and miss Core/Workstation symbols, while Serena has successfully resolved AMS symbols such as `DocumentSlot`, `PickupEdlModels`, `PickupMatchingService`, `CrxPickupTarget`, and `AsrResponse`.
+- Use `rg` only for literal text searches, file inventory, or when Serena is unavailable/insufficient. If Serena is unavailable, say so briefly before falling back.
+
 ## Project Overview
 Audio Management System (AMS) - CLI and core library for audio processing, ASR, forced alignment, and audiobook mastering.
 
