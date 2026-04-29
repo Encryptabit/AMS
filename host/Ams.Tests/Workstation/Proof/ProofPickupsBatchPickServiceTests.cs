@@ -93,6 +93,39 @@ public sealed class ProofPickupsBatchPickServiceTests
     }
 
     [Fact]
+    public async Task SyncToWorkspace_ResumingUnresolvedDraftPickMap_PopulatesBatchTargetsForManualDropdown()
+    {
+        using var harness = await BatchPickHarness.CreateAsync(["chapter-01", "chapter-02"]);
+        harness.CrxEntries.Add(harness.CreateCrxEntry("chapter-01", errorNumber: 101, sentenceId: 11));
+        harness.CrxEntries.Add(harness.CreateCrxEntry("chapter-02", errorNumber: 202, sentenceId: 21));
+        harness.ImportPickAssetsBehavior = (sourcePath, targets, _) =>
+        {
+            var first = targets.Single(target => target.ErrorNumber == 101);
+            return Task.FromResult((
+                Matched: (IReadOnlyList<PickupAsset>)[harness.CreateAsset("seg-101", sourcePath, first, 0.00, 0.40)],
+                Unmatched: (IReadOnlyList<PickupAsset>)[harness.CreateUnmatchedAsset("seg-extra", sourcePath, 0.55, 0.95)]));
+        };
+
+        var imported = await harness.Service.ImportPickMapAsync(harness.PickupPath, CancellationToken.None);
+        Assert.Equal(1, imported.PickAssignmentCountsByStatus[PickupPickMapAssignmentStatus.Unresolved]);
+        Assert.Equal(2, imported.Targets.Count);
+
+        var resumedService = harness.CreateSessionService();
+        var resumed = resumedService.SyncToWorkspace(CancellationToken.None);
+
+        Assert.NotNull(resumed.PickMap);
+        Assert.True(resumed.PickMap!.IsDraft);
+        Assert.Equal(imported.PickMapRevision, resumed.PickMapRevision);
+        Assert.Equal(1, resumed.PickAssignmentCountsByStatus[PickupPickMapAssignmentStatus.Unresolved]);
+        Assert.Contains(resumed.Targets, target =>
+            string.Equals(target.ChapterStem, "chapter-01", StringComparison.OrdinalIgnoreCase)
+            && target.ErrorNumber == 101);
+        Assert.Contains(resumed.Targets, target =>
+            string.Equals(target.ChapterStem, "chapter-02", StringComparison.OrdinalIgnoreCase)
+            && target.ErrorNumber == 202);
+    }
+
+    [Fact]
     public async Task SetPickAssignmentDispositionAsync_WhenTargetStillMissing_PersistsValidationErrorInDraftMap()
     {
         using var harness = await BatchPickHarness.CreateAsync(["chapter-01", "chapter-02"]);
@@ -208,14 +241,14 @@ public sealed class ProofPickupsBatchPickServiceTests
         private readonly string _root;
         private readonly Dictionary<string, List<StagedReplacement>> _queues = new(StringComparer.OrdinalIgnoreCase);
 
-        private BatchPickHarness(string root, BlazorWorkspace workspace, PickupPickMapStore pickMapStore, ProofPickupsSessionService service)
+        private BatchPickHarness(string root, BlazorWorkspace workspace, PickupPickMapStore pickMapStore)
         {
             _root = root;
             Workspace = workspace;
             PickMapStore = pickMapStore;
-            Service = service;
             PickupPath = Path.Combine(root, ".pickups", "session.wav");
             ImportPickAssetsBehavior = static (_, _, _) => Task.FromResult(((IReadOnlyList<PickupAsset>)Array.Empty<PickupAsset>(), (IReadOnlyList<PickupAsset>)Array.Empty<PickupAsset>()));
+            Service = CreateSessionService();
         }
 
         public BlazorWorkspace Workspace { get; }
@@ -233,6 +266,37 @@ public sealed class ProofPickupsBatchPickServiceTests
         public int CommitCallCount { get; private set; }
 
         public Func<string, IReadOnlyList<CrxPickupTarget>, CancellationToken, Task<(IReadOnlyList<PickupAsset> Matched, IReadOnlyList<PickupAsset> Unmatched)>> ImportPickAssetsBehavior { get; set; }
+
+        public ProofPickupsSessionService CreateSessionService()
+            => new(
+                Workspace,
+                new ProofPickupsSessionService.RuntimeHooks(
+                    GetCrxEntries: () => CrxEntries,
+                    ImportAssetsAsync: (sourcePath, targets, ct) => ImportPickAssetsBehavior(sourcePath, targets, ct),
+                    StageReplacement: (chapterStem, match, sourcePath, originalStartSec, originalEndSec) =>
+                    {
+                        StageCallCount++;
+                        throw new InvalidOperationException("StageReplacement must not be called during Pick tests.");
+                    },
+                    UnstageReplacement: static _ => false,
+                    RestageReplacement: static _ => (false, "not configured"),
+                    GetQueue: GetQueue,
+                    CommitReplacementAsync: (replacementId, _) =>
+                    {
+                        CommitCallCount++;
+                        return Task.FromResult((HasResult: true, TimingDeltaSec: 0.0));
+                    },
+                    RevertReplacementAsync: static (_, _) => Task.FromResult((HasResult: true, TimingDeltaSec: 0.0)),
+                    ReadEdlDocument: static (_, _) => null,
+                    ReadArtifactLedgerDocument: static (_, _) => null,
+                    MutateEdlDocument: static (_, _, _, _) => throw new InvalidOperationException("EDL mutation must not be called during Pick tests."),
+                    TryGetOperation: static (_, _) => null,
+                    TransitionOperationState: static (document, _, _) => document,
+                    BuildOrderingDiagnostics: static _ => string.Empty,
+                    ImportPickAssetsAsync: (sourcePath, targets, ct) => ImportPickAssetsBehavior(sourcePath, targets, ct),
+                    ReadPickMapDocument: ct => PickMapStore.TryRead(ct),
+                    LoadOrCreatePickMap: (source, ct) => PickMapStore.LoadOrCreate(source, ct),
+                    SavePickMap: (source, document, ct) => PickMapStore.Save(source, document, ct)));
 
         public static async Task<BatchPickHarness> CreateAsync(IReadOnlyList<string> chapterStems)
         {
@@ -268,42 +332,7 @@ public sealed class ProofPickupsBatchPickServiceTests
             Assert.True(workspace.SelectChapter(workspace.AvailableChapters[0]));
 
             var pickMapStore = new PickupPickMapStore(workspace);
-            BatchPickHarness? harness = null;
-            harness = new BatchPickHarness(
-                root,
-                workspace,
-                pickMapStore,
-                new ProofPickupsSessionService(
-                    workspace,
-                    new ProofPickupsSessionService.RuntimeHooks(
-                        GetCrxEntries: () => harness!.CrxEntries,
-                        ImportAssetsAsync: (sourcePath, targets, ct) => harness!.ImportPickAssetsBehavior(sourcePath, targets, ct),
-                        StageReplacement: (chapterStem, match, sourcePath, originalStartSec, originalEndSec) =>
-                        {
-                            harness!.StageCallCount++;
-                            throw new InvalidOperationException("StageReplacement must not be called during Pick tests.");
-                        },
-                        UnstageReplacement: static _ => false,
-                        RestageReplacement: static _ => (false, "not configured"),
-                        GetQueue: chapterStem => harness!.GetQueue(chapterStem),
-                        CommitReplacementAsync: (replacementId, _) =>
-                        {
-                            harness!.CommitCallCount++;
-                            return Task.FromResult((HasResult: true, TimingDeltaSec: 0.0));
-                        },
-                        RevertReplacementAsync: static (_, _) => Task.FromResult((HasResult: true, TimingDeltaSec: 0.0)),
-                        ReadEdlDocument: static (_, _) => null,
-                        ReadArtifactLedgerDocument: static (_, _) => null,
-                        MutateEdlDocument: static (_, _, _, _) => throw new InvalidOperationException("EDL mutation must not be called during Pick tests."),
-                        TryGetOperation: static (_, _) => null,
-                        TransitionOperationState: static (document, _, _) => document,
-                        BuildOrderingDiagnostics: static _ => string.Empty,
-                        ImportPickAssetsAsync: (sourcePath, targets, ct) => harness!.ImportPickAssetsBehavior(sourcePath, targets, ct),
-                        ReadPickMapDocument: ct => pickMapStore.TryRead(ct),
-                        LoadOrCreatePickMap: (source, ct) => pickMapStore.LoadOrCreate(source, ct),
-                        SavePickMap: (source, document, ct) => pickMapStore.Save(source, document, ct))));
-
-            return harness;
+            return new BatchPickHarness(root, workspace, pickMapStore);
         }
 
         public CrxEntry CreateCrxEntry(string chapterName, int errorNumber, int sentenceId)

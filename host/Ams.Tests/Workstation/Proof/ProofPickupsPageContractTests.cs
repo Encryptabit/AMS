@@ -60,6 +60,19 @@ public sealed class ProofPickupsPageContractTests
     }
 
     [Fact]
+    public void PickupsPage_ManualTargetOptionsUseSessionTargetsAndLoadedMapFallback()
+    {
+        var source = ReadRepoFile(PickupsPageRelativePath);
+
+        AssertContains(source, PickupsPageRelativePath, "private IReadOnlyList<PickupPickMapTargetReference> AvailablePickTargets", "manual target option source");
+        AssertContains(source, PickupsPageRelativePath, "_snapshot.Targets", "session CRX target source for manual dropdown");
+        AssertContains(source, PickupsPageRelativePath, "assignment.InferredTarget", "loaded Pick map inferred target fallback");
+        AssertContains(source, PickupsPageRelativePath, "assignment.SelectedTarget", "loaded Pick map selected target fallback");
+        AssertContains(source, PickupsPageRelativePath, ".Concat(mapTargets)", "manual target option merge for resumed maps");
+        AssertContains(source, PickupsPageRelativePath, "BuildPickTargetOptionValue(target)", "stable manual target option value");
+    }
+
+    [Fact]
     public void PickupsPage_UsesEditingHandoffHelperWithDeterministicFallbackSeam()
     {
         var source = ReadRepoFile(PickupsPageRelativePath);

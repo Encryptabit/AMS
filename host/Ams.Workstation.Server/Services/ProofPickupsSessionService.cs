@@ -214,6 +214,9 @@ public sealed class ProofPickupsSessionService
             _snapshot.PickMapRevision,
             _snapshot.LastPickOperationId,
             _snapshot.LastPickValidationError);
+        var targets = ResolveBatchPickTargetsForLoadedMap(
+            pickDiagnostics.Map,
+            chapterChanged ? Array.Empty<CrxPickupTarget>() : _snapshot.Targets);
 
         _snapshot = _snapshot with
         {
@@ -224,7 +227,7 @@ public sealed class ProofPickupsSessionService
                 : _snapshot.SourcePath,
             Matched = chapterChanged ? Array.Empty<PickupAsset>() : _snapshot.Matched,
             Unmatched = chapterChanged ? Array.Empty<PickupAsset>() : _snapshot.Unmatched,
-            Targets = chapterChanged ? Array.Empty<CrxPickupTarget>() : _snapshot.Targets,
+            Targets = targets,
             Staged = staged,
             Applied = applied,
             Reverted = reverted,
@@ -1573,6 +1576,26 @@ public sealed class ProofPickupsSessionService
         };
 
         return _snapshot;
+    }
+
+    private IReadOnlyList<CrxPickupTarget> ResolveBatchPickTargetsForLoadedMap(
+        PickupPickMapDocument? document,
+        IReadOnlyList<CrxPickupTarget> fallbackTargets)
+    {
+        if (document is null)
+        {
+            return fallbackTargets;
+        }
+
+        try
+        {
+            var targets = BuildBatchCrxTargets();
+            return targets.Count == 0 ? fallbackTargets : targets;
+        }
+        catch
+        {
+            return fallbackTargets;
+        }
     }
 
     private PickMapDiagnostics ReadPickMapDiagnostics(
