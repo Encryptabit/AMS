@@ -13,7 +13,9 @@ public sealed class PickupEdlEngine
         PickupEdlSourceReference source,
         PickupEdlOperationState state,
         IReadOnlySet<int>? knownSentenceIds = null,
-        DateTime? updatedAtUtc = null)
+        DateTime? updatedAtUtc = null,
+        double? explicitReplacementDurationSec = null,
+        PickupEdlFitMetadata? fitMetadata = null)
     {
         ArgumentNullException.ThrowIfNull(replacement);
         ArgumentNullException.ThrowIfNull(source);
@@ -45,7 +47,9 @@ public sealed class PickupEdlEngine
             pickupAssetId: null,
             crossfadeDurationSec: replacement.CrossfadeDurationSec,
             crossfadeCurve: replacement.CrossfadeCurve,
-            updatedAtUtc: updatedAtUtc ?? DateTime.UtcNow);
+            updatedAtUtc: updatedAtUtc ?? DateTime.UtcNow,
+            explicitReplacementDurationSec: explicitReplacementDurationSec,
+            fitMetadata: fitMetadata);
     }
 
     public PickupEdlDocument UpsertOperation(PickupEdlDocument document, PickupEdlOperation operation)
@@ -112,7 +116,9 @@ public sealed class PickupEdlEngine
             pickupAssetId: existing.PickupAssetId,
             crossfadeDurationSec: existing.CrossfadeDurationSec,
             crossfadeCurve: existing.CrossfadeCurve,
-            updatedAtUtc: updatedAtUtc ?? DateTime.UtcNow);
+            updatedAtUtc: updatedAtUtc ?? DateTime.UtcNow,
+            explicitReplacementDurationSec: existing.ExplicitReplacementDurationSec,
+            fitMetadata: existing.FitMetadata);
 
         return UpsertOperation(document, transitioned);
     }
@@ -186,9 +192,11 @@ public sealed class PickupEdlEngine
         ArgumentNullException.ThrowIfNull(document);
 
         var rebuild = string.Join(">", BuildDeterministicRebuildOrder(document).Select(op => op.Id));
-        var projection = string.Join(">", BuildAppliedProjectionEdits(document).Select(edit => edit.Id));
+        var projectionEdits = BuildAppliedProjectionEdits(document);
+        var projection = string.Join(">", projectionEdits.Select(edit => edit.Id));
+        var replacementDurations = string.Join(">", projectionEdits.Select(edit => $"{edit.Id}:{edit.ReplacementDurationSec:F6}s"));
 
-        return $"chapter={document.ChapterStem}; revision={document.Revision}; rebuild=[{rebuild}]; projection=[{projection}]";
+        return $"chapter={document.ChapterStem}; revision={document.Revision}; rebuild=[{rebuild}]; projection=[{projection}]; replacementDurations=[{replacementDurations}]";
     }
 
     private static void EnsureOperationAffinity(PickupEdlDocument document, PickupEdlOperation operation)

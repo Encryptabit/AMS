@@ -37,6 +37,44 @@ public class PickupEdlProjectionTests
     }
 
     [Fact]
+    public void Projection_CompositeExplicitReplacementDurations_OverrideSourceSliceDuration()
+    {
+        var exact = MakeOperation(
+            "op-exact",
+            baselineStartSec: 5,
+            baselineEndSec: 6,
+            sourceStartSec: 0,
+            sourceEndSec: 1,
+            state: PickupEdlOperationState.Applied,
+            explicitReplacementDurationSec: 1.0);
+        var longer = MakeOperation(
+            "op-longer",
+            baselineStartSec: 10,
+            baselineEndSec: 12,
+            sourceStartSec: 2,
+            sourceEndSec: 3,
+            state: PickupEdlOperationState.Applied,
+            explicitReplacementDurationSec: 3.5);
+        var shorter = MakeOperation(
+            "op-shorter",
+            baselineStartSec: 20,
+            baselineEndSec: 23,
+            sourceStartSec: 4,
+            sourceEndSec: 8,
+            state: PickupEdlOperationState.Applied,
+            explicitReplacementDurationSec: 1.25);
+        var doc = CreateDocument([shorter, longer, exact]);
+
+        var projection = doc.BuildProjectionEdits();
+
+        Assert.Equal(new[] { "op-exact", "op-longer", "op-shorter" }, projection.Select(edit => edit.Id).ToArray());
+        Assert.Equal(new[] { 1.0, 3.5, 1.25 }, projection.Select(edit => edit.ReplacementDurationSec).ToArray());
+        Assert.Equal(9.0, TimelineProjection.BaselineToCurrentTime(9.0, projection));
+        Assert.Equal(21.5, TimelineProjection.BaselineToCurrentTime(21.0, projection));
+        Assert.Equal(39.75, TimelineProjection.ProjectedDuration(40.0, projection), precision: 6);
+    }
+
+    [Fact]
     public void ProjectionRoundTrip_ReorderedInput_ProducesSameMapping()
     {
         var opA = MakeOperation("op-a", 5, 6, sourceStartSec: 0, sourceEndSec: 1.5);
@@ -134,7 +172,9 @@ public class PickupEdlProjectionTests
         double baselineEndSec,
         double sourceStartSec,
         double sourceEndSec,
-        PickupEdlOperationState state = PickupEdlOperationState.Staged)
+        PickupEdlOperationState state = PickupEdlOperationState.Staged,
+        double? explicitReplacementDurationSec = null,
+        PickupEdlFitMetadata? fitMetadata = null)
     {
         return new PickupEdlOperation(
             id: id,
@@ -151,6 +191,8 @@ public class PickupEdlProjectionTests
             pickupAssetId: "asset-002",
             crossfadeDurationSec: 0.05,
             crossfadeCurve: "hsin",
-            updatedAtUtc: FixedUtc);
+            updatedAtUtc: FixedUtc,
+            explicitReplacementDurationSec: explicitReplacementDurationSec,
+            fitMetadata: fitMetadata);
     }
 }

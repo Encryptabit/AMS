@@ -61,6 +61,63 @@ public sealed record PickupEdlSourceReference
 }
 
 /// <summary>
+/// Optional Fit-loop provenance carried on pickup EDL operations created from Proof Pickups.
+/// </summary>
+public sealed record PickupEdlFitMetadata
+{
+    [JsonConstructor]
+    public PickupEdlFitMetadata(
+        string fitItemId,
+        string pickAssignmentId,
+        string pickupSegmentId,
+        int? previewVersion = null,
+        int? pickMapRevision = null,
+        string? pickAssignmentsFingerprint = null)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(fitItemId);
+        ArgumentException.ThrowIfNullOrWhiteSpace(pickAssignmentId);
+        ArgumentException.ThrowIfNullOrWhiteSpace(pickupSegmentId);
+
+        if (previewVersion is <= 0)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(previewVersion),
+                previewVersion,
+                "Pickup EDL Fit metadata preview version must be greater than zero when present.");
+        }
+
+        if (pickMapRevision is < 0)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(pickMapRevision),
+                pickMapRevision,
+                "Pickup EDL Fit metadata pick-map revision must be non-negative when present.");
+        }
+
+        FitItemId = fitItemId.Trim();
+        PickAssignmentId = pickAssignmentId.Trim();
+        PickupSegmentId = pickupSegmentId.Trim();
+        PreviewVersion = previewVersion;
+        PickMapRevision = pickMapRevision;
+        PickAssignmentsFingerprint = string.IsNullOrWhiteSpace(pickAssignmentsFingerprint)
+            ? null
+            : pickAssignmentsFingerprint.Trim();
+    }
+
+    public string FitItemId { get; }
+
+    public string PickAssignmentId { get; }
+
+    public string PickupSegmentId { get; }
+
+    public int? PreviewVersion { get; }
+
+    public int? PickMapRevision { get; }
+
+    public string? PickAssignmentsFingerprint { get; }
+}
+
+/// <summary>
 /// Immutable pickup edit operation stored inside a chapter-scoped EDL document.
 /// </summary>
 public sealed record PickupEdlOperation
@@ -83,7 +140,9 @@ public sealed record PickupEdlOperation
         string? pickupAssetId,
         double crossfadeDurationSec,
         string crossfadeCurve,
-        DateTime updatedAtUtc)
+        DateTime updatedAtUtc,
+        double? explicitReplacementDurationSec = null,
+        PickupEdlFitMetadata? fitMetadata = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(id);
         ArgumentException.ThrowIfNullOrWhiteSpace(chapterStem);
@@ -130,6 +189,15 @@ public sealed record PickupEdlOperation
                 $"Pickup EDL op '{id}' for chapter '{chapterStem}' has invalid crossfade duration '{crossfadeDurationSec}'.");
         }
 
+        if (explicitReplacementDurationSec is not null)
+        {
+            EnsurePositiveFiniteDuration(
+                durationName: nameof(explicitReplacementDurationSec),
+                durationSec: explicitReplacementDurationSec.Value,
+                opId: id,
+                chapterStem: chapterStem);
+        }
+
         Id = id;
         ChapterStem = chapterStem;
         Kind = kind;
@@ -145,6 +213,8 @@ public sealed record PickupEdlOperation
         CrossfadeDurationSec = crossfadeDurationSec;
         CrossfadeCurve = crossfadeCurve;
         UpdatedAtUtc = updatedAtUtc;
+        ExplicitReplacementDurationSec = explicitReplacementDurationSec;
+        FitMetadata = fitMetadata;
     }
 
     public string Id { get; }
@@ -177,11 +247,17 @@ public sealed record PickupEdlOperation
 
     public DateTime UpdatedAtUtc { get; }
 
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public double? ExplicitReplacementDurationSec { get; }
+
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public PickupEdlFitMetadata? FitMetadata { get; }
+
     [JsonIgnore]
     public bool IsActive => State is PickupEdlOperationState.Staged or PickupEdlOperationState.Applied;
 
     [JsonIgnore]
-    public double ReplacementDurationSec => SourceEndSec - SourceStartSec;
+    public double ReplacementDurationSec => ExplicitReplacementDurationSec ?? SourceEndSec - SourceStartSec;
 
     public ChapterEdit ToChapterEdit()
     {
@@ -205,6 +281,22 @@ public sealed record PickupEdlOperation
             CrossfadeDurationSec: CrossfadeDurationSec,
             CrossfadeCurve: CrossfadeCurve,
             AppliedAtUtc: UpdatedAtUtc);
+    }
+
+    private static void EnsurePositiveFiniteDuration(
+        string durationName,
+        double durationSec,
+        string opId,
+        string chapterStem)
+    {
+        if (double.IsNaN(durationSec) || double.IsInfinity(durationSec) || durationSec <= RangeEpsilonSec)
+        {
+            throw new ArgumentOutOfRangeException(
+                durationName,
+                durationSec,
+                $"Pickup EDL op '{opId}' for chapter '{chapterStem}' has invalid replacement duration '{durationSec}'. " +
+                "Replacement duration must be positive and finite.");
+        }
     }
 
     private static void EnsureRange(

@@ -84,6 +84,126 @@ public class PickupEdlContractTests
     }
 
     [Fact]
+    public void Operation_RejectsUnknownKind_BeforeProjectionUse()
+    {
+        var ex = Assert.Throws<ArgumentOutOfRangeException>(() =>
+            MakeOperation("op-bad-kind", 10, 12, kind: (PickupEdlOperationType)999));
+
+        Assert.Contains("kind", ex.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("op-bad-kind", ex.Message, StringComparison.Ordinal);
+        Assert.Contains(ChapterStem, ex.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void Operation_LegacyJsonWithoutExplicitDuration_DefaultsToSourceDuration()
+    {
+        var json =
+            """
+            {
+              "SchemaVersion": "pickup-edl/v1",
+              "ChapterStem": "chapter-01",
+              "Revision": 1,
+              "Source": {
+                "Path": "/tmp/pickups.wav",
+                "Fingerprint": "fp-source-001",
+                "FileSizeBytes": 10,
+                "ModifiedAtUtc": "2026-01-01T00:00:00Z"
+              },
+              "Operations": [
+                {
+                  "Id": "op-legacy",
+                  "ChapterStem": "chapter-01",
+                  "Kind": 0,
+                  "State": 1,
+                  "BaselineStartSec": 10,
+                  "BaselineEndSec": 12,
+                  "SourceStartSec": 5,
+                  "SourceEndSec": 6.75,
+                  "SourceFingerprint": "fp-source-001",
+                  "SentenceId": 42,
+                  "ErrorNumber": 7,
+                  "PickupAssetId": "asset-001",
+                  "CrossfadeDurationSec": 0.07,
+                  "CrossfadeCurve": "hsin",
+                  "UpdatedAtUtc": "2026-01-01T00:00:00Z"
+                }
+              ]
+            }
+            """;
+
+        var doc = JsonSerializer.Deserialize<PickupEdlDocument>(json);
+
+        Assert.NotNull(doc);
+        var op = Assert.Single(doc!.Operations);
+        Assert.Null(op.ExplicitReplacementDurationSec);
+        Assert.Null(op.FitMetadata);
+        Assert.Equal(1.75, op.ReplacementDurationSec, precision: 6);
+        Assert.Equal(1.75, op.ToChapterEdit().ReplacementDurationSec, precision: 6);
+    }
+
+    [Fact]
+    public void Operation_SerializesExplicitDurationAndFitMetadata_ForCompositeFitEdits()
+    {
+        var metadata = new PickupEdlFitMetadata(
+            fitItemId: "fit::pick-001",
+            pickAssignmentId: "pick-001",
+            pickupSegmentId: "segment-001",
+            previewVersion: 3,
+            pickMapRevision: 4,
+            pickAssignmentsFingerprint: "fp-pick-map");
+        var op = MakeOperation(
+            "op-fit",
+            baselineStartSec: 20,
+            baselineEndSec: 22,
+            sourceStartSec: 5,
+            sourceEndSec: 6,
+            explicitReplacementDurationSec: 2.35,
+            fitMetadata: metadata);
+        var doc = CreateDocument([op]);
+
+        var json = JsonSerializer.Serialize(doc);
+        var roundTripped = JsonSerializer.Deserialize<PickupEdlDocument>(json);
+
+        Assert.Contains("ExplicitReplacementDurationSec", json, StringComparison.Ordinal);
+        Assert.Contains("FitMetadata", json, StringComparison.Ordinal);
+        Assert.NotNull(roundTripped);
+        var actual = Assert.Single(roundTripped!.Operations);
+        Assert.Equal(2.35, actual.ExplicitReplacementDurationSec);
+        Assert.Equal(2.35, actual.ReplacementDurationSec);
+        Assert.NotNull(actual.FitMetadata);
+        Assert.Equal("fit::pick-001", actual.FitMetadata!.FitItemId);
+        Assert.Equal("pick-001", actual.FitMetadata.PickAssignmentId);
+        Assert.Equal("segment-001", actual.FitMetadata.PickupSegmentId);
+        Assert.Equal(3, actual.FitMetadata.PreviewVersion);
+        Assert.Equal(4, actual.FitMetadata.PickMapRevision);
+        Assert.Equal("fp-pick-map", actual.FitMetadata.PickAssignmentsFingerprint);
+    }
+
+    [Theory]
+    [MemberData(nameof(InvalidExplicitReplacementDurations))]
+    public void Operation_RejectsInvalidExplicitReplacementDuration(double explicitReplacementDurationSec)
+    {
+        var ex = Assert.Throws<ArgumentOutOfRangeException>(() =>
+            MakeOperation(
+                "op-bad-replacement-duration",
+                baselineStartSec: 10,
+                baselineEndSec: 12,
+                explicitReplacementDurationSec: explicitReplacementDurationSec));
+
+        Assert.Contains("replacement duration", ex.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("op-bad-replacement-duration", ex.Message, StringComparison.Ordinal);
+        Assert.Contains(ChapterStem, ex.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    public static IEnumerable<object[]> InvalidExplicitReplacementDurations =>
+    [
+        new object[] { -0.1 },
+        new object[] { 0.0 },
+        new object[] { double.NaN },
+        new object[] { double.PositiveInfinity }
+    ];
+
+    [Fact]
     public void JsonDeserialize_RejectsSchemaVersionMismatch()
     {
         var json =
@@ -193,12 +313,15 @@ public class PickupEdlContractTests
         string? sourceFingerprint = null,
         string? chapterStem = null,
         double sourceStartSec = 5,
-        double sourceEndSec = 6)
+        double sourceEndSec = 6,
+        double? explicitReplacementDurationSec = null,
+        PickupEdlFitMetadata? fitMetadata = null,
+        PickupEdlOperationType kind = PickupEdlOperationType.PickupReplace)
     {
         return new PickupEdlOperation(
             id: id,
             chapterStem: chapterStem ?? ChapterStem,
-            kind: PickupEdlOperationType.PickupReplace,
+            kind: kind,
             state: state,
             baselineStartSec: baselineStartSec,
             baselineEndSec: baselineEndSec,
@@ -210,6 +333,8 @@ public class PickupEdlContractTests
             pickupAssetId: "asset-001",
             crossfadeDurationSec: 0.07,
             crossfadeCurve: "hsin",
-            updatedAtUtc: FixedUtc);
+            updatedAtUtc: FixedUtc,
+            explicitReplacementDurationSec: explicitReplacementDurationSec,
+            fitMetadata: fitMetadata);
     }
 }

@@ -61,6 +61,72 @@ public sealed class PickupEdlEngineIntegrationTests
     }
 
     [Fact]
+    public void StoreAndEngine_TransitionsPreserveExplicitFitDurationAndMetadata()
+    {
+        var root = CreateTempDirectory();
+        using var workspace = CreateWorkspace(root);
+
+        try
+        {
+            var chapterStem = "chapter-10-fit";
+            var sourcePath = CreateTempSourceFile(root, "pickup-fit.wav");
+            var sourceCache = new PickupSourceBufferCache(_ => throw new InvalidOperationException("decode not expected"));
+            var source = sourceCache.DescribeSource(sourcePath);
+            var engine = new PickupEdlEngine();
+            var store = new PickupEdlStore(workspace);
+            var metadata = new PickupEdlFitMetadata(
+                fitItemId: "fit::pick-fit-001",
+                pickAssignmentId: "pick-fit-001",
+                pickupSegmentId: "segment-fit-001",
+                previewVersion: 2,
+                pickMapRevision: 5,
+                pickAssignmentsFingerprint: "fp-fit-picks");
+
+            var op = engine.BuildOperation(
+                CreateReplacement(
+                    "op-fit",
+                    chapterStem,
+                    sentenceId: 31,
+                    originalStartSec: 5,
+                    originalEndSec: 7,
+                    pickupStartSec: 1,
+                    pickupEndSec: 2),
+                source,
+                PickupEdlOperationState.Staged,
+                knownSentenceIds: new HashSet<int> { 31 },
+                updatedAtUtc: new DateTime(2026, 01, 10, 0, 0, 0, DateTimeKind.Utc),
+                explicitReplacementDurationSec: 2.75,
+                fitMetadata: metadata);
+
+            _ = store.Mutate(chapterStem, source, document => engine.UpsertOperation(document, op));
+            var transitioned = store.Mutate(
+                chapterStem,
+                source,
+                document => engine.TransitionOperationState(document, "op-fit", PickupEdlOperationState.Applied));
+
+            var persisted = store.TryRead(chapterStem, CancellationToken.None);
+
+            Assert.NotNull(persisted);
+            var actual = Assert.Single(persisted!.Operations);
+            Assert.Equal(PickupEdlOperationState.Applied, actual.State);
+            Assert.Equal(2.75, actual.ExplicitReplacementDurationSec);
+            Assert.Equal(2.75, actual.ReplacementDurationSec);
+            Assert.NotNull(actual.FitMetadata);
+            Assert.Equal("fit::pick-fit-001", actual.FitMetadata!.FitItemId);
+            Assert.Equal("pick-fit-001", actual.FitMetadata.PickAssignmentId);
+            Assert.Equal("segment-fit-001", actual.FitMetadata.PickupSegmentId);
+
+            var projectionEdit = Assert.Single(engine.BuildAppliedProjectionEdits(transitioned));
+            Assert.Equal(2.75, projectionEdit.ReplacementDurationSec);
+            Assert.Contains("replacementDurations=[op-fit:2.750000s]", engine.BuildDeterministicOrderingDiagnostics(transitioned), StringComparison.Ordinal);
+        }
+        finally
+        {
+            SafeDeleteDirectory(root);
+        }
+    }
+
+    [Fact]
     public void TransitionOperationState_AppliedToApplied_ThrowsIllegalTransitionDiagnostics()
     {
         var engine = new PickupEdlEngine();
