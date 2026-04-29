@@ -13,9 +13,9 @@ public sealed record QcThresholds
     public double MinHeadSilence { get; init; } = 0.5;
     public double MaxHeadSilence { get; init; } = 1.0;
     public double MinTailSilence { get; init; } = 2.0;
-    public double MaxTailSilence { get; init; } = 5.0;
+    public double MaxTailSilence { get; init; } = 4.0;
     public double MinTitleBodyGap { get; init; } = 1.0;
-    public double MaxTitleBodyGap { get; init; } = 2.5;
+    public double MaxTitleBodyGap { get; init; } = 2.0;
 }
 
 /// <summary>

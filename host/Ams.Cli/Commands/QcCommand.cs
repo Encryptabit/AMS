@@ -49,8 +49,8 @@ public static class QcCommand
 
         var noiseOption = new Option<double>(
             "--noise",
-            () => -40.0,
-            "Silence detection noise floor in dB (default: -40, tuned for QC)");
+            () => -55.0,
+            "Silence detection noise floor in dB (default: -55, matches treat's silence threshold)");
 
         var minSilenceOption = new Option<double>(
             "--min-silence",
@@ -76,7 +76,7 @@ public static class QcCommand
             "Minimum acceptable tail silence in seconds");
         var maxTailOption = new Option<double>(
             "--max-tail-silence",
-            () => 5.0,
+            () => 4.0,
             "Maximum acceptable tail silence in seconds");
         var minGapOption = new Option<double>(
             "--min-title-gap",
@@ -84,7 +84,7 @@ public static class QcCommand
             "Minimum acceptable title-body gap in seconds");
         var maxGapOption = new Option<double>(
             "--max-title-gap",
-            () => 2.5,
+            () => 2.0,
             "Maximum acceptable title-body gap in seconds");
 
         cmd.AddOption(dirOption);
