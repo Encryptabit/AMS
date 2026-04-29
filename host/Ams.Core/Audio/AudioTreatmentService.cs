@@ -51,7 +51,7 @@ public sealed class AudioTreatmentService
         var roomtoneBuffer = chapter.Book.Audio.Roomtone
             ?? throw new InvalidOperationException(
                 $"Roomtone not found at {chapter.Book.Audio.RoomtonePath}. " +
-                "Create a roomtone.wav file in the book directory.");
+                "Create a roomtone.wav file in the book's safe/ directory.");
 
         return await TreatChapterCoreAsync(chapter, roomtoneBuffer, outputPath, options, cancellationToken);
     }

@@ -204,7 +204,7 @@ public static class TreatCommand
                     if (!chapter.Book.Audio.HasRoomtone)
                     {
                         Log.Error("Roomtone file not found: {Path}", chapter.Book.Audio.RoomtonePath);
-                        Log.Error("Create a roomtone.wav file in the book directory or specify with --roomtone.");
+                        Log.Error("Create a roomtone.wav file in the book's safe/ directory or specify with --roomtone.");
                         context.ExitCode = 1;
                         return;
                     }

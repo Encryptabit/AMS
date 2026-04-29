@@ -22,6 +22,7 @@ public sealed class BookAudio
     private readonly object _playbackErrorAlertLock = new();
     private PlaybackErrorAlertDescriptor? _playbackErrorAlertSound;
     private AudioBuffer? _playbackErrorAlertBuffer;
+    private readonly object _roomtoneLock = new();
     private AudioBuffer? _roomtone;
     private bool _roomtoneLoaded;
 
@@ -32,8 +33,10 @@ public sealed class BookAudio
 
     /// <summary>
     /// Gets the path to the roomtone file for this book.
+    /// Roomtone lives under the book's <c>safe/</c> subdirectory so it is not picked up
+    /// as a chapter by <see cref="ChapterDiscoveryService"/>.
     /// </summary>
-    public string RoomtonePath => _book.ResolveArtifactFile("roomtone.wav").FullName;
+    public string RoomtonePath => _book.ResolveArtifactFile(Path.Combine("safe", "roomtone.wav")).FullName;
 
     /// <summary>
     /// Gets whether a roomtone file exists for this book.
@@ -79,13 +82,16 @@ public sealed class BookAudio
     {
         get
         {
-            if (!_roomtoneLoaded)
+            lock (_roomtoneLock)
             {
-                _roomtone = LoadRoomtone();
-                _roomtoneLoaded = true;
-            }
+                if (!_roomtoneLoaded)
+                {
+                    _roomtone = LoadRoomtone();
+                    _roomtoneLoaded = true;
+                }
 
-            return _roomtone;
+                return _roomtone;
+            }
         }
     }
 
@@ -94,8 +100,11 @@ public sealed class BookAudio
     /// </summary>
     public void UnloadRoomtone()
     {
-        _roomtone = null;
-        _roomtoneLoaded = false;
+        lock (_roomtoneLock)
+        {
+            _roomtone = null;
+            _roomtoneLoaded = false;
+        }
         Log.Debug("BookAudio unloaded roomtone for {BookId}", _book.Descriptor.BookId);
     }
 
