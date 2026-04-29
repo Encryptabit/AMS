@@ -87,22 +87,25 @@ public sealed class PickupPickMapStore
         var path = GetDocumentPath();
         var gate = GetMapGate(path);
 
-        Exception? finalFailure = null;
-        for (var attempt = 1; attempt <= 2; attempt++)
+        lock (gate)
         {
-            ct.ThrowIfCancellationRequested();
+            var current = LoadOrCreateUnlocked(path, source, ct);
+            var previousJson = File.Exists(path)
+                ? File.ReadAllText(path)
+                : null;
+            var next = NormalizeForWrite(
+                source: source,
+                nextRevision: current.Revision + 1,
+                document: document);
+            var json = JsonSerializer.Serialize(next, JsonOptions);
 
-            try
+            Exception? finalFailure = null;
+            for (var attempt = 1; attempt <= 2; attempt++)
             {
-                lock (gate)
-                {
-                    var current = LoadOrCreateUnlocked(path, source, ct);
-                    var next = NormalizeForWrite(
-                        source: source,
-                        nextRevision: current.Revision + 1,
-                        document: document);
+                ct.ThrowIfCancellationRequested();
 
-                    var json = JsonSerializer.Serialize(next, JsonOptions);
+                try
+                {
                     _atomicWrite(path, json, ct);
 
                     Log.Info(
@@ -114,29 +117,29 @@ public sealed class PickupPickMapStore
 
                     return next;
                 }
+                catch (Exception ex) when (attempt == 1 && IsRetriableIoFailure(ex))
+                {
+                    finalFailure = RestoreSnapshotAfterFailedWrite(path, previousJson, source, ex, ct);
+                    Log.Warn(
+                        "Pickup pick-map write retrying after {FailureType} attempt={Attempt}, path={Path}, source={SourceFingerprint}: {Message}",
+                        ex.GetType().Name,
+                        attempt,
+                        path,
+                        source.Fingerprint,
+                        ex.Message);
+                }
+                catch (Exception ex)
+                {
+                    finalFailure = RestoreSnapshotAfterFailedWrite(path, previousJson, source, ex, ct);
+                    break;
+                }
             }
-            catch (Exception ex) when (attempt == 1 && IsRetriableIoFailure(ex))
-            {
-                finalFailure = ex;
-                Log.Warn(
-                    "Pickup pick-map write retrying after {FailureType} attempt={Attempt}, path={Path}, source={SourceFingerprint}: {Message}",
-                    ex.GetType().Name,
-                    attempt,
-                    path,
-                    source.Fingerprint,
-                    ex.Message);
-            }
-            catch (Exception ex)
-            {
-                finalFailure = ex;
-                break;
-            }
-        }
 
-        throw new InvalidOperationException(
-            $"Pickup pick-map write failed after retry for source '{source.Path}' " +
-            $"(fingerprint='{source.Fingerprint}', crxTargets='{source.CrxTargetsFingerprint}', path='{path}').",
-            finalFailure);
+            throw new InvalidOperationException(
+                $"Pickup pick-map write failed after retry for source '{source.Path}' " +
+                $"(fingerprint='{source.Fingerprint}', crxTargets='{source.CrxTargetsFingerprint}', path='{path}').",
+                finalFailure);
+        }
     }
 
     private PickupPickMapDocument LoadOrCreateUnlocked(
@@ -253,6 +256,51 @@ public sealed class PickupPickMapStore
 
     private static bool IsMalformedDocumentException(Exception ex)
         => ex is JsonException || ex is ArgumentException || ex is InvalidOperationException;
+
+    private static Exception RestoreSnapshotAfterFailedWrite(
+        string path,
+        string? previousJson,
+        PickupPickMapSourceReference source,
+        Exception writeFailure,
+        CancellationToken ct)
+    {
+        try
+        {
+            ct.ThrowIfCancellationRequested();
+
+            if (previousJson is null)
+            {
+                if (File.Exists(path))
+                {
+                    File.Delete(path);
+                }
+
+                return writeFailure;
+            }
+
+            var currentJson = File.Exists(path)
+                ? File.ReadAllText(path)
+                : null;
+            if (string.Equals(currentJson, previousJson, StringComparison.Ordinal))
+            {
+                return writeFailure;
+            }
+
+            var directory = Path.GetDirectoryName(path)
+                ?? throw new InvalidOperationException($"Cannot resolve directory for pickup pick-map file '{path}'.");
+            Directory.CreateDirectory(directory);
+            File.WriteAllText(path, previousJson);
+            return writeFailure;
+        }
+        catch (Exception restoreFailure)
+        {
+            return new InvalidOperationException(
+                "Pickup pick-map write failed and last-good document restoration failed: " +
+                $"path='{path}', sourcePath='{source.Path}', fingerprint='{source.Fingerprint}', " +
+                $"writeFailure='{writeFailure.Message}', restoreFailure='{restoreFailure.Message}'.",
+                new AggregateException(writeFailure, restoreFailure));
+        }
+    }
 
     private static void WriteAtomic(string path, string json, CancellationToken ct)
     {

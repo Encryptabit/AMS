@@ -226,6 +226,130 @@ public sealed class PickupPickMapStoreTests
     }
 
     [Fact]
+    public void Save_FirstWriteCorruptsDestinationAndThrows_RetriesWithoutQuarantiningCurrentMap()
+    {
+        var root = CreateTempDirectory();
+        try
+        {
+            var source = CreateSource();
+            var stableStore = new PickupPickMapStore(() => root);
+            var stableDocument = CreateDocument(
+                source,
+                [
+                    CreateAssignment(
+                        id: "seg-stable",
+                        status: PickupPickMapAssignmentStatus.Confirmed,
+                        segmentStartSec: 1,
+                        segmentEndSec: 2,
+                        selectedTarget: CreateTarget("chapter-01", errorNumber: 1))
+                ]);
+            _ = stableStore.Save(source, stableDocument);
+            var documentPath = stableStore.GetDocumentPath();
+
+            var attempts = 0;
+            var retryingStore = new PickupPickMapStore(
+                workspaceRootResolver: () => root,
+                atomicWrite: (path, json, _) =>
+                {
+                    attempts++;
+                    if (attempts == 1)
+                    {
+                        File.WriteAllText(path, "{ corrupted by interrupted pick-map write");
+                        throw new IOException("simulated interrupted pick-map write after destination corruption");
+                    }
+
+                    File.WriteAllText(path, json);
+                });
+            var nextDocument = CreateDocument(
+                source,
+                [
+                    CreateAssignment(
+                        id: "seg-retry-success",
+                        status: PickupPickMapAssignmentStatus.Confirmed,
+                        segmentStartSec: 3,
+                        segmentEndSec: 4,
+                        selectedTarget: CreateTarget("chapter-01", errorNumber: 2))
+                ]);
+
+            var saved = retryingStore.Save(source, nextDocument);
+            var loaded = stableStore.TryRead();
+
+            Assert.Equal(2, attempts);
+            Assert.Equal(2, saved.Revision);
+            Assert.NotNull(loaded);
+            Assert.Equal("seg-retry-success", Assert.Single(loaded!.Assignments).Id);
+            Assert.Empty(Directory.GetFiles(
+                Path.GetDirectoryName(documentPath)!,
+                $"{Path.GetFileName(documentPath)}.malformed.*.json"));
+            Assert.True(File.Exists(documentPath));
+        }
+        finally
+        {
+            SafeDeleteDirectory(root);
+        }
+    }
+
+    [Fact]
+    public void Save_CorruptingWriteFailures_RestorePreviousDocumentWithoutQuarantine()
+    {
+        var root = CreateTempDirectory();
+        try
+        {
+            var source = CreateSource();
+            var stableStore = new PickupPickMapStore(() => root);
+            var stableDocument = CreateDocument(
+                source,
+                [
+                    CreateAssignment(
+                        id: "seg-stable",
+                        status: PickupPickMapAssignmentStatus.Confirmed,
+                        segmentStartSec: 1,
+                        segmentEndSec: 2,
+                        selectedTarget: CreateTarget("chapter-01", errorNumber: 1))
+                ]);
+            _ = stableStore.Save(source, stableDocument);
+            var documentPath = stableStore.GetDocumentPath();
+            var before = File.ReadAllText(documentPath);
+
+            var attempts = 0;
+            var failingStore = new PickupPickMapStore(
+                workspaceRootResolver: () => root,
+                atomicWrite: (path, _, _) =>
+                {
+                    attempts++;
+                    File.WriteAllText(path, $"{{ corrupted by failed pick-map write attempt {attempts}");
+                    throw new IOException($"simulated corrupting pick-map write failure {attempts}");
+                });
+            var nextDocument = CreateDocument(
+                source,
+                [
+                    CreateAssignment(
+                        id: "seg-never-saved",
+                        status: PickupPickMapAssignmentStatus.Confirmed,
+                        segmentStartSec: 3,
+                        segmentEndSec: 4,
+                        selectedTarget: CreateTarget("chapter-01", errorNumber: 2))
+                ]);
+
+            var ex = Assert.Throws<InvalidOperationException>(() => failingStore.Save(source, nextDocument));
+            var loaded = stableStore.TryRead();
+
+            Assert.Equal(2, attempts);
+            Assert.Contains("write failed after retry", ex.Message, StringComparison.OrdinalIgnoreCase);
+            Assert.Equal(before, File.ReadAllText(documentPath));
+            Assert.NotNull(loaded);
+            Assert.Equal("seg-stable", Assert.Single(loaded!.Assignments).Id);
+            Assert.Empty(Directory.GetFiles(
+                Path.GetDirectoryName(documentPath)!,
+                $"{Path.GetFileName(documentPath)}.malformed.*.json"));
+        }
+        finally
+        {
+            SafeDeleteDirectory(root);
+        }
+    }
+
+    [Fact]
     public void Document_RejectsDuplicateAssignmentIds_WithSourceDiagnostics()
     {
         var source = CreateSource();
