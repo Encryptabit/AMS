@@ -375,7 +375,7 @@ public static class Program
 
             if (state.RunAllChapters && state.Chapters.Count > 0)
             {
-                if (TryGetAsrParallelism(args, out var parallelism))
+                if (TryGetChapterParallelism(args, out var parallelism))
                 {
                     await ExecuteChaptersInParallelAsync(state, rootCommand, args, parallelism);
                     return;
@@ -463,7 +463,8 @@ public static class Program
         }
 
         var degree = Math.Clamp(requestedParallelism, 1, chapters.Count);
-        Log.Debug("Running ASR in parallel with degree {Degree} (requested {Requested})", degree, requestedParallelism);
+        var commandLabel = chapters.Count > 0 && args.Length > 0 ? args[0] : "command";
+        Log.Debug("Running {Command} in parallel with degree {Degree} (requested {Requested})", commandLabel, degree, requestedParallelism);
         using var semaphore = new SemaphoreSlim(degree);
         var tasks = new List<Task>(chapters.Count);
         var failures = 0;
@@ -507,7 +508,7 @@ public static class Program
         }
     }
 
-    private static bool TryGetAsrParallelism(IReadOnlyList<string> args, out int parallelism)
+    private static bool TryGetChapterParallelism(IReadOnlyList<string> args, out int parallelism)
     {
         parallelism = 1;
         if (args.Count < 2)
@@ -515,14 +516,26 @@ public static class Program
             return false;
         }
 
-        if (!args[0].Equals("asr", StringComparison.OrdinalIgnoreCase) ||
-            !args[1].Equals("run", StringComparison.OrdinalIgnoreCase))
+        var verb = args[0];
+        var sub = args[1];
+
+        // ASR opt-in: explicit --parallel N flag.
+        if (verb.Equals("asr", StringComparison.OrdinalIgnoreCase) &&
+            sub.Equals("run", StringComparison.OrdinalIgnoreCase))
         {
-            return false;
+            parallelism = Math.Max(1, ExtractParallelism(args));
+            return parallelism > 1;
         }
 
-        parallelism = Math.Max(1, ExtractParallelism(args));
-        return parallelism > 1;
+        // Treat: each chapter's treatment is independent and CPU-bound, so default
+        // mode-all batches to ProcessorCount-wide parallelism without requiring a flag.
+        if (verb.Equals("treat", StringComparison.OrdinalIgnoreCase))
+        {
+            parallelism = Math.Max(1, Environment.ProcessorCount);
+            return parallelism > 1;
+        }
+
+        return false;
     }
 
     private static int ExtractParallelism(IReadOnlyList<string> args)
