@@ -530,6 +530,74 @@ public sealed class ProofPickupsChapterFitServiceTests
     }
 
     [Fact]
+    public async Task CommitFitAsync_CallerCancellationAfterRuntimeSuccess_PersistsCommittedStateWithNonCancelledToken()
+    {
+        using var harness = await ChapterFitHarness.CreateAsync(["chapter-01"]);
+        using var cts = new CancellationTokenSource();
+        var fitSaveCancellationStates = new List<bool>();
+        harness.CrxEntries.Add(harness.CreateCrxEntry("chapter-01", errorNumber: 101, sentenceId: 11));
+        harness.ImportPickAssetsBehavior = (sourcePath, targets, _) =>
+        {
+            var target = targets.Single();
+            return Task.FromResult((
+                Matched: (IReadOnlyList<PickupAsset>)[harness.CreateAsset("seg-101", sourcePath, target, 0.10, 0.40)],
+                Unmatched: (IReadOnlyList<PickupAsset>)Array.Empty<PickupAsset>()));
+        };
+        harness.CommitFitBehavior = (fitPlan, fitItem, _, _) =>
+        {
+            harness.SetArtifactLedgerDocument(
+                fitPlan.ChapterStem,
+                harness.CreateLedgerDocument(
+                    fitPlan.ChapterStem,
+                    [harness.CreateLedgerEntry(1, fitItem.ReplacementId, PickupArtifactLedgerTransitions.CommitSuccess, edlRevision: 11)],
+                    revision: 6));
+
+            cts.Cancel();
+            return Task.FromResult(new FitReplacementCommitResult(
+                ResultBuffer: new AudioBuffer(channels: 1, sampleRate: 1_000, length: 1_000),
+                TimingDeltaSec: 0.075,
+                OperationId: fitItem.ReplacementId,
+                RenderedReplacementDurationSec: 0.300,
+                EdlRevision: 11));
+        };
+
+        var imported = await harness.Service.ImportPickMapAsync(harness.PickupPath, CancellationToken.None);
+        _ = await harness.Service.ConfirmPickMapAsync(imported.PickMapRevision!.Value, CancellationToken.None);
+        var loaded = await harness.Service.LoadOrCreateFitPlanAsync(CancellationToken.None);
+        var item = Assert.Single(loaded.FitPlan!.Items);
+        var previewed = await harness.Service.GenerateFitPreviewAsync(item.FitItemId, loaded.FitPlanRevision!.Value, CancellationToken.None);
+        var previewedItem = Assert.Single(previewed.FitPlan!.Items);
+        var accepted = await harness.Service.AcceptFitPreviewAsync(
+            item.FitItemId,
+            previewed.FitPlanRevision!.Value,
+            previewedItem.PreviewEvidence!.PreviewVersion,
+            ct: CancellationToken.None);
+        harness.SaveFitPlanBehavior = (chapterStem, pickMap, document, ct) =>
+        {
+            fitSaveCancellationStates.Add(ct.IsCancellationRequested);
+            return harness.FitPlanStore.Save(chapterStem, pickMap, document, ct);
+        };
+
+        var committed = await harness.Service.CommitFitAsync(
+            item.FitItemId,
+            accepted.FitPlanRevision!.Value,
+            cts.Token);
+        var committedItem = Assert.Single(committed.FitPlan!.Items);
+
+        Assert.Equal(ProofPickupsSessionPhase.Completed, committed.Phase);
+        Assert.Equal(1, harness.FitCommitCallCount);
+        Assert.Equal(PickupFitPlanItemStatus.Committed, committedItem.Status);
+        Assert.Equal(PickupFitCommitStatus.Committed, committedItem.Commit.Status);
+        Assert.Equal(item.ReplacementId, committedItem.Commit.OperationId);
+        Assert.Equal(11, committedItem.Commit.EdlRevision);
+        Assert.Equal(1, committedItem.Commit.LedgerSequence);
+        Assert.Equal(6, committed.ArtifactLedgerRevision);
+        Assert.Null(committed.LastFitValidationError);
+        Assert.NotEmpty(fitSaveCancellationStates);
+        Assert.All(fitSaveCancellationStates, wasCancelled => Assert.False(wasCancelled));
+    }
+
+    [Fact]
     public async Task CommitFitAsync_UnacceptedItem_FailsClosedWithoutRuntimeCall()
     {
         using var harness = await ChapterFitHarness.CreateAsync(["chapter-01"]);

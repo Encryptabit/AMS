@@ -1177,7 +1177,9 @@ public sealed class ProofPickupsSessionService
         PickupFitPlanDocument? document = null;
         PickupPickMapDocument? pickMap = null;
         PickupFitPlanItem? item = null;
+        FitReplacementCommitResult? commitResult = null;
         var runtimeStarted = false;
+        var runtimeReturnedResult = false;
 
         try
         {
@@ -1196,36 +1198,43 @@ public sealed class ProofPickupsSessionService
             };
 
             runtimeStarted = true;
-            var commitResult = await CommitFitReplacementOrThrow(document, item, ct).ConfigureAwait(false);
+            commitResult = await CommitFitReplacementOrThrow(document, item, ct).ConfigureAwait(false);
             ValidateFitCommitResult(chapterStem, item, commitResult);
+            var validatedCommitResult = commitResult!;
+            runtimeReturnedResult = true;
+
+            // Commit runtime can mutate the EDL, ledger, and corrected audio before returning.
+            // Once it returns a valid result, caller cancellation must not prevent durable Fit truth
+            // from recording that same operation id as committed.
+            var postRuntimePersistenceToken = CancellationToken.None;
 
             var (staged, applied, reverted, failed) = GetLifecycleQueues(chapterStem);
             var (edlRevision, orderingDiagnostics, lastValidationError, edlReadError) = ReadEdlDiagnostics(
                 chapterStem,
-                ct,
+                postRuntimePersistenceToken,
                 baseline.EdlRevision,
                 baseline.DeterministicOrderingDiagnostics,
                 baseline.LastValidationError);
             var (ledgerRevision, ledgerEntries, ledgerReadError) = ReadLedgerDiagnostics(
                 chapterStem,
-                ct,
+                postRuntimePersistenceToken,
                 baseline.ArtifactLedgerRevision,
                 baseline.ArtifactLedgerEntries);
-            var ledgerSequence = ResolveLedgerSequence(ledgerEntries, commitResult.OperationId)
+            var ledgerSequence = ResolveLedgerSequence(ledgerEntries, validatedCommitResult.OperationId)
                 ?? throw new InvalidOperationException(
-                    $"Pickup Fit commit returned no artifact-ledger evidence for chapter '{chapterStem}', op '{commitResult.OperationId}'.");
+                    $"Pickup Fit commit returned no artifact-ledger evidence for chapter '{chapterStem}', op '{validatedCommitResult.OperationId}'.");
 
             var committedDocument = ReplaceFitItem(
                 document,
                 fitItemId,
                 current => WithFitCommitSuccess(
                     current,
-                    commitResult.OperationId,
-                    edlRevision ?? commitResult.EdlRevision,
+                    validatedCommitResult.OperationId,
+                    edlRevision ?? validatedCommitResult.EdlRevision,
                     ledgerSequence),
                 operationId,
                 validationError: null);
-            var saved = SaveFitPlanOrThrow(chapterStem, pickMap, committedDocument, ct);
+            var saved = SaveFitPlanOrThrow(chapterStem, pickMap, committedDocument, postRuntimePersistenceToken);
 
             _snapshot = ApplyFitPlanToSnapshot(
                 baseline with
@@ -1245,7 +1254,7 @@ public sealed class ProofPickupsSessionService
                     Phase = ProofPickupsSessionPhase.Completed,
                     Progress = 1d,
                     LastError = edlReadError ?? ledgerReadError,
-                    LastOperationId = commitResult.OperationId
+                    LastOperationId = validatedCommitResult.OperationId
                 },
                 saved,
                 readError: null,
@@ -1253,6 +1262,24 @@ public sealed class ProofPickupsSessionService
                 validationError: null);
 
             return _snapshot;
+        }
+        catch (OperationCanceledException ex) when (runtimeReturnedResult && document is not null && pickMap is not null && item is not null)
+        {
+            var message =
+                $"Fit commit failed for chapter '{chapterStem}', item '{fitItemId}': " +
+                $"post-runtime persistence cancelled after commit returned ({ex.Message}). Polish rollback/ledger diagnostics refreshed; item left uncommitted for retry.";
+
+            return PersistFitCommitFailure(
+                baseline,
+                chapterName,
+                chapterStem,
+                pickMap,
+                document,
+                item,
+                fitItemId,
+                operationId,
+                message,
+                CancellationToken.None);
         }
         catch (OperationCanceledException ex) when (runtimeStarted && document is not null && pickMap is not null && item is not null)
         {
@@ -1301,7 +1328,7 @@ public sealed class ProofPickupsSessionService
                     fitItemId,
                     operationId,
                     message,
-                    ct);
+                    CancellationToken.None);
             }
 
             return FailFitAndPreserve(
