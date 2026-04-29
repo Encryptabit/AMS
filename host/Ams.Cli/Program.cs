@@ -1,4 +1,6 @@
 ﻿using System.CommandLine;
+using System.CommandLine.Builder;
+using System.CommandLine.Parsing;
 using System.Text;
 using System.Threading;
 using Ams.Cli.Repl;
@@ -465,6 +467,14 @@ public static class Program
         var degree = Math.Clamp(requestedParallelism, 1, chapters.Count);
         var commandLabel = chapters.Count > 0 && args.Length > 0 ? args[0] : "command";
         Log.Debug("Running {Command} in parallel with degree {Degree} (requested {Requested})", commandLabel, degree, requestedParallelism);
+
+        // Build the parser once on the orchestrator thread. RootCommand.InvokeAsync rebuilds a parser
+        // per call and mutates the root command (adding --version / --help global options), which
+        // races under concurrent invocation and throws "An item with the same key has already been
+        // added. Key: --version". Reusing a single Parser sidesteps that — Parser.InvokeAsync
+        // creates per-call ParseResult/InvocationContext state and is safe to share.
+        var parser = new CommandLineBuilder(rootCommand).UseDefaults().Build();
+
         using var semaphore = new SemaphoreSlim(degree);
         var tasks = new List<Task>(chapters.Count);
         var failures = 0;
@@ -481,7 +491,7 @@ public static class Program
                     using var scope = state.BeginChapterScope(chapterCopy);
                     ReplContext.Current = state;
                     var concreteArgs = ReplacePlaceholders(args, chapterCopy);
-                    var exitCode = await rootCommand.InvokeAsync(concreteArgs).ConfigureAwait(false);
+                    var exitCode = await parser.InvokeAsync(concreteArgs).ConfigureAwait(false);
                     if (exitCode != 0)
                     {
                         Interlocked.Increment(ref failures);
