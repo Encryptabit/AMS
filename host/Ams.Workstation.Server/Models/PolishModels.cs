@@ -1,3 +1,4 @@
+using Ams.Core.Artifacts;
 using Ams.Core.Audio;
 
 namespace Ams.Workstation.Server.Models;
@@ -39,7 +40,9 @@ public sealed record StagedReplacement(
     double CrossfadeDurationSec,
     string CrossfadeCurve,
     DateTime StagedAtUtc,
-    ReplacementStatus Status);
+    ReplacementStatus Status,
+    double? ExplicitReplacementDurationSec = null,
+    PickupEdlFitMetadata? FitMetadata = null);
 
 /// <summary>
 /// Result of matching a pickup recording segment to a sentence in the original audio.
@@ -249,13 +252,23 @@ public static class StagedReplacementExtensions
     public static double PickupDuration(this StagedReplacement r) =>
         r.PickupEndSec - r.PickupStartSec;
 
+    public static double ReplacementDuration(this StagedReplacement r) =>
+        r.ExplicitReplacementDurationSec ?? r.PickupDuration();
+
     public static double OriginalDuration(this StagedReplacement r) =>
         r.OriginalEndSec - r.OriginalStartSec;
 
     /// <summary>
     /// Where the replacement actually ends in the post-splice audio:
-    /// original start + pickup duration (not the original end).
+    /// original start + rendered replacement duration (or pickup duration for legacy replacements).
     /// </summary>
     public static double ActualReplacedEndSec(this StagedReplacement r) =>
-        r.OriginalStartSec + r.PickupDuration();
+        r.OriginalStartSec + r.ReplacementDuration();
 }
+
+public sealed record FitReplacementCommitResult(
+    AudioBuffer ResultBuffer,
+    double TimingDeltaSec,
+    string OperationId,
+    double RenderedReplacementDurationSec,
+    int EdlRevision);

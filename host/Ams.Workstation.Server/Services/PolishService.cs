@@ -16,6 +16,7 @@ using Ams.Core.Processors;
 using Ams.Core.Runtime.Chapter;
 using Ams.Workstation.Server.Models;
 using Ams.Workstation.Server.Services.Pickups.Edl;
+using Ams.Workstation.Server.Services.Pickups.Fit;
 
 namespace Ams.Workstation.Server.Services;
 
@@ -1005,6 +1006,220 @@ public class PolishService
         }
     }
 
+    public async Task<FitReplacementCommitResult> CommitFitReplacementAsync(
+        PickupFitPlanDocument fitPlan,
+        PickupFitPlanItem fitItem,
+        string? roomtoneFilePath,
+        CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(fitPlan);
+        ArgumentNullException.ThrowIfNull(fitItem);
+
+        var operationHandle = GetActiveChapterHandleOrThrow();
+        var operationStem = operationHandle.Chapter.Descriptor.ChapterId;
+        if (!string.Equals(operationStem, fitPlan.ChapterStem, StringComparison.OrdinalIgnoreCase) ||
+            !string.Equals(operationStem, fitItem.Target.ChapterStem, StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException(
+                $"Pickup Fit commit rejected: active chapter='{operationStem}', fitPlan='{fitPlan.ChapterStem}', itemTarget='{fitItem.Target.ChapterStem}'.");
+        }
+
+        var mutationLock = GetChapterMutationLock(operationStem);
+        await mutationLock.WaitAsync(ct).ConfigureAwait(false);
+
+        StagedReplacement? item = null;
+        IReadOnlySet<int>? knownSentenceIds = null;
+        PickupEdlSourceReference? source = null;
+        var transitionedToApplied = false;
+
+        try
+        {
+            ct.ThrowIfCancellationRequested();
+            EnsureFitItemReadyForCommit(fitPlan, fitItem);
+            knownSentenceIds = BuildKnownSentenceIdSet(GetCurrentHydratedTranscript());
+
+            source = BuildPickupEdlSourceReference(fitPlan.Source);
+            var pickupSource = _pickupSourceBufferCache.GetSourceBuffer(source, operationStem, fitItem.ReplacementId, ct);
+            var render = RenderFitReplacement(operationHandle, fitItem, pickupSource, roomtoneFilePath);
+
+            item = BuildFitStagedReplacement(fitPlan, fitItem, render);
+            EnsureNoActiveOverlapOrThrow(operationStem, item.Id, item.OriginalStartSec, item.OriginalEndSec);
+            EnsureFitReplacementQueued(operationStem, item);
+
+            var (seededDocument, seededSource) = EnsurePickupEdlOperationSeeded(
+                operationStem,
+                item,
+                knownSentenceIds,
+                ct);
+            source = seededSource;
+
+            TryAppendPickupArtifactLedgerEntry(
+                chapterStem: operationStem,
+                operationId: item.Id,
+                transition: PickupArtifactLedgerTransitions.CommitAttempt,
+                phase: "fit-apply",
+                edlRevision: seededDocument.Revision,
+                queueStatus: ReplacementStatus.Staged,
+                edlState: PickupEdlOperationState.Staged,
+                rollbackVerdict: PickupArtifactLedgerRollbackVerdict.NotRequired,
+                failureReason: null,
+                ct);
+
+            var chapterBuffer = GetChapterBuffer(operationHandle);
+            var originalDuration = item.OriginalEndSec - item.OriginalStartSec;
+
+            _undoService.SaveOriginalSegment(
+                item.ChapterStem,
+                item.SentenceId,
+                item.Id,
+                chapterBuffer,
+                item.OriginalStartSec,
+                item.OriginalEndSec,
+                render.RenderedDurationSec);
+
+            await _undoService.SaveReplacementSegmentAsync(
+                item.ChapterStem,
+                item.Id,
+                render.Buffer,
+                ct).ConfigureAwait(false);
+
+            var appliedDocument = TransitionPickupEdlOperationState(
+                operationStem,
+                source,
+                item.Id,
+                PickupEdlOperationState.Applied,
+                ct);
+            transitionedToApplied = true;
+
+            if (!_stagingQueue.UpdateStatus(item.Id, ReplacementStatus.Applied, syncEditList: false))
+            {
+                throw new InvalidOperationException(
+                    $"Pickup Fit commit failed to update queue status for chapter '{operationStem}', op '{item.Id}'.");
+            }
+
+            SyncPickupEditsFromEdl(operationStem, appliedDocument);
+
+            var allEdits = _editListService.GetEdits(operationStem);
+            var resultBuffer = await RebuildChapterAsync(operationHandle, allEdits, ct).ConfigureAwait(false);
+            var timingDelta = render.RenderedDurationSec - originalDuration;
+
+            PersistCorrectedBuffer(operationHandle, resultBuffer);
+
+            TryAppendPickupArtifactLedgerEntry(
+                chapterStem: operationStem,
+                operationId: item.Id,
+                transition: PickupArtifactLedgerTransitions.CommitSuccess,
+                phase: "fit-apply",
+                edlRevision: appliedDocument.Revision,
+                queueStatus: ReplacementStatus.Applied,
+                edlState: PickupEdlOperationState.Applied,
+                rollbackVerdict: PickupArtifactLedgerRollbackVerdict.NotRequired,
+                failureReason: null,
+                CancellationToken.None);
+
+            return new FitReplacementCommitResult(
+                ResultBuffer: resultBuffer,
+                TimingDeltaSec: timingDelta,
+                OperationId: item.Id,
+                RenderedReplacementDurationSec: render.RenderedDurationSec,
+                EdlRevision: appliedDocument.Revision);
+        }
+        catch (OperationCanceledException cancelEx)
+        {
+            var rollbackVerdict = PickupArtifactLedgerRollbackVerdict.NotAttempted;
+            var terminalQueueStatus = item?.Status ?? ReplacementStatus.Failed;
+            var terminalEdlState = PickupEdlOperationState.Staged;
+
+            if (transitionedToApplied && item is not null && source is not null)
+            {
+                var rollbackSucceeded = TryRollbackPickupTransition(
+                    operationStem,
+                    source,
+                    item.Id,
+                    rollbackEdlState: PickupEdlOperationState.Staged,
+                    rollbackQueueStatus: ReplacementStatus.Staged,
+                    phase: "fit-apply-cancel",
+                    trigger: cancelEx);
+
+                rollbackVerdict = rollbackSucceeded
+                    ? PickupArtifactLedgerRollbackVerdict.Succeeded
+                    : PickupArtifactLedgerRollbackVerdict.Failed;
+                terminalQueueStatus = rollbackSucceeded ? ReplacementStatus.Staged : ReplacementStatus.Failed;
+                terminalEdlState = rollbackSucceeded ? PickupEdlOperationState.Staged : PickupEdlOperationState.Failed;
+
+                if (!rollbackSucceeded)
+                {
+                    PersistFailedPickupState(operationStem, item, knownSentenceIds, cancelEx, CancellationToken.None);
+                }
+            }
+
+            TryAppendPickupArtifactLedgerEntry(
+                chapterStem: operationStem,
+                operationId: fitItem.ReplacementId,
+                transition: PickupArtifactLedgerTransitions.CommitCancelled,
+                phase: "fit-apply-cancel",
+                edlRevision: ResolveCurrentPickupEdlRevision(operationStem, CancellationToken.None),
+                queueStatus: terminalQueueStatus,
+                edlState: terminalEdlState,
+                rollbackVerdict: rollbackVerdict,
+                failureReason: cancelEx.Message,
+                CancellationToken.None);
+
+            throw;
+        }
+        catch (Exception ex)
+        {
+            var rollbackVerdict = PickupArtifactLedgerRollbackVerdict.NotAttempted;
+            var terminalQueueStatus = ReplacementStatus.Failed;
+            var terminalEdlState = PickupEdlOperationState.Failed;
+
+            if (transitionedToApplied && item is not null && source is not null)
+            {
+                var rollbackSucceeded = TryRollbackPickupTransition(
+                    operationStem,
+                    source,
+                    item.Id,
+                    rollbackEdlState: PickupEdlOperationState.Staged,
+                    rollbackQueueStatus: ReplacementStatus.Staged,
+                    phase: "fit-apply-failure",
+                    trigger: ex);
+
+                rollbackVerdict = rollbackSucceeded
+                    ? PickupArtifactLedgerRollbackVerdict.Succeeded
+                    : PickupArtifactLedgerRollbackVerdict.Failed;
+                terminalQueueStatus = rollbackSucceeded ? ReplacementStatus.Staged : ReplacementStatus.Failed;
+                terminalEdlState = rollbackSucceeded ? PickupEdlOperationState.Staged : PickupEdlOperationState.Failed;
+
+                if (!rollbackSucceeded)
+                {
+                    PersistFailedPickupState(operationStem, item, knownSentenceIds, ex, CancellationToken.None);
+                }
+            }
+            else if (item is not null)
+            {
+                PersistFailedPickupState(operationStem, item, knownSentenceIds, ex, CancellationToken.None);
+            }
+
+            TryAppendPickupArtifactLedgerEntry(
+                chapterStem: operationStem,
+                operationId: fitItem.ReplacementId,
+                transition: PickupArtifactLedgerTransitions.CommitFailure,
+                phase: "fit-apply-failure",
+                edlRevision: ResolveCurrentPickupEdlRevision(operationStem, CancellationToken.None),
+                queueStatus: terminalQueueStatus,
+                edlState: terminalEdlState,
+                rollbackVerdict: rollbackVerdict,
+                failureReason: ex.Message,
+                CancellationToken.None);
+
+            throw;
+        }
+        finally
+        {
+            mutationLock.Release();
+        }
+    }
+
     public async Task<(AudioBuffer? ResultBuffer, int AppliedCount)> ApplyReplacementsAsync(
         IReadOnlyList<string> replacementIds,
         CancellationToken ct)
@@ -1681,6 +1896,161 @@ public class PolishService
         return set;
     }
 
+    private static void EnsureFitItemReadyForCommit(PickupFitPlanDocument fitPlan, PickupFitPlanItem fitItem)
+    {
+        if (!string.Equals(fitItem.Target.ChapterStem, fitPlan.ChapterStem, StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException(
+                $"Pickup Fit commit rejected for item '{fitItem.FitItemId}': item chapter '{fitItem.Target.ChapterStem}' does not match plan chapter '{fitPlan.ChapterStem}'.");
+        }
+
+        if (!fitItem.Acceptance.IsAccepted || fitItem.PreviewEvidence is null)
+        {
+            throw new InvalidOperationException(
+                $"Pickup Fit commit rejected for item '{fitItem.FitItemId}': accepted preview evidence is required before commit.");
+        }
+
+        if (!fitItem.PreviewEvidence.MatchesPickTruth(fitPlan.PickMapRevision, fitPlan.PickAssignmentsFingerprint))
+        {
+            throw new InvalidOperationException(
+                $"Pickup Fit commit rejected for item '{fitItem.FitItemId}': preview evidence is stale for pick revision/fingerprint.");
+        }
+
+        if (fitItem.Acceptance.AcceptedPreviewVersion != fitItem.PreviewEvidence.PreviewVersion)
+        {
+            throw new InvalidOperationException(
+                $"Pickup Fit commit rejected for item '{fitItem.FitItemId}': accepted preview version does not match preview evidence.");
+        }
+    }
+
+    private static PickupEdlSourceReference BuildPickupEdlSourceReference(PickupPickMapSourceReference source)
+    {
+        ArgumentNullException.ThrowIfNull(source);
+        return new PickupEdlSourceReference(
+            path: source.Path,
+            fingerprint: source.Fingerprint,
+            fileSizeBytes: source.FileSizeBytes,
+            modifiedAtUtc: source.ModifiedAtUtc);
+    }
+
+    private PickupFitAudioRenderResult RenderFitReplacement(
+        ChapterContextHandle operationHandle,
+        PickupFitPlanItem fitItem,
+        AudioBuffer pickupSource,
+        string? roomtoneFilePath)
+    {
+        try
+        {
+            return PickupFitAudioRenderer.Render(fitItem, pickupSource, roomtoneSource: null);
+        }
+        catch (InvalidOperationException ex) when (ex.Message.Contains("roomtone is required", StringComparison.OrdinalIgnoreCase))
+        {
+            var roomtone = ResolveFitRoomtoneBuffer(operationHandle, roomtoneFilePath, fitItem.FitItemId)
+                ?? throw new InvalidOperationException(
+                    $"Pickup Fit commit rejected for item '{fitItem.FitItemId}': roomtone fill is required but no roomtone source is available.",
+                    ex);
+            return PickupFitAudioRenderer.Render(fitItem, pickupSource, roomtone);
+        }
+    }
+
+    private static AudioBuffer? ResolveFitRoomtoneBuffer(
+        ChapterContextHandle operationHandle,
+        string? roomtoneFilePath,
+        string fitItemId)
+    {
+        if (!string.IsNullOrWhiteSpace(roomtoneFilePath))
+        {
+            var file = new FileInfo(roomtoneFilePath.Trim());
+            if (!file.Exists)
+            {
+                throw new FileNotFoundException(
+                    $"Pickup Fit commit rejected for item '{fitItemId}': roomtone file is missing at '{file.FullName}'.",
+                    file.FullName);
+            }
+
+            return AudioProcessor.Decode(file.FullName);
+        }
+
+        return operationHandle.Chapter.Book.Audio.Roomtone;
+    }
+
+    private static StagedReplacement BuildFitStagedReplacement(
+        PickupFitPlanDocument fitPlan,
+        PickupFitPlanItem fitItem,
+        PickupFitAudioRenderResult render)
+    {
+        var metadata = new PickupEdlFitMetadata(
+            fitItemId: fitItem.FitItemId,
+            pickAssignmentId: fitItem.PickAssignmentId,
+            pickupSegmentId: fitItem.PickupSegmentId,
+            previewVersion: fitItem.PreviewEvidence?.PreviewVersion,
+            pickMapRevision: fitPlan.PickMapRevision,
+            pickAssignmentsFingerprint: fitPlan.PickAssignmentsFingerprint);
+
+        return new StagedReplacement(
+            Id: fitItem.ReplacementId,
+            ChapterStem: fitPlan.ChapterStem,
+            SentenceId: fitItem.Target.SentenceId,
+            OriginalStartSec: fitItem.OuterRange.StartSec,
+            OriginalEndSec: fitItem.OuterRange.EndSec,
+            PickupSourcePath: fitPlan.Source.Path,
+            PickupStartSec: fitItem.InnerRange.StartSec,
+            PickupEndSec: fitItem.InnerRange.EndSec,
+            CrossfadeDurationSec: render.EffectiveCrossfadeDurationSec,
+            CrossfadeCurve: render.CrossfadeCurve,
+            StagedAtUtc: DateTime.UtcNow,
+            Status: ReplacementStatus.Staged,
+            ExplicitReplacementDurationSec: render.RenderedDurationSec,
+            FitMetadata: metadata);
+    }
+
+    private void EnsureFitReplacementQueued(string chapterStem, StagedReplacement replacement)
+    {
+        var existing = TryFindStagedItem(replacement.Id, chapterStem);
+        if (existing is null)
+        {
+            if (!_stagingQueue.TryStage(replacement, out var validationError))
+            {
+                throw new InvalidOperationException(
+                    $"Pickup Fit commit failed to stage replacement for chapter '{chapterStem}', op '{replacement.Id}': {validationError}");
+            }
+
+            return;
+        }
+
+        if (existing.Status != ReplacementStatus.Staged)
+        {
+            throw new InvalidOperationException(
+                $"Pickup Fit commit rejected for chapter '{chapterStem}', op '{replacement.Id}': queue state is '{existing.Status}', expected 'Staged'.");
+        }
+
+        if (!StagedReplacementPayloadMatches(existing, replacement))
+        {
+            throw new InvalidOperationException(
+                $"Pickup Fit commit rejected for chapter '{chapterStem}', op '{replacement.Id}': existing staged payload differs from accepted Fit payload.");
+        }
+    }
+
+    private static bool StagedReplacementPayloadMatches(StagedReplacement left, StagedReplacement right)
+    {
+        const double epsilon = 0.000_001;
+        return string.Equals(left.ChapterStem, right.ChapterStem, StringComparison.OrdinalIgnoreCase)
+               && left.SentenceId == right.SentenceId
+               && string.Equals(Path.GetFullPath(left.PickupSourcePath), Path.GetFullPath(right.PickupSourcePath), StringComparison.OrdinalIgnoreCase)
+               && Math.Abs(left.OriginalStartSec - right.OriginalStartSec) <= epsilon
+               && Math.Abs(left.OriginalEndSec - right.OriginalEndSec) <= epsilon
+               && Math.Abs(left.PickupStartSec - right.PickupStartSec) <= epsilon
+               && Math.Abs(left.PickupEndSec - right.PickupEndSec) <= epsilon
+               && Math.Abs(left.CrossfadeDurationSec - right.CrossfadeDurationSec) <= epsilon
+               && string.Equals(left.CrossfadeCurve, right.CrossfadeCurve, StringComparison.Ordinal)
+               && NullableDurationMatches(left.ExplicitReplacementDurationSec, right.ExplicitReplacementDurationSec, epsilon)
+               && EqualityComparer<PickupEdlFitMetadata?>.Default.Equals(left.FitMetadata, right.FitMetadata);
+    }
+
+    private static bool NullableDurationMatches(double? left, double? right, double epsilon)
+        => left is null && right is null ||
+           left is not null && right is not null && Math.Abs(left.Value - right.Value) <= epsilon;
+
     private PickupEdlSourceReference ResolveSourceReferenceForReplacement(string chapterStem, StagedReplacement replacement)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(chapterStem);
@@ -1918,7 +2288,9 @@ public class PolishService
                && Math.Abs(operation.SourceEndSec - replacement.PickupEndSec) <= epsilon
                && Math.Abs(operation.CrossfadeDurationSec - replacement.CrossfadeDurationSec) <= epsilon
                && string.Equals(operation.CrossfadeCurve, replacement.CrossfadeCurve, StringComparison.Ordinal)
-               && operation.SentenceId == replacement.SentenceId;
+               && operation.SentenceId == replacement.SentenceId
+               && NullableDurationMatches(operation.ExplicitReplacementDurationSec, replacement.ExplicitReplacementDurationSec, epsilon)
+               && EqualityComparer<PickupEdlFitMetadata?>.Default.Equals(operation.FitMetadata, replacement.FitMetadata);
     }
 
     private void LogPickupEdlTransition(

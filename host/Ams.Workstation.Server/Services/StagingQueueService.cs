@@ -245,7 +245,7 @@ public class StagingQueueService
                             Operation: EditOperation.PickupReplace,
                             BaselineStartSec: replacement.OriginalStartSec,
                             BaselineEndSec: replacement.OriginalEndSec,
-                            ReplacementDurationSec: replacement.PickupDuration(),
+                            ReplacementDurationSec: replacement.ReplacementDuration(),
                             SentenceId: replacement.SentenceId,
                             ErrorNumber: null,
                             PickupAssetId: null,

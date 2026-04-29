@@ -48,8 +48,8 @@ public sealed class PickupEdlEngine
             crossfadeDurationSec: replacement.CrossfadeDurationSec,
             crossfadeCurve: replacement.CrossfadeCurve,
             updatedAtUtc: updatedAtUtc ?? DateTime.UtcNow,
-            explicitReplacementDurationSec: explicitReplacementDurationSec,
-            fitMetadata: fitMetadata);
+            explicitReplacementDurationSec: explicitReplacementDurationSec ?? replacement.ExplicitReplacementDurationSec,
+            fitMetadata: fitMetadata ?? replacement.FitMetadata);
     }
 
     public PickupEdlDocument UpsertOperation(PickupEdlDocument document, PickupEdlOperation operation)
