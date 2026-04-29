@@ -5,6 +5,7 @@ using Ams.Core.Artifacts.Hydrate;
 using Ams.Core.Common;
 using Ams.Workstation.Server.Models;
 using Ams.Workstation.Server.Services.Pickups.Edl;
+using Ams.Workstation.Server.Services.Pickups.Fit;
 using Ams.Workstation.Server.Services.Pickups.Pick;
 
 namespace Ams.Workstation.Server.Services;
@@ -51,7 +52,13 @@ public sealed record ProofPickupsSessionSnapshot(
     IReadOnlyDictionary<PickupPickMapAssignmentStatus, int> PickAssignmentCountsByStatus,
     IReadOnlyDictionary<string, int> PickAssignmentCountsByChapter,
     string? LastPickOperationId,
-    string? LastPickValidationError)
+    string? LastPickValidationError,
+    PickupFitPlanDocument? FitPlan,
+    int? FitPlanRevision,
+    string? FitPlanReadError,
+    IReadOnlyDictionary<PickupFitPlanItemStatus, int> FitAssignmentCountsByStatus,
+    string? LastFitOperationId,
+    string? LastFitValidationError)
 {
     public static ProofPickupsSessionSnapshot Empty { get; } = new(
         ActiveChapterName: null,
@@ -80,7 +87,13 @@ public sealed record ProofPickupsSessionSnapshot(
         PickAssignmentCountsByStatus: new Dictionary<PickupPickMapAssignmentStatus, int>(),
         PickAssignmentCountsByChapter: new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase),
         LastPickOperationId: null,
-        LastPickValidationError: null);
+        LastPickValidationError: null,
+        FitPlan: null,
+        FitPlanRevision: null,
+        FitPlanReadError: null,
+        FitAssignmentCountsByStatus: new Dictionary<PickupFitPlanItemStatus, int>(),
+        LastFitOperationId: null,
+        LastFitValidationError: null);
 
     public bool HasActiveChapter => !string.IsNullOrWhiteSpace(ActiveChapterStem);
 
@@ -109,6 +122,7 @@ public sealed class ProofPickupsSessionService
         PickupEdlStore pickupEdlStore,
         PickupArtifactLedgerStore pickupArtifactLedgerStore,
         PickupPickMapStore pickupPickMapStore,
+        PickupFitPlanStore pickupFitPlanStore,
         PickupEdlEngine pickupEdlEngine)
         : this(
             workspace,
@@ -144,7 +158,10 @@ public sealed class ProofPickupsSessionService
                 ImportPickAssetsAsync: (sourcePath, targets, ct) => pickupAssetService.ImportForPickAsync(sourcePath, targets, ct),
                 ReadPickMapDocument: ct => pickupPickMapStore.TryRead(ct),
                 LoadOrCreatePickMap: (source, ct) => pickupPickMapStore.LoadOrCreate(source, ct),
-                SavePickMap: (source, document, ct) => pickupPickMapStore.Save(source, document, ct)))
+                SavePickMap: (source, document, ct) => pickupPickMapStore.Save(source, document, ct),
+                ReadFitPlanDocument: (chapterStem, ct) => pickupFitPlanStore.TryRead(chapterStem, ct),
+                LoadOrCreateFitPlan: (chapterStem, pickMap, ct) => pickupFitPlanStore.LoadOrCreate(chapterStem, pickMap, ct),
+                SaveFitPlan: (chapterStem, pickMap, document, ct) => pickupFitPlanStore.Save(chapterStem, pickMap, document, ct)))
     {
     }
 
@@ -185,6 +202,12 @@ public sealed class ProofPickupsSessionService
                 PickAssignmentCountsByChapter = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase),
                 LastPickOperationId = null,
                 LastPickValidationError = null,
+                FitPlan = null,
+                FitPlanRevision = null,
+                FitPlanReadError = null,
+                FitAssignmentCountsByStatus = new Dictionary<PickupFitPlanItemStatus, int>(),
+                LastFitOperationId = null,
+                LastFitValidationError = null,
                 LastError = chapterError,
                 LastOperationId = null,
                 Phase = ProofPickupsSessionPhase.Idle,
@@ -217,6 +240,13 @@ public sealed class ProofPickupsSessionService
         var targets = ResolveBatchPickTargetsForLoadedMap(
             pickDiagnostics.Map,
             chapterChanged ? Array.Empty<CrxPickupTarget>() : _snapshot.Targets);
+        var fitDiagnostics = ReadFitPlanDiagnostics(
+            chapterStem,
+            ct,
+            chapterChanged ? null : _snapshot.FitPlan,
+            chapterChanged ? null : _snapshot.FitPlanRevision,
+            chapterChanged ? null : _snapshot.LastFitOperationId,
+            chapterChanged ? null : _snapshot.LastFitValidationError);
 
         _snapshot = _snapshot with
         {
@@ -245,7 +275,13 @@ public sealed class ProofPickupsSessionService
             PickAssignmentCountsByChapter = pickDiagnostics.CountsByChapter,
             LastPickOperationId = pickDiagnostics.LastOperationId,
             LastPickValidationError = pickDiagnostics.LastValidationError,
-            LastError = edlReadError ?? pickDiagnostics.ReadError ?? (chapterChanged ? null : _snapshot.LastError),
+            FitPlan = fitDiagnostics.Plan,
+            FitPlanRevision = fitDiagnostics.Revision,
+            FitPlanReadError = fitDiagnostics.ReadError,
+            FitAssignmentCountsByStatus = fitDiagnostics.CountsByStatus,
+            LastFitOperationId = fitDiagnostics.LastOperationId,
+            LastFitValidationError = fitDiagnostics.LastValidationError,
+            LastError = edlReadError ?? pickDiagnostics.ReadError ?? fitDiagnostics.ReadError ?? (chapterChanged ? null : _snapshot.LastError),
             LastOperationId = chapterChanged ? null : _snapshot.LastOperationId,
             Phase = chapterChanged ? ProofPickupsSessionPhase.Idle : _snapshot.Phase,
             Progress = chapterChanged ? 0d : _snapshot.Progress
@@ -732,6 +768,88 @@ public sealed class ProofPickupsSessionService
                     lastValidationError: null,
                     isDraft: false);
             }));
+    }
+
+    public Task<ProofPickupsSessionSnapshot> LoadOrCreateFitPlanAsync(CancellationToken ct = default)
+        => Task.FromResult(LoadOrCreateFitPlan(ct));
+
+    internal ProofPickupsSessionSnapshot LoadOrCreateFitPlan(CancellationToken ct = default)
+    {
+        var synced = SyncToWorkspace(ct);
+        if (!synced.HasActiveChapter)
+        {
+            return _snapshot;
+        }
+
+        var chapterName = synced.ActiveChapterName!;
+        var chapterStem = synced.ActiveChapterStem!;
+        var baseline = synced;
+        var operationId = CreateFitOperationId("load-or-create");
+
+        try
+        {
+            if (!string.IsNullOrWhiteSpace(baseline.PickMapReadError))
+            {
+                throw new InvalidOperationException(
+                    $"Cannot create Fit plan while Pick map read error is active: {baseline.PickMapReadError}");
+            }
+
+            if (!string.IsNullOrWhiteSpace(baseline.FitPlanReadError))
+            {
+                throw new InvalidOperationException(
+                    $"Cannot create Fit plan while Fit-plan read error is active: {baseline.FitPlanReadError}");
+            }
+
+            var pickMap = baseline.PickMap
+                ?? throw new InvalidOperationException("No canonical Pick map is loaded. Import and confirm Pick truth before Fit.");
+
+            EnsurePickMapReadyForFit(chapterStem, pickMap);
+
+            _snapshot = baseline with
+            {
+                Phase = ProofPickupsSessionPhase.Picking,
+                Progress = 0.84d,
+                LastError = null,
+                LastFitOperationId = operationId,
+                LastFitValidationError = null
+            };
+
+            var targets = BuildBatchCrxTargets();
+            var currentSource = BuildPickMapSourceReference(pickMap.Source.Path, targets);
+            EnsurePickMapSourceCurrent(pickMap, currentSource);
+
+            var existing = _hooks.ReadFitPlanDocument?.Invoke(chapterStem, ct);
+            var document = LoadOrCreateFitPlanOrThrow(chapterStem, pickMap, ct);
+            if (existing is null)
+            {
+                var stamped = StampFitPlanOperation(document, operationId, validationError: null);
+                var saved = SaveFitPlanOrThrow(chapterStem, pickMap, stamped, ct);
+                document = _hooks.ReadFitPlanDocument?.Invoke(chapterStem, ct) ?? saved;
+            }
+
+            _snapshot = ApplyFitPlanToSnapshot(
+                baseline with
+                {
+                    Phase = ProofPickupsSessionPhase.Completed,
+                    Progress = 1d,
+                    LastError = null
+                },
+                document,
+                readError: null,
+                operationId,
+                document.LastValidationError);
+
+            return _snapshot;
+        }
+        catch (Exception ex)
+        {
+            return FailFitAndPreserve(
+                baseline,
+                chapterName,
+                chapterStem,
+                $"Fit plan load/create failed for chapter '{chapterStem}': {ex.Message}",
+                operationId);
+        }
     }
 
     public Task<ProofPickupsSessionSnapshot> StageAsync(string assetId, CancellationToken ct = default)
@@ -1277,6 +1395,13 @@ public sealed class ProofPickupsSessionService
             ct,
             baseline.ArtifactLedgerRevision,
             baseline.ArtifactLedgerEntries);
+        var fitDiagnostics = ReadFitPlanDiagnostics(
+            chapterStem,
+            ct,
+            baseline.FitPlan,
+            baseline.FitPlanRevision,
+            baseline.LastFitOperationId,
+            baseline.LastFitValidationError);
 
         _snapshot = baseline with
         {
@@ -1292,9 +1417,15 @@ public sealed class ProofPickupsSessionService
             ArtifactLedgerRevision = ledgerRevision,
             ArtifactLedgerEntries = ledgerEntries,
             ArtifactLedgerReadError = ledgerReadError,
+            FitPlan = fitDiagnostics.Plan,
+            FitPlanRevision = fitDiagnostics.Revision,
+            FitPlanReadError = fitDiagnostics.ReadError,
+            FitAssignmentCountsByStatus = fitDiagnostics.CountsByStatus,
+            LastFitOperationId = fitDiagnostics.LastOperationId,
+            LastFitValidationError = fitDiagnostics.LastValidationError,
             Phase = phase,
             Progress = progress,
-            LastError = lastError ?? edlReadError,
+            LastError = lastError ?? edlReadError ?? fitDiagnostics.ReadError,
             LastOperationId = operationId ?? baseline.LastOperationId
         };
 
@@ -1337,6 +1468,27 @@ public sealed class ProofPickupsSessionService
             LastError = message,
             LastPickOperationId = operationId ?? baseline.LastPickOperationId,
             LastPickValidationError = message
+        };
+
+        return _snapshot;
+    }
+
+    private ProofPickupsSessionSnapshot FailFitAndPreserve(
+        ProofPickupsSessionSnapshot baseline,
+        string chapterName,
+        string chapterStem,
+        string message,
+        string? operationId = null)
+    {
+        _snapshot = baseline with
+        {
+            ActiveChapterName = chapterName,
+            ActiveChapterStem = chapterStem,
+            Phase = ProofPickupsSessionPhase.Failed,
+            Progress = baseline.Progress,
+            LastError = message,
+            LastFitOperationId = operationId ?? baseline.LastFitOperationId,
+            LastFitValidationError = message
         };
 
         return _snapshot;
@@ -1416,6 +1568,162 @@ public sealed class ProofPickupsSessionService
 
         return _hooks.SavePickMap(source, document, ct);
     }
+
+    private PickupFitPlanDocument LoadOrCreateFitPlanOrThrow(
+        string chapterStem,
+        PickupPickMapDocument pickMap,
+        CancellationToken ct)
+    {
+        if (_hooks.LoadOrCreateFitPlan is null)
+        {
+            throw new InvalidOperationException("Fit-plan store load/create hook is not configured.");
+        }
+
+        return _hooks.LoadOrCreateFitPlan(chapterStem, pickMap, ct);
+    }
+
+    private PickupFitPlanDocument SaveFitPlanOrThrow(
+        string chapterStem,
+        PickupPickMapDocument pickMap,
+        PickupFitPlanDocument document,
+        CancellationToken ct)
+    {
+        if (_hooks.SaveFitPlan is null)
+        {
+            throw new InvalidOperationException("Fit-plan store save hook is not configured.");
+        }
+
+        return _hooks.SaveFitPlan(chapterStem, pickMap, document, ct);
+    }
+
+    private static void EnsurePickMapReadyForFit(string chapterStem, PickupPickMapDocument pickMap)
+    {
+        if (pickMap.IsDraft)
+        {
+            throw new InvalidOperationException(
+                $"Cannot create Fit plan for chapter '{chapterStem}' from draft Pick map revision '{pickMap.Revision}'. Confirm Pick truth first.");
+        }
+
+        var unresolved = pickMap.Assignments
+            .Where(assignment => assignment.Status == PickupPickMapAssignmentStatus.Unresolved)
+            .Select(assignment => assignment.Id)
+            .ToArray();
+        if (unresolved.Length > 0)
+        {
+            throw new InvalidOperationException(
+                $"Cannot create Fit plan: unresolved Pick assignment(s) remain: {string.Join(", ", unresolved)}.");
+        }
+
+        var missingTargets = pickMap.Assignments
+            .Where(assignment => assignment.RequiresUniqueTarget && assignment.EffectiveTarget is null)
+            .Select(assignment => assignment.Id)
+            .ToArray();
+        if (missingTargets.Length > 0)
+        {
+            throw new InvalidOperationException(
+                $"Cannot create Fit plan: target-bearing Pick assignment(s) are malformed: {string.Join(", ", missingTargets)}.");
+        }
+
+        var canonicalAssignments = PickupFitPlanDocument.GetCanonicalAssignments(chapterStem, pickMap);
+        if (canonicalAssignments.Count == 0)
+        {
+            throw new InvalidOperationException(
+                $"No Fit-ready Pick assignments target active chapter '{chapterStem}'. Confirmed, inferred, or override assignments with an EffectiveTarget are required.");
+        }
+    }
+
+    private static PickupFitPlanDocument StampFitPlanOperation(
+        PickupFitPlanDocument document,
+        string operationId,
+        string? validationError)
+        => new(
+            schemaVersion: PickupFitPlanDocument.CurrentSchemaVersion,
+            chapterStem: document.ChapterStem,
+            revision: document.Revision,
+            source: document.Source,
+            pickMapRevision: document.PickMapRevision,
+            pickAssignmentsFingerprint: document.PickAssignmentsFingerprint,
+            items: document.GetDeterministicItemOrder(),
+            createdAtUtc: document.CreatedAtUtc,
+            updatedAtUtc: document.UpdatedAtUtc,
+            lastOperationId: operationId,
+            lastValidationError: validationError ?? document.LastValidationError,
+            isDraft: document.IsDraft);
+
+    private ProofPickupsSessionSnapshot ApplyFitPlanToSnapshot(
+        ProofPickupsSessionSnapshot baseline,
+        PickupFitPlanDocument? document,
+        string? readError,
+        string? operationId,
+        string? validationError)
+    {
+        var diagnostics = BuildFitPlanDiagnostics(document, readError, operationId, validationError);
+        _snapshot = baseline with
+        {
+            FitPlan = diagnostics.Plan,
+            FitPlanRevision = diagnostics.Revision,
+            FitPlanReadError = diagnostics.ReadError,
+            FitAssignmentCountsByStatus = diagnostics.CountsByStatus,
+            LastFitOperationId = diagnostics.LastOperationId,
+            LastFitValidationError = diagnostics.LastValidationError
+        };
+
+        return _snapshot;
+    }
+
+    private FitPlanDiagnostics ReadFitPlanDiagnostics(
+        string chapterStem,
+        CancellationToken ct,
+        PickupFitPlanDocument? fallbackPlan,
+        int? fallbackRevision,
+        string? fallbackOperationId,
+        string? fallbackValidationError)
+    {
+        if (_hooks.ReadFitPlanDocument is null)
+        {
+            return BuildFitPlanDiagnostics(fallbackPlan, null, fallbackOperationId, fallbackValidationError);
+        }
+
+        try
+        {
+            var document = _hooks.ReadFitPlanDocument(chapterStem, ct);
+            return BuildFitPlanDiagnostics(
+                document,
+                readError: null,
+                operationId: document?.LastOperationId,
+                validationError: document?.LastValidationError);
+        }
+        catch (Exception ex)
+        {
+            var preserved = fallbackPlan is not null
+                ? fallbackPlan
+                : fallbackRevision.HasValue
+                    ? _snapshot.FitPlan
+                    : null;
+            return BuildFitPlanDiagnostics(
+                preserved,
+                readError: $"Fit-plan read failed for chapter '{chapterStem}': {ex.Message}",
+                operationId: fallbackOperationId,
+                validationError: fallbackValidationError);
+        }
+    }
+
+    private static FitPlanDiagnostics BuildFitPlanDiagnostics(
+        PickupFitPlanDocument? document,
+        string? readError,
+        string? operationId,
+        string? validationError)
+        => new(
+            Plan: document,
+            Revision: document?.Revision,
+            ReadError: readError,
+            CountsByStatus: document?.GetItemCountsByStatus()
+                ?? new Dictionary<PickupFitPlanItemStatus, int>(),
+            LastOperationId: operationId,
+            LastValidationError: validationError);
+
+    private static string CreateFitOperationId(string action)
+        => $"fit-{action}-{Guid.NewGuid():N}";
 
     private static PickupPickMapDocument ReplacePickAssignment(
         PickupPickMapDocument document,
@@ -1681,6 +1989,14 @@ public sealed class ProofPickupsSessionService
         string? ReadError,
         IReadOnlyDictionary<PickupPickMapAssignmentStatus, int> CountsByStatus,
         IReadOnlyDictionary<string, int> CountsByChapter,
+        string? LastOperationId,
+        string? LastValidationError);
+
+    private sealed record FitPlanDiagnostics(
+        PickupFitPlanDocument? Plan,
+        int? Revision,
+        string? ReadError,
+        IReadOnlyDictionary<PickupFitPlanItemStatus, int> CountsByStatus,
         string? LastOperationId,
         string? LastValidationError);
 
@@ -2112,5 +2428,8 @@ public sealed class ProofPickupsSessionService
         Func<string, IReadOnlyList<CrxPickupTarget>, CancellationToken, Task<(IReadOnlyList<PickupAsset> Matched, IReadOnlyList<PickupAsset> Unmatched)>>? ImportPickAssetsAsync = null,
         Func<CancellationToken, PickupPickMapDocument?>? ReadPickMapDocument = null,
         Func<PickupPickMapSourceReference, CancellationToken, PickupPickMapDocument>? LoadOrCreatePickMap = null,
-        Func<PickupPickMapSourceReference, PickupPickMapDocument, CancellationToken, PickupPickMapDocument>? SavePickMap = null);
+        Func<PickupPickMapSourceReference, PickupPickMapDocument, CancellationToken, PickupPickMapDocument>? SavePickMap = null,
+        Func<string, CancellationToken, PickupFitPlanDocument?>? ReadFitPlanDocument = null,
+        Func<string, PickupPickMapDocument, CancellationToken, PickupFitPlanDocument>? LoadOrCreateFitPlan = null,
+        Func<string, PickupPickMapDocument, PickupFitPlanDocument, CancellationToken, PickupFitPlanDocument>? SaveFitPlan = null);
 }

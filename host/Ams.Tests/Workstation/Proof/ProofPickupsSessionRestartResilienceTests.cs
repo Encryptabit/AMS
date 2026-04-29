@@ -3,6 +3,7 @@ using Ams.Core.Services.Documents;
 using Ams.Workstation.Server.Models;
 using Ams.Workstation.Server.Services;
 using Ams.Workstation.Server.Services.Pickups.Edl;
+using Ams.Workstation.Server.Services.Pickups.Fit;
 using Ams.Workstation.Server.Services.Pickups.Pick;
 
 namespace Ams.Tests.Workstation.Proof;
@@ -280,6 +281,103 @@ public sealed class ProofPickupsSessionRestartResilienceTests
         }
     }
 
+    [Fact]
+    public async Task SyncToWorkspace_RestartReloadsStoredFitPlan()
+    {
+        var root = await CreateWorkspaceRootAsync(["chapter-01"]);
+
+        try
+        {
+            var pickupPath = Path.Combine(root, ".pickups", "session.wav");
+            WriteWavStub(pickupPath);
+
+            ProofPickupsSessionSnapshot baseline;
+            using (var firstBoot = await SessionBoot.OpenAsync(root, loadPersistedState: false))
+            {
+                var source = BuildPickSourceReference(pickupPath);
+                var pickMap = firstBoot.PickMapStore.Save(
+                    source,
+                    CreatePickMapDocument(source, firstBoot.ActiveChapterStem, isDraft: false),
+                    CancellationToken.None);
+                var savedFit = firstBoot.FitPlanStore.Save(
+                    firstBoot.ActiveChapterStem,
+                    pickMap,
+                    PickupFitPlanDocument.CreateInitial(firstBoot.ActiveChapterStem, pickMap, "fit-restart-seed"),
+                    CancellationToken.None);
+
+                baseline = firstBoot.Service.SyncToWorkspace();
+
+                Assert.NotNull(baseline.FitPlan);
+                Assert.Equal(savedFit.Revision, baseline.FitPlanRevision);
+                Assert.Equal("fit-restart-seed", baseline.LastFitOperationId);
+                Assert.Equal(1, baseline.FitAssignmentCountsByStatus[PickupFitPlanItemStatus.Draft]);
+                Assert.Null(baseline.FitPlanReadError);
+            }
+
+            using var restartedBoot = await SessionBoot.OpenAsync(root, loadPersistedState: true);
+            var restarted = restartedBoot.Service.SyncToWorkspace();
+
+            Assert.NotNull(restarted.FitPlan);
+            Assert.Equal(baseline.FitPlanRevision, restarted.FitPlanRevision);
+            Assert.Equal(baseline.FitPlan!.Items.Select(item => item.PickAssignmentId), restarted.FitPlan!.Items.Select(item => item.PickAssignmentId));
+            Assert.Equal(1, restarted.FitAssignmentCountsByStatus[PickupFitPlanItemStatus.Draft]);
+            Assert.Null(restarted.FitPlanReadError);
+        }
+        finally
+        {
+            SafeDeleteDirectory(root);
+        }
+    }
+
+    [Fact]
+    public async Task SyncToWorkspace_MalformedFitPlanAfterBaseline_PreservesPriorFitPlanAndQuarantinesFile()
+    {
+        var root = await CreateWorkspaceRootAsync(["chapter-01"]);
+
+        try
+        {
+            var pickupPath = Path.Combine(root, ".pickups", "session.wav");
+            WriteWavStub(pickupPath);
+
+            using var boot = await SessionBoot.OpenAsync(root, loadPersistedState: false);
+            var source = BuildPickSourceReference(pickupPath);
+            var pickMap = boot.PickMapStore.Save(
+                source,
+                CreatePickMapDocument(source, boot.ActiveChapterStem, isDraft: false),
+                CancellationToken.None);
+            _ = boot.FitPlanStore.Save(
+                boot.ActiveChapterStem,
+                pickMap,
+                PickupFitPlanDocument.CreateInitial(boot.ActiveChapterStem, pickMap, "fit-malformed-seed"),
+                CancellationToken.None);
+
+            var baseline = boot.Service.SyncToWorkspace();
+            Assert.NotNull(baseline.FitPlan);
+
+            var fitPath = boot.FitPlanStore.GetDocumentPath(boot.ActiveChapterStem);
+            Assert.True(File.Exists(fitPath));
+            await File.WriteAllTextAsync(fitPath, "{ malformed-fit-plan-json");
+
+            var refreshed = boot.Service.SyncToWorkspace();
+
+            Assert.Equal(baseline.FitPlanRevision, refreshed.FitPlanRevision);
+            Assert.Equal(baseline.FitPlan!.Items.Select(item => item.PickAssignmentId), refreshed.FitPlan!.Items.Select(item => item.PickAssignmentId));
+            Assert.Contains("fit-plan read failed", refreshed.FitPlanReadError ?? string.Empty, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains("malformed pickup fit-plan json", refreshed.FitPlanReadError ?? string.Empty, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains("fit-plan.json", refreshed.FitPlanReadError ?? string.Empty, StringComparison.OrdinalIgnoreCase);
+
+            Assert.False(File.Exists(fitPath));
+            var quarantineFiles = Directory.GetFiles(
+                Path.GetDirectoryName(fitPath)!,
+                $"{Path.GetFileName(fitPath)}.malformed.*.json");
+            Assert.NotEmpty(quarantineFiles);
+        }
+        finally
+        {
+            SafeDeleteDirectory(root);
+        }
+    }
+
     private static void SeedPersistedArtifacts(
         SessionBoot boot,
         string chapterStem,
@@ -463,6 +561,11 @@ public sealed class ProofPickupsSessionRestartResilienceTests
         Assert.Equal(expected.LastPickOperationId, actual.LastPickOperationId);
         Assert.Equal(expected.LastPickValidationError, actual.LastPickValidationError);
         Assert.Equal(expected.PickMap?.Assignments.Select(item => item.Id) ?? Array.Empty<string>(), actual.PickMap?.Assignments.Select(item => item.Id) ?? Array.Empty<string>());
+        Assert.Equal(expected.FitPlanRevision, actual.FitPlanRevision);
+        Assert.Equal(expected.FitPlanReadError, actual.FitPlanReadError);
+        Assert.Equal(expected.LastFitOperationId, actual.LastFitOperationId);
+        Assert.Equal(expected.LastFitValidationError, actual.LastFitValidationError);
+        Assert.Equal(expected.FitPlan?.Items.Select(item => item.PickAssignmentId) ?? Array.Empty<string>(), actual.FitPlan?.Items.Select(item => item.PickAssignmentId) ?? Array.Empty<string>());
         Assert.Equal(expected.LastError, actual.LastError);
     }
 
@@ -563,6 +666,7 @@ public sealed class ProofPickupsSessionRestartResilienceTests
             PickupEdlStore edlStore,
             PickupArtifactLedgerStore ledgerStore,
             PickupPickMapStore pickMapStore,
+            PickupFitPlanStore fitPlanStore,
             PickupEdlEngine engine)
         {
             Root = root;
@@ -571,6 +675,7 @@ public sealed class ProofPickupsSessionRestartResilienceTests
             EdlStore = edlStore;
             LedgerStore = ledgerStore;
             PickMapStore = pickMapStore;
+            FitPlanStore = fitPlanStore;
             Engine = engine;
 
             CommitBehavior = static (_, _) => Task.FromResult((HasResult: true, TimingDeltaSec: 0.0));
@@ -590,6 +695,8 @@ public sealed class ProofPickupsSessionRestartResilienceTests
         public PickupArtifactLedgerStore LedgerStore { get; }
 
         public PickupPickMapStore PickMapStore { get; }
+
+        public PickupFitPlanStore FitPlanStore { get; }
 
         public PickupEdlEngine Engine { get; }
 
@@ -622,10 +729,11 @@ public sealed class ProofPickupsSessionRestartResilienceTests
             var edlStore = new PickupEdlStore(workspace);
             var ledgerStore = new PickupArtifactLedgerStore(workspace);
             var pickMapStore = new PickupPickMapStore(workspace);
+            var fitPlanStore = new PickupFitPlanStore(workspace);
             var engine = new PickupEdlEngine();
 
             await Task.Yield();
-            return new SessionBoot(root, workspace, stagingQueue, edlStore, ledgerStore, pickMapStore, engine);
+            return new SessionBoot(root, workspace, stagingQueue, edlStore, ledgerStore, pickMapStore, fitPlanStore, engine);
         }
 
         public ProofPickupsSessionService CreateSessionService()
@@ -654,7 +762,10 @@ public sealed class ProofPickupsSessionRestartResilienceTests
                     BuildOrderingDiagnostics: document => Engine.BuildDeterministicOrderingDiagnostics(document),
                     ReadPickMapDocument: ct => PickMapStore.TryRead(ct),
                     LoadOrCreatePickMap: (source, ct) => PickMapStore.LoadOrCreate(source, ct),
-                    SavePickMap: (source, document, ct) => PickMapStore.Save(source, document, ct)));
+                    SavePickMap: (source, document, ct) => PickMapStore.Save(source, document, ct),
+                    ReadFitPlanDocument: (chapterStem, ct) => FitPlanStore.TryRead(chapterStem, ct),
+                    LoadOrCreateFitPlan: (chapterStem, pickMap, ct) => FitPlanStore.LoadOrCreate(chapterStem, pickMap, ct),
+                    SaveFitPlan: (chapterStem, pickMap, document, ct) => FitPlanStore.Save(chapterStem, pickMap, document, ct)));
         }
 
         public void Dispose()
