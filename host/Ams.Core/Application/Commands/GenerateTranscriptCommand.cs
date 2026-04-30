@@ -40,6 +40,72 @@ public sealed class GenerateTranscriptCommand
         chapter.Save();
     }
 
+    // Re-transcribes only the specified chunk indices via IAsrService.TranscribeChunksAsync
+    // (which splices new tokens into the existing AsrResponse). Whisper engine only — WhisperX
+    // model loading is opaque to the in-process cache, so scoped recovery is not supported
+    // there (the orchestrator skips the AlternateModel tier for WhisperX anyway).
+    //
+    // Throws InvalidOperationException when the chunk plan is no longer valid for the current
+    // audio (caller should fall back to full ExecuteAsync).
+    public async Task ExecuteScopedAsync(
+        ChapterContext chapter,
+        IReadOnlyList<int> chunkIndices,
+        GenerateTranscriptOptions? options,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(chapter);
+        ArgumentNullException.ThrowIfNull(chunkIndices);
+
+        if (chunkIndices.Count == 0)
+        {
+            throw new ArgumentException(
+                "chunkIndices must contain at least one chunk index.", nameof(chunkIndices));
+        }
+
+        var effectiveOptions = options ?? GenerateTranscriptOptions.Default;
+        var engine = effectiveOptions.Engine ?? AsrEngineConfig.Resolve();
+
+        if (engine != AsrEngine.Whisper)
+        {
+            throw new InvalidOperationException(
+                "Scoped re-ASR is only supported for the Whisper engine. " +
+                $"Engine '{engine}' must use full chapter re-transcription.");
+        }
+
+        var (modelPath, _) = await AsrEngineConfig.ResolveModelPathAsync(effectiveOptions.Model, effectiveOptions.ModelPath)
+            .ConfigureAwait(false);
+
+        var prompt = effectiveOptions.DisablePrompt ? null : BuildAsrPrompt(chapter);
+
+        var asrOptions = new AsrOptions(
+            ModelPath: modelPath,
+            Engine: AsrEngine.Whisper,
+            Language: effectiveOptions.Language,
+            Threads: Math.Max(0, effectiveOptions.Threads),
+            UseGpu: effectiveOptions.UseGpu,
+            EnableWordTimestamps: effectiveOptions.EnableWordTimestamps,
+            BeamSize: Math.Max(1, effectiveOptions.BeamSize),
+            BestOf: Math.Max(1, effectiveOptions.BestOf),
+            Temperature: (float)Math.Clamp(effectiveOptions.Temperature, 0.0, 1.0),
+            NoSpeechBoost: true,
+            GpuDevice: effectiveOptions.GpuDevice,
+            UseFlashAttention: effectiveOptions.EnableFlashAttention,
+            UseDtwTimestamps: effectiveOptions.EnableDtwTimestamps,
+            Prompt: prompt,
+            DisableChunkPlan: effectiveOptions.DisableChunkPlan);
+
+        Log.Info(
+            "Scoped re-ASR: {Count} chunk(s) at indices [{Indices}] (model={Model}, prompt={PromptStatus})",
+            chunkIndices.Count, string.Join(",", chunkIndices), effectiveOptions.Model ?? "default",
+            prompt is null ? "disabled" : "preserved");
+
+        var splicedResponse = await _asrService.TranscribeChunksAsync(chapter, chunkIndices, asrOptions, cancellationToken)
+            .ConfigureAwait(false);
+
+        PersistResponse(chapter, splicedResponse);
+        chapter.Save();
+    }
+
     private async Task RunWhisperAsync(
         ChapterContext chapter,
         GenerateTranscriptOptions options,

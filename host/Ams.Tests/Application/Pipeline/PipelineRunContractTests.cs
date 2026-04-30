@@ -155,6 +155,58 @@ public sealed class PipelineRunContractTests : IDisposable
     }
 
     [Fact]
+    public async Task RunChapterAsync_ScopedReAsr_ForcesAllDownstreamStages()
+    {
+        // C4 contract: when PipelineRunOptions.ScopedReAsrChunkIndices is non-empty, the ASR
+        // stage rewrites asr.json (via scoped re-transcribe) — anchors / transcript / hydrate /
+        // MFA must therefore re-run regardless of their cached state and regardless of
+        // options.Force. Without this, a direct caller patching asr.json would leave stale
+        // downstream outputs (CLI orchestrator already sets Force, but the contract should hold
+        // for any caller).
+        var root = CreateTempDirectory();
+        var bookFile = await WriteBookAsync(root, "book.txt", "Title\n\nHello scoped world.");
+        var audioFile = WriteAudioStub(root, "chapter-01.wav");
+        var chapterId = "chapter-01";
+        var chapterDirectory = new DirectoryInfo(Path.Combine(root, chapterId));
+        var bookIndexFile = new FileInfo(Path.Combine(root, "book-index.json"));
+
+        using var workspace = new TestWorkspace(root);
+        await CreateBookIndexAsync(bookFile, bookIndexFile);
+        SeedCachedArtifacts(workspace, bookIndexFile, audioFile, chapterDirectory, chapterId);
+
+        var asr = new RecordingAsrService();
+        var alignment = new RecordingAlignmentService();
+        var service = CreateService(asr, alignment);
+
+        var result = await service.RunChapterAsync(
+            workspace,
+            new PipelineRunOptions
+            {
+                BookFile = bookFile,
+                BookIndexFile = bookIndexFile,
+                AudioFile = audioFile,
+                ChapterDirectory = chapterDirectory,
+                ChapterId = chapterId,
+                EndStage = PipelineStage.Hydrate,
+                SkipTreatedCopy = false,
+                Force = false,                              // explicitly NOT forcing
+                ScopedReAsrChunkIndices = new[] { 0, 1 }    // but scoped re-ASR is requested
+            });
+
+        Assert.Equal(RunState.Completed, result.State);
+        // ASR ran (scoped path tried first; falls back to full when chunk plan absent in test).
+        Assert.True(result.AsrRan, "ASR stage must run when ScopedReAsrChunkIndices is set");
+        // Downstream stages cascade despite Force=false because effectiveForce includes scoped.
+        Assert.True(result.AnchorsRan, "Anchors must re-run after scoped ASR rewrites asr.json");
+        Assert.True(result.TranscriptRan, "Transcript must re-run after scoped ASR rewrites asr.json");
+        Assert.True(result.HydrateRan, "Hydrate must re-run after scoped ASR rewrites asr.json");
+
+        Assert.Equal(1, alignment.ComputeAnchorsCalls);
+        Assert.Equal(1, alignment.BuildTranscriptCalls);
+        Assert.Equal(1, alignment.HydrateCalls);
+    }
+
+    [Fact]
     public async Task RunChapterAsync_FailureSurfacesTypedFailureProgressAndArtifacts()
     {
         var root = CreateTempDirectory();
@@ -497,6 +549,8 @@ public sealed class PipelineRunContractTests : IDisposable
     private sealed class RecordingAsrService : IAsrService
     {
         public int TranscribeCalls { get; private set; }
+        public int TranscribeChunksCalls { get; private set; }
+        public IReadOnlyList<int> LastScopedIndices { get; private set; } = Array.Empty<int>();
 
         public Task<AsrResponse> TranscribeAsync(
             ChapterContext chapter,
@@ -520,7 +574,11 @@ public sealed class PipelineRunContractTests : IDisposable
             AsrOptions options,
             CancellationToken cancellationToken = default)
         {
-            throw new NotSupportedException($"{nameof(TranscribeChunksAsync)} is not used in these tests.");
+            _ = chapter;
+            _ = options;
+            TranscribeChunksCalls++;
+            LastScopedIndices = chunkIndices.ToArray();
+            return Task.FromResult(CreateAsrResponse());
         }
     }
 

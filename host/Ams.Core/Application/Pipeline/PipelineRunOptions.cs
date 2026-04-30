@@ -61,4 +61,13 @@ public sealed record PipelineRunOptions
     /// Use this to isolate MFA chunking behavior during rollout without affecting ASR.
     /// </summary>
     public bool DisableChunkedMfa { get; init; }
+
+    // When non-null and non-empty, the ASR stage runs scoped re-transcription for ONLY these
+    // chunk indices instead of full chapter ASR. Used by the C-tier recovery escalator to
+    // avoid re-transcribing every chunk when MFA flagged just a few. The scoped re-ASR
+    // splices new tokens into the existing asr.json (preserving the rest byte-identical).
+    // If scoped is requested but not feasible (chunk plan invalid for current audio), the
+    // ASR stage falls back to full chapter re-transcription. Downstream stages always run
+    // normally — the new asr.json on disk feeds them.
+    public IReadOnlyList<int>? ScopedReAsrChunkIndices { get; init; }
 }

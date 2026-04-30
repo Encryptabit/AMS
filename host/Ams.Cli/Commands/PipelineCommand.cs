@@ -523,7 +523,8 @@ public static class PipelineCommand
         bool disableChunkPlan,
         bool disableChunkedMfa,
         bool requireAsrChunkAudio,
-        RecoveryTier currentTier)
+        RecoveryTier currentTier,
+        IReadOnlyDictionary<string, IReadOnlyList<int>>? scopedIndicesByChapterPath = null)
     {
         var modelForThisPass = ResolveModelForTier(currentTier, primaryAsrModel, fallbackAsrModel);
         var asrModel = modelForThisPass;
@@ -570,7 +571,7 @@ public static class PipelineCommand
         using var concurrency = PipelineConcurrencyControl.CreateShared(maxAsrParallelism, maxMfaParallelism);
         using var workerSemaphore = new SemaphoreSlim(maxWorkers, maxWorkers);
         var errors = new ConcurrentBag<Exception>();
-        var recoveryQueue = new ConcurrentBag<FileInfo>();
+        var recoveryQueue = new ConcurrentBag<(FileInfo File, IReadOnlyList<int> ChunkIndices)>();
         var nextTier = SelectNextRecoveryTier(currentTier, asrEngine, fallbackAsrModel);
 
         var tasks = existingChapters.Select(async chapter =>
@@ -592,6 +593,14 @@ public static class PipelineCommand
             try
             {
                 cancellationToken.ThrowIfCancellationRequested();
+
+                IReadOnlyList<int>? scopedForThisChapter = null;
+                if (scopedIndicesByChapterPath is not null &&
+                    scopedIndicesByChapterPath.TryGetValue(chapter.FullName, out var indicesForChapter) &&
+                    indicesForChapter.Count > 0)
+                {
+                    scopedForThisChapter = indicesForChapter;
+                }
 
                 var result = await RunPipelineAsync(
                     pipelineService,
@@ -618,7 +627,8 @@ public static class PipelineCommand
                     disableChunkPlan,
                     disableChunkedMfa,
                     requireAsrChunkAudio,
-                    currentTier).ConfigureAwait(false);
+                    currentTier,
+                    scopedForThisChapter).ConfigureAwait(false);
 
                 if (result.ProblematicChunkIndices.Count > 0)
                 {
@@ -633,7 +643,7 @@ public static class PipelineCommand
                     else
                     {
                         reporter?.Report(CreateRecoveryQueuedUpdate(chapterId));
-                        recoveryQueue.Add(chapter);
+                        recoveryQueue.Add((chapter, result.ProblematicChunkIndices));
                     }
                 }
                 else if (currentTier != RecoveryTier.None)
@@ -669,9 +679,23 @@ public static class PipelineCommand
 
         if (nextTier is not null && !recoveryQueue.IsEmpty)
         {
-            var recoveryChapters = recoveryQueue
-                .DistinctBy(file => file.FullName, PathComparer)
-                .ToList();
+            // Aggregate per-chapter chunk indices for the next tier. If a chapter somehow ends
+            // up multiple times in the queue (shouldn't happen given the loop structure), the
+            // chunk-index lists are unioned so no flagged chunk is dropped.
+            var indicesByChapter = new Dictionary<string, IReadOnlyList<int>>(PathComparer);
+            var recoveryChapters = new List<FileInfo>();
+            foreach (var (file, indices) in recoveryQueue)
+            {
+                if (indicesByChapter.TryGetValue(file.FullName, out var existing))
+                {
+                    indicesByChapter[file.FullName] = existing.Concat(indices).Distinct().OrderBy(i => i).ToArray();
+                }
+                else
+                {
+                    indicesByChapter[file.FullName] = indices;
+                    recoveryChapters.Add(file);
+                }
+            }
 
             var nextModelAlias = ResolveModelForTier(nextTier.Value, primaryAsrModel, fallbackAsrModel);
             Log.Info(
@@ -706,7 +730,8 @@ public static class PipelineCommand
                 disableChunkPlan,
                 disableChunkedMfa,
                 requireAsrChunkAudio,
-                nextTier.Value).ConfigureAwait(false);
+                nextTier.Value,
+                indicesByChapter).ConfigureAwait(false);
         }
 
         Log.Debug("Parallel pipeline run complete.");
@@ -1595,6 +1620,7 @@ public static class PipelineCommand
         bool requireAsrChunkAudio)
     {
         var currentTier = RecoveryTier.None;
+        IReadOnlyList<int>? scopedChunkIndices = null;
         while (true)
         {
             var modelForThisPass = ResolveModelForTier(currentTier, primaryAsrModel, fallbackAsrModel);
@@ -1602,10 +1628,14 @@ public static class PipelineCommand
             if (currentTier != RecoveryTier.None)
             {
                 reporter?.Report(CreateRecoveryQueuedUpdate(chapterId));
+                var scopeDescription = scopedChunkIndices is { Count: > 0 }
+                    ? $"scoped to chunks=[{string.Join(",", scopedChunkIndices)}]"
+                    : "full chapter";
                 Log.Info(
-                    "Starting recovery pass at tier={Tier} for {Chapter}",
+                    "Starting recovery pass at tier={Tier} for {Chapter} ({Scope})",
                     FormatTierForLog(currentTier, modelForThisPass),
-                    chapterId);
+                    chapterId,
+                    scopeDescription);
             }
 
             var result = await RunPipelineAsync(
@@ -1633,7 +1663,8 @@ public static class PipelineCommand
                 disableChunkPlan,
                 disableChunkedMfa,
                 requireAsrChunkAudio,
-                currentTier).ConfigureAwait(false);
+                currentTier,
+                scopedChunkIndices).ConfigureAwait(false);
 
             if (result.ProblematicChunkIndices.Count == 0)
             {
@@ -1659,6 +1690,11 @@ public static class PipelineCommand
             }
 
             currentTier = nextTier.Value;
+            // Carry the chunk indices MFA flagged into the next pass — the orchestrator passes
+            // them to RunPipelineAsync, which threads them into PipelineRunOptions for scoped
+            // re-ASR. If the chunk plan is invalid for the current audio, scoped re-ASR falls
+            // back to full chapter inside PipelineService.
+            scopedChunkIndices = result.ProblematicChunkIndices;
         }
     }
 
@@ -1687,7 +1723,8 @@ public static class PipelineCommand
         bool disableChunkPlan = false,
         bool disableChunkedMfa = false,
         bool requireAsrChunkAudio = false,
-        RecoveryTier currentTier = RecoveryTier.None)
+        RecoveryTier currentTier = RecoveryTier.None,
+        IReadOnlyList<int>? scopedReAsrChunkIndices = null)
     {
         var isRecoveryPass = currentTier != RecoveryTier.None;
         var disablePrompt = currentTier == RecoveryTier.Promptless;
@@ -1793,6 +1830,7 @@ public static class PipelineCommand
             HydrationOptions = null,
             DisableChunkPlan = disableChunkPlan,
             DisableChunkedMfa = disableChunkedMfa,
+            ScopedReAsrChunkIndices = scopedReAsrChunkIndices,
             MfaOptions = new RunMfaOptions
             {
                 AudioFile = audioFile,

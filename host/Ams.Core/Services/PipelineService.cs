@@ -296,18 +296,57 @@ public sealed class PipelineService
             var hasHydrate = HasHydrateDocument();
             var hasTextGrid = HasTextGridDocument();
 
+            // Scoped re-ASR rewrites asr.json mid-pipeline — anchors / transcript / hydrate /
+            // MFA must re-run regardless of their cached state. Treat scoped requests as
+            // implicit Force for ALL stages from ASR onward. Without this, a direct
+            // PipelineRunOptions caller could patch asr.json while reusing stale downstream
+            // outputs (the CLI orchestrator already sets Force on recovery passes, but the
+            // contract should hold for any caller).
+            var scopedIndices = options.ScopedReAsrChunkIndices;
+            var wantsScoped = scopedIndices is { Count: > 0 };
+            var effectiveForce = options.Force || wantsScoped;
+
             await ExecuteStageAsync(
                 PipelineStage.Asr,
                 "Running ASR",
                 async () =>
                 {
-                    if (options.Force || !hasAsr)
+                    var shouldRun = effectiveForce || !hasAsr;
+
+                    if (shouldRun)
                     {
                         await WaitAsync(options.Concurrency?.AsrSemaphore, cancellationToken).ConfigureAwait(false);
                         try
                         {
-                            await _generateTranscript.ExecuteAsync(chapter, options.TranscriptOptions, cancellationToken)
-                                .ConfigureAwait(false);
+                            var didScoped = false;
+                            if (wantsScoped)
+                            {
+                                try
+                                {
+                                    await _generateTranscript.ExecuteScopedAsync(
+                                            chapter, scopedIndices!, options.TranscriptOptions, cancellationToken)
+                                        .ConfigureAwait(false);
+                                    didScoped = true;
+                                    Log.Info(
+                                        "Scoped re-ASR succeeded for {Chapter} ({Count} chunk(s) patched)",
+                                        chapter.Descriptor.ChapterId, scopedIndices!.Count);
+                                }
+                                catch (InvalidOperationException ex)
+                                {
+                                    // Chunk plan invalid, no existing AsrResponse, or engine
+                                    // not Whisper — fall back to full ExecuteAsync.
+                                    Log.Warn(
+                                        "Scoped re-ASR not feasible for {Chapter}: {Reason}; falling back to full chapter re-ASR",
+                                        chapter.Descriptor.ChapterId, ex.Message);
+                                }
+                            }
+
+                            if (!didScoped)
+                            {
+                                await _generateTranscript.ExecuteAsync(chapter, options.TranscriptOptions, cancellationToken)
+                                    .ConfigureAwait(false);
+                            }
+
                             asrRan = true;
                             hasAsr = true;
                         }
@@ -327,7 +366,7 @@ public sealed class PipelineService
                 "Computing anchors",
                 async () =>
                 {
-                    if (options.Force || !hasAnchors)
+                    if (effectiveForce || !hasAnchors)
                     {
                         var anchorOptions = (options.AnchorOptions ?? BuildDefaultAnchorOptions()) with { EmitWindows = false };
                         await _computeAnchors.ExecuteAsync(chapter, anchorOptions, cancellationToken)
@@ -346,7 +385,7 @@ public sealed class PipelineService
                 "Building transcript index",
                 async () =>
                 {
-                    if (options.Force || !hasTranscript)
+                    if (effectiveForce || !hasTranscript)
                     {
                         var transcriptOptions = options.TranscriptIndexOptions ?? new BuildTranscriptIndexOptions();
                         transcriptOptions = transcriptOptions with
@@ -373,7 +412,7 @@ public sealed class PipelineService
                 "Hydrating transcript",
                 async () =>
                 {
-                    if (options.Force || !hasHydrate)
+                    if (effectiveForce || !hasHydrate)
                     {
                         await _hydrateTranscript.ExecuteAsync(chapter, options.HydrationOptions, cancellationToken)
                             .ConfigureAwait(false);
@@ -392,7 +431,7 @@ public sealed class PipelineService
                 async () =>
                 {
                     var textGridExists = hasTextGrid;
-                    if (options.Force || !textGridExists)
+                    if (effectiveForce || !textGridExists)
                     {
                         await WaitAsync(options.Concurrency?.MfaSemaphore, cancellationToken).ConfigureAwait(false);
                         string? workspaceRoot = null;
