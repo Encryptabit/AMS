@@ -440,7 +440,7 @@ public static class PipelineCommand
         }
     }
 
-    private static async Task RunPipelineForMultipleChaptersAsync(
+    private static Task RunPipelineForMultipleChaptersAsync(
         PipelineService pipelineService,
         FileInfo bookFile,
         DirectoryInfo? workDirOption,
@@ -466,8 +466,67 @@ public static class PipelineCommand
         bool disableChunkPlan = false,
         bool disableChunkedMfa = false,
         bool requireAsrChunkAudio = false,
-        bool promptlessRecoveryPass = false)
+        string? fallbackAsrModel = null)
+        => RunPipelineForMultipleChaptersWithTierAsync(
+            pipelineService,
+            bookFile,
+            workDirOption,
+            bookIndexOverride,
+            forceIndex,
+            force,
+            avgWpm,
+            asrEngine,
+            asrModel,
+            fallbackAsrModel,
+            asrDtwTimestamps,
+            asrFlashAttention,
+            asrLanguage,
+            verbose,
+            chapterFiles,
+            maxWorkers,
+            maxAsrParallelism,
+            maxMfaParallelism,
+            reporter,
+            cancellationToken,
+            mfaProfile,
+            mfaBeam,
+            mfaRetryBeam,
+            disableChunkPlan,
+            disableChunkedMfa,
+            requireAsrChunkAudio,
+            RecoveryTier.None);
+
+    private static async Task RunPipelineForMultipleChaptersWithTierAsync(
+        PipelineService pipelineService,
+        FileInfo bookFile,
+        DirectoryInfo? workDirOption,
+        FileInfo? bookIndexOverride,
+        bool forceIndex,
+        bool force,
+        double avgWpm,
+        AsrEngine asrEngine,
+        string? primaryAsrModel,
+        string? fallbackAsrModel,
+        bool asrDtwTimestamps,
+        bool asrFlashAttention,
+        string asrLanguage,
+        bool verbose,
+        IReadOnlyList<FileInfo> chapterFiles,
+        int maxWorkers,
+        int maxAsrParallelism,
+        int maxMfaParallelism,
+        IPipelineProgressReporter? reporter,
+        CancellationToken cancellationToken,
+        MfaBeamProfile? mfaProfile,
+        int? mfaBeam,
+        int? mfaRetryBeam,
+        bool disableChunkPlan,
+        bool disableChunkedMfa,
+        bool requireAsrChunkAudio,
+        RecoveryTier currentTier)
     {
+        var modelForThisPass = ResolveModelForTier(currentTier, primaryAsrModel, fallbackAsrModel);
+        var asrModel = modelForThisPass;
         ArgumentNullException.ThrowIfNull(pipelineService);
 
         if (chapterFiles is null || chapterFiles.Count == 0)
@@ -511,7 +570,8 @@ public static class PipelineCommand
         using var concurrency = PipelineConcurrencyControl.CreateShared(maxAsrParallelism, maxMfaParallelism);
         using var workerSemaphore = new SemaphoreSlim(maxWorkers, maxWorkers);
         var errors = new ConcurrentBag<Exception>();
-        var promptlessRecoveryQueue = new ConcurrentBag<FileInfo>();
+        var recoveryQueue = new ConcurrentBag<FileInfo>();
+        var nextTier = SelectNextRecoveryTier(currentTier, asrEngine, fallbackAsrModel);
 
         var tasks = existingChapters.Select(async chapter =>
         {
@@ -558,22 +618,30 @@ public static class PipelineCommand
                     disableChunkPlan,
                     disableChunkedMfa,
                     requireAsrChunkAudio,
-                    promptlessRecoveryPass).ConfigureAwait(false);
+                    currentTier).ConfigureAwait(false);
 
                 if (result.PromptlessAsrRecoveryRequested)
                 {
-                    if (promptlessRecoveryPass)
+                    if (nextTier is null)
                     {
                         Log.Warn(
-                            "Promptless ASR recovery pass still reported low-coverage MFA chunks for {Chapter}; keeping best-effort output",
+                            "Recovery exhausted at tier={Tier} for {Chapter}; keeping best-effort output",
+                            FormatTierForLog(currentTier, asrModel),
                             chapterId);
                         reporter?.Report(CreateCompletionUpdate(chapterId, "Complete (best effort)"));
                     }
                     else
                     {
                         reporter?.Report(CreateRecoveryQueuedUpdate(chapterId));
-                        promptlessRecoveryQueue.Add(chapter);
+                        recoveryQueue.Add(chapter);
                     }
+                }
+                else if (currentTier != RecoveryTier.None)
+                {
+                    Log.Info(
+                        "Chapter {Chapter} resolved at tier={Tier}",
+                        chapterId,
+                        FormatTierForLog(currentTier, asrModel));
                 }
             }
             catch (OperationCanceledException oce)
@@ -599,17 +667,19 @@ public static class PipelineCommand
             throw new AggregateException(errors);
         }
 
-        if (!promptlessRecoveryPass && !promptlessRecoveryQueue.IsEmpty)
+        if (nextTier is not null && !recoveryQueue.IsEmpty)
         {
-            var recoveryChapters = promptlessRecoveryQueue
+            var recoveryChapters = recoveryQueue
                 .DistinctBy(file => file.FullName, PathComparer)
                 .ToList();
 
+            var nextModelAlias = ResolveModelForTier(nextTier.Value, primaryAsrModel, fallbackAsrModel);
             Log.Info(
-                "Starting promptless ASR recovery pass for {Count} chapter(s).",
+                "Starting recovery pass at tier={Tier} for {Count} chapter(s).",
+                FormatTierForLog(nextTier.Value, nextModelAlias),
                 recoveryChapters.Count);
 
-            await RunPipelineForMultipleChaptersAsync(
+            await RunPipelineForMultipleChaptersWithTierAsync(
                 pipelineService,
                 bookFile,
                 workDirOption,
@@ -618,7 +688,8 @@ public static class PipelineCommand
                 force,
                 avgWpm,
                 asrEngine,
-                asrModel,
+                primaryAsrModel,
+                fallbackAsrModel,
                 asrDtwTimestamps,
                 asrFlashAttention,
                 asrLanguage,
@@ -635,7 +706,7 @@ public static class PipelineCommand
                 disableChunkPlan,
                 disableChunkedMfa,
                 requireAsrChunkAudio,
-                promptlessRecoveryPass: true).ConfigureAwait(false);
+                nextTier.Value).ConfigureAwait(false);
         }
 
         Log.Debug("Parallel pipeline run complete.");
@@ -1197,8 +1268,14 @@ public static class PipelineCommand
         var avgWpmOption = new Option<double>("--avg-wpm", () => 200.0,
             "Average WPM used for duration estimation when indexing");
 
-        var asrModelOption = new Option<string?>("--asr-model", () => null, "Optional ASR model identifier");
+        var asrModelOption = new Option<string?>("--asr-model", () => null,
+            "ASR model alias. Whitelisted: large-v3, large-v3-turbo. " +
+            "Set AMS_WHISPER_MODEL_PATH for arbitrary .bin files.");
         asrModelOption.AddAlias("-m");
+        var fallbackModelOption = new Option<string?>("--fallback-model", () => null,
+            "Cross-pair model used by the AlternateModel recovery tier when MFA reports low-coverage chunks. " +
+            "Defaults to the cross-pair of --asr-model (large-v3 ↔ large-v3-turbo). " +
+            "Pass 'none' to skip the AlternateModel tier and go straight to Promptless.");
         var asrEngineOption = new Option<string>(
             "--asr-engine",
             () => AsrEngineConfig.Resolve().ToString().ToLowerInvariant(),
@@ -1247,6 +1324,7 @@ public static class PipelineCommand
         cmd.AddOption(forceIndexOption);
         cmd.AddOption(avgWpmOption);
         cmd.AddOption(asrModelOption);
+        cmd.AddOption(fallbackModelOption);
         cmd.AddOption(asrEngineOption);
         cmd.AddOption(asrDtwOption);
         cmd.AddOption(asrFlashAttentionOption);
@@ -1273,7 +1351,20 @@ public static class PipelineCommand
             var forceAll = context.ParseResult.GetValueForOption(forceOption);
             var forceIndex = context.ParseResult.GetValueForOption(forceIndexOption);
             var avgWpm = context.ParseResult.GetValueForOption(avgWpmOption);
-            var asrModel = context.ParseResult.GetValueForOption(asrModelOption);
+            var asrModelRaw = context.ParseResult.GetValueForOption(asrModelOption);
+            var fallbackModelRaw = context.ParseResult.GetValueForOption(fallbackModelOption);
+            string? asrModel;
+            string? fallbackModel;
+            try
+            {
+                (asrModel, fallbackModel) = ResolveRecoveryModels(asrModelRaw, fallbackModelRaw);
+            }
+            catch (ArgumentException ex)
+            {
+                Log.Error(ex.Message);
+                context.ExitCode = 2;
+                return;
+            }
             var asrEngine = AsrEngineConfig.Resolve(context.ParseResult.GetValueForOption(asrEngineOption));
             var asrDtwTimestamps = context.ParseResult.GetValueForOption(asrDtwOption);
             var asrFlashAttention = context.ParseResult.GetValueForOption(asrFlashAttentionOption);
@@ -1330,7 +1421,8 @@ public static class PipelineCommand
                                 mfaRetryBeam,
                                 noChunkPlan,
                                 noChunkedMfa,
-                                requireAsrChunkAudio));
+                                requireAsrChunkAudio,
+                                fallbackAsrModel: fallbackModel));
                     }
                     else
                     {
@@ -1359,7 +1451,8 @@ public static class PipelineCommand
                             mfaRetryBeam,
                             noChunkPlan,
                             noChunkedMfa,
-                            requireAsrChunkAudio).ConfigureAwait(false);
+                            requireAsrChunkAudio,
+                            fallbackAsrModel: fallbackModel).ConfigureAwait(false);
                     }
                 }
                 catch (Exception ex)
@@ -1390,7 +1483,7 @@ public static class PipelineCommand
 
                             try
                             {
-                                var result = await RunPipelineAsync(
+                                await RunSingleChapterWithTierEscalationAsync(
                                     pipelineService,
                                     bookFile,
                                     audioFile,
@@ -1402,6 +1495,7 @@ public static class PipelineCommand
                                     avgWpm,
                                     asrEngine,
                                     asrModel,
+                                    fallbackModel,
                                     asrDtwTimestamps,
                                     asrFlashAttention,
                                     asrLanguage,
@@ -1415,46 +1509,6 @@ public static class PipelineCommand
                                     noChunkPlan,
                                     noChunkedMfa,
                                     requireAsrChunkAudio).ConfigureAwait(false);
-
-                                if (result.PromptlessAsrRecoveryRequested)
-                                {
-                                    reporter.Report(CreateRecoveryQueuedUpdate(chapterId));
-
-                                    var recoveryResult = await RunPipelineAsync(
-                                        pipelineService,
-                                        bookFile,
-                                        audioFile,
-                                        workDir,
-                                        bookIndex,
-                                        chapterId,
-                                        forceIndex,
-                                        forceAll,
-                                        avgWpm,
-                                        asrEngine,
-                                        asrModel,
-                                        asrDtwTimestamps,
-                                        asrFlashAttention,
-                                        asrLanguage,
-                                        verbose,
-                                        reporter,
-                                        concurrency,
-                                        cancellationToken,
-                                        mfaProfile,
-                                        mfaBeam,
-                                        mfaRetryBeam,
-                                        noChunkPlan,
-                                        noChunkedMfa,
-                                        requireAsrChunkAudio,
-                                        promptlessRecoveryPass: true).ConfigureAwait(false);
-
-                                    if (recoveryResult.PromptlessAsrRecoveryRequested)
-                                    {
-                                        Log.Warn(
-                                            "Promptless ASR recovery pass still reported low-coverage MFA chunks for {Chapter}; keeping best-effort output",
-                                            chapterId);
-                                        reporter.Report(CreateCompletionUpdate(chapterId, "Complete (best effort)"));
-                                    }
-                                }
                             }
                             catch (OperationCanceledException oce)
                             {
@@ -1471,7 +1525,7 @@ public static class PipelineCommand
                 else
                 {
                     using var concurrency = PipelineConcurrencyControl.CreateSingle();
-                    var result = await RunPipelineAsync(
+                    await RunSingleChapterWithTierEscalationAsync(
                         pipelineService,
                         bookFile,
                         audioFile,
@@ -1483,11 +1537,12 @@ public static class PipelineCommand
                         avgWpm,
                         asrEngine,
                         asrModel,
+                        fallbackModel,
                         asrDtwTimestamps,
                         asrFlashAttention,
                         asrLanguage,
                         verbose,
-                        progress: null,
+                        reporter: null,
                         concurrency,
                         cancellationToken,
                         mfaProfile,
@@ -1496,43 +1551,6 @@ public static class PipelineCommand
                         noChunkPlan,
                         noChunkedMfa,
                         requireAsrChunkAudio).ConfigureAwait(false);
-
-                    if (result.PromptlessAsrRecoveryRequested)
-                    {
-                        var recoveryResult = await RunPipelineAsync(
-                            pipelineService,
-                            bookFile,
-                            audioFile,
-                            workDir,
-                            bookIndex,
-                            chapterId,
-                            forceIndex,
-                            forceAll,
-                            avgWpm,
-                            asrEngine,
-                            asrModel,
-                            asrDtwTimestamps,
-                            asrFlashAttention,
-                            asrLanguage,
-                            verbose,
-                            progress: null,
-                            concurrency,
-                            cancellationToken,
-                            mfaProfile,
-                            mfaBeam,
-                            mfaRetryBeam,
-                            noChunkPlan,
-                            noChunkedMfa,
-                            requireAsrChunkAudio,
-                            promptlessRecoveryPass: true).ConfigureAwait(false);
-
-                        if (recoveryResult.PromptlessAsrRecoveryRequested)
-                        {
-                            Log.Warn(
-                                "Promptless ASR recovery pass still reported low-coverage MFA chunks for {Chapter}; keeping best-effort output",
-                                chapterId);
-                        }
-                    }
                 }
             }
             catch (OperationCanceledException)
@@ -1547,6 +1565,101 @@ public static class PipelineCommand
         });
 
         return cmd;
+    }
+
+    private static async Task RunSingleChapterWithTierEscalationAsync(
+        PipelineService pipelineService,
+        FileInfo bookFile,
+        FileInfo audioFile,
+        DirectoryInfo? workDirOption,
+        FileInfo? bookIndexOverride,
+        string chapterId,
+        bool forceIndex,
+        bool force,
+        double avgWpm,
+        AsrEngine asrEngine,
+        string? primaryAsrModel,
+        string? fallbackAsrModel,
+        bool asrDtwTimestamps,
+        bool asrFlashAttention,
+        string asrLanguage,
+        bool verbose,
+        IPipelineProgressReporter? reporter,
+        PipelineConcurrencyControl concurrency,
+        CancellationToken cancellationToken,
+        MfaBeamProfile? mfaProfile,
+        int? mfaBeam,
+        int? mfaRetryBeam,
+        bool disableChunkPlan,
+        bool disableChunkedMfa,
+        bool requireAsrChunkAudio)
+    {
+        var currentTier = RecoveryTier.None;
+        while (true)
+        {
+            var modelForThisPass = ResolveModelForTier(currentTier, primaryAsrModel, fallbackAsrModel);
+
+            if (currentTier != RecoveryTier.None)
+            {
+                reporter?.Report(CreateRecoveryQueuedUpdate(chapterId));
+                Log.Info(
+                    "Starting recovery pass at tier={Tier} for {Chapter}",
+                    FormatTierForLog(currentTier, modelForThisPass),
+                    chapterId);
+            }
+
+            var result = await RunPipelineAsync(
+                pipelineService,
+                bookFile,
+                audioFile,
+                workDirOption,
+                bookIndexOverride,
+                chapterId,
+                forceIndex,
+                force,
+                avgWpm,
+                asrEngine,
+                modelForThisPass,
+                asrDtwTimestamps,
+                asrFlashAttention,
+                asrLanguage,
+                verbose,
+                reporter,
+                concurrency,
+                cancellationToken,
+                mfaProfile,
+                mfaBeam,
+                mfaRetryBeam,
+                disableChunkPlan,
+                disableChunkedMfa,
+                requireAsrChunkAudio,
+                currentTier).ConfigureAwait(false);
+
+            if (!result.PromptlessAsrRecoveryRequested)
+            {
+                if (currentTier != RecoveryTier.None)
+                {
+                    Log.Info(
+                        "Chapter {Chapter} resolved at tier={Tier}",
+                        chapterId,
+                        FormatTierForLog(currentTier, modelForThisPass));
+                }
+                return;
+            }
+
+            var nextTier = SelectNextRecoveryTier(currentTier, asrEngine, fallbackAsrModel);
+            if (nextTier is null)
+            {
+                Log.Warn(
+                    "Recovery exhausted at tier={Tier} for {Chapter}; keeping best-effort output",
+                    FormatTierForLog(currentTier, modelForThisPass),
+                    chapterId);
+                reporter?.Report(CreateCompletionUpdate(chapterId, "Complete (best effort)"));
+                return;
+            }
+
+            currentTier = nextTier.Value;
+        }
     }
 
     private static async Task<PipelineChapterResult> RunPipelineAsync(
@@ -1574,8 +1687,10 @@ public static class PipelineCommand
         bool disableChunkPlan = false,
         bool disableChunkedMfa = false,
         bool requireAsrChunkAudio = false,
-        bool promptlessRecoveryPass = false)
+        RecoveryTier currentTier = RecoveryTier.None)
     {
+        var isRecoveryPass = currentTier != RecoveryTier.None;
+        var disablePrompt = currentTier == RecoveryTier.Promptless;
         ArgumentNullException.ThrowIfNull(pipelineService);
 
         bool quiet = progress is not null;
@@ -1647,7 +1762,7 @@ public static class PipelineCommand
             EnableFlashAttention = asrFlashAttention,
             EnableDtwTimestamps = asrDtwTimestamps,
             DisableChunkPlan = disableChunkPlan,
-            DisablePrompt = promptlessRecoveryPass
+            DisablePrompt = disablePrompt
         };
 
         var useDedicatedMfaProcess = concurrency?.MfaDegree > 1;
@@ -1661,9 +1776,9 @@ public static class PipelineCommand
             ChapterId = chapterStem,
             ModuleId = ModuleIds.PipelineRun,
             Progress = progress,
-            Force = force || promptlessRecoveryPass,
+            Force = force || isRecoveryPass,
             ForceIndex = forceIndex,
-            StartStage = promptlessRecoveryPass ? PipelineStage.Asr : PipelineStage.BookIndex,
+            StartStage = isRecoveryPass ? PipelineStage.Asr : PipelineStage.BookIndex,
             EndStage = PipelineStage.Mfa,
             AverageWordsPerMinute = avgWpm,
             TranscriptOptions = transcriptOptions,
@@ -3147,6 +3262,72 @@ public static class PipelineCommand
                 $"Unknown MFA profile '{raw}'. Valid options: fast, balanced, strict.")
         };
     }
+
+    // Validates --asr-model / --fallback-model and resolves the cross-pair default. Returns
+    // the alias strings to pass downstream (null preserves env-var resolution paths). Throws
+    // ArgumentException with a user-facing message for unrecognized values.
+    internal static (string? PrimaryAlias, string? FallbackAlias) ResolveRecoveryModels(
+        string? asrModelRaw,
+        string? fallbackModelRaw)
+    {
+        var primary = AmsAsrModelExtensions.ParseStrict(asrModelRaw);
+
+        AmsAsrModel? fallback;
+        if (fallbackModelRaw is not null && string.Equals(fallbackModelRaw.Trim(), "none", StringComparison.OrdinalIgnoreCase))
+        {
+            fallback = null;
+        }
+        else if (string.IsNullOrWhiteSpace(fallbackModelRaw))
+        {
+            fallback = primary?.GetDefaultFallback();
+        }
+        else
+        {
+            fallback = AmsAsrModelExtensions.ParseStrict(fallbackModelRaw);
+        }
+
+        if (fallback is not null && primary is not null && fallback == primary)
+        {
+            // No point in firing AlternateModel with the same model.
+            fallback = null;
+        }
+
+        return (primary?.ToAlias(), fallback?.ToAlias());
+    }
+
+    // Tier escalation policy. None → AlternateModel (only for Whisper engine when a fallback
+    // alias is configured) → Promptless (last resort). Returns null when there are no more
+    // tiers to try (caller logs a best-effort warning).
+    internal static RecoveryTier? SelectNextRecoveryTier(
+        RecoveryTier currentTier,
+        AsrEngine asrEngine,
+        string? fallbackAsrModel)
+    {
+        return currentTier switch
+        {
+            RecoveryTier.None when asrEngine == AsrEngine.Whisper && !string.IsNullOrWhiteSpace(fallbackAsrModel)
+                => RecoveryTier.AlternateModel,
+            RecoveryTier.None => RecoveryTier.Promptless,
+            RecoveryTier.AlternateModel => RecoveryTier.Promptless,
+            _ => null
+        };
+    }
+
+    // Picks the model alias to send to RunPipelineAsync for the current tier. AlternateModel
+    // uses the cross-pair fallback; None and Promptless preserve the user's primary model.
+    internal static string? ResolveModelForTier(
+        RecoveryTier tier,
+        string? primaryAsrModel,
+        string? fallbackAsrModel)
+        => tier == RecoveryTier.AlternateModel ? fallbackAsrModel : primaryAsrModel;
+
+    private static string FormatTierForLog(RecoveryTier tier, string? modelAlias) => tier switch
+    {
+        RecoveryTier.None => "None",
+        RecoveryTier.AlternateModel => $"AlternateModel(model={modelAlias ?? "?"})",
+        RecoveryTier.Promptless => "Promptless",
+        _ => tier.ToString()
+    };
 
     private static string MakeSafeFileStem(string? value)
     {
