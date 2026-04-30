@@ -22,7 +22,6 @@ namespace Ams.Cli.Commands;
 public static class QcCommand
 {
     private static readonly string[] AudioExtensions = ["*.mp3", "*.wav", "*.flac", "*.m4a"];
-    private static readonly Regex FileNumberRegex = new(@"\d+", RegexOptions.Compiled);
     private static readonly Regex DecoratedChapterTitleRegex = new(
         @"^\s*chapter\b.+?[:\-–—]\s*.+\s*$",
         RegexOptions.Compiled | RegexOptions.IgnoreCase);
@@ -137,12 +136,7 @@ public static class QcCommand
 
                     files = AudioExtensions
                         .SelectMany(ext => dir.GetFiles(ext))
-                        .Select(file => new { File = file, Key = GetSortKey(file) })
-                        .OrderBy(entry => entry.Key.Category)
-                        .ThenBy(entry => entry.Key.PrimaryNumber)
-                        .ThenBy(entry => entry.Key.NameLower, StringComparer.Ordinal)
-                        .ThenBy(entry => entry.File.Name, StringComparer.OrdinalIgnoreCase)
-                        .Select(entry => entry.File)
+                        .OrderBy(file => file, NaturalStringComparer.FileNameWithoutExtensionIgnoreCase)
                         .ToList();
 
                     if (files.Count == 0)
@@ -414,18 +408,6 @@ public static class QcCommand
         return parenIndex > 0 ? flag[..parenIndex].TrimEnd() : flag;
     }
 
-    private static AudioFileSortKey GetSortKey(FileInfo file)
-    {
-        var stem = Path.GetFileNameWithoutExtension(file.Name);
-        var match = FileNumberRegex.Match(stem);
-        if (match.Success && int.TryParse(match.Value, out var primary))
-        {
-            return new AudioFileSortKey(0, primary, stem.ToLowerInvariant());
-        }
-
-        return new AudioFileSortKey(1, int.MaxValue, stem.ToLowerInvariant());
-    }
-
     private static IReadOnlyList<ChapterDescriptor> TryDiscoverWorkspaceChapters(DirectoryInfo root)
     {
         try
@@ -561,6 +543,4 @@ public static class QcCommand
 
         return normalized;
     }
-
-    private readonly record struct AudioFileSortKey(int Category, int PrimaryNumber, string NameLower);
 }

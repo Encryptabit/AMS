@@ -12,6 +12,7 @@ from __future__ import annotations
 import argparse
 import os
 import shutil
+import subprocess
 import sys
 import tarfile
 import tempfile
@@ -21,20 +22,22 @@ from pathlib import Path
 
 PLATFORM_ARTIFACTS: dict[str, dict[str, str]] = {
     "windows": {
-        "archive_name": "ffmpeg-n8.0-latest-win64-gpl-shared-8.0.zip",
+        "archive_name": "ffmpeg-n8.0.1-66-g27b8d1a017-win64-gpl-shared-8.0.zip",
         "archive_url": (
-            "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/"
-            "ffmpeg-n8.0-latest-win64-gpl-shared-8.0.zip"
+            "https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-02-28-12-59/"
+            "ffmpeg-n8.0.1-66-g27b8d1a017-win64-gpl-shared-8.0.zip"
         ),
     },
     "linux": {
-        "archive_name": "ffmpeg-n8.0-latest-linux64-gpl-shared-8.0.tar.xz",
+        "archive_name": "ffmpeg-n8.0.1-66-g27b8d1a017-linux64-gpl-shared-8.0.tar.xz",
         "archive_url": (
-            "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/"
-            "ffmpeg-n8.0-latest-linux64-gpl-shared-8.0.tar.xz"
+            "https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-02-28-12-59/"
+            "ffmpeg-n8.0.1-66-g27b8d1a017-linux64-gpl-shared-8.0.tar.xz"
         ),
     },
 }
+
+EXPECTED_FFMPEG_VERSION_MARKER = "ffmpeg version n8.0"
 
 REQUIRED_ALIAS_PREFIXES = (
     "avcodec",
@@ -72,9 +75,36 @@ def has_required_native_libraries(directory: Path, platform_key: str) -> bool:
     return True
 
 
+def has_expected_ffmpeg_version(directory: Path, platform_key: str) -> bool:
+    executable = directory / ("ffmpeg.exe" if platform_key == "windows" else "ffmpeg")
+    if not executable.is_file():
+        return False
+
+    try:
+        result = subprocess.run(
+            [str(executable), "-version"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            timeout=10,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return False
+
+    if result.returncode != 0:
+        return False
+
+    first_line = result.stdout.splitlines()[0] if result.stdout else ""
+    return EXPECTED_FFMPEG_VERSION_MARKER in first_line
+
+
 def find_valid_install(destinations: list[Path], platform_key: str) -> Path | None:
     for destination in destinations:
-        if has_required_native_libraries(destination, platform_key):
+        if (
+            has_required_native_libraries(destination, platform_key)
+            and has_expected_ffmpeg_version(destination, platform_key)
+        ):
             return destination
     return None
 
@@ -249,9 +279,14 @@ def main() -> int:
         found = find_valid_install(destinations, platform_key)
         if found is not None:
             print(f"FFmpeg binaries detected: {found}")
+            print(f"FFmpeg version marker detected: {EXPECTED_FFMPEG_VERSION_MARKER}")
             return 0
 
         print("FFmpeg binaries are missing from expected paths:", file=sys.stderr)
+        print(
+            f"Expected FFmpeg version marker: {EXPECTED_FFMPEG_VERSION_MARKER}",
+            file=sys.stderr,
+        )
         for path in destinations:
             print(f"- {path}", file=sys.stderr)
         print(

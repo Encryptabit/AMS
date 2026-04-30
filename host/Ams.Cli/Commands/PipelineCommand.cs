@@ -16,6 +16,7 @@ using Ams.Core.Application.Mfa.Models;
 using Ams.Core.Application.Runs;
 using Ams.Core.Asr;
 using Ams.Core.Artifacts;
+using Ams.Core.Common;
 using Ams.Core.Processors;
 using Ams.Core.Artifacts.Hydrate;
 using Ams.Core.Prosody;
@@ -2102,7 +2103,7 @@ public static class PipelineCommand
 
         return Directory.EnumerateFiles(root.FullName, "*.wav", SearchOption.TopDirectoryOnly)
             .Select(path => new FileInfo(path))
-            .OrderBy(file => file.Name, StringComparer.OrdinalIgnoreCase)
+            .OrderBy(file => file, NaturalStringComparer.FileNameWithoutExtensionIgnoreCase)
             .ToList();
     }
 
@@ -2490,7 +2491,7 @@ public static class PipelineCommand
 
         AnsiConsole.MarkupLine($"Chapters analyzed: {chapters.Count}");
 
-        foreach (var chapter in chapters.OrderBy(c => c.Chapter, StringComparer.OrdinalIgnoreCase))
+        foreach (var chapter in chapters.OrderBy(c => c.Chapter, NaturalStringComparer.SortIgnoreCase))
         {
             AnsiConsole.MarkupLine($"\n[bold yellow]{chapter.Chapter}[/]");
 
@@ -2804,7 +2805,7 @@ public static class PipelineCommand
 
         var allChapters = Directory.EnumerateFiles(root.FullName, "*.wav", SearchOption.TopDirectoryOnly)
             .Select(path => new FileInfo(path))
-            .OrderBy(file => file.Name, PathComparer)
+            .OrderBy(file => file, NaturalStringComparer.FileNameWithoutExtensionIgnoreCase)
             .ToList();
 
         if (verifyAll)

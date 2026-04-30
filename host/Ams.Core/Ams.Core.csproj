@@ -25,6 +25,8 @@
         <!-- Avoid cross-platform stale copy issues when pre-build auto-install swaps FFmpeg layouts. -->
         <None Remove="$(ResolvedExtToolsDir)\ffmpeg\**\*.so;$(ResolvedExtToolsDir)\ffmpeg\**\*.so.*;$(ResolvedExtToolsDir)\ffmpeg\**\*.dylib"
               Condition="'$(OS)' == 'Windows_NT'" />
+        <None Remove="$(ResolvedExtToolsDir)\ffmpeg\bin\ffmpeg;$(ResolvedExtToolsDir)\ffmpeg\bin\ffprobe;$(ResolvedExtToolsDir)\ffmpeg\bin\ffplay"
+              Condition="'$(OS)' == 'Windows_NT'" />
         <None Remove="$(ResolvedExtToolsDir)\ffmpeg\**\*.dll;$(ResolvedExtToolsDir)\ffmpeg\**\*.exe"
               Condition="'$(OS)' != 'Windows_NT'" />
     </ItemGroup>
@@ -41,6 +43,7 @@
         <PackageReference Include="DiffMatchPatch" Version="4.0.0"/>
         <PackageReference Include="DocX" Version="5.0.0"/>
         <PackageReference Include="FFmpeg.AutoGen" Version="8.0.0" />
+        <PackageReference Include="Humanizer.Core" Version="3.0.10"/>
         <PackageReference Include="Microsoft.Extensions.Logging" Version="10.0.0"/>
         <PackageReference Include="Microsoft.Extensions.Logging.Console" Version="10.0.0"/>
         <PackageReference Include="PDFiumCore" Version="134.0.6982"/>

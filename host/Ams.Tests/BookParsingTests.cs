@@ -253,6 +253,25 @@ public class BookModelsTests
     }
 
     [Fact]
+    public void PronunciationHelper_NormalizesDigitAndHyphenatedWordNumbersEquivalently()
+    {
+        var numeric = PronunciationHelper.NormalizeForLookup("21");
+        var hyphenated = PronunciationHelper.NormalizeForLookup("twenty-one");
+
+        Assert.Equal("twenty one", numeric);
+        Assert.Equal(hyphenated, numeric);
+    }
+
+    [Fact]
+    public void PronunciationHelper_NormalizesOrdinalNumbersToWords()
+    {
+        Assert.Equal("first", PronunciationHelper.NormalizeForLookup("1st"));
+        Assert.Equal("second", PronunciationHelper.NormalizeForLookup("2nd"));
+        Assert.Equal("third", PronunciationHelper.NormalizeForLookup("3rd"));
+        Assert.Equal("twenty first", PronunciationHelper.NormalizeForLookup("21st"));
+    }
+
+    [Fact]
     public void BookIndexOptions_Defaults()
     {
         var opt = new BookIndexOptions();

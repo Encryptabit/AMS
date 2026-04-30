@@ -1,5 +1,5 @@
 using System.Text.Json;
-using System.Text.RegularExpressions;
+using Ams.Core.Common;
 using Ams.Core.Processors.Alignment.Anchors;
 using Ams.Core.Runtime.Book;
 
@@ -73,7 +73,7 @@ public static class ChapterDiscoveryService
         {
             wavFiles = Directory.EnumerateFiles(rootPath, "*.wav", SearchOption.TopDirectoryOnly)
                 .Select(path => new FileInfo(path))
-                .OrderBy(file => file, ChapterFileComparer.Instance)
+                .OrderBy(file => file, NaturalStringComparer.FileNameWithoutExtensionIgnoreCase)
                 .ToList();
         }
         catch (Exception)
@@ -144,8 +144,8 @@ public static class ChapterDiscoveryService
                 return aMatched ? -1 : 1;
             }
 
-            // Both unmatched: use numeric-aware stem comparison
-            return ChapterFileComparer.CompareStemStrings(a.Stem, b.Stem);
+            // Both unmatched: use natural numeric-aware stem comparison.
+            return NaturalStringComparer.CompareIgnoreCase(a.Stem, b.Stem);
         });
 
         return chapters;
@@ -170,76 +170,4 @@ public static class ChapterDiscoveryService
         }
     }
 
-    /// <summary>
-    /// Numeric-aware file comparer for sorting chapter files.
-    /// Extracted from CLI REPL's ChapterFileComparer.
-    /// </summary>
-    internal sealed class ChapterFileComparer : IComparer<FileInfo>
-    {
-        public static readonly ChapterFileComparer Instance = new();
-
-        private static readonly Regex NumberRegex = new(@"\d+", RegexOptions.Compiled);
-
-        public int Compare(FileInfo? x, FileInfo? y)
-        {
-            if (ReferenceEquals(x, y)) return 0;
-            if (x is null) return -1;
-            if (y is null) return 1;
-
-            var keyX = GetSortKey(x);
-            var keyY = GetSortKey(y);
-
-            var category = keyX.Category.CompareTo(keyY.Category);
-            if (category != 0) return category;
-
-            var number = keyX.PrimaryNumber.CompareTo(keyY.PrimaryNumber);
-            if (number != 0) return number;
-
-            var name = string.Compare(keyX.NameLower, keyY.NameLower, StringComparison.Ordinal);
-            if (name != 0) return name;
-
-            return string.Compare(x.Name, y.Name, StringComparison.OrdinalIgnoreCase);
-        }
-
-        /// <summary>
-        /// Compares two stem strings using numeric-aware logic.
-        /// Used when FileInfo is not available.
-        /// </summary>
-        internal static int CompareStemStrings(string? x, string? y)
-        {
-            if (ReferenceEquals(x, y)) return 0;
-            if (x is null) return -1;
-            if (y is null) return 1;
-
-            var keyX = GetStemSortKey(x);
-            var keyY = GetStemSortKey(y);
-
-            var category = keyX.Category.CompareTo(keyY.Category);
-            if (category != 0) return category;
-
-            var number = keyX.PrimaryNumber.CompareTo(keyY.PrimaryNumber);
-            if (number != 0) return number;
-
-            return string.Compare(keyX.NameLower, keyY.NameLower, StringComparison.Ordinal);
-        }
-
-        private static SortKey GetSortKey(FileInfo file)
-        {
-            var stem = Path.GetFileNameWithoutExtension(file.Name);
-            return GetStemSortKey(stem);
-        }
-
-        private static SortKey GetStemSortKey(string stem)
-        {
-            var match = NumberRegex.Match(stem);
-            if (match.Success && int.TryParse(match.Value, out var primary))
-            {
-                return new SortKey(0, primary, stem.ToLowerInvariant());
-            }
-
-            return new SortKey(1, int.MaxValue, stem.ToLowerInvariant());
-        }
-
-        private readonly record struct SortKey(int Category, int PrimaryNumber, string NameLower);
-    }
 }

@@ -1,10 +1,13 @@
 using System.Globalization;
 using System.Text;
+using Humanizer;
 
 namespace Ams.Core.Runtime.Book;
 
 public static class PronunciationHelper
 {
+    private static readonly CultureInfo EnglishCulture = CultureInfo.GetCultureInfo("en-US");
+
     public static string? NormalizeForLookup(string token)
     {
         if (string.IsNullOrWhiteSpace(token))
@@ -58,9 +61,20 @@ public static class PronunciationHelper
                 }
 
                 var digits = token.Substring(start, i - start);
+                var suffixLength = GetOrdinalSuffixLength(token, i, digits);
+                string words;
+                if (suffixLength > 0)
+                {
+                    words = ConvertOrdinalNumberToWordsSafe(digits);
+                    i += suffixLength;
+                }
+                else
+                {
+                    words = ConvertNumberToWordsSafe(digits);
+                }
+
                 i--;
 
-                var words = ConvertNumberToWordsSafe(digits);
                 if (!string.IsNullOrEmpty(words))
                 {
                     segments.AddRange(words.Split(' ', StringSplitOptions.RemoveEmptyEntries));
@@ -125,24 +139,6 @@ public static class PronunciationHelper
 
     private static string ConvertNumberToWordsSafe(string digits)
     {
-        static string SpellOutDigits(string raw)
-        {
-            return string.Join(" ", raw.Select(ch => ch switch
-            {
-                '0' => "zero",
-                '1' => "one",
-                '2' => "two",
-                '3' => "three",
-                '4' => "four",
-                '5' => "five",
-                '6' => "six",
-                '7' => "seven",
-                '8' => "eight",
-                '9' => "nine",
-                _ => string.Empty
-            }).Where(s => s.Length > 0));
-        }
-
         var canonical = digits.Replace("_", string.Empty).Replace(",", string.Empty);
         if (!long.TryParse(canonical, NumberStyles.Integer, CultureInfo.InvariantCulture, out var value))
         {
@@ -152,82 +148,68 @@ public static class PronunciationHelper
         return NumberToWords(value);
     }
 
-    private static string NumberToWords(long number)
+    private static string ConvertOrdinalNumberToWordsSafe(string digits)
     {
-        if (number == 0)
+        var canonical = digits.Replace("_", string.Empty).Replace(",", string.Empty);
+        if (!int.TryParse(canonical, NumberStyles.Integer, CultureInfo.InvariantCulture, out var value))
         {
-            return "zero";
+            return SpellOutDigits(digits);
         }
 
-        if (number < 0)
+        return NormalizeSpelledNumberWords(value.ToOrdinalWords(EnglishCulture));
+    }
+
+    private static int GetOrdinalSuffixLength(string token, int start, string digits)
+    {
+        const int SuffixLength = 2;
+        if (start + SuffixLength > token.Length)
         {
-            return "minus " + NumberToWords(Math.Abs(number));
+            return 0;
         }
 
-        var parts = new List<string>();
-        var units = new[] { "", "thousand", "million", "billion", "trillion", "quadrillion", "quintillion" };
-        int unitIndex = 0;
-
-        while (number > 0 && unitIndex < units.Length)
+        var suffix = token.Substring(start, SuffixLength);
+        if (!IsOrdinalSuffixForDigits(digits, suffix))
         {
-            int chunk = (int)(number % 1000);
-            if (chunk != 0)
+            return 0;
+        }
+
+        var afterSuffix = start + SuffixLength;
+        return afterSuffix >= token.Length || !char.IsLetterOrDigit(token[afterSuffix])
+            ? SuffixLength
+            : 0;
+    }
+
+    private static bool IsOrdinalSuffixForDigits(string digits, string suffix)
+    {
+        var canonical = digits.Replace("_", string.Empty).Replace(",", string.Empty);
+        if (!long.TryParse(canonical, NumberStyles.Integer, CultureInfo.InvariantCulture, out var value))
+        {
+            return false;
+        }
+
+        var expected = "th";
+        var lastTwo = Math.Abs(value % 100);
+        if (lastTwo is < 11 or > 13)
+        {
+            expected = Math.Abs(value % 10) switch
             {
-                var chunkWords = ChunkToWords(chunk);
-                if (!string.IsNullOrEmpty(units[unitIndex]))
-                {
-                    chunkWords += " " + units[unitIndex];
-                }
-
-                parts.Insert(0, chunkWords);
-            }
-
-            number /= 1000;
-            unitIndex++;
+                1 => "st",
+                2 => "nd",
+                3 => "rd",
+                _ => "th"
+            };
         }
 
-        if (number > 0)
-        {
-            parts.Add(SpellOutDigits(number.ToString(CultureInfo.InvariantCulture)));
-        }
-
-        return string.Join(" ", parts);
+        return string.Equals(suffix, expected, StringComparison.OrdinalIgnoreCase);
     }
 
-    private static string ChunkToWords(int number)
-    {
-        var ones = new[] { "", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine" };
-        var teens = new[]
-        {
-            "ten", "eleven", "twelve", "thirteen", "fourteen", "fifteen", "sixteen", "seventeen", "eighteen", "nineteen"
-        };
-        var tens = new[] { "", "", "twenty", "thirty", "forty", "fifty", "sixty", "seventy", "eighty", "ninety" };
+    private static string NumberToWords(long number)
+        => NormalizeSpelledNumberWords(number.ToWords(EnglishCulture, addAnd: false));
 
-        var words = new List<string>();
-
-        if (number >= 100)
-        {
-            words.Add(ones[number / 100]);
-            words.Add("hundred");
-            number %= 100;
-        }
-
-        if (number >= 20)
-        {
-            words.Add(tens[number / 10]);
-            number %= 10;
-        }
-        else if (number >= 10)
-        {
-            words.Add(teens[number - 10]);
-            number = 0;
-        }
-
-        if (number > 0)
-        {
-            words.Add(ones[number]);
-        }
-
-        return string.Join(" ", words.Where(w => w.Length > 0));
-    }
+    private static string NormalizeSpelledNumberWords(string value)
+        => string.Join(
+            " ",
+            value.Replace('-', ' ')
+                .Split(' ', StringSplitOptions.RemoveEmptyEntries)
+                .Select(part => part.ToLowerInvariant()));
 }

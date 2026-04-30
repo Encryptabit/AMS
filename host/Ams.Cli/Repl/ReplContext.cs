@@ -1,5 +1,4 @@
 using System.Text.Json;
-using System.Text.RegularExpressions;
 using System.Threading;
 using Ams.Cli.Workspace;
 using Ams.Core.Asr;
@@ -168,7 +167,7 @@ internal sealed class ReplState
         {
             Chapters = Directory.EnumerateFiles(WorkingDirectory, "*.wav", SearchOption.TopDirectoryOnly)
                 .Select(path => new FileInfo(path))
-                .OrderBy(file => file, ChapterFileComparer.Instance)
+                .OrderBy(file => file, NaturalStringComparer.FileNameWithoutExtensionIgnoreCase)
                 .ToList();
         }
         catch (Exception ex)
@@ -481,46 +480,4 @@ internal sealed class ReplState
     }
 
     private sealed record PersistedReplState(string WorkingDirectory, string? SelectedChapterName, bool RunAllChapters);
-
-    private sealed class ChapterFileComparer : IComparer<FileInfo>
-    {
-        public static readonly ChapterFileComparer Instance = new();
-
-        private static readonly Regex NumberRegex = new("\\d+", RegexOptions.Compiled);
-
-        public int Compare(FileInfo? x, FileInfo? y)
-        {
-            if (ReferenceEquals(x, y)) return 0;
-            if (x is null) return -1;
-            if (y is null) return 1;
-
-            var keyX = GetSortKey(x);
-            var keyY = GetSortKey(y);
-
-            var category = keyX.Category.CompareTo(keyY.Category);
-            if (category != 0) return category;
-
-            var number = keyX.PrimaryNumber.CompareTo(keyY.PrimaryNumber);
-            if (number != 0) return number;
-
-            var name = string.Compare(keyX.NameLower, keyY.NameLower, StringComparison.Ordinal);
-            if (name != 0) return name;
-
-            return string.Compare(x.Name, y.Name, StringComparison.OrdinalIgnoreCase);
-        }
-
-        private static SortKey GetSortKey(FileInfo file)
-        {
-            var stem = Path.GetFileNameWithoutExtension(file.Name);
-            var match = NumberRegex.Match(stem);
-            if (match.Success && int.TryParse(match.Value, out var primary))
-            {
-                return new SortKey(0, primary, stem.ToLowerInvariant());
-            }
-
-            return new SortKey(1, int.MaxValue, stem.ToLowerInvariant());
-        }
-
-        private readonly record struct SortKey(int Category, int PrimaryNumber, string NameLower);
-    }
 }

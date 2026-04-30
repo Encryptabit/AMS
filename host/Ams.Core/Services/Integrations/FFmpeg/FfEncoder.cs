@@ -478,13 +478,13 @@ internal static unsafe class FfEncoder
         {
             if (customIo != null)
             {
-                if (customIo->buffer != null)
+                var localIo = customIo;
+                if (fmt != null && fmt->pb == customIo)
                 {
-                    av_free(customIo->buffer);
-                    customIo->buffer = null;
+                    fmt->pb = null;
                 }
 
-                var localIo = customIo;
+                av_freep(&localIo->buffer);
                 avio_context_free(&localIo);
                 customIo = null;
             }
