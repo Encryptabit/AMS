@@ -191,8 +191,13 @@ public class MfaChunkCorpusBuilderTests
     }
 
     [Fact]
-    public void BuildLabTextFromWordTiming_UsesSpokenWordForSubstitution()
+    public void BuildLabTextFromWordTiming_PrefersBookCanonical_ForSubstitution()
     {
+        // MFA aligns text against audio; the book is the source of truth, so
+        // Sub-op book words feed their canonical pronunciation to MFA. This
+        // matters most for Whisper substitutions like "Chapter Five" -> "V."
+        // where the ASR's spoken word is a single phone but the book text is
+        // what the narrator actually said.
         var words = new[]
         {
             new HydratedWord(10, 0, "going", "gonna", "Sub", "near_or_diff", 1.0),
@@ -209,8 +214,8 @@ public class MfaChunkCorpusBuilderTests
         var lab = MfaChunkCorpusBuilder.BuildLabTextFromWordTiming(words, asr, 0.0, 1.0);
 
         Assert.NotNull(lab);
-        Assert.Contains("gonna", lab);
-        Assert.DoesNotContain("going", lab);
+        Assert.Contains("going", lab);
+        Assert.DoesNotContain("gonna", lab);
         Assert.Contains("home", lab);
     }
 
@@ -240,12 +245,16 @@ public class MfaChunkCorpusBuilderTests
     }
 
     [Fact]
-    public void BuildLabTextFromWordTiming_OmitsDeletion()
+    public void BuildLabTextFromWordTiming_IncludesIsolatedDeletion_WithDefaultTolerance()
     {
+        // A single Del-op book word between two Matches is a real narrator slip
+        // (or a Whisper drop like "Chapter" before a chapter number). With the
+        // default tolerance of 3, the canonical word is spliced back in so MFA
+        // has text to align against the corresponding audio.
         var words = new[]
         {
             new HydratedWord(10, 0, "alpha", "alpha", "Match", "equal_or_equiv", 0.0),
-            new HydratedWord(11, null, "missing", null, "Del", "missing_book", 1.0),
+            new HydratedWord(11, null, "chapter", null, "Del", "missing_book", 1.0),
             new HydratedWord(12, 1, "bravo", "bravo", "Match", "equal_or_equiv", 0.0)
         };
         var asr = new AsrResponse(
@@ -259,9 +268,117 @@ public class MfaChunkCorpusBuilderTests
         var lab = MfaChunkCorpusBuilder.BuildLabTextFromWordTiming(words, asr, 0.0, 1.0);
 
         Assert.NotNull(lab);
-        Assert.DoesNotContain("missing", lab);
+        var tokens = lab.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        // Synthesized Del midpoint interpolates between 0.20 (alpha) and 0.60 (bravo) -> 0.40.
+        // Lab order should follow midpoint order: alpha, chapter, bravo.
+        Assert.Equal(["alpha", "chapter", "bravo"], tokens);
+    }
+
+    [Fact]
+    public void BuildLabTextFromWordTiming_DropsLongDeletionRun_BeyondTolerance()
+    {
+        // When the narrator skips an entire passage, the hydrate has a long run
+        // of consecutive Del-op book words. Those must not be spliced into the
+        // lab — MFA would try to align audio that isn't there and squash the
+        // surrounding alignment. With tolerance 3, a 5-word Del run is dropped.
+        var words = new[]
+        {
+            new HydratedWord(10, 0, "alpha", "alpha", "Match", "equal_or_equiv", 0.0),
+            new HydratedWord(11, null, "the", null, "Del", "missing_book", 1.0),
+            new HydratedWord(12, null, "quick", null, "Del", "missing_book", 1.0),
+            new HydratedWord(13, null, "brown", null, "Del", "missing_book", 1.0),
+            new HydratedWord(14, null, "fox", null, "Del", "missing_book", 1.0),
+            new HydratedWord(15, null, "jumps", null, "Del", "missing_book", 1.0),
+            new HydratedWord(16, 1, "bravo", "bravo", "Match", "equal_or_equiv", 0.0)
+        };
+        var asr = new AsrResponse(
+            modelVersion: "test",
+            tokens:
+            [
+                new AsrToken(0.10, 0.20, "alpha"),
+                new AsrToken(0.50, 0.20, "bravo")
+            ]);
+
+        var lab = MfaChunkCorpusBuilder.BuildLabTextFromWordTiming(words, asr, 0.0, 1.0,
+            maxConsecutiveDelRun: 3);
+
+        Assert.NotNull(lab);
+        var tokens = lab.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        Assert.Equal(["alpha", "bravo"], tokens);
+        Assert.DoesNotContain("the", lab);
+        Assert.DoesNotContain("fox", lab);
+    }
+
+    [Fact]
+    public void BuildLabTextFromWordTiming_DropsAnyDeletion_WhenToleranceIsZero()
+    {
+        // Tolerance 0 reproduces legacy behavior where every Del op is dropped.
+        var words = new[]
+        {
+            new HydratedWord(10, 0, "alpha", "alpha", "Match", "equal_or_equiv", 0.0),
+            new HydratedWord(11, null, "chapter", null, "Del", "missing_book", 1.0),
+            new HydratedWord(12, 1, "bravo", "bravo", "Match", "equal_or_equiv", 0.0)
+        };
+        var asr = new AsrResponse(
+            modelVersion: "test",
+            tokens:
+            [
+                new AsrToken(0.10, 0.20, "alpha"),
+                new AsrToken(0.50, 0.20, "bravo")
+            ]);
+
+        var lab = MfaChunkCorpusBuilder.BuildLabTextFromWordTiming(words, asr, 0.0, 1.0,
+            maxConsecutiveDelRun: 0);
+
+        Assert.NotNull(lab);
+        Assert.DoesNotContain("chapter", lab);
         Assert.Contains("alpha", lab);
         Assert.Contains("bravo", lab);
+    }
+
+    [Fact]
+    public void BuildLabTextFromWordTiming_DelNeighbors_FollowBookOrder_NotListOrder()
+    {
+        // Production hydrate.Words is built as anchor ops first, DP ops after, so
+        // list-order does not match book-order. A naive previous/next neighbor walk
+        // through the list picks the last-anchor as a Del's "previous" word, even
+        // when the Del is for the first book token (chapter heading drop). The
+        // synthesized midpoint then lands far past the actual deletion, putting the
+        // spliced word in the wrong chunk. Regression for review feedback on
+        // rvw_8d172ee3f20b444daa993a75db15a9b7.
+        var words = new[]
+        {
+            // Anchor block (book-order 100..103) emitted first, like production.
+            new HydratedWord(100, 2, "tuesday", "Tuesday", "Match", "anchor", 0.0),
+            new HydratedWord(101, 3, "morning", "morning", "Match", "anchor", 0.0),
+            new HydratedWord(102, 4, "gregor", "Gregor", "Match", "anchor", 0.0),
+            new HydratedWord(103, 5, "arrived", "arrived", "Match", "anchor", 0.0),
+            // DP block emitted after anchors. "Chapter" has no ASR equivalent; "5"
+            // was Whisper-substituted as "V."; both belong at the START of the book.
+            new HydratedWord(97, null, "Chapter", null, "Del", "missing_book", 1.0),
+            new HydratedWord(98, 0, "5", "V.", "Sub", "near_or_diff", 0.3),
+            new HydratedWord(99, 1, "On", "On", "Match", "equal_or_equiv", 0.0)
+        };
+        var asr = new AsrResponse(
+            modelVersion: "test",
+            tokens:
+            [
+                new AsrToken(0.98, 3.20, "V."),
+                new AsrToken(4.18, 0.10, "On"),
+                new AsrToken(4.28, 0.20, "Tuesday"),
+                new AsrToken(4.50, 0.30, "morning"),
+                new AsrToken(4.80, 0.40, "Gregor"),
+                new AsrToken(5.20, 0.40, "arrived")
+            ]);
+
+        var lab = MfaChunkCorpusBuilder.BuildLabTextFromWordTiming(words, asr, 0.0, 17.0);
+
+        Assert.NotNull(lab);
+        var tokens = lab.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        // "chapter" must be spliced in at a midpoint near "V." (book-order prev=null,
+        // next=98 ("5"/"V." midpoint=2.58s) -> synthesized ~2.579s) and therefore
+        // appear BEFORE "five" in the lab — not stuck after "tuesday morning gregor".
+        Assert.Equal(["chapter", "five", "on", "tuesday", "morning", "gregor", "arrived"], tokens);
     }
 
     [Fact]
@@ -793,6 +910,35 @@ public class MfaChunkCorpusBuilderTests
         // Other chunks (preserved) retain their entries.
         Assert.Contains(result.Utterances, u => u.ChunkId == 0);
         Assert.Contains(result.Utterances, u => u.ChunkId == 2);
+    }
+
+    [Fact]
+    public void RebuildScoped_WrittenLabFileHasNoUtf8Bom()
+    {
+        // MFA's text reader treats a leading U+FEFF as part of the first word, so
+        // "chapter five" becomes "﻿chapter five" -- which goes OOV/<unk> and
+        // squashes the alignment of the following words. Lab files must be BOM-free.
+        using var workspace = new ScopedRebuildWorkspace(chunkCount: 2,
+            chunk1BookText: "chapter five on tuesday morning gregor arrived");
+
+        workspace.WriteCorpusFile(0, ".wav", "ORIG-0");
+        workspace.WriteCorpusFile(0, ".lab", "alpha bravo charlie");
+        workspace.WriteSourceWav(1, "FRESH-1");
+
+        MfaChunkCorpusBuilder.RebuildScoped(
+            audioBuffer: workspace.AudioBuffer,
+            chunkPlan: workspace.Plan,
+            hydrate: workspace.Hydrate,
+            corpusDirectory: workspace.CorpusDir,
+            chunkIndices: new[] { 1 },
+            chunkAudio: workspace.ChunkAudio,
+            requireAsrChunkAudio: true);
+
+        var labBytes = File.ReadAllBytes(Path.Combine(workspace.CorpusDir, "utt-0001.lab"));
+        Assert.True(labBytes.Length >= 3, "Rebuilt lab file should not be empty.");
+        Assert.False(
+            labBytes[0] == 0xEF && labBytes[1] == 0xBB && labBytes[2] == 0xBF,
+            "Lab file must not start with UTF-8 BOM (EF BB BF) — MFA mis-tokenizes the first word.");
     }
 
     [Fact]

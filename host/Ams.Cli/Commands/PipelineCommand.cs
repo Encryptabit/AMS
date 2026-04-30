@@ -466,6 +466,7 @@ public static class PipelineCommand
         bool disableChunkPlan = false,
         bool disableChunkedMfa = false,
         bool requireAsrChunkAudio = false,
+        int mfaMaxConsecutiveDelRun = 3,
         string? fallbackAsrModel = null)
         => RunPipelineForMultipleChaptersWithTierAsync(
             pipelineService,
@@ -494,6 +495,7 @@ public static class PipelineCommand
             disableChunkPlan,
             disableChunkedMfa,
             requireAsrChunkAudio,
+            mfaMaxConsecutiveDelRun,
             RecoveryTier.None);
 
     private static async Task RunPipelineForMultipleChaptersWithTierAsync(
@@ -523,6 +525,7 @@ public static class PipelineCommand
         bool disableChunkPlan,
         bool disableChunkedMfa,
         bool requireAsrChunkAudio,
+        int mfaMaxConsecutiveDelRun,
         RecoveryTier currentTier,
         IReadOnlyDictionary<string, IReadOnlyList<int>>? scopedIndicesByChapterPath = null)
     {
@@ -627,6 +630,7 @@ public static class PipelineCommand
                     disableChunkPlan,
                     disableChunkedMfa,
                     requireAsrChunkAudio,
+                    mfaMaxConsecutiveDelRun,
                     currentTier,
                     scopedForThisChapter).ConfigureAwait(false);
 
@@ -730,6 +734,7 @@ public static class PipelineCommand
                 disableChunkPlan,
                 disableChunkedMfa,
                 requireAsrChunkAudio,
+                mfaMaxConsecutiveDelRun,
                 nextTier.Value,
                 indicesByChapter).ConfigureAwait(false);
         }
@@ -1339,6 +1344,10 @@ public static class PipelineCommand
             "Force MFA to use single-utterance corpus even when a chunk plan exists");
         var requireAsrChunkAudioOption = new Option<bool>("--require-asr-chunk-audio", () => false,
             "Require chunked MFA to reuse ASR-emitted chunk audio; fail if missing or incompatible");
+        var mfaMaxDelRunOption = new Option<int>("--mfa-max-del-run", () => 3,
+            "Maximum consecutive Del-op book-word run that gets spliced into the MFA lab via book canonical text. " +
+            "Defaults to 3 so chapter-heading drops (Whisper transcribing 'Chapter Five' as 'V.') are recovered " +
+            "while narrator-skipped passages are still dropped. Set to 0 for legacy behavior.");
 
         cmd.AddOption(bookOption);
         cmd.AddOption(audioOption);
@@ -1365,6 +1374,7 @@ public static class PipelineCommand
         cmd.AddOption(noChunkPlanOption);
         cmd.AddOption(noChunkedMfaOption);
         cmd.AddOption(requireAsrChunkAudioOption);
+        cmd.AddOption(mfaMaxDelRunOption);
 
         cmd.SetHandler(async context =>
         {
@@ -1406,6 +1416,7 @@ public static class PipelineCommand
             var noChunkPlan = context.ParseResult.GetValueForOption(noChunkPlanOption);
             var noChunkedMfa = context.ParseResult.GetValueForOption(noChunkedMfaOption);
             var requireAsrChunkAudio = context.ParseResult.GetValueForOption(requireAsrChunkAudioOption);
+            var mfaMaxDelRun = context.ParseResult.GetValueForOption(mfaMaxDelRunOption);
             if (showProgress && Log.IsDebugLoggingEnabled())
             {
                 Log.Debug("Progress UI disabled while AMS_LOG_LEVEL requests Debug-level logging.");
@@ -1447,6 +1458,7 @@ public static class PipelineCommand
                                 noChunkPlan,
                                 noChunkedMfa,
                                 requireAsrChunkAudio,
+                                mfaMaxDelRun,
                                 fallbackAsrModel: fallbackModel));
                     }
                     else
@@ -1477,6 +1489,7 @@ public static class PipelineCommand
                             noChunkPlan,
                             noChunkedMfa,
                             requireAsrChunkAudio,
+                            mfaMaxDelRun,
                             fallbackAsrModel: fallbackModel).ConfigureAwait(false);
                     }
                 }
@@ -1533,7 +1546,8 @@ public static class PipelineCommand
                                     mfaRetryBeam,
                                     noChunkPlan,
                                     noChunkedMfa,
-                                    requireAsrChunkAudio).ConfigureAwait(false);
+                                    requireAsrChunkAudio,
+                                    mfaMaxDelRun).ConfigureAwait(false);
                             }
                             catch (OperationCanceledException oce)
                             {
@@ -1575,7 +1589,8 @@ public static class PipelineCommand
                         mfaRetryBeam,
                         noChunkPlan,
                         noChunkedMfa,
-                        requireAsrChunkAudio).ConfigureAwait(false);
+                        requireAsrChunkAudio,
+                        mfaMaxDelRun).ConfigureAwait(false);
                 }
             }
             catch (OperationCanceledException)
@@ -1617,7 +1632,8 @@ public static class PipelineCommand
         int? mfaRetryBeam,
         bool disableChunkPlan,
         bool disableChunkedMfa,
-        bool requireAsrChunkAudio)
+        bool requireAsrChunkAudio,
+        int mfaMaxConsecutiveDelRun)
     {
         var currentTier = RecoveryTier.None;
         IReadOnlyList<int>? scopedChunkIndices = null;
@@ -1663,6 +1679,7 @@ public static class PipelineCommand
                 disableChunkPlan,
                 disableChunkedMfa,
                 requireAsrChunkAudio,
+                mfaMaxConsecutiveDelRun,
                 currentTier,
                 scopedChunkIndices).ConfigureAwait(false);
 
@@ -1723,6 +1740,7 @@ public static class PipelineCommand
         bool disableChunkPlan = false,
         bool disableChunkedMfa = false,
         bool requireAsrChunkAudio = false,
+        int mfaMaxConsecutiveDelRun = 3,
         RecoveryTier currentTier = RecoveryTier.None,
         IReadOnlyList<int>? scopedReAsrChunkIndices = null)
     {
@@ -1842,7 +1860,8 @@ public static class PipelineCommand
                 Beam = mfaBeam,
                 RetryBeam = mfaRetryBeam,
                 DisableChunkedMfa = disableChunkedMfa,
-                RequireAsrChunkAudio = requireAsrChunkAudio
+                RequireAsrChunkAudio = requireAsrChunkAudio,
+                MaxConsecutiveDelRun = mfaMaxConsecutiveDelRun
             },
             MergeOptions = new MergeTimingsOptions
             {

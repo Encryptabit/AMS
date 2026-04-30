@@ -32,7 +32,8 @@ public static class MfaWorkflow
         string? workspaceRoot = null,
         MfaBeamSettings? beamSettings = null,
         bool disableChunkedMfa = false,
-        bool requireAsrChunkAudio = false)
+        bool requireAsrChunkAudio = false,
+        int maxConsecutiveDelRun = 3)
     {
         var problematicChunkIndices = (IReadOnlyList<int>)Array.Empty<int>();
 
@@ -94,7 +95,8 @@ public static class MfaWorkflow
                 corpusDir,
                 chunkAudio,
                 requireAsrChunkAudio,
-                chapterContext.Documents.Asr);
+                chapterContext.Documents.Asr,
+                maxConsecutiveDelRun);
 
             Log.Info("Using chunked MFA corpus: {Count} utterances from shared chunk plan", chunkCorpus.Utterances.Count);
         }
@@ -364,6 +366,12 @@ public static class MfaWorkflow
         }
     }
 
+    // MFA's text reader treats a leading U+FEFF as part of the first word, turning
+    // "chapter" into "﻿chapter" -- which becomes OOV/<unk> and squashes the
+    // alignment of the following words. Lab files must be BOM-free.
+    private static readonly Encoding LabFileEncoding =
+        new UTF8Encoding(encoderShouldEmitUTF8Identifier: false);
+
     private static async Task WriteLabFileAsync(
         FileInfo hydrateFile,
         ChapterContext chapterContext,
@@ -379,7 +387,7 @@ public static class MfaWorkflow
             if (normalizedCorpus.Count > 0)
             {
                 Log.Debug("Using ASR corpus for MFA alignment ({Corpus})", corpusSource.FullName);
-                await File.WriteAllTextAsync(labPath, string.Join(Environment.NewLine, normalizedCorpus), Encoding.UTF8,
+                await File.WriteAllTextAsync(labPath, string.Join(Environment.NewLine, normalizedCorpus), LabFileEncoding,
                         cancellationToken)
                     .ConfigureAwait(false);
                 return;
@@ -396,7 +404,7 @@ public static class MfaWorkflow
             var normalized = PrepareLabLines(corpus);
             if (normalized.Count > 0)
             {
-                await File.WriteAllTextAsync(labPath, string.Join(Environment.NewLine, normalized), Encoding.UTF8,
+                await File.WriteAllTextAsync(labPath, string.Join(Environment.NewLine, normalized), LabFileEncoding,
                     cancellationToken).ConfigureAwait(false);
                 return;
             }

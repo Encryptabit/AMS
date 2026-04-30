@@ -52,6 +52,12 @@ internal static class MfaChunkCorpusBuilder
 
     private const double ChunkAudioTimingToleranceSec = 0.05;
 
+    // MFA's text reader treats a leading U+FEFF as part of the first word, turning
+    // "chapter" into "﻿chapter" -- which becomes OOV/<unk> and squashes the
+    // alignment of the following words. Lab files must be BOM-free.
+    private static readonly Encoding LabFileEncoding =
+        new UTF8Encoding(encoderShouldEmitUTF8Identifier: false);
+
     /// <summary>
     /// Builds per-chunk wav and lab files under <paramref name="corpusDirectory"/>.
     /// </summary>
@@ -59,6 +65,8 @@ internal static class MfaChunkCorpusBuilder
     /// <param name="chunkPlan">Shared chunk plan document from ChunkPlanningService.</param>
     /// <param name="hydrate">Hydrated transcript with sentence-level BookText and timing.</param>
     /// <param name="corpusDirectory">Target directory for utterance corpus assets.</param>
+    /// <param name="maxConsecutiveDelRun">Maximum consecutive Del-op book-word run to splice
+    /// back into the lab via book canonical text. Longer runs are dropped.</param>
     /// <returns>A <see cref="ChunkCorpusResult"/> with the list of emitted utterances.</returns>
     internal static ChunkCorpusResult Build(
         AudioBuffer audioBuffer,
@@ -67,7 +75,8 @@ internal static class MfaChunkCorpusBuilder
         string corpusDirectory,
         ChunkAudioDocument? chunkAudio = null,
         bool requireAsrChunkAudio = false,
-        AsrResponse? asr = null)
+        AsrResponse? asr = null,
+        int maxConsecutiveDelRun = 3)
     {
         ArgumentNullException.ThrowIfNull(audioBuffer);
         ArgumentNullException.ThrowIfNull(chunkPlan);
@@ -97,26 +106,13 @@ internal static class MfaChunkCorpusBuilder
         IReadOnlyList<string>? previousLabTokens = null;
 
         // Pre-index word midpoints sorted by time for O(W log W + C) lookup
-        // instead of O(C * W) rescanning per chunk.
+        // instead of O(C * W) rescanning per chunk. Del-op book words within
+        // tolerance get spliced in with synthetic midpoints so chapter-heading
+        // drops ("Chapter Five" -> Whisper "V.") don't leave the lab missing words.
         List<PreIndexedWord>? preIndexedWords = null;
         if (asr is not null && hydrate.Words.Count > 0 && asr.Tokens.Length > 0)
         {
-            preIndexedWords = new List<PreIndexedWord>(hydrate.Words.Count);
-            foreach (var word in hydrate.Words)
-            {
-                if (word.AsrIdx is not int asrIdx || asrIdx < 0 || asrIdx >= asr.Tokens.Length)
-                    continue;
-
-                var lexemeParts = ResolveAlignmentLexemeParts(word);
-                if (lexemeParts.Count == 0)
-                    continue;
-
-                var token = asr.Tokens[asrIdx];
-                var midpoint = token.StartTime + Math.Max(0d, token.Duration) * 0.5d;
-                preIndexedWords.Add(new PreIndexedWord(midpoint, asrIdx, word.BookIdx, lexemeParts));
-            }
-
-            preIndexedWords.Sort((a, b) => a.MidpointSec.CompareTo(b.MidpointSec));
+            preIndexedWords = BuildPreIndexedWords(hydrate.Words, asr, maxConsecutiveDelRun);
         }
 
         for (int i = 0; i < chunkPlan.Chunks.Count; i++)
@@ -237,7 +233,7 @@ internal static class MfaChunkCorpusBuilder
 
             // Write LAB
             var labPath = Path.Combine(corpusDirectory, uttName + ".lab");
-            File.WriteAllText(labPath, labText, Encoding.UTF8);
+            File.WriteAllText(labPath, labText, LabFileEncoding);
 
             utterances.Add(new UtteranceEntry(
                 ChunkId: chunk.ChunkId,
@@ -283,7 +279,8 @@ internal static class MfaChunkCorpusBuilder
         IReadOnlyList<int> chunkIndices,
         ChunkAudioDocument? chunkAudio = null,
         bool requireAsrChunkAudio = false,
-        AsrResponse? asr = null)
+        AsrResponse? asr = null,
+        int maxConsecutiveDelRun = 3)
     {
         ArgumentNullException.ThrowIfNull(audioBuffer);
         ArgumentNullException.ThrowIfNull(chunkPlan);
@@ -323,19 +320,7 @@ internal static class MfaChunkCorpusBuilder
         List<PreIndexedWord>? preIndexedWords = null;
         if (asr is not null && hydrate.Words.Count > 0 && asr.Tokens.Length > 0)
         {
-            preIndexedWords = new List<PreIndexedWord>(hydrate.Words.Count);
-            foreach (var word in hydrate.Words)
-            {
-                if (word.AsrIdx is not int asrIdx || asrIdx < 0 || asrIdx >= asr.Tokens.Length)
-                    continue;
-                var lexemeParts = ResolveAlignmentLexemeParts(word);
-                if (lexemeParts.Count == 0)
-                    continue;
-                var token = asr.Tokens[asrIdx];
-                var midpoint = token.StartTime + Math.Max(0d, token.Duration) * 0.5d;
-                preIndexedWords.Add(new PreIndexedWord(midpoint, asrIdx, word.BookIdx, lexemeParts));
-            }
-            preIndexedWords.Sort((a, b) => a.MidpointSec.CompareTo(b.MidpointSec));
+            preIndexedWords = BuildPreIndexedWords(hydrate.Words, asr, maxConsecutiveDelRun);
         }
 
         var utterances = new List<UtteranceEntry>(chunkPlan.Chunks.Count);
@@ -501,7 +486,7 @@ internal static class MfaChunkCorpusBuilder
                 AudioProcessor.EncodeWav(wavPath, slice);
             }
 
-            File.WriteAllText(labPath, labText, Encoding.UTF8);
+            File.WriteAllText(labPath, labText, LabFileEncoding);
 
             utterances.Add(new UtteranceEntry(
                 ChunkId: chunk.ChunkId,
@@ -542,16 +527,16 @@ internal static class MfaChunkCorpusBuilder
 
     /// <summary>
     /// Builds lab text from hydrate word mappings whose ASR token timing midpoint
-    /// falls inside the chunk time range. The emitted surface follows what should
-    /// be aligned phonetically rather than always forcing canonical book text:
-    /// matches use book words, substitutions prefer spoken ASR words, insertions
-    /// include spoken ASR words, and deletions are omitted.
+    /// falls inside the chunk time range. Prefers book canonical for Match/Sub so
+    /// MFA aligns against book truth; splices Del-op book words back in when their
+    /// consecutive run length is within <paramref name="maxConsecutiveDelRun"/>.
     /// </summary>
     internal static string? BuildLabTextFromWordTiming(
         IReadOnlyList<HydratedWord> words,
         AsrResponse asr,
         double chunkStartSec,
-        double chunkEndSec)
+        double chunkEndSec,
+        int maxConsecutiveDelRun = 3)
     {
         ArgumentNullException.ThrowIfNull(words);
         ArgumentNullException.ThrowIfNull(asr);
@@ -561,80 +546,20 @@ internal static class MfaChunkCorpusBuilder
             return null;
         }
 
-        var candidates = new List<AlignmentWordCandidate>();
-        foreach (var word in words)
-        {
-            if (word.AsrIdx is not int asrIdx)
-            {
-                continue;
-            }
-
-            if (asrIdx < 0 || asrIdx >= asr.Tokens.Length)
-            {
-                continue;
-            }
-
-            var lexemeParts = ResolveAlignmentLexemeParts(word);
-            if (lexemeParts.Count == 0)
-            {
-                continue;
-            }
-
-            var token = asr.Tokens[asrIdx];
-            var tokenMidpoint = token.StartTime + Math.Max(0d, token.Duration) * 0.5d;
-            if (!IsWithinChunk(tokenMidpoint, chunkStartSec, chunkEndSec))
-            {
-                continue;
-            }
-
-            candidates.Add(new AlignmentWordCandidate(asrIdx, word.BookIdx, lexemeParts));
-        }
-
-        if (candidates.Count == 0)
-        {
-            return null;
-        }
-
-        candidates.Sort((a, b) => a.AsrIdx.CompareTo(b.AsrIdx));
-        var seenBookIdx = new HashSet<int>();
-        var parts = new List<string>(candidates.Count);
-
-        foreach (var candidate in candidates)
-        {
-            // Guard against duplicate align ops that map one book word to multiple ASR indices.
-            if (candidate.BookIdx is int bookIdx && !seenBookIdx.Add(bookIdx))
-            {
-                continue;
-            }
-
-            foreach (var part in candidate.LexemeParts)
-            {
-                if (!string.IsNullOrWhiteSpace(part))
-                {
-                    parts.Add(part);
-                }
-            }
-        }
-
-        if (parts.Count < MinLabTokenCount)
-        {
-            return null;
-        }
-
-        return string.Join(' ', parts);
+        var preIndexed = BuildPreIndexedWords(words, asr, maxConsecutiveDelRun);
+        return preIndexed.Count == 0
+            ? null
+            : BuildLabTextFromPreIndexedWords(preIndexed, chunkStartSec, chunkEndSec);
     }
 
     private static IReadOnlyList<string> ResolveAlignmentLexemeParts(HydratedWord word)
     {
         ArgumentNullException.ThrowIfNull(word);
 
-        if (IsDeleteOperation(word.Op))
-        {
-            return Array.Empty<string>();
-        }
-
         if (IsInsertOperation(word.Op))
         {
+            // Insert: book has no equivalent, narrator added a word.
+            // Filler insertions are dropped to keep the lab clean.
             if (string.Equals(word.Reason, "filler", StringComparison.OrdinalIgnoreCase))
             {
                 return Array.Empty<string>();
@@ -643,15 +568,12 @@ internal static class MfaChunkCorpusBuilder
             return ExtractPreferredPronunciationParts(word.AsrWord);
         }
 
-        if (IsSubstitutionOperation(word.Op))
-        {
-            var spokenParts = ExtractPreferredPronunciationParts(word.AsrWord);
-            if (spokenParts.Count > 0)
-            {
-                return spokenParts;
-            }
-        }
-
+        // Match, Sub, Del: prefer book canonical for MFA forced alignment.
+        // MFA aligns text -> audio; the book is the source of truth so
+        // chapter-heading drops ("Chapter Five" Whisper-transcribed as "V.")
+        // align as the book pronunciation rather than as the ASR's spoken form.
+        // Fall back to the ASR word only when the book word produces no
+        // pronouncable parts (defensive guard for empty/punctuation-only entries).
         var canonicalParts = ExtractPreferredPronunciationParts(word.BookWord);
         if (canonicalParts.Count > 0)
         {
@@ -659,6 +581,176 @@ internal static class MfaChunkCorpusBuilder
         }
 
         return ExtractPreferredPronunciationParts(word.AsrWord);
+    }
+
+    /// <summary>
+    /// Builds the pre-indexed word list with two passes that don't depend on
+    /// <paramref name="hydrateWords"/> being in book order. Production hydrate
+    /// emits anchor ops first then DP ops, so list-order ≠ book-order — any
+    /// algorithm that walks the list to find a Del's "previous word" picks the
+    /// wrong neighbor and synthesizes a midpoint far from the actual deletion.
+    /// <para>Pass 1: emit non-Del words with their ASR midpoint and build a
+    /// BookIdx → midpoint anchor map. Pass 2: collect Del words sorted by
+    /// BookIdx, group runs of book-adjacent BookIdx values, and splice canonical
+    /// pronunciation for runs ≤ <paramref name="maxConsecutiveDelRun"/>. Each
+    /// run's prev/next neighbor is the closest anchor by BookIdx, and its
+    /// synthetic midpoint is interpolated between those neighbors' ASR midpoints.
+    /// Longer runs are dropped wholesale (narrator-skipped passages).</para>
+    /// </summary>
+    private static List<PreIndexedWord> BuildPreIndexedWords(
+        IReadOnlyList<HydratedWord> hydrateWords,
+        AsrResponse asr,
+        int maxConsecutiveDelRun)
+    {
+        var result = new List<PreIndexedWord>(hydrateWords.Count);
+        var clampedMax = Math.Max(0, maxConsecutiveDelRun);
+
+        // Pass 1: emit every non-Del word with a valid AsrIdx, indexing
+        // BookIdx → midpoint along the way for the Del-run neighbor lookup.
+        // SortedList keeps anchor BookIdx values in ascending order so we can
+        // find prev/next neighbors by binary search regardless of insert order.
+        var anchorMidpointByBookIdx = new SortedList<int, double>();
+        foreach (var word in hydrateWords)
+        {
+            if (IsDeleteOperation(word.Op))
+            {
+                continue;
+            }
+
+            if (word.AsrIdx is not int asrIdx || asrIdx < 0 || asrIdx >= asr.Tokens.Length)
+            {
+                continue;
+            }
+
+            var token = asr.Tokens[asrIdx];
+            var midpoint = token.StartTime + Math.Max(0d, token.Duration) * 0.5d;
+
+            var lexemeParts = ResolveAlignmentLexemeParts(word);
+            if (lexemeParts.Count > 0)
+            {
+                result.Add(new PreIndexedWord(midpoint, asrIdx, word.BookIdx, lexemeParts));
+            }
+
+            // Index by BookIdx for Del-run neighbor lookup. Inserts have no
+            // BookIdx and don't anchor a book position. If two ops share the
+            // same BookIdx (shouldn't happen, but defensive), keep the first.
+            if (word.BookIdx is int bookIdx && !anchorMidpointByBookIdx.ContainsKey(bookIdx))
+            {
+                anchorMidpointByBookIdx.Add(bookIdx, midpoint);
+            }
+        }
+
+        if (clampedMax > 0)
+        {
+            // Pass 2: collect Del-op book words, sort by BookIdx (NOT list order),
+            // group runs of consecutive BookIdx values, splice canonical for short runs.
+            var dels = new List<HydratedWord>();
+            foreach (var word in hydrateWords)
+            {
+                if (IsDeleteOperation(word.Op) && word.BookIdx is not null)
+                {
+                    dels.Add(word);
+                }
+            }
+            dels.Sort((a, b) => a.BookIdx!.Value.CompareTo(b.BookIdx!.Value));
+
+            int runStart = 0;
+            while (runStart < dels.Count)
+            {
+                int runEnd = runStart;
+                while (runEnd + 1 < dels.Count
+                    && dels[runEnd + 1].BookIdx!.Value == dels[runEnd].BookIdx!.Value + 1)
+                {
+                    runEnd++;
+                }
+                int runLen = runEnd - runStart + 1;
+
+                if (runLen > clampedMax)
+                {
+                    runStart = runEnd + 1;
+                    continue;
+                }
+
+                int firstBookIdx = dels[runStart].BookIdx!.Value;
+                int lastBookIdx = dels[runEnd].BookIdx!.Value;
+
+                var (prevMidpoint, nextMidpoint) =
+                    FindAnchorNeighbors(anchorMidpointByBookIdx, firstBookIdx, lastBookIdx);
+
+                if (prevMidpoint is null && nextMidpoint is null)
+                {
+                    // Run with no anchorable neighbors. Skip; sentence-overlap
+                    // fallback will produce lab text from BookText if needed.
+                    runStart = runEnd + 1;
+                    continue;
+                }
+
+                for (int j = 0; j < runLen; j++)
+                {
+                    var delWord = dels[runStart + j];
+                    var canonicalParts = ExtractPreferredPronunciationParts(delWord.BookWord);
+                    if (canonicalParts.Count == 0)
+                    {
+                        continue;
+                    }
+
+                    double mid;
+                    if (prevMidpoint is double pm && nextMidpoint is double nm)
+                    {
+                        mid = pm + (nm - pm) * ((j + 1.0) / (runLen + 1.0));
+                    }
+                    else if (prevMidpoint is double pmOnly)
+                    {
+                        // Stagger after prev so book order is preserved within the run.
+                        mid = pmOnly + 1e-3 * (j + 1);
+                    }
+                    else
+                    {
+                        var nmOnly = nextMidpoint!.Value;
+                        mid = nmOnly - 1e-3 * (runLen - j);
+                    }
+
+                    // AsrIdx -1 is a sentinel for synthesized Del entries; consumers
+                    // sort by MidpointSec, not AsrIdx, so this only flags provenance.
+                    result.Add(new PreIndexedWord(mid, AsrIdx: -1, delWord.BookIdx, canonicalParts));
+                }
+
+                runStart = runEnd + 1;
+            }
+        }
+
+        result.Sort((a, b) => a.MidpointSec.CompareTo(b.MidpointSec));
+        return result;
+    }
+
+    /// <summary>
+    /// Returns the closest anchor midpoints by BookIdx — the largest key &lt;
+    /// <paramref name="firstBookIdx"/> (prev) and the smallest key &gt;
+    /// <paramref name="lastBookIdx"/> (next). Either may be null if no anchor
+    /// exists on that side. Caller passes anchor BookIdx values that bracket a
+    /// Del run, so prev/next are always strictly outside the run.
+    /// </summary>
+    private static (double? Prev, double? Next) FindAnchorNeighbors(
+        SortedList<int, double> anchorMidpointByBookIdx,
+        int firstBookIdx,
+        int lastBookIdx)
+    {
+        double? prev = null;
+        double? next = null;
+        foreach (var kvp in anchorMidpointByBookIdx)
+        {
+            if (kvp.Key < firstBookIdx)
+            {
+                prev = kvp.Value; // last write wins -> closest-below by BookIdx
+            }
+            else if (kvp.Key > lastBookIdx)
+            {
+                next = kvp.Value; // first hit beyond lastBookIdx
+                break;
+            }
+        }
+
+        return (prev, next);
     }
 
     private static IReadOnlyList<string> ExtractPreferredPronunciationParts(string? value)
@@ -681,6 +773,7 @@ internal static class MfaChunkCorpusBuilder
         => string.Equals(operation, nameof(AlignOp.Sub), StringComparison.OrdinalIgnoreCase);
 
     private sealed record AlignmentWordCandidate(
+        double MidpointSec,
         int AsrIdx,
         int? BookIdx,
         IReadOnlyList<string> LexemeParts);
@@ -736,7 +829,7 @@ internal static class MfaChunkCorpusBuilder
             if (pw.MidpointSec >= upperBound)
                 break;
 
-            candidates.Add(new AlignmentWordCandidate(pw.AsrIdx, pw.BookIdx, pw.LexemeParts));
+            candidates.Add(new AlignmentWordCandidate(pw.MidpointSec, pw.AsrIdx, pw.BookIdx, pw.LexemeParts));
         }
 
         if (candidates.Count == 0)
@@ -744,7 +837,10 @@ internal static class MfaChunkCorpusBuilder
             return null;
         }
 
-        candidates.Sort((a, b) => a.AsrIdx.CompareTo(b.AsrIdx));
+        // Sort by MidpointSec so synthesized Del entries (AsrIdx=-1) interleave
+        // with real ASR-anchored words at their interpolated positions instead
+        // of clustering at the front of the lab.
+        candidates.Sort((a, b) => a.MidpointSec.CompareTo(b.MidpointSec));
         var seenBookIdx = new HashSet<int>();
         var parts = new List<string>(candidates.Count);
 

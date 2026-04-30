@@ -49,7 +49,8 @@ public sealed class RunMfaCommand
                 workspaceRoot: options?.WorkspaceRoot,
                 beamSettings: beamSettings,
                 disableChunkedMfa: options?.DisableChunkedMfa ?? false,
-                requireAsrChunkAudio: options?.RequireAsrChunkAudio ?? false)
+                requireAsrChunkAudio: options?.RequireAsrChunkAudio ?? false,
+                maxConsecutiveDelRun: options?.MaxConsecutiveDelRun ?? 3)
             .ConfigureAwait(false);
 
         var alignmentRoot =
@@ -115,6 +116,20 @@ public sealed record RunMfaOptions
     /// of silently regenerating chunk slices.
     /// </summary>
     public bool RequireAsrChunkAudio { get; init; }
+
+    /// <summary>
+    /// Maximum length of a consecutive Del-op book-word run that the lab builder
+    /// will still splice back into the MFA corpus using book canonical text. Runs
+    /// longer than this are dropped so MFA does not try to align audio against
+    /// passages the narrator skipped.
+    /// <para>
+    /// Default <c>3</c> covers chapter-heading drops ("Chapter" missing) and small
+    /// narrator slips while leaving room to skip whole missed sentences. Set to
+    /// <c>0</c> for legacy behavior (drop every Del). Set to <see cref="int.MaxValue"/>
+    /// to always include — this is unsafe when narrators omit sentences.
+    /// </para>
+    /// </summary>
+    public int MaxConsecutiveDelRun { get; init; } = 3;
 }
 
 public sealed record RunMfaResult(FileInfo TextGridFile, IReadOnlyList<int> ProblematicChunkIndices)
