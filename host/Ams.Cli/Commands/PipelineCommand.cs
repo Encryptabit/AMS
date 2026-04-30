@@ -620,7 +620,7 @@ public static class PipelineCommand
                     requireAsrChunkAudio,
                     currentTier).ConfigureAwait(false);
 
-                if (result.PromptlessAsrRecoveryRequested)
+                if (result.ProblematicChunkIndices.Count > 0)
                 {
                     if (nextTier is null)
                     {
@@ -1635,7 +1635,7 @@ public static class PipelineCommand
                 requireAsrChunkAudio,
                 currentTier).ConfigureAwait(false);
 
-            if (!result.PromptlessAsrRecoveryRequested)
+            if (result.ProblematicChunkIndices.Count == 0)
             {
                 if (currentTier != RecoveryTier.None)
                 {

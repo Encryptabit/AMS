@@ -68,7 +68,7 @@ public sealed record PipelineChapterResult
         FileInfo hydrateFile,
         FileInfo textGridFile,
         FileInfo treatedAudioFile,
-        bool promptlessAsrRecoveryRequested = false,
+        IReadOnlyList<int>? problematicChunkIndices = null,
         BuildBookIndexResult? bookIndexResult = null,
         ModuleId? moduleId = null,
         RunState state = RunState.Completed,
@@ -110,7 +110,9 @@ public sealed record PipelineChapterResult
         HydrateFile = hydrateFile;
         TextGridFile = textGridFile;
         TreatedAudioFile = treatedAudioFile;
-        PromptlessAsrRecoveryRequested = promptlessAsrRecoveryRequested;
+        ProblematicChunkIndices = problematicChunkIndices is null
+            ? Array.Empty<int>()
+            : problematicChunkIndices.ToArray();
         BookIndexResult = bookIndexResult;
         ModuleId = moduleId ?? ModuleIds.PipelineRun;
         State = state;
@@ -148,7 +150,7 @@ public sealed record PipelineChapterResult
 
     public FileInfo TreatedAudioFile { get; }
 
-    public bool PromptlessAsrRecoveryRequested { get; }
+    public IReadOnlyList<int> ProblematicChunkIndices { get; }
 
     public BuildBookIndexResult? BookIndexResult { get; }
 

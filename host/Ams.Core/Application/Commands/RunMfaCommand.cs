@@ -60,7 +60,7 @@ public sealed class RunMfaCommand
 
         chapter.Documents.InvalidateTextGrid();
 
-        return new RunMfaResult(textGridFile, outcome.PromptlessAsrRetryRecommended);
+        return new RunMfaResult(textGridFile, outcome.ProblematicChunkIndices);
     }
 
     private static FileInfo ResolveAudioFile(ChapterContext chapter, RunMfaOptions? options)
@@ -117,4 +117,8 @@ public sealed record RunMfaOptions
     public bool RequireAsrChunkAudio { get; init; }
 }
 
-public sealed record RunMfaResult(FileInfo TextGridFile, bool PromptlessAsrRetryRecommended = false);
+public sealed record RunMfaResult(FileInfo TextGridFile, IReadOnlyList<int> ProblematicChunkIndices)
+{
+    public RunMfaResult(FileInfo textGridFile)
+        : this(textGridFile, Array.Empty<int>()) { }
+}

@@ -62,7 +62,7 @@ public sealed class PipelineService
         var transcriptRan = false;
         var hydrateRan = false;
         var mfaRan = false;
-        var promptlessAsrRecoveryRequested = false;
+        var problematicChunkIndices = (IReadOnlyList<int>)Array.Empty<int>();
 
         void TrackArtifacts(IEnumerable<RunArtifact>? artifacts)
         {
@@ -105,7 +105,7 @@ public sealed class PipelineService
                 paths.HydrateFile,
                 paths.TextGridFile,
                 paths.TreatedAudioFile,
-                promptlessAsrRecoveryRequested,
+                problematicChunkIndices,
                 bookIndexResult,
                 moduleId,
                 state,
@@ -422,11 +422,12 @@ public sealed class PipelineService
                             hasTextGrid = HasTextGridDocument();
                             textGridExists = hasTextGrid;
 
-                            if (result.PromptlessAsrRetryRecommended)
+                            if (result.ProblematicChunkIndices.Count > 0)
                             {
-                                promptlessAsrRecoveryRequested = true;
+                                problematicChunkIndices = result.ProblematicChunkIndices;
                                 Log.Info(
-                                    "MFA requested promptless ASR recovery for {Chapter}; deferring retry so scheduler can requeue without hijacking ASR concurrency",
+                                    "MFA flagged {Count} problematic chunk(s) for {Chapter}; deferring recovery so scheduler can requeue without hijacking ASR concurrency",
+                                    problematicChunkIndices.Count,
                                     chapter.Descriptor.ChapterId);
                             }
                         }
@@ -482,12 +483,12 @@ public sealed class PipelineService
                 .OrderBy(artifact => artifact.Path, StringComparer.OrdinalIgnoreCase)
                 .ToArray();
 
-            if (promptlessAsrRecoveryRequested)
+            if (problematicChunkIndices.Count > 0)
             {
                 Emit(RunProgressUpdate.CreateStatus(
                     moduleId,
                     RunState.Running,
-                    "Promptless ASR recovery requested",
+                    $"Recovery requested for {problematicChunkIndices.Count} chunk(s)",
                     PipelineRunContract.StageProgress(PipelineStage.Mfa),
                     PipelineRunContract.PipelineStageName,
                     overallArtifacts,

@@ -15,7 +15,11 @@ namespace Ams.Core.Application.Mfa;
 
 public static class MfaWorkflow
 {
-    internal readonly record struct RunOutcome(bool PromptlessAsrRetryRecommended);
+    // ProblematicChunkIndices lists chunk-plan indices flagged by chunked MFA as misaligned
+    // (missing/empty/low-coverage). Empty list means no recovery is needed. Non-empty means
+    // the orchestrator should escalate to the next recovery tier and re-ASR these chunks.
+    // Legacy single-utterance path always returns an empty list (it has no per-chunk signal).
+    internal readonly record struct RunOutcome(IReadOnlyList<int> ProblematicChunkIndices);
 
     internal static async Task<RunOutcome> RunChapterAsync(
         ChapterContext chapterContext,
@@ -30,7 +34,7 @@ public static class MfaWorkflow
         bool disableChunkedMfa = false,
         bool requireAsrChunkAudio = false)
     {
-        var promptlessAsrRetryRecommended = false;
+        var problematicChunkIndices = (IReadOnlyList<int>)Array.Empty<int>();
 
         if (!useDedicatedProcess)
         {
@@ -261,16 +265,21 @@ public static class MfaWorkflow
 
             if (failedChunks.Count > 0)
             {
-                promptlessAsrRetryRecommended = true;
+                problematicChunkIndices = failedChunks
+                    .Select(r => r.Utterance.ChunkId)
+                    .Distinct()
+                    .OrderBy(id => id)
+                    .ToArray();
                 Log.Info(
                     "Chunked MFA detected {Failed}/{Total} problematic chunks " +
-                    "(missing={Missing}, empty={Empty}, lowCoverage={LowCoverage})",
+                    "(missing={Missing}, empty={Empty}, lowCoverage={LowCoverage}); chunkIds=[{Ids}]",
                     failedChunks.Count, chunkCorpus.Utterances.Count,
                     failedChunks.Count(r => r.Status == ChunkAlignmentStatus.MissingOutput),
                     failedChunks.Count(r => r.Status == ChunkAlignmentStatus.ParseFailure),
-                    failedChunks.Count(r => r.Status == ChunkAlignmentStatus.LowCoverage));
+                    failedChunks.Count(r => r.Status == ChunkAlignmentStatus.LowCoverage),
+                    string.Join(",", problematicChunkIndices));
                 Log.Info(
-                    "Skipping strict MFA retry; recommend chapter ASR regeneration with prompt disabled before re-running alignment");
+                    "Skipping strict MFA retry; orchestrator will escalate recovery for these chunks");
             }
 
             // Aggregate per-chunk TextGrids into canonical chapter-level TextGrid
@@ -305,7 +314,7 @@ public static class MfaWorkflow
         CopyIfExists(Path.Combine(alignOutputDir, "alignment", "mfa", "alignment_analysis.csv"),
             Path.Combine(mfaCopyDir, "alignment_analysis.csv"));
 
-        return new RunOutcome(promptlessAsrRetryRecommended);
+        return new RunOutcome(problematicChunkIndices);
     }
 
     private static string EnsureDirectory(string path)
