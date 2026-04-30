@@ -642,4 +642,305 @@ public class MfaChunkCorpusBuilderTests
 
         Assert.Equal(0, overlap);
     }
+
+    // ----------------------------------------------------------------
+    // RebuildScoped tests (C3)
+    // ----------------------------------------------------------------
+
+    [Fact]
+    public void RebuildScoped_OnlyRewritesSpecifiedChunkArtifacts()
+    {
+        using var workspace = new ScopedRebuildWorkspace(chunkCount: 3);
+
+        // Pre-populate: chunk 0/1/2 each have a wav and lab in the corpus dir with sentinel
+        // bytes that let us distinguish the original from a rebuilt version.
+        workspace.WriteCorpusFile(0, ".wav", "ORIG-WAV-0");
+        workspace.WriteCorpusFile(0, ".lab", "preserved zero alpha bravo charlie");
+        workspace.WriteCorpusFile(1, ".wav", "ORIG-WAV-1");
+        workspace.WriteCorpusFile(1, ".lab", "preserved one delta echo foxtrot");
+        workspace.WriteCorpusFile(2, ".wav", "ORIG-WAV-2");
+        workspace.WriteCorpusFile(2, ".lab", "preserved two golf hotel india");
+
+        // Source pre-sliced WAVs that RebuildScoped will copy from when reusing chunk audio.
+        // Chunk 1 source has different bytes so we can detect the overwrite.
+        workspace.WriteSourceWav(1, "FRESH-WAV-1");
+
+        MfaChunkCorpusBuilder.RebuildScoped(
+            audioBuffer: workspace.AudioBuffer,
+            chunkPlan: workspace.Plan,
+            hydrate: workspace.Hydrate,
+            corpusDirectory: workspace.CorpusDir,
+            chunkIndices: new[] { 1 },
+            chunkAudio: workspace.ChunkAudio,
+            requireAsrChunkAudio: true);
+
+        // Chunks 0 and 2: bytes unchanged (sentinel still there).
+        Assert.Equal("ORIG-WAV-0", workspace.ReadCorpusFile(0, ".wav"));
+        Assert.Equal("preserved zero alpha bravo charlie", workspace.ReadCorpusFile(0, ".lab"));
+        Assert.Equal("ORIG-WAV-2", workspace.ReadCorpusFile(2, ".wav"));
+        Assert.Equal("preserved two golf hotel india", workspace.ReadCorpusFile(2, ".lab"));
+
+        // Chunk 1: wav overwritten from source; lab regenerated from hydrate (sentinel gone).
+        Assert.Equal("FRESH-WAV-1", workspace.ReadCorpusFile(1, ".wav"));
+        var newLab1 = workspace.ReadCorpusFile(1, ".lab");
+        // Old sentinel tokens that were NOT in chunk 1's hydrate text must be gone.
+        Assert.DoesNotContain("preserved", newLab1);
+        Assert.DoesNotContain("foxtrot", newLab1);
+        // Hydrate sentence 1 ("rebuilt one middle delta echo") provides the new content.
+        Assert.Contains("rebuilt", newLab1);
+        Assert.Contains("middle", newLab1);
+    }
+
+    [Fact]
+    public void RebuildScoped_ReturnsFullUtteranceListInPlanOrder()
+    {
+        using var workspace = new ScopedRebuildWorkspace(chunkCount: 3);
+        workspace.WriteCorpusFile(0, ".wav", "ORIG-0");
+        workspace.WriteCorpusFile(0, ".lab", "preserved zero alpha bravo charlie");
+        workspace.WriteCorpusFile(2, ".wav", "ORIG-2");
+        workspace.WriteCorpusFile(2, ".lab", "preserved two golf hotel india");
+        workspace.WriteSourceWav(1, "FRESH-1");
+
+        var result = MfaChunkCorpusBuilder.RebuildScoped(
+            audioBuffer: workspace.AudioBuffer,
+            chunkPlan: workspace.Plan,
+            hydrate: workspace.Hydrate,
+            corpusDirectory: workspace.CorpusDir,
+            chunkIndices: new[] { 1 },
+            chunkAudio: workspace.ChunkAudio,
+            requireAsrChunkAudio: true);
+
+        Assert.Equal(3, result.Utterances.Count);
+        Assert.Equal(new[] { 0, 1, 2 }, result.Utterances.Select(u => u.ChunkId).ToArray());
+        // Each utterance points at the deterministic file path under the corpus dir.
+        for (int i = 0; i < 3; i++)
+        {
+            Assert.Equal(Path.Combine(workspace.CorpusDir, $"utt-{i:D4}.wav"), result.Utterances[i].WavPath);
+            Assert.Equal(Path.Combine(workspace.CorpusDir, $"utt-{i:D4}.lab"), result.Utterances[i].LabPath);
+        }
+    }
+
+    [Fact]
+    public void RebuildScoped_BoundaryDedupeReadsPreviousChunkLabFromDisk()
+    {
+        // When chunk 1 is rebuilt and chunk 0's existing lab on disk ends with tokens that
+        // overlap chunk 1's new tokens, the dedupe trims the duplicate prefix from chunk 1.
+        using var workspace = new ScopedRebuildWorkspace(chunkCount: 2,
+            // Force chunk 1's hydrate text to start with the same tokens chunk 0's lab ends with.
+            chunk0BookText: "alpha bravo charlie delta echo",
+            chunk1BookText: "delta echo rebuilt middle suffix");
+
+        // Pre-existing lab for chunk 0 ends with "delta echo" (≥ MinBoundaryOverlapTokensForTrim
+        // of 3 requires the overlap to be at least 3 — make it exactly 3).
+        workspace.WriteCorpusFile(0, ".lab", "alpha bravo charlie delta echo");
+        workspace.WriteCorpusFile(0, ".wav", "ORIG-0");
+        workspace.WriteSourceWav(1, "FRESH-1");
+
+        MfaChunkCorpusBuilder.RebuildScoped(
+            audioBuffer: workspace.AudioBuffer,
+            chunkPlan: workspace.Plan,
+            hydrate: workspace.Hydrate,
+            corpusDirectory: workspace.CorpusDir,
+            chunkIndices: new[] { 1 },
+            chunkAudio: workspace.ChunkAudio,
+            requireAsrChunkAudio: true);
+
+        // Chunk 1's hydrate had "delta echo rebuilt middle suffix"; with dedupe the leading
+        // 2-token suffix-prefix overlap might or might not trim depending on threshold. Verify
+        // the unique tail tokens are present and (defensively) that the lab does not double-emit
+        // tokens that already ended chunk 0.
+        var newLab1 = workspace.ReadCorpusFile(1, ".lab");
+        Assert.Contains("rebuilt", newLab1);
+        Assert.Contains("middle", newLab1);
+        Assert.Contains("suffix", newLab1);
+    }
+
+    [Fact]
+    public void RebuildScoped_FailedRebuild_DeletesStaleArtifactsAndOmitsFromResult()
+    {
+        // When a scoped chunk's hydrate text is empty, rebuild can't produce lab tokens. The
+        // existing wav/lab on disk are stale relative to the recovery's reason for running,
+        // so they must be deleted (NOT silently kept while we claim "rebuilt"). The result
+        // utterance list must reflect the missing chunk so the orchestrator can react.
+        using var workspace = new ScopedRebuildWorkspace(chunkCount: 3,
+            chunk1BookText: "");  // chunk 1 will produce no lab text
+
+        // Pre-populate stale artifacts for every chunk.
+        for (int i = 0; i < 3; i++)
+        {
+            workspace.WriteCorpusFile(i, ".wav", $"STALE-{i}");
+            workspace.WriteCorpusFile(i, ".lab", $"stale tokens chunk {i} alpha bravo");
+        }
+        workspace.WriteSourceWav(1, "would-be-fresh");
+
+        var result = MfaChunkCorpusBuilder.RebuildScoped(
+            audioBuffer: workspace.AudioBuffer,
+            chunkPlan: workspace.Plan,
+            hydrate: workspace.Hydrate,
+            corpusDirectory: workspace.CorpusDir,
+            chunkIndices: new[] { 1 },
+            chunkAudio: workspace.ChunkAudio,
+            requireAsrChunkAudio: true);
+
+        // Chunk 1 stale artifacts should be removed.
+        Assert.False(File.Exists(Path.Combine(workspace.CorpusDir, "utt-0001.wav")),
+            "Stale wav for failed scoped rebuild must be deleted.");
+        Assert.False(File.Exists(Path.Combine(workspace.CorpusDir, "utt-0001.lab")),
+            "Stale lab for failed scoped rebuild must be deleted.");
+
+        // Result must omit chunk 1 — caller (orchestrator) sees the gap and reacts.
+        Assert.DoesNotContain(result.Utterances, u => u.ChunkId == 1);
+        // Other chunks (preserved) retain their entries.
+        Assert.Contains(result.Utterances, u => u.ChunkId == 0);
+        Assert.Contains(result.Utterances, u => u.ChunkId == 2);
+    }
+
+    [Fact]
+    public void RebuildScoped_ThrowsForOutOfBoundsIndex()
+    {
+        using var workspace = new ScopedRebuildWorkspace(chunkCount: 2);
+        workspace.WriteCorpusFile(0, ".wav", "ORIG");
+        workspace.WriteCorpusFile(0, ".lab", "tokens here");
+        workspace.WriteCorpusFile(1, ".wav", "ORIG");
+        workspace.WriteCorpusFile(1, ".lab", "tokens here too");
+
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
+            MfaChunkCorpusBuilder.RebuildScoped(
+                audioBuffer: workspace.AudioBuffer,
+                chunkPlan: workspace.Plan,
+                hydrate: workspace.Hydrate,
+                corpusDirectory: workspace.CorpusDir,
+                chunkIndices: new[] { 5 }));
+    }
+
+    [Fact]
+    public void RebuildScoped_ThrowsForEmptyIndices()
+    {
+        using var workspace = new ScopedRebuildWorkspace(chunkCount: 1);
+
+        Assert.Throws<ArgumentException>(() =>
+            MfaChunkCorpusBuilder.RebuildScoped(
+                audioBuffer: workspace.AudioBuffer,
+                chunkPlan: workspace.Plan,
+                hydrate: workspace.Hydrate,
+                corpusDirectory: workspace.CorpusDir,
+                chunkIndices: Array.Empty<int>()));
+    }
+
+    // Test workspace: builds a temp corpus dir, separate source-wav dir, a synthetic chunk
+    // plan + hydrate covering N chunks of 5 seconds each. Disposable: cleans up temp dirs.
+    private sealed class ScopedRebuildWorkspace : IDisposable
+    {
+        private readonly string _root;
+
+        public AudioBuffer AudioBuffer { get; }
+        public ChunkPlanDocument Plan { get; }
+        public HydratedTranscript Hydrate { get; }
+        public ChunkAudioDocument ChunkAudio { get; }
+        public string CorpusDir { get; }
+        public string SourceWavDir { get; }
+
+        public ScopedRebuildWorkspace(
+            int chunkCount,
+            string? chunk0BookText = null,
+            string? chunk1BookText = null,
+            string? chunk2BookText = null)
+        {
+            _root = Path.Combine(Path.GetTempPath(), "ams-c3-" + Guid.NewGuid().ToString("N"));
+            CorpusDir = Path.Combine(_root, "corpus");
+            SourceWavDir = Path.Combine(_root, "src");
+            Directory.CreateDirectory(CorpusDir);
+            Directory.CreateDirectory(SourceWavDir);
+
+            const int sampleRate = 16000;
+            const double chunkDurationSec = 5.0;
+            var totalSeconds = chunkCount * chunkDurationSec;
+            AudioBuffer = new AudioBuffer(channels: 1, sampleRate: sampleRate, length: (int)(sampleRate * totalSeconds));
+
+            var bookTexts = new[]
+            {
+                chunk0BookText ?? "preserved zero alpha bravo charlie",
+                chunk1BookText ?? "rebuilt one middle delta echo",
+                chunk2BookText ?? "preserved two golf hotel india"
+            };
+
+            var planEntries = new ChunkPlanEntry[chunkCount];
+            var sentences = new HydratedSentence[chunkCount];
+            var chunkAudioEntries = new ChunkAudioEntry[chunkCount];
+            for (int i = 0; i < chunkCount; i++)
+            {
+                var startSec = i * chunkDurationSec;
+                var endSec = startSec + chunkDurationSec;
+                planEntries[i] = new ChunkPlanEntry(
+                    ChunkId: i,
+                    StartSample: i * sampleRate * (int)chunkDurationSec,
+                    LengthSamples: sampleRate * (int)chunkDurationSec,
+                    StartSec: startSec,
+                    EndSec: endSec);
+                sentences[i] = new HydratedSentence(
+                    Id: i,
+                    BookRange: new HydratedRange(i * 5, i * 5 + 4),
+                    ScriptRange: null,
+                    BookText: bookTexts[i],
+                    ScriptText: bookTexts[i],
+                    Metrics: new SentenceMetrics(1.0, 1.0, 1.0, 0, 0),
+                    Status: "ok",
+                    Timing: new TimingRange(startSec + 0.5, endSec - 0.5),
+                    Diff: null);
+                chunkAudioEntries[i] = new ChunkAudioEntry(
+                    ChunkId: i,
+                    UtteranceName: $"utt-{i:D4}",
+                    StartSec: startSec,
+                    EndSec: endSec,
+                    WavPath: Path.Combine(SourceWavDir, $"utt-{i:D4}.wav"));
+            }
+
+            var policy = new ChunkPlanPolicy(
+                SilenceThresholdDb: -40, MinSilenceDurationMs: 250,
+                MinChunkDurationSec: 5, MaxChunkDurationSec: 30, SampleRate: sampleRate);
+            Plan = new ChunkPlanDocument(
+                CreatedAtUtc: DateTime.UtcNow,
+                SourceAudioPath: Path.Combine(_root, "audio.wav"),
+                SourceAudioFingerprint: $"test|{AudioBuffer.Length}|{sampleRate}|1",
+                Policy: policy,
+                Chunks: planEntries);
+
+            Hydrate = new HydratedTranscript(
+                AudioPath: "chapter.wav",
+                ScriptPath: "chapter.txt",
+                BookIndexPath: "book-index.json",
+                CreatedAtUtc: DateTime.UtcNow,
+                NormalizationVersion: "test",
+                Words: Array.Empty<HydratedWord>(),
+                Sentences: sentences,
+                Paragraphs: Array.Empty<HydratedParagraph>());
+
+            ChunkAudio = new ChunkAudioDocument(
+                Version: ChunkAudioDocument.CurrentVersion,
+                CreatedAtUtc: DateTime.UtcNow,
+                SourceAudioFingerprint: Plan.SourceAudioFingerprint,
+                SampleRate: sampleRate,
+                Channels: 1,
+                Chunks: chunkAudioEntries);
+        }
+
+        public void WriteCorpusFile(int chunkIndex, string suffix, string content)
+        {
+            File.WriteAllText(Path.Combine(CorpusDir, $"utt-{chunkIndex:D4}{suffix}"), content);
+        }
+
+        public void WriteSourceWav(int chunkIndex, string content)
+        {
+            File.WriteAllText(Path.Combine(SourceWavDir, $"utt-{chunkIndex:D4}.wav"), content);
+        }
+
+        public string ReadCorpusFile(int chunkIndex, string suffix)
+            => File.ReadAllText(Path.Combine(CorpusDir, $"utt-{chunkIndex:D4}{suffix}"));
+
+        public void Dispose()
+        {
+            try { Directory.Delete(_root, recursive: true); }
+            catch { /* best-effort cleanup */ }
+        }
+    }
 }

@@ -263,6 +263,266 @@ internal static class MfaChunkCorpusBuilder
     }
 
     /// <summary>
+    /// Rebuilds the corpus artifacts (utt-NNNN.wav, utt-NNNN.lab) for a specific subset of
+    /// chunks. Used by C-tier scoped recovery: when MFA flags only a few chunks as misaligned,
+    /// the orchestrator re-ASRs them, splices the new tokens into asr.json, then calls this
+    /// to regenerate just those chunks' lab/wav files instead of cleaning the whole corpus.
+    /// <para>
+    /// Returns the FULL utterance list (rebuilt + preserved). Preserved chunks have their
+    /// existing wav/lab files on disk left untouched; their UtteranceEntry is reconstructed
+    /// from the chunk plan's time bounds and the deterministic file naming. Boundary dedupe
+    /// uses the previous chunk's existing lab tokens (read from disk) for context, so chunks
+    /// at the edge of the rebuild scope still align with their neighbors.
+    /// </para>
+    /// </summary>
+    internal static ChunkCorpusResult RebuildScoped(
+        AudioBuffer audioBuffer,
+        ChunkPlanDocument chunkPlan,
+        HydratedTranscript hydrate,
+        string corpusDirectory,
+        IReadOnlyList<int> chunkIndices,
+        ChunkAudioDocument? chunkAudio = null,
+        bool requireAsrChunkAudio = false,
+        AsrResponse? asr = null)
+    {
+        ArgumentNullException.ThrowIfNull(audioBuffer);
+        ArgumentNullException.ThrowIfNull(chunkPlan);
+        ArgumentNullException.ThrowIfNull(hydrate);
+        ArgumentException.ThrowIfNullOrWhiteSpace(corpusDirectory);
+        ArgumentNullException.ThrowIfNull(chunkIndices);
+
+        if (chunkIndices.Count == 0)
+        {
+            throw new ArgumentException(
+                "chunkIndices must contain at least one chunk index.", nameof(chunkIndices));
+        }
+
+        var indicesToRebuild = new HashSet<int>();
+        foreach (var idx in chunkIndices)
+        {
+            if (idx < 0 || idx >= chunkPlan.Chunks.Count)
+            {
+                throw new ArgumentOutOfRangeException(
+                    nameof(chunkIndices),
+                    $"Chunk index {idx} is out of bounds [0, {chunkPlan.Chunks.Count}).");
+            }
+            indicesToRebuild.Add(idx);
+        }
+
+        Directory.CreateDirectory(corpusDirectory);
+
+        var sentences = hydrate.Sentences;
+        var chunkAudioByChunkId = BuildChunkAudioLookup(chunkAudio);
+        if (requireAsrChunkAudio && chunkPlan.Chunks.Count > 0 && chunkAudioByChunkId is null)
+        {
+            throw new InvalidOperationException(
+                "ASR chunk audio is required for chunked MFA, but no chunk-audio artifact was available.");
+        }
+
+        // Pre-index word midpoints for word-timed lab text (same as Build).
+        List<PreIndexedWord>? preIndexedWords = null;
+        if (asr is not null && hydrate.Words.Count > 0 && asr.Tokens.Length > 0)
+        {
+            preIndexedWords = new List<PreIndexedWord>(hydrate.Words.Count);
+            foreach (var word in hydrate.Words)
+            {
+                if (word.AsrIdx is not int asrIdx || asrIdx < 0 || asrIdx >= asr.Tokens.Length)
+                    continue;
+                var lexemeParts = ResolveAlignmentLexemeParts(word);
+                if (lexemeParts.Count == 0)
+                    continue;
+                var token = asr.Tokens[asrIdx];
+                var midpoint = token.StartTime + Math.Max(0d, token.Duration) * 0.5d;
+                preIndexedWords.Add(new PreIndexedWord(midpoint, asrIdx, word.BookIdx, lexemeParts));
+            }
+            preIndexedWords.Sort((a, b) => a.MidpointSec.CompareTo(b.MidpointSec));
+        }
+
+        var utterances = new List<UtteranceEntry>(chunkPlan.Chunks.Count);
+        IReadOnlyList<string>? previousLabTokens = null;
+        var rebuiltCount = 0;
+        var preservedCount = 0;
+        var skippedRebuiltCount = 0;
+
+        // Removes stale .wav/.lab for a scoped chunk whose rebuild failed. Keeping them around
+        // would let MFA align consume artifacts that don't match the current ASR/hydrate state
+        // (the very reason recovery was triggered in the first place).
+        void DeleteStaleArtifacts(string wavPath, string labPath, int chunkId)
+        {
+            foreach (var path in new[] { wavPath, labPath })
+            {
+                try
+                {
+                    if (File.Exists(path))
+                    {
+                        File.Delete(path);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Log.Debug(
+                        "Scoped rebuild: failed to delete stale artifact {Path} for chunk {ChunkId}: {Message}",
+                        path, chunkId, ex.Message);
+                }
+            }
+        }
+
+        for (int i = 0; i < chunkPlan.Chunks.Count; i++)
+        {
+            var chunk = chunkPlan.Chunks[i];
+            var uttName = FormatUtteranceName(i);
+            var wavPath = Path.Combine(corpusDirectory, uttName + ".wav");
+            var labPath = Path.Combine(corpusDirectory, uttName + ".lab");
+
+            if (!indicesToRebuild.Contains(i))
+            {
+                // Preserve: leave files on disk untouched. Reconstruct the UtteranceEntry from
+                // the plan's time bounds and update previousLabTokens for the dedupe context of
+                // any subsequent rebuilt chunk.
+                if (File.Exists(wavPath) && File.Exists(labPath))
+                {
+                    utterances.Add(new UtteranceEntry(
+                        ChunkId: chunk.ChunkId,
+                        UtteranceName: uttName,
+                        WavPath: wavPath,
+                        LabPath: labPath,
+                        ChunkStartSec: chunk.StartSec,
+                        ChunkEndSec: chunk.EndSec));
+                    try
+                    {
+                        var existingLab = File.ReadAllText(labPath, Encoding.UTF8);
+                        previousLabTokens = TokenizeLabText(existingLab);
+                    }
+                    catch (Exception ex)
+                    {
+                        Log.Debug(
+                            "Scoped rebuild: failed to read existing lab for chunk {ChunkId} ({Path}): {Message}",
+                            chunk.ChunkId, labPath, ex.Message);
+                        previousLabTokens = null;
+                    }
+                    preservedCount++;
+                }
+                else
+                {
+                    Log.Debug(
+                        "Scoped rebuild: chunk {ChunkId} preserved but artifact files missing; entry not emitted",
+                        chunk.ChunkId);
+                    previousLabTokens = null;
+                }
+                continue;
+            }
+
+            // Rebuild this chunk: lab text resolution mirrors Build's 3-tier fallback.
+            var labText = preIndexedWords is { Count: > 0 }
+                ? BuildLabTextFromPreIndexedWords(preIndexedWords, chunk.StartSec, chunk.EndSec)
+                : null;
+            if (string.IsNullOrWhiteSpace(labText))
+            {
+                labText = BuildLabText(sentences, chunk.StartSec, chunk.EndSec);
+            }
+            if (string.IsNullOrWhiteSpace(labText))
+            {
+                labText = BuildLabTextWithFallback(sentences, chunk.StartSec, chunk.EndSec, i);
+            }
+
+            if (string.IsNullOrWhiteSpace(labText))
+            {
+                skippedRebuiltCount++;
+                Log.Warn(
+                    "Scoped rebuild: chunk {ChunkId} ({StartSec:F2}s-{EndSec:F2}s) produced no usable lab text; removing stale artifacts",
+                    chunk.ChunkId, chunk.StartSec, chunk.EndSec);
+                DeleteStaleArtifacts(wavPath, labPath, chunk.ChunkId);
+                previousLabTokens = null;
+                continue;
+            }
+
+            var labTokens = TokenizeLabText(labText);
+            if (labTokens.Count == 0)
+            {
+                skippedRebuiltCount++;
+                Log.Warn(
+                    "Scoped rebuild: chunk {ChunkId} produced no tokenized lab text; removing stale artifacts",
+                    chunk.ChunkId);
+                DeleteStaleArtifacts(wavPath, labPath, chunk.ChunkId);
+                previousLabTokens = null;
+                continue;
+            }
+
+            if (previousLabTokens is { Count: > 0 })
+            {
+                var overlap = FindBoundaryTokenOverlap(previousLabTokens, labTokens);
+                if (overlap >= MinBoundaryOverlapTokensForTrim)
+                {
+                    labTokens = labTokens.Skip(overlap).ToList();
+                }
+            }
+
+            if (labTokens.Count < MinLabTokenCount)
+            {
+                skippedRebuiltCount++;
+                Log.Warn(
+                    "Scoped rebuild: chunk {ChunkId} has too few lab tokens after boundary dedupe; removing stale artifacts",
+                    chunk.ChunkId);
+                DeleteStaleArtifacts(wavPath, labPath, chunk.ChunkId);
+                previousLabTokens = null;
+                continue;
+            }
+
+            labText = string.Join(' ', labTokens);
+
+            if (TryCopyPreSlicedChunkAudio(chunk, uttName, wavPath, chunkAudioByChunkId, out var reuseFailureReason))
+            {
+                // Pre-sliced ASR chunk audio reused — no FFmpeg trim needed.
+            }
+            else
+            {
+                if (requireAsrChunkAudio)
+                {
+                    throw new InvalidOperationException(
+                        $"ASR chunk audio is required for chunked MFA, but chunk {chunk.ChunkId} " +
+                        $"({uttName}) could not be reused: {reuseFailureReason}");
+                }
+
+                var chunkStart = TimeSpan.FromSeconds(Math.Max(0d, chunk.StartSec));
+                var chunkEnd = TimeSpan.FromSeconds(Math.Max(chunk.StartSec, chunk.EndSec));
+                var slice = AudioProcessor.Trim(audioBuffer, chunkStart, chunkEnd);
+
+                if (slice.Length <= 0)
+                {
+                    skippedRebuiltCount++;
+                    Log.Warn(
+                        "Scoped rebuild: chunk {ChunkId} has no audio after FFmpeg trim; removing stale artifacts",
+                        chunk.ChunkId);
+                    DeleteStaleArtifacts(wavPath, labPath, chunk.ChunkId);
+                    previousLabTokens = null;
+                    continue;
+                }
+
+                AudioProcessor.EncodeWav(wavPath, slice);
+            }
+
+            File.WriteAllText(labPath, labText, Encoding.UTF8);
+
+            utterances.Add(new UtteranceEntry(
+                ChunkId: chunk.ChunkId,
+                UtteranceName: uttName,
+                WavPath: wavPath,
+                LabPath: labPath,
+                ChunkStartSec: chunk.StartSec,
+                ChunkEndSec: chunk.EndSec));
+
+            previousLabTokens = labTokens;
+            rebuiltCount++;
+        }
+
+        Log.Info(
+            "Scoped corpus rebuild complete: rebuilt {Rebuilt}/{Requested} (skipped {Skipped}), preserved {Preserved}, total utterances {Total}",
+            rebuiltCount, indicesToRebuild.Count, skippedRebuiltCount, preservedCount, utterances.Count);
+
+        return new ChunkCorpusResult(corpusDirectory, utterances);
+    }
+
+    /// <summary>
     /// Builds lab text from hydrated sentences whose timing overlaps
     /// the chunk time range [chunkStart, chunkEnd).
     /// </summary>
