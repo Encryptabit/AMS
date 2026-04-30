@@ -783,6 +783,15 @@ public sealed class WorkstationPrepSessionTests : IDisposable
         {
             throw new NotSupportedException($"{nameof(ResolveAsrReadyBuffer)} is not used in these tests.");
         }
+
+        public Task<AsrResponse> TranscribeChunksAsync(
+            ChapterContext chapter,
+            IReadOnlyList<int> chunkIndices,
+            AsrOptions options,
+            CancellationToken cancellationToken = default)
+        {
+            throw new NotSupportedException($"{nameof(TranscribeChunksAsync)} is not used in these tests.");
+        }
     }
 
     private sealed class BlockingAsrService : IAsrService
@@ -804,6 +813,15 @@ public sealed class WorkstationPrepSessionTests : IDisposable
         public AudioBuffer ResolveAsrReadyBuffer(ChapterContext chapter)
         {
             throw new NotSupportedException($"{nameof(ResolveAsrReadyBuffer)} is not used in these tests.");
+        }
+
+        public Task<AsrResponse> TranscribeChunksAsync(
+            ChapterContext chapter,
+            IReadOnlyList<int> chunkIndices,
+            AsrOptions options,
+            CancellationToken cancellationToken = default)
+        {
+            throw new NotSupportedException($"{nameof(TranscribeChunksAsync)} is not used in these tests.");
         }
 
         public Task WaitUntilStartedAsync()

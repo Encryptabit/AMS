@@ -513,6 +513,15 @@ public sealed class PipelineRunContractTests : IDisposable
         {
             throw new NotSupportedException($"{nameof(ResolveAsrReadyBuffer)} is not used in these tests.");
         }
+
+        public Task<AsrResponse> TranscribeChunksAsync(
+            ChapterContext chapter,
+            IReadOnlyList<int> chunkIndices,
+            AsrOptions options,
+            CancellationToken cancellationToken = default)
+        {
+            throw new NotSupportedException($"{nameof(TranscribeChunksAsync)} is not used in these tests.");
+        }
     }
 
     private sealed class RecordingAlignmentService : IAlignmentService
