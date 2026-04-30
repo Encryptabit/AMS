@@ -46,7 +46,7 @@ public static class Program
             return 0;
         }
 
-        return await rootCommand.InvokeAsync(args);
+        return await CreateParser(rootCommand).InvokeAsync(args);
     }
 
     public static IHost BuildHost(string[] args)
@@ -92,6 +92,12 @@ public static class Program
         return rootCommand;
     }
 
+    private static Parser CreateParser(RootCommand rootCommand)
+    {
+        ArgumentNullException.ThrowIfNull(rootCommand);
+        return new CommandLineBuilder(rootCommand).UseDefaults().Build();
+    }
+
     private static void ConfigureServices(IServiceCollection services)
     {
         ArgumentNullException.ThrowIfNull(services);
@@ -126,6 +132,11 @@ public static class Program
 
     private static async Task StartRepl(RootCommand rootCommand)
     {
+        // RootCommand.InvokeAsync builds the default invocation pipeline per call, and
+        // that path mutates the command tree by adding default global options. The REPL
+        // invokes the same root many times, sometimes concurrently for chapter batches,
+        // so use one parser for the whole session.
+        var parser = CreateParser(rootCommand);
         var state = new ReplState();
         var lineEditor = new ReplLineEditor();
         Console.WriteLine("AMS Interactive CLI - Type 'help' for CLI verbs, 'exit' to quit");
@@ -152,7 +163,7 @@ public static class Program
                 break;
             }
 
-            if (await TryHandleBuiltInAsync(input, state, rootCommand))
+            if (await TryHandleBuiltInAsync(input, state, parser))
             {
                 Console.WriteLine();
                 continue;
@@ -161,7 +172,7 @@ public static class Program
             try
             {
                 var replArgs = ParseInput(input);
-                await ExecuteWithScopeAsync(replArgs, state, rootCommand);
+                await ExecuteWithScopeAsync(replArgs, state, parser);
             }
             catch (Exception ex)
             {
@@ -225,7 +236,7 @@ public static class Program
 
     private static string GetAsrStatusLabel() => $"ASR:{AsrEngineConfig.Resolve().ToString().ToLowerInvariant()}";
 
-    private static async Task<bool> TryHandleBuiltInAsync(string input, ReplState state, RootCommand rootCommand)
+    private static async Task<bool> TryHandleBuiltInAsync(string input, ReplState state, Parser parser)
     {
         var tokens = ParseInput(input);
         if (tokens.Length == 0)
@@ -237,7 +248,7 @@ public static class Program
         switch (head)
         {
             case "help":
-                await rootCommand.InvokeAsync(new[] { "--help" });
+                await parser.InvokeAsync(new[] { "--help" });
                 return true;
 
             case "clear":
@@ -276,7 +287,7 @@ public static class Program
                 }
 
                 var runArgs = tokens.Skip(1).ToArray();
-                await ExecuteWithScopeAsync(runArgs, state, rootCommand);
+                await ExecuteWithScopeAsync(runArgs, state, parser);
                 return true;
 
             default:
@@ -363,7 +374,7 @@ public static class Program
         HandleUseCommand(tokens, state);
     }
 
-    private static async Task ExecuteWithScopeAsync(string[] args, ReplState state, RootCommand rootCommand)
+    private static async Task ExecuteWithScopeAsync(string[] args, ReplState state, Parser parser)
     {
         if (args.Length == 0)
         {
@@ -379,7 +390,7 @@ public static class Program
             {
                 if (TryGetChapterParallelism(args, out var parallelism))
                 {
-                    await ExecuteChaptersInParallelAsync(state, rootCommand, args, parallelism);
+                    await ExecuteChaptersInParallelAsync(state, parser, args, parallelism);
                     return;
                 }
                 else if (ShouldHandleAllChaptersInBulk(args))
@@ -387,7 +398,7 @@ public static class Program
                     ReplContext.Current = state;
                     try
                     {
-                        await rootCommand.InvokeAsync(args);
+                        await parser.InvokeAsync(args);
                     }
                     finally
                     {
@@ -404,7 +415,7 @@ public static class Program
                         try
                         {
                             var concreteArgs = ReplacePlaceholders(args, chapter);
-                            var exitCode = await rootCommand.InvokeAsync(concreteArgs);
+                            var exitCode = await parser.InvokeAsync(concreteArgs);
                             if (exitCode != 0)
                             {
                                 Console.WriteLine($"Command exited with {exitCode}; stopping batch.");
@@ -426,7 +437,7 @@ public static class Program
                 try
                 {
                     var concreteArgs = ReplacePlaceholders(args, chapter);
-                    await rootCommand.InvokeAsync(concreteArgs);
+                    await parser.InvokeAsync(concreteArgs);
                 }
                 finally
                 {
@@ -438,7 +449,7 @@ public static class Program
                 ReplContext.Current = state;
                 try
                 {
-                    await rootCommand.InvokeAsync(args);
+                    await parser.InvokeAsync(args);
                 }
                 finally
                 {
@@ -454,7 +465,7 @@ public static class Program
 
     private static async Task ExecuteChaptersInParallelAsync(
         ReplState state,
-        RootCommand rootCommand,
+        Parser parser,
         string[] args,
         int requestedParallelism)
     {
@@ -467,13 +478,6 @@ public static class Program
         var degree = Math.Clamp(requestedParallelism, 1, chapters.Count);
         var commandLabel = chapters.Count > 0 && args.Length > 0 ? args[0] : "command";
         Log.Debug("Running {Command} in parallel with degree {Degree} (requested {Requested})", commandLabel, degree, requestedParallelism);
-
-        // Build the parser once on the orchestrator thread. RootCommand.InvokeAsync rebuilds a parser
-        // per call and mutates the root command (adding --version / --help global options), which
-        // races under concurrent invocation and throws "An item with the same key has already been
-        // added. Key: --version". Reusing a single Parser sidesteps that — Parser.InvokeAsync
-        // creates per-call ParseResult/InvocationContext state and is safe to share.
-        var parser = new CommandLineBuilder(rootCommand).UseDefaults().Build();
 
         using var semaphore = new SemaphoreSlim(degree);
         var tasks = new List<Task>(chapters.Count);

@@ -22,6 +22,7 @@ internal static class ReplContext
 internal sealed class ReplState
 {
     private readonly AsyncLocal<FileInfo?> _chapterOverride = new();
+    private readonly object _workspaceLock = new();
     private readonly string _stateFilePath;
     private bool _suppressPersist;
     private string? _pendingChapterName;
@@ -108,7 +109,16 @@ internal sealed class ReplState
         }
     }
 
-    public IWorkspace Workspace => _workspace ??= new CliWorkspace(this);
+    public IWorkspace Workspace
+    {
+        get
+        {
+            lock (_workspaceLock)
+            {
+                return _workspace ??= new CliWorkspace(this);
+            }
+        }
+    }
 
     public void SetWorkingDirectory(string path)
     {
@@ -126,6 +136,7 @@ internal sealed class ReplState
         }
 
         WorkingDirectory = full;
+        ResetWorkspace();
         RefreshChapters();
         RunAllChapters = false;
         if (Chapters.Count > 0)
@@ -138,6 +149,14 @@ internal sealed class ReplState
         }
 
         PersistState();
+    }
+
+    private void ResetWorkspace()
+    {
+        lock (_workspaceLock)
+        {
+            _workspace = null;
+        }
     }
 
     public void RefreshChapters()

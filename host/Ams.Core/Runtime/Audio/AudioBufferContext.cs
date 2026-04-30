@@ -8,6 +8,7 @@ public sealed class AudioBufferContext
 {
     private readonly AudioBufferDescriptor _descriptor;
     private readonly Func<AudioBufferDescriptor, AudioBuffer?> _loader;
+    private readonly object _bufferLock = new();
     private readonly object _waveformLock = new();
     private readonly Dictionary<int, WaveformPeaks> _waveformPeaksCache = new();
     private AudioBuffer? _buffer;
@@ -25,21 +26,33 @@ public sealed class AudioBufferContext
     {
         get
         {
-            if (!_loaded)
+            lock (_bufferLock)
             {
-                _buffer = _loader(_descriptor);
-                _loaded = true;
-                Log.Debug(
-                    "AudioBufferContext loaded buffer {BufferId} (has data: {HasData})",
-                    _descriptor.BufferId,
-                    _buffer is not null);
-            }
+                if (!_loaded)
+                {
+                    _buffer = _loader(_descriptor);
+                    _loaded = true;
+                    Log.Debug(
+                        "AudioBufferContext loaded buffer {BufferId} (has data: {HasData})",
+                        _descriptor.BufferId,
+                        _buffer is not null);
+                }
 
-            return _buffer;
+                return _buffer;
+            }
         }
     }
 
-    public bool IsLoaded => _loaded && _buffer != null;
+    public bool IsLoaded
+    {
+        get
+        {
+            lock (_bufferLock)
+            {
+                return _loaded && _buffer != null;
+            }
+        }
+    }
 
     public WaveformPeaks? GetOrCreateWaveformPeaks(int bucketCount)
     {
@@ -66,12 +79,16 @@ public sealed class AudioBufferContext
 
     public void Unload()
     {
-        _buffer = null;
+        lock (_bufferLock)
+        {
+            _buffer = null;
+            _loaded = false;
+        }
+
         lock (_waveformLock)
         {
             _waveformPeaksCache.Clear();
         }
-        _loaded = false;
         Log.Debug("AudioBufferContext unloaded buffer {BufferId}", _descriptor.BufferId);
     }
 }

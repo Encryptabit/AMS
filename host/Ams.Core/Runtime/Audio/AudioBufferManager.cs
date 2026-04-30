@@ -7,6 +7,7 @@ namespace Ams.Core.Runtime.Audio;
 
 public sealed class AudioBufferManager : IAudioBufferManager
 {
+    private readonly object _sync = new();
     private readonly IReadOnlyList<AudioBufferDescriptor> _descriptors;
     private readonly Dictionary<string, AudioBufferContext> _cache;
     private readonly Func<AudioBufferDescriptor, AudioBuffer?> _loader;
@@ -48,25 +49,29 @@ public sealed class AudioBufferManager : IAudioBufferManager
     {
         get
         {
-            if (_descriptors.Count == 0)
+            lock (_sync)
             {
-                throw new InvalidOperationException("No audio buffers have been registered for this chapter.");
-            }
+                if (_descriptors.Count == 0)
+                {
+                    throw new InvalidOperationException("No audio buffers have been registered for this chapter.");
+                }
 
-            return Load(_cursor);
+                return LoadCore(_cursor);
+            }
         }
     }
 
     public AudioBufferContext Load(int index)
     {
-        if ((uint)index >= (uint)_descriptors.Count)
+        lock (_sync)
         {
-            throw new ArgumentOutOfRangeException(nameof(index));
-        }
+            if ((uint)index >= (uint)_descriptors.Count)
+            {
+                throw new ArgumentOutOfRangeException(nameof(index));
+            }
 
-        _cursor = index;
-        var descriptor = _descriptors[index];
-        return GetOrCreate(descriptor);
+            return LoadCore(index);
+        }
     }
 
     public AudioBufferContext Load(string bufferId)
@@ -76,31 +81,40 @@ public sealed class AudioBufferManager : IAudioBufferManager
 
     public bool TryMoveNext(out AudioBufferContext bufferContext)
     {
-        if (_cursor + 1 >= _descriptors.Count)
+        lock (_sync)
         {
-            bufferContext = _descriptors.Count == 0 ? null! : Current;
-            return false;
-        }
+            if (_cursor + 1 >= _descriptors.Count)
+            {
+                bufferContext = _descriptors.Count == 0 ? null! : LoadCore(_cursor);
+                return false;
+            }
 
-        bufferContext = Load(_cursor + 1);
-        return true;
+            bufferContext = LoadCore(_cursor + 1);
+            return true;
+        }
     }
 
     public bool TryMovePrevious(out AudioBufferContext bufferContext)
     {
-        if (_cursor <= 0 || _descriptors.Count == 0)
+        lock (_sync)
         {
-            bufferContext = _descriptors.Count == 0 ? null! : Current;
-            return false;
-        }
+            if (_cursor <= 0 || _descriptors.Count == 0)
+            {
+                bufferContext = _descriptors.Count == 0 ? null! : LoadCore(_cursor);
+                return false;
+            }
 
-        bufferContext = Load(_cursor - 1);
-        return true;
+            bufferContext = LoadCore(_cursor - 1);
+            return true;
+        }
     }
 
     public void Reset()
     {
-        _cursor = 0;
+        lock (_sync)
+        {
+            _cursor = 0;
+        }
     }
 
     public void Deallocate(string bufferId)
@@ -110,29 +124,42 @@ public sealed class AudioBufferManager : IAudioBufferManager
             return;
         }
 
-        if (_cache.Remove(bufferId, out var context))
+        lock (_sync)
         {
-            context.Unload();
-            Log.Debug(
-                "AudioBufferManager deallocated buffer {BufferId} (cache {CacheCount})",
-                bufferId,
-                _cache.Count);
+            if (_cache.Remove(bufferId, out var context))
+            {
+                context.Unload();
+                Log.Debug(
+                    "AudioBufferManager deallocated buffer {BufferId} (cache {CacheCount})",
+                    bufferId,
+                    _cache.Count);
+            }
         }
     }
 
     public void DeallocateAll()
     {
-        foreach (var context in _cache.Values)
+        lock (_sync)
         {
-            context.Unload();
-        }
+            foreach (var context in _cache.Values)
+            {
+                context.Unload();
+            }
 
-        if (_cache.Count > 0)
-        {
-            Log.Debug("AudioBufferManager flushed {Count} buffer(s)", _cache.Count);
-        }
+            if (_cache.Count > 0)
+            {
+                Log.Debug("AudioBufferManager flushed {Count} buffer(s)", _cache.Count);
+            }
 
-        _cache.Clear();
+            _cache.Clear();
+        }
+    }
+
+    private AudioBufferContext LoadCore(int index)
+    {
+        _cursor = index;
+        var descriptor = _descriptors[index];
+        return GetOrCreate(descriptor);
     }
 
     private AudioBufferContext GetOrCreate(AudioBufferDescriptor descriptor)
@@ -166,22 +193,25 @@ public sealed class AudioBufferManager : IAudioBufferManager
     private AudioBufferContext? TryGetByBufferId(string bufferId, bool moveCursor)
     {
         ArgumentException.ThrowIfNullOrEmpty(bufferId);
-        for (int i = 0; i < _descriptors.Count; i++)
+        lock (_sync)
         {
-            if (!string.Equals(_descriptors[i].BufferId, bufferId, StringComparison.OrdinalIgnoreCase))
+            for (int i = 0; i < _descriptors.Count; i++)
             {
-                continue;
+                if (!string.Equals(_descriptors[i].BufferId, bufferId, StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                if (moveCursor)
+                {
+                    _cursor = i;
+                }
+
+                return GetOrCreate(_descriptors[i]);
             }
 
-            if (moveCursor)
-            {
-                _cursor = i;
-            }
-
-            return GetOrCreate(_descriptors[i]);
+            return null;
         }
-
-        return null;
     }
 
     private AudioBuffer? DefaultLoader(AudioBufferDescriptor descriptor)

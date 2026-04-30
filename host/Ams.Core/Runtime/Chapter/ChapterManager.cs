@@ -20,6 +20,7 @@ public sealed class ChapterManager : IChapterManager
         PropertyNameCaseInsensitive = true
     };
 
+    private readonly object _sync = new();
     private readonly BookContext _bookContext;
     private readonly List<ChapterDescriptor> _descriptors;
     private readonly Dictionary<string, ChapterContext> _cache;
@@ -40,61 +41,90 @@ public sealed class ChapterManager : IChapterManager
         _cursor = 0;
     }
 
-    public int Count => _descriptors.Count;
-    public IReadOnlyList<ChapterDescriptor> Descriptors => _descriptors;
+    public int Count
+    {
+        get
+        {
+            lock (_sync)
+            {
+                return _descriptors.Count;
+            }
+        }
+    }
+
+    public IReadOnlyList<ChapterDescriptor> Descriptors
+    {
+        get
+        {
+            lock (_sync)
+            {
+                return _descriptors.ToArray();
+            }
+        }
+    }
 
     public ChapterContext Current
     {
         get
         {
-            if (_descriptors.Count == 0)
+            lock (_sync)
             {
-                throw new InvalidOperationException("This book does not define any chapters.");
-            }
+                if (_descriptors.Count == 0)
+                {
+                    throw new InvalidOperationException("This book does not define any chapters.");
+                }
 
-            return Load(_cursor);
+                return LoadCore(_cursor);
+            }
         }
     }
 
     public ChapterContext Load(int index)
     {
-        if ((uint)index >= (uint)_descriptors.Count)
+        lock (_sync)
         {
-            throw new ArgumentOutOfRangeException(nameof(index));
-        }
+            if ((uint)index >= (uint)_descriptors.Count)
+            {
+                throw new ArgumentOutOfRangeException(nameof(index));
+            }
 
-        _cursor = index;
-        return GetOrCreate(_descriptors[index]);
+            return LoadCore(index);
+        }
     }
 
     public ChapterContext Load(string chapterId)
     {
         ArgumentException.ThrowIfNullOrEmpty(chapterId);
-        for (int i = 0; i < _descriptors.Count; i++)
+        lock (_sync)
         {
-            if (string.Equals(_descriptors[i].ChapterId, chapterId, StringComparison.OrdinalIgnoreCase))
+            for (int i = 0; i < _descriptors.Count; i++)
             {
-                _cursor = i;
-                return GetOrCreate(_descriptors[i]);
+                if (string.Equals(_descriptors[i].ChapterId, chapterId, StringComparison.OrdinalIgnoreCase))
+                {
+                    return LoadCore(i);
+                }
             }
-        }
 
-        throw new KeyNotFoundException(
-            $"Chapter '{chapterId}' was not found in book '{_bookContext.Descriptor.BookId}'.");
+            throw new KeyNotFoundException(
+                $"Chapter '{chapterId}' was not found in book '{_bookContext.Descriptor.BookId}'.");
+        }
     }
 
     public bool Contains(string chapterId)
     {
         ArgumentException.ThrowIfNullOrEmpty(chapterId);
-        for (int i = 0; i < _descriptors.Count; i++)
+        lock (_sync)
         {
-            if (string.Equals(_descriptors[i].ChapterId, chapterId, StringComparison.OrdinalIgnoreCase))
+            for (int i = 0; i < _descriptors.Count; i++)
             {
-                return true;
+                if (string.Equals(_descriptors[i].ChapterId, chapterId, StringComparison.OrdinalIgnoreCase))
+                {
+                    return true;
+                }
             }
-        }
 
-        return false;
+            return false;
+        }
     }
 
     public ChapterContextHandle CreateContext(
@@ -107,124 +137,141 @@ public sealed class ChapterManager : IChapterManager
         string? chapterId = null,
         bool reloadBookIndex = false)
     {
-        ArgumentNullException.ThrowIfNull(bookIndexFile);
-        if (!bookIndexFile.Exists)
+        lock (_sync)
         {
-            throw new FileNotFoundException("Book index not found", bookIndexFile.FullName);
-        }
-
-        var chapterStem = DetermineChapterStem(chapterId, audioFile, asrFile);
-        var chapterRoot =
-            ResolveChapterRoot(chapterDirectory, audioFile, asrFile, bookIndexFile.Directory, chapterStem);
-        var audioPath = audioFile?.FullName ?? Path.Combine(chapterRoot, $"{chapterStem}.wav");
-
-        // Use cached book-index if available (book stays in memory while open)
-        var bookIndex = reloadBookIndex ? null : _bookContext.Documents.BookIndex;
-        bookIndex ??= LoadJson<BookIndex>(bookIndexFile.FullName);
-
-        var aliases = BuildAliasSet(chapterStem, chapterRoot, bookIndex, out var matchedSection);
-
-        var bufferList = new List<AudioBufferDescriptor>
-        {
-            new AudioBufferDescriptor("raw", audioPath)
-        };
-
-        var treatedPath = Path.Combine(chapterRoot, $"{chapterStem}.treated.wav");
-        bufferList.Add(new AudioBufferDescriptor("treated", treatedPath));
-
-        var correctedPath = Path.Combine(chapterRoot, $"{chapterStem}.corrected.wav");
-        bufferList.Add(new AudioBufferDescriptor("corrected", correctedPath));
-
-        var filteredPath = Path.Combine(chapterRoot, $"{chapterStem}.filtered.wav");
-        bufferList.Add(new AudioBufferDescriptor("filtered", filteredPath));
-
-        var initialDescriptor = new ChapterDescriptor(
-            chapterId: chapterStem,
-            rootPath: chapterRoot,
-            audioBuffers: bufferList,
-            aliases: aliases,
-            bookStartWord: matchedSection?.StartWord,
-            bookEndWord: matchedSection?.EndWord);
-
-        var descriptor = EnsureChapterDescriptor(initialDescriptor);
-        var chapter = Load(descriptor.ChapterId);
-
-        var currentBookIndex = _bookContext.Documents.BookIndex;
-        if (currentBookIndex is null || reloadBookIndex)
-        {
-            _bookContext.Documents.SetLoadedBookIndex(bookIndex);
-        }
-
-        if (asrFile?.Exists == true)
-        {
-            var asrDocument = LoadJson<AsrResponse>(asrFile.FullName);
-            if (asrDocument is not null)
+            ArgumentNullException.ThrowIfNull(bookIndexFile);
+            if (!bookIndexFile.Exists)
             {
-                chapter.Documents.Asr = asrDocument;
-                var currentCorpus = chapter.Documents.AsrTranscriptText;
-                if (string.IsNullOrWhiteSpace(currentCorpus))
+                throw new FileNotFoundException("Book index not found", bookIndexFile.FullName);
+            }
+
+            var chapterStem = DetermineChapterStem(chapterId, audioFile, asrFile);
+            var chapterRoot =
+                ResolveChapterRoot(chapterDirectory, audioFile, asrFile, bookIndexFile.Directory, chapterStem);
+            var audioPath = audioFile?.FullName ?? Path.Combine(chapterRoot, $"{chapterStem}.wav");
+
+            // Use cached book-index if available (book stays in memory while open)
+            var bookIndex = reloadBookIndex ? null : _bookContext.Documents.BookIndex;
+            bookIndex ??= LoadJson<BookIndex>(bookIndexFile.FullName);
+
+            var aliases = BuildAliasSet(chapterStem, chapterRoot, bookIndex, out var matchedSection);
+
+            var bufferList = new List<AudioBufferDescriptor>
+            {
+                new AudioBufferDescriptor("raw", audioPath)
+            };
+
+            var treatedPath = Path.Combine(chapterRoot, $"{chapterStem}.treated.wav");
+            bufferList.Add(new AudioBufferDescriptor("treated", treatedPath));
+
+            var correctedPath = Path.Combine(chapterRoot, $"{chapterStem}.corrected.wav");
+            bufferList.Add(new AudioBufferDescriptor("corrected", correctedPath));
+
+            var filteredPath = Path.Combine(chapterRoot, $"{chapterStem}.filtered.wav");
+            bufferList.Add(new AudioBufferDescriptor("filtered", filteredPath));
+
+            var initialDescriptor = new ChapterDescriptor(
+                chapterId: chapterStem,
+                rootPath: chapterRoot,
+                audioBuffers: bufferList,
+                aliases: aliases,
+                bookStartWord: matchedSection?.StartWord,
+                bookEndWord: matchedSection?.EndWord);
+
+            var descriptor = EnsureChapterDescriptor(initialDescriptor);
+            var chapter = LoadCore(FindDescriptorIndex(descriptor.ChapterId));
+
+            var currentBookIndex = _bookContext.Documents.BookIndex;
+            if (currentBookIndex is null || reloadBookIndex)
+            {
+                _bookContext.Documents.SetLoadedBookIndex(bookIndex);
+            }
+
+            if (asrFile?.Exists == true)
+            {
+                var asrDocument = LoadJson<AsrResponse>(asrFile.FullName);
+                if (asrDocument is not null)
                 {
-                    chapter.Documents.AsrTranscriptText = AsrTranscriptBuilder.BuildCorpusText(asrDocument);
+                    chapter.Documents.Asr = asrDocument;
+                    var currentCorpus = chapter.Documents.AsrTranscriptText;
+                    if (string.IsNullOrWhiteSpace(currentCorpus))
+                    {
+                        chapter.Documents.AsrTranscriptText = AsrTranscriptBuilder.BuildCorpusText(asrDocument);
+                    }
                 }
             }
-        }
 
-        if (transcriptFile?.Exists == true)
-        {
-            chapter.Documents.Transcript = LoadJson<TranscriptIndex>(transcriptFile.FullName);
-        }
+            if (transcriptFile?.Exists == true)
+            {
+                chapter.Documents.Transcript = LoadJson<TranscriptIndex>(transcriptFile.FullName);
+            }
 
-        if (hydrateFile?.Exists == true)
-        {
-            chapter.Documents.HydratedTranscript = LoadJson<HydratedTranscript>(hydrateFile.FullName);
-        }
+            if (hydrateFile?.Exists == true)
+            {
+                chapter.Documents.HydratedTranscript = LoadJson<HydratedTranscript>(hydrateFile.FullName);
+            }
 
-        return new ChapterContextHandle(_bookContext, chapter);
+            return new ChapterContextHandle(_bookContext, chapter);
+        }
     }
 
     public ChapterDescriptor UpsertDescriptor(ChapterDescriptor descriptor)
     {
         ArgumentNullException.ThrowIfNull(descriptor);
-
-        for (int i = 0; i < _descriptors.Count; i++)
+        lock (_sync)
         {
-            if (string.Equals(_descriptors[i].ChapterId, descriptor.ChapterId, StringComparison.OrdinalIgnoreCase))
+            for (int i = 0; i < _descriptors.Count; i++)
             {
-                var merged = MergeDescriptors(_descriptors[i], descriptor);
-                _descriptors[i] = merged;
-                return merged;
+                if (string.Equals(_descriptors[i].ChapterId, descriptor.ChapterId, StringComparison.OrdinalIgnoreCase))
+                {
+                    var merged = MergeDescriptors(_descriptors[i], descriptor);
+                    _descriptors[i] = merged;
+                    return merged;
+                }
             }
-        }
 
-        _descriptors.Add(descriptor);
-        return descriptor;
+            _descriptors.Add(descriptor);
+            return descriptor;
+        }
     }
 
     public bool TryMoveNext(out ChapterContext context)
     {
-        if (_cursor + 1 >= _descriptors.Count)
+        lock (_sync)
         {
-            context = _descriptors.Count == 0 ? null! : Current;
-            return false;
-        }
+            if (_cursor + 1 >= _descriptors.Count)
+            {
+                context = _descriptors.Count == 0 ? null! : LoadCore(_cursor);
+                return false;
+            }
 
-        context = Load(_cursor + 1);
-        return true;
+            context = LoadCore(_cursor + 1);
+            return true;
+        }
     }
 
     public bool TryMovePrevious(out ChapterContext context)
     {
-        if (_cursor <= 0 || _descriptors.Count == 0)
+        lock (_sync)
         {
-            context = _descriptors.Count == 0 ? null! : Current;
-            return false;
-        }
+            if (_cursor <= 0 || _descriptors.Count == 0)
+            {
+                context = _descriptors.Count == 0 ? null! : LoadCore(_cursor);
+                return false;
+            }
 
-        context = Load(_cursor - 1);
-        return true;
+            context = LoadCore(_cursor - 1);
+            return true;
+        }
     }
 
-    public void Reset() => _cursor = 0;
+    public void Reset()
+    {
+        lock (_sync)
+        {
+            _cursor = 0;
+        }
+    }
 
     public void Deallocate(string chapterId)
     {
@@ -233,31 +280,57 @@ public sealed class ChapterManager : IChapterManager
             return;
         }
 
-        if (_cache.Remove(chapterId, out var context))
+        lock (_sync)
         {
-            context.Save();
-            context.Audio.DeallocateAll();
-            RemoveUsageNode(chapterId);
-            Log.Debug(
-                "ChapterManager[{BookId}] deallocated context {ChapterId} (cache {CacheCount}/{Max})",
-                _bookContext.Descriptor.BookId,
-                chapterId,
-                _cache.Count,
-                MaxCachedContexts);
+            if (_cache.Remove(chapterId, out var context))
+            {
+                context.Save();
+                context.Audio.DeallocateAll();
+                RemoveUsageNode(chapterId);
+                Log.Debug(
+                    "ChapterManager[{BookId}] deallocated context {ChapterId} (cache {CacheCount}/{Max})",
+                    _bookContext.Descriptor.BookId,
+                    chapterId,
+                    _cache.Count,
+                    MaxCachedContexts);
+            }
         }
     }
 
     public void DeallocateAll()
     {
-        foreach (var context in _cache.Values)
+        lock (_sync)
         {
-            context.Save();
-            context.Audio.DeallocateAll();
+            foreach (var context in _cache.Values)
+            {
+                context.Save();
+                context.Audio.DeallocateAll();
+            }
+
+            _cache.Clear();
+            _usageNodes.Clear();
+            _usageOrder.Clear();
+        }
+    }
+
+    private ChapterContext LoadCore(int index)
+    {
+        _cursor = index;
+        return GetOrCreate(_descriptors[index]);
+    }
+
+    private int FindDescriptorIndex(string chapterId)
+    {
+        for (int i = 0; i < _descriptors.Count; i++)
+        {
+            if (string.Equals(_descriptors[i].ChapterId, chapterId, StringComparison.OrdinalIgnoreCase))
+            {
+                return i;
+            }
         }
 
-        _cache.Clear();
-        _usageNodes.Clear();
-        _usageOrder.Clear();
+        throw new KeyNotFoundException(
+            $"Chapter '{chapterId}' was not found in book '{_bookContext.Descriptor.BookId}'.");
     }
 
     private ChapterContext GetOrCreate(ChapterDescriptor descriptor)

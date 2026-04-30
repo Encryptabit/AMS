@@ -80,6 +80,7 @@ public sealed record BookDescriptor
 
 public sealed class BookManager : IBookManager
 {
+    private readonly object _sync = new();
     private readonly IReadOnlyList<BookDescriptor> _descriptors;
     private readonly Dictionary<string, BookContext> _cache;
     private readonly IArtifactResolver _artifactResolver;
@@ -100,59 +101,84 @@ public sealed class BookManager : IBookManager
 
     public int Count => _descriptors.Count;
 
-    public BookContext Current => Load(_cursor);
+    public BookContext Current
+    {
+        get
+        {
+            lock (_sync)
+            {
+                return LoadCore(_cursor);
+            }
+        }
+    }
 
     public BookContext Load(int index)
     {
-        if ((uint)index >= (uint)_descriptors.Count)
+        lock (_sync)
         {
-            throw new ArgumentOutOfRangeException(nameof(index));
-        }
+            if ((uint)index >= (uint)_descriptors.Count)
+            {
+                throw new ArgumentOutOfRangeException(nameof(index));
+            }
 
-        _cursor = index;
-        return GetOrCreate(_descriptors[index]);
+            return LoadCore(index);
+        }
     }
 
     public BookContext Load(string bookId)
     {
         ArgumentException.ThrowIfNullOrEmpty(bookId);
-        for (int i = 0; i < _descriptors.Count; i++)
+        lock (_sync)
         {
-            if (string.Equals(_descriptors[i].BookId, bookId, StringComparison.OrdinalIgnoreCase))
+            for (int i = 0; i < _descriptors.Count; i++)
             {
-                _cursor = i;
-                return GetOrCreate(_descriptors[i]);
+                if (string.Equals(_descriptors[i].BookId, bookId, StringComparison.OrdinalIgnoreCase))
+                {
+                    return LoadCore(i);
+                }
             }
-        }
 
-        throw new KeyNotFoundException($"Book '{bookId}' was not found in this manager instance.");
+            throw new KeyNotFoundException($"Book '{bookId}' was not found in this manager instance.");
+        }
     }
 
     public bool TryMoveNext(out BookContext context)
     {
-        if (_cursor + 1 >= _descriptors.Count)
+        lock (_sync)
         {
-            context = Current;
-            return false;
-        }
+            if (_cursor + 1 >= _descriptors.Count)
+            {
+                context = LoadCore(_cursor);
+                return false;
+            }
 
-        context = Load(_cursor + 1);
-        return true;
+            context = LoadCore(_cursor + 1);
+            return true;
+        }
     }
 
     public bool TryMovePrevious(out BookContext context)
     {
-        if (_cursor <= 0)
+        lock (_sync)
         {
-            context = Current;
-            return false;
-        }
+            if (_cursor <= 0)
+            {
+                context = LoadCore(_cursor);
+                return false;
+            }
 
-        context = Load(_cursor - 1);
-        return true;
+            context = LoadCore(_cursor - 1);
+            return true;
+        }
     }
 
-    public void Reset() => _cursor = 0;
+    public void Reset()
+    {
+        lock (_sync)
+        {
+            _cursor = 0;
+        }
+    }
 
     public void Deallocate(string bookId)
     {
@@ -161,26 +187,38 @@ public sealed class BookManager : IBookManager
             return;
         }
 
-        if (_cache.Remove(bookId, out var context))
+        lock (_sync)
         {
-            context.Save();
-            context.Chapters.DeallocateAll();
-            context.Audio.UnloadAll();
-            Log.Debug("BookManager deallocated context {BookId}", bookId);
+            if (_cache.Remove(bookId, out var context))
+            {
+                context.Save();
+                context.Chapters.DeallocateAll();
+                context.Audio.UnloadAll();
+                Log.Debug("BookManager deallocated context {BookId}", bookId);
+            }
         }
     }
 
     public void DeallocateAll()
     {
-        foreach (var context in _cache.Values)
+        lock (_sync)
         {
-            context.Save();
-            context.Chapters.DeallocateAll();
-            context.Audio.UnloadAll();
-            Log.Debug("BookManager flushed context {BookId}", context.Descriptor.BookId);
-        }
+            foreach (var context in _cache.Values)
+            {
+                context.Save();
+                context.Chapters.DeallocateAll();
+                context.Audio.UnloadAll();
+                Log.Debug("BookManager flushed context {BookId}", context.Descriptor.BookId);
+            }
 
-        _cache.Clear();
+            _cache.Clear();
+        }
+    }
+
+    private BookContext LoadCore(int index)
+    {
+        _cursor = index;
+        return GetOrCreate(_descriptors[index]);
     }
 
     private BookContext GetOrCreate(BookDescriptor descriptor)
