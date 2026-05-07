@@ -9,14 +9,85 @@ Workflow:
 4. Write page numbers to the workbook (or print-only in --dry-run mode).
 
 Typical usage:
-  uv run --with openpyxl --with pypdf --with rapidfuzz \
-    python scripts/fill_crx_pdf_pages.py \
+  python scripts/fill_crx_pdf_pages.py \
       --xlsx "E:/Audiobooks/Raws/Book/CRX/My_CRX.xlsx" \
       --pdf "E:/Audiobooks/Raws/Book/My-Print.pdf" \
       --book-index "E:/Audiobooks/Raws/Book/book-index.json"
+
+Dependencies (openpyxl, pypdf, rapidfuzz) are installed automatically into
+scripts/.venv/fill_crx_pdf_pages/ on first run.
 """
 
 from __future__ import annotations
+
+REQUIREMENTS = ("openpyxl", "pypdf", "rapidfuzz")
+_VENV_MARKER = "AMS_FILL_CRX_PDF_PAGES_VENV"
+
+
+def _bootstrap_venv() -> None:
+    """Create/reuse a private venv next to this script and re-exec inside it.
+
+    Runs only once per invocation: a marker env var on the child process
+    short-circuits the second entry. Uses only stdlib so it works before any
+    third-party packages exist on the system Python.
+    """
+    import os
+
+    if os.environ.get(_VENV_MARKER) == "1":
+        return
+
+    import subprocess
+    import sys as _sys
+    from pathlib import Path as _Path
+
+    script_path = _Path(__file__).resolve()
+    venv_dir = script_path.parent / ".venv" / script_path.stem
+
+    if _sys.platform == "win32":
+        py = venv_dir / "Scripts" / "python.exe"
+    else:
+        py = venv_dir / "bin" / "python"
+
+    stamp = venv_dir / ".requirements.txt"
+    desired = "\n".join(REQUIREMENTS) + "\n"
+
+    if not py.exists():
+        print(f"[bootstrap] Creating venv: {venv_dir}", flush=True)
+        try:
+            import venv as _venv
+
+            _venv.EnvBuilder(with_pip=True, clear=False).create(str(venv_dir))
+        except Exception as exc:  # pragma: no cover - environment-dependent
+            print(
+                f"[bootstrap] Failed to create venv ({exc}). "
+                "On Debian/Ubuntu install 'python3-venv', then re-run.",
+                file=_sys.stderr,
+            )
+            raise SystemExit(1)
+
+    if not stamp.exists() or stamp.read_text() != desired:
+        print(f"[bootstrap] Installing: {', '.join(REQUIREMENTS)}", flush=True)
+        subprocess.check_call(
+            [
+                str(py),
+                "-m",
+                "pip",
+                "install",
+                "--disable-pip-version-check",
+                "--quiet",
+                *REQUIREMENTS,
+            ]
+        )
+        stamp.write_text(desired)
+
+    env = os.environ.copy()
+    env[_VENV_MARKER] = "1"
+    result = subprocess.run([str(py), str(script_path), *_sys.argv[1:]], env=env)
+    raise SystemExit(result.returncode)
+
+
+_bootstrap_venv()
+
 
 import argparse
 import datetime as dt
@@ -30,23 +101,41 @@ from typing import Dict, Iterable, List, Tuple
 
 from openpyxl import load_workbook
 from openpyxl.utils.cell import column_index_from_string
-from pypdf import PdfReader
-from rapidfuzz import fuzz
+from pypdf import PdfReader  # pyright: ignore[reportMissingImports]
+from rapidfuzz import fuzz  # pyright: ignore[reportMissingImports]
 
 
 CHAPTER_TITLE_RE = re.compile(r"(?i)^\s*chapter\s+(\w+)\s*(?::\s*(.+?))?\s*$")
 CHAPTER_NUMBER_RE = re.compile(r"(?i)\bchapter\s+(\w+)\b")
 
-WORD_TO_NUM: Dict[str, int] = {
-    "one": 1, "two": 2, "three": 3, "four": 4, "five": 5,
-    "six": 6, "seven": 7, "eight": 8, "nine": 9, "ten": 10,
-    "eleven": 11, "twelve": 12, "thirteen": 13, "fourteen": 14,
-    "fifteen": 15, "sixteen": 16, "seventeen": 17, "eighteen": 18,
-    "nineteen": 19, "twenty": 20, "twenty-one": 21, "twenty-two": 22,
-    "twenty-three": 23, "twenty-four": 24, "twenty-five": 25,
-    "twenty-six": 26, "twenty-seven": 27, "twenty-eight": 28,
-    "twenty-nine": 29, "thirty": 30,
-}
+_ONES: Tuple[str, ...] = (
+    "", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine",
+    "ten", "eleven", "twelve", "thirteen", "fourteen", "fifteen",
+    "sixteen", "seventeen", "eighteen", "nineteen",
+)
+_TENS: Tuple[str, ...] = (
+    "", "", "twenty", "thirty", "forty", "fifty",
+    "sixty", "seventy", "eighty", "ninety",
+)
+
+
+def int_to_word(n: int) -> str | None:
+    """Render 1..99 as a hyphenated English word ("forty-two"). Returns None outside range."""
+    if not (1 <= n <= 99):
+        return None
+    if n < 20:
+        return _ONES[n]
+    tens, ones = divmod(n, 10)
+    if ones == 0:
+        return _TENS[tens]
+    return f"{_TENS[tens]}-{_ONES[ones]}"
+
+
+WORD_TO_NUM: Dict[str, int] = {}
+for _i in range(1, 100):
+    _w = int_to_word(_i)
+    if _w is not None:
+        WORD_TO_NUM[_w] = _i
 
 
 def word_or_digit_to_int(value: str) -> int | None:

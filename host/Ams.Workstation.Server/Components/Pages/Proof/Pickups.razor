@@ -1009,6 +1009,7 @@
             var messages = new[]
                 {
                     _fitInputValidationError,
+                    FitPickTruthMismatchMessage,
                     _snapshot.LastFitValidationError,
                     _snapshot.FitPlan?.LastValidationError
                 }
@@ -1021,18 +1022,30 @@
         }
     }
 
-    private bool CanLoadFitPlan
-        => !_snapshot.IsBusy
-           && _snapshot.HasActiveChapter
+    private string? FitPickTruthMismatchMessage
+        => BuildFitPickTruthMismatchMessage(_snapshot);
+
+    private bool HasCurrentConfirmedPickTruth
+        => _snapshot.HasActiveChapter
            && _snapshot.PickMap is { IsDraft: false }
            && string.IsNullOrWhiteSpace(_snapshot.PickMapReadError)
+           && string.IsNullOrWhiteSpace(_snapshot.LastPickValidationError);
+
+    private bool CanUseLoadedFitPlan
+        => _snapshot.FitPlan is not null
+           && HasCurrentConfirmedPickTruth
+           && string.IsNullOrWhiteSpace(_snapshot.FitPlanReadError)
+           && string.IsNullOrWhiteSpace(FitPickTruthMismatchMessage);
+
+    private bool CanLoadFitPlan
+        => !_snapshot.IsBusy
+           && HasCurrentConfirmedPickTruth
            && string.IsNullOrWhiteSpace(_snapshot.FitPlanReadError);
 
     private bool CanEditFitItem(PickupFitPlanItem item)
         => !_snapshot.IsBusy
-           && _snapshot.FitPlan is not null
+           && CanUseLoadedFitPlan
            && TryGetFitRevision(out _)
-           && string.IsNullOrWhiteSpace(_snapshot.FitPlanReadError)
            && item.Status != PickupFitPlanItemStatus.Committed
            && item.Commit.Status != PickupFitCommitStatus.Committed;
 
@@ -1047,9 +1060,8 @@
 
     private bool CanCommitFitItem(PickupFitPlanItem item)
         => !_snapshot.IsBusy
-           && _snapshot.FitPlan is not null
+           && CanUseLoadedFitPlan
            && TryGetFitRevision(out _)
-           && string.IsNullOrWhiteSpace(_snapshot.FitPlanReadError)
            && IsFitItemCommitReady(item);
 
     private static bool IsFitItemCommitReady(PickupFitPlanItem item)
@@ -1062,6 +1074,68 @@
     {
         expectedRevision = _snapshot.FitPlanRevision ?? _snapshot.FitPlan?.Revision ?? -1;
         return expectedRevision >= 0;
+    }
+
+    private static string? BuildFitPickTruthMismatchMessage(ProofPickupsSessionSnapshot snapshot)
+    {
+        var fitPlan = snapshot.FitPlan;
+        if (fitPlan is null)
+        {
+            return null;
+        }
+
+        if (string.IsNullOrWhiteSpace(snapshot.ActiveChapterStem))
+        {
+            return "Loaded Fit plan is blocked because no active chapter is selected. Reload the workspace before Fit actions.";
+        }
+
+        var pickMap = snapshot.PickMap;
+        if (pickMap is null)
+        {
+            return "Loaded Fit plan is blocked because no current Pick map is loaded. Import and confirm Pick truth, then reload Chapter Fit.";
+        }
+
+        if (pickMap.IsDraft)
+        {
+            return "Loaded Fit plan is blocked because current Pick map is still draft. Save canonical Pick truth, then reload Chapter Fit.";
+        }
+
+        string expectedAssignments;
+        try
+        {
+            expectedAssignments = PickupFitPlanDocument.ComputePickAssignmentsFingerprint(snapshot.ActiveChapterStem, pickMap);
+        }
+        catch (Exception ex)
+        {
+            return $"Loaded Fit plan cannot be validated against current Pick truth: {ex.Message}";
+        }
+
+        var sourceMatches = string.Equals(fitPlan.Source.Fingerprint, pickMap.Source.Fingerprint, StringComparison.Ordinal) &&
+            string.Equals(fitPlan.Source.CrxTargetsFingerprint, pickMap.Source.CrxTargetsFingerprint, StringComparison.Ordinal);
+        var assignmentsMatch = fitPlan.PickMapRevision == pickMap.Revision &&
+            string.Equals(fitPlan.PickAssignmentsFingerprint, expectedAssignments, StringComparison.Ordinal);
+
+        return sourceMatches && assignmentsMatch
+            ? null
+            : "Loaded Fit plan no longer matches current confirmed Pick truth. Reload Chapter Fit before editing, previewing, accepting, or committing.";
+    }
+
+    private static ProofPickupsSessionSnapshot ClearLoadedFitPlanWhenPickTruthChanged(ProofPickupsSessionSnapshot snapshot)
+    {
+        var mismatch = BuildFitPickTruthMismatchMessage(snapshot);
+        if (string.IsNullOrWhiteSpace(mismatch))
+        {
+            return snapshot;
+        }
+
+        return snapshot with
+        {
+            FitPlan = null,
+            FitPlanRevision = null,
+            FitPlanReadError = null,
+            FitAssignmentCountsByStatus = new Dictionary<PickupFitPlanItemStatus, int>(),
+            LastFitValidationError = mismatch
+        };
     }
 
     private bool CanSavePickMap
@@ -1163,6 +1237,7 @@
             _pickupSourcePath = _snapshot.SourcePath;
         }
 
+        _snapshot = ClearLoadedFitPlanWhenPickTruthChanged(_snapshot);
         SyncPickTargetSelections();
         await InvokeAsync(StateHasChanged);
     }
@@ -1180,6 +1255,7 @@
             .ConfirmPickMapAsync(_snapshot.PickMap.Revision, _actionCts!.Token)
             .ConfigureAwait(false);
 
+        _snapshot = ClearLoadedFitPlanWhenPickTruthChanged(_snapshot);
         SyncPickTargetSelections();
         await InvokeAsync(StateHasChanged);
     }
@@ -1203,6 +1279,7 @@
             .SetPickAssignmentTargetAsync(assignmentId, _snapshot.PickMap.Revision, chapterStem, errorNumber)
             .ConfigureAwait(false);
 
+        _snapshot = ClearLoadedFitPlanWhenPickTruthChanged(_snapshot);
         SyncPickTargetSelections();
         await InvokeAsync(StateHasChanged);
     }
@@ -1218,6 +1295,7 @@
             .SetPickAssignmentDispositionAsync(assignmentId, _snapshot.PickMap.Revision, disposition)
             .ConfigureAwait(false);
 
+        _snapshot = ClearLoadedFitPlanWhenPickTruthChanged(_snapshot);
         SyncPickTargetSelections();
         await InvokeAsync(StateHasChanged);
     }

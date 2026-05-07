@@ -598,6 +598,61 @@ public sealed class ProofPickupsChapterFitServiceTests
     }
 
     [Fact]
+    public async Task FitRuntimeActions_StalePickTruth_ClearLoadedPlanAndFailBeforeRuntimeCalls()
+    {
+        using var harness = await ChapterFitHarness.CreateAsync(["chapter-01"]);
+        harness.CrxEntries.Add(harness.CreateCrxEntry("chapter-01", errorNumber: 101, sentenceId: 11));
+        harness.ImportPickAssetsBehavior = (sourcePath, targets, _) =>
+        {
+            var target = targets.Single();
+            return Task.FromResult((
+                Matched: (IReadOnlyList<PickupAsset>)[harness.CreateAsset("seg-101", sourcePath, target, 0.10, 0.40)],
+                Unmatched: (IReadOnlyList<PickupAsset>)Array.Empty<PickupAsset>()));
+        };
+
+        var imported = await harness.Service.ImportPickMapAsync(harness.PickupPath, CancellationToken.None);
+        _ = await harness.Service.ConfirmPickMapAsync(imported.PickMapRevision!.Value, CancellationToken.None);
+        var loaded = await harness.Service.LoadOrCreateFitPlanAsync(CancellationToken.None);
+        var item = Assert.Single(loaded.FitPlan!.Items);
+        var previewed = await harness.Service.GenerateFitPreviewAsync(item.FitItemId, loaded.FitPlanRevision!.Value, CancellationToken.None);
+        var previewedItem = Assert.Single(previewed.FitPlan!.Items);
+        var accepted = await harness.Service.AcceptFitPreviewAsync(
+            item.FitItemId,
+            previewed.FitPlanRevision!.Value,
+            previewedItem.PreviewEvidence!.PreviewVersion,
+            ct: CancellationToken.None);
+
+        var overridden = await harness.Service.SetPickAssignmentTargetAsync(
+            assignmentId: "seg-101",
+            expectedRevision: accepted.PickMapRevision!.Value,
+            chapterStem: harness.ActiveChapterStem,
+            errorNumber: 101,
+            note: "pick truth changed after fit acceptance",
+            ct: CancellationToken.None);
+        var reconfirmed = await harness.Service.ConfirmPickMapAsync(overridden.PickMapRevision!.Value, CancellationToken.None);
+
+        Assert.Null(reconfirmed.FitPlan);
+        Assert.Null(reconfirmed.FitPlanRevision);
+        Assert.Contains("Pick truth changed", reconfirmed.LastFitValidationError ?? string.Empty, StringComparison.OrdinalIgnoreCase);
+
+        var previewRejected = await harness.Service.GenerateFitPreviewAsync(
+            item.FitItemId,
+            accepted.FitPlanRevision!.Value,
+            CancellationToken.None);
+        var commitRejected = await harness.Service.CommitFitAsync(
+            item.FitItemId,
+            accepted.FitPlanRevision!.Value,
+            CancellationToken.None);
+
+        Assert.Equal(ProofPickupsSessionPhase.Failed, previewRejected.Phase);
+        Assert.Contains("current confirmed Pick truth", previewRejected.LastFitValidationError ?? string.Empty, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(ProofPickupsSessionPhase.Failed, commitRejected.Phase);
+        Assert.Contains("current confirmed Pick truth", commitRejected.LastFitValidationError ?? string.Empty, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(1, harness.FitPreviewCallCount);
+        Assert.Equal(0, harness.FitCommitCallCount);
+    }
+
+    [Fact]
     public async Task CommitFitAsync_UnacceptedItem_FailsClosedWithoutRuntimeCall()
     {
         using var harness = await ChapterFitHarness.CreateAsync(["chapter-01"]);

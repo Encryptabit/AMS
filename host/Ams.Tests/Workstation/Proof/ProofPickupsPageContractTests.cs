@@ -94,6 +94,11 @@ public sealed class ProofPickupsPageContractTests
         AssertContains(source, PickupsPageRelativePath, "GenerateFitPreviewAsync", "Fit preview session binding");
         AssertContains(source, PickupsPageRelativePath, "AcceptFitPreviewAsync", "Fit accept session binding");
         AssertContains(source, PickupsPageRelativePath, "CommitFitAsync", "Fit commit session binding");
+        AssertContains(source, PickupsPageRelativePath, "CanUseLoadedFitPlan", "Fit actions require current loaded Fit plan truth");
+        AssertContains(source, PickupsPageRelativePath, "BuildFitPickTruthMismatchMessage", "Fit stale Pick truth diagnostic helper");
+        AssertContains(source, PickupsPageRelativePath, "ClearLoadedFitPlanWhenPickTruthChanged", "Fit plan cleared after Pick truth changes");
+        AssertContains(source, PickupsPageRelativePath, "Loaded Fit plan no longer matches current confirmed Pick truth", "Fit stale Pick truth warning copy");
+        AssertContains(source, PickupsPageRelativePath, "HasCurrentConfirmedPickTruth", "Fit actions require confirmed Pick map");
         AssertContains(source, PickupsPageRelativePath, "IsEnabled=\"@CanCommitFitItem(fitItem)\"", "Fit commit disabled until commit-ready state");
     }
 

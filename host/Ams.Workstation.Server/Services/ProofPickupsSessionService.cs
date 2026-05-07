@@ -251,7 +251,8 @@ public sealed class ProofPickupsSessionService
             chapterChanged ? null : _snapshot.FitPlan,
             chapterChanged ? null : _snapshot.FitPlanRevision,
             chapterChanged ? null : _snapshot.LastFitOperationId,
-            chapterChanged ? null : _snapshot.LastFitValidationError);
+            chapterChanged ? null : _snapshot.LastFitValidationError,
+            pickDiagnostics.Map);
 
         _snapshot = _snapshot with
         {
@@ -1889,7 +1890,8 @@ public sealed class ProofPickupsSessionService
             baseline.FitPlan,
             baseline.FitPlanRevision,
             baseline.LastFitOperationId,
-            baseline.LastFitValidationError);
+            baseline.LastFitValidationError,
+            baseline.PickMap);
 
         _snapshot = baseline with
         {
@@ -2069,6 +2071,11 @@ public sealed class ProofPickupsSessionService
 
         var pickMap = baseline.PickMap
             ?? throw new InvalidOperationException("No canonical Pick map is loaded. Import and confirm Pick truth before Fit.");
+        if (baseline.FitPlan is null && !string.IsNullOrWhiteSpace(baseline.LastFitValidationError))
+        {
+            throw new InvalidOperationException(baseline.LastFitValidationError);
+        }
+
         var document = baseline.FitPlan
             ?? throw new InvalidOperationException("No Fit plan is loaded. Create a Fit plan before editing or committing Fit items.");
 
@@ -2082,6 +2089,7 @@ public sealed class ProofPickupsSessionService
         var targets = BuildBatchCrxTargets();
         var currentSource = BuildPickMapSourceReference(pickMap.Source.Path, targets);
         EnsurePickMapSourceCurrent(pickMap, currentSource);
+        EnsureFitPlanMatchesCurrentPickTruth(chapterStem, pickMap, document);
 
         return (document, pickMap);
     }
@@ -2757,6 +2765,88 @@ public sealed class ProofPickupsSessionService
         }
     }
 
+    private static void EnsureFitPlanMatchesCurrentPickTruth(
+        string chapterStem,
+        PickupPickMapDocument pickMap,
+        PickupFitPlanDocument document)
+    {
+        if (TryBuildFitPlanPickTruthMismatch(chapterStem, pickMap, document, out var mismatchMessage))
+        {
+            throw new InvalidOperationException(mismatchMessage ?? "Loaded Fit plan no longer matches current confirmed Pick truth.");
+        }
+    }
+
+    private static bool TryBuildFitPlanPickTruthMismatch(
+        string chapterStem,
+        PickupPickMapDocument? pickMap,
+        PickupFitPlanDocument? document,
+        out string? mismatchMessage)
+    {
+        mismatchMessage = null;
+        if (document is null)
+        {
+            return false;
+        }
+
+        if (string.IsNullOrWhiteSpace(chapterStem))
+        {
+            mismatchMessage = "Loaded Fit plan is blocked because no active chapter stem is available. Reload the workspace before Fit actions.";
+            return true;
+        }
+
+        if (!string.Equals(document.ChapterStem, chapterStem, StringComparison.OrdinalIgnoreCase))
+        {
+            mismatchMessage =
+                $"Loaded Fit plan chapter '{document.ChapterStem}' does not match active chapter '{chapterStem}'. Reload Chapter Fit before Fit actions.";
+            return true;
+        }
+
+        if (pickMap is null)
+        {
+            mismatchMessage =
+                $"Loaded Fit plan for chapter '{chapterStem}' is blocked because no current Pick map is loaded. Import and confirm Pick truth, then reload Chapter Fit.";
+            return true;
+        }
+
+        if (pickMap.IsDraft)
+        {
+            mismatchMessage =
+                $"Loaded Fit plan for chapter '{chapterStem}' is blocked because current Pick map revision '{pickMap.Revision}' is draft. Confirm Pick truth and reload Chapter Fit.";
+            return true;
+        }
+
+        string expectedAssignments;
+        try
+        {
+            expectedAssignments = PickupFitPlanDocument.ComputePickAssignmentsFingerprint(chapterStem, pickMap);
+        }
+        catch (Exception ex)
+        {
+            mismatchMessage =
+                $"Loaded Fit plan for chapter '{chapterStem}' cannot be validated against current Pick truth: {ex.Message}";
+            return true;
+        }
+
+        var sourceMatches = string.Equals(document.Source.Fingerprint, pickMap.Source.Fingerprint, StringComparison.Ordinal) &&
+            string.Equals(document.Source.CrxTargetsFingerprint, pickMap.Source.CrxTargetsFingerprint, StringComparison.Ordinal);
+        var assignmentsMatch = document.PickMapRevision == pickMap.Revision &&
+            string.Equals(document.PickAssignmentsFingerprint, expectedAssignments, StringComparison.Ordinal);
+
+        if (sourceMatches && assignmentsMatch)
+        {
+            return false;
+        }
+
+        mismatchMessage =
+            "Loaded Fit plan no longer matches current confirmed Pick truth. " +
+            $"Reload Chapter Fit before editing, previewing, accepting, or committing. " +
+            $"documentPickRevision='{document.PickMapRevision}', currentPickRevision='{pickMap.Revision}', " +
+            $"documentAssignments='{document.PickAssignmentsFingerprint}', currentAssignments='{expectedAssignments}', " +
+            $"documentSource='{document.Source.Fingerprint}', currentSource='{pickMap.Source.Fingerprint}', " +
+            $"documentCrx='{document.Source.CrxTargetsFingerprint}', currentCrx='{pickMap.Source.CrxTargetsFingerprint}'.";
+        return true;
+    }
+
     private static bool ShouldPersistLoadedFitPlan(
         PickupFitPlanDocument? existing,
         PickupFitPlanDocument loaded)
@@ -2823,18 +2913,27 @@ public sealed class ProofPickupsSessionService
         PickupFitPlanDocument? fallbackPlan,
         int? fallbackRevision,
         string? fallbackOperationId,
-        string? fallbackValidationError)
+        string? fallbackValidationError,
+        PickupPickMapDocument? currentPickMap)
     {
         if (_hooks.ReadFitPlanDocument is null)
         {
-            return BuildFitPlanDiagnostics(fallbackPlan, null, fallbackOperationId, fallbackValidationError);
+            return BuildFitPlanDiagnosticsForCurrentPickTruth(
+                chapterStem,
+                fallbackPlan,
+                currentPickMap,
+                readError: null,
+                operationId: fallbackOperationId,
+                validationError: fallbackValidationError);
         }
 
         try
         {
             var document = _hooks.ReadFitPlanDocument(chapterStem, ct);
-            return BuildFitPlanDiagnostics(
+            return BuildFitPlanDiagnosticsForCurrentPickTruth(
+                chapterStem,
                 document,
+                currentPickMap,
                 readError: null,
                 operationId: document?.LastOperationId,
                 validationError: document?.LastValidationError);
@@ -2852,6 +2951,26 @@ public sealed class ProofPickupsSessionService
                 operationId: fallbackOperationId,
                 validationError: fallbackValidationError);
         }
+    }
+
+    private static FitPlanDiagnostics BuildFitPlanDiagnosticsForCurrentPickTruth(
+        string chapterStem,
+        PickupFitPlanDocument? document,
+        PickupPickMapDocument? currentPickMap,
+        string? readError,
+        string? operationId,
+        string? validationError)
+    {
+        if (readError is null && TryBuildFitPlanPickTruthMismatch(chapterStem, currentPickMap, document, out var mismatchMessage))
+        {
+            return BuildFitPlanDiagnostics(
+                document: null,
+                readError: null,
+                operationId: document?.LastOperationId ?? operationId,
+                validationError: mismatchMessage);
+        }
+
+        return BuildFitPlanDiagnostics(document, readError, operationId, validationError);
     }
 
     private static FitPlanDiagnostics BuildFitPlanDiagnostics(
@@ -3029,7 +3148,49 @@ public sealed class ProofPickupsSessionService
             LastPickValidationError = diagnostics.LastValidationError
         };
 
+        _snapshot = ClearStaleFitPlanIfPickTruthChanged(_snapshot);
         return _snapshot;
+    }
+
+    private ProofPickupsSessionSnapshot ClearStaleFitPlanIfPickTruthChanged(ProofPickupsSessionSnapshot snapshot)
+    {
+        if (string.IsNullOrWhiteSpace(snapshot.ActiveChapterStem))
+        {
+            return snapshot;
+        }
+
+        if (snapshot.FitPlan is null)
+        {
+            if (snapshot.PickMap is { IsDraft: false } &&
+                !string.IsNullOrWhiteSpace(snapshot.LastFitValidationError) &&
+                snapshot.LastFitValidationError.StartsWith("Loaded Fit plan", StringComparison.OrdinalIgnoreCase))
+            {
+                return snapshot with
+                {
+                    LastFitValidationError = "Loaded Fit plan was cleared because Pick truth changed. Reload Chapter Fit before editing, previewing, accepting, or committing."
+                };
+            }
+
+            return snapshot;
+        }
+
+        if (!TryBuildFitPlanPickTruthMismatch(
+                snapshot.ActiveChapterStem,
+                snapshot.PickMap,
+                snapshot.FitPlan,
+                out var mismatchMessage))
+        {
+            return snapshot;
+        }
+
+        return snapshot with
+        {
+            FitPlan = null,
+            FitPlanRevision = null,
+            FitPlanReadError = null,
+            FitAssignmentCountsByStatus = new Dictionary<PickupFitPlanItemStatus, int>(),
+            LastFitValidationError = mismatchMessage
+        };
     }
 
     private IReadOnlyList<CrxPickupTarget> ResolveBatchPickTargetsForLoadedMap(
