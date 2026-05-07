@@ -1,10 +1,12 @@
-using System.Text;
+using System.Globalization;
 using System.Text.RegularExpressions;
+using Humanizer;
 
 namespace Ams.Core.Common;
 
 public static partial class TextNormalizer
 {
+    private static readonly CultureInfo EnglishCulture = CultureInfo.GetCultureInfo("en-US");
     private static readonly Dictionary<string, string> CommonContractions = new(StringComparer.OrdinalIgnoreCase)
     {
         { "don't", "do not" },
@@ -58,19 +60,6 @@ public static partial class TextNormalizer
         '\u2013', '\u2014', '\u2212'
     ];
 
-    private static readonly string[] Ones = ["", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine"];
-    private static readonly string[] Teens =
-    [
-        "ten", "eleven", "twelve", "thirteen", "fourteen",
-        "fifteen", "sixteen", "seventeen", "eighteen", "nineteen"
-    ];
-
-    private static readonly string[] Tens = ["", "", "twenty", "thirty", "forty", "fifty", "sixty", "seventy", "eighty", "ninety"];
-    private static readonly string[] Hundreds =
-    [
-        "", "one hundred", "two hundred", "three hundred", "four hundred",
-        "five hundred", "six hundred", "seven hundred", "eight hundred", "nine hundred"
-    ];
 
     /// <summary>
     /// Normalizes text for scoring and matching.
@@ -118,7 +107,7 @@ public static partial class TextNormalizer
             {
                 if (int.TryParse(match.Value, out int number) && number >= 0 && number <= 999)
                 {
-                    return NumberToWords(number);
+                    return HumanizeNumberWords(number);
                 }
 
                 return match.Value;
@@ -153,43 +142,19 @@ public static partial class TextNormalizer
         return new string(normalized);
     }
 
-    private static string NumberToWords(int number)
+    private static string HumanizeNumberWords(int number)
     {
         if (number < 0 || number > 999)
         {
             throw new ArgumentOutOfRangeException(nameof(number), "Number must be in range 0..999.");
         }
 
-        if (number == 0)
-        {
-            return "zero";
-        }
-
-        var result = new StringBuilder(24);
-
-        if (number >= 100)
-        {
-            AppendWord(result, Hundreds[number / 100]);
-            number %= 100;
-        }
-
-        if (number >= 20)
-        {
-            AppendWord(result, Tens[number / 10]);
-            number %= 10;
-        }
-        else if (number >= 10)
-        {
-            AppendWord(result, Teens[number - 10]);
-            number = 0;
-        }
-
-        if (number > 0)
-        {
-            AppendWord(result, Ones[number]);
-        }
-
-        return result.ToString();
+        return string.Join(
+            " ",
+            ((long)number).ToWords(EnglishCulture, addAnd: false)
+                .Replace('-', ' ')
+                .Split(' ', StringSplitOptions.RemoveEmptyEntries)
+                .Select(part => part.ToLowerInvariant()));
     }
 
     public static string[] TokenizeWords(string text)
@@ -315,21 +280,6 @@ public static partial class TextNormalizer
 
         var pattern = $@"\b(?:{string.Join("|", escaped)})\b";
         return new Regex(pattern, RegexOptions.Compiled | RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
-    }
-
-    private static void AppendWord(StringBuilder builder, string word)
-    {
-        if (string.IsNullOrEmpty(word))
-        {
-            return;
-        }
-
-        if (builder.Length > 0)
-        {
-            builder.Append(' ');
-        }
-
-        builder.Append(word);
     }
 
     private static bool TryMapTypographyChar(char value, out char mapped)

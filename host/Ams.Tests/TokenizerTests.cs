@@ -46,6 +46,19 @@ public class TextNormalizerTests
     }
 
     [Fact]
+    public void Normalize_WithOptions_ConvertsNumbersToHumanizerWords()
+    {
+        var options = new TextNormalizationOptions(
+            ExpandContractions: true,
+            RemoveNumbers: false,
+            ConvertNumbersToWords: true);
+
+        var result = TextNormalizer.Normalize("21 and 123 times", options);
+
+        Assert.Equal("twenty one and one hundred twenty three times", result);
+    }
+
+    [Fact]
     public void Normalize_NullInput_ReturnsEmpty()
     {
         var result = TextNormalizer.Normalize(null!);

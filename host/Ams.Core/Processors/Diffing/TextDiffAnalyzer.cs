@@ -1,6 +1,7 @@
 using System.Text;
 using Ams.Core.Artifacts;
 using Ams.Core.Artifacts.Hydrate;
+using Ams.Core.Runtime.Book;
 using DiffMatchPatch;
 
 namespace Ams.Core.Processors.Diffing;
@@ -54,6 +55,7 @@ public static class TextDiffAnalyzer
         var displayHypothesis = NormalizeForDisplay(hypothesisText);
         var displayReferenceTokens = Tokenize(displayReference);
         var displayHypothesisTokens = Tokenize(displayHypothesis);
+        HarmonizePronunciationEquivalentDisplayTokens(displayReferenceTokens, displayHypothesisTokens);
         HarmonizeCompoundBoundaryTokens(displayReferenceTokens, displayHypothesisTokens);
 
         var displayTokenDiff = BuildTokenDiff(displayReferenceTokens, displayHypothesisTokens);
@@ -176,9 +178,21 @@ public static class TextDiffAnalyzer
     }
 
     private static string NormalizeForScoring(string? value)
-        => string.IsNullOrWhiteSpace(value)
-            ? string.Empty
-            : TextNormalizer.Normalize(value, expandContractions: false, removeNumbers: false);
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return string.Empty;
+        }
+
+        var normalized = TextNormalizer.Normalize(
+            value,
+            new TextNormalizationOptions(
+                ExpandContractions: false,
+                RemoveNumbers: false,
+                ConvertNumbersToWords: false));
+        var tokens = TextNormalizer.TokenizeWords(normalized);
+        return string.Join(" ", tokens.SelectMany(PronunciationHelper.ExtractPronunciationParts));
+    }
 
     private static string NormalizeForDisplay(string? value)
         => string.IsNullOrWhiteSpace(value)
@@ -189,6 +203,64 @@ public static class TextDiffAnalyzer
                     ExpandContractions: false,
                     RemoveNumbers: false,
                     ConvertNumbersToWords: false));
+
+    private static void HarmonizePronunciationEquivalentDisplayTokens(
+        List<string> referenceTokens,
+        List<string> hypothesisTokens)
+    {
+        if (referenceTokens.Count == 0 || hypothesisTokens.Count == 0)
+        {
+            return;
+        }
+
+        if (HaveSamePronunciationParts(referenceTokens, hypothesisTokens))
+        {
+            hypothesisTokens.Clear();
+            hypothesisTokens.AddRange(referenceTokens);
+            return;
+        }
+
+        if (referenceTokens.Count != hypothesisTokens.Count)
+        {
+            return;
+        }
+
+        for (var i = 0; i < referenceTokens.Count; i++)
+        {
+            if (!string.Equals(referenceTokens[i], hypothesisTokens[i], StringComparison.Ordinal) &&
+                HaveSamePronunciationParts(referenceTokens[i], hypothesisTokens[i]))
+            {
+                hypothesisTokens[i] = referenceTokens[i];
+            }
+        }
+    }
+
+    private static bool HaveSamePronunciationParts(IReadOnlyList<string> referenceTokens, IReadOnlyList<string> hypothesisTokens)
+    {
+        var referenceParts = ExpandPronunciationParts(referenceTokens);
+        var hypothesisParts = ExpandPronunciationParts(hypothesisTokens);
+
+        return referenceParts.Count > 0 && referenceParts.SequenceEqual(hypothesisParts, StringComparer.Ordinal);
+    }
+
+    private static List<string> ExpandPronunciationParts(IReadOnlyList<string> tokens)
+    {
+        var parts = new List<string>();
+        foreach (var token in tokens)
+        {
+            parts.AddRange(PronunciationHelper.ExtractPronunciationParts(token));
+        }
+
+        return parts;
+    }
+
+    private static bool HaveSamePronunciationParts(string referenceToken, string hypothesisToken)
+    {
+        var referenceParts = PronunciationHelper.ExtractPronunciationParts(referenceToken);
+        var hypothesisParts = PronunciationHelper.ExtractPronunciationParts(hypothesisToken);
+
+        return referenceParts.Count > 0 && referenceParts.SequenceEqual(hypothesisParts, StringComparer.Ordinal);
+    }
 
     private static List<string> Tokenize(string text)
     {

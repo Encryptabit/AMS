@@ -139,18 +139,18 @@ public static class PronunciationHelper
 
     private static string ConvertNumberToWordsSafe(string digits)
     {
-        var canonical = digits.Replace("_", string.Empty).Replace(",", string.Empty);
+        var canonical = CanonicalizeDigits(digits);
         if (!long.TryParse(canonical, NumberStyles.Integer, CultureInfo.InvariantCulture, out var value))
         {
             return SpellOutDigits(digits);
         }
 
-        return NumberToWords(value);
+        return NormalizeSpelledNumberWords(value.ToWords(EnglishCulture, addAnd: false));
     }
 
     private static string ConvertOrdinalNumberToWordsSafe(string digits)
     {
-        var canonical = digits.Replace("_", string.Empty).Replace(",", string.Empty);
+        var canonical = CanonicalizeDigits(digits);
         if (!int.TryParse(canonical, NumberStyles.Integer, CultureInfo.InvariantCulture, out var value))
         {
             return SpellOutDigits(digits);
@@ -168,7 +168,7 @@ public static class PronunciationHelper
         }
 
         var suffix = token.Substring(start, SuffixLength);
-        if (!IsOrdinalSuffixForDigits(digits, suffix))
+        if (!HasHumanizerOrdinalSuffix(digits, suffix))
         {
             return 0;
         }
@@ -179,32 +179,19 @@ public static class PronunciationHelper
             : 0;
     }
 
-    private static bool IsOrdinalSuffixForDigits(string digits, string suffix)
+    private static bool HasHumanizerOrdinalSuffix(string digits, string suffix)
     {
-        var canonical = digits.Replace("_", string.Empty).Replace(",", string.Empty);
-        if (!long.TryParse(canonical, NumberStyles.Integer, CultureInfo.InvariantCulture, out var value))
+        var canonical = CanonicalizeDigits(digits);
+        if (canonical.Length == 0)
         {
             return false;
         }
 
-        var expected = "th";
-        var lastTwo = Math.Abs(value % 100);
-        if (lastTwo is < 11 or > 13)
-        {
-            expected = Math.Abs(value % 10) switch
-            {
-                1 => "st",
-                2 => "nd",
-                3 => "rd",
-                _ => "th"
-            };
-        }
-
-        return string.Equals(suffix, expected, StringComparison.OrdinalIgnoreCase);
+        return canonical.Ordinalize(EnglishCulture).EndsWith(suffix, StringComparison.OrdinalIgnoreCase);
     }
 
-    private static string NumberToWords(long number)
-        => NormalizeSpelledNumberWords(number.ToWords(EnglishCulture, addAnd: false));
+    private static string CanonicalizeDigits(string digits)
+        => digits.Replace("_", string.Empty).Replace(",", string.Empty);
 
     private static string NormalizeSpelledNumberWords(string value)
         => string.Join(

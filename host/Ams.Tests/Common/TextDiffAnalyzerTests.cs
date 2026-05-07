@@ -156,4 +156,45 @@ public sealed class TextDiffAnalyzerTests
         Assert.Contains("4224", flattened);
         Assert.Contains("895", flattened);
     }
+
+    [Fact]
+    public void Analyze_NumberDigitVsWord_KeepsScoringAndDisplayEqual()
+    {
+        var result = TextDiffAnalyzer.Analyze("Chapter 2", "Chapter two");
+
+        Assert.Equal(0.0, result.Metrics.Wer);
+        Assert.Equal(0, result.Metrics.MissingRuns);
+        Assert.Equal(0, result.Metrics.ExtraRuns);
+        Assert.Equal(0, result.Diff.Stats.Insertions);
+        Assert.Equal(0, result.Diff.Stats.Deletions);
+        Assert.All(result.Diff.Ops, op => Assert.Equal("equal", op.Operation));
+    }
+
+    [Fact]
+    public void Analyze_MultiWordNumberVsDigit_KeepsScoringAndDisplayEqual()
+    {
+        var result = TextDiffAnalyzer.Analyze("Chapter 21", "Chapter twenty one");
+
+        Assert.Equal(0.0, result.Metrics.Wer);
+        Assert.Equal(0, result.Metrics.MissingRuns);
+        Assert.Equal(0, result.Metrics.ExtraRuns);
+        Assert.Equal(0, result.Diff.Stats.Insertions);
+        Assert.Equal(0, result.Diff.Stats.Deletions);
+        Assert.All(result.Diff.Ops, op => Assert.Equal("equal", op.Operation));
+    }
+
+    [Fact]
+    public void Analyze_NumberEquivalence_DoesNotHideNeighboringTextDifferences()
+    {
+        var result = TextDiffAnalyzer.Analyze("Chapter 2 ends", "Chapter two end");
+        var changedTokens = result.Diff.Ops
+            .Where(op => op.Operation != "equal")
+            .SelectMany(op => op.Tokens)
+            .ToArray();
+
+        Assert.DoesNotContain("2", changedTokens);
+        Assert.DoesNotContain("two", changedTokens);
+        Assert.Contains("ends", changedTokens);
+        Assert.Contains("end", changedTokens);
+    }
 }

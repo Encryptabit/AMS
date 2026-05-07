@@ -232,14 +232,17 @@ public sealed class TranscriptHydrationService : ITranscriptHydrationService
         end = Math.Min(end, book.Words.Length - 1);
         var tokens = new List<string>(Math.Max(0, end - start + 1));
         var phonemes = new List<string[]?>(Math.Max(0, end - start + 1));
-        var wordTokens = new List<string>(4);
 
         for (int i = start; i <= end; i++)
         {
             var word = book.Words[i];
-            var normalized = TextNormalizer.Normalize(word.Text, expandContractions: false, removeNumbers: false);
-            wordTokens.Clear();
-            TextNormalizer.TokenizeWords(normalized, wordTokens);
+            var normalized = TextNormalizer.Normalize(
+                word.Text,
+                new TextNormalizationOptions(
+                    ExpandContractions: false,
+                    RemoveNumbers: false,
+                    ConvertNumbersToWords: false));
+            var wordTokens = PronunciationHelper.ExtractPronunciationParts(normalized);
             if (wordTokens.Count == 0)
             {
                 continue;
@@ -281,7 +284,6 @@ public sealed class TranscriptHydrationService : ITranscriptHydrationService
 
         var tokens = new List<string>(Math.Max(0, e - s + 1));
         var phonemes = new List<string[]?>(Math.Max(0, e - s + 1));
-        var wordTokens = new List<string>(4);
 
         for (int i = s; i <= e; i++)
         {
@@ -291,9 +293,13 @@ public sealed class TranscriptHydrationService : ITranscriptHydrationService
                 continue;
             }
 
-            var normalized = TextNormalizer.Normalize(word, expandContractions: false, removeNumbers: false);
-            wordTokens.Clear();
-            TextNormalizer.TokenizeWords(normalized, wordTokens);
+            var normalized = TextNormalizer.Normalize(
+                word,
+                new TextNormalizationOptions(
+                    ExpandContractions: false,
+                    RemoveNumbers: false,
+                    ConvertNumbersToWords: false));
+            var wordTokens = PronunciationHelper.ExtractPronunciationParts(normalized);
             if (wordTokens.Count == 0)
             {
                 continue;
