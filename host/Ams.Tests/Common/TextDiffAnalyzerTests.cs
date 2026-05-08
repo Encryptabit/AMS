@@ -197,4 +197,68 @@ public sealed class TextDiffAnalyzerTests
         Assert.Contains("ends", changedTokens);
         Assert.Contains("end", changedTokens);
     }
+
+    [Fact]
+    public void Analyze_NextWordHeadBleed_KeepsPluralSBoundaryEqual()
+    {
+        var result = TextDiffAnalyzer.Analyze("fluid swirled", "fluids swirled");
+
+        Assert.Equal(0.0, result.Metrics.Wer);
+        Assert.Equal(0, result.Metrics.MissingRuns);
+        Assert.Equal(0, result.Metrics.ExtraRuns);
+        Assert.Equal(0, result.Diff.Stats.Insertions);
+        Assert.Equal(0, result.Diff.Stats.Deletions);
+        Assert.All(result.Diff.Ops, op => Assert.Equal("equal", op.Operation));
+    }
+
+    [Fact]
+    public void Analyze_PreviousWordTailBleed_KeepsLeadingLetterBoundaryEqual()
+    {
+        var result = TextDiffAnalyzer.Analyze("and Ward found", "and Dward found");
+
+        Assert.Equal(0.0, result.Metrics.Wer);
+        Assert.Equal(0, result.Metrics.MissingRuns);
+        Assert.Equal(0, result.Metrics.ExtraRuns);
+        Assert.Equal(0, result.Diff.Stats.Insertions);
+        Assert.Equal(0, result.Diff.Stats.Deletions);
+        Assert.All(result.Diff.Ops, op => Assert.Equal("equal", op.Operation));
+    }
+
+    [Theory]
+    [InlineData("Ward found", "Dward found", "dward")]
+    [InlineData("fluid swirled", "fluids twirled", "fluids")]
+    public void Analyze_BoundaryBleedGuard_DoesNotHideUnsupportedExtraLetters(
+        string reference,
+        string hypothesis,
+        string expectedChangedToken)
+    {
+        var result = TextDiffAnalyzer.Analyze(reference, hypothesis);
+        var changedTokens = result.Diff.Ops
+            .Where(op => op.Operation != "equal")
+            .SelectMany(op => op.Tokens)
+            .ToArray();
+
+        Assert.True(result.Metrics.Wer > 0);
+        Assert.Contains(expectedChangedToken, changedTokens);
+    }
+
+    [Fact]
+    public void Analyze_ExactPhonemeEquivalentDisplayTokens_SuppressesNameSpellingNoise()
+    {
+        var options = new TextDiffScoringOptions(
+            ReferenceTokens: new[] { "nudging", "haley" },
+            HypothesisTokens: new[] { "nudging", "hayley" },
+            ReferencePhonemeVariants: new string[]?[] { null, new[] { "HH EY1 L IY0" } },
+            HypothesisPhonemeVariants: new string[]?[] { null, new[] { "HH EY1 L IY0" } },
+            UseExactPhonemeEquivalence: true);
+
+        var result = TextDiffAnalyzer.Analyze("nudging Haley", "nudging Hayley", options);
+
+        Assert.Equal(0.0, result.Metrics.Wer);
+        Assert.Equal(0, result.Metrics.MissingRuns);
+        Assert.Equal(0, result.Metrics.ExtraRuns);
+        Assert.Equal(0, result.Diff.Stats.Insertions);
+        Assert.Equal(0, result.Diff.Stats.Deletions);
+        Assert.All(result.Diff.Ops, op => Assert.Equal("equal", op.Operation));
+    }
 }

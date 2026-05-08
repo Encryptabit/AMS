@@ -45,6 +45,11 @@ public static class TextDiffAnalyzer
         var scoringHypothesisPhonemes = CreateMutablePhonemeList(
             scoringHypothesisPayload.Phonemes,
             scoringHypothesisTokens.Count);
+        HarmonizeBoundaryShiftTokens(
+            scoringReferenceTokens,
+            scoringHypothesisTokens,
+            scoringReferencePhonemes,
+            scoringHypothesisPhonemes);
         HarmonizeCompoundBoundaryTokens(
             scoringReferenceTokens,
             scoringHypothesisTokens,
@@ -56,6 +61,14 @@ public static class TextDiffAnalyzer
         var displayReferenceTokens = Tokenize(displayReference);
         var displayHypothesisTokens = Tokenize(displayHypothesis);
         HarmonizePronunciationEquivalentDisplayTokens(displayReferenceTokens, displayHypothesisTokens);
+        HarmonizeBoundaryShiftTokens(displayReferenceTokens, displayHypothesisTokens);
+        HarmonizeExactPhonemeEquivalentDisplayTokens(
+            displayReferenceTokens,
+            displayHypothesisTokens,
+            scoringReferenceTokens,
+            scoringHypothesisTokens,
+            scoringReferencePhonemes,
+            scoringHypothesisPhonemes);
         HarmonizeCompoundBoundaryTokens(displayReferenceTokens, displayHypothesisTokens);
 
         var displayTokenDiff = BuildTokenDiff(displayReferenceTokens, displayHypothesisTokens);
@@ -260,6 +273,112 @@ public static class TextDiffAnalyzer
         var hypothesisParts = PronunciationHelper.ExtractPronunciationParts(hypothesisToken);
 
         return referenceParts.Count > 0 && referenceParts.SequenceEqual(hypothesisParts, StringComparer.Ordinal);
+    }
+
+    private static void HarmonizeBoundaryShiftTokens(
+        List<string> referenceTokens,
+        List<string> hypothesisTokens,
+        List<string[]?>? referencePhonemes = null,
+        List<string[]?>? hypothesisPhonemes = null)
+    {
+        if (referenceTokens.Count == 0 || referenceTokens.Count != hypothesisTokens.Count)
+        {
+            return;
+        }
+
+        for (var i = 0; i < referenceTokens.Count; i++)
+        {
+            var reference = referenceTokens[i];
+            var hypothesis = hypothesisTokens[i];
+            if (string.Equals(reference, hypothesis, StringComparison.Ordinal) ||
+                hypothesis.Length != reference.Length + 1)
+            {
+                continue;
+            }
+
+            if (HasShiftedPreviousTail(referenceTokens, hypothesisTokens, i, reference, hypothesis) ||
+                HasShiftedNextHead(referenceTokens, hypothesisTokens, i, reference, hypothesis))
+            {
+                hypothesisTokens[i] = reference;
+                if (hypothesisPhonemes is not null && referencePhonemes is not null &&
+                    i < hypothesisPhonemes.Count && i < referencePhonemes.Count)
+                {
+                    hypothesisPhonemes[i] = referencePhonemes[i];
+                }
+            }
+        }
+    }
+
+    private static bool HasShiftedPreviousTail(
+        IReadOnlyList<string> referenceTokens,
+        IReadOnlyList<string> hypothesisTokens,
+        int index,
+        string reference,
+        string hypothesis)
+    {
+        if (index <= 0 || !hypothesis.EndsWith(reference, StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        var shifted = hypothesis[0];
+        var previousReference = referenceTokens[index - 1];
+        var previousHypothesis = hypothesisTokens[index - 1];
+        return string.Equals(previousReference, previousHypothesis, StringComparison.Ordinal) &&
+            previousReference.Length > 0 &&
+            previousReference[^1] == shifted;
+    }
+
+    private static bool HasShiftedNextHead(
+        IReadOnlyList<string> referenceTokens,
+        IReadOnlyList<string> hypothesisTokens,
+        int index,
+        string reference,
+        string hypothesis)
+    {
+        if (index + 1 >= referenceTokens.Count || !hypothesis.StartsWith(reference, StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        var shifted = hypothesis[^1];
+        var nextReference = referenceTokens[index + 1];
+        var nextHypothesis = hypothesisTokens[index + 1];
+        return string.Equals(nextReference, nextHypothesis, StringComparison.Ordinal) &&
+            nextReference.Length > 0 &&
+            nextReference[0] == shifted;
+    }
+
+    private static void HarmonizeExactPhonemeEquivalentDisplayTokens(
+        List<string> displayReferenceTokens,
+        List<string> displayHypothesisTokens,
+        IReadOnlyList<string> scoringReferenceTokens,
+        IReadOnlyList<string> scoringHypothesisTokens,
+        IReadOnlyList<string[]?>? scoringReferencePhonemes,
+        IReadOnlyList<string[]?>? scoringHypothesisPhonemes)
+    {
+        if (scoringReferencePhonemes is null || scoringHypothesisPhonemes is null ||
+            displayReferenceTokens.Count != displayHypothesisTokens.Count ||
+            displayReferenceTokens.Count != scoringReferenceTokens.Count ||
+            displayHypothesisTokens.Count != scoringHypothesisTokens.Count)
+        {
+            return;
+        }
+
+        for (var i = 0; i < displayReferenceTokens.Count; i++)
+        {
+            if (string.Equals(displayReferenceTokens[i], displayHypothesisTokens[i], StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            if (HasExactPhonemeMatch(
+                    GetPhonemes(scoringReferencePhonemes, i),
+                    GetPhonemes(scoringHypothesisPhonemes, i)))
+            {
+                displayHypothesisTokens[i] = displayReferenceTokens[i];
+            }
+        }
     }
 
     private static List<string> Tokenize(string text)
