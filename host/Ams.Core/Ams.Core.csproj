@@ -8,7 +8,7 @@
         <AmsRepoRootDir>$(MSBuildProjectDirectory)/../..</AmsRepoRootDir>
         <AmsFfmpegSetupScript>$(AmsRepoRootDir)/scripts/setup_ffmpeg.py</AmsFfmpegSetupScript>
         <AmsFfmpegPrecheck Condition="'$(AmsFfmpegPrecheck)' == ''">true</AmsFfmpegPrecheck>
-        <AmsFfmpegAutoInstall Condition="'$(AmsFfmpegAutoInstall)' == ''">false</AmsFfmpegAutoInstall>
+        <AmsFfmpegAutoInstall Condition="'$(AmsFfmpegAutoInstall)' == ''">true</AmsFfmpegAutoInstall>
         <AmsFfmpegPrecheckFailBuild Condition="'$(AmsFfmpegPrecheckFailBuild)' == ''">false</AmsFfmpegPrecheckFailBuild>
     </PropertyGroup>
 
