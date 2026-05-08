@@ -80,6 +80,11 @@ def has_expected_ffmpeg_version(directory: Path, platform_key: str) -> bool:
     if not executable.is_file():
         return False
 
+    env = os.environ.copy()
+    if platform_key == "linux":
+        existing = env.get("LD_LIBRARY_PATH")
+        env["LD_LIBRARY_PATH"] = str(directory) if not existing else f"{directory}{os.pathsep}{existing}"
+
     try:
         result = subprocess.run(
             [str(executable), "-version"],
@@ -88,6 +93,7 @@ def has_expected_ffmpeg_version(directory: Path, platform_key: str) -> bool:
             text=True,
             timeout=10,
             check=False,
+            env=env,
         )
     except (OSError, subprocess.SubprocessError):
         return False
