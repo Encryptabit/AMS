@@ -132,7 +132,7 @@ public static class DspCommand
 
                 var chainOptionValue = context.ParseResult.GetValueForOption(chainOption);
                 var pluginPath = context.ParseResult.GetValueForOption(pluginOption);
-                var paramValues = context.ParseResult.GetValueForOption(paramOption);
+                var paramValues = context.ParseResult.GetValueForOption(paramOption) ?? Array.Empty<string>();
                 var presetPath = context.ParseResult.GetValueForOption(presetOption);
                 var paramFile = context.ParseResult.GetValueForOption(paramFileOption);
 
@@ -650,6 +650,11 @@ public static class DspCommand
 
             try
             {
+                if (string.IsNullOrWhiteSpace(plugin))
+                {
+                    throw new InvalidOperationException("Specify --plugin before listing parameters.");
+                }
+
                 var baseDir = Directory.GetCurrentDirectory();
                 var pluginPath = ResolvePath(plugin, baseDir);
 
@@ -2091,7 +2096,7 @@ public static class DspCommand
                 Directory.Delete(path, recursive: true);
             }
         }
-        catch (Exception ex)
+        catch (Exception)
         {
             Log.Debug("Failed to delete temporary directory {Path}", path);
         }
@@ -2106,7 +2111,7 @@ public static class DspCommand
                 File.Delete(path);
             }
         }
-        catch (Exception ex)
+        catch (Exception)
         {
             Log.Debug("Failed to delete temporary file {Path}", path);
         }

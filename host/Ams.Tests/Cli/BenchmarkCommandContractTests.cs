@@ -662,7 +662,7 @@ public sealed class BenchmarkCommandContractTests : IDisposable
 
         Assert.Equal(5, exitCode);
 
-        var stdout = console.Out.ToString();
+        var stdout = console.Out.ToString() ?? string.Empty;
         var reasonIndex = stdout.IndexOf("Compare compatibility reason:", StringComparison.OrdinalIgnoreCase);
         var scoringIndex = stdout.IndexOf("Metric verdict scoring skipped:", StringComparison.OrdinalIgnoreCase);
 
