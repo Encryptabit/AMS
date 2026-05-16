@@ -18,6 +18,8 @@ This document covers the physical contents of `host/Ams.Core` only. Host project
 
 Every current AMS Core file has one labelled home. The ledger assigns whole-file line ranges. If a future audit needs to split a large file by method or class, create a child slice under the owning feature slice instead of leaving it unlabeled.
 
+This catalogue defines the cleanup targets. The refactor northstar defines the philosophy. The slice alignment plans under `docs/slices/` define the specific changes needed to bring each target into alignment with that philosophy.
+
 ## Evidence Notes
 
 The refreshed Code2Obsidian run completed without enrichment:
