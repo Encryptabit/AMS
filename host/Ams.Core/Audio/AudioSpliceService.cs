@@ -193,9 +193,9 @@ public static class AudioSpliceService
             ? AudioProcessor.Resample(replacement, (ulong)original.SampleRate)
             : replacement;
 
-        // Step 2: Trim before and after segments from original
-        var before = AudioProcessor.Trim(original, TimeSpan.Zero, TimeSpan.FromSeconds(startSec));
-        var after = AudioProcessor.Trim(original, TimeSpan.FromSeconds(endSec));
+        // Step 2: Slice before and after segments from original
+        var before = SlicePrefix(original, startSec, "replace prefix");
+        var after = SliceSuffix(original, endSec, "replace suffix");
 
         // Step 3: Clamp crossfade for first join (before + replacement)
         double clampedCrossfade1 = ClampCrossfadeDuration(
@@ -286,8 +286,8 @@ public static class AudioSpliceService
             throw new ArgumentOutOfRangeException(nameof(endSec), "End time must be greater than start time.");
         var normalizedCurve = NormalizeCrossfadeCurve(curve);
 
-        var before = AudioProcessor.Trim(original, TimeSpan.Zero, TimeSpan.FromSeconds(startSec));
-        var after = AudioProcessor.Trim(original, TimeSpan.FromSeconds(endSec));
+        var before = SlicePrefix(original, startSec, "delete prefix");
+        var after = SliceSuffix(original, endSec, "delete suffix");
 
         // If either segment is empty/negligible, return the other
         if (before.Length == 0 && after.Length == 0)
@@ -336,8 +336,8 @@ public static class AudioSpliceService
             ? AudioProcessor.Resample(insertion, (ulong)original.SampleRate)
             : insertion;
 
-        var before = AudioProcessor.Trim(original, TimeSpan.Zero, TimeSpan.FromSeconds(insertPointSec));
-        var after = AudioProcessor.Trim(original, TimeSpan.FromSeconds(insertPointSec));
+        var before = SlicePrefix(original, insertPointSec, "insert prefix");
+        var after = SliceSuffix(original, insertPointSec, "insert suffix");
 
         // Crossfade before + insertion
         double clampedCrossfade1 = ClampCrossfadeDuration(
@@ -383,6 +383,34 @@ public static class AudioSpliceService
         if (a.Length == 0) return b;
         if (b.Length == 0) return a;
         return ConcatenateSegments(a, b);
+    }
+
+    private static AudioBuffer SlicePrefix(AudioBuffer buffer, double endSec, string context)
+    {
+        if (!double.IsFinite(endSec) || endSec < 0)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(endSec),
+                endSec,
+                $"Invalid audio slice end{FormatContext(context)}.");
+        }
+
+        var endSample = Math.Clamp((int)Math.Ceiling(endSec * buffer.SampleRate), 0, buffer.Length);
+        return buffer.Slice(0, endSample);
+    }
+
+    private static AudioBuffer SliceSuffix(AudioBuffer buffer, double startSec, string context)
+    {
+        if (!double.IsFinite(startSec) || startSec < 0)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(startSec),
+                startSec,
+                $"Invalid audio slice start{FormatContext(context)}.");
+        }
+
+        var startSample = Math.Clamp((int)Math.Floor(startSec * buffer.SampleRate), 0, buffer.Length);
+        return buffer.Slice(startSample, buffer.Length - startSample);
     }
 
     private static string FormatContext(string? context)

@@ -89,6 +89,8 @@ Runtime buffer identity and artifact lifecycle belong to FS01. Concrete audio op
 - Keep buffer mutation bounded behind narrow methods instead of pushing allocation-heavy immutable transitions into hot DSP paths.
 - Decide whether the empty FFmpeg resampler placeholder is dead code or near-term planned work.
 - Audit duplicate downmix, silence, and timeline projection rules across ASR, treatment, and prosody.
+- Replace FFmpeg trim calls with zero-copy `AudioBuffer` slices when the operation only needs a range from an already-loaded buffer.
+- Avoid duplicate audio materialization: prefer one decode per analysis workflow, one encode per durable artifact, and direct file streaming when an existing compatible WAV artifact already exists.
 
 ## Decisions
 
@@ -110,6 +112,33 @@ Workstation currently slices audio through explicit operation-local values:
 
 That supports keeping `AudioBufferDescriptor.Start` and `AudioBufferDescriptor.Duration` out of FS01. If a reusable audio range value is introduced, it should prove finite values and `end > start` in the operation that owns the range.
 
+### 2026-05-17 - Prefer Slices And Single Materialization For Audio Ranges
+
+When an operation already has an `AudioBuffer` and only needs a contiguous time range, it should use a backing-store slice instead of routing through FFmpeg `atrim`. FFmpeg trim remains appropriate when the operation is actually decoding from disk with a start/duration, applying filters, changing timing, resampling, or crossing an external process boundary.
+
+Audio operations should also avoid redundant decode/encode passes. A workflow should decode once and pass the decoded buffer through analysis steps when possible. If a workflow has already created a compatible WAV artifact, downstream consumers should reuse that artifact instead of encoding the same samples again. If an endpoint is serving a full existing WAV artifact without transformation, prefer file streaming over re-encoding a cached buffer.
+
+The current audit found likely slice replacements in:
+
+- audio splice before/after extraction for replace, delete, and insert;
+- treatment decorator, title, and content extraction;
+- workstation polish audition and context preview clips;
+- undo backup segment export;
+- polish verification segment extraction before ASR prep;
+- splice-boundary search-window extraction;
+- MFA corpus chunk construction when pre-sliced chunk audio is unavailable.
+
+The current audit found likely decode/encode materialization reductions in:
+
+- chunked ASR, where chunk WAV artifacts are encoded and the same slices are encoded again for ASR input;
+- benchmark metrics, where raw/treated audio is decoded for integrity and loudness, then QC decodes the same files again;
+- pickup ASR/MFA, where planned chunks are transcribed from buffer slices and later encoded again for MFA corpus input;
+- full chapter playback endpoints, where an existing WAV artifact can be streamed directly when no range or transformation is requested;
+- CRX export, where a sliced segment can be encoded directly to the destination file instead of first materializing a `MemoryStream`;
+- MFA workflow corpus setup, where full-audio decode can be lazy if reusable chunk-audio artifacts satisfy the corpus request.
+
+We are going to try to address the FS04-owned optimizations during this pass. MFA-specific leftovers that require a broader forced-alignment redesign should remain visible here and be completed during FS06.
+
 ## Code Sketches
 
 No code sketches recorded yet.
@@ -120,9 +149,11 @@ No code sketches recorded yet.
 - Where should decode options validate finite non-negative start/duration?
 - Is the empty FFmpeg resampler placeholder dead code or a near-term planned implementation?
 - Which downmix, silence, and timeline projection rules are duplicated across ASR, treatment, and prosody?
+- Which chunk audio artifacts are durable requirements, and which exist only because an ASR or MFA boundary currently requires WAV materialization?
 
 ## Cross-Slice Boundaries
 
 - FS01 owns runtime artifact identity and lazy load/cache lifecycle.
 - FS03 owns ASR engine/model selection and recognition flow.
+- FS06 owns the forced-alignment workflow shape, corpus reuse policy, and TextGrid aggregation. FS04 owns the low-level decode, encode, slice, and FFmpeg operations used by that workflow.
 - FS10 owns pause dynamics semantics; FS04 owns low-level audio operations used by pause workflows.

@@ -1,4 +1,5 @@
 using Ams.Core.Artifacts;
+using Ams.Core.Processors;
 
 namespace Ams.Workstation.Server.Services;
 
@@ -18,7 +19,7 @@ public class AudioExportService
     /// <summary>
     /// Export an audio segment to the CRX folder.
     /// Uses a clamped AudioBuffer slice for segment extraction,
-    /// then ToWavStream() on the segment buffer.
+    /// then encodes the segment buffer directly to the destination WAV.
     /// </summary>
     public ExportResult ExportSegment(double startSec, double endSec, int paddingMs = 0)
     {
@@ -56,9 +57,7 @@ public class AudioExportService
         var filename = $"{nextNumber:D3}.wav";
         var outputPath = Path.Combine(crxFolder, filename);
 
-        using var wavStream = segment.ToWavStream();
-        using var outputStream = File.Create(outputPath);
-        wavStream.CopyTo(outputStream);
+        AudioProcessor.EncodeWav(outputPath, segment);
 
         return new ExportResult(true, filename, nextNumber, outputPath);
     }

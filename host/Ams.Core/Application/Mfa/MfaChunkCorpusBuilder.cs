@@ -216,13 +216,11 @@ internal static class MfaChunkCorpusBuilder
 
                 var chunkStart = TimeSpan.FromSeconds(Math.Max(0d, chunk.StartSec));
                 var chunkEnd = TimeSpan.FromSeconds(Math.Max(chunk.StartSec, chunk.EndSec));
-                var slice = AudioProcessor.Trim(audioBuffer, chunkStart, chunkEnd);
-
-                if (slice.Length <= 0)
+                if (!audioBuffer.TrySliceClamped(chunkStart, chunkEnd, out var slice))
                 {
                     skippedNoAudio++;
                     Log.Debug(
-                        "Chunk {ChunkId} has no audio after FFmpeg trim " +
+                        "Chunk {ChunkId} has no audio after buffer slice " +
                         "(startSec={StartSec:F2}, endSec={EndSec:F2}); skipping",
                         chunk.ChunkId, chunk.StartSec, chunk.EndSec);
                     continue;
@@ -470,13 +468,11 @@ internal static class MfaChunkCorpusBuilder
 
                 var chunkStart = TimeSpan.FromSeconds(Math.Max(0d, chunk.StartSec));
                 var chunkEnd = TimeSpan.FromSeconds(Math.Max(chunk.StartSec, chunk.EndSec));
-                var slice = AudioProcessor.Trim(audioBuffer, chunkStart, chunkEnd);
-
-                if (slice.Length <= 0)
+                if (!audioBuffer.TrySliceClamped(chunkStart, chunkEnd, out var slice))
                 {
                     skippedRebuiltCount++;
                     Log.Warn(
-                        "Scoped rebuild: chunk {ChunkId} has no audio after FFmpeg trim; removing stale artifacts",
+                        "Scoped rebuild: chunk {ChunkId} has no audio after buffer slice; removing stale artifacts",
                         chunk.ChunkId);
                     DeleteStaleArtifacts(wavPath, labPath, chunk.ChunkId);
                     previousLabTokens = null;
