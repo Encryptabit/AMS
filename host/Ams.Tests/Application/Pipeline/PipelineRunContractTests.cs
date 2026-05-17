@@ -697,7 +697,7 @@ public sealed class PipelineRunContractTests : IDisposable
             var chapterDirectory = options.ChapterDirectory
                                    ?? new DirectoryInfo(Path.Combine(RootPath, options.ChapterId ?? "chapter-01"));
 
-            return Book.Chapters.CreateContext(
+            return Book.Chapters.CreateContext(ChapterOpenRequest.FromTrusted(
                 bookIndexFile,
                 options.AsrFile,
                 options.TranscriptFile,
@@ -705,7 +705,7 @@ public sealed class PipelineRunContractTests : IDisposable
                 options.AudioFile,
                 chapterDirectory,
                 options.ChapterId,
-                options.ReloadBookIndex);
+                options.ReloadBookIndex));
         }
 
         public void Dispose()

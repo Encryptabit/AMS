@@ -231,7 +231,7 @@ public sealed class PrepRunSession : IDisposable
             var (normalizedRequest, warnings) = NormalizePipelineRunRequest(request);
             var pipelineOptions = CreatePipelineRunOptions(chapterDisplayTitle, normalizedRequest) with
             {
-                Progress = new Progress<RunProgressUpdate>(AppendProgress)
+                Progress = new InlineRunProgress(AppendProgress)
             };
 
             LastPipelineRequest = normalizedRequest;
@@ -919,6 +919,21 @@ public sealed class PrepRunSession : IDisposable
     }
 
     private const string PipelineRunContractStageName = "pipeline";
+
+    private sealed class InlineRunProgress : IProgress<RunProgressUpdate>
+    {
+        private readonly Action<RunProgressUpdate> _handler;
+
+        public InlineRunProgress(Action<RunProgressUpdate> handler)
+        {
+            _handler = handler ?? throw new ArgumentNullException(nameof(handler));
+        }
+
+        public void Report(RunProgressUpdate value)
+        {
+            _handler(value);
+        }
+    }
 
     private sealed class RunScope : IDisposable
     {

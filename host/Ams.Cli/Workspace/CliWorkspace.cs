@@ -55,7 +55,7 @@ internal sealed class CliWorkspace : IWorkspace
                             ?? throw new InvalidOperationException(
                                 "Book index file could not be resolved for this workspace.");
 
-        return Book.Chapters.CreateContext(
+        return Book.Chapters.CreateContext(ChapterOpenRequest.FromTrusted(
             bookIndexFile,
             normalized.AsrFile,
             normalized.TranscriptFile,
@@ -63,7 +63,7 @@ internal sealed class CliWorkspace : IWorkspace
             normalized.AudioFile,
             normalized.ChapterDirectory,
             normalized.ChapterId,
-            normalized.ReloadBookIndex);
+            normalized.ReloadBookIndex));
     }
 
     private ChapterOpenOptions NormalizeOptions(ChapterOpenOptions options)

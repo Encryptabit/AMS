@@ -874,7 +874,7 @@ public sealed class BenchmarkRunServiceTests : IDisposable
             var chapterDirectory = options.ChapterDirectory ?? new DirectoryInfo(Path.Combine(RootPath, chapterId));
             var bookIndexFile = options.BookIndexFile ?? new FileInfo(Path.Combine(RootPath, "book-index.json"));
 
-            return Book.Chapters.CreateContext(
+            return Book.Chapters.CreateContext(ChapterOpenRequest.FromTrusted(
                 bookIndexFile,
                 options.AsrFile,
                 options.TranscriptFile,
@@ -882,7 +882,7 @@ public sealed class BenchmarkRunServiceTests : IDisposable
                 options.AudioFile,
                 chapterDirectory,
                 chapterId,
-                options.ReloadBookIndex);
+                options.ReloadBookIndex));
         }
 
         public void Dispose()

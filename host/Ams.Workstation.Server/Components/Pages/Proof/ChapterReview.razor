@@ -1197,19 +1197,11 @@
             return false;
         }
 
-        // Single-sentence path: when selection mode is inactive, treat the swiped sentence as a one-element batch.
-        // Fallback (mobile-action-bar) surfaces with no swipe origin still require active selection mode.
         if (!_isSelectionModeActive)
         {
-            if (sentenceId <= 0)
-            {
-                _lastSelectionGestureEvent = $"{eventName}-ignored-no-target";
-                LogSelectionModeDiagnostic(_lastSelectionGestureEvent, trigger, sentenceId, $"surface={sourceSurface};reason=no-sentence-target");
-                return false;
-            }
-
-            selectedSentenceIds = new HashSet<int> { sentenceId };
-            return true;
+            _lastSelectionGestureEvent = $"{eventName}-ignored-inactive-selection";
+            LogSelectionModeDiagnostic(_lastSelectionGestureEvent, trigger, sentenceId, $"surface={sourceSurface};reason=selection-mode-inactive");
+            return false;
         }
 
         if (selectedSentenceIds.Count == 0)

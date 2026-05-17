@@ -1,6 +1,7 @@
 using Ams.Core.Artifacts;
 using Ams.Core.Processors;
 using Ams.Core.Runtime.Book;
+using Ams.Core.Runtime.Common;
 using Ams.Core.Runtime.Interfaces;
 
 namespace Ams.Core.Runtime.Audio;
@@ -11,6 +12,7 @@ public sealed class AudioBufferManager : IAudioBufferManager
     private readonly IReadOnlyList<AudioBufferDescriptor> _descriptors;
     private readonly Dictionary<string, AudioBufferContext> _cache;
     private readonly Func<AudioBufferDescriptor, AudioBuffer?> _loader;
+    private readonly RuntimeCachePolicy _cachePolicy;
     private int _cursor;
 
     public AudioBufferManager(
@@ -19,11 +21,14 @@ public sealed class AudioBufferManager : IAudioBufferManager
     {
         _descriptors = descriptors ?? Array.Empty<AudioBufferDescriptor>();
         _loader = loader ?? DefaultLoader;
+        _cachePolicy = RuntimeLifetimePolicies.AudioBuffers;
         _cache = new Dictionary<string, AudioBufferContext>(StringComparer.OrdinalIgnoreCase);
         _cursor = 0;
     }
 
     public int Count => _descriptors.Count;
+
+    internal RuntimeCachePolicy CachePolicy => _cachePolicy;
 
     /// <summary>
     /// Gets the chapter's raw buffer context without changing the current cursor.
@@ -169,16 +174,18 @@ public sealed class AudioBufferManager : IAudioBufferManager
             context = new AudioBufferContext(descriptor, _loader);
             _cache[descriptor.BufferId] = context;
             Log.Debug(
-                "AudioBufferManager created buffer context {BufferId} (cache {CacheCount})",
+                "AudioBufferManager created buffer context {BufferId} (cache {CacheCount}, policy {Policy})",
                 descriptor.BufferId,
-                _cache.Count);
+                _cache.Count,
+                _cachePolicy.Name);
         }
         else
         {
             Log.Debug(
-                "AudioBufferManager reused buffer context {BufferId} (cache {CacheCount})",
+                "AudioBufferManager reused buffer context {BufferId} (cache {CacheCount}, policy {Policy})",
                 descriptor.BufferId,
-                _cache.Count);
+                _cache.Count,
+                _cachePolicy.Name);
         }
 
         return context;
@@ -223,11 +230,7 @@ public sealed class AudioBufferManager : IAudioBufferManager
 
         try
         {
-            return AudioProcessor.Decode(descriptor.Path, new AudioDecodeOptions
-            {
-                TargetSampleRate = descriptor.SampleRate,
-                TargetChannels = descriptor.Channels
-            });
+            return AudioProcessor.Decode(descriptor.Path);
         }
         catch (Exception ex)
         {

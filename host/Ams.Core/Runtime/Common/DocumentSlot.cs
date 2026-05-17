@@ -9,21 +9,18 @@ internal sealed class DocumentSlot<T>
     private readonly bool _writeThrough;
     private readonly Func<FileInfo?>? _backingFileAccessor;
     private readonly IDocumentSlotAdapter<T>? _adapter;
-    private bool _loaded;
-    private bool _dirty;
-    private T? _value;
+    private DocumentSlotState<T> _state = new NotLoaded<T>();
 
     public DocumentSlot(Func<T?> loader, Action<T> saver, DocumentSlotOptions<T>? options = null)
     {
         _loader = loader ?? throw new ArgumentNullException(nameof(loader));
         _saver = saver ?? throw new ArgumentNullException(nameof(saver));
 
-        if (options is not null)
-        {
-            _postLoadTransform = options.PostLoadTransform;
-            _backingFileAccessor = options.BackingFileAccessor;
-            _writeThrough = options.WriteThrough;
-        }
+        if (options is null) return;
+
+        _postLoadTransform = options.PostLoadTransform;
+        _backingFileAccessor = options.BackingFileAccessor;
+        _writeThrough = options.WriteThrough;
     }
 
     public DocumentSlot(IDocumentSlotAdapter<T> adapter, DocumentSlotOptions<T>? options = null)
@@ -35,82 +32,132 @@ internal sealed class DocumentSlot<T>
         _adapter = adapter;
     }
 
-    public bool IsDirty => _dirty;
+    public bool IsDirty => _state.IsDirty;
+
+    internal string StateName => _state.Name;
 
     public T? GetValue()
     {
-        if (!_loaded)
+        return _state switch
         {
-            var loaded = _loader();
-            if (_postLoadTransform is not null)
-            {
-                loaded = _postLoadTransform(loaded);
-            }
-
-            _value = loaded;
-            _loaded = true;
-        }
-
-        return _value;
+            LoadedClean<T> loaded => loaded.Value,
+            LoadedDirty<T> dirty => dirty.Value,
+            LoadedMissing<T> => null,
+            Invalidated<T> invalidated => LoadValue(markDirty: invalidated.PreserveDirty),
+            NotLoaded<T> => LoadValue(markDirty: false),
+            _ => throw new InvalidOperationException($"Unknown document slot state '{_state.GetType().Name}'.")
+        };
     }
 
     public void SetValue(T? value) => SetValue(value, markClean: false);
 
     public void SetValue(T? value, bool markClean)
     {
-        _value = value;
-        _loaded = true;
+        if (value is null)
+        {
+            _state = new LoadedMissing<T>();
+            return;
+        }
 
         if (markClean)
         {
-            _dirty = false;
+            _state = new LoadedClean<T>(value);
             return;
         }
 
-        if (_writeThrough && value is not null)
+        if (_writeThrough)
         {
             _saver(value);
-            _dirty = false;
+            _state = new LoadedClean<T>(value);
             return;
         }
 
-        _dirty = value is not null;
+        _state = new LoadedDirty<T>(value);
     }
 
     public void Invalidate(bool keepDirty = false)
     {
-        _loaded = false;
-        _value = null;
-        if (!keepDirty)
-        {
-            _dirty = false;
-        }
+        _state = new Invalidated<T>(keepDirty && _state.IsDirty);
     }
 
     public FileInfo? GetBackingFile()
     {
-        if (_backingFileAccessor is not null)
-        {
-            return _backingFileAccessor();
-        }
-
-        return _adapter?.GetBackingFile();
+        return _backingFileAccessor is not null ? _backingFileAccessor() : _adapter?.GetBackingFile();
     }
 
     public void Save()
     {
-        if (!_dirty)
+        if (!_state.IsDirty)
         {
             return;
         }
 
-        if (_value is null)
+        if (_state is not LoadedDirty<T> dirty)
         {
-            _dirty = false;
+            _state = new NotLoaded<T>();
             return;
         }
 
-        _saver(_value);
-        _dirty = false;
+        _saver(dirty.Value);
+        _state = new LoadedClean<T>(dirty.Value);
     }
+
+    private T? LoadValue(bool markDirty)
+    {
+        var loaded = _loader();
+        if (_postLoadTransform is not null)
+        {
+            loaded = _postLoadTransform(loaded);
+        }
+
+        _state = loaded is null
+            ? new LoadedMissing<T>()
+            : markDirty
+                ? new LoadedDirty<T>(loaded)
+                : new LoadedClean<T>(loaded);
+
+        return loaded;
+    }
+}
+
+internal abstract record DocumentSlotState<T>
+    where T : class
+{
+    public abstract string Name { get; }
+    public abstract bool IsDirty { get; }
+}
+
+internal sealed record NotLoaded<T> : DocumentSlotState<T>
+    where T : class
+{
+    public override string Name => "not-loaded";
+    public override bool IsDirty => false;
+}
+
+internal sealed record LoadedMissing<T> : DocumentSlotState<T>
+    where T : class
+{
+    public override string Name => "loaded-missing";
+    public override bool IsDirty => false;
+}
+
+internal sealed record LoadedClean<T>(T Value) : DocumentSlotState<T>
+    where T : class
+{
+    public override string Name => "loaded-clean";
+    public override bool IsDirty => false;
+}
+
+internal sealed record LoadedDirty<T>(T Value) : DocumentSlotState<T>
+    where T : class
+{
+    public override string Name => "loaded-dirty";
+    public override bool IsDirty => true;
+}
+
+internal sealed record Invalidated<T>(bool PreserveDirty) : DocumentSlotState<T>
+    where T : class
+{
+    public override string Name => PreserveDirty ? "invalidated-dirty" : "invalidated";
+    public override bool IsDirty => PreserveDirty;
 }

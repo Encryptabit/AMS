@@ -1,10 +1,73 @@
 # FS01: Runtime Workspace And Artifact Lifecycle
 
-Last updated: 2026-05-16
+Last updated: 2026-05-17
 
 Reader: an engineer refactoring AMS Core workspace, chapter, artifact, document slot, or runtime cache behavior.
 
 Post-read action: preserve host/Core boundaries while making runtime artifact lifecycle states explicit and auditable.
+
+## Built-In .NET Guard Inventory
+
+AMS Core targets `net10.0`. Before writing a throwing contract, invariant, disposal, or cancellation check, check this inventory first. These are the public .NET `ThrowIf*` methods found in the .NET 10 reference surface.
+
+Do not add custom `Guard`, `*Guard`, or `ThrowIf` helper classes/functions for ordinary constructor or method contracts or state invariants. The invariant should be visible where it is enforced. Use the built-in guard that directly matches the invariant. If no built-in guard matches, write an explicit local `if` and throw the standard exception at the boundary that owns the contract. Use validators, parsers, or result shapes for untrusted input and expected domain rejection; do not turn normal input errors into guard exceptions.
+
+### Guards Versus Validators
+
+Guards are for programmer errors, trusted-state corruption, impossible object states, and lifecycle misuse. Validators are for user choices, host configuration, CLI arguments, Workstation selections, external payloads, and contextual business policy that can be rejected during normal operation. A guard may throw; a validator should usually return a reportable result, issue list, or typed rejection.
+
+In the current AMS app, the user-selected workspace path is an input boundary. Once a workspace has been accepted, chapter-open requests built from discovered workspace state are trusted runtime requests. Missing optional artifacts are ordinary absence, not request failure.
+
+### Argument Guards
+
+Use these for caller contract violations on method and constructor arguments. The signatures below include the `paramName` parameter so the overload is explicit. In normal AMS code, omit `paramName` and let the .NET `CallerArgumentExpression` feature capture the argument name. Pass `paramName` only when validating a transformed/local value but reporting the original public parameter.
+
+| Invariant | Built-in guard |
+|---|---|
+| Reference argument must not be null | `ArgumentNullException.ThrowIfNull(argument, paramName = null)` |
+| Pointer argument must not be null | `ArgumentNullException.ThrowIfNull(argument, paramName = null)` pointer overload |
+| String argument must not be null or empty | `ArgumentException.ThrowIfNullOrEmpty(argument, paramName = null)` |
+| String argument must not be null, empty, or whitespace | `ArgumentException.ThrowIfNullOrWhiteSpace(argument, paramName = null)` |
+| Comparable argument must not equal a value | `ArgumentOutOfRangeException.ThrowIfEqual(value, other, paramName = null)` |
+| Comparable argument must equal a value | `ArgumentOutOfRangeException.ThrowIfNotEqual(value, other, paramName = null)` |
+| Comparable argument must be less than or equal to a maximum | `ArgumentOutOfRangeException.ThrowIfGreaterThan(value, other, paramName = null)` |
+| Comparable argument must be less than a maximum | `ArgumentOutOfRangeException.ThrowIfGreaterThanOrEqual(value, other, paramName = null)` |
+| Comparable argument must be greater than or equal to a minimum | `ArgumentOutOfRangeException.ThrowIfLessThan(value, other, paramName = null)` |
+| Comparable argument must be greater than a minimum | `ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(value, other, paramName = null)` |
+| Numeric argument must be non-negative | `ArgumentOutOfRangeException.ThrowIfNegative(value, paramName = null)` |
+| Numeric argument must be positive | `ArgumentOutOfRangeException.ThrowIfNegativeOrZero(value, paramName = null)` |
+| Numeric argument must be non-zero | `ArgumentOutOfRangeException.ThrowIfZero(value, paramName = null)` |
+
+### State And Lifecycle Guards
+
+Use these when the object or operation state owns the failure, not a caller argument range.
+
+| Invariant | Built-in guard |
+|---|---|
+| Instance must not be disposed | `ObjectDisposedException.ThrowIf(condition, instance)` |
+| Type-owned resource must not be disposed | `ObjectDisposedException.ThrowIf(condition, type)` |
+| Operation must stop when cancellation is requested | `cancellationToken.ThrowIfCancellationRequested()` |
+
+### Specialized BCL Guards
+
+These are built into specific .NET APIs. Use them only when working directly with those API types.
+
+| API invariant | Built-in guard |
+|---|---|
+| ASN.1 reader must have consumed all remaining data | `AsnReader.ThrowIfNotEmpty()` |
+| Server-sent-event parser must be enumerated only once | `SseParser<T>.ThrowIfNotFirstEnumeration()` |
+
+### When No Built-In Guard Exists
+
+Some AMS invariants are real but have no matching .NET `ThrowIf*` helper. Keep those checks inline and explicit:
+
+- invalid file names or path separators;
+- non-finite numeric values such as `NaN` or infinity;
+- cross-field rules such as `end > start`;
+- collection-specific rules beyond null, empty, and count checks;
+- domain membership rules such as known artifact kind, known module id, or valid chapter mapping.
+
+Do not hide those checks behind a custom guard abstraction. The developer reading the function should see every invariant the function owns.
 
 ## Scope
 
@@ -22,7 +85,7 @@ It does not own audio decode/resample policy, DSP treatment, or FFmpeg implement
 
 ## Specific Changes Needed
 
-- Replace loose chapter-opening option bags with a validated Core request shape.
+- Replace loose chapter-opening option bags with a trusted Core request shape built after workspace validation.
 - Move reusable artifact path construction into Core-owned artifact address values.
 - Audit CLI and Workstation path-resolution one-offs and classify each as host policy or Core invariant.
 - Keep hosts responsible for metadata and user choices, not loaded Core documents.
@@ -141,7 +204,7 @@ public ChapterContextHandle CreateContext(
     bool reloadBookIndex = false)
 ```
 
-Agreed direction: replace the option bag with a validated Core request shape after the host path-resolution audit and nullable policy are complete. The request should make required fields obvious and should reserve nullable values for real, named absence.
+Agreed direction: replace the option bag with a trusted Core request shape after the host path-resolution audit and nullable policy are complete. User-facing validation belongs at workspace selection/opening; the chapter request should make required fields obvious and should reserve nullable values for real, named absence.
 
 ### 4. Artifact Address Model
 
@@ -266,6 +329,47 @@ Agreed direction: remove decode, resample, and clip policy from FS01 descriptor 
 
 ## Decisions
 
+### 2026-05-16 - Host Path-Resolution Audit Classification
+
+CLI and Workstation keep host policy:
+
+- selecting the workspace root;
+- choosing the default book-index file when the user does not provide one;
+- mapping a Workstation display title to a WAV stem;
+- choosing a default chapter directory from the active workspace and selected chapter;
+- accepting explicit user-provided audio, ASR, transcript, and hydrate files.
+
+Core owns runtime invariants:
+
+- validating that a chapter-open request has a real book-index file, chapter id, and chapter directory;
+- inferring the chapter id from explicit audio/ASR file names when the host did not provide one;
+- resolving the chapter root from explicit chapter directory, explicit artifact files, or book-index directory;
+- constructing canonical chapter artifact addresses such as `{chapterId}.align.tx.json` and `{chapterId}.treated.wav`;
+- preserving an explicit raw audio file as the raw buffer address while deriving Core-owned sibling artifact addresses from the chapter directory and chapter id.
+
+### 2026-05-16 - FS01 Nullable Policy
+
+Current retained nullables have named lifecycle meanings:
+
+- `ChapterOpenOptions` remains a host input shape where null means "host/Core should apply defaults or no explicit override was selected."
+- `ChapterOpenRequest` permits nullable artifact file overrides only for optional eager-load inputs; its book index, chapter id, and chapter directory are required.
+- `DocumentSlot<T>` permits a loaded-null value only as `loaded-missing`, meaning the backing optional document was checked and no artifact exists.
+- `BookStartWord` and `BookEndWord` remain nullable because a chapter may not map to a known book section.
+- host current-chapter handles remain nullable because no current chapter may be selected.
+
+Unearned audio descriptor nullables were removed from the FS01 runtime shape. Decode, resample, trim, and clip policy remain FS04-owned operation data instead of fields on every runtime buffer descriptor.
+
+### 2026-05-16 - Current Cache And Lifetime Defaults Are Named
+
+The first pass keeps current runtime retention behavior but names it:
+
+- book contexts: retain all, save and release resources when explicitly deallocated;
+- chapter contexts: retain known chapters by default, save and release audio resources on eviction/deallocation;
+- audio buffers: retain loaded buffer contexts by default, release buffer resources on deallocation;
+- document slots: keep file-backed documents loaded after read and save dirty values when the owning context saves.
+
+TTL remains intentionally unset in this pass. LRU remains limited to the existing chapter-context eviction path until a later resource-ownership pass justifies broader eviction.
+
 ### 2026-05-16 - Hosts Provide Metadata; Core Owns Artifact Addresses
 
 CLI and Workstation should not load files and pass already-loaded documents into Core as the normal path. Hosts should provide workspace metadata, selected chapter identity, explicit user overrides, and host-specific roots.
@@ -346,11 +450,22 @@ public sealed record ChapterArtifactAddress
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(chapterRoot);
         ArgumentException.ThrowIfNullOrWhiteSpace(chapterId);
-        ArtifactGuard.ThrowIfInvalidSuffix(suffix, nameof(suffix));
+        ArgumentException.ThrowIfNullOrWhiteSpace(suffix);
+
+        var normalizedSuffix = suffix.Trim().TrimStart('.');
+        ArgumentOutOfRangeException.ThrowIfEqual(normalizedSuffix.Length, 0, nameof(suffix));
+        if (normalizedSuffix.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0
+            || normalizedSuffix.Contains(Path.DirectorySeparatorChar)
+            || normalizedSuffix.Contains(Path.AltDirectorySeparatorChar))
+        {
+            throw new ArgumentException(
+                "Artifact suffix cannot contain path separators or invalid file name characters.",
+                nameof(suffix));
+        }
 
         ChapterRoot = Path.GetFullPath(chapterRoot);
         ChapterId = chapterId;
-        Suffix = suffix;
+        Suffix = normalizedSuffix;
     }
 
     public string ChapterRoot { get; }
