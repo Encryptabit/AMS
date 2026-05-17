@@ -6,6 +6,8 @@ Reader: an engineer refactoring AMS Core workspace, chapter, artifact, document 
 
 Post-read action: preserve host/Core boundaries while making runtime artifact lifecycle states explicit and auditable.
 
+Status: complete for the current cleanup pass as of 2026-05-17. Remaining notes in this file are future audit context unless they are explicitly reopened.
+
 ## Built-In .NET Guard Inventory
 
 AMS Core targets `net10.0`. Before writing a throwing contract, invariant, disposal, or cancellation check, check this inventory first. These are the public .NET `ThrowIf*` methods found in the .NET 10 reference surface.

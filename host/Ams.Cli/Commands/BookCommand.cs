@@ -2,7 +2,6 @@ using System.CommandLine;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
-using Ams.Core.Processors.DocumentProcessor;
 using Ams.Cli.Utilities;
 using Ams.Core.Runtime.Book;
 
@@ -102,7 +101,7 @@ public static class BookCommand
 
         var provider = new MfaPronunciationProvider(g2pModel: g2pModel);
 
-        var enriched = await DocumentProcessor.PopulateMissingPhonemesAsync(index, provider, cancellationToken)
+        var enriched = await BookPhonemePopulator.PopulateMissingAsync(index, provider, cancellationToken)
             .ConfigureAwait(false);
 
         static bool HasPhonemes(BookWord w) => w.Phonemes is { Length: > 0 };

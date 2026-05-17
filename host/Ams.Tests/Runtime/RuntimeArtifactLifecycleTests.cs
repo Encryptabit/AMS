@@ -24,6 +24,24 @@ public sealed class RuntimeArtifactLifecycleTests : IDisposable
     }
 
     [Fact]
+    public void FileArtifact_ComputesSha256HashOnceOnFirstAccess()
+    {
+        var root = CreateTempDirectory();
+        var path = Path.Combine(root, "source.txt");
+        File.WriteAllText(path, "first");
+
+        var artifact = FileArtifact.FromPath(path);
+
+        var originalHash = artifact.Sha256Hash;
+        File.WriteAllText(path, "second");
+
+        Assert.True(artifact.Exists);
+        Assert.Equal(6, artifact.Length);
+        Assert.Equal(originalHash, artifact.Sha256Hash);
+        Assert.NotEqual(originalHash, FileArtifact.FromPath(path).Sha256Hash);
+    }
+
+    [Fact]
     public void ChapterOpenRequest_PreservesExplicitRawAudioAndBuildsCanonicalDerivedBuffers()
     {
         var root = CreateTempDirectory();

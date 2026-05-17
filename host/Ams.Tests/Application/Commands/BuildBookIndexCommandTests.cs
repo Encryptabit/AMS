@@ -1,7 +1,7 @@
 using Ams.Core.Application.Commands;
 using Ams.Core.Application.Pipeline;
 using Ams.Core.Application.Runs;
-using Ams.Core.Processors.DocumentProcessor;
+using Ams.Core.Runtime.Documents;
 using Ams.Core.Runtime.Book;
 using Ams.Core.Services.Documents;
 using Ams.Core.Services.Interfaces;
@@ -223,8 +223,8 @@ public class BuildBookIndexCommandTests
 
     private static async Task<BookIndex> BuildIndexAsync(string sourceFile)
     {
-        var parseResult = await DocumentProcessor.ParseBookAsync(sourceFile);
-        return await DocumentProcessor.BuildBookIndexAsync(parseResult, sourceFile);
+        var parseResult = await new BookParser().ParseAsync(sourceFile);
+        return await new BookIndexer().CreateIndexAsync(parseResult, sourceFile);
     }
 
     private static async Task<FileInfo> WriteBookAsync(string root, string fileName, string content)

@@ -6,6 +6,8 @@ Reader: an engineer changing manuscript parsing, book indexing, cache behavior, 
 
 Post-read action: record specific FS02 alignment work here before changing parser/indexer contracts, cache rules, pronunciation behavior, or book metadata shape.
 
+Status: complete for the current cleanup pass as of 2026-05-17. Remaining notes in this file are future audit context unless they are explicitly reopened.
+
 ## Built-In .NET Guard Inventory
 
 AMS Core targets `net10.0`. Before writing a throwing contract, invariant, disposal, or cancellation check, check this inventory first. These are the public .NET `ThrowIf*` methods found in the .NET 10 reference surface.
@@ -82,11 +84,19 @@ FS02 owns manuscript parsing, index construction, cached book metadata, pronunci
 
 ## Specific Changes Needed
 
-No slice-specific changes recorded yet.
+- First pass: make the book-index cache boundary explicit. New book-index artifacts should carry a schema version, and cache reads should reject stale/corrupt/incompatible index shapes as normal validation misses rather than letting malformed cached metadata flow into runtime code.
+- Keep indexer option invariants visible at the indexing boundary. `AverageWpm` must be finite and positive; invalid values are caller/configuration validation failures, not hidden guard helper logic.
+- Remove the static `DocumentProcessor` compatibility facade and route callers directly to runtime book services (`BookParser`, `BookIndexer`, `BookCache`, `BookPhonemePopulator`) where the real behavior lives.
+- Keep cache artifact pathing, JSON file access, source-file metadata checks, and source-file hashing in the runtime artifact layer. `BookCache` should own cache policy and compatibility decisions, not filesystem layout, metadata probing, or hashing implementations.
+- Preserve manuscript text in `BookWord.Text`. Analysis-only repairs, such as forced hyphen line-break joining for pronunciation lookup, must not rewrite canonical word text.
 
 ## Decisions
 
-No slice-specific decisions recorded yet.
+- Cached `book-index.json` entries are external artifacts. Compatibility failures should return a cache miss and remove the stale cache file; they should not be treated as internal runtime corruption.
+- Current runtime/workspace `book-index.json` loading remains permissive for existing workspace artifacts. FS02 cache compatibility is the first compatibility boundary; broader workspace artifact migration can be handled in a later slice if needed.
+- Do not keep forwarding/static book-ingestion APIs around for compatibility when the call sites are cheap to update. FS02 should reduce indirection rather than preserve misleading abstractions.
+- File hashing is shared artifact behavior. Book indexing and cache validation should read the lazy `Sha256Hash` property from a `FileArtifact<TAddress>` instead of each carrying local SHA256 code.
+- `BookWord.Text` is the canonical manuscript surface. The indexer may build a separate analysis surface for pronunciation/proper-noun heuristics, but it must store the manuscript span unchanged.
 
 ## Code Sketches
 
@@ -97,3 +107,4 @@ No code sketches recorded yet.
 - Which book-index invariants should move into constructors or factories?
 - Which parser/indexer failure shapes are user validation versus internal corruption?
 - Which cached book artifacts need compatibility/version handling before refactor?
+- Should workspace `book-index.json` loading eventually report compatibility diagnostics through a validator/result shape before opening a book context?

@@ -2,7 +2,7 @@ using Ams.Core.Runtime.Book;
 
 namespace Ams.Core.Runtime.Artifacts;
 
-public sealed record ChapterArtifactAddress
+public sealed record ChapterArtifactAddress : IFileArtifactAddress
 {
     public ChapterArtifactAddress(string chapterRoot, string chapterId, string suffix)
     {
@@ -177,7 +177,7 @@ public sealed record ChapterArtifactAddress
     }
 }
 
-public sealed record BookArtifactAddress
+public sealed record BookArtifactAddress : IFileArtifactAddress
 {
     public BookArtifactAddress(string bookRoot, string fileName)
     {
@@ -203,6 +203,53 @@ public sealed record BookArtifactAddress
     public FileInfo ToFile() => new(Path.Combine(BookRoot, FileName));
 
     public string FullPath => ToFile().FullName;
+
+    public override string ToString() => FullPath;
+}
+
+public sealed record BookCacheArtifactAddress : IFileArtifactAddress
+{
+    public BookCacheArtifactAddress(string cacheRoot, string fileName)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(cacheRoot);
+        ArgumentException.ThrowIfNullOrWhiteSpace(fileName);
+
+        if (Path.IsPathRooted(fileName)
+            || fileName.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0
+            || fileName.Contains(Path.DirectorySeparatorChar)
+            || fileName.Contains(Path.AltDirectorySeparatorChar))
+        {
+            throw new ArgumentException(
+                "Cache artifact file name cannot contain path separators or invalid file name characters.",
+                nameof(fileName));
+        }
+
+        CacheRoot = Path.GetFullPath(cacheRoot);
+        FileName = fileName;
+    }
+
+    public string CacheRoot { get; }
+    public string FileName { get; }
+
+    public FileInfo ToFile() => new(Path.Combine(CacheRoot, FileName));
+
+    public string FullPath => ToFile().FullName;
+
+    public override string ToString() => FullPath;
+}
+
+public sealed record SourceArtifactAddress : IFileArtifactAddress
+{
+    public SourceArtifactAddress(string path)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(path);
+
+        FullPath = Path.GetFullPath(path);
+    }
+
+    public string FullPath { get; }
+
+    public FileInfo ToFile() => new(FullPath);
 
     public override string ToString() => FullPath;
 }

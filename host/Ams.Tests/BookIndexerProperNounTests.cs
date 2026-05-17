@@ -1,4 +1,4 @@
-using Ams.Core.Processors.DocumentProcessor;
+using Ams.Core.Runtime.Documents;
 using Ams.Core.Runtime.Book;
 
 namespace Ams.Tests;
@@ -445,8 +445,8 @@ public class BookIndexerProperNounTests
 
     private static async Task<BookIndex> BuildIndex(string sourceFile)
     {
-        var parsed = await DocumentProcessor.ParseBookAsync(sourceFile);
-        return await DocumentProcessor.BuildBookIndexAsync(parsed, sourceFile);
+        var parsed = await new BookParser().ParseAsync(sourceFile);
+        return await new BookIndexer().CreateIndexAsync(parsed, sourceFile);
     }
 
     private static SectionRange GetSectionWithTitle(BookIndex index, string titleSubstring)

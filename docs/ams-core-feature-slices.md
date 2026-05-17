@@ -44,23 +44,23 @@ Historical `.planning` findings are not automatically current. Several previousl
 
 ## Slice Index
 
-| Slice | Home | Responsibility | Current files | Current lines |
-| --- | --- | --- | ---: | ---: |
-| FS00 | Build and project surface | Project build rules, assembly metadata, global compilation context | 4 | 178 |
-| FS01 | Runtime workspace and artifact lifecycle | Workspace abstraction, book/chapter/audio context lifecycles, artifact path resolution, lazy document slots | 20 | 2,613 |
-| FS02 | Book ingestion, indexing, and pronunciation | Manuscript parsing, book indexing, cache, pronunciation lookup, proper noun prompting | 19 | 4,243 |
-| FS03 | ASR transcription | ASR engine selection, Whisper.NET processing, ASR service contracts, transcript response models | 8 | 2,481 |
-| FS04 | Audio DSP, QC, and FFmpeg integration | Audio buffers through treatment, splicing, QC, silence detection, FFmpeg wrappers, filter specs | 25 | 8,704 |
-| FS05 | Alignment, timing, and artifact contracts | Anchor selection, transcript alignment, hydration, MFA timing merge models, timing DTOs | 34 | 4,880 |
-| FS06 | MFA forced alignment | MFA corpus construction, G2P/pronunciation support, process invocation, TextGrid aggregation | 12 | 3,750 |
-| FS07 | Use-case commands and pipeline entry points | Command wrappers, pipeline orchestration, run states, module IDs, progress/failure contracts | 20 | 3,217 |
-| FS08 | Benchmark and determinism | Benchmark run/compare contracts, deterministic gate, metrics, manifests, artifact store | 12 | 5,937 |
-| FS09 | Validation and reporting | Validation reports, script validation, hydrated/text diff scoring | 6 | 1,961 |
-| FS10 | Prosody and pause dynamics | Pause maps, pause policies, dynamics/compression math, timeline application | 9 | 2,744 |
-| FS11 | Common infrastructure | Logging, path resolution, text normalization, natural sorting, edit distance helpers | 7 | 1,196 |
-| FS12 | Embedded resources and model assets | Embedded word-frequency resource and bundled FFmpeg/Tesseract/Silero assets | 4 | 122,939 |
+| Slice | Status | Home | Responsibility | Current files | Current lines |
+| --- | --- | --- | --- | ---: | ---: |
+| FS00 | Planned | Build and project surface | Project build rules, assembly metadata, global compilation context | 4 | 178 |
+| FS01 | Complete for current cleanup pass | Runtime workspace and artifact lifecycle | Workspace abstraction, book/chapter/audio context lifecycles, artifact path resolution, lazy document slots | 23 | 3,058 |
+| FS02 | Complete for current cleanup pass | Book ingestion, indexing, and pronunciation | Manuscript parsing, book indexing, cache, pronunciation lookup, proper noun prompting | 17 | 4,365 |
+| FS03 | Planned | ASR transcription | ASR engine selection, Whisper.NET processing, ASR service contracts, transcript response models | 8 | 2,481 |
+| FS04 | Planned | Audio DSP, QC, and FFmpeg integration | Audio buffers through treatment, splicing, QC, silence detection, FFmpeg wrappers, filter specs | 25 | 8,704 |
+| FS05 | Planned | Alignment, timing, and artifact contracts | Anchor selection, transcript alignment, hydration, MFA timing merge models, timing DTOs | 34 | 4,880 |
+| FS06 | Planned | MFA forced alignment | MFA corpus construction, G2P/pronunciation support, process invocation, TextGrid aggregation | 12 | 3,750 |
+| FS07 | Planned | Use-case commands and pipeline entry points | Command wrappers, pipeline orchestration, run states, module IDs, progress/failure contracts | 20 | 3,217 |
+| FS08 | Planned | Benchmark and determinism | Benchmark run/compare contracts, deterministic gate, metrics, manifests, artifact store | 12 | 5,937 |
+| FS09 | Planned | Validation and reporting | Validation reports, script validation, hydrated/text diff scoring | 6 | 1,961 |
+| FS10 | Planned | Prosody and pause dynamics | Pause maps, pause policies, dynamics/compression math, timeline application | 9 | 2,744 |
+| FS11 | Planned | Common infrastructure | Logging, path resolution, text normalization, natural sorting, edit distance helpers | 7 | 1,196 |
+| FS12 | Planned | Embedded resources and model assets | Embedded word-frequency resource and bundled FFmpeg/Tesseract/Silero assets | 4 | 122,939 |
 
-Total current AMS Core coverage: 180 files, 164,843 lines.
+Total current AMS Core coverage: 183 files, 165,634 lines.
 
 ## Slice Responsibilities
 
@@ -108,7 +108,7 @@ Audit focus:
 
 - Keep book-index schema compatibility stable.
 - Keep parser/indexer responsibilities separate from chapter runtime state.
-- Treat `DocumentProcessor` as a compatibility facade over the newer runtime book services.
+- Keep callers routed directly to the runtime book services (`BookParser`, `BookIndexer`, `BookCache`, `BookPhonemePopulator`) instead of reintroducing a `DocumentProcessor` forwarding facade.
 
 ### FS03: ASR Transcription
 
@@ -421,9 +421,6 @@ Each row assigns the entire current file to one feature slice. `Lines 1-N` means
 | `Processors/AudioProcessor.Analysis.cs` | 1-586 | FS04 Audio DSP, QC, and FFmpeg integration |
 | `Processors/AudioProcessor.cs` | 1-274 | FS04 Audio DSP, QC, and FFmpeg integration |
 | `Processors/Diffing/TextDiffAnalyzer.cs` | 1-967 | FS09 Validation and reporting |
-| `Processors/DocumentProcessor/DocumentProcessor.Cache.cs` | 1-26 | FS02 Book ingestion, indexing, and pronunciation |
-| `Processors/DocumentProcessor/DocumentProcessor.Indexing.cs` | 1-47 | FS02 Book ingestion, indexing, and pronunciation |
-| `Processors/DocumentProcessor/DocumentProcessor.Phonemes.cs` | 1-13 | FS02 Book ingestion, indexing, and pronunciation |
 | `Prosody/PauseAdjustmentsDocument.cs` | 1-158 | FS10 Prosody and pause dynamics |
 | `Prosody/PauseAnalysisReport.cs` | 1-47 | FS10 Prosody and pause dynamics |
 | `Prosody/PauseCompressionMath.cs` | 1-245 | FS10 Prosody and pause dynamics |
@@ -434,6 +431,9 @@ Each row assigns the entire current file to one feature slice. `Lines 1-N` means
 | `Prosody/PausePolicyStorage.cs` | 1-59 | FS10 Prosody and pause dynamics |
 | `Prosody/PauseTimelineApplier.cs` | 1-271 | FS10 Prosody and pause dynamics |
 | `Resources/english-frequency-82k.txt` | 1-83973 | FS12 Embedded resources and model assets |
+| `Runtime/Artifacts/ArtifactAddresses.cs` | 1-255 | FS01 Runtime workspace and artifact lifecycle |
+| `Runtime/Artifacts/BookCacheArtifactResolver.cs` | 1-83 | FS01 Runtime workspace and artifact lifecycle |
+| `Runtime/Artifacts/FileArtifact.cs` | 1-107 | FS01 Runtime workspace and artifact lifecycle |
 | `Runtime/Artifacts/FileArtifactResolver.cs` | 1-285 | FS01 Runtime workspace and artifact lifecycle |
 | `Runtime/Artifacts/IArtifactResolver.cs` | 1-62 | FS01 Runtime workspace and artifact lifecycle |
 | `Runtime/Audio/AppPlaybackAlertSoundService.cs` | 1-253 | FS01 Runtime workspace and artifact lifecycle |
@@ -441,12 +441,13 @@ Each row assigns the entire current file to one feature slice. `Lines 1-N` means
 | `Runtime/Audio/AudioBufferManager.cs` | 1-238 | FS01 Runtime workspace and artifact lifecycle |
 | `Runtime/Audio/IAppPlaybackAlertSoundService.cs` | 1-38 | FS01 Runtime workspace and artifact lifecycle |
 | `Runtime/Book/BookAudio.cs` | 1-492 | FS02 Book ingestion, indexing, and pronunciation |
-| `Runtime/Book/BookCache.cs` | 1-302 | FS02 Book ingestion, indexing, and pronunciation |
+| `Runtime/Book/BookCache.cs` | 1-240 | FS02 Book ingestion, indexing, and pronunciation |
 | `Runtime/Book/BookContext.cs` | 1-39 | FS02 Book ingestion, indexing, and pronunciation |
 | `Runtime/Book/BookDocuments.cs` | 1-35 | FS02 Book ingestion, indexing, and pronunciation |
-| `Runtime/Book/BookIndexer.cs` | 1-1086 | FS02 Book ingestion, indexing, and pronunciation |
+| `Runtime/Book/BookIndexCompatibility.cs` | 1-285 | FS02 Book ingestion, indexing, and pronunciation |
+| `Runtime/Book/BookIndexer.cs` | 1-1065 | FS02 Book ingestion, indexing, and pronunciation |
 | `Runtime/Book/BookManager.cs` | 1-239 | FS02 Book ingestion, indexing, and pronunciation |
-| `Runtime/Book/BookModels.cs` | 1-108 | FS02 Book ingestion, indexing, and pronunciation |
+| `Runtime/Book/BookModels.cs` | 1-114 | FS02 Book ingestion, indexing, and pronunciation |
 | `Runtime/Book/BookParser.cs` | 1-793 | FS02 Book ingestion, indexing, and pronunciation |
 | `Runtime/Book/BookPhonemePopulator.cs` | 1-118 | FS02 Book ingestion, indexing, and pronunciation |
 | `Runtime/Book/EnglishFrequencyDictionary.cs` | 1-74 | FS02 Book ingestion, indexing, and pronunciation |
