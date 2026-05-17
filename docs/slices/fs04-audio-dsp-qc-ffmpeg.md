@@ -135,12 +135,18 @@ The current audit found likely slice replacements in:
 
 The current audit found likely decode/encode materialization reductions in:
 
-- chunked ASR, where chunk WAV artifacts are encoded and the same slices are encoded again for ASR input;
+- chunked ASR, where chunk WAV artifacts are emitted for MFA reuse; keep Whisper.NET transcription on in-memory slices when the buffer is already materialized, and use prepared WAV files for WhisperX/no-buffer cases;
 - benchmark metrics, where raw/treated audio is decoded for integrity and loudness, then QC decodes the same files again;
 - pickup ASR/MFA, where planned chunks are transcribed from buffer slices and later encoded again for MFA corpus input;
 - full chapter playback endpoints, where an existing audio artifact should be streamed from the runtime descriptor path when no range or transformation is requested;
 - CRX export, where a sliced segment can be encoded directly to the destination file instead of first materializing a `MemoryStream`;
-- MFA workflow corpus setup, where full-audio decode can be lazy if reusable chunk-audio artifacts satisfy the corpus request.
+- MFA workflow corpus setup, where full-audio decode should be lazy and avoided when reusable chunk-audio artifacts satisfy the corpus request.
+
+Current near-term backlog from the CLI/pipeline audit:
+
+- make chunked MFA corpus construction lazy-load chapter audio only when reusable ASR chunk WAV artifacts are unavailable;
+- keep Whisper.NET chunk ASR on in-memory slices when the buffer is already materialized; use file-backed prepared WAV transcription only when it avoids materialization or is required by WhisperX;
+- later, collapse benchmark/QC/loudness file analysis so raw and treated files are not decoded multiple times for the same metrics pass.
 
 We are going to try to address the FS04-owned optimizations during this pass. MFA-specific leftovers that require a broader forced-alignment redesign should remain visible here and be completed during FS06.
 

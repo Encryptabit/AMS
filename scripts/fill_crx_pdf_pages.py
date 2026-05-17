@@ -106,7 +106,11 @@ from rapidfuzz import fuzz  # pyright: ignore[reportMissingImports]
 
 
 CHAPTER_TITLE_RE = re.compile(r"(?i)^\s*chapter\s+(\w+)\s*(?::\s*(.+?))?\s*$")
+NUMERIC_CHAPTER_TITLE_RE = re.compile(
+    r"^\s*(\d{1,3})\s*(?:[-:\u2010-\u2015]\s*)?(.+?)?\s*$"
+)
 CHAPTER_NUMBER_RE = re.compile(r"(?i)\bchapter\s+(\w+)\b")
+NUMERIC_CHAPTER_NUMBER_RE = re.compile(r"^\s*(\d{1,3})(?:\s|[-:\u2010-\u2015]|$)")
 
 _ONES: Tuple[str, ...] = (
     "", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine",
@@ -205,20 +209,31 @@ def extract_should_be(comments: str) -> str:
 
 def parse_chapter_title(title: str) -> ChapterTitle | None:
     match = CHAPTER_TITLE_RE.match(title or "")
+    if match:
+        number = word_or_digit_to_int(match.group(1))
+        if number is None:
+            return None
+        subtitle = (match.group(2) or "").strip()
+        return ChapterTitle(number=number, title=title.strip(), subtitle=subtitle)
+
+    match = NUMERIC_CHAPTER_TITLE_RE.match(title or "")
     if not match:
         return None
-    number = word_or_digit_to_int(match.group(1))
-    if number is None:
-        return None
+
     subtitle = (match.group(2) or "").strip()
-    return ChapterTitle(number=number, title=title.strip(), subtitle=subtitle)
+    return ChapterTitle(number=int(match.group(1)), title=title.strip(), subtitle=subtitle)
 
 
 def parse_chapter_number(label: str) -> int | None:
     match = CHAPTER_NUMBER_RE.search(label or "")
+    if match:
+        return word_or_digit_to_int(match.group(1))
+
+    match = NUMERIC_CHAPTER_NUMBER_RE.match(label or "")
     if not match:
         return None
-    return word_or_digit_to_int(match.group(1))
+
+    return int(match.group(1))
 
 
 def read_pdf_pages(pdf_path: Path) -> List[str]:

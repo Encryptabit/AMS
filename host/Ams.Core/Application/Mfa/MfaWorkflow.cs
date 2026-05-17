@@ -87,9 +87,8 @@ public static class MfaWorkflow
             // Clean the corpus directory for fresh chunk output
             CleanCorpusDirectory(corpusDir);
 
-            var audioBuffer = AudioProcessor.Decode(audioFile.FullName);
             chunkCorpus = MfaChunkCorpusBuilder.Build(
-                audioBuffer,
+                audioBufferFactory: () => AudioProcessor.Decode(audioFile.FullName),
                 chunkPlan,
                 hydrate,
                 corpusDir,

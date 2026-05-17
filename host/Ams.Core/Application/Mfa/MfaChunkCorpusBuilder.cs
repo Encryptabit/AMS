@@ -79,6 +79,33 @@ internal static class MfaChunkCorpusBuilder
         int maxConsecutiveDelRun = 3)
     {
         ArgumentNullException.ThrowIfNull(audioBuffer);
+
+        return Build(
+            audioBufferFactory: () => audioBuffer,
+            chunkPlan,
+            hydrate,
+            corpusDirectory,
+            chunkAudio,
+            requireAsrChunkAudio,
+            asr,
+            maxConsecutiveDelRun);
+    }
+
+    /// <summary>
+    /// Builds per-chunk wav and lab files under <paramref name="corpusDirectory"/>,
+    /// loading full chapter audio only when pre-sliced chunk audio cannot be reused.
+    /// </summary>
+    internal static ChunkCorpusResult Build(
+        Func<AudioBuffer> audioBufferFactory,
+        ChunkPlanDocument chunkPlan,
+        HydratedTranscript hydrate,
+        string corpusDirectory,
+        ChunkAudioDocument? chunkAudio = null,
+        bool requireAsrChunkAudio = false,
+        AsrResponse? asr = null,
+        int maxConsecutiveDelRun = 3)
+    {
+        ArgumentNullException.ThrowIfNull(audioBufferFactory);
         ArgumentNullException.ThrowIfNull(chunkPlan);
         ArgumentNullException.ThrowIfNull(hydrate);
         ArgumentException.ThrowIfNullOrWhiteSpace(corpusDirectory);
@@ -104,6 +131,20 @@ internal static class MfaChunkCorpusBuilder
         int sentenceTimedChunks = 0;
         int nearestSentenceFallbackChunks = 0;
         IReadOnlyList<string>? previousLabTokens = null;
+        AudioBuffer? audioBuffer = null;
+
+        AudioBuffer GetAudioBuffer()
+        {
+            if (audioBuffer is null)
+            {
+                Log.Debug(
+                    "MFA chunk audio: action=load-buffer, scope=full, reason=reuse-unavailable");
+                audioBuffer = audioBufferFactory()
+                    ?? throw new InvalidOperationException("Audio buffer factory returned null.");
+            }
+
+            return audioBuffer;
+        }
 
         // Pre-index word midpoints sorted by time for O(W log W + C) lookup
         // instead of O(C * W) rescanning per chunk. Del-op book words within
@@ -209,14 +250,24 @@ internal static class MfaChunkCorpusBuilder
             {
                 if (requireAsrChunkAudio)
                 {
+                    Log.Warn(
+                        "MFA chunk audio: action=require-failed, scope=full, chunkId={ChunkId}, reason={Reason}, detail={Detail}",
+                        chunk.ChunkId,
+                        reuseFailureReason,
+                        uttName + ".wav");
                     throw new InvalidOperationException(
                         $"ASR chunk audio is required for chunked MFA, but chunk {chunk.ChunkId} " +
                         $"({uttName}) could not be reused: {reuseFailureReason}");
                 }
 
+                Log.Debug(
+                    "MFA chunk audio: action=fallback-slice, scope=full, chunkId={ChunkId}, reason={Reason}, detail={Detail}",
+                    chunk.ChunkId,
+                    reuseFailureReason,
+                    uttName + ".wav");
                 var chunkStart = TimeSpan.FromSeconds(Math.Max(0d, chunk.StartSec));
                 var chunkEnd = TimeSpan.FromSeconds(Math.Max(chunk.StartSec, chunk.EndSec));
-                if (!audioBuffer.TrySliceClamped(chunkStart, chunkEnd, out var slice))
+                if (!GetAudioBuffer().TrySliceClamped(chunkStart, chunkEnd, out var slice))
                 {
                     skippedNoAudio++;
                     Log.Debug(
@@ -281,6 +332,31 @@ internal static class MfaChunkCorpusBuilder
         int maxConsecutiveDelRun = 3)
     {
         ArgumentNullException.ThrowIfNull(audioBuffer);
+
+        return RebuildScoped(
+            audioBufferFactory: () => audioBuffer,
+            chunkPlan,
+            hydrate,
+            corpusDirectory,
+            chunkIndices,
+            chunkAudio,
+            requireAsrChunkAudio,
+            asr,
+            maxConsecutiveDelRun);
+    }
+
+    internal static ChunkCorpusResult RebuildScoped(
+        Func<AudioBuffer> audioBufferFactory,
+        ChunkPlanDocument chunkPlan,
+        HydratedTranscript hydrate,
+        string corpusDirectory,
+        IReadOnlyList<int> chunkIndices,
+        ChunkAudioDocument? chunkAudio = null,
+        bool requireAsrChunkAudio = false,
+        AsrResponse? asr = null,
+        int maxConsecutiveDelRun = 3)
+    {
+        ArgumentNullException.ThrowIfNull(audioBufferFactory);
         ArgumentNullException.ThrowIfNull(chunkPlan);
         ArgumentNullException.ThrowIfNull(hydrate);
         ArgumentException.ThrowIfNullOrWhiteSpace(corpusDirectory);
@@ -326,6 +402,20 @@ internal static class MfaChunkCorpusBuilder
         var rebuiltCount = 0;
         var preservedCount = 0;
         var skippedRebuiltCount = 0;
+        AudioBuffer? audioBuffer = null;
+
+        AudioBuffer GetAudioBuffer()
+        {
+            if (audioBuffer is null)
+            {
+                Log.Debug(
+                    "MFA chunk audio: action=load-buffer, scope=scoped, reason=reuse-unavailable");
+                audioBuffer = audioBufferFactory()
+                    ?? throw new InvalidOperationException("Audio buffer factory returned null.");
+            }
+
+            return audioBuffer;
+        }
 
         // Removes stale .wav/.lab for a scoped chunk whose rebuild failed. Keeping them around
         // would let MFA align consume artifacts that don't match the current ASR/hydrate state
@@ -461,14 +551,24 @@ internal static class MfaChunkCorpusBuilder
             {
                 if (requireAsrChunkAudio)
                 {
+                    Log.Warn(
+                        "MFA chunk audio: action=require-failed, scope=scoped, chunkId={ChunkId}, reason={Reason}, detail={Detail}",
+                        chunk.ChunkId,
+                        reuseFailureReason,
+                        uttName + ".wav");
                     throw new InvalidOperationException(
                         $"ASR chunk audio is required for chunked MFA, but chunk {chunk.ChunkId} " +
                         $"({uttName}) could not be reused: {reuseFailureReason}");
                 }
 
+                Log.Debug(
+                    "MFA chunk audio: action=fallback-slice, scope=scoped, chunkId={ChunkId}, reason={Reason}, detail={Detail}",
+                    chunk.ChunkId,
+                    reuseFailureReason,
+                    uttName + ".wav");
                 var chunkStart = TimeSpan.FromSeconds(Math.Max(0d, chunk.StartSec));
                 var chunkEnd = TimeSpan.FromSeconds(Math.Max(chunk.StartSec, chunk.EndSec));
-                if (!audioBuffer.TrySliceClamped(chunkStart, chunkEnd, out var slice))
+                if (!GetAudioBuffer().TrySliceClamped(chunkStart, chunkEnd, out var slice))
                 {
                     skippedRebuiltCount++;
                     Log.Warn(
@@ -1102,6 +1202,11 @@ internal static class MfaChunkCorpusBuilder
             }
 
             File.Copy(entry.WavPath, destinationWavPath, overwrite: true);
+            Log.Debug(
+                "MFA chunk audio: action=reuse, chunkId={ChunkId}, bytes={Bytes}, detail={Detail}",
+                chunk.ChunkId,
+                info.Length,
+                Path.GetFileName(destinationWavPath));
             return true;
         }
         catch (Exception ex)
