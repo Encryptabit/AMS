@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using Ams.Core.Processors;
 
 namespace Ams.Core.Artifacts;
@@ -100,10 +101,54 @@ public sealed class AudioBuffer
     /// </summary>
     public AudioBuffer Slice(TimeSpan start, TimeSpan end)
     {
-        var startSample = (int)(start.TotalSeconds * SampleRate);
-        var endSample = Math.Min((int)(end.TotalSeconds * SampleRate), Length);
+        var startSample = FloorSampleIndex(start);
+        var endSample = Math.Min(CeilingSampleIndex(end), Length);
+        ArgumentOutOfRangeException.ThrowIfGreaterThan(startSample, Length, nameof(start));
+        ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(endSample, startSample, nameof(end));
+
         return Slice(startSample, endSample - startSample);
     }
+
+    /// <summary>
+    /// Returns a zero-copy slice of this buffer for a time range clamped to the buffer bounds.
+    /// </summary>
+    public AudioBuffer SliceClamped(TimeSpan start, TimeSpan end)
+    {
+        var startSample = Math.Clamp(FloorSampleIndex(start), 0, Length);
+        var endSample = Math.Clamp(CeilingSampleIndex(end), 0, Length);
+        ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(endSample, startSample, nameof(end));
+
+        return Slice(startSample, endSample - startSample);
+    }
+
+    /// <summary>
+    /// Attempts to return a zero-copy slice for a time range clamped to the buffer bounds.
+    /// </summary>
+    public bool TrySliceClamped(
+        TimeSpan? start,
+        TimeSpan? end,
+        [NotNullWhen(true)] out AudioBuffer? segment)
+    {
+        var startSample = Math.Clamp(FloorSampleIndex(start ?? TimeSpan.Zero), 0, Length);
+        var endSample = Math.Clamp(CeilingSampleIndex(end ?? Duration), 0, Length);
+        if (endSample <= startSample)
+        {
+            segment = null;
+            return false;
+        }
+
+        segment = Slice(startSample, endSample - startSample);
+        return true;
+    }
+
+    private int FloorSampleIndex(TimeSpan time)
+        => (int)Math.Floor(time.TotalSeconds * SampleRate);
+
+    private int CeilingSampleIndex(TimeSpan time)
+        => (int)Math.Ceiling(time.TotalSeconds * SampleRate);
+
+    private TimeSpan Duration
+        => TimeSpan.FromSeconds(Length / (double)SampleRate);
 
     public MemoryStream ToWavStream(AudioEncodeOptions? options = null)
         => AudioProcessor.EncodeWavToStream(this, options);

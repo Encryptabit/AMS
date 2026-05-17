@@ -128,17 +128,19 @@ public class AudioController : ControllerBase
 
             LogRangeDiagnostics(chapterName, buffer, start, end);
 
-            // If start/end provided, trim to segment
+            // If start/end provided, stream the requested in-memory segment.
             if (start.HasValue && end.HasValue)
             {
-                var maxDuration = (double)buffer.Length / buffer.SampleRate;
-                var trimmed = Ams.Core.Processors.AudioProcessor.Trim(
-                    buffer,
-                    TimeSpan.FromSeconds(Math.Max(0, start.Value)),
-                    TimeSpan.FromSeconds(Math.Min(end.Value, maxDuration)));
+                if (!buffer.TrySliceClamped(
+                        TimeSpan.FromSeconds(start.Value),
+                        TimeSpan.FromSeconds(end.Value),
+                        out var segment))
+                {
+                    return BadRequest("Invalid chapter audio range");
+                }
 
-                var trimStream = trimmed.ToWavStream();
-                return File(trimStream, "audio/wav", enableRangeProcessing: true);
+                var segmentStream = segment.ToWavStream();
+                return File(segmentStream, "audio/wav", enableRangeProcessing: true);
             }
 
             _logger.LogDebug(
@@ -157,7 +159,7 @@ public class AudioController : ControllerBase
 
     /// <summary>
     /// Returns precomputed min/max waveform peaks for the current chapter audio.
-    /// Optional start/end values trim the chapter before peak extraction.
+    /// Optional start/end values slice the chapter before peak extraction.
     /// </summary>
     [HttpGet("chapter/{chapterName}/peaks")]
     public IActionResult GetChapterPeaks(
@@ -180,10 +182,15 @@ public class AudioController : ControllerBase
 
         if (start.HasValue || end.HasValue)
         {
-            var segment = TrimBuffer(buffer, start, end);
-            return segment is null
-                ? BadRequest("Invalid chapter peak range")
-                : Ok(BuildWaveformPeaksPayload(segment, pxPerSec, $"chapter '{chapterName}' range"));
+            if (!buffer.TrySliceClamped(
+                    start.HasValue ? TimeSpan.FromSeconds(start.Value) : null,
+                    end.HasValue ? TimeSpan.FromSeconds(end.Value) : null,
+                    out var segment))
+            {
+                return BadRequest("Invalid chapter peak range");
+            }
+
+            return Ok(BuildWaveformPeaksPayload(segment, pxPerSec, $"chapter '{chapterName}' range"));
         }
 
         var bucketCount = ResolveWaveformBucketCount(buffer, pxPerSec, $"chapter '{chapterName}'");
@@ -581,25 +588,6 @@ public class AudioController : ControllerBase
         var audioBytes = Math.Max(0, startBytes - wavHeaderBytes);
         seconds = audioBytes / (double)(buffer.SampleRate * bytesPerSampleFrame);
         return true;
-    }
-
-    private static AudioBuffer? TrimBuffer(AudioBuffer buffer, double? start, double? end)
-    {
-        var maxDuration = buffer.SampleRate > 0
-            ? buffer.Length / (double)buffer.SampleRate
-            : 0d;
-
-        var clampedStart = Math.Max(0d, start ?? 0d);
-        var clampedEnd = end.HasValue ? Math.Min(end.Value, maxDuration) : maxDuration;
-        if (clampedEnd <= clampedStart)
-        {
-            return null;
-        }
-
-        return AudioProcessor.Trim(
-            buffer,
-            TimeSpan.FromSeconds(clampedStart),
-            TimeSpan.FromSeconds(clampedEnd));
     }
 
     private sealed record CorrectedPlaybackResolution(
