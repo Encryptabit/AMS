@@ -91,6 +91,7 @@ Runtime buffer identity and artifact lifecycle belong to FS01. Concrete audio op
 - Audit duplicate downmix, silence, and timeline projection rules across ASR, treatment, and prosody.
 - Replace FFmpeg trim calls with zero-copy `AudioBuffer` slices when the operation only needs a range from an already-loaded buffer.
 - Avoid duplicate audio materialization: prefer one decode per analysis workflow, one encode per durable artifact, and direct file streaming when an existing compatible WAV artifact already exists.
+- Keep browser streaming paths explicit: stream existing artifact files from resolved audio descriptors; encode decoded buffers only when the response is computed from samples.
 
 ## Decisions
 
@@ -118,6 +119,10 @@ When an operation already has an `AudioBuffer` and only needs a contiguous time 
 
 Audio operations should also avoid redundant decode/encode passes. A workflow should decode once and pass the decoded buffer through analysis steps when possible. If a workflow has already created a compatible WAV artifact, downstream consumers should reuse that artifact instead of encoding the same samples again. If an endpoint is serving a full existing WAV artifact without transformation, prefer file streaming over re-encoding a cached buffer.
 
+Streaming policy should preserve the distinction between file artifacts and decoded buffers. A full existing WAV/MP3/FLAC/M4A artifact should stream from the resolved audio descriptor path without forcing lazy buffer load. A decoded `AudioBuffer` should be encoded to a browser-readable stream only when the response is computed from samples, such as a slice, preview buffer, region fallback, waveform-adjacent operation, or transformed audio.
+
+Do not rediscover audio file paths in streaming callsites from chapter names, stems, or working-directory guesses. Use the runtime audio context descriptor path once FS01 has resolved the artifact. Ad hoc file resolution belongs at the artifact discovery boundary, not in HTTP streaming helpers.
+
 The current audit found likely slice replacements in:
 
 - audio splice before/after extraction for replace, delete, and insert;
@@ -133,7 +138,7 @@ The current audit found likely decode/encode materialization reductions in:
 - chunked ASR, where chunk WAV artifacts are encoded and the same slices are encoded again for ASR input;
 - benchmark metrics, where raw/treated audio is decoded for integrity and loudness, then QC decodes the same files again;
 - pickup ASR/MFA, where planned chunks are transcribed from buffer slices and later encoded again for MFA corpus input;
-- full chapter playback endpoints, where an existing WAV artifact can be streamed directly when no range or transformation is requested;
+- full chapter playback endpoints, where an existing audio artifact should be streamed from the runtime descriptor path when no range or transformation is requested;
 - CRX export, where a sliced segment can be encoded directly to the destination file instead of first materializing a `MemoryStream`;
 - MFA workflow corpus setup, where full-audio decode can be lazy if reusable chunk-audio artifacts satisfy the corpus request.
 

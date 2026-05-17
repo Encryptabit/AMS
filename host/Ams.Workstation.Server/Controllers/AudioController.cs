@@ -103,8 +103,8 @@ public class AudioController : ControllerBase
 
     /// <summary>
     /// Gets the audio for a chapter from the workspace's AudioBufferContext.
-    /// Streams WAV data from the loaded AudioBuffer.
-    /// When start/end query params are provided, trims to that segment.
+    /// Streams the resolved audio artifact when no range is requested.
+    /// When start/end query params are provided, streams an in-memory slice of that segment.
     /// </summary>
     [HttpGet("chapter/{chapterName}")]
     public IActionResult GetChapterAudio(string chapterName, [FromQuery] double? start = null, [FromQuery] double? end = null)
@@ -118,19 +118,19 @@ public class AudioController : ControllerBase
         try
         {
             var audioContext = _workspace.CurrentChapterHandle.Chapter.Audio.Current;
-            var buffer = audioContext.Buffer;
-
-            if (buffer is null)
-            {
-                _logger.LogWarning("Audio buffer not available for chapter '{ChapterName}'", chapterName);
-                return NotFound("Audio buffer not available");
-            }
-
-            LogRangeDiagnostics(chapterName, buffer, start, end);
 
             // If start/end provided, stream the requested in-memory segment.
             if (start.HasValue && end.HasValue)
             {
+                var buffer = audioContext.Buffer;
+                if (buffer is null)
+                {
+                    _logger.LogWarning("Audio buffer not available for ranged chapter '{ChapterName}'", chapterName);
+                    return NotFound("Audio buffer not available");
+                }
+
+                LogRangeDiagnostics(chapterName, audioContext, buffer, start, end);
+
                 if (!buffer.TrySliceClamped(
                         TimeSpan.FromSeconds(start.Value),
                         TimeSpan.FromSeconds(end.Value),
@@ -139,16 +139,15 @@ public class AudioController : ControllerBase
                     return BadRequest("Invalid chapter audio range");
                 }
 
-                var segmentStream = segment.ToWavStream();
-                return File(segmentStream, "audio/wav", enableRangeProcessing: true);
+                return StreamAudioBuffer(segment);
             }
 
             _logger.LogDebug(
-                "Streaming audio for chapter '{ChapterName}': {Channels}ch, {SampleRate}Hz, {Length} samples",
-                chapterName, buffer.Channels, buffer.SampleRate, buffer.Length);
+                "Streaming chapter audio file for chapter '{ChapterName}' from buffer '{BufferId}'",
+                chapterName,
+                audioContext.Descriptor.BufferId);
 
-            var stream = buffer.ToWavStream();
-            return File(stream, "audio/wav", enableRangeProcessing: true);
+            return StreamAudioFile(audioContext, "Audio file not available");
         }
         catch (InvalidOperationException ex)
         {
@@ -205,8 +204,8 @@ public class AudioController : ControllerBase
 
     /// <summary>
     /// Serves a partial region of a chapter's audio by decoding only the requested time range.
-    /// Uses the workspace to resolve the chapter's audio file path and decodes directly from disk
-    /// with start/duration parameters for memory-efficient partial loading.
+    /// Uses the current chapter audio descriptor and decodes directly from disk with start/duration
+    /// parameters for memory-efficient partial loading.
     /// </summary>
     [HttpGet("chapter/{chapterName}/region")]
     public IActionResult GetChapterRegionAudio(string chapterName, [FromQuery] double start, [FromQuery] double end)
@@ -221,30 +220,45 @@ public class AudioController : ControllerBase
             return BadRequest("End must be greater than start");
         }
 
-        if (!_workspace.IsInitialized || string.IsNullOrEmpty(_workspace.WorkingDirectory))
+        if (_workspace.CurrentChapterHandle is null)
         {
-            return NotFound("Workspace not initialized");
+            return NotFound("No chapter loaded");
         }
 
         try
         {
-            // Resolve chapter name to stem and audio file path
-            var stem = _workspace.GetStemForChapter(chapterName) ?? chapterName;
-            var audioPath = Path.Combine(_workspace.WorkingDirectory, $"{stem}.wav");
+            var requestedChapter = Uri.UnescapeDataString(chapterName ?? string.Empty).Trim();
+            if (string.IsNullOrWhiteSpace(requestedChapter))
+            {
+                return BadRequest("Chapter name is required");
+            }
+
+            var handle = _workspace.CurrentChapterHandle;
+            var descriptor = handle.Chapter.Descriptor;
+            var activeChapter = string.IsNullOrWhiteSpace(_workspace.CurrentChapterName)
+                ? descriptor.ChapterId
+                : _workspace.CurrentChapterName!.Trim();
+
+            if (!MatchesRequestedChapter(requestedChapter, activeChapter, descriptor))
+            {
+                _logger.LogWarning(
+                    "Region playback request rejected for chapter '{RequestedChapter}'. Active chapter='{ActiveChapter}', stem='{ChapterId}'.",
+                    requestedChapter,
+                    activeChapter,
+                    descriptor.ChapterId);
+                return NotFound($"Chapter '{requestedChapter}' is not active (active chapter '{activeChapter}').");
+            }
+
+            var audioContext = handle.Chapter.Audio.Current;
+            var audioPath = audioContext.Descriptor.Path;
 
             if (!System.IO.File.Exists(audioPath))
             {
-                // Try treated audio path
-                var treatedPath = Path.Combine(_workspace.WorkingDirectory, stem, $"{stem}.treated.wav");
-                if (System.IO.File.Exists(treatedPath))
-                {
-                    audioPath = treatedPath;
-                }
-                else
-                {
-                    _logger.LogWarning("Audio file not found for chapter '{ChapterName}' at '{Path}'", chapterName, audioPath);
-                    return NotFound($"Audio file not found for chapter '{chapterName}'");
-                }
+                _logger.LogWarning(
+                    "Audio descriptor file not found for chapter '{ChapterName}' at '{Path}'",
+                    requestedChapter,
+                    audioPath);
+                return NotFound($"Audio file not found for chapter '{requestedChapter}'");
             }
 
             // Validate end does not exceed duration
@@ -268,8 +282,12 @@ public class AudioController : ControllerBase
                 Start: TimeSpan.FromSeconds(start),
                 Duration: TimeSpan.FromSeconds(regionDuration)));
 
-            var stream = buffer.ToWavStream();
-            return File(stream, "audio/wav", enableRangeProcessing: true);
+            return StreamAudioBuffer(buffer);
+        }
+        catch (InvalidOperationException ex)
+        {
+            _logger.LogWarning(ex, "No audio buffers registered for chapter '{ChapterName}'", chapterName);
+            return NotFound($"No audio buffers available for chapter '{chapterName}'");
         }
         catch (Exception ex)
         {
@@ -291,8 +309,7 @@ public class AudioController : ControllerBase
             return NotFound("No preview buffer available");
         }
 
-        var stream = buffer.ToWavStream();
-        return File(stream, "audio/wav", enableRangeProcessing: true);
+        return StreamAudioBuffer(buffer);
     }
 
     /// <summary>
@@ -326,8 +343,9 @@ public class AudioController : ControllerBase
             resolved.RequestedChapter,
             resolved.Source);
 
-        var stream = resolved.Buffer.ToWavStream();
-        return File(stream, "audio/wav", enableRangeProcessing: true);
+        return StreamAudioFile(
+            resolved.Context,
+            $"No audio available for chapter '{resolved.RequestedChapter}' (source '{resolved.Source}').");
     }
 
     /// <summary>
@@ -342,8 +360,18 @@ public class AudioController : ControllerBase
             return failureResult!;
         }
 
+        var buffer = resolved.Context.Buffer;
+        if (buffer is null)
+        {
+            _logger.LogWarning(
+                "Corrected waveform peaks unavailable because audio buffer failed to load for chapter '{RequestedChapter}' from source '{Source}'",
+                resolved.RequestedChapter,
+                resolved.Source);
+            return NotFound($"No audio available for chapter '{resolved.RequestedChapter}' (source '{resolved.Source}').");
+        }
+
         var bucketCount = ResolveWaveformBucketCount(
-            resolved.Buffer,
+            buffer,
             pxPerSec,
             $"corrected chapter '{resolved.RequestedChapter}' source '{resolved.Source}'");
         var peaks = resolved.Context.GetOrCreateWaveformPeaks(bucketCount);
@@ -484,6 +512,27 @@ public class AudioController : ControllerBase
         return File(fileStream, contentType, enableRangeProcessing: true);
     }
 
+    private IActionResult StreamAudioFile(AudioBufferContext context, string notFoundMessage)
+    {
+        var filePath = context.Descriptor.Path;
+        if (!System.IO.File.Exists(filePath))
+        {
+            _logger.LogWarning(
+                "Audio descriptor file not found for buffer '{BufferId}' at '{Path}'",
+                context.Descriptor.BufferId,
+                filePath);
+            return NotFound(notFoundMessage);
+        }
+
+        return ServeAudioFile(filePath);
+    }
+
+    private IActionResult StreamAudioBuffer(AudioBuffer buffer)
+    {
+        var stream = buffer.ToWavStream();
+        return File(stream, "audio/wav", enableRangeProcessing: true);
+    }
+
     private object BuildWaveformPeaksPayload(AudioBuffer buffer, int pxPerSec, string description)
     {
         var bucketCount = ResolveWaveformBucketCount(buffer, pxPerSec, description);
@@ -522,7 +571,7 @@ public class AudioController : ControllerBase
         return actualBuckets;
     }
 
-    private void LogRangeDiagnostics(string chapterName, AudioBuffer buffer, double? start, double? end)
+    private void LogRangeDiagnostics(string chapterName, AudioBufferContext context, AudioBuffer buffer, double? start, double? end)
     {
         if (!_logger.IsEnabled(LogLevel.Debug))
         {
@@ -543,7 +592,7 @@ public class AudioController : ControllerBase
         _logger.LogDebug(
             "Chapter audio request range: chapter={ChapterName} buffer={BufferId} range={RangeHeader} approxWavStart={ApproxStart} queryStart={QueryStart} queryEnd={QueryEnd} sampleRate={SampleRate} channels={Channels}",
             chapterName,
-            _workspace.CurrentChapterHandle?.Chapter.Audio.Current.Descriptor.BufferId,
+            context.Descriptor.BufferId,
             rangeValue,
             approxSec,
             start,
@@ -595,8 +644,7 @@ public class AudioController : ControllerBase
         string ActiveChapter,
         string ChapterId,
         string Source,
-        AudioBufferContext Context,
-        AudioBuffer Buffer);
+        AudioBufferContext Context);
 
     private bool TryResolveCorrectedPlayback(
         string chapterName,
@@ -657,8 +705,7 @@ public class AudioController : ControllerBase
         foreach (var candidate in new[] { ("corrected", audio.Corrected), ("treated", audio.Treated), ("current", currentContext) })
         {
             var context = candidate.Item2;
-            var buffer = context?.Buffer;
-            if (context is null || buffer is null)
+            if (!IsAudioContextAvailable(context))
             {
                 continue;
             }
@@ -668,8 +715,7 @@ public class AudioController : ControllerBase
                 ActiveChapter: activeChapter,
                 ChapterId: descriptor.ChapterId,
                 Source: candidate.Item1,
-                Context: context,
-                Buffer: buffer);
+                Context: context!);
 
             _logger.LogDebug(
                 "Resolved corrected playback source '{Source}' for chapter '{RequestedChapter}' (active '{ActiveChapter}', stem '{ChapterId}')",
@@ -687,6 +733,11 @@ public class AudioController : ControllerBase
             descriptor.ChapterId);
         failureResult = NotFound($"No audio available for chapter '{requestedChapter}' (checked corrected, treated, current).");
         return false;
+    }
+
+    private static bool IsAudioContextAvailable(AudioBufferContext? context)
+    {
+        return context is not null && System.IO.File.Exists(context.Descriptor.Path);
     }
 
     private static bool MatchesRequestedChapter(
