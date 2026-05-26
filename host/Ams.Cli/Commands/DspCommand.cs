@@ -32,6 +32,7 @@ public static class DspCommand
         FilterDefinition.Create("deesser", (g, p) => g.DeEsser(p),
             new DeEsserFilterParams(NormalizedFrequency: 0.4, Intensity: 0.2, MaxReduction: 0.5, OutputMode: "o")),
         FilterDefinition.Create("denoise", (g, p) => g.FftDenoise(p), new FftDenoiseFilterParams(NoiseReductionDb: 6)),
+        FilterDefinition.Create("declick", (g, p) => g.DeClick(p), new DeClickFilterParams()),
         FilterDefinition.Create("ndenoise", (g, p) => g.NeuralDenoise(p),
             new NeuralDenoiseFilterParams(Model: "models/sh.rnnn", Mix: 0.6)),
         FilterDefinition.Create("aspectralstats", (g, p) => g.AspectralStats(p), new AspectralStatsFilterParams()),

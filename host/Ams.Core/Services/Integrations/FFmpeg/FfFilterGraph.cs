@@ -162,6 +162,36 @@ public sealed class FfFilterGraph
     }
 
     /// <summary>
+    /// De-click impulsive noise (libavfilter <c>adeclick</c>).
+    /// </summary>
+    public FfFilterGraph DeClick(
+        double window = 55,
+        double overlap = 75,
+        double autoRegressionOrder = 2,
+        double threshold = 2,
+        double burst = 2,
+        string method = "add") =>
+        DeClick(new DeClickFilterParams(
+            window,
+            overlap,
+            autoRegressionOrder,
+            threshold,
+            burst,
+            method));
+
+    public FfFilterGraph DeClick(DeClickFilterParams? parameters)
+    {
+        var p = parameters ?? new DeClickFilterParams();
+        return AddFilter("adeclick",
+            ("window", FormatDouble(Math.Clamp(p.Window, 10, 100))),
+            ("overlap", FormatDouble(Math.Clamp(p.Overlap, 50, 95))),
+            ("arorder", FormatDouble(Math.Clamp(p.AutoRegressionOrder, 0, 25))),
+            ("threshold", FormatDouble(Math.Clamp(p.Threshold, 1, 100))),
+            ("burst", FormatDouble(Math.Clamp(p.Burst, 0, 10))),
+            ("method", NormalizeDeClickMethod(p.Method)));
+    }
+
+    /// <summary>
     /// Neural denoiser (libavfilter <c>arnndn</c>).
     /// </summary>
     public FfFilterGraph NeuralDenoise(string model = "models/sh.rnnn") =>
@@ -604,6 +634,20 @@ public sealed class FfFilterGraph
     private static string FormatDouble(double value) => FfUtils.FormatNumber(value);
     private static string FormatDecibels(double value) => FfUtils.FormatDecibels(value);
     private static string FormatFraction(double value) => FfUtils.FormatFraction(value);
+
+    private static string NormalizeDeClickMethod(string? method)
+    {
+        var normalized = string.IsNullOrWhiteSpace(method)
+            ? "add"
+            : method.Trim().ToLowerInvariant();
+
+        return normalized switch
+        {
+            "0" or "a" or "add" => "add",
+            "1" or "s" or "save" => "save",
+            _ => "add"
+        };
+    }
 
     private void EnsureDefaultFormatClause()
     {

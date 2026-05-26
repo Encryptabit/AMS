@@ -14,6 +14,14 @@ public sealed record DeEsserFilterParams(
 
 public sealed record FftDenoiseFilterParams(double NoiseReductionDb = 12);
 
+public sealed record DeClickFilterParams(
+    double Window = 55,
+    double Overlap = 75,
+    double AutoRegressionOrder = 2,
+    double Threshold = 2,
+    double Burst = 2,
+    string Method = "add");
+
 public sealed record NeuralDenoiseFilterParams(string Model = "rnnoise", double Mix = 0.6);
 
 public sealed record AspectralStatsFilterParams(

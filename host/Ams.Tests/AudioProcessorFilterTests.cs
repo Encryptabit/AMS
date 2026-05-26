@@ -124,4 +124,40 @@ public class AudioProcessorFilterTests
 
         Assert.InRange(peak, 0.45f, 0.55f);
     }
+
+    [Fact]
+    public void DeClick_BuildsNamedAdeclickFilter()
+    {
+        var buffer = CreateBuffer((440, 1.0));
+
+        var spec = FfFilterGraph
+            .FromBuffer(buffer)
+            .DeClick(new DeClickFilterParams(
+                Window: 40,
+                Overlap: 70,
+                AutoRegressionOrder: 4,
+                Threshold: 3,
+                Burst: 1,
+                Method: "save"))
+            .BuildSpec();
+
+        Assert.Contains("adeclick=window=40:overlap=70:arorder=4:threshold=3:burst=1:method=save", spec);
+    }
+
+    [Fact]
+    public void DeClick_RunsWithDefaults()
+    {
+        if (FiltersUnavailable()) return;
+        var buffer = CreateBuffer((440, 1.0));
+        buffer.GetChannelSpan(0)[buffer.SampleRate / 2] = 1.0f;
+
+        var declicked = FfFilterGraph
+            .FromBuffer(buffer)
+            .DeClick()
+            .ToBuffer();
+
+        Assert.Equal(buffer.SampleRate, declicked.SampleRate);
+        Assert.Equal(buffer.Channels, declicked.Channels);
+        Assert.InRange(declicked.Length, buffer.Length - 32, buffer.Length + 32);
+    }
 }
