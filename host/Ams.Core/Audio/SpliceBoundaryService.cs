@@ -266,11 +266,12 @@ public static class SpliceBoundaryService
         if (searchRightSec <= searchLeftSec)
             return (roughSec, BoundaryMethod.Original);
 
-        // 1. Trim the search region from the chapter buffer
-        var regionBuffer = AudioProcessor.Trim(
+        // 1. Slice the search region from the chapter buffer
+        var regionBuffer = AudioSpliceService.SliceByTime(
             buffer,
-            TimeSpan.FromSeconds(searchLeftSec),
-            TimeSpan.FromSeconds(searchRightSec));
+            searchLeftSec,
+            searchRightSec,
+            "splice boundary search");
 
         if (regionBuffer.Length == 0)
             return (roughSec, BoundaryMethod.Original);

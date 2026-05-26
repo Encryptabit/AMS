@@ -363,6 +363,28 @@ public static class AsrProcessor
         return await TranscribeBufferInternalAsync(buffer, options, cancellationToken).ConfigureAwait(false);
     }
 
+    public static Task<AsrResponse> TranscribePreparedWavFileAsync(
+        string audioPath,
+        AsrOptions options,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(audioPath);
+        if (!File.Exists(audioPath))
+        {
+            throw new FileNotFoundException($"Audio file not found: {audioPath}", audioPath);
+        }
+
+        options = options ?? throw new ArgumentNullException(nameof(options));
+        ValidateOptions(options);
+        cancellationToken.ThrowIfCancellationRequested();
+
+        return options.Engine switch
+        {
+            AsrEngine.WhisperX => RunWhisperXPreparedWavFilePassAsync(audioPath, options, cancellationToken),
+            _ => TranscribePreparedWavFileWithWhisperNetAsync(audioPath, options, cancellationToken)
+        };
+    }
+
     public static async Task<AsrResponse> TranscribeBufferAsync(
         ReadOnlyMemory<float> monoAudio,
         AsrOptions options,
@@ -448,11 +470,84 @@ public static class AsrProcessor
         return await RunWhisperPassAsync(buffer, fallbackOptions, cancellationToken).ConfigureAwait(false);
     }
 
+    private static async Task<AsrResponse> TranscribePreparedWavFileWithWhisperNetAsync(
+        string audioPath,
+        AsrOptions options,
+        CancellationToken cancellationToken)
+    {
+        var response = await RunWhisperPreparedWavFilePassAsync(audioPath, options, cancellationToken)
+            .ConfigureAwait(false);
+
+        if (!IsDtwEffectivelyEnabled(options))
+        {
+            return response;
+        }
+
+        var audioDurationSec = AudioProcessor.Probe(audioPath).Duration.TotalSeconds;
+        if (!ShouldRetryWithoutDtw(options, audioDurationSec, response, out _, out var transcriptEndSec,
+                out var coverage))
+        {
+            return response;
+        }
+
+        Log.Warn(
+            "DTW timestamps appear truncated for model '{Model}' (end={TranscriptEnd:F2}s, audio={AudioDuration:F2}s, coverage={Coverage:P1}). Retrying once with DTW disabled.",
+            options.ModelPath,
+            transcriptEndSec,
+            audioDurationSec,
+            coverage);
+
+        var fallbackOptions = options with { UseDtwTimestamps = false };
+        return await RunWhisperPreparedWavFilePassAsync(audioPath, fallbackOptions, cancellationToken)
+            .ConfigureAwait(false);
+    }
+
     private static async Task<AsrResponse> RunWhisperPassAsync(
         AudioBuffer buffer,
         AsrOptions options,
         CancellationToken cancellationToken)
     {
+        return await RunWhisperStreamPassAsync(
+                options,
+                cancellationToken,
+                () =>
+                {
+                    var wavStream = buffer.ToWavStream(new AudioEncodeOptions
+                    {
+                        TargetSampleRate = AudioProcessor.DefaultAsrSampleRate,
+                        TargetBitDepth = 16
+                    });
+                    wavStream.Position = 0;
+                    return wavStream;
+                })
+            .ConfigureAwait(false);
+    }
+
+    private static async Task<AsrResponse> RunWhisperPreparedWavFilePassAsync(
+        string audioPath,
+        AsrOptions options,
+        CancellationToken cancellationToken)
+    {
+        return await RunWhisperStreamPassAsync(
+                options,
+                cancellationToken,
+                () => new FileStream(
+                    audioPath,
+                    FileMode.Open,
+                    FileAccess.Read,
+                    FileShare.Read,
+                    bufferSize: 1 << 16,
+                    useAsync: true))
+            .ConfigureAwait(false);
+    }
+
+    private static async Task<AsrResponse> RunWhisperStreamPassAsync(
+        AsrOptions options,
+        CancellationToken cancellationToken,
+        Func<Stream> openWavStream)
+    {
+        ArgumentNullException.ThrowIfNull(openWavStream);
+
         var factoryOptions = CreateFactoryOptions(options);
 
         using var factoryHandle = WhisperFactoryPool.Acquire(options.ModelPath, factoryOptions, out var factory);
@@ -469,12 +564,8 @@ public static class AsrProcessor
             var builder = ConfigureBuilder(factory, options, enableTokenTimestamps: options.EnableWordTimestamps);
 
             await using var processor = builder.Build();
-            await using var wavStream = buffer.ToWavStream(new AudioEncodeOptions
-            {
-                TargetSampleRate = AudioProcessor.DefaultAsrSampleRate,
-                TargetBitDepth = 16
-            });
-            wavStream.Position = 0;
+            await using var wavStream = openWavStream()
+                ?? throw new InvalidOperationException("Prepared WAV stream factory returned null.");
 
             var tokens = new List<AsrToken>();
             var segments = new List<AsrSegment>();
@@ -526,8 +617,6 @@ public static class AsrProcessor
         AsrOptions options,
         CancellationToken cancellationToken)
     {
-        var executable = ResolveWhisperXExecutable();
-        var model = ResolveWhisperXModel(options);
         var tempDir = Path.Combine(Path.GetTempPath(), $"ams-whisperx-{Guid.NewGuid():N}");
         Directory.CreateDirectory(tempDir);
 
@@ -535,64 +624,95 @@ public static class AsrProcessor
         {
             var audioPath = Path.Combine(tempDir, "input.wav");
             AudioProcessor.EncodeWav(audioPath, buffer);
-
-            using var process = new Process
-            {
-                StartInfo = CreateWhisperXStartInfo(executable, model, audioPath, tempDir, options)
-            };
-
-            Log.Debug(
-                "Starting WhisperX process executable={Executable} model={Model} gpu={UseGpu} align={Align}",
-                executable,
-                model,
-                options.UseGpu,
-                options.EnableWordTimestamps);
-
-            if (!process.Start())
-            {
-                throw new InvalidOperationException("Failed to start whisperx process.");
-            }
-
-            var stdoutTask = process.StandardOutput.ReadToEndAsync(cancellationToken);
-            var stderrTask = process.StandardError.ReadToEndAsync(cancellationToken);
-            using var registration = cancellationToken.Register(static state =>
-            {
-                var proc = (Process)state!;
-                try
-                {
-                    if (!proc.HasExited)
-                    {
-                        proc.Kill(entireProcessTree: true);
-                    }
-                }
-                catch
-                {
-                }
-            }, process);
-
-            await process.WaitForExitAsync(cancellationToken).ConfigureAwait(false);
-            var stdout = await stdoutTask.ConfigureAwait(false);
-            var stderr = await stderrTask.ConfigureAwait(false);
-
-            if (process.ExitCode != 0)
-            {
-                throw new InvalidOperationException(
-                    $"whisperx exited with code {process.ExitCode}.{FormatWhisperXFailure(stdout, stderr)}");
-            }
-
-            var jsonPath = Path.Combine(tempDir, Path.GetFileNameWithoutExtension(audioPath) + ".json");
-            if (!File.Exists(jsonPath))
-            {
-                throw new FileNotFoundException($"WhisperX output JSON not found: {jsonPath}", jsonPath);
-            }
-
-            var json = await File.ReadAllTextAsync(jsonPath, cancellationToken).ConfigureAwait(false);
-            return ParseWhisperXJson(json, $"whisperx:{model}");
+            return await RunWhisperXFilePassCoreAsync(audioPath, tempDir, options, cancellationToken)
+                .ConfigureAwait(false);
         }
         finally
         {
             TryDeleteDirectory(tempDir);
         }
+    }
+
+    private static async Task<AsrResponse> RunWhisperXPreparedWavFilePassAsync(
+        string audioPath,
+        AsrOptions options,
+        CancellationToken cancellationToken)
+    {
+        var tempDir = Path.Combine(Path.GetTempPath(), $"ams-whisperx-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(tempDir);
+
+        try
+        {
+            return await RunWhisperXFilePassCoreAsync(audioPath, tempDir, options, cancellationToken)
+                .ConfigureAwait(false);
+        }
+        finally
+        {
+            TryDeleteDirectory(tempDir);
+        }
+    }
+
+    private static async Task<AsrResponse> RunWhisperXFilePassCoreAsync(
+        string audioPath,
+        string outputDirectory,
+        AsrOptions options,
+        CancellationToken cancellationToken)
+    {
+        var executable = ResolveWhisperXExecutable();
+        var model = ResolveWhisperXModel(options);
+
+        using var process = new Process
+        {
+            StartInfo = CreateWhisperXStartInfo(executable, model, audioPath, outputDirectory, options)
+        };
+
+        Log.Debug(
+            "Starting WhisperX process executable={Executable} model={Model} gpu={UseGpu} align={Align}",
+            executable,
+            model,
+            options.UseGpu,
+            options.EnableWordTimestamps);
+
+        if (!process.Start())
+        {
+            throw new InvalidOperationException("Failed to start whisperx process.");
+        }
+
+        var stdoutTask = process.StandardOutput.ReadToEndAsync(cancellationToken);
+        var stderrTask = process.StandardError.ReadToEndAsync(cancellationToken);
+        using var registration = cancellationToken.Register(static state =>
+        {
+            var proc = (Process)state!;
+            try
+            {
+                if (!proc.HasExited)
+                {
+                    proc.Kill(entireProcessTree: true);
+                }
+            }
+            catch
+            {
+            }
+        }, process);
+
+        await process.WaitForExitAsync(cancellationToken).ConfigureAwait(false);
+        var stdout = await stdoutTask.ConfigureAwait(false);
+        var stderr = await stderrTask.ConfigureAwait(false);
+
+        if (process.ExitCode != 0)
+        {
+            throw new InvalidOperationException(
+                $"whisperx exited with code {process.ExitCode}.{FormatWhisperXFailure(stdout, stderr)}");
+        }
+
+        var jsonPath = Path.Combine(outputDirectory, Path.GetFileNameWithoutExtension(audioPath) + ".json");
+        if (!File.Exists(jsonPath))
+        {
+            throw new FileNotFoundException($"WhisperX output JSON not found: {jsonPath}", jsonPath);
+        }
+
+        var json = await File.ReadAllTextAsync(jsonPath, cancellationToken).ConfigureAwait(false);
+        return ParseWhisperXJson(json, $"whisperx:{model}");
     }
 
     private static bool ShouldRetryWithoutDtw(
@@ -603,7 +723,26 @@ public static class AsrProcessor
         out double transcriptEndSec,
         out double coverage)
     {
-        audioDurationSec = ComputeAudioDurationSeconds(buffer);
+        var duration = ComputeAudioDurationSeconds(buffer);
+        audioDurationSec = duration;
+        return ShouldRetryWithoutDtw(
+            options,
+            duration,
+            response,
+            out _,
+            out transcriptEndSec,
+            out coverage);
+    }
+
+    private static bool ShouldRetryWithoutDtw(
+        AsrOptions options,
+        double audioDurationSec,
+        AsrResponse response,
+        out double resolvedAudioDurationSec,
+        out double transcriptEndSec,
+        out double coverage)
+    {
+        resolvedAudioDurationSec = audioDurationSec;
         transcriptEndSec = ComputeTranscriptEndSeconds(response);
         coverage = audioDurationSec > 0 ? transcriptEndSec / audioDurationSec : 0;
 

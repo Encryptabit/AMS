@@ -40,21 +40,28 @@ public sealed class ChapterContextHandle : IDisposable
             throw new FileNotFoundException("Book index not found", bookIndexFile.FullName);
         }
 
-        var bookRoot = bookIndexFile.Directory?.FullName ?? Directory.GetCurrentDirectory();
-        var bookDescriptor = new BookDescriptor(
-            bookId: Path.GetFileName(bookRoot.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)),
-            rootPath: bookRoot,
-            chapters: Array.Empty<ChapterDescriptor>());
-
-        var book = GetOrCreateManager(bookDescriptor).Current;
-        return book.Chapters.CreateContext(
+        return Create(ChapterOpenRequest.FromTrusted(
             bookIndexFile,
             asrFile,
             transcriptFile,
             hydrateFile,
             audioFile,
             chapterDirectory,
-            chapterId);
+            chapterId));
+    }
+
+    public static ChapterContextHandle Create(ChapterOpenRequest request)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+
+        var bookRoot = request.BookIndexFile.Directory?.FullName ?? Directory.GetCurrentDirectory();
+        var bookDescriptor = new BookDescriptor(
+            bookId: Path.GetFileName(bookRoot.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)),
+            rootPath: bookRoot,
+            chapters: Array.Empty<ChapterDescriptor>());
+
+        var book = GetOrCreateManager(bookDescriptor).Current;
+        return book.Chapters.CreateContext(request);
     }
 
     public void Save()

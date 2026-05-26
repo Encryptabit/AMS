@@ -62,11 +62,11 @@ public sealed class ContextConcurrencyTests : IDisposable
             var chapterDirectory = Directory.CreateDirectory(Path.Combine(root, chapterId));
             var audioFile = new FileInfo(Path.Combine(root, $"{chapterId}.wav"));
 
-            using var handle = chapters.CreateContext(
+            using var handle = chapters.CreateContext(ChapterOpenRequest.FromTrusted(
                 bookIndexFile,
                 audioFile: audioFile,
                 chapterDirectory: chapterDirectory,
-                chapterId: chapterId);
+                chapterId: chapterId));
 
             return handle.Chapter.Descriptor.ChapterId;
         });

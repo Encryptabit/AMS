@@ -1,5 +1,5 @@
-using System.Security.Cryptography;
 using System.Text.RegularExpressions;
+using Ams.Core.Runtime.Artifacts;
 using Ams.Core.Runtime.Book;
 
 namespace Ams.Core.Runtime.Documents;
@@ -41,20 +41,19 @@ file record struct BracketState
 /// Canonical indexer: preserves exact token text, builds sentence/paragraph ranges only.
 /// No normalization, no timing.
 /// </summary>
-public partial class BookIndexer : IBookIndexer
+public partial class BookIndexer(IPronunciationProvider? pronunciationProvider = null) : IBookIndexer
 {
-    private static readonly Regex _blankLineSplit = new("(\r?\n){2,}", RegexOptions.Compiled);
-    private static readonly Regex ForcedHyphenBreakRegex = new(@"(?<=\p{L})-\r?\n\s*(?=\p{L})", RegexOptions.Compiled);
+    private static readonly Regex BlankLineSeparatorRegex = CreateBlankLineSeparatorRegex();
+    private static readonly Regex ForcedHyphenLineBreakRegex = CreateForcedHyphenLineBreakRegex();
+    private static readonly Regex OcrChapterHeaderRegex = CreateOcrChapterHeaderRegex();
+    private static readonly Regex NumberedHeadingTitleRegex = CreateNumberedHeadingTitleRegex();
+    private static readonly Regex TableOfContentsDottedPageRegex = CreateTableOfContentsDottedPageRegex();
+    private static readonly Regex TableOfContentsSpacedPageRegex = CreateTableOfContentsSpacedPageRegex();
+    private static readonly Regex SectionHeadingKeywordRegex = CreateSectionHeadingKeywordRegex();
+    private static readonly Regex UnsuffixedChapterTitleRegex = CreateUnsuffixedChapterTitleRegex();
+    private static readonly Regex WhitespaceRegex = CreateWhitespaceRegex();
 
-    private static readonly Regex OcrChapterHeaderRegex =
-        new(@"^C(?:H|A|P|T|E|R|\d)*\s*(\d+)$", RegexOptions.IgnoreCase | RegexOptions.Compiled);
-
-    private readonly IPronunciationProvider _pronunciationProvider;
-
-    public BookIndexer(IPronunciationProvider? pronunciationProvider = null)
-    {
-        _pronunciationProvider = pronunciationProvider ?? NullPronunciationProvider.Instance;
-    }
+    private readonly IPronunciationProvider _pronunciationProvider = pronunciationProvider ?? NullPronunciationProvider.Instance;
 
     public async Task<BookIndex> CreateIndexAsync(
         BookParseResult parseResult,
@@ -62,12 +61,12 @@ public partial class BookIndexer : IBookIndexer
         BookIndexOptions? options = null,
         CancellationToken cancellationToken = default)
     {
-        if (parseResult == null)
-            throw new ArgumentNullException(nameof(parseResult));
+        ArgumentNullException.ThrowIfNull(parseResult);
         if (string.IsNullOrWhiteSpace(sourceFile))
             throw new ArgumentException("Source file path cannot be null or empty.", nameof(sourceFile));
 
         options ??= new BookIndexOptions();
+        ValidateOptions(options);
 
         var paragraphTexts = BuildParagraphTexts(parseResult);
         paragraphTexts = FoldAdjacentHeadings(paragraphTexts);
@@ -96,7 +95,7 @@ public partial class BookIndexer : IBookIndexer
         }
     }
 
-    private BookIndex Process(
+    private static BookIndex Process(
         BookParseResult parseResult,
         string sourceFile,
         BookIndexOptions options,
@@ -104,7 +103,7 @@ public partial class BookIndexer : IBookIndexer
         IReadOnlyDictionary<string, string[]> pronunciations,
         CancellationToken cancellationToken)
     {
-        var sourceFileHash = ComputeFileHash(sourceFile);
+        var sourceFileHash = FileArtifact.FromPath(sourceFile).Sha256Hash;
 
         var words = new List<BookWord>();
         var sentences = new List<SentenceRange>();
@@ -193,8 +192,8 @@ public partial class BookIndexer : IBookIndexer
 
             foreach (var rawToken in TokenizeByWhitespace(pText))
             {
-                var normalizedToken = NormalizeTokenSurface(rawToken);
-                if (!ContainsLexicalContent(normalizedToken))
+                var analysisToken = BuildTokenAnalysisSurface(rawToken);
+                if (!ContainsLexicalContent(analysisToken))
                 {
                     continue;
                 }
@@ -206,18 +205,18 @@ public partial class BookIndexer : IBookIndexer
                 if (!bracketState.InBracket)
                 {
                     // Check if this token starts a bracket phrase
-                    char firstChar = rawToken.Length > 0 ? rawToken[0] : '\0';
+                    char firstChar = analysisToken.Length > 0 ? analysisToken[0] : '\0';
                     if (firstChar is '[' or '<')
                     {
                         char expectedClose = firstChar == '[' ? ']' : '>';
                         bracketState.Open(expectedClose);
-                        var stripped = StripBracketChar(rawToken, firstChar, expectedClose);
+                        var stripped = StripBracketChar(analysisToken, firstChar, expectedClose);
                         if (stripped.Length > 0)
                             bracketState.Accumulator!.Add(stripped);
                         bracketState.TokenCount++;
 
                         // Check if this same token also closes the bracket
-                        if (rawToken.Length > 1 && rawToken[^1] == expectedClose)
+                        if (analysisToken.Length > 1 && analysisToken[^1] == expectedClose)
                         {
                             // Single-token bracket like [Word]
                             var phrase = string.Join(" ", bracketState.Accumulator!);
@@ -232,14 +231,14 @@ public partial class BookIndexer : IBookIndexer
                 {
                     // Inside bracket accumulation
                     bracketState.TokenCount++;
-                    bool closes = rawToken.Length > 0 && rawToken[^1] == bracketState.ExpectedClose;
+                    bool closes = analysisToken.Length > 0 && analysisToken[^1] == bracketState.ExpectedClose;
                     bool safetyValve = bracketState.TokenCount > 8;
 
                     if (closes || safetyValve)
                     {
                         if (closes)
                         {
-                            var stripped = StripBracketChar(rawToken, '\0', bracketState.ExpectedClose);
+                            var stripped = StripBracketChar(analysisToken, '\0', bracketState.ExpectedClose);
                             if (stripped.Length > 0)
                                 bracketState.Accumulator!.Add(stripped);
                             var phrase = string.Join(" ", bracketState.Accumulator!);
@@ -253,7 +252,7 @@ public partial class BookIndexer : IBookIndexer
                     }
                     else
                     {
-                        var stripped = StripBracketChar(rawToken, '\0', '\0');
+                        var stripped = StripBracketChar(analysisToken, '\0', '\0');
                         if (stripped.Length > 0)
                             bracketState.Accumulator!.Add(stripped);
                     }
@@ -263,11 +262,11 @@ public partial class BookIndexer : IBookIndexer
                 // --- Frequency-based proper noun detection (skip if inside bracket) ---
                 if (!insideBracket && currentSection != null)
                 {
-                    CheckFrequencyForProperNoun(rawToken, sectionProperNouns);
+                    CheckFrequencyForProperNoun(rawToken, analysisToken, sectionProperNouns);
                 }
 
                 // --- Standard word processing (always runs, even inside brackets) ---
-                string? lexeme = PronunciationHelper.NormalizeForLookup(normalizedToken);
+                string? lexeme = PronunciationHelper.NormalizeForLookup(analysisToken);
                 string[]? phonemes = null;
                 if (!string.IsNullOrEmpty(lexeme) && pronunciations.TryGetValue(lexeme, out var mapped) &&
                     mapped.Length > 0)
@@ -286,7 +285,7 @@ public partial class BookIndexer : IBookIndexer
                 words.Add(w);
                 globalWord++;
 
-                if (IsSentenceTerminal(normalizedToken))
+                if (IsSentenceTerminal(analysisToken))
                 {
                     sentences.Add(
                         new SentenceRange(Index: sentenceIndex, Start: sentenceStartWord, End: globalWord - 1));
@@ -353,8 +352,24 @@ public partial class BookIndexer : IBookIndexer
             Sentences: sentences.ToArray(),
             Paragraphs: paragraphs.ToArray(),
             Sections: sections.ToArray(),
-            BuildWarnings: warnings
+            BuildWarnings: warnings,
+            SchemaVersion: BookIndex.CurrentSchemaVersion
         );
+    }
+
+    private static void ValidateOptions(BookIndexOptions options)
+    {
+        ArgumentNullException.ThrowIfNull(options);
+
+        if (double.IsNaN(options.AverageWpm) || double.IsInfinity(options.AverageWpm))
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(options.AverageWpm),
+                options.AverageWpm,
+                "AverageWpm must be finite.");
+        }
+
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(options.AverageWpm, nameof(options.AverageWpm));
     }
 
     private static int GetHeadingLevel(string style)
@@ -391,9 +406,7 @@ public partial class BookIndexer : IBookIndexer
         if (t.Contains("introduction")) return "introduction";
         if (t.Contains("afterword")) return "afterword";
         if (t.Contains("acknowledg")) return "acknowledgments";
-        if (t.Contains("appendix")) return "appendix";
-        if (t.Contains("chapter")) return "chapter";
-        return "chapter";
+        return t.Contains("appendix") ? "appendix" : "chapter";
     }
 
     private static bool ShouldStartSection(string text, string style, string kind)
@@ -409,18 +422,8 @@ public partial class BookIndexer : IBookIndexer
         bool styleSuggestsHeading = LooksLikeHeadingStyle(style, kind);
         bool standaloneCandidate = LooksLikeStandaloneTitle(trimmed);
 
-        if (textHasKeyword)
-        {
-            if (LooksLikeTableOfContentsEntry(trimmed))
-                return false;
-
-            return true;
-        }
-
-        if (styleSuggestsHeading && standaloneCandidate)
-            return true;
-
-        return false;
+        if (!textHasKeyword) return styleSuggestsHeading && standaloneCandidate;
+        return !LooksLikeTableOfContentsEntry(trimmed);
     }
 
     private static bool LooksLikeHeadingStyle(string? style, string? kind)
@@ -480,19 +483,16 @@ public partial class BookIndexer : IBookIndexer
             return false;
 
         // Allow typical "1 - Title" or "III. Title" patterns often used for chapters
-        if (NumberedHeadingRegex.IsMatch(trimmed))
+        if (NumberedHeadingTitleRegex.IsMatch(trimmed))
             return true;
 
         int letterCount = 0;
         int upperCount = 0;
-        foreach (var ch in trimmed)
+        foreach (var ch in trimmed.Where(char.IsLetter))
         {
-            if (char.IsLetter(ch))
-            {
-                letterCount++;
-                if (char.IsUpper(ch))
-                    upperCount++;
-            }
+            letterCount++;
+            if (char.IsUpper(ch))
+                upperCount++;
         }
 
         if (letterCount > 0)
@@ -503,10 +503,7 @@ public partial class BookIndexer : IBookIndexer
         }
 
         var words = trimmed.Split(' ', StringSplitOptions.RemoveEmptyEntries);
-        if (words.Length > 0 && words.Length <= 8 && words.All(w => char.IsLetter(w[0]) && char.IsUpper(w[0])))
-            return true;
-
-        return false;
+        return words.Length > 0 && words.Length <= 8 && words.All(w => char.IsLetter(w[0]) && char.IsUpper(w[0]));
     }
 
     private static bool LooksLikeTableOfContentsEntry(string text)
@@ -517,44 +514,29 @@ public partial class BookIndexer : IBookIndexer
         if (text.Contains("....", StringComparison.Ordinal))
             return true;
 
-        if (Regex.IsMatch(text, @"\.{2,}\s*\d+$"))
+        if (TableOfContentsDottedPageRegex.IsMatch(text))
             return true;
 
-        if (Regex.IsMatch(text, @"[ \t]{2,}\d+$"))
+        if (TableOfContentsSpacedPageRegex.IsMatch(text))
             return true;
 
-        if (text.Contains('	'))
-        {
-            var parts = text.Split('	', StringSplitOptions.RemoveEmptyEntries);
-            if (parts.Length >= 2)
-            {
-                var tail = parts[^1].Trim();
-                if (tail.Length > 0 && tail.All(char.IsDigit))
-                {
-                    return true;
-                }
-            }
-        }
-
-        return false;
+        if (!text.Contains('	')) return false;
+        var parts = text.Split('	', StringSplitOptions.RemoveEmptyEntries);
+        if (parts.Length < 2) return false;
+        var tail = parts[^1].Trim();
+        return tail.Length > 0 && tail.All(char.IsDigit);
     }
-
-    private static readonly Regex ChapterDuplicateRegex = MyRegex1();
-    private static readonly Regex SectionTitleRegex = MyRegex();
-
-    private static readonly Regex NumberedHeadingRegex = MyRegex2();
 
     private static bool LooksLikeSectionHeading(string text)
     {
         if (string.IsNullOrWhiteSpace(text)) return false;
         var t = text.Trim();
-        if (SectionTitleRegex.IsMatch(t)) return true;
-        return false;
+        return SectionHeadingKeywordRegex.IsMatch(t);
     }
 
     private static void ApplyChapterDuplicateSuffixes(List<SectionRange> sections)
     {
-        if (sections == null || sections.Count == 0)
+        if (sections.Count == 0)
             return;
 
         var candidates =
@@ -567,7 +549,7 @@ public partial class BookIndexer : IBookIndexer
                 continue;
 
             var title = section.Title ?? string.Empty;
-            var match = ChapterDuplicateRegex.Match(title);
+            var match = UnsuffixedChapterTitleRegex.Match(title);
             if (!match.Success)
                 continue;
 
@@ -621,22 +603,61 @@ public partial class BookIndexer : IBookIndexer
             if (i >= n) yield break;
 
             int start = i;
-            while (i < n && !char.IsWhiteSpace(text[i])) i++;
+            while (i < n)
+            {
+                while (i < n && !char.IsWhiteSpace(text[i])) i++;
+
+                if (!TryContinueForcedHyphenLineBreak(text, start, i, out var nextTokenStart))
+                {
+                    break;
+                }
+
+                i = nextTokenStart;
+            }
+
             yield return text[start..i];
         }
     }
 
-    private static string NormalizeTokenSurface(string token)
+    private static bool TryContinueForcedHyphenLineBreak(
+        string text,
+        int tokenStart,
+        int tokenEnd,
+        out int nextTokenStart)
+    {
+        nextTokenStart = tokenEnd;
+        if (tokenEnd - tokenStart < 2 || text[tokenEnd - 1] != '-' || !char.IsLetter(text[tokenEnd - 2]))
+        {
+            return false;
+        }
+
+        var i = tokenEnd;
+        var sawLineBreak = false;
+        while (i < text.Length && char.IsWhiteSpace(text[i]))
+        {
+            sawLineBreak |= text[i] is '\r' or '\n';
+            i++;
+        }
+
+        if (!sawLineBreak || i >= text.Length || !char.IsLetter(text[i]))
+        {
+            return false;
+        }
+
+        nextTokenStart = i;
+        return true;
+    }
+
+    private static string BuildTokenAnalysisSurface(string token)
     {
         if (string.IsNullOrWhiteSpace(token))
         {
             return string.Empty;
         }
 
-        // Single-pass: normalize typography, then trim whitespace + outer quotes from both ends
         var normalized = TextNormalizer.NormalizeTypography(token);
+        normalized = ForcedHyphenLineBreakRegex.Replace(normalized, string.Empty);
 
-        // Combined trim of whitespace and outer quotes in one scan from both ends
         int start = 0;
         int end = normalized.Length - 1;
 
@@ -658,7 +679,7 @@ public partial class BookIndexer : IBookIndexer
 
         var trimmed = text.Trim();
         var sample = trimmed.ToUpperInvariant();
-        sample = Regex.Replace(sample, "\\s+", string.Empty);
+        sample = WhitespaceRegex.Replace(sample, string.Empty);
 
         var digits = new System.Text.StringBuilder();
         foreach (var ch in sample)
@@ -723,25 +744,15 @@ public partial class BookIndexer : IBookIndexer
         if (parseResult.Paragraphs != null && parseResult.Paragraphs.Count > 0)
         {
             return parseResult.Paragraphs
-                .Select(p => (Text: NormalizeParagraphText(p.Text), Style: p.Style ?? "Unknown",
+                .Select(p => (Text: p.Text, Style: p.Style ?? "Unknown",
                     Kind: p.Kind ?? "Body"))
                 .ToList();
         }
 
-        return _blankLineSplit.Split(parseResult.Text)
+        return BlankLineSeparatorRegex.Split(parseResult.Text)
             .Where(s => !string.IsNullOrEmpty(s))
-            .Select(t => (Text: NormalizeParagraphText(t.TrimEnd('\r', '\n')), Style: "Unknown", Kind: "Body"))
+            .Select(t => (Text: t.TrimEnd('\r', '\n'), Style: "Unknown", Kind: "Body"))
             .ToList();
-    }
-
-    private static string NormalizeParagraphText(string text)
-    {
-        if (string.IsNullOrEmpty(text))
-        {
-            return string.Empty;
-        }
-
-        return ForcedHyphenBreakRegex.Replace(text, string.Empty);
     }
 
     private static List<(string Text, string Style, string Kind)> FoldAdjacentHeadings(
@@ -802,22 +813,12 @@ public partial class BookIndexer : IBookIndexer
         var a = first.Trim();
         var b = second.Trim();
 
-        if (string.Equals(a, b, StringComparison.OrdinalIgnoreCase))
+        if (string.Equals(a, b, StringComparison.OrdinalIgnoreCase) || b.StartsWith(a, StringComparison.OrdinalIgnoreCase))
         {
             return b;
         }
 
-        if (b.StartsWith(a, StringComparison.OrdinalIgnoreCase))
-        {
-            return b;
-        }
-
-        if (a.EndsWith(b, StringComparison.OrdinalIgnoreCase))
-        {
-            return a;
-        }
-
-        return $"{a} — {b}";
+        return a.EndsWith(b, StringComparison.OrdinalIgnoreCase) ? a : $"{a} — {b}";
     }
 
     private static IReadOnlySet<string> CollectLexicalTokens(List<(string Text, string Style, string Kind)> paragraphs)
@@ -827,7 +828,7 @@ public partial class BookIndexer : IBookIndexer
         {
             foreach (var rawToken in TokenizeByWhitespace(text))
             {
-                var token = NormalizeTokenSurface(rawToken);
+                var token = BuildTokenAnalysisSurface(rawToken);
                 if (!ContainsLexicalContent(token))
                 {
                     continue;
@@ -851,15 +852,7 @@ public partial class BookIndexer : IBookIndexer
             return false;
         }
 
-        foreach (char c in text)
-        {
-            if (char.IsLetterOrDigit(c))
-            {
-                return true;
-            }
-        }
-
-        return false;
+        return text.Any(char.IsLetterOrDigit);
     }
 
     private static bool ShouldSkipParagraphFromIndex(string? text, string? style, string? kind)
@@ -870,12 +863,7 @@ public partial class BookIndexer : IBookIndexer
         }
 
         var trimmed = text?.Trim();
-        if (string.IsNullOrEmpty(trimmed))
-        {
-            return false;
-        }
-
-        return LooksLikeTableOfContentsEntry(trimmed);
+        return !string.IsNullOrEmpty(trimmed) && LooksLikeTableOfContentsEntry(trimmed);
     }
 
     private static string[]? FinalizeProperNouns(HashSet<string> sectionProperNouns)
@@ -887,21 +875,6 @@ public partial class BookIndexer : IBookIndexer
 
         var filtered = ProperNounPromptFilter.Filter(sectionProperNouns);
         return filtered.Length == 0 ? null : filtered;
-    }
-
-    private static string ComputeFileHash(string filePath)
-    {
-        try
-        {
-            using var sha256 = SHA256.Create();
-            using var stream = File.OpenRead(filePath);
-            var hashBytes = sha256.ComputeHash(stream);
-            return Convert.ToHexString(hashBytes);
-        }
-        catch (Exception ex)
-        {
-            throw new BookIndexException($"Failed to compute hash for file '{filePath}': {ex.Message}", ex);
-        }
     }
 
     /// <summary>
@@ -929,18 +902,25 @@ public partial class BookIndexer : IBookIndexer
     /// <summary>
     /// Check if a non-bracketed token should be flagged as a proper noun based on frequency.
     /// </summary>
-    private static void CheckFrequencyForProperNoun(string rawToken, HashSet<string> properNouns)
+    private static void CheckFrequencyForProperNoun(
+        string rawToken,
+        string analysisToken,
+        HashSet<string> properNouns)
     {
         // Em-dash compounds: split and check each component independently
         if (rawToken.Contains('\u2014') || rawToken.Contains('\u2013'))
         {
             var parts = rawToken.Split(new[] { '\u2014', '\u2013' }, StringSplitOptions.RemoveEmptyEntries);
             foreach (var part in parts)
-                CheckFrequencyForProperNoun(part.Trim(), properNouns);
+            {
+                var partToken = part.Trim();
+                CheckFrequencyForProperNoun(partToken, BuildTokenAnalysisSurface(partToken), properNouns);
+            }
+
             return;
         }
 
-        var lookupForm = ExtractLookupForm(rawToken);
+        var lookupForm = ExtractLookupForm(analysisToken);
         if (string.IsNullOrEmpty(lookupForm) || lookupForm.Length <= 1)
             return;
 
@@ -948,25 +928,26 @@ public partial class BookIndexer : IBookIndexer
         if (IsNumericToken(lookupForm))
             return;
 
+        if (IsKnownCommonContraction(lookupForm))
+            return;
+
         // Hyphenated: check each component; add full token only if ALL components are rare
         if (lookupForm.Contains('-'))
         {
             var parts = lookupForm.Split('-', StringSplitOptions.RemoveEmptyEntries);
-            if (parts.Length > 1 && parts.All(p => p.Length > 1 && EnglishFrequencyDictionary.IsRareOrUnknown(p)))
-            {
-                var surface = TrimPunctuation(rawToken);
-                if (surface.Length > 0)
-                    properNouns.Add(surface);
-            }
+            if (parts.Length <= 1 ||
+                !parts.All(p => p.Length > 1 && EnglishFrequencyDictionary.IsRareOrUnknown(p))) return;
+            var surface = TrimPunctuation(analysisToken);
+            if (surface.Length > 0)
+                properNouns.Add(surface);
             return;
         }
 
-        if (EnglishFrequencyDictionary.IsRareOrUnknown(lookupForm))
-        {
-            var surface = TrimPunctuation(rawToken);
-            if (surface.Length > 0)
-                properNouns.Add(surface);
-        }
+        if (!EnglishFrequencyDictionary.IsRareOrUnknown(lookupForm)) return;
+
+        var tokenSurface = TrimPunctuation(analysisToken);
+        if (tokenSurface.Length > 0)
+            properNouns.Add(tokenSurface);
     }
 
     private static bool IsNumericToken(string lookupForm)
@@ -987,7 +968,7 @@ public partial class BookIndexer : IBookIndexer
     }
 
     /// <summary>
-    /// Extract a lowercase lookup form from a raw token: strip punctuation, possessives, lowercase.
+    /// Extract a lowercase dictionary lookup form from a raw token.
     /// </summary>
     private static string ExtractLookupForm(string rawToken)
     {
@@ -996,12 +977,10 @@ public partial class BookIndexer : IBookIndexer
 
         var span = rawToken.AsSpan();
 
-        // Strip leading punctuation (except hyphen)
         int start = 0;
         while (start < span.Length && char.IsPunctuation(span[start]) && span[start] != '-')
             start++;
 
-        // Strip trailing punctuation (except hyphen)
         int end = span.Length - 1;
         while (end >= start && char.IsPunctuation(span[end]) && span[end] != '-')
             end--;
@@ -1010,52 +989,34 @@ public partial class BookIndexer : IBookIndexer
             return string.Empty;
 
         var trimmed = span[start..(end + 1)];
+        var lookup = trimmed.ToString();
 
-        // Strip possessive 's or 's from end
-        if (trimmed.Length >= 2)
+        if (lookup.EndsWith("'s", StringComparison.OrdinalIgnoreCase) ||
+            lookup.EndsWith("\u2019s", StringComparison.OrdinalIgnoreCase))
         {
-            if (trimmed.EndsWith("'s", StringComparison.OrdinalIgnoreCase) ||
-                trimmed.EndsWith("\u2019s", StringComparison.OrdinalIgnoreCase))
-            {
-                trimmed = trimmed[..^2];
-            }
+            lookup = lookup[..^2];
         }
 
-        // Strip contraction suffixes (handle irregulars first)
-        var trimmedStr = trimmed.ToString();
-        if (trimmedStr.EndsWith("n't", StringComparison.OrdinalIgnoreCase) ||
-            trimmedStr.EndsWith("n\u2019t", StringComparison.OrdinalIgnoreCase))
+        return lookup.Length == 0
+            ? string.Empty
+            : TextNormalizer.NormalizeTypography(lookup).ToLowerInvariant();
+    }
+
+    private static bool IsKnownCommonContraction(string lookupForm)
+    {
+        if (!lookupForm.Contains('\'') && !lookupForm.Contains('\u2019'))
         {
-            // Irregular: won't → will, can't → can
-            var baseForm = trimmedStr[..^3];
-            if (baseForm.Equals("wo", StringComparison.OrdinalIgnoreCase))
-                return "will";
-            if (baseForm.Equals("ca", StringComparison.OrdinalIgnoreCase))
-                return "can";
-            return baseForm.Length == 0 ? string.Empty : baseForm.ToLowerInvariant();
+            return false;
         }
 
-        ReadOnlySpan<string> contractionSuffixes = ["'ve", "\u2019ve", "'re", "\u2019re", "'ll", "\u2019ll"];
-        foreach (var suffix in contractionSuffixes)
+        var expanded = TextNormalizer.Normalize(lookupForm, expandContractions: true, removeNumbers: false);
+        if (string.Equals(expanded, lookupForm, StringComparison.Ordinal))
         {
-            if (trimmedStr.EndsWith(suffix, StringComparison.OrdinalIgnoreCase))
-            {
-                var baseForm = trimmedStr[..^suffix.Length];
-                return baseForm.Length == 0 ? string.Empty : baseForm.ToLowerInvariant();
-            }
+            return false;
         }
 
-        ReadOnlySpan<string> shortSuffixes = ["'d", "\u2019d", "'m", "\u2019m"];
-        foreach (var suffix in shortSuffixes)
-        {
-            if (trimmedStr.EndsWith(suffix, StringComparison.OrdinalIgnoreCase))
-            {
-                var baseForm = trimmedStr[..^suffix.Length];
-                return baseForm.Length == 0 ? string.Empty : baseForm.ToLowerInvariant();
-            }
-        }
-
-        return trimmed.Length == 0 ? string.Empty : trimmedStr.ToLowerInvariant();
+        var parts = expanded.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        return parts.Length > 0 && parts.All(static part => !EnglishFrequencyDictionary.IsRareOrUnknown(part));
     }
 
     /// <summary>
@@ -1072,15 +1033,33 @@ public partial class BookIndexer : IBookIndexer
         return start > end ? string.Empty : token[start..(end + 1)];
     }
 
-    [GeneratedRegex(@"^\s*(chapter\b|prologue\b|epilogue\b|prelude\b|foreword\b|introduction\b|afterword\b|appendix\b)",
-        RegexOptions.IgnoreCase | RegexOptions.Compiled, "en-US")]
-    private static partial Regex MyRegex();
+    [GeneratedRegex(@"(\r?\n){2,}", RegexOptions.Compiled)]
+    private static partial Regex CreateBlankLineSeparatorRegex();
 
-    [GeneratedRegex(@"^(?<prefix>\s*chapter)(?<ws>\s+)(?<number>\d+)(?<suffix>\s*[A-Za-z]*)?$",
-        RegexOptions.IgnoreCase | RegexOptions.Compiled, "en-US")]
-    private static partial Regex MyRegex1();
+    [GeneratedRegex(@"(?<=\p{L})-\r?\n\s*(?=\p{L})", RegexOptions.Compiled)]
+    private static partial Regex CreateForcedHyphenLineBreakRegex();
+
+    [GeneratedRegex(@"^C(?:H|A|P|T|E|R|\d)*\s*(\d+)$", RegexOptions.IgnoreCase | RegexOptions.Compiled, "en-US")]
+    private static partial Regex CreateOcrChapterHeaderRegex();
 
     [GeneratedRegex(@"^\s*((\d+|[ivxlcdm]+)\s*[-–.:]\s*[a-zA-Z])", RegexOptions.IgnoreCase | RegexOptions.Compiled,
         "en-US")]
-    private static partial Regex MyRegex2();
+    private static partial Regex CreateNumberedHeadingTitleRegex();
+
+    [GeneratedRegex(@"\.{2,}\s*\d+$", RegexOptions.Compiled)]
+    private static partial Regex CreateTableOfContentsDottedPageRegex();
+
+    [GeneratedRegex(@"[ \t]{2,}\d+$", RegexOptions.Compiled)]
+    private static partial Regex CreateTableOfContentsSpacedPageRegex();
+
+    [GeneratedRegex(@"^\s*(chapter\b|prologue\b|epilogue\b|prelude\b|foreword\b|introduction\b|afterword\b|appendix\b)",
+        RegexOptions.IgnoreCase | RegexOptions.Compiled, "en-US")]
+    private static partial Regex CreateSectionHeadingKeywordRegex();
+
+    [GeneratedRegex(@"^(?<prefix>\s*chapter)(?<ws>\s+)(?<number>\d+)(?<suffix>\s*[A-Za-z]*)?$",
+        RegexOptions.IgnoreCase | RegexOptions.Compiled, "en-US")]
+    private static partial Regex CreateUnsuffixedChapterTitleRegex();
+
+    [GeneratedRegex(@"\s+", RegexOptions.Compiled)]
+    private static partial Regex CreateWhitespaceRegex();
 }

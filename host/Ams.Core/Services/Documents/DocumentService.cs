@@ -1,5 +1,5 @@
-using Ams.Core.Processors.DocumentProcessor;
 using Ams.Core.Runtime.Book;
+using Ams.Core.Runtime.Documents;
 using Ams.Core.Services.Interfaces;
 
 namespace Ams.Core.Services.Documents;
@@ -8,6 +8,8 @@ public sealed class DocumentService : IDocumentService
 {
     private readonly IPronunciationProvider? _pronunciationProvider;
     private readonly IBookCache? _cache;
+    private readonly IBookParser _parser;
+    private readonly IBookIndexer _indexer;
 
     public DocumentService(
         IPronunciationProvider? pronunciationProvider = null,
@@ -15,6 +17,8 @@ public sealed class DocumentService : IDocumentService
     {
         _pronunciationProvider = pronunciationProvider;
         _cache = cache;
+        _parser = new BookParser();
+        _indexer = new BookIndexer(pronunciationProvider);
     }
 
     public async Task<DocumentBuildIndexResult> BuildIndexAsync(
@@ -25,9 +29,9 @@ public sealed class DocumentService : IDocumentService
 
         var sourceFile = request.SourceFile;
 
-        if (!DocumentProcessor.CanParseBook(sourceFile))
+        if (!_parser.CanParse(sourceFile))
         {
-            var supportedExts = string.Join(", ", DocumentProcessor.GetSupportedBookExtensions());
+            var supportedExts = string.Join(", ", _parser.SupportedExtensions);
             throw new InvalidOperationException($"Unsupported file format. Supported formats: {supportedExts}");
         }
 
@@ -51,13 +55,12 @@ public sealed class DocumentService : IDocumentService
             }
         }
 
-        var parseResult = await DocumentProcessor.ParseBookAsync(sourceFile, cancellationToken).ConfigureAwait(false);
-        var index = await DocumentProcessor
-            .BuildBookIndexAsync(
+        var parseResult = await _parser.ParseAsync(sourceFile, cancellationToken).ConfigureAwait(false);
+        var index = await _indexer
+            .CreateIndexAsync(
                 parseResult,
                 sourceFile,
                 request.Options,
-                _pronunciationProvider,
                 cancellationToken)
             .ConfigureAwait(false);
 
@@ -79,7 +82,7 @@ public sealed class DocumentService : IDocumentService
                 "Pronunciation provider was not supplied when constructing DocumentService.");
         }
 
-        return DocumentProcessor.PopulateMissingPhonemesAsync(index, _pronunciationProvider, cancellationToken);
+        return BookPhonemePopulator.PopulateMissingAsync(index, _pronunciationProvider, cancellationToken);
     }
 
     public async Task<BookIndex> ParseAndPopulatePhonemesAsync(
@@ -116,8 +119,8 @@ public sealed class DocumentService : IDocumentService
             return (index, false);
         }
 
-        var enriched = await DocumentProcessor
-            .PopulateMissingPhonemesAsync(index, _pronunciationProvider, cancellationToken)
+        var enriched = await BookPhonemePopulator
+            .PopulateMissingAsync(index, _pronunciationProvider, cancellationToken)
             .ConfigureAwait(false);
 
         var missingAfter = CountMissingPhonemes(enriched);

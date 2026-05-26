@@ -100,7 +100,7 @@ public sealed class BlazorWorkspace : IWorkspace, IDisposable
             chapterDir = new DirectoryInfo(Path.Combine(RootPath, options.ChapterId));
         }
 
-        return Book.Chapters.CreateContext(
+        return Book.Chapters.CreateContext(ChapterOpenRequest.FromTrusted(
             bookIndex,
             options.AsrFile,
             options.TranscriptFile,
@@ -108,7 +108,7 @@ public sealed class BlazorWorkspace : IWorkspace, IDisposable
             options.AudioFile,
             chapterDir,
             options.ChapterId,
-            options.ReloadBookIndex);
+            options.ReloadBookIndex));
     }
 
     #endregion

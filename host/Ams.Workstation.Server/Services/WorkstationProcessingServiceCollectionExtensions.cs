@@ -18,7 +18,7 @@ public static class WorkstationProcessingServiceCollectionExtensions
         ArgumentNullException.ThrowIfNull(services);
 
         services.TryAddSingleton<IPronunciationProvider>(_ => new MfaPronunciationProvider());
-        services.TryAddSingleton<IBookCache>(_ => Ams.Core.Processors.DocumentProcessor.DocumentProcessor.CreateBookCache());
+        services.TryAddSingleton<IBookCache>(_ => new BookCache());
         services.TryAddSingleton<IDocumentService, DocumentService>();
         services.TryAddSingleton<IAsrService, AsrService>();
         services.TryAddSingleton<IAnchorComputeService, AnchorComputeService>();

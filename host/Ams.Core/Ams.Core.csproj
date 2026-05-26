@@ -112,11 +112,13 @@
             Condition="'$(AmsFfmpegPrecheck)' == 'true' and '$(DesignTimeBuild)' != 'true' and Exists('$(AmsFfmpegSetupScript)')">
         <Exec Command="py &quot;$(AmsFfmpegSetupScript)&quot; --repo-root &quot;$(AmsRepoRootDir)&quot; --check-only"
               IgnoreExitCode="true"
+              IgnoreStandardErrorWarningFormat="true"
               Condition="'$(OS)' == 'Windows_NT'">
             <Output TaskParameter="ExitCode" PropertyName="AmsFfmpegPrecheckExitCode"/>
         </Exec>
         <Exec Command="python3 &quot;$(AmsFfmpegSetupScript)&quot; --repo-root &quot;$(AmsRepoRootDir)&quot; --check-only"
               IgnoreExitCode="true"
+              IgnoreStandardErrorWarningFormat="true"
               Condition="'$(OS)' != 'Windows_NT'">
             <Output TaskParameter="ExitCode" PropertyName="AmsFfmpegPrecheckExitCode"/>
         </Exec>
@@ -125,21 +127,25 @@
                  Text="FFmpeg precheck failed; attempting automatic install via scripts/setup_ffmpeg.py"/>
         <Exec Command="py &quot;$(AmsFfmpegSetupScript)&quot; --repo-root &quot;$(AmsRepoRootDir)&quot;"
               IgnoreExitCode="true"
+              IgnoreStandardErrorWarningFormat="true"
               Condition="'$(OS)' == 'Windows_NT' and '$(AmsFfmpegPrecheckExitCode)' != '' and '$(AmsFfmpegPrecheckExitCode)' != '0' and '$(AmsFfmpegAutoInstall)' == 'true'">
             <Output TaskParameter="ExitCode" PropertyName="AmsFfmpegInstallExitCode"/>
         </Exec>
         <Exec Command="python3 &quot;$(AmsFfmpegSetupScript)&quot; --repo-root &quot;$(AmsRepoRootDir)&quot;"
               IgnoreExitCode="true"
+              IgnoreStandardErrorWarningFormat="true"
               Condition="'$(OS)' != 'Windows_NT' and '$(AmsFfmpegPrecheckExitCode)' != '' and '$(AmsFfmpegPrecheckExitCode)' != '0' and '$(AmsFfmpegAutoInstall)' == 'true'">
             <Output TaskParameter="ExitCode" PropertyName="AmsFfmpegInstallExitCode"/>
         </Exec>
         <Exec Command="py &quot;$(AmsFfmpegSetupScript)&quot; --repo-root &quot;$(AmsRepoRootDir)&quot; --check-only"
               IgnoreExitCode="true"
+              IgnoreStandardErrorWarningFormat="true"
               Condition="'$(OS)' == 'Windows_NT' and '$(AmsFfmpegInstallExitCode)' == '0' and '$(AmsFfmpegAutoInstall)' == 'true'">
             <Output TaskParameter="ExitCode" PropertyName="AmsFfmpegFinalCheckExitCode"/>
         </Exec>
         <Exec Command="python3 &quot;$(AmsFfmpegSetupScript)&quot; --repo-root &quot;$(AmsRepoRootDir)&quot; --check-only"
               IgnoreExitCode="true"
+              IgnoreStandardErrorWarningFormat="true"
               Condition="'$(OS)' != 'Windows_NT' and '$(AmsFfmpegInstallExitCode)' == '0' and '$(AmsFfmpegAutoInstall)' == 'true'">
             <Output TaskParameter="ExitCode" PropertyName="AmsFfmpegFinalCheckExitCode"/>
         </Exec>

@@ -103,7 +103,7 @@ public static class Program
         ArgumentNullException.ThrowIfNull(services);
 
         services.AddSingleton<IPronunciationProvider>(_ => new MfaPronunciationProvider());
-        services.AddSingleton<IBookCache>(_ => Ams.Core.Processors.DocumentProcessor.DocumentProcessor.CreateBookCache());
+        services.AddSingleton<IBookCache>(_ => new BookCache());
         services.AddSingleton<IAppPlaybackAlertSoundService, AppPlaybackAlertSoundService>();
         services.AddSingleton<IDocumentService, DocumentService>();
         services.AddSingleton<IAsrService, AsrService>();

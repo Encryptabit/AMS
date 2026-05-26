@@ -54,6 +54,71 @@ public class AudioBufferSliceTests
     }
 
     [Fact]
+    public void Slice_TimeOverload_FloorsStartAndCeilsEnd()
+    {
+        const int sampleRate = 10;
+        var buffer = new AudioBuffer(1, sampleRate, sampleRate);
+        var span = buffer.GetChannelSpan(0);
+        for (int i = 0; i < span.Length; i++)
+            span[i] = i;
+
+        var slice = buffer.Slice(TimeSpan.FromSeconds(0.11), TimeSpan.FromSeconds(0.29));
+
+        Assert.Equal(2, slice.Length);
+        Assert.Equal(1f, slice.GetChannel(0).Span[0]);
+        Assert.Equal(2f, slice.GetChannel(0).Span[1]);
+    }
+
+    [Fact]
+    public void SliceClamped_TimeRange_ClampsToBufferBounds()
+    {
+        const int sampleRate = 10;
+        var buffer = new AudioBuffer(1, sampleRate, sampleRate);
+
+        var slice = buffer.SliceClamped(TimeSpan.FromSeconds(-0.1), TimeSpan.FromSeconds(2.0));
+
+        Assert.Equal(sampleRate, slice.Length);
+    }
+
+    [Fact]
+    public void SliceClamped_TimeRange_ThrowsForCollapsedRange()
+    {
+        const int sampleRate = 10;
+        var buffer = new AudioBuffer(1, sampleRate, sampleRate);
+
+        Assert.Throws<ArgumentOutOfRangeException>(
+            () => buffer.SliceClamped(TimeSpan.FromSeconds(2.0), TimeSpan.FromSeconds(3.0)));
+    }
+
+    [Fact]
+    public void TrySliceClamped_TimeRange_UsesFullBufferWhenRangeIsOpen()
+    {
+        const int sampleRate = 10;
+        var buffer = new AudioBuffer(1, sampleRate, sampleRate);
+
+        var ok = buffer.TrySliceClamped(start: null, end: null, out var segment);
+
+        Assert.True(ok);
+        Assert.NotNull(segment);
+        Assert.Equal(sampleRate, segment.Length);
+    }
+
+    [Fact]
+    public void TrySliceClamped_TimeRange_ReturnsFalseForCollapsedRange()
+    {
+        const int sampleRate = 10;
+        var buffer = new AudioBuffer(1, sampleRate, sampleRate);
+
+        var ok = buffer.TrySliceClamped(
+            TimeSpan.FromSeconds(2.0),
+            TimeSpan.FromSeconds(3.0),
+            out var segment);
+
+        Assert.False(ok);
+        Assert.Null(segment);
+    }
+
+    [Fact]
     public void Slice_ToWavStream_ProducesValidWav()
     {
         if (!TryEnsureFfmpeg()) return;

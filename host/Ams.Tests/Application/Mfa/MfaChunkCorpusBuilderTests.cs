@@ -669,6 +669,32 @@ public class MfaChunkCorpusBuilderTests
         Assert.Contains("could not be reused", ex.Message, StringComparison.OrdinalIgnoreCase);
     }
 
+    [Fact]
+    public void Build_DoesNotLoadAudioBuffer_WhenReusableChunkAudioSatisfiesAllChunks()
+    {
+        using var workspace = new ScopedRebuildWorkspace(chunkCount: 2);
+        workspace.WriteSourceWav(0, "SOURCE-WAV-0");
+        workspace.WriteSourceWav(1, "SOURCE-WAV-1");
+
+        var factoryCalled = false;
+        var result = MfaChunkCorpusBuilder.Build(
+            audioBufferFactory: () =>
+            {
+                factoryCalled = true;
+                throw new InvalidOperationException("Audio buffer should not be loaded when chunk WAVs are reusable.");
+            },
+            chunkPlan: workspace.Plan,
+            hydrate: workspace.Hydrate,
+            corpusDirectory: workspace.CorpusDir,
+            chunkAudio: workspace.ChunkAudio,
+            requireAsrChunkAudio: true);
+
+        Assert.False(factoryCalled);
+        Assert.Equal(2, result.Utterances.Count);
+        Assert.Equal("SOURCE-WAV-0", workspace.ReadCorpusFile(0, ".wav"));
+        Assert.Equal("SOURCE-WAV-1", workspace.ReadCorpusFile(1, ".wav"));
+    }
+
     // ----------------------------------------------------------------
     // Deterministic corpus file list test
     // ----------------------------------------------------------------

@@ -6,15 +6,13 @@ using Ams.Core.Artifacts.Hydrate;
 using Ams.Core.Asr;
 using Ams.Core.Processors.Alignment.Anchors;
 using Ams.Core.Runtime.Book;
+using Ams.Core.Runtime.Common;
 using Ams.Core.Runtime.Interfaces;
 
 namespace Ams.Core.Runtime.Chapter;
 
 public sealed class ChapterManager : IChapterManager
 {
-    // Default to unbounded (all chapters) unless caller specifies smaller.
-    private const int DefaultMaxCachedContexts = int.MaxValue;
-
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
         PropertyNameCaseInsensitive = true
@@ -26,18 +24,23 @@ public sealed class ChapterManager : IChapterManager
     private readonly Dictionary<string, ChapterContext> _cache;
     private readonly Dictionary<string, LinkedListNode<string>> _usageNodes;
     private readonly LinkedList<string> _usageOrder;
-    private readonly int _maxCachedContexts;
+    private readonly RuntimeCachePolicy _cachePolicy;
     private int _cursor;
 
-    internal ChapterManager(BookContext bookContext, int maxCachedContexts = DefaultMaxCachedContexts)
+    internal ChapterManager(BookContext bookContext, int maxCachedContexts = RuntimeCachePolicy.RetainAllEntries)
     {
         _bookContext = bookContext ?? throw new ArgumentNullException(nameof(bookContext));
         _descriptors = new List<ChapterDescriptor>(bookContext.Descriptor.Chapters);
         _cache = new Dictionary<string, ChapterContext>(StringComparer.OrdinalIgnoreCase);
         _usageNodes = new Dictionary<string, LinkedListNode<string>>(StringComparer.OrdinalIgnoreCase);
         _usageOrder = new LinkedList<string>();
-        // Preserve caller intent; effective limit is computed dynamically (see MaxCachedContexts).
-        _maxCachedContexts = maxCachedContexts;
+        _cachePolicy = maxCachedContexts == RuntimeCachePolicy.RetainAllEntries
+            ? RuntimeLifetimePolicies.ChapterContexts
+            : RuntimeLifetimePolicies.ChapterContexts with
+            {
+                Name = "caller-limited-chapter-contexts",
+                MaxEntries = maxCachedContexts
+            };
         _cursor = 0;
     }
 
@@ -62,6 +65,8 @@ public sealed class ChapterManager : IChapterManager
             }
         }
     }
+
+    internal RuntimeCachePolicy CachePolicy => _cachePolicy;
 
     public ChapterContext Current
     {
@@ -136,39 +141,38 @@ public sealed class ChapterManager : IChapterManager
         DirectoryInfo? chapterDirectory = null,
         string? chapterId = null,
         bool reloadBookIndex = false)
+        => CreateContext(ChapterOpenRequest.FromTrusted(
+            bookIndexFile,
+            asrFile,
+            transcriptFile,
+            hydrateFile,
+            audioFile,
+            chapterDirectory,
+            chapterId,
+            reloadBookIndex));
+
+    public ChapterContextHandle CreateContext(ChapterOpenRequest request)
     {
+        ArgumentNullException.ThrowIfNull(request);
+
         lock (_sync)
         {
-            ArgumentNullException.ThrowIfNull(bookIndexFile);
-            if (!bookIndexFile.Exists)
-            {
-                throw new FileNotFoundException("Book index not found", bookIndexFile.FullName);
-            }
-
-            var chapterStem = DetermineChapterStem(chapterId, audioFile, asrFile);
-            var chapterRoot =
-                ResolveChapterRoot(chapterDirectory, audioFile, asrFile, bookIndexFile.Directory, chapterStem);
-            var audioPath = audioFile?.FullName ?? Path.Combine(chapterRoot, $"{chapterStem}.wav");
+            var chapterStem = request.ChapterId;
+            var chapterRoot = request.ChapterDirectory.FullName;
 
             // Use cached book-index if available (book stays in memory while open)
-            var bookIndex = reloadBookIndex ? null : _bookContext.Documents.BookIndex;
-            bookIndex ??= LoadJson<BookIndex>(bookIndexFile.FullName);
+            var bookIndex = request.ReloadBookIndex ? null : _bookContext.Documents.BookIndex;
+            bookIndex ??= LoadJson<BookIndex>(request.BookIndexFile.FullName);
 
             var aliases = BuildAliasSet(chapterStem, chapterRoot, bookIndex, out var matchedSection);
 
             var bufferList = new List<AudioBufferDescriptor>
             {
-                new AudioBufferDescriptor("raw", audioPath)
+                new("raw", request.RawAudioAddress()),
+                new("treated", request.GetChapterArtifactAddress("treated.wav")),
+                new("corrected", request.GetChapterArtifactAddress("corrected.wav")),
+                new("filtered", request.GetChapterArtifactAddress("filtered.wav"))
             };
-
-            var treatedPath = Path.Combine(chapterRoot, $"{chapterStem}.treated.wav");
-            bufferList.Add(new AudioBufferDescriptor("treated", treatedPath));
-
-            var correctedPath = Path.Combine(chapterRoot, $"{chapterStem}.corrected.wav");
-            bufferList.Add(new AudioBufferDescriptor("corrected", correctedPath));
-
-            var filteredPath = Path.Combine(chapterRoot, $"{chapterStem}.filtered.wav");
-            bufferList.Add(new AudioBufferDescriptor("filtered", filteredPath));
 
             var initialDescriptor = new ChapterDescriptor(
                 chapterId: chapterStem,
@@ -182,14 +186,14 @@ public sealed class ChapterManager : IChapterManager
             var chapter = LoadCore(FindDescriptorIndex(descriptor.ChapterId));
 
             var currentBookIndex = _bookContext.Documents.BookIndex;
-            if (currentBookIndex is null || reloadBookIndex)
+            if (currentBookIndex is null || request.ReloadBookIndex)
             {
                 _bookContext.Documents.SetLoadedBookIndex(bookIndex);
             }
 
-            if (asrFile?.Exists == true)
+            if (request.AsrFile?.Exists == true)
             {
-                var asrDocument = LoadJson<AsrResponse>(asrFile.FullName);
+                var asrDocument = LoadJson<AsrResponse>(request.AsrFile.FullName);
                 if (asrDocument is not null)
                 {
                     chapter.Documents.Asr = asrDocument;
@@ -201,14 +205,14 @@ public sealed class ChapterManager : IChapterManager
                 }
             }
 
-            if (transcriptFile?.Exists == true)
+            if (request.TranscriptFile?.Exists == true)
             {
-                chapter.Documents.Transcript = LoadJson<TranscriptIndex>(transcriptFile.FullName);
+                chapter.Documents.Transcript = LoadJson<TranscriptIndex>(request.TranscriptFile.FullName);
             }
 
-            if (hydrateFile?.Exists == true)
+            if (request.HydrateFile?.Exists == true)
             {
-                chapter.Documents.HydratedTranscript = LoadJson<HydratedTranscript>(hydrateFile.FullName);
+                chapter.Documents.HydratedTranscript = LoadJson<HydratedTranscript>(request.HydrateFile.FullName);
             }
 
             return new ChapterContextHandle(_bookContext, chapter);
@@ -408,19 +412,7 @@ public sealed class ChapterManager : IChapterManager
     }
 
     private int MaxCachedContexts
-    {
-        get
-        {
-            if (_maxCachedContexts == DefaultMaxCachedContexts)
-            {
-                // Default: cache up to the number of known chapters; if none are known yet, stay unbounded.
-                return _descriptors.Count == 0 ? int.MaxValue : _descriptors.Count;
-            }
-
-            var descriptorCount = _descriptors.Count == 0 ? _maxCachedContexts : _descriptors.Count;
-            return Math.Max(1, Math.Min(_maxCachedContexts, descriptorCount));
-        }
-    }
+        => _cachePolicy.EffectiveMaxEntries(_descriptors.Count);
 
     private static ChapterDescriptor MergeDescriptors(ChapterDescriptor existing, ChapterDescriptor incoming)
     {
@@ -676,48 +668,6 @@ public sealed class ChapterManager : IChapterManager
         }
 
         return builder.ToString();
-    }
-
-    private static string DetermineChapterStem(string? supplied, FileInfo? audioFile, FileInfo? asrFile)
-    {
-        if (!string.IsNullOrWhiteSpace(supplied))
-        {
-            return supplied;
-        }
-
-        var candidate = audioFile ?? asrFile;
-        if (candidate is not null)
-        {
-            var chopped = candidate.Name.Split('.');
-            return Path.GetFileNameWithoutExtension(chopped[0]);
-        }
-
-        throw new ArgumentException("Chapter identifier must be provided.");
-    }
-
-    private static string ResolveChapterRoot(
-        DirectoryInfo? chapterDirectory,
-        FileInfo? audioFile,
-        FileInfo? asrFile,
-        DirectoryInfo? bookIndexDirectory,
-        string chapterStem)
-    {
-        if (chapterDirectory is not null)
-        {
-            Directory.CreateDirectory(chapterDirectory.FullName);
-            return chapterDirectory.FullName;
-        }
-
-        var candidate = audioFile?.Directory ?? asrFile?.Directory ?? bookIndexDirectory;
-        if (candidate is null)
-        {
-            var fallback = Path.Combine(Directory.GetCurrentDirectory(), chapterStem);
-            Directory.CreateDirectory(fallback);
-            return fallback;
-        }
-
-        Directory.CreateDirectory(candidate.FullName);
-        return candidate.FullName;
     }
 
     private static T LoadJson<T>(string path)

@@ -686,8 +686,7 @@ public class PolishService
             clipEndSec = Math.Min(chapterDurationSec, clipStartSec + MinAuditionClipDurationSec);
         }
 
-        var chapterClip = AudioProcessor.Trim(
-            chapterBuffer,
+        var chapterClip = chapterBuffer.SliceClamped(
             TimeSpan.FromSeconds(clipStartSec),
             TimeSpan.FromSeconds(clipEndSec));
 
@@ -763,9 +762,8 @@ public class PolishService
             contextEndSec = Math.Min(chapterDurationSec, contextStartSec + MinAuditionClipDurationSec);
         }
 
-        // Trim the context window from the chapter
-        var contextClip = AudioProcessor.Trim(
-            chapterBuffer,
+        // Slice the context window from the chapter
+        var contextClip = chapterBuffer.SliceClamped(
             TimeSpan.FromSeconds(contextStartSec),
             TimeSpan.FromSeconds(contextEndSec));
 
@@ -1081,8 +1079,7 @@ public class PolishService
             clipEndSec = Math.Min(chapterDurationSec, clipStartSec + MinAuditionClipDurationSec);
         }
 
-        var contextClip = AudioProcessor.Trim(
-            chapterBuffer,
+        var contextClip = chapterBuffer.SliceClamped(
             TimeSpan.FromSeconds(clipStartSec),
             TimeSpan.FromSeconds(clipEndSec));
         var clipDurationSec = (double)contextClip.Length / contextClip.SampleRate;

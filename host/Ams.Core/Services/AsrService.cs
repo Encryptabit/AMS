@@ -1,3 +1,5 @@
+using System.Diagnostics;
+using Ams.Core.Asr;
 using Ams.Core.Artifacts;
 using Ams.Core.Artifacts.Alignment;
 using Ams.Core.Audio;
@@ -16,6 +18,10 @@ namespace Ams.Core.Services;
 /// </summary>
 public sealed class AsrService : IAsrService
 {
+    private static readonly AudioEncodeOptions AsrChunkEncodeOptions = new(
+        TargetSampleRate: AudioProcessor.DefaultAsrSampleRate,
+        TargetBitDepth: 16);
+
     private readonly ChunkPlanningService _chunkPlanningService = new();
 
     public async Task<AsrResponse> TranscribeAsync(
@@ -76,17 +82,65 @@ public sealed class AsrService : IAsrService
                 MaxDegreeOfParallelism = Environment.ProcessorCount,
                 CancellationToken = cancellationToken
             },
-            i => AudioProcessor.EncodeWav(chunkAudioEntries[i].WavPath, chunkSlices[i]));
-        Log.Debug("ASR encoded {ChunkCount} chunk WAVs in parallel", chunkCount);
+            i => AudioProcessor.EncodeWav(chunkAudioEntries[i].WavPath, chunkSlices[i], AsrChunkEncodeOptions));
+        Log.Debug(
+            "ASR stream chunks: emitted={ChunkCount}, sampleRate={SampleRate}, channels={Channels}, dir={Directory}",
+            chunkCount,
+            buffer.SampleRate,
+            buffer.Channels,
+            chunkAudioDirectory);
 
-        // Phase 2: transcribe sequentially (Whisper model context is single-threaded)
+        // Phase 2: transcribe sequentially (Whisper model context is single-threaded).
+        // Whisper.NET keeps the already-materialized slice in memory; WhisperX needs a file path.
         var chunkResults = new List<(AsrResponse Response, double OffsetSec)>(chunkCount);
         for (int i = 0; i < chunkCount; i++)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            var response = await AsrProcessor.TranscribeBufferAsync(chunkSlices[i], options, cancellationToken)
-                .ConfigureAwait(false);
-            chunkResults.Add((response, plan.Chunks[i].StartSec));
+            var chunk = plan.Chunks[i];
+            var chunkAudio = chunkAudioEntries[i];
+            var chunkFile = new FileInfo(chunkAudio.WavPath);
+            chunkFile.Refresh();
+            var chunkDurationSec = Math.Max(0d, chunk.EndSec - chunk.StartSec);
+            var chunkDetail = Path.GetFileName(chunkAudio.WavPath);
+            var streamSource = options.Engine == AsrEngine.WhisperX ? "file" : "buffer";
+            Log.Debug(
+                "ASR stream chunk: state=start, source={Source}, chunk={ChunkNumber}/{ChunkCount}, chunkId={ChunkId}, rangeSec={StartSec:F3}-{EndSec:F3}, durationSec={DurationSec:F3}, bytes={Bytes}, detail={Detail}",
+                streamSource,
+                i + 1,
+                chunkCount,
+                chunk.ChunkId,
+                chunk.StartSec,
+                chunk.EndSec,
+                chunkDurationSec,
+                chunkFile.Exists ? chunkFile.Length : -1,
+                chunkDetail);
+
+            var chunkTimer = Stopwatch.StartNew();
+            var response = options.Engine == AsrEngine.WhisperX
+                ? await AsrProcessor.TranscribePreparedWavFileAsync(
+                        chunkAudio.WavPath,
+                        options,
+                        cancellationToken)
+                    .ConfigureAwait(false)
+                : await AsrProcessor.TranscribeBufferAsync(
+                        chunkSlices[i],
+                        options,
+                        cancellationToken)
+                    .ConfigureAwait(false);
+            chunkTimer.Stop();
+
+            Log.Debug(
+                "ASR stream chunk: state=complete, source={Source}, chunk={ChunkNumber}/{ChunkCount}, chunkId={ChunkId}, durationMs={DurationMs}, tokens={TokenCount}, segments={SegmentCount}, detail={Detail}",
+                streamSource,
+                i + 1,
+                chunkCount,
+                chunk.ChunkId,
+                chunkTimer.ElapsedMilliseconds,
+                response.Tokens?.Length ?? 0,
+                response.Segments?.Length ?? 0,
+                chunkDetail);
+
+            chunkResults.Add((response, chunk.StartSec));
         }
 
         chapter.Documents.ChunkAudio = new ChunkAudioDocument(

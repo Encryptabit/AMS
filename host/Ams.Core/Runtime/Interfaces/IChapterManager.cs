@@ -23,6 +23,8 @@ public interface IChapterManager
         string? chapterId = null,
         bool reloadBookIndex = false);
 
+    ChapterContextHandle CreateContext(ChapterOpenRequest request);
+
     ChapterDescriptor UpsertDescriptor(ChapterDescriptor descriptor);
     bool TryMoveNext(out ChapterContext context);
     bool TryMovePrevious(out ChapterContext context);

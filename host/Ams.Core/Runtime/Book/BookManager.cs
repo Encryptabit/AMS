@@ -1,32 +1,28 @@
 using Ams.Core.Runtime.Artifacts;
+using Ams.Core.Runtime.Common;
 using Ams.Core.Runtime.Interfaces;
 
 namespace Ams.Core.Runtime.Book;
 
 public sealed record AudioBufferDescriptor
 {
-    public AudioBufferDescriptor(
-        string bufferId,
-        string path,
-        int? sampleRate = null,
-        int? channels = null,
-        TimeSpan? start = null,
-        TimeSpan? duration = null)
+    public AudioBufferDescriptor(string bufferId, ChapterArtifactAddress address)
     {
-        BufferId = bufferId ?? throw new ArgumentNullException(nameof(bufferId));
-        Path = path ?? throw new ArgumentNullException(nameof(path));
-        SampleRate = sampleRate;
-        Channels = channels;
-        Start = start;
-        Duration = duration;
+        ArgumentException.ThrowIfNullOrWhiteSpace(bufferId);
+        ArgumentNullException.ThrowIfNull(address);
+
+        BufferId = bufferId;
+        Address = address;
+    }
+
+    public AudioBufferDescriptor(string bufferId, string path)
+        : this(bufferId, ChapterArtifactAddress.FromPath(path))
+    {
     }
 
     public string BufferId { get; }
-    public string Path { get; }
-    public int? SampleRate { get; }
-    public int? Channels { get; }
-    public TimeSpan? Start { get; }
-    public TimeSpan? Duration { get; }
+    public ChapterArtifactAddress Address { get; }
+    public string Path => Address.FullPath;
 }
 
 public sealed record ChapterDescriptor
@@ -40,8 +36,11 @@ public sealed record ChapterDescriptor
         int? bookStartWord = null,
         int? bookEndWord = null)
     {
-        ChapterId = chapterId ?? throw new ArgumentNullException(nameof(chapterId));
-        RootPath = rootPath ?? throw new ArgumentNullException(nameof(rootPath));
+        ArgumentException.ThrowIfNullOrWhiteSpace(chapterId);
+        ArgumentException.ThrowIfNullOrWhiteSpace(rootPath);
+
+        ChapterId = chapterId;
+        RootPath = rootPath;
         AudioBuffers = audioBuffers ?? Array.Empty<AudioBufferDescriptor>();
         Documents = documents;
         Aliases = aliases ?? Array.Empty<string>();
@@ -66,8 +65,11 @@ public sealed record BookDescriptor
         IReadOnlyList<ChapterDescriptor> chapters,
         IReadOnlyDictionary<string, string>? documents = null)
     {
-        BookId = bookId ?? throw new ArgumentNullException(nameof(bookId));
-        RootPath = rootPath ?? throw new ArgumentNullException(nameof(rootPath));
+        ArgumentException.ThrowIfNullOrWhiteSpace(bookId);
+        ArgumentException.ThrowIfNullOrWhiteSpace(rootPath);
+
+        BookId = bookId;
+        RootPath = rootPath;
         Chapters = chapters ?? Array.Empty<ChapterDescriptor>();
         Documents = documents;
     }
@@ -84,6 +86,7 @@ public sealed class BookManager : IBookManager
     private readonly IReadOnlyList<BookDescriptor> _descriptors;
     private readonly Dictionary<string, BookContext> _cache;
     private readonly IArtifactResolver _artifactResolver;
+    private readonly RuntimeCachePolicy _cachePolicy;
     private int _cursor;
 
     public BookManager(IReadOnlyList<BookDescriptor> descriptors, IArtifactResolver? resolver = null)
@@ -96,6 +99,7 @@ public sealed class BookManager : IBookManager
 
         _cache = new Dictionary<string, BookContext>(StringComparer.OrdinalIgnoreCase);
         _artifactResolver = resolver ?? FileArtifactResolver.Instance;
+        _cachePolicy = RuntimeLifetimePolicies.BookContexts;
         _cursor = 0;
     }
 
@@ -111,6 +115,8 @@ public sealed class BookManager : IBookManager
             }
         }
     }
+
+    internal RuntimeCachePolicy CachePolicy => _cachePolicy;
 
     public BookContext Load(int index)
     {

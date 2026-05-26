@@ -169,10 +169,11 @@ public sealed class AudioTreatmentService
             {
                 Log.Debug("Extracting chapter decorator segment: {Start:F3}s - {End:F3}s",
                     titleStart, decoratorBoundary);
-                var decoratorBuffer = AudioProcessor.Trim(
+                var decoratorBuffer = SliceChapterSegment(
                     chapterBuffer,
-                    TimeSpan.FromSeconds(titleStart),
-                    TimeSpan.FromSeconds(decoratorBoundary));
+                    titleStart,
+                    decoratorBoundary,
+                    "chapter decorator");
                 segments.Add(decoratorBuffer);
 
                 var decoratorGapBuffer = PrepareRoomtoneSegment(roomtoneBuffer, opts.PrerollSeconds);
@@ -180,20 +181,22 @@ public sealed class AudioTreatmentService
 
                 Log.Debug("Extracting chapter title segment: {Start:F3}s - {End:F3}s",
                     titleBoundary, titleEnd);
-                var titleBuffer = AudioProcessor.Trim(
+                var titleBuffer = SliceChapterSegment(
                     chapterBuffer,
-                    TimeSpan.FromSeconds(titleBoundary),
-                    TimeSpan.FromSeconds(titleEnd));
+                    titleBoundary,
+                    titleEnd,
+                    "chapter title");
                 segments.Add(titleBuffer);
             }
             else
             {
                 // Extract title segment
                 Log.Debug("Extracting title segment: {Start:F3}s - {End:F3}s", titleStart, titleEnd);
-                var titleBuffer = AudioProcessor.Trim(
+                var titleBuffer = SliceChapterSegment(
                     chapterBuffer,
-                    TimeSpan.FromSeconds(titleStart),
-                    TimeSpan.FromSeconds(titleEnd));
+                    titleStart,
+                    titleEnd,
+                    "title");
                 segments.Add(titleBuffer);
             }
 
@@ -211,10 +214,11 @@ public sealed class AudioTreatmentService
 
         // Extract content segment
         Log.Debug("Extracting content segment: {Start:F3}s - {End:F3}s", contentStart, contentEnd);
-        var contentBuffer = AudioProcessor.Trim(
+        var contentBuffer = SliceChapterSegment(
             chapterBuffer,
-            TimeSpan.FromSeconds(contentStart),
-            TimeSpan.FromSeconds(contentEnd));
+            contentStart,
+            contentEnd,
+            "content");
         segments.Add(contentBuffer);
 
         // Postroll (always present)
@@ -291,6 +295,24 @@ public sealed class AudioTreatmentService
         }
 
         return assembled;
+    }
+
+    private static AudioBuffer SliceChapterSegment(
+        AudioBuffer chapterBuffer,
+        double startSec,
+        double endSec,
+        string description)
+    {
+        if (!chapterBuffer.TrySliceClamped(
+                TimeSpan.FromSeconds(startSec),
+                TimeSpan.FromSeconds(endSec),
+                out var segment))
+        {
+            throw new InvalidOperationException(
+                $"Unable to extract {description} segment from chapter audio: {startSec:F3}s - {endSec:F3}s.");
+        }
+
+        return segment;
     }
 
     private static AudioEncodeOptions BuildEncodeOptions(AudioBuffer chapterBuffer)

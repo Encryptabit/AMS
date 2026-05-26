@@ -56,9 +56,8 @@ public class PolishVerificationService
         ArgumentNullException.ThrowIfNull(chapterBuffer);
         ArgumentException.ThrowIfNullOrWhiteSpace(expectedText);
 
-        // 1. Trim the affected segment from the chapter buffer
-        var segment = AudioProcessor.Trim(
-            chapterBuffer,
+        // 1. Slice the affected segment from the chapter buffer
+        var segment = chapterBuffer.SliceClamped(
             TimeSpan.FromSeconds(startSec),
             TimeSpan.FromSeconds(endSec));
 

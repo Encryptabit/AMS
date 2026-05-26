@@ -96,8 +96,13 @@ public record BookIndex(
     [property: JsonPropertyName("sections")]
     SectionRange[] Sections,
     [property: JsonPropertyName("buildWarnings")]
-    string[]? BuildWarnings = null
-);
+    string[]? BuildWarnings = null,
+    [property: JsonPropertyName("schemaVersion")]
+    int? SchemaVersion = null
+)
+{
+    public const int CurrentSchemaVersion = 1;
+}
 
 /// <summary>
 /// Options relevant to canonical indexing.

@@ -5,7 +5,7 @@ namespace Ams.Workstation.Server.Services;
 
 /// <summary>
 /// Exports audio segments to WAV files in the CRX folder.
-/// Uses AudioProcessor.Trim (FFmpeg atrim) for segment extraction.
+/// Uses zero-copy AudioBuffer slices for segment extraction.
 /// </summary>
 public class AudioExportService
 {
@@ -18,8 +18,8 @@ public class AudioExportService
 
     /// <summary>
     /// Export an audio segment to the CRX folder.
-    /// Uses AudioProcessor.Trim (FFmpeg atrim) for segment extraction,
-    /// then ToWavStream() on the trimmed buffer.
+    /// Uses a clamped AudioBuffer slice for segment extraction,
+    /// then encodes the segment buffer directly to the destination WAV.
     /// </summary>
     public ExportResult ExportSegment(double startSec, double endSec, int paddingMs = 0)
     {
@@ -34,13 +34,10 @@ public class AudioExportService
         if (audioBuffer == null)
             throw new InvalidOperationException("Audio buffer not loaded");
 
-        // Trim segment using AudioProcessor (FFmpeg atrim filter)
         var endWithPadding = endSec + (paddingMs / 1000.0);
-        var maxDuration = (double)audioBuffer.Length / audioBuffer.SampleRate;
-        var trimmed = AudioProcessor.Trim(
-            audioBuffer,
-            TimeSpan.FromSeconds(Math.Max(0, startSec)),
-            TimeSpan.FromSeconds(Math.Min(endWithPadding, maxDuration)));
+        var segment = audioBuffer.SliceClamped(
+            TimeSpan.FromSeconds(startSec),
+            TimeSpan.FromSeconds(endWithPadding));
 
         // Create CRX folder
         var crxFolder = Path.Combine(_workspace.RootPath, "CRX");
@@ -56,13 +53,11 @@ public class AudioExportService
                 nextNumber = num + 1;
         }
 
-        // Export trimmed segment to WAV file
+        // Export segment to WAV file
         var filename = $"{nextNumber:D3}.wav";
         var outputPath = Path.Combine(crxFolder, filename);
 
-        using var wavStream = trimmed.ToWavStream();
-        using var outputStream = File.Create(outputPath);
-        wavStream.CopyTo(outputStream);
+        AudioProcessor.EncodeWav(outputPath, segment);
 
         return new ExportResult(true, filename, nextNumber, outputPath);
     }

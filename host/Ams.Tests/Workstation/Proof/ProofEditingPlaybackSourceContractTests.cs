@@ -559,6 +559,54 @@ public sealed class ProofEditingPlaybackSourceContractTests
     }
 
     [Fact]
+    public void AudioController_FullPlaybackStreamsDescriptorFilesWithoutLoadingBuffers()
+    {
+        var source = ReadRepoFile(AudioControllerRelativePath);
+
+        AssertContains(
+            source,
+            AudioControllerRelativePath,
+            "private IActionResult StreamAudioFile(AudioBufferContext context, string notFoundMessage)",
+            "descriptor-backed audio file streaming helper");
+
+        AssertContains(
+            source,
+            AudioControllerRelativePath,
+            "var filePath = context.Descriptor.Path;",
+            "audio file streaming resolves through the runtime descriptor");
+
+        AssertContains(
+            source,
+            AudioControllerRelativePath,
+            "return StreamAudioFile(audioContext, \"Audio file not available\");",
+            "generic full chapter playback streams the descriptor artifact");
+
+        AssertContains(
+            source,
+            AudioControllerRelativePath,
+            "return StreamAudioFile(\n            resolved.Context,",
+            "corrected full chapter playback streams the resolved descriptor artifact");
+
+        AssertDoesNotContain(
+            source,
+            AudioControllerRelativePath,
+            "Path.Combine(_workspace.WorkingDirectory",
+            "streaming callsites must not rediscover audio paths from the workspace root");
+
+        AssertDoesNotContain(
+            source,
+            AudioControllerRelativePath,
+            "var buffer = context?.Buffer;",
+            "corrected playback resolution must not force lazy buffer loading");
+
+        AssertDoesNotContain(
+            source,
+            AudioControllerRelativePath,
+            "resolved.Buffer",
+            "corrected playback response must not encode the resolved buffer when a descriptor artifact can stream");
+    }
+
+    [Fact]
     public void AudioController_CorrectedResolver_DeclaresDeterministicFallbackAndFailClosedGuards()
     {
         var source = ReadRepoFile(AudioControllerRelativePath);

@@ -71,9 +71,8 @@ public class UndoService
             var fileName = $"sent{sentenceId}.v{version}.original.wav";
             var filePath = Path.Combine(dir, fileName);
 
-            // Trim the original segment and encode to disk
-            var segment = AudioProcessor.Trim(
-                originalBuffer,
+            // Slice the original segment and encode to disk
+            var segment = originalBuffer.SliceClamped(
                 TimeSpan.FromSeconds(startSec),
                 TimeSpan.FromSeconds(endSec));
 

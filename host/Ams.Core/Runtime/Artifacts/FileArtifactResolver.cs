@@ -177,10 +177,10 @@ public sealed class FileArtifactResolver : IArtifactResolver
         => new(GetChapterArtifactPath(context, "align.chunk-audio.json"));
 
     public FileInfo GetChapterArtifactFile(ChapterContext context, string suffix)
-        => new(GetChapterArtifactPath(context, suffix));
+        => GetChapterArtifactAddress(context, suffix).ToFile();
 
     public FileInfo GetBookArtifactFile(BookContext context, string fileName)
-        => new(Path.Combine(GetBookRoot(context), fileName));
+        => GetBookArtifactAddress(context, fileName).ToFile();
 
     private static PauseAdjustmentsDocument? LoadPauseAdjustmentsInternal(string path)
     {
@@ -222,10 +222,10 @@ public sealed class FileArtifactResolver : IArtifactResolver
     }
 
     private static string ResolveBookIndexPath(BookContext context)
-    {
-        var root = GetBookRoot(context);
-        return Path.Combine(root, "book-index.json");
-    }
+        => GetBookArtifactAddress(context, "book-index.json").FullPath;
+
+    private static BookArtifactAddress GetBookArtifactAddress(BookContext context, string fileName)
+        => new(GetBookRoot(context), fileName);
 
     private static string GetBookRoot(BookContext context)
     {
@@ -260,11 +260,10 @@ public sealed class FileArtifactResolver : IArtifactResolver
     }
 
     private static string GetChapterArtifactPath(ChapterContext context, string suffix)
-    {
-        var directory = GetChapterRoot(context.Descriptor);
-        var stem = GetChapterStem(context.Descriptor);
-        return Path.Combine(directory, $"{stem}.{suffix}");
-    }
+        => GetChapterArtifactAddress(context, suffix).FullPath;
+
+    private static ChapterArtifactAddress GetChapterArtifactAddress(ChapterContext context, string suffix)
+        => ChapterArtifactAddress.FromDescriptor(context.Descriptor, suffix);
 
     private static string GetTextGridPath(ChapterContext context)
     {
