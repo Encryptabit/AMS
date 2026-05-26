@@ -14,12 +14,17 @@ public sealed class ChapterContextHandle : IDisposable
 
     private readonly BookContext _bookContext;
     private readonly ChapterContext _chapterContext;
+    private readonly bool _deallocateOnDispose;
     private bool _disposed;
 
-    internal ChapterContextHandle(BookContext bookContext, ChapterContext chapterContext)
+    internal ChapterContextHandle(
+        BookContext bookContext,
+        ChapterContext chapterContext,
+        bool deallocateOnDispose = true)
     {
         _bookContext = bookContext ?? throw new ArgumentNullException(nameof(bookContext));
         _chapterContext = chapterContext ?? throw new ArgumentNullException(nameof(chapterContext));
+        _deallocateOnDispose = deallocateOnDispose;
     }
 
     public BookContext Book => _bookContext;
@@ -78,7 +83,19 @@ public sealed class ChapterContextHandle : IDisposable
         }
 
         var chapterId = _chapterContext.Descriptor.ChapterId;
-        _bookContext.Chapters.Deallocate(chapterId);
+        if (_deallocateOnDispose)
+        {
+            _bookContext.Chapters.Deallocate(chapterId);
+        }
+        else
+        {
+            Save();
+            Log.Debug(
+                "ChapterContextHandle retained context {ChapterId} in book {BookId}",
+                chapterId,
+                _bookContext.Descriptor.BookId);
+        }
+
         _disposed = true;
     }
 

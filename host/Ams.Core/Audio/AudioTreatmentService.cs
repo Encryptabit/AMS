@@ -248,10 +248,12 @@ public sealed class AudioTreatmentService
             "Encoding treated output at {SampleRate}Hz, {BitDepth}-bit PCM",
             encodeOptions.TargetSampleRate ?? treatedBuffer.SampleRate,
             encodeOptions.TargetBitDepth ?? 16);
-        AudioProcessor.EncodeWav(outputPath, treatedBuffer, encodeOptions);
+        var outputBuffer = NormalizeForEncode(treatedBuffer, encodeOptions);
+        AudioProcessor.EncodeWav(outputPath, outputBuffer, encodeOptions);
+        TryWriteThroughTreated(chapter, outputPath, outputBuffer);
 
         // Calculate total duration from the rendered buffer so logs stay accurate with crossfades.
-        var totalDuration = treatedBuffer.Length / (double)treatedBuffer.SampleRate;
+        var totalDuration = outputBuffer.Length / (double)outputBuffer.SampleRate;
 
         return Task.FromResult(new TreatmentResult(
             outputPath,
@@ -261,6 +263,33 @@ public sealed class AudioTreatmentService
             contentEnd,
             totalDuration));
     }
+
+    private static AudioBuffer NormalizeForEncode(AudioBuffer buffer, AudioEncodeOptions options)
+    {
+        if (options.TargetSampleRate is not int targetSampleRate || buffer.SampleRate == targetSampleRate)
+        {
+            return buffer;
+        }
+
+        return AudioProcessor.Resample(buffer, (ulong)targetSampleRate);
+    }
+
+    private static void TryWriteThroughTreated(ChapterContext chapter, string outputPath, AudioBuffer buffer)
+    {
+        var treatedContext = chapter.Audio.Treated;
+        if (treatedContext is null || !PathsEqual(treatedContext.Descriptor.Path, outputPath))
+        {
+            return;
+        }
+
+        chapter.Audio.WriteThrough("treated", buffer);
+    }
+
+    private static bool PathsEqual(string left, string right)
+        => string.Equals(
+            Path.GetFullPath(left),
+            Path.GetFullPath(right),
+            StringComparison.OrdinalIgnoreCase);
 
     private static AudioBuffer AssembleSegmentsWithSplice(
         IReadOnlyList<AudioBuffer> segments,

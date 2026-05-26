@@ -132,6 +132,23 @@ public sealed class ChapterManager : IChapterManager
         }
     }
 
+    public bool TryGetCached(string chapterId, out ChapterContext context)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(chapterId);
+        lock (_sync)
+        {
+            if (_cache.TryGetValue(chapterId, out var cached))
+            {
+                TrackUsage(chapterId);
+                context = cached;
+                return true;
+            }
+
+            context = null!;
+            return false;
+        }
+    }
+
     public ChapterContextHandle CreateContext(
         FileInfo bookIndexFile,
         FileInfo? asrFile = null,
@@ -140,7 +157,8 @@ public sealed class ChapterManager : IChapterManager
         FileInfo? audioFile = null,
         DirectoryInfo? chapterDirectory = null,
         string? chapterId = null,
-        bool reloadBookIndex = false)
+        bool reloadBookIndex = false,
+        bool retainContextOnDispose = false)
         => CreateContext(ChapterOpenRequest.FromTrusted(
             bookIndexFile,
             asrFile,
@@ -149,9 +167,12 @@ public sealed class ChapterManager : IChapterManager
             audioFile,
             chapterDirectory,
             chapterId,
-            reloadBookIndex));
+            reloadBookIndex),
+            retainContextOnDispose);
 
-    public ChapterContextHandle CreateContext(ChapterOpenRequest request)
+    public ChapterContextHandle CreateContext(
+        ChapterOpenRequest request,
+        bool retainContextOnDispose = false)
     {
         ArgumentNullException.ThrowIfNull(request);
 
@@ -215,7 +236,10 @@ public sealed class ChapterManager : IChapterManager
                 chapter.Documents.HydratedTranscript = LoadJson<HydratedTranscript>(request.HydrateFile.FullName);
             }
 
-            return new ChapterContextHandle(_bookContext, chapter);
+            return new ChapterContextHandle(
+                _bookContext,
+                chapter,
+                deallocateOnDispose: !retainContextOnDispose);
         }
     }
 

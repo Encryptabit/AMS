@@ -54,6 +54,24 @@ public sealed class AudioBufferContext
         }
     }
 
+    public void WriteThrough(AudioBuffer buffer)
+    {
+        ArgumentNullException.ThrowIfNull(buffer);
+
+        lock (_bufferLock)
+        {
+            _buffer = buffer;
+            _loaded = true;
+        }
+
+        lock (_waveformLock)
+        {
+            _waveformPeaksCache.Clear();
+        }
+
+        Log.Debug("AudioBufferContext write-through updated buffer {BufferId}", _descriptor.BufferId);
+    }
+
     public WaveformPeaks? GetOrCreateWaveformPeaks(int bucketCount)
     {
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(bucketCount);

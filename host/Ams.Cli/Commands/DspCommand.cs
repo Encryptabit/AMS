@@ -6,11 +6,15 @@ using System.Text.Json;
 using System.Text.RegularExpressions;
 using System.Globalization;
 using Spectre.Console;
+using Ams.Cli.Repl;
 using Ams.Cli.Utilities;
 using Ams.Core.Artifacts;
 using Ams.Core.Audio;
 using Ams.Core.Common;
 using Ams.Core.Processors;
+using Ams.Core.Runtime.Audio;
+using Ams.Core.Runtime.Chapter;
+using Ams.Core.Runtime.Workspace;
 using Ams.Core.Services.Integrations.FFmpeg;
 
 namespace Ams.Cli.Commands;
@@ -134,8 +138,9 @@ public static class DspCommand
                 var tier = AudioTierResolver.Parse(
                     context.ParseResult.GetValueForOption(tierOption),
                     AudioTier.Source);
+                var providedInput = context.ParseResult.GetValueForOption(inputOption);
                 var inputFile = CommandInputResolver.RequireAudio(
-                    context.ParseResult.GetValueForOption(inputOption),
+                    providedInput,
                     tier);
                 var outputFile = ResolveOutputFile(context.ParseResult.GetValueForOption(outputOption), inputFile);
 
@@ -335,8 +340,9 @@ public static class DspCommand
                 var tier = AudioTierResolver.Parse(
                     context.ParseResult.GetValueForOption(tierOption),
                     AudioTier.Source);
+                var providedInput = context.ParseResult.GetValueForOption(inputOption);
                 var inputFile = CommandInputResolver.RequireAudio(
-                    context.ParseResult.GetValueForOption(inputOption),
+                    providedInput,
                     tier);
                 var selected = context.ParseResult.GetValueForOption(filtersOption);
                 List<FilterConfig> enabledFilters;
@@ -369,7 +375,14 @@ public static class DspCommand
                 var printAstats = context.ParseResult.GetValueForOption(astatsPrintOption);
                 var printRaw = context.ParseResult.GetValueForOption(rawLogsOption);
 
-                ExecuteFilterChain(inputFile, enabledFilters, save, outputFile, printAstats, printRaw);
+                ExecuteFilterChain(
+                    inputFile,
+                    enabledFilters,
+                    save,
+                    outputFile,
+                    printAstats,
+                    printRaw,
+                    providedInput is null ? tier : null);
             }
             catch (Exception ex)
             {
@@ -412,7 +425,14 @@ public static class DspCommand
                     throw new InvalidOperationException("--output can only be used with --save.");
                 }
 
-                ExecuteFilterChain(inputFile, filterConfigs, save, outputFile, printAstats: false, printRaw: printRaw);
+                ExecuteFilterChain(
+                    inputFile,
+                    filterConfigs,
+                    save,
+                    outputFile,
+                    printAstats: false,
+                    printRaw: printRaw,
+                    workspaceTier: null);
             }
             catch (Exception ex)
             {
@@ -1391,14 +1411,15 @@ public static class DspCommand
         bool saveOutput,
         FileInfo? explicitOutput,
         bool printAstats,
-        bool printRaw)
+        bool printRaw,
+        AudioTier? workspaceTier)
     {
         if (filters.Count == 0)
         {
             throw new InvalidOperationException("Specify at least one filter.");
         }
 
-        var buffer = AudioProcessor.Decode(inputFile.FullName);
+        var (buffer, chapter) = ResolveFilterChainInput(inputFile, workspaceTier);
         var graph = BuildFilterGraph(buffer, filters);
 
         if (printRaw)
@@ -1417,9 +1438,20 @@ public static class DspCommand
         {
             var resolved = ResolveFilteredOutput(explicitOutput, inputFile);
             Directory.CreateDirectory(resolved.DirectoryName ?? Directory.GetCurrentDirectory());
-            using var stream = File.Create(resolved.FullName);
             var encodeOptions = AudioEncodingDefaults.ForSource(buffer);
-            graph.StreamToWave(stream, encodeOptions);
+            if (TryResolveFilteredWriteThroughChapter(chapter, resolved, out var writeThroughChapter))
+            {
+                var rendered = graph.ToBuffer();
+                var outputBuffer = NormalizeForEncode(rendered, encodeOptions);
+                AudioProcessor.EncodeWav(resolved.FullName, outputBuffer, encodeOptions);
+                writeThroughChapter.Audio.WriteThrough("filtered", outputBuffer);
+            }
+            else
+            {
+                using var stream = File.Create(resolved.FullName);
+                graph.StreamToWave(stream, encodeOptions);
+            }
+
             Log.Info("Filtered audio written to {Output}", resolved.FullName);
         }
         else
@@ -1428,6 +1460,107 @@ public static class DspCommand
             Log.Info("Filter chain executed for {Input} ({Count} filters)", inputFile.FullName, filters.Count);
         }
     }
+
+    private static (AudioBuffer Buffer, ChapterContext? Chapter) ResolveFilterChainInput(
+        FileInfo inputFile,
+        AudioTier? workspaceTier)
+    {
+        if (workspaceTier.HasValue && TryOpenActiveChapterContext(out var chapter))
+        {
+            var context = ResolveTierBufferContext(chapter, workspaceTier.Value);
+            var buffer = context?.Buffer;
+            if (buffer is not null)
+            {
+                Log.Debug(
+                    "[dsp] Using workspace {Tier} buffer for {ChapterId}",
+                    AudioTierResolver.Describe(workspaceTier.Value),
+                    chapter.Descriptor.ChapterId);
+                return (buffer, chapter);
+            }
+        }
+
+        return (AudioProcessor.Decode(inputFile.FullName), null);
+    }
+
+    private static AudioBufferContext? ResolveTierBufferContext(ChapterContext chapter, AudioTier tier)
+        => tier switch
+        {
+            AudioTier.Source => chapter.Audio.Raw,
+            AudioTier.Treated => chapter.Audio.Treated,
+            AudioTier.Filtered => chapter.Audio.Filtered,
+            _ => null
+        };
+
+    private static AudioBuffer NormalizeForEncode(AudioBuffer buffer, AudioEncodeOptions options)
+    {
+        if (options.TargetSampleRate is not int targetSampleRate || buffer.SampleRate == targetSampleRate)
+        {
+            return buffer;
+        }
+
+        return AudioProcessor.Resample(buffer, (ulong)targetSampleRate);
+    }
+
+    private static bool TryResolveFilteredWriteThroughChapter(
+        ChapterContext? chapter,
+        FileInfo outputFile,
+        out ChapterContext writeThroughChapter)
+    {
+        writeThroughChapter = null!;
+        chapter ??= TryOpenActiveChapterContext(out var opened) ? opened : null;
+        if (chapter is null)
+        {
+            return false;
+        }
+
+        var filteredContext = chapter.Audio.Filtered;
+        if (filteredContext is null || !PathsEqual(filteredContext.Descriptor.Path, outputFile.FullName))
+        {
+            return false;
+        }
+
+        writeThroughChapter = chapter;
+        return true;
+    }
+
+    private static bool TryOpenActiveChapterContext(out ChapterContext chapter)
+    {
+        chapter = null!;
+        var repl = ReplContext.Current;
+        if (repl?.ActiveChapter is null)
+        {
+            return false;
+        }
+
+        try
+        {
+            var activeChapter = repl.ActiveChapter;
+            var chapterId = Path.GetFileNameWithoutExtension(activeChapter.Name);
+            var bookIndexFile = CommandInputResolver.ResolveBookIndex(null, mustExist: true);
+            var workspace = CommandInputResolver.ResolveWorkspace(bookIndexFile);
+            using var handle = workspace.OpenChapter(new ChapterOpenOptions
+            {
+                BookIndexFile = bookIndexFile,
+                AudioFile = activeChapter,
+                ChapterId = chapterId,
+                RetainContextOnDispose = true
+            });
+
+            chapter = handle.Chapter;
+            return true;
+        }
+        catch (Exception ex)
+        {
+            Log.Debug("[dsp] Unable to resolve active chapter context for write-through: {Message}", ex.Message);
+            return false;
+        }
+    }
+
+    private static bool PathsEqual(string left, string right)
+        => string.Equals(
+            Path.GetFullPath(left),
+            Path.GetFullPath(right),
+            StringComparison.OrdinalIgnoreCase);
 
     private static IEnumerable<FilterDefinition> ResolveFilterDefinitions(string[]? requested)
     {

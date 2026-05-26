@@ -5,10 +5,12 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using Ams.Cli.Repl;
 using Ams.Cli.Utilities;
+using Ams.Core.Artifacts;
 using Ams.Core.Audio.QualityControl;
 using Ams.Core.Common;
 using Ams.Core.Processors;
 using Ams.Core.Processors.Alignment.Anchors;
+using Ams.Core.Runtime.Audio;
 using Ams.Core.Runtime.Book;
 using Ams.Core.Runtime.Workspace;
 using Spectre.Console;
@@ -139,6 +141,7 @@ public static class QcCommand
                 };
 
                 List<FileInfo> files;
+                AudioTier? workspaceTier = null;
 
                 if (dir is not null)
                 {
@@ -195,6 +198,7 @@ public static class QcCommand
                     // Workspace-aware mode: discover the requested tier for the selected chapter,
                     // or all chapters when the REPL is in mode all.
                     var tier = AudioTierResolver.Parse(tierValue, AudioTier.Treated, allowAdjusted: true);
+                    workspaceTier = tier;
                     var chapters = workspaceChapters;
 
                     if (chapters.Count == 0)
@@ -233,6 +237,16 @@ public static class QcCommand
                         workspaceRoot.FullName);
                 }
 
+                var loadedBuffersByPath = workspaceTier.HasValue
+                    ? BuildLoadedWorkspaceBufferLookup(workspaceChapters, workspaceTier.Value)
+                    : new Dictionary<string, AudioBuffer>(StringComparer.OrdinalIgnoreCase);
+                if (loadedBuffersByPath.Count > 0)
+                {
+                    Log.Debug("QC will reuse {Count} loaded {Tier} buffer(s)",
+                        loadedBuffersByPath.Count,
+                        AudioTierResolver.Describe(workspaceTier!.Value));
+                }
+
                 // Analyze files in parallel; results assigned by index to preserve sort order.
                 var resultsByIndex = new ChapterQcResult[files.Count];
                 var completed = 0;
@@ -247,12 +261,22 @@ public static class QcCommand
                         var file = files[i];
                         try
                         {
-                            var result = AudioQcAnalyzer.AnalyzeFile(
-                                file.FullName,
-                                noiseDb,
-                                minSilenceSec,
-                                thresholds,
-                                ResolveSectionTitle(file, bookIndex));
+                            var sectionTitle = ResolveSectionTitle(file, bookIndex);
+                            var result = loadedBuffersByPath.TryGetValue(NormalizePathKey(file.FullName),
+                                out var loadedBuffer)
+                                ? AudioQcAnalyzer.AnalyzeBuffer(
+                                    loadedBuffer,
+                                    file.Name,
+                                    noiseDb,
+                                    minSilenceSec,
+                                    thresholds,
+                                    sectionTitle)
+                                : AudioQcAnalyzer.AnalyzeFile(
+                                    file.FullName,
+                                    noiseDb,
+                                    minSilenceSec,
+                                    thresholds,
+                                    sectionTitle);
 
                             if (TryResolveRawDuration(file, rawLookup, result.DurationSec, out var rawDurationSec))
                             {
@@ -408,9 +432,71 @@ public static class QcCommand
             : new FileInfo(Path.Combine(chapter.RootPath, $"{chapter.ChapterId}.{suffix}"));
     }
 
+    private static Dictionary<string, AudioBuffer> BuildLoadedWorkspaceBufferLookup(
+        IReadOnlyList<ChapterDescriptor> chapters,
+        AudioTier tier)
+    {
+        var buffers = new Dictionary<string, AudioBuffer>(StringComparer.OrdinalIgnoreCase);
+        if (tier == AudioTier.Adjusted || ReplContext.Current is null)
+        {
+            return buffers;
+        }
+
+        foreach (var chapter in chapters)
+        {
+            var file = ResolveWorkspaceTierFile(chapter, tier);
+            if (file is null)
+            {
+                continue;
+            }
+
+            if (TryResolveLoadedWorkspaceBuffer(chapter, tier, out var buffer))
+            {
+                buffers[NormalizePathKey(file.FullName)] = buffer;
+            }
+        }
+
+        return buffers;
+    }
+
+    private static bool TryResolveLoadedWorkspaceBuffer(
+        ChapterDescriptor chapter,
+        AudioTier tier,
+        out AudioBuffer buffer)
+    {
+        buffer = null!;
+
+        var workspace = ReplContext.Current?.Workspace;
+        if (workspace is null || !workspace.Chapters.TryGetCached(chapter.ChapterId, out var context))
+        {
+            return false;
+        }
+
+        var bufferContext = ResolveTierBufferContext(context.Audio, tier);
+        if (bufferContext?.IsLoaded != true)
+        {
+            return false;
+        }
+
+        buffer = bufferContext.Buffer!;
+        return true;
+    }
+
+    private static AudioBufferContext? ResolveTierBufferContext(AudioBufferManager manager, AudioTier tier)
+        => tier switch
+        {
+            AudioTier.Source => manager.Raw,
+            AudioTier.Treated => manager.Treated,
+            AudioTier.Filtered => manager.Filtered,
+            _ => null
+        };
+
     private static bool IsSourceTierFile(FileInfo file)
         => !AudioTierResolver.IsVariantFileName(file.Name)
            && !file.Name.Equals("roomtone.wav", StringComparison.OrdinalIgnoreCase);
+
+    private static string NormalizePathKey(string path)
+        => Path.GetFullPath(path);
 
     private static string TierSearchPattern(AudioTier tier) => tier switch
     {

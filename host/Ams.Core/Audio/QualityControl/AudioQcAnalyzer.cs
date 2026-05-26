@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Text.RegularExpressions;
+using Ams.Core.Artifacts;
 using Ams.Core.Processors;
 
 namespace Ams.Core.Audio.QualityControl;
@@ -252,10 +253,36 @@ public static class AudioQcAnalyzer
 
         // Probe file metadata via in-process FFmpeg
         var info = AudioProcessor.Probe(filePath);
-        var durationSec = info.Duration.TotalSeconds;
 
         // Decode and run silence/loudness analysis via in-process libavfilter
         var buffer = AudioProcessor.Decode(filePath);
+        return AnalyzeBuffer(
+            buffer,
+            fileName,
+            noiseDb,
+            minSilenceDurationSec,
+            thresholds,
+            sectionTitle,
+            info.Duration.TotalSeconds,
+            info.Channels,
+            info.SampleRate);
+    }
+
+    public static ChapterQcResult AnalyzeBuffer(
+        AudioBuffer buffer,
+        string fileName,
+        double noiseDb,
+        double minSilenceDurationSec,
+        QcThresholds thresholds,
+        string? sectionTitle = null,
+        double? durationSecOverride = null,
+        int? channelsOverride = null,
+        int? sampleRateOverride = null)
+    {
+        ArgumentNullException.ThrowIfNull(buffer);
+        ArgumentException.ThrowIfNullOrWhiteSpace(fileName);
+
+        var durationSec = durationSecOverride ?? buffer.Length / (double)buffer.SampleRate;
         var loudness = AudioProcessor.AnalyzeLoudness(buffer);
         var intervals = AudioProcessor.DetectSilence(buffer, new SilenceDetectOptions
         {
@@ -280,8 +307,8 @@ public static class AudioQcAnalyzer
         {
             FileName = fileName,
             DurationSec = durationSec,
-            Channels = info.Channels,
-            SampleRate = info.SampleRate,
+            Channels = channelsOverride ?? buffer.Channels,
+            SampleRate = sampleRateOverride ?? buffer.SampleRate,
             OverallRmsDbFs = loudness.OverallRmsDbFs,
             SamplePeakDbFs = loudness.SamplePeakDbFs,
             TruePeakDbFs = loudness.TruePeakDbFs,

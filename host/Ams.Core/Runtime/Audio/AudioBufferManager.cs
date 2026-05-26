@@ -84,6 +84,29 @@ public sealed class AudioBufferManager : IAudioBufferManager
         return GetByBufferId(bufferId, moveCursor: true);
     }
 
+    public void WriteThrough(string bufferId, AudioBuffer buffer)
+    {
+        if (!TryWriteThrough(bufferId, buffer))
+        {
+            throw new KeyNotFoundException($"Buffer '{bufferId}' not found in chapter context.");
+        }
+    }
+
+    public bool TryWriteThrough(string bufferId, AudioBuffer buffer)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(bufferId);
+        ArgumentNullException.ThrowIfNull(buffer);
+
+        var context = TryGetByBufferId(bufferId, moveCursor: false);
+        if (context is null)
+        {
+            return false;
+        }
+
+        context.WriteThrough(buffer);
+        return true;
+    }
+
     public bool TryMoveNext(out AudioBufferContext bufferContext)
     {
         lock (_sync)

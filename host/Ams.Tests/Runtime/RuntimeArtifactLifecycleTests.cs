@@ -1,5 +1,6 @@
 using Ams.Core.Artifacts;
 using Ams.Core.Runtime.Artifacts;
+using Ams.Core.Runtime.Audio;
 using Ams.Core.Runtime.Book;
 using Ams.Core.Runtime.Chapter;
 using Ams.Core.Runtime.Common;
@@ -144,6 +145,55 @@ public sealed class RuntimeArtifactLifecycleTests : IDisposable
         Assert.True(RuntimeLifetimePolicies.ChapterContexts.ReleaseResourcesOnUnload);
         Assert.True(RuntimeLifetimePolicies.DocumentSlots.KeepLoadedAfterRead);
         Assert.True(RuntimeLifetimePolicies.DocumentSlots.SaveDirtyOnOwnerSave);
+    }
+
+    [Fact]
+    public void AudioBufferManager_WriteThrough_UpdatesBufferWithoutDecoding()
+    {
+        var path = Path.Combine(CreateTempDirectory(), "chapter.filtered.wav");
+        var loadCount = 0;
+        var manager = new AudioBufferManager(
+            new[] { new AudioBufferDescriptor("filtered", path) },
+            _ =>
+            {
+                loadCount++;
+                return null;
+            });
+        var rendered = new AudioBuffer(1, 16000, 160);
+
+        Assert.True(manager.TryWriteThrough("filtered", rendered));
+
+        var context = manager.Filtered;
+        Assert.NotNull(context);
+        Assert.True(context!.IsLoaded);
+        Assert.Same(rendered, context.Buffer);
+        Assert.Equal(0, loadCount);
+        Assert.False(manager.TryWriteThrough("missing", rendered));
+    }
+
+    [Fact]
+    public void ChapterContextHandle_RetainContextOnDispose_KeepsChapterCached()
+    {
+        var root = CreateTempDirectory();
+        var bookIndexFile = WriteBookIndex(root);
+        var chapterDirectory = Directory.CreateDirectory(Path.Combine(root, "chapter-01"));
+        var manager = new BookManager(new[]
+        {
+            new BookDescriptor("book-1", root, Array.Empty<ChapterDescriptor>())
+        });
+
+        var request = ChapterOpenRequest.FromTrusted(
+            bookIndexFile,
+            chapterDirectory: chapterDirectory,
+            chapterId: "chapter-01");
+
+        var handle = manager.Current.Chapters.CreateContext(request, retainContextOnDispose: true);
+        var chapter = handle.Chapter;
+
+        handle.Dispose();
+
+        Assert.True(manager.Current.Chapters.TryGetCached("chapter-01", out var cached));
+        Assert.Same(chapter, cached);
     }
 
     public void Dispose()

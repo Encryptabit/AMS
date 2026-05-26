@@ -63,7 +63,8 @@ internal sealed class CliWorkspace : IWorkspace
             normalized.AudioFile,
             normalized.ChapterDirectory,
             normalized.ChapterId,
-            normalized.ReloadBookIndex));
+            normalized.ReloadBookIndex),
+            normalized.RetainContextOnDispose);
     }
 
     private ChapterOpenOptions NormalizeOptions(ChapterOpenOptions options)

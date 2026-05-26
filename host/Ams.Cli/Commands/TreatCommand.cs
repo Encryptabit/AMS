@@ -2,6 +2,7 @@ using System.CommandLine;
 using Ams.Cli.Repl;
 using Ams.Cli.Utilities;
 using Ams.Core.Audio;
+using Ams.Core.Runtime.Chapter;
 using Ams.Core.Runtime.Workspace;
 
 namespace Ams.Cli.Commands;
@@ -95,7 +96,7 @@ public static class TreatCommand
 
                 var activeChapter = repl.ActiveChapter;
                 var chapterId = Path.GetFileNameWithoutExtension(activeChapter.Name);
-                var treatmentInput = AudioTierResolver.ResolveActiveTierFile(tier, mustExist: true);
+                _ = AudioTierResolver.ResolveActiveTierFile(tier, mustExist: true);
 
                 // Resolve book index and workspace
                 var bookIndexFile = CommandInputResolver.ResolveBookIndex(null, mustExist: true);
@@ -153,12 +154,14 @@ public static class TreatCommand
                 var openOptions = new ChapterOpenOptions
                 {
                     BookIndexFile = bookIndexFile,
-                    AudioFile = treatmentInput,
-                    ChapterId = chapterId
+                    AudioFile = activeChapter,
+                    ChapterId = chapterId,
+                    RetainContextOnDispose = ReplContext.Current is not null
                 };
 
                 using var handle = workspace.OpenChapter(openOptions);
                 var chapter = handle.Chapter;
+                SelectTreatmentInputTier(chapter, tier);
 
                 // Determine output path
                 var outputPath = chapter.ResolveArtifactFile("treated.wav").FullName;
@@ -254,5 +257,18 @@ public static class TreatCommand
         });
 
         return cmd;
+    }
+
+    private static void SelectTreatmentInputTier(ChapterContext chapter, AudioTier tier)
+    {
+        var bufferId = tier switch
+        {
+            AudioTier.Source => "raw",
+            AudioTier.Treated => "treated",
+            AudioTier.Filtered => "filtered",
+            _ => throw new ArgumentOutOfRangeException(nameof(tier), tier, null)
+        };
+
+        chapter.Audio.Load(bufferId);
     }
 }

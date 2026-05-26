@@ -21,9 +21,10 @@ public interface IChapterManager
         FileInfo? audioFile = null,
         DirectoryInfo? chapterDirectory = null,
         string? chapterId = null,
-        bool reloadBookIndex = false);
+        bool reloadBookIndex = false,
+        bool retainContextOnDispose = false);
 
-    ChapterContextHandle CreateContext(ChapterOpenRequest request);
+    ChapterContextHandle CreateContext(ChapterOpenRequest request, bool retainContextOnDispose = false);
 
     ChapterDescriptor UpsertDescriptor(ChapterDescriptor descriptor);
     bool TryMoveNext(out ChapterContext context);

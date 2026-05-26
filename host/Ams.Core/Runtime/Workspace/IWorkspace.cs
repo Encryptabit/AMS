@@ -39,4 +39,5 @@ public sealed record ChapterOpenOptions
     public DirectoryInfo? ChapterDirectory { get; init; }
     public string? ChapterId { get; init; }
     public bool ReloadBookIndex { get; init; }
+    public bool RetainContextOnDispose { get; init; }
 }
