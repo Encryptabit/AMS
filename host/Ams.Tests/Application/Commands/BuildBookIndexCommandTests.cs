@@ -190,12 +190,12 @@ public class BuildBookIndexCommandTests
     }
 
     [Fact]
-    public void BuildBookIndexRequest_FromPipelineOptions_MapsForceToRebuildMode()
+    public void BuildBookIndexRequest_FromPipelineOptions_MapsOnlyForceIndexToRebuildMode()
     {
         var root = CreateTempDirectory();
         try
         {
-            var request = BuildBookIndexRequest.FromPipelineOptions(new PipelineRunOptions
+            var forceRequest = BuildBookIndexRequest.FromPipelineOptions(new PipelineRunOptions
             {
                 BookFile = new FileInfo(Path.Combine(root, "book.md")),
                 BookIndexFile = new FileInfo(Path.Combine(root, "book-index.json")),
@@ -206,8 +206,20 @@ public class BuildBookIndexCommandTests
                 AverageWordsPerMinute = 155.0
             });
 
-            Assert.Equal(BookIndexCacheMode.Rebuild, request.CacheMode);
-            Assert.Equal(155.0, request.IndexOptions?.AverageWpm);
+            var forceIndexRequest = BuildBookIndexRequest.FromPipelineOptions(new PipelineRunOptions
+            {
+                BookFile = new FileInfo(Path.Combine(root, "book.md")),
+                BookIndexFile = new FileInfo(Path.Combine(root, "book-index.json")),
+                AudioFile = new FileInfo(Path.Combine(root, "chapter.wav")),
+                ChapterId = "chapter-01",
+                Force = false,
+                ForceIndex = true,
+                AverageWordsPerMinute = 155.0
+            });
+
+            Assert.Equal(BookIndexCacheMode.PreferCache, forceRequest.CacheMode);
+            Assert.Equal(BookIndexCacheMode.Rebuild, forceIndexRequest.CacheMode);
+            Assert.Equal(155.0, forceRequest.IndexOptions?.AverageWpm);
         }
         finally
         {

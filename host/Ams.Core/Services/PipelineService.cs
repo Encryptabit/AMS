@@ -593,7 +593,7 @@ public sealed class PipelineService
         CancellationToken cancellationToken)
     {
         options.BookIndexFile.Refresh();
-        var requestRebuild = options.ForceIndex || options.Force;
+        var requestRebuild = options.ForceIndex;
         var exists = options.BookIndexFile.Exists;
         var concurrency = options.Concurrency;
 

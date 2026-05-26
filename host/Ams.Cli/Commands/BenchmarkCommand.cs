@@ -116,7 +116,7 @@ public static class BenchmarkCommand
         var forceOption = new Option<bool>(
             "--force",
             () => false,
-            "Force pipeline artifact regeneration during benchmark execution");
+            "Force chapter pipeline artifact regeneration during benchmark execution");
 
         var forceIndexOption = new Option<bool>(
             "--force-index",

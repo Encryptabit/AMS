@@ -1292,7 +1292,7 @@ public static class PipelineCommand
         var chapterIdOption = new Option<string?>("--chapter-id", () => null,
             "Override output stem (defaults to audio file name)");
         var forceOption =
-            new Option<bool>("--force", () => false, "Re-run all stages even if outputs are already present");
+            new Option<bool>("--force", () => false, "Re-run chapter artifact stages even if outputs are already present");
         forceOption.AddAlias("-f");
         var forceIndexOption =
             new Option<bool>("--force-index", () => false, "Rebuild book index even if it already exists");

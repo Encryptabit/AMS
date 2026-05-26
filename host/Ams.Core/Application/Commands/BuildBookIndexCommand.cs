@@ -157,7 +157,7 @@ public sealed record BuildBookIndexRequest
             {
                 AverageWpm = options.AverageWordsPerMinute
             },
-            options.Force || options.ForceIndex
+            options.ForceIndex
                 ? BookIndexCacheMode.Rebuild
                 : BookIndexCacheMode.PreferCache);
     }

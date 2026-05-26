@@ -179,22 +179,15 @@ public sealed record ChapterArtifactAddress : IFileArtifactAddress
 
 public sealed record BookArtifactAddress : IFileArtifactAddress
 {
+    private static readonly char[] ExtraInvalidFileNameChars = ['<', '>', ':', '"', '|', '?', '*'];
+
     public BookArtifactAddress(string bookRoot, string fileName)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(bookRoot);
         ArgumentException.ThrowIfNullOrWhiteSpace(fileName);
 
-        if (fileName.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0
-            || fileName.Contains(Path.DirectorySeparatorChar)
-            || fileName.Contains(Path.AltDirectorySeparatorChar))
-        {
-            throw new ArgumentException(
-                "Artifact file name cannot contain path separators or invalid file name characters.",
-                nameof(fileName));
-        }
-
         BookRoot = Path.GetFullPath(bookRoot);
-        FileName = fileName;
+        FileName = NormalizeRelativePath(fileName);
     }
 
     public string BookRoot { get; }
@@ -205,6 +198,43 @@ public sealed record BookArtifactAddress : IFileArtifactAddress
     public string FullPath => ToFile().FullName;
 
     public override string ToString() => FullPath;
+
+    private static string NormalizeRelativePath(string path)
+    {
+        var trimmed = path.Trim();
+        if (Path.IsPathRooted(trimmed))
+        {
+            throw new ArgumentException(
+                "Artifact path must be relative to the book root.",
+                nameof(path));
+        }
+
+        var segments = trimmed
+            .Split(['/', '\\'], StringSplitOptions.None)
+            .Select(static segment => segment.Trim())
+            .ToArray();
+
+        if (segments.Length == 0 || segments.Any(static segment => segment.Length == 0))
+        {
+            throw new ArgumentException(
+                "Artifact path cannot contain empty path segments.",
+                nameof(path));
+        }
+
+        foreach (var segment in segments)
+        {
+            if (segment is "." or ".."
+                || segment.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0
+                || segment.IndexOfAny(ExtraInvalidFileNameChars) >= 0)
+            {
+                throw new ArgumentException(
+                    "Artifact path cannot contain traversal segments or invalid file name characters.",
+                    nameof(path));
+            }
+        }
+
+        return Path.Combine(segments);
+    }
 }
 
 public sealed record BookCacheArtifactAddress : IFileArtifactAddress

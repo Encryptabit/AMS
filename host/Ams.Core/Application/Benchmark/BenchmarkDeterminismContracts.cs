@@ -193,13 +193,15 @@ public sealed record BenchmarkCachePolicy
 
     public bool AllowsCachedPipelineArtifacts => !ForcePipelineRebuild;
 
-    public bool AllowsCachedBookIndex => !ForcePipelineRebuild && !ForceBookIndexRebuild;
+    public bool AllowsCachedBookIndex => !ForceBookIndexRebuild;
 
-    public string Summary => ForcePipelineRebuild
-        ? "Pipeline artifact cache bypass requested."
-        : ForceBookIndexRebuild
-            ? "Book-index cache bypass requested."
-            : "Pipeline and book-index caches allowed.";
+    public string Summary => (ForcePipelineRebuild, ForceBookIndexRebuild) switch
+    {
+        (true, true) => "Pipeline artifact and book-index cache bypass requested.",
+        (true, false) => "Pipeline artifact cache bypass requested; book-index cache allowed.",
+        (false, true) => "Book-index cache bypass requested.",
+        _ => "Pipeline and book-index caches allowed."
+    };
 
     public static BenchmarkCachePolicy Default { get; } = new(forcePipelineRebuild: false, forceBookIndexRebuild: false);
 

@@ -154,6 +154,60 @@ public sealed class PipelineRunContractTests : IDisposable
     }
 
     [Fact]
+    public async Task RunChapterAsync_ForceRerunsChapterStagesWithoutRebuildingBookIndex()
+    {
+        var root = CreateTempDirectory();
+        var bookFile = await WriteBookAsync(root, "book.txt", "Title\n\nHello forced chapter world.");
+        var audioFile = WriteAudioStub(root, "chapter-01.wav");
+        var chapterId = "chapter-01";
+        var chapterDirectory = new DirectoryInfo(Path.Combine(root, chapterId));
+        var bookIndexFile = new FileInfo(Path.Combine(root, "book-index.json"));
+
+        using var workspace = new TestWorkspace(root);
+        await CreateBookIndexAsync(bookFile, bookIndexFile);
+        SeedCachedArtifacts(workspace, bookIndexFile, audioFile, chapterDirectory, chapterId);
+
+        var asr = new RecordingAsrService();
+        var alignment = new RecordingAlignmentService();
+        var service = CreateService(asr, alignment);
+
+        var result = await service.RunChapterAsync(
+            workspace,
+            new PipelineRunOptions
+            {
+                BookFile = bookFile,
+                BookIndexFile = bookIndexFile,
+                AudioFile = audioFile,
+                ChapterDirectory = chapterDirectory,
+                ChapterId = chapterId,
+                EndStage = PipelineStage.Hydrate,
+                SkipTreatedCopy = false,
+                Force = true,
+                ForceIndex = false
+            });
+
+        Assert.Equal(RunState.Completed, result.State);
+        Assert.False(result.BookIndexBuilt);
+        Assert.True(result.AsrRan);
+        Assert.True(result.AnchorsRan);
+        Assert.True(result.TranscriptRan);
+        Assert.True(result.HydrateRan);
+
+        Assert.Collection(
+            result.StageResults,
+            stage => AssertStage(stage, PipelineStage.BookIndex, executed: false, RunState.Completed, "Index ready"),
+            stage => AssertStage(stage, PipelineStage.Asr, executed: true, RunState.Completed, "ASR complete"),
+            stage => AssertStage(stage, PipelineStage.Anchors, executed: true, RunState.Completed, "Anchors generated"),
+            stage => AssertStage(stage, PipelineStage.Transcript, executed: true, RunState.Completed, "Transcript indexed"),
+            stage => AssertStage(stage, PipelineStage.Hydrate, executed: true, RunState.Completed, "Hydrate complete"));
+
+        Assert.Equal(1, asr.TranscribeCalls);
+        Assert.Equal(1, alignment.ComputeAnchorsCalls);
+        Assert.Equal(1, alignment.BuildTranscriptCalls);
+        Assert.Equal(1, alignment.HydrateCalls);
+    }
+
+    [Fact]
     public async Task RunChapterAsync_ScopedReAsr_ForcesAllDownstreamStages()
     {
         // C4 contract: when PipelineRunOptions.ScopedReAsrChunkIndices is non-empty, the ASR

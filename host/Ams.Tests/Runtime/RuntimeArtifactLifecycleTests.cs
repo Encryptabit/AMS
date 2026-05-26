@@ -24,6 +24,21 @@ public sealed class RuntimeArtifactLifecycleTests : IDisposable
     }
 
     [Fact]
+    public void BookArtifactAddress_AllowsValidatedRelativePathsUnderBookRoot()
+    {
+        var root = CreateTempDirectory();
+
+        var nested = new BookArtifactAddress(root, "safe/roomtone.wav");
+
+        Assert.Equal(Path.Combine("safe", "roomtone.wav"), nested.FileName);
+        Assert.Equal(Path.Combine(Path.GetFullPath(root), "safe", "roomtone.wav"), nested.FullPath);
+        Assert.Throws<ArgumentException>(() => new BookArtifactAddress(root, "../roomtone.wav"));
+        Assert.Throws<ArgumentException>(() => new BookArtifactAddress(root, "safe/../roomtone.wav"));
+        Assert.Throws<ArgumentException>(() => new BookArtifactAddress(root, "safe//roomtone.wav"));
+        Assert.Throws<ArgumentException>(() => new BookArtifactAddress(root, "safe/bad:name.wav"));
+    }
+
+    [Fact]
     public void FileArtifact_ComputesSha256HashOnceOnFirstAccess()
     {
         var root = CreateTempDirectory();
@@ -69,6 +84,27 @@ public sealed class RuntimeArtifactLifecycleTests : IDisposable
         Assert.Equal(Path.Combine(chapterDirectory.FullName, "chapter-01.treated.wav"), buffers["treated"].Path);
         Assert.Equal(Path.Combine(chapterDirectory.FullName, "chapter-01.corrected.wav"), buffers["corrected"].Path);
         Assert.Equal(Path.Combine(chapterDirectory.FullName, "chapter-01.filtered.wav"), buffers["filtered"].Path);
+    }
+
+    [Fact]
+    public void BookAudio_RoomtonePath_UsesCentralizedBookArtifactResolution()
+    {
+        var root = CreateTempDirectory();
+        var manager = new BookManager(new[]
+        {
+            new BookDescriptor("book-1", root, Array.Empty<ChapterDescriptor>())
+        });
+
+        var expectedPath = Path.Combine(Path.GetFullPath(root), "safe", "roomtone.wav");
+
+        Assert.Equal(expectedPath, manager.Current.ResolveArtifactFile(Path.Combine("safe", "roomtone.wav")).FullName);
+        Assert.Equal(expectedPath, manager.Current.Audio.RoomtonePath);
+        Assert.False(manager.Current.Audio.HasRoomtone);
+
+        Directory.CreateDirectory(Path.GetDirectoryName(expectedPath)!);
+        File.WriteAllBytes(expectedPath, [0x52, 0x49, 0x46, 0x46]);
+
+        Assert.True(manager.Current.Audio.HasRoomtone);
     }
 
     [Fact]

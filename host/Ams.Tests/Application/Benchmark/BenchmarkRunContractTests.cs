@@ -151,6 +151,7 @@ public sealed class BenchmarkRunContractTests
         Assert.True(request.CachePolicy.ForcePipelineRebuild);
         Assert.False(request.CachePolicy.ForceBookIndexRebuild);
         Assert.False(request.CachePolicy.AllowsCachedPipelineArtifacts);
+        Assert.True(request.CachePolicy.AllowsCachedBookIndex);
 
         Assert.True(request.ChunkPolicy.DisableChunkPlan);
         Assert.True(request.ChunkPolicy.DisableChunkedMfa);
