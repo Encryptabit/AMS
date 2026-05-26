@@ -68,6 +68,36 @@ public class SectionLocatorTests
         );
     }
 
+    private static BookIndex MakeBookIndexWithFrontMatter()
+    {
+        var words = new List<BookWord>();
+        for (int i = 0; i < 120; i++)
+        {
+            words.Add(new BookWord($"w{i}", i, i / 5, i / 10, -1));
+        }
+
+        var sections = new[]
+        {
+            new SectionRange(0, "RECURRING CHARACTERS:", 1, "Heading", 0, 19, 0, 1),
+            new SectionRange(1, "THE STORY SO FAR...", 1, "Heading", 20, 59, 2, 5),
+            new SectionRange(2, "CHAPTER ONE", 1, "chapter", 60, 119, 6, 11)
+        };
+
+        return new BookIndex(
+            SourceFile: "fake.docx",
+            SourceFileHash: "hash",
+            IndexedAt: System.DateTime.UtcNow,
+            Title: "Test",
+            Author: "Author",
+            Totals: new BookTotals(120, 24, 12, 36.0),
+            Words: words.ToArray(),
+            Sentences: new[] { new SentenceRange(0, 0, 4) },
+            Paragraphs: new[] { new ParagraphRange(0, 0, 9, "", "Heading 1") },
+            Sections: sections,
+            BuildWarnings: null
+        );
+    }
+
     [Fact]
     public void Detects_Chapter_From_Asr_Prefix()
     {
@@ -86,6 +116,19 @@ public class SectionLocatorTests
     public void ResolveSectionByTitle_NormalizesNumbers(string label, int expectedId)
     {
         var book = MakeBookIndex();
+        var resolved = SectionLocator.ResolveSectionByTitle(book, label);
+        Assert.NotNull(resolved);
+        Assert.Equal(expectedId, resolved!.Id);
+    }
+
+    [Theory]
+    [InlineData("001_TheStorySoFar", 1)]
+    [InlineData("001-TheStorySoFar", 1)]
+    [InlineData("TheStorySoFar", 1)]
+    [InlineData("002_Chapter 1", 2)]
+    public void ResolveSectionByTitle_PrefersTextTitleOverTrackNumber(string label, int expectedId)
+    {
+        var book = MakeBookIndexWithFrontMatter();
         var resolved = SectionLocator.ResolveSectionByTitle(book, label);
         Assert.NotNull(resolved);
         Assert.Equal(expectedId, resolved!.Id);
