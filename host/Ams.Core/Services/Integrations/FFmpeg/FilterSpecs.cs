@@ -47,7 +47,8 @@ public sealed record ACompressorFilterParams(
 public sealed record ALimiterFilterParams(
     double LimitDb = -3,
     double AttackMilliseconds = 5,
-    double ReleaseMilliseconds = 50);
+    double ReleaseMilliseconds = 50,
+    bool AutoLevel = false);
 
 public sealed record LoudNormFilterParams(
     double TargetI = -18,

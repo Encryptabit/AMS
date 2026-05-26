@@ -1,5 +1,6 @@
 using Ams.Core.Artifacts;
 using Ams.Core.Processors;
+using Ams.Core.Services.Integrations.FFmpeg;
 
 namespace Ams.Tests;
 
@@ -101,5 +102,26 @@ public class AudioProcessorFilterTests
         var first = intervals[0];
         Assert.True(first.Start < TimeSpan.FromMilliseconds(50));
         Assert.True(first.End > TimeSpan.FromMilliseconds(350));
+    }
+
+    [Fact]
+    public void ALimiter_DefaultsToNoAutoLevel()
+    {
+        if (FiltersUnavailable()) return;
+        var buffer = CreateBuffer((440, 1.0));
+        var samples = buffer.GetChannelSpan(0);
+        for (var i = 0; i < samples.Length; i++)
+        {
+            samples[i] *= 1.8f;
+        }
+
+        var limited = FfFilterGraph
+            .FromBuffer(buffer)
+            .ALimiter(new ALimiterFilterParams(LimitDb: -6, AttackMilliseconds: 2, ReleaseMilliseconds: 80))
+            .ToBuffer();
+
+        var peak = limited.GetChannel(0).Span.ToArray().Max(sample => Math.Abs(sample));
+
+        Assert.InRange(peak, 0.45f, 0.55f);
     }
 }

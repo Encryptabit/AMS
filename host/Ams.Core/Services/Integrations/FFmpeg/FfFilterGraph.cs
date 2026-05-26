@@ -208,7 +208,8 @@ public sealed class FfFilterGraph
         return AddFilter("alimiter",
             ("limit", FormatDecibels(p.LimitDb)),
             ("attack", FormatDouble(p.AttackMilliseconds)),
-            ("release", FormatDouble(p.ReleaseMilliseconds)));
+            ("release", FormatDouble(p.ReleaseMilliseconds)),
+            ("level", p.AutoLevel ? "1" : "0"));
     }
 
     /// <summary>
