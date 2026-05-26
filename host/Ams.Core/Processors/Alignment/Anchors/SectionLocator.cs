@@ -155,15 +155,6 @@ public static class SectionLocator
         var audioTokens = CollapseNumberTokens(audioTokensRaw);
         var lookup = BuildSectionLookup(book.Sections);
 
-        var audioNumber = ExtractLeadingNumber(audioTokens);
-        if (audioNumber.HasValue && lookup.ByNumber.TryGetValue(audioNumber.Value, out var numberMatches))
-        {
-            if (numberMatches.Count == 1)
-            {
-                return numberMatches[0].Section;
-            }
-        }
-
         var audioVariants = BuildNormalizedVariants(audioTokens);
         foreach (var variant in audioVariants)
         {
@@ -182,6 +173,15 @@ public static class SectionLocator
             if (exact != null)
             {
                 return exact.Section;
+            }
+        }
+
+        var audioNumber = ExtractLeadingNumber(audioTokens);
+        if (audioNumber.HasValue && lookup.ByNumber.TryGetValue(audioNumber.Value, out var numberMatches))
+        {
+            if (numberMatches.Count == 1)
+            {
+                return numberMatches[0].Section;
             }
         }
 
@@ -206,10 +206,17 @@ public static class SectionLocator
         if (string.IsNullOrWhiteSpace(text)) return tokens;
 
         var sb = new StringBuilder();
+        char previous = '\0';
         foreach (var ch in text)
         {
             if (char.IsLetterOrDigit(ch))
             {
+                if (sb.Length > 0 && StartsNewToken(previous, ch))
+                {
+                    tokens.Add(sb.ToString());
+                    sb.Clear();
+                }
+
                 sb.Append(char.ToLowerInvariant(ch));
             }
             else
@@ -220,6 +227,8 @@ public static class SectionLocator
                     sb.Clear();
                 }
             }
+
+            previous = ch;
         }
 
         if (sb.Length > 0)
@@ -228,6 +237,15 @@ public static class SectionLocator
         }
 
         return tokens;
+    }
+
+    private static bool StartsNewToken(char previous, char current)
+    {
+        return previous != '\0' &&
+               char.IsLetter(previous) &&
+               char.IsLower(previous) &&
+               char.IsLetter(current) &&
+               char.IsUpper(current);
     }
 
     private static List<string> CollapseNumberTokens(IReadOnlyList<string> tokens)
