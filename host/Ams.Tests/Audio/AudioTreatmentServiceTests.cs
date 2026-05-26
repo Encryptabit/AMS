@@ -293,7 +293,7 @@ public sealed class AudioTreatmentServiceTests
         };
         var buffer = new AudioBuffer(channels: 1, sampleRate: 44_100, length: 1000, metadata);
 
-        var bitDepth = AudioTreatmentService.ResolvePreferredBitDepth(buffer);
+        var bitDepth = AudioEncodingDefaults.ResolvePreferredBitDepth(buffer);
 
         Assert.Equal(24, bitDepth);
     }
@@ -307,7 +307,7 @@ public sealed class AudioTreatmentServiceTests
         };
         var buffer = new AudioBuffer(channels: 1, sampleRate: 44_100, length: 1000, metadata);
 
-        var bitDepth = AudioTreatmentService.ResolvePreferredBitDepth(buffer);
+        var bitDepth = AudioEncodingDefaults.ResolvePreferredBitDepth(buffer);
 
         Assert.Equal(16, bitDepth);
     }

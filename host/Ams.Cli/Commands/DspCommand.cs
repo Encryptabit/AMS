@@ -8,6 +8,7 @@ using System.Globalization;
 using Spectre.Console;
 using Ams.Cli.Utilities;
 using Ams.Core.Artifacts;
+using Ams.Core.Audio;
 using Ams.Core.Common;
 using Ams.Core.Processors;
 using Ams.Core.Services.Integrations.FFmpeg;
@@ -1401,9 +1402,7 @@ public static class DspCommand
             var resolved = ResolveFilteredOutput(explicitOutput, inputFile);
             Directory.CreateDirectory(resolved.DirectoryName ?? Directory.GetCurrentDirectory());
             using var stream = File.Create(resolved.FullName);
-            var encodeOptions = new AudioEncodeOptions(
-                TargetSampleRate: buffer.SampleRate,
-                TargetBitDepth: 32);
+            var encodeOptions = AudioEncodingDefaults.ForSource(buffer);
             graph.StreamToWave(stream, encodeOptions);
             Log.Info("Filtered audio written to {Output}", resolved.FullName);
         }
