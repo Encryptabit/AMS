@@ -602,7 +602,9 @@ public static class Program
 
         if (!args[0].Equals("pipeline", StringComparison.OrdinalIgnoreCase))
         {
-            return false;
+            return args[0].Equals("qc", StringComparison.OrdinalIgnoreCase)
+                   && args.Count >= 2
+                   && args[1].Equals("analyze", StringComparison.OrdinalIgnoreCase);
         }
 
         if (args[1].Equals("run", StringComparison.OrdinalIgnoreCase))

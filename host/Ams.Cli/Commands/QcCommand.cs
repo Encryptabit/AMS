@@ -25,7 +25,15 @@ public static class QcCommand
     private static readonly Regex DecoratedChapterTitleRegex = new(
         @"^\s*chapter\b.+?[:\-–—]\s*.+\s*$",
         RegexOptions.Compiled | RegexOptions.IgnoreCase);
-    private static readonly string[] VariantMarkers = [".pause-adjusted", ".treated", ".corrected", ".filtered"];
+    private static readonly string[] VariantMarkers =
+    [
+        ".dsp.filtered",
+        ".pause-adjusted",
+        ".corrected",
+        ".treated",
+        ".filtered",
+        ".dsp"
+    ];
 
     public static Command Create()
     {
@@ -45,6 +53,10 @@ public static class QcCommand
             "--dir",
             "Directory containing audio files to analyze (overrides workspace discovery)");
         dirOption.AddAlias("-d");
+
+        var tierOption = new Option<string?>(
+            "--tier",
+            "Audio tier to analyze: source, treated, filtered, adjusted. Defaults to treated in workspace mode; with --dir, omit to analyze all files.");
 
         var noiseOption = new Option<double>(
             "--noise",
@@ -87,6 +99,7 @@ public static class QcCommand
             "Maximum acceptable title-body gap in seconds");
 
         cmd.AddOption(dirOption);
+        cmd.AddOption(tierOption);
         cmd.AddOption(noiseOption);
         cmd.AddOption(minSilenceOption);
         cmd.AddOption(jsonOption);
@@ -104,12 +117,15 @@ public static class QcCommand
             try
             {
                 var dir = context.ParseResult.GetValueForOption(dirOption);
+                var tierValue = context.ParseResult.GetValueForOption(tierOption);
+                var tierSpecified = context.ParseResult.FindResultFor(tierOption) is not null
+                                    && !string.IsNullOrWhiteSpace(tierValue);
                 var noiseDb = context.ParseResult.GetValueForOption(noiseOption);
                 var minSilenceSec = context.ParseResult.GetValueForOption(minSilenceOption);
                 var jsonOutput = context.ParseResult.GetValueForOption(jsonOption);
-                var workspaceRoot = CommandInputResolver.ResolveDirectory(null);
+                var workspaceRoot = ResolveQcWorkspaceRoot(dir);
                 var workspaceChapters = TryDiscoverWorkspaceChapters(workspaceRoot);
-                var bookIndex = TryLoadBookIndex();
+                var bookIndex = TryLoadBookIndex(workspaceRoot);
                 var rawLookup = BuildRawEquivalentLookup(workspaceChapters, bookIndex);
 
                 var thresholds = new QcThresholds
@@ -126,7 +142,12 @@ public static class QcCommand
 
                 if (dir is not null)
                 {
-                    // --dir override: scan directory for audio files
+                    // --dir override: by default preserve legacy flat-directory behavior.
+                    // If --tier is supplied, make the directory scan tier-aware and recursive.
+                    var directoryTier = tierSpecified
+                        ? AudioTierResolver.Parse(tierValue, AudioTier.Treated, allowAdjusted: true)
+                        : (AudioTier?)null;
+
                     if (!dir.Exists)
                     {
                         Log.Error("Directory not found: {Path}", dir.FullName);
@@ -134,24 +155,46 @@ public static class QcCommand
                         return;
                     }
 
-                    files = AudioExtensions
-                        .SelectMany(ext => dir.GetFiles(ext))
-                        .OrderBy(file => file, NaturalStringComparer.FileNameWithoutExtensionIgnoreCase)
-                        .ToList();
+                    files = tierSpecified
+                        ? DiscoverDirectoryTierFiles(dir, directoryTier!.Value)
+                        : DiscoverDirectoryAudioFiles(dir);
 
                     if (files.Count == 0)
                     {
-                        Log.Error("No audio files found in {Path} (supported: {Extensions})",
-                            dir.FullName, string.Join(", ", AudioExtensions));
+                        if (directoryTier.HasValue)
+                        {
+                            Log.Error("No {Tier} audio files found in {Path}",
+                                AudioTierResolver.Describe(directoryTier.Value),
+                                dir.FullName);
+                        }
+                        else
+                        {
+                            Log.Error("No audio files found in {Path} (supported: {Extensions})",
+                                dir.FullName,
+                                string.Join(", ", AudioExtensions));
+                        }
+
                         context.ExitCode = 1;
                         return;
                     }
 
-                    Log.Info("Found {Count} audio files in {Path}", files.Count, dir.FullName);
+                    if (directoryTier.HasValue)
+                    {
+                        Log.Info("Found {Count} {Tier} audio files in {Path}",
+                            files.Count,
+                            AudioTierResolver.Describe(directoryTier.Value),
+                            dir.FullName);
+                    }
+                    else
+                    {
+                        Log.Info("Found {Count} audio files in {Path}", files.Count, dir.FullName);
+                    }
                 }
                 else
                 {
-                    // Workspace-aware mode: discover treated WAV files
+                    // Workspace-aware mode: discover the requested tier for the selected chapter,
+                    // or all chapters when the REPL is in mode all.
+                    var tier = AudioTierResolver.Parse(tierValue, AudioTier.Treated, allowAdjusted: true);
                     var chapters = workspaceChapters;
 
                     if (chapters.Count == 0)
@@ -164,32 +207,30 @@ public static class QcCommand
                     var repl = ReplContext.Current;
                     var stem = repl?.ActiveChapterStem;
 
-                    if (stem is null)
+                    if (stem is null && repl?.RunAllChapters != true)
                     {
                         Log.Error("No chapter selected. Use 'use' to select a chapter or 'mode all' for batch analysis.");
                         context.ExitCode = 1;
                         return;
                     }
 
-                    var chapter = chapters.FirstOrDefault(c =>
-                        c.ChapterId.Equals(stem, StringComparison.OrdinalIgnoreCase));
-
-                    if (chapter is null)
+                    files = ResolveWorkspaceTierFiles(
+                        chapters,
+                        tier,
+                        repl?.RunAllChapters == true ? null : stem);
+                    if (files.Count == 0)
                     {
-                        Log.Error("Chapter {ChapterId} not found in workspace", stem);
+                        Log.Error("{Tier} audio not found for {Scope}",
+                            AudioTierResolver.Describe(tier),
+                            repl?.RunAllChapters == true ? "any chapter" : stem);
                         context.ExitCode = 1;
                         return;
                     }
 
-                    var treated = chapter.AudioBuffers.FirstOrDefault(b => b.BufferId == "treated");
-                    if (treated is null || !File.Exists(treated.Path))
-                    {
-                        Log.Error("Treated audio not found for {ChapterId}. Run the treatment pipeline first.", stem);
-                        context.ExitCode = 1;
-                        return;
-                    }
-
-                    files = [new FileInfo(treated.Path)];
+                    Log.Info("Found {Count} {Tier} file(s) in workspace {Path}",
+                        files.Count,
+                        AudioTierResolver.Describe(tier),
+                        workspaceRoot.FullName);
                 }
 
                 // Analyze files in parallel; results assigned by index to preserve sort order.
@@ -282,6 +323,136 @@ public static class QcCommand
 
         return cmd;
     }
+
+    internal static List<FileInfo> DiscoverDirectoryAudioFiles(DirectoryInfo directory)
+    {
+        ArgumentNullException.ThrowIfNull(directory);
+
+        return AudioExtensions
+            .SelectMany(ext => directory.GetFiles(ext))
+            .OrderBy(file => file, NaturalStringComparer.FileNameWithoutExtensionIgnoreCase)
+            .ToList();
+    }
+
+    internal static List<FileInfo> DiscoverDirectoryTierFiles(DirectoryInfo directory, AudioTier tier)
+    {
+        ArgumentNullException.ThrowIfNull(directory);
+
+        var files = tier == AudioTier.Source
+            ? AudioExtensions.SelectMany(ext => directory.EnumerateFiles(ext, SearchOption.AllDirectories))
+                .Where(file => !IsInSkippedDiscoveryDirectory(directory, file.FullName))
+                .Where(IsSourceTierFile)
+            : directory.EnumerateFiles(TierSearchPattern(tier), SearchOption.AllDirectories)
+                .Where(file => !IsInSkippedDiscoveryDirectory(directory, file.FullName));
+
+        return files
+            .OrderBy(file => file.FullName, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+    }
+
+    private static List<FileInfo> ResolveWorkspaceTierFiles(
+        IReadOnlyList<ChapterDescriptor> chapters,
+        AudioTier tier,
+        string? chapterStem)
+    {
+        var selected = chapters.Where(chapter => !IsSkippedWorkspaceChapter(chapter));
+        if (!string.IsNullOrWhiteSpace(chapterStem))
+        {
+            selected = selected.Where(chapter =>
+                chapter.ChapterId.Equals(chapterStem, StringComparison.OrdinalIgnoreCase));
+        }
+
+        var files = new List<FileInfo>();
+        foreach (var chapter in selected)
+        {
+            var file = ResolveWorkspaceTierFile(chapter, tier);
+            if (file?.Exists == true)
+            {
+                files.Add(file);
+            }
+            else
+            {
+                Log.Debug("{Tier} audio missing for {ChapterId}",
+                    AudioTierResolver.Describe(tier),
+                    chapter.ChapterId);
+            }
+        }
+
+        return files
+            .OrderBy(file => file.FullName, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+    }
+
+    private static FileInfo? ResolveWorkspaceTierFile(ChapterDescriptor chapter, AudioTier tier)
+    {
+        var bufferId = tier switch
+        {
+            AudioTier.Source => "raw",
+            AudioTier.Treated => "treated",
+            AudioTier.Filtered => "filtered",
+            AudioTier.Adjusted => null,
+            _ => throw new ArgumentOutOfRangeException(nameof(tier), tier, null)
+        };
+
+        if (bufferId is not null)
+        {
+            var path = chapter.AudioBuffers
+                .FirstOrDefault(buffer => string.Equals(buffer.BufferId, bufferId, StringComparison.OrdinalIgnoreCase))
+                ?.Path;
+            return string.IsNullOrWhiteSpace(path) ? null : new FileInfo(path);
+        }
+
+        var suffix = AudioTierResolver.ArtifactSuffix(tier);
+        return string.IsNullOrWhiteSpace(suffix)
+            ? null
+            : new FileInfo(Path.Combine(chapter.RootPath, $"{chapter.ChapterId}.{suffix}"));
+    }
+
+    private static bool IsSourceTierFile(FileInfo file)
+        => !AudioTierResolver.IsVariantFileName(file.Name)
+           && !file.Name.Equals("roomtone.wav", StringComparison.OrdinalIgnoreCase);
+
+    private static string TierSearchPattern(AudioTier tier) => tier switch
+    {
+        AudioTier.Treated => "*.treated.wav",
+        AudioTier.Filtered => "*.filtered.wav",
+        AudioTier.Adjusted => "*.pause-adjusted.wav",
+        AudioTier.Source => "*.wav",
+        _ => throw new ArgumentOutOfRangeException(nameof(tier), tier, null)
+    };
+
+    private static bool IsInSkippedDiscoveryDirectory(DirectoryInfo root, string candidatePath)
+    {
+        var relative = Path.GetRelativePath(root.FullName, candidatePath);
+        if (relative.StartsWith("..", StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        var parts = relative.Split(
+            [Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar],
+            StringSplitOptions.RemoveEmptyEntries);
+
+        return parts.Take(Math.Max(0, parts.Length - 1)).Any(IsSkippedDiscoveryDirectoryName);
+    }
+
+    private static bool IsSkippedWorkspaceChapter(ChapterDescriptor chapter)
+    {
+        if (IsSkippedDiscoveryDirectoryName(chapter.ChapterId))
+        {
+            return true;
+        }
+
+        var directoryName = Path.GetFileName(
+            chapter.RootPath.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
+        return IsSkippedDiscoveryDirectoryName(directoryName);
+    }
+
+    private static bool IsSkippedDiscoveryDirectoryName(string? name)
+        => string.Equals(name, "safe", StringComparison.OrdinalIgnoreCase)
+           || string.Equals(name, "Batch 2", StringComparison.OrdinalIgnoreCase)
+           || string.Equals(name, "CRX", StringComparison.OrdinalIgnoreCase)
+           || (!string.IsNullOrWhiteSpace(name) && name.StartsWith(".", StringComparison.Ordinal));
 
     private static void RenderTable(List<ChapterQcResult> results)
     {
@@ -412,7 +583,9 @@ public static class QcCommand
     {
         try
         {
-            return WorkspaceChapterDiscovery.Discover(root.FullName);
+            return WorkspaceChapterDiscovery.Discover(root.FullName)
+                .Where(chapter => !IsSkippedWorkspaceChapter(chapter))
+                .ToList();
         }
         catch (Exception ex)
         {
@@ -421,11 +594,33 @@ public static class QcCommand
         }
     }
 
-    private static BookIndex? TryLoadBookIndex()
+    private static DirectoryInfo ResolveQcWorkspaceRoot(DirectoryInfo? directoryOverride)
+    {
+        if (directoryOverride is null)
+        {
+            return CommandInputResolver.ResolveDirectory(null);
+        }
+
+        var directory = new DirectoryInfo(Path.GetFullPath(directoryOverride.FullName));
+        if (File.Exists(Path.Combine(directory.FullName, "book-index.json")))
+        {
+            return directory;
+        }
+
+        if (directory.Parent is { } parent &&
+            File.Exists(Path.Combine(parent.FullName, "book-index.json")))
+        {
+            return parent;
+        }
+
+        return CommandInputResolver.ResolveDirectory(null);
+    }
+
+    private static BookIndex? TryLoadBookIndex(DirectoryInfo root)
     {
         try
         {
-            var bookIndexFile = CommandInputResolver.ResolveBookIndex(null, mustExist: false);
+            var bookIndexFile = new FileInfo(Path.Combine(root.FullName, "book-index.json"));
             if (!bookIndexFile.Exists)
             {
                 return null;
