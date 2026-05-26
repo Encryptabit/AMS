@@ -72,6 +72,7 @@ public static class PipelineCommand
 
     private const string DefaultBatchFolderName = "Batch 2";
     private const string CrxDirectoryName = "CRX";
+    private const string SafeDirectoryName = "safe";
 
     private static readonly JsonSerializerOptions StatsJsonOptions = new()
     {
@@ -918,7 +919,7 @@ public static class PipelineCommand
 
     private static Command CreatePrepStageCommand()
     {
-        var cmd = new Command("stage", "Collect treated WAVs into a batch folder for delivery");
+        var cmd = new Command("stage", "Collect WAVs into a batch folder for delivery");
 
         var rootOption = new Option<DirectoryInfo?>(
             "--root",
@@ -936,14 +937,18 @@ public static class PipelineCommand
             () => false,
             "Overwrite existing files in the destination folder");
 
+        var tierOption = new Option<string>("--tier", () => "treated",
+            $"{AudioTierResolver.StageTierHelp}; defaults to treated");
+
         var adjustedOption = new Option<bool>(
             "--adjusted",
             () => false,
-            "Stage pause-adjusted WAVs instead of treated WAVs.");
+            "Stage pause-adjusted WAVs instead of treated WAVs. Equivalent to --tier adjusted.");
 
         cmd.AddOption(rootOption);
         cmd.AddOption(outputOption);
         cmd.AddOption(overwriteOption);
+        cmd.AddOption(tierOption);
         cmd.AddOption(adjustedOption);
 
         cmd.SetHandler(context =>
@@ -964,31 +969,29 @@ public static class PipelineCommand
 
             var overwrite = context.ParseResult.GetValueForOption(overwriteOption);
             var useAdjusted = context.ParseResult.GetValueForOption(adjustedOption);
+            var tier = useAdjusted
+                ? AudioTier.Adjusted
+                : AudioTierResolver.Parse(
+                    context.ParseResult.GetValueForOption(tierOption),
+                    AudioTier.Treated,
+                    allowAdjusted: true);
 
             var destNormalized = NormalizeDirectoryPath(destination.FullName);
 
-            var searchPattern = useAdjusted ? "*.pause-adjusted.wav" : "*.treated.wav";
-            var stagedFiles = Directory.EnumerateFiles(root.FullName, searchPattern, SearchOption.AllDirectories)
-                .Where(path => !IsWithinDirectory(path, destNormalized))
-                .Select(path => new FileInfo(path))
-                .OrderBy(file => file.FullName, PathComparer)
-                .ToList();
+            var stagedFiles = DiscoverStageFiles(root, destNormalized, tier);
 
             if (stagedFiles.Count == 0)
             {
-                Log.Debug(
-                    useAdjusted
-                        ? "No pause-adjusted WAV files found under {Root}"
-                        : "No treated WAV files found under {Root}",
+                Log.Debug("No {Tier} WAV files found under {Root}",
+                    AudioTierResolver.Describe(tier),
                     root.FullName);
                 return;
             }
 
             Log.Debug(
-                useAdjusted
-                    ? "Staging {Count} pause-adjusted file(s) from {Root} to {Destination}"
-                    : "Staging {Count} treated file(s) from {Root} to {Destination}",
+                "Staging {Count} {Tier} file(s) from {Root} to {Destination}",
                 stagedFiles.Count,
+                AudioTierResolver.Describe(tier),
                 root.FullName,
                 destination.FullName);
 
@@ -3418,6 +3421,11 @@ public static class PipelineCommand
             return false;
         }
 
+        if (directory.Name.Equals(SafeDirectoryName, PathComparison))
+        {
+            return false;
+        }
+
         if (directory.Name.StartsWith(".", StringComparison.Ordinal))
         {
             return false;
@@ -3457,25 +3465,76 @@ public static class PipelineCommand
         return candidateFull.StartsWith(directoryNormalized, PathComparison);
     }
 
-    private static string GetStagedFileName(FileInfo source)
+    internal static IReadOnlyList<FileInfo> DiscoverStageFiles(
+        DirectoryInfo root,
+        string destinationNormalized,
+        AudioTier tier)
     {
-        var stem = Path.GetFileNameWithoutExtension(source.Name);
-        var markers = new[] { ".pause-adjusted", ".treated" };
+        ArgumentNullException.ThrowIfNull(root);
+        ArgumentException.ThrowIfNullOrWhiteSpace(destinationNormalized);
 
-        foreach (var marker in markers)
+        return tier == AudioTier.Source
+            ? DiscoverSourceStageFiles(root, destinationNormalized)
+            : Directory.EnumerateFiles(root.FullName, StageSearchPattern(tier), SearchOption.AllDirectories)
+                .Where(path => !IsWithinDirectory(path, destinationNormalized))
+                .Where(path => !IsWithinSafeDirectory(root, path))
+                .Select(path => new FileInfo(path))
+                .OrderBy(file => file.FullName, PathComparer)
+                .ToList();
+    }
+
+    private static IReadOnlyList<FileInfo> DiscoverSourceStageFiles(DirectoryInfo root, string destinationNormalized)
+    {
+        var files = new List<FileInfo>();
+
+        files.AddRange(root
+            .EnumerateFiles("*.wav", SearchOption.TopDirectoryOnly)
+            .Where(file => !IsWithinDirectory(file.FullName, destinationNormalized))
+            .Where(IsSourceStageCandidate));
+
+        foreach (var directory in root.EnumerateDirectories("*", SearchOption.TopDirectoryOnly))
         {
-            while (stem.EndsWith(marker, PathComparison) || stem.EndsWith(marker.TrimStart('.'), PathComparison))
+            if (!LooksLikeChapterDirectory(directory))
             {
-                var toTrim = stem.EndsWith(marker, PathComparison) ? marker.Length : marker.TrimStart('.').Length;
-                if (stem.Length <= toTrim)
-                {
-                    break;
-                }
-
-                stem = stem[..^toTrim];
+                continue;
             }
+
+            var candidate = new FileInfo(Path.Combine(directory.FullName, $"{directory.Name}.wav"));
+            if (!candidate.Exists ||
+                IsWithinDirectory(candidate.FullName, destinationNormalized) ||
+                !IsSourceStageCandidate(candidate))
+            {
+                continue;
+            }
+
+            files.Add(candidate);
         }
 
-        return stem + source.Extension;
+        return files
+            .DistinctBy(file => Path.GetFullPath(file.FullName), StringComparer.OrdinalIgnoreCase)
+            .OrderBy(file => file.FullName, PathComparer)
+            .ToList();
     }
+
+    private static bool IsSourceStageCandidate(FileInfo file)
+        => !AudioTierResolver.IsVariantFileName(file.Name)
+           && !file.Name.Equals("roomtone.wav", StringComparison.OrdinalIgnoreCase);
+
+    private static bool IsWithinSafeDirectory(DirectoryInfo root, string candidatePath)
+    {
+        var safeDirectory = NormalizeDirectoryPath(Path.Combine(root.FullName, SafeDirectoryName));
+        return IsWithinDirectory(candidatePath, safeDirectory);
+    }
+
+    private static string StageSearchPattern(AudioTier tier) => tier switch
+    {
+        AudioTier.Treated => "*.treated.wav",
+        AudioTier.Filtered => "*.filtered.wav",
+        AudioTier.Adjusted => "*.pause-adjusted.wav",
+        AudioTier.Source => "*.wav",
+        _ => throw new ArgumentOutOfRangeException(nameof(tier), tier, null)
+    };
+
+    private static string GetStagedFileName(FileInfo source)
+        => AudioTierResolver.StripVariantMarkers(source.Name);
 }

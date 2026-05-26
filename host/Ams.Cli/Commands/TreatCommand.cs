@@ -20,6 +20,9 @@ public static class TreatCommand
             "Override roomtone.wav file (defaults to book's roomtone.wav via Book.Audio.Roomtone)");
         roomtoneOption.AddAlias("-r");
 
+        var tierOption = new Option<string>("--tier", () => "source",
+            $"{AudioTierResolver.TierHelp}; input tier used for treatment");
+
         var prerollOption = new Option<double?>(
             "--preroll",
             "Preroll duration in seconds (default: 0.75)");
@@ -54,6 +57,7 @@ public static class TreatCommand
         forceOption.AddAlias("-f");
 
         cmd.AddOption(roomtoneOption);
+        cmd.AddOption(tierOption);
         cmd.AddOption(prerollOption);
         cmd.AddOption(gapOption);
         cmd.AddOption(postrollOption);
@@ -69,6 +73,9 @@ public static class TreatCommand
             try
             {
                 var roomtoneValue = context.ParseResult.GetValueForOption(roomtoneOption);
+                var tier = AudioTierResolver.Parse(
+                    context.ParseResult.GetValueForOption(tierOption),
+                    AudioTier.Source);
                 var prerollValue = context.ParseResult.GetValueForOption(prerollOption);
                 var gapValue = context.ParseResult.GetValueForOption(gapOption);
                 var postrollValue = context.ParseResult.GetValueForOption(postrollOption);
@@ -88,6 +95,7 @@ public static class TreatCommand
 
                 var activeChapter = repl.ActiveChapter;
                 var chapterId = Path.GetFileNameWithoutExtension(activeChapter.Name);
+                var treatmentInput = AudioTierResolver.ResolveActiveTierFile(tier, mustExist: true);
 
                 // Resolve book index and workspace
                 var bookIndexFile = CommandInputResolver.ResolveBookIndex(null, mustExist: true);
@@ -145,7 +153,7 @@ public static class TreatCommand
                 var openOptions = new ChapterOpenOptions
                 {
                     BookIndexFile = bookIndexFile,
-                    AudioFile = activeChapter,
+                    AudioFile = treatmentInput,
                     ChapterId = chapterId
                 };
 
@@ -175,7 +183,9 @@ public static class TreatCommand
                     return;
                 }
 
-                Log.Info("Treating chapter: {Chapter}", chapterId);
+                Log.Info("Treating chapter: {Chapter} (input tier={Tier})",
+                    chapterId,
+                    AudioTierResolver.Describe(tier));
 
                 var service = new AudioTreatmentService();
                 AudioTreatmentService.TreatmentResult result;

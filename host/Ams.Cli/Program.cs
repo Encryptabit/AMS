@@ -605,7 +605,14 @@ public static class Program
             return false;
         }
 
-        return args[1].Equals("run", StringComparison.OrdinalIgnoreCase);
+        if (args[1].Equals("run", StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        return args.Count >= 3
+               && args[1].Equals("prep", StringComparison.OrdinalIgnoreCase)
+               && args[2].Equals("stage", StringComparison.OrdinalIgnoreCase);
     }
 
     private static string[] ReplacePlaceholders(string[] args, FileInfo chapter)

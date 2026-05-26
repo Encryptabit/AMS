@@ -7,21 +7,8 @@ namespace Ams.Cli.Utilities;
 
 internal static class CommandInputResolver
 {
-    public static FileInfo RequireAudio(FileInfo? provided)
-    {
-        if (provided is not null)
-        {
-            return AmsPathResolver.NormalizeFile(provided);
-        }
-
-        var context = ReplContext.Current;
-        if (context?.ActiveChapter is not null)
-        {
-            return context.ActiveChapter;
-        }
-
-        throw new InvalidOperationException("Audio file is required. Provide --audio or select a chapter with 'use'.");
-    }
+    public static FileInfo RequireAudio(FileInfo? provided, AudioTier tier = AudioTier.Source)
+        => AudioTierResolver.ResolveInput(provided, tier);
 
     public static FileInfo ResolveOutput(FileInfo? provided, string suffix)
     {

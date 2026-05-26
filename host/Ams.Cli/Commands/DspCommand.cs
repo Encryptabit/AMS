@@ -75,6 +75,8 @@ public static class DspCommand
             Arity = ArgumentArity.ZeroOrOne
         };
         inputOption.AddAlias("-i");
+        var tierOption = new Option<string>("--tier", () => "source",
+            $"{AudioTierResolver.TierHelp}; used when --input is omitted");
 
         var outputOption = new Option<FileInfo?>("--output", "Output audio file (defaults to <chapter>.treated.wav)")
         {
@@ -108,6 +110,7 @@ public static class DspCommand
         var overwriteOption = new Option<bool>("--overwrite", () => false, "Overwrite final output if it exists");
 
         cmd.AddOption(inputOption);
+        cmd.AddOption(tierOption);
         cmd.AddOption(outputOption);
         cmd.AddOption(chainOption);
         cmd.AddOption(pluginOption);
@@ -128,7 +131,12 @@ public static class DspCommand
 
             try
             {
-                var inputFile = CommandInputResolver.RequireAudio(context.ParseResult.GetValueForOption(inputOption));
+                var tier = AudioTierResolver.Parse(
+                    context.ParseResult.GetValueForOption(tierOption),
+                    AudioTier.Source);
+                var inputFile = CommandInputResolver.RequireAudio(
+                    context.ParseResult.GetValueForOption(inputOption),
+                    tier);
                 var outputFile = ResolveOutputFile(context.ParseResult.GetValueForOption(outputOption), inputFile);
 
                 var chainOptionValue = context.ParseResult.GetValueForOption(chainOption);
@@ -294,6 +302,8 @@ public static class DspCommand
 
         var inputOption = new Option<FileInfo?>("--input", "Input audio file (defaults to active chapter)");
         inputOption.AddAlias("-i");
+        var tierOption = new Option<string>("--tier", () => "source",
+            $"{AudioTierResolver.TierHelp}; used when --input is omitted");
         var configOption = new Option<FileInfo?>("--config", () => null,
             $"Configuration file path (defaults to {DefaultFilterChainFileName})");
         var filtersOption = new Option<string[]>("--filters", () => Array.Empty<string>(),
@@ -309,6 +319,7 @@ public static class DspCommand
             "Print all raw FFmpeg filter-graph logs to the console");
 
         cmd.AddOption(inputOption);
+        cmd.AddOption(tierOption);
         cmd.AddOption(configOption);
         cmd.AddOption(filtersOption);
         cmd.AddOption(saveOption);
@@ -321,7 +332,12 @@ public static class DspCommand
             var token = context.GetCancellationToken();
             try
             {
-                var inputFile = CommandInputResolver.RequireAudio(context.ParseResult.GetValueForOption(inputOption));
+                var tier = AudioTierResolver.Parse(
+                    context.ParseResult.GetValueForOption(tierOption),
+                    AudioTier.Source);
+                var inputFile = CommandInputResolver.RequireAudio(
+                    context.ParseResult.GetValueForOption(inputOption),
+                    tier);
                 var selected = context.ParseResult.GetValueForOption(filtersOption);
                 List<FilterConfig> enabledFilters;
                 if (selected is { Length: > 0 })
@@ -1585,7 +1601,7 @@ public static class DspCommand
 
         var chapterArtifact = CommandInputResolver.TryResolveChapterArtifact(
             provided: null,
-            suffix: "dsp.filtered.wav",
+            suffix: "filtered.wav",
             mustExist: false);
 
         if (chapterArtifact is not null)
