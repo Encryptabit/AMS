@@ -1422,6 +1422,7 @@ public static class DspCommand
 
         var (buffer, chapter) = ResolveFilterChainInput(inputFile, workspaceTier);
         var graph = BuildFilterGraph(buffer, filters);
+        var usesTwoPassLoudNorm = HasTwoPassLoudNorm(filters);
 
         if (printRaw)
         {
@@ -1442,10 +1443,16 @@ public static class DspCommand
             var encodeOptions = AudioEncodingDefaults.ForSource(buffer);
             if (TryResolveFilteredWriteThroughChapter(chapter, resolved, out var writeThroughChapter))
             {
-                var rendered = graph.ToBuffer();
+                var rendered = RenderFilterChainToBuffer(buffer, filters);
                 var outputBuffer = NormalizeForEncode(rendered, encodeOptions);
                 AudioProcessor.EncodeWav(resolved.FullName, outputBuffer, encodeOptions);
                 writeThroughChapter.Audio.WriteThrough("filtered", outputBuffer);
+            }
+            else if (usesTwoPassLoudNorm)
+            {
+                var rendered = RenderFilterChainToBuffer(buffer, filters);
+                var outputBuffer = NormalizeForEncode(rendered, encodeOptions);
+                AudioProcessor.EncodeWav(resolved.FullName, outputBuffer, encodeOptions);
             }
             else
             {
@@ -1457,7 +1464,15 @@ public static class DspCommand
         }
         else
         {
-            graph.RunDiscardingOutput();
+            if (usesTwoPassLoudNorm)
+            {
+                _ = RenderFilterChainToBuffer(buffer, filters);
+            }
+            else
+            {
+                graph.RunDiscardingOutput();
+            }
+
             Log.Info("Filter chain executed for {Input} ({Count} filters)", inputFile.FullName, filters.Count);
         }
     }
@@ -1645,6 +1660,148 @@ public static class DspCommand
         }
 
         return graph;
+    }
+
+    private static AudioBuffer RenderFilterChainToBuffer(AudioBuffer input, IReadOnlyList<FilterConfig> filters)
+    {
+        var current = input;
+        var pending = new List<FilterConfig>();
+
+        foreach (var filter in filters)
+        {
+            if (!TryGetTwoPassLoudNorm(filter, out var loudNorm))
+            {
+                pending.Add(filter);
+                continue;
+            }
+
+            current = RenderPendingFilters(current, pending);
+            pending.Clear();
+            current = RenderLoudNormTwoPass(current, loudNorm);
+        }
+
+        return RenderPendingFilters(current, pending);
+    }
+
+    private static AudioBuffer RenderPendingFilters(AudioBuffer input, IReadOnlyList<FilterConfig> filters)
+    {
+        if (filters.Count == 0)
+        {
+            return input;
+        }
+
+        return BuildFilterGraph(input, filters).ToBuffer();
+    }
+
+    private static bool HasTwoPassLoudNorm(IReadOnlyList<FilterConfig> filters)
+        => filters.Any(filter => TryGetTwoPassLoudNorm(filter, out _));
+
+    private static bool TryGetTwoPassLoudNorm(FilterConfig filter, out LoudNormFilterParams parameters)
+    {
+        parameters = null!;
+        if (!string.Equals(filter.Name, "loudnorm", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        var definition = GetFilterDefinition(filter.Name);
+        parameters = (LoudNormFilterParams)(DeserializeParameters(definition, filter.Parameters)
+                                            ?? new LoudNormFilterParams());
+        return parameters.TwoPass;
+    }
+
+    private static AudioBuffer RenderLoudNormTwoPass(AudioBuffer input, LoudNormFilterParams parameters)
+    {
+        Log.Debug("[dsp] loudnorm two-pass: measuring input");
+        var logs = FfFilterGraph
+            .FromBuffer(input)
+            .LoudNormMeasurement(parameters)
+            .CaptureLogs();
+        var measurements = ParseLoudNormMeasurements(logs);
+        Log.Debug(
+            "[dsp] loudnorm two-pass: measured I={MeasuredI:F2}, LRA={MeasuredLra:F2}, TP={MeasuredTp:F2}, threshold={MeasuredThreshold:F2}, offset={Offset:F2}",
+            measurements.MeasuredI,
+            measurements.MeasuredLra,
+            measurements.MeasuredTp,
+            measurements.MeasuredThreshold,
+            measurements.Offset);
+
+        return FfFilterGraph
+            .FromBuffer(input)
+            .LoudNormMeasured(parameters, measurements)
+            .ToBuffer();
+    }
+
+    private static LoudNormMeasuredStats ParseLoudNormMeasurements(IReadOnlyList<string> logs)
+    {
+        var json = ExtractFirstJsonObject(logs);
+        using var document = JsonDocument.Parse(json);
+        var root = document.RootElement;
+        return new LoudNormMeasuredStats(
+            MeasuredI: GetRequiredDouble(root, "input_i"),
+            MeasuredLra: GetRequiredDouble(root, "input_lra"),
+            MeasuredTp: GetRequiredDouble(root, "input_tp"),
+            MeasuredThreshold: GetRequiredDouble(root, "input_thresh"),
+            Offset: GetRequiredDouble(root, "target_offset"));
+    }
+
+    private static string ExtractFirstJsonObject(IReadOnlyList<string> logs)
+    {
+        var builder = new StringBuilder();
+        var collecting = false;
+        var depth = 0;
+
+        foreach (var rawLine in logs)
+        {
+            var line = rawLine.Trim();
+            if (!collecting)
+            {
+                var start = line.IndexOf('{');
+                if (start < 0)
+                {
+                    continue;
+                }
+
+                line = line[start..];
+                collecting = true;
+            }
+
+            builder.AppendLine(line);
+            depth += line.Count(c => c == '{');
+            depth -= line.Count(c => c == '}');
+            if (collecting && depth <= 0)
+            {
+                break;
+            }
+        }
+
+        var json = builder.ToString().Trim();
+        if (json.Length == 0)
+        {
+            throw new InvalidOperationException("loudnorm did not emit JSON measurement stats.");
+        }
+
+        return json;
+    }
+
+    private static double GetRequiredDouble(JsonElement root, string propertyName)
+    {
+        if (!root.TryGetProperty(propertyName, out var property))
+        {
+            throw new InvalidOperationException($"loudnorm stats did not include '{propertyName}'.");
+        }
+
+        return property.ValueKind switch
+        {
+            JsonValueKind.Number => property.GetDouble(),
+            JsonValueKind.String when double.TryParse(
+                property.GetString(),
+                NumberStyles.Float,
+                CultureInfo.InvariantCulture,
+                out var value) => value,
+            _ => throw new InvalidOperationException(
+                $"loudnorm stat '{propertyName}' was not a numeric value.")
+        };
     }
 
     private static FilterConfig CreateFilterConfig(FilterDefinition definition, bool enabled = true)

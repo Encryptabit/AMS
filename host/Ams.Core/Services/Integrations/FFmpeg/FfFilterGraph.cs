@@ -259,6 +259,33 @@ public sealed class FfFilterGraph
             ("dual_mono", p.DualMono ? "1" : "0"));
     }
 
+    public FfFilterGraph LoudNormMeasurement(LoudNormFilterParams? parameters)
+    {
+        var p = parameters ?? new LoudNormFilterParams();
+        return AddFilter("loudnorm",
+            ("I", FormatDouble(p.TargetI)),
+            ("LRA", FormatDouble(p.TargetLra)),
+            ("TP", FormatDouble(p.TargetTp)),
+            ("dual_mono", p.DualMono ? "1" : "0"),
+            ("print_format", "json"));
+    }
+
+    public FfFilterGraph LoudNormMeasured(LoudNormFilterParams? parameters, LoudNormMeasuredStats measurements)
+    {
+        var p = parameters ?? new LoudNormFilterParams();
+        return AddFilter("loudnorm",
+            ("I", FormatDouble(p.TargetI)),
+            ("LRA", FormatDouble(p.TargetLra)),
+            ("TP", FormatDouble(p.TargetTp)),
+            ("measured_I", FormatDouble(measurements.MeasuredI)),
+            ("measured_LRA", FormatDouble(measurements.MeasuredLra)),
+            ("measured_TP", FormatDouble(measurements.MeasuredTp)),
+            ("measured_thresh", FormatDouble(measurements.MeasuredThreshold)),
+            ("offset", FormatDouble(measurements.Offset)),
+            ("linear", "1"),
+            ("dual_mono", p.DualMono ? "1" : "0"));
+    }
+
     /// <summary>
     /// Dynamic audio normalization (libavfilter <c>dynaudnorm</c>).
     /// </summary>

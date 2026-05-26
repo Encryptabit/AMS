@@ -62,7 +62,15 @@ public sealed record LoudNormFilterParams(
     double TargetI = -18,
     double TargetLra = 7,
     double TargetTp = -2,
-    bool DualMono = false);
+    bool DualMono = false,
+    bool TwoPass = false);
+
+public sealed record LoudNormMeasuredStats(
+    double MeasuredI,
+    double MeasuredLra,
+    double MeasuredTp,
+    double MeasuredThreshold,
+    double Offset);
 
 public sealed record SilenceRemoveFilterParams(
     int StartPeriods = 0,

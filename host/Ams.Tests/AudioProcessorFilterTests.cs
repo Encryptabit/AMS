@@ -160,4 +160,44 @@ public class AudioProcessorFilterTests
         Assert.Equal(buffer.Channels, declicked.Channels);
         Assert.InRange(declicked.Length, buffer.Length - 32, buffer.Length + 32);
     }
+
+    [Fact]
+    public void LoudNormMeasurement_BuildsJsonStatsClause()
+    {
+        var buffer = CreateBuffer((440, 1.0));
+
+        var spec = FfFilterGraph
+            .FromBuffer(buffer)
+            .LoudNormMeasurement(new LoudNormFilterParams(
+                TargetI: -19,
+                TargetLra: 7,
+                TargetTp: -3,
+                DualMono: true,
+                TwoPass: true))
+            .BuildSpec();
+
+        Assert.Contains("loudnorm=I=-19:LRA=7:TP=-3:dual_mono=1:print_format=json", spec);
+    }
+
+    [Fact]
+    public void LoudNormMeasured_BuildsSecondPassClause()
+    {
+        var buffer = CreateBuffer((440, 1.0));
+
+        var spec = FfFilterGraph
+            .FromBuffer(buffer)
+            .LoudNormMeasured(
+                new LoudNormFilterParams(TargetI: -19, TargetLra: 7, TargetTp: -3, DualMono: true, TwoPass: true),
+                new LoudNormMeasuredStats(
+                    MeasuredI: -26.1,
+                    MeasuredLra: 3.2,
+                    MeasuredTp: -2.4,
+                    MeasuredThreshold: -36.8,
+                    Offset: 0.5))
+            .BuildSpec();
+
+        Assert.Contains(
+            "loudnorm=I=-19:LRA=7:TP=-3:measured_I=-26.1:measured_LRA=3.2:measured_TP=-2.4:measured_thresh=-36.8:offset=0.5:linear=1:dual_mono=1",
+            spec);
+    }
 }
