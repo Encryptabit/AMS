@@ -180,6 +180,33 @@ public class AudioProcessorFilterTests
     }
 
     [Fact]
+    public void LoudNorm_BuildsSampleRateRestoreClause()
+    {
+        var buffer = CreateBuffer((440, 1.0));
+
+        var spec = FfFilterGraph
+            .FromBuffer(buffer)
+            .LoudNorm(new LoudNormFilterParams(TargetI: -19, TargetLra: 7, TargetTp: -3))
+            .BuildSpec();
+
+        Assert.Contains("loudnorm=I=-19:LRA=7:TP=-3:dual_mono=0,aresample=16000", spec);
+    }
+
+    [Fact]
+    public void LoudNorm_AfterExplicitResample_RestoresExplicitSampleRate()
+    {
+        var buffer = CreateBuffer((440, 1.0));
+
+        var spec = FfFilterGraph
+            .FromBuffer(buffer)
+            .Resample(new ResampleFilterParams(48000))
+            .LoudNorm(new LoudNormFilterParams(TargetI: -19, TargetLra: 7, TargetTp: -3))
+            .BuildSpec();
+
+        Assert.Contains("aresample=48000,loudnorm=I=-19:LRA=7:TP=-3:dual_mono=0,aresample=48000", spec);
+    }
+
+    [Fact]
     public void LoudNormMeasured_BuildsSecondPassClause()
     {
         var buffer = CreateBuffer((440, 1.0));
@@ -197,7 +224,7 @@ public class AudioProcessorFilterTests
             .BuildSpec();
 
         Assert.Contains(
-            "loudnorm=I=-19:LRA=7:TP=-3:measured_I=-26.1:measured_LRA=3.2:measured_TP=-2.4:measured_thresh=-36.8:offset=0.5:linear=1:dual_mono=1",
+            "loudnorm=I=-19:LRA=7:TP=-3:measured_I=-26.1:measured_LRA=3.2:measured_TP=-2.4:measured_thresh=-36.8:offset=0.5:linear=1:dual_mono=1,aresample=16000",
             spec);
     }
 }

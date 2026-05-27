@@ -14,6 +14,7 @@ public sealed class FfFilterGraph
     private string _outputLabel = "out";
     private bool _customGraphOverride;
     private bool _formatPinned;
+    private int _currentSampleRate;
 
     private FfFilterGraph(AudioBuffer buffer, string label)
     {
@@ -24,6 +25,7 @@ public sealed class FfFilterGraph
         }
 
         _inputLabel = label;
+        _currentSampleRate = buffer.SampleRate;
         AddInput(buffer, label);
     }
 
@@ -58,12 +60,14 @@ public sealed class FfFilterGraph
     /// </summary>
     public FfFilterGraph UseInput(string label)
     {
-        if (!_inputs.Any(i => string.Equals(i.Label, label, StringComparison.OrdinalIgnoreCase)))
+        var input = _inputs.FirstOrDefault(i => string.Equals(i.Label, label, StringComparison.OrdinalIgnoreCase));
+        if (string.IsNullOrEmpty(input.Label))
         {
             throw new InvalidOperationException($"Input '{label}' has not been registered.");
         }
 
         _inputLabel = label;
+        _currentSampleRate = input.Buffer.SampleRate;
         return this;
     }
 
@@ -99,6 +103,7 @@ public sealed class FfFilterGraph
         if (sampleRate.HasValue)
         {
             args.Add(("sample_rates", FormatDouble(sampleRate.Value)));
+            _currentSampleRate = sampleRate.Value;
         }
 
         return AddFilter("aformat", args, markFormatPinned: true);
@@ -252,11 +257,12 @@ public sealed class FfFilterGraph
     public FfFilterGraph LoudNorm(LoudNormFilterParams? parameters)
     {
         var p = parameters ?? new LoudNormFilterParams();
-        return AddFilter("loudnorm",
+        AddFilter("loudnorm",
             ("I", FormatDouble(p.TargetI)),
             ("LRA", FormatDouble(p.TargetLra)),
             ("TP", FormatDouble(p.TargetTp)),
             ("dual_mono", p.DualMono ? "1" : "0"));
+        return RestoreCurrentSampleRateAfterLoudNorm();
     }
 
     public FfFilterGraph LoudNormMeasurement(LoudNormFilterParams? parameters)
@@ -273,7 +279,7 @@ public sealed class FfFilterGraph
     public FfFilterGraph LoudNormMeasured(LoudNormFilterParams? parameters, LoudNormMeasuredStats measurements)
     {
         var p = parameters ?? new LoudNormFilterParams();
-        return AddFilter("loudnorm",
+        AddFilter("loudnorm",
             ("I", FormatDouble(p.TargetI)),
             ("LRA", FormatDouble(p.TargetLra)),
             ("TP", FormatDouble(p.TargetTp)),
@@ -284,6 +290,7 @@ public sealed class FfFilterGraph
             ("offset", FormatDouble(measurements.Offset)),
             ("linear", "1"),
             ("dual_mono", p.DualMono ? "1" : "0"));
+        return RestoreCurrentSampleRateAfterLoudNorm();
     }
 
     /// <summary>
@@ -323,6 +330,7 @@ public sealed class FfFilterGraph
     public FfFilterGraph Resample(ResampleFilterParams? parameters)
     {
         var p = parameters ?? new ResampleFilterParams();
+        _currentSampleRate = checked((int)p.SampleRate);
         return AddRawFilter("aresample", $"{p.SampleRate}");
     }
 
@@ -661,6 +669,16 @@ public sealed class FfFilterGraph
     private static string FormatDouble(double value) => FfUtils.FormatNumber(value);
     private static string FormatDecibels(double value) => FfUtils.FormatDecibels(value);
     private static string FormatFraction(double value) => FfUtils.FormatFraction(value);
+
+    private FfFilterGraph RestoreCurrentSampleRateAfterLoudNorm()
+    {
+        if (_currentSampleRate > 0)
+        {
+            AddRawFilter("aresample", FormatDouble(_currentSampleRate));
+        }
+
+        return this;
+    }
 
     private static string NormalizeDeClickMethod(string? method)
     {

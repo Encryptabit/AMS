@@ -1690,6 +1690,10 @@ public static class DspCommand
             return input;
         }
 
+        Log.Debug(
+            "[dsp] Rendering filter segment ({Count}): {Filters}",
+            filters.Count,
+            string.Join(", ", filters.Select(filter => filter.Name)));
         return BuildFilterGraph(input, filters).ToBuffer();
     }
 
@@ -1726,6 +1730,7 @@ public static class DspCommand
             measurements.MeasuredThreshold,
             measurements.Offset);
 
+        Log.Debug("[dsp] loudnorm two-pass: applying measured normalization");
         return FfFilterGraph
             .FromBuffer(input)
             .LoudNormMeasured(parameters, measurements)
