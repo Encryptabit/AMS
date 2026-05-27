@@ -46,21 +46,21 @@ internal static unsafe class FfEncoder
         FfSession.EnsureInitialized();
 
         var targetSampleRate = options.TargetSampleRate ?? buffer.SampleRate;
-        var bitDepth = options.TargetBitDepth ?? 16;
+        var encoding = ResolveEncoding(options);
 
-        var (codecId, sampleFormat) = ResolveEncoding(bitDepth);
-
-        AVCodec* codec = avcodec_find_encoder(codecId);
+        AVCodec* codec = avcodec_find_encoder(encoding.CodecId);
         if (codec == null)
         {
-            throw new InvalidOperationException($"FFmpeg encoder for {codecId} not found.");
+            throw new InvalidOperationException($"FFmpeg encoder for {encoding.CodecId} not found.");
         }
 
         AVFormatContext* fmt = null;
-        ThrowIfError(avformat_alloc_output_context2(&fmt, null, "wav", null), nameof(avformat_alloc_output_context2));
+        ThrowIfError(avformat_alloc_output_context2(&fmt, null, encoding.MuxerName, null),
+            nameof(avformat_alloc_output_context2));
         if (fmt == null)
         {
-            throw new InvalidOperationException("FFmpeg could not create a WAV format context.");
+            throw new InvalidOperationException(
+                $"FFmpeg could not create a {encoding.MuxerName} format context.");
         }
 
         AVCodecContext* cc = null;
@@ -92,12 +92,20 @@ internal static unsafe class FfEncoder
 
             cc->codec_id = codec->id;
             cc->codec_type = AVMediaType.AVMEDIA_TYPE_AUDIO;
-            cc->sample_fmt = sampleFormat;
+            cc->sample_fmt = encoding.SampleFormat;
             cc->sample_rate = targetSampleRate;
             cc->time_base = new AVRational { num = 1, den = targetSampleRate };
+            if (encoding.BitRate.HasValue)
+            {
+                cc->bit_rate = encoding.BitRate.Value;
+            }
 
             av_channel_layout_uninit(&cc->ch_layout);
             av_channel_layout_default(&cc->ch_layout, buffer.Channels);
+            if ((fmt->oformat->flags & AVFMT_GLOBALHEADER) != 0)
+            {
+                cc->flags |= AV_CODEC_FLAG_GLOBAL_HEADER;
+            }
 
             ThrowIfError(avcodec_open2(cc, codec, null), nameof(avcodec_open2));
             avcodec_parameters_from_context(stream->codecpar, cc);
@@ -197,7 +205,8 @@ internal static unsafe class FfEncoder
 
         while (cursor < totalSamples)
         {
-            var chunk = Math.Min(DefaultChunkSamples, totalSamples - cursor);
+            var chunkSize = cc->frame_size > 0 ? cc->frame_size : DefaultChunkSamples;
+            var chunk = Math.Min(chunkSize, totalSamples - cursor);
             var dstCapacity = ComputeResampleOutputSamples(resampler, buffer.SampleRate, targetSampleRate, chunk);
             if (dstCapacity <= 0)
             {
@@ -373,15 +382,63 @@ internal static unsafe class FfEncoder
         }
     }
 
-    private static (AVCodecID CodecId, AVSampleFormat SampleFormat) ResolveEncoding(int bitDepth)
+    private static EncodingSpec ResolveEncoding(AudioEncodeOptions options)
     {
-        return bitDepth switch
+        var targetFormat = options.TargetFormat;
+        return targetFormat switch
         {
-            16 => (AVCodecID.AV_CODEC_ID_PCM_S16LE, AVSampleFormat.AV_SAMPLE_FMT_S16),
-            24 => (AVCodecID.AV_CODEC_ID_PCM_S24LE, AVSampleFormat.AV_SAMPLE_FMT_S32),
-            32 => (AVCodecID.AV_CODEC_ID_PCM_F32LE, AVSampleFormat.AV_SAMPLE_FMT_FLT),
-            _ => throw new NotSupportedException($"Unsupported PCM bit depth {bitDepth}."),
+            AudioContainerFormat.Wav => ResolveWavEncoding(options),
+            AudioContainerFormat.Mp3 => ResolveMp3Encoding(options),
+            _ => throw new NotSupportedException($"Unsupported audio format {targetFormat}.")
         };
+    }
+
+    private static EncodingSpec ResolveWavEncoding(AudioEncodeOptions options)
+    {
+        var bitDepth = options.TargetBitDepth ?? 16;
+        var sampleEncoding = options.TargetSampleEncoding
+                             ?? (bitDepth == 32 ? AudioSampleEncoding.Float : AudioSampleEncoding.SignedInteger);
+
+        return (bitDepth, sampleEncoding) switch
+        {
+            (16, AudioSampleEncoding.SignedInteger) => new EncodingSpec(
+                AVCodecID.AV_CODEC_ID_PCM_S16LE,
+                AVSampleFormat.AV_SAMPLE_FMT_S16,
+                "wav",
+                BitRate: null),
+            (24, AudioSampleEncoding.SignedInteger) => new EncodingSpec(
+                AVCodecID.AV_CODEC_ID_PCM_S24LE,
+                AVSampleFormat.AV_SAMPLE_FMT_S32,
+                "wav",
+                BitRate: null),
+            (32, AudioSampleEncoding.SignedInteger) => new EncodingSpec(
+                AVCodecID.AV_CODEC_ID_PCM_S32LE,
+                AVSampleFormat.AV_SAMPLE_FMT_S32,
+                "wav",
+                BitRate: null),
+            (32, AudioSampleEncoding.Float) => new EncodingSpec(
+                AVCodecID.AV_CODEC_ID_PCM_F32LE,
+                AVSampleFormat.AV_SAMPLE_FMT_FLT,
+                "wav",
+                BitRate: null),
+            _ => throw new NotSupportedException(
+                $"Unsupported WAV PCM target: {bitDepth}-bit {sampleEncoding}."),
+        };
+    }
+
+    private static EncodingSpec ResolveMp3Encoding(AudioEncodeOptions options)
+    {
+        var bitrateKbps = options.TargetBitrateKbps ?? 320;
+        if (bitrateKbps <= 0)
+        {
+            throw new NotSupportedException($"Unsupported MP3 bitrate {bitrateKbps} kbps.");
+        }
+
+        return new EncodingSpec(
+            AVCodecID.AV_CODEC_ID_MP3,
+            AVSampleFormat.AV_SAMPLE_FMT_FLTP,
+            "mp3",
+            bitrateKbps * 1000L);
     }
 
     private static unsafe void SetupIo(
@@ -605,21 +662,21 @@ internal static unsafe class FfEncoder
             _inputSampleRate = sampleRate;
             _inputChannels = channels;
             _targetSampleRate = _options.TargetSampleRate ?? sampleRate;
-            var bitDepth = _options.TargetBitDepth ?? 16;
-            var (codecId, sampleFormat) = ResolveEncoding(bitDepth);
+            var encoding = ResolveEncoding(_options);
 
-            var codec = avcodec_find_encoder(codecId);
+            var codec = avcodec_find_encoder(encoding.CodecId);
             if (codec == null)
             {
-                throw new InvalidOperationException($"FFmpeg encoder for {codecId} not found.");
+                throw new InvalidOperationException($"FFmpeg encoder for {encoding.CodecId} not found.");
             }
 
             AVFormatContext* formatContext = null;
-            ThrowIfError(avformat_alloc_output_context2(&formatContext, null, "wav", null),
+            ThrowIfError(avformat_alloc_output_context2(&formatContext, null, encoding.MuxerName, null),
                 nameof(avformat_alloc_output_context2));
             if (formatContext == null)
             {
-                throw new InvalidOperationException("FFmpeg could not create a WAV format context.");
+                throw new InvalidOperationException(
+                    $"FFmpeg could not create a {encoding.MuxerName} format context.");
             }
 
             _formatContext = formatContext;
@@ -640,12 +697,20 @@ internal static unsafe class FfEncoder
 
             _codecContext->codec_id = codec->id;
             _codecContext->codec_type = AVMediaType.AVMEDIA_TYPE_AUDIO;
-            _codecContext->sample_fmt = sampleFormat;
+            _codecContext->sample_fmt = encoding.SampleFormat;
             _codecContext->sample_rate = _targetSampleRate;
             _codecContext->time_base = new AVRational { num = 1, den = _targetSampleRate };
+            if (encoding.BitRate.HasValue)
+            {
+                _codecContext->bit_rate = encoding.BitRate.Value;
+            }
 
             av_channel_layout_uninit(&_codecContext->ch_layout);
             av_channel_layout_default(&_codecContext->ch_layout, _inputChannels);
+            if ((_formatContext->oformat->flags & AVFMT_GLOBALHEADER) != 0)
+            {
+                _codecContext->flags |= AV_CODEC_FLAG_GLOBAL_HEADER;
+            }
 
             ThrowIfError(avcodec_open2(_codecContext, codec, null), nameof(avcodec_open2));
             avcodec_parameters_from_context(_stream->codecpar, _codecContext);
@@ -787,4 +852,10 @@ internal static unsafe class FfEncoder
         DynamicBuffer,
         CustomStream,
     }
+
+    private readonly record struct EncodingSpec(
+        AVCodecID CodecId,
+        AVSampleFormat SampleFormat,
+        string MuxerName,
+        long? BitRate);
 }

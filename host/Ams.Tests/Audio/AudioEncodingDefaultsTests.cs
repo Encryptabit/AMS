@@ -1,5 +1,6 @@
 using Ams.Core.Artifacts;
 using Ams.Core.Audio;
+using Ams.Core.Processors;
 
 namespace Ams.Tests.Audio;
 
@@ -32,6 +33,21 @@ public sealed class AudioEncodingDefaultsTests
 
         Assert.Equal(44_100, options.TargetSampleRate);
         Assert.Equal(24, options.TargetBitDepth);
+        Assert.Equal(AudioSampleEncoding.SignedInteger, options.TargetSampleEncoding);
+    }
+
+    [Theory]
+    [InlineData("pcm_s32le", AudioSampleEncoding.SignedInteger)]
+    [InlineData("pcm_f32le", AudioSampleEncoding.Float)]
+    public void ResolvePreferredSampleEncoding_DistinguishesIntegerAndFloatPcm(
+        string codecName,
+        AudioSampleEncoding expected)
+    {
+        var buffer = CreateBuffer(codecName);
+
+        var encoding = AudioEncodingDefaults.ResolvePreferredSampleEncoding(buffer);
+
+        Assert.Equal(expected, encoding);
     }
 
     private static AudioBuffer CreateBuffer(string? codecName, int sampleRate = 48_000)

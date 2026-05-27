@@ -33,16 +33,29 @@ public static partial class AudioProcessor
 
     public static void EncodeWav(string path, AudioBuffer buffer, AudioEncodeOptions? options = null)
     {
+        var effective = (options ?? new AudioEncodeOptions()) with
+        {
+            TargetFormat = AudioContainerFormat.Wav
+        };
+
+        EncodeAudio(path, buffer, effective, nameof(EncodeWav));
+    }
+
+    public static void EncodeAudio(string path, AudioBuffer buffer, AudioEncodeOptions? options = null)
+    {
+        EncodeAudio(path, buffer, options ?? new AudioEncodeOptions(), nameof(EncodeAudio));
+    }
+
+    private static void EncodeAudio(string path, AudioBuffer buffer, AudioEncodeOptions options, string activityName)
+    {
         MeasureActivity(
-            nameof(EncodeWav),
+            activityName,
             () =>
             {
                 if (buffer is null)
                 {
                     throw new ArgumentNullException(nameof(buffer));
                 }
-
-                var effective = options ?? new AudioEncodeOptions();
 
                 var directory = Path.GetDirectoryName(Path.GetFullPath(path));
                 if (!string.IsNullOrEmpty(directory))
@@ -51,7 +64,11 @@ public static partial class AudioProcessor
                 }
 
                 using var stream = File.Create(path);
-                FfEncoder.EncodeToCustomStream(buffer, stream, effective);
+                var outputBuffer = NormalizeForEncode(buffer, options);
+                var effectiveOptions = ReferenceEquals(outputBuffer, buffer)
+                    ? options
+                    : options with { TargetSampleRate = outputBuffer.SampleRate };
+                FfEncoder.EncodeToCustomStream(outputBuffer, stream, effectiveOptions);
                 stream.Flush();
             },
             detail: Path.GetFileName(path));
@@ -75,6 +92,18 @@ public static partial class AudioProcessor
                 ms.Position = 0;
                 return ms;
             });
+    }
+
+    private static AudioBuffer NormalizeForEncode(AudioBuffer buffer, AudioEncodeOptions options)
+    {
+        if (options.TargetFormat != AudioContainerFormat.Mp3 ||
+            options.TargetSampleRate is not int targetSampleRate ||
+            buffer.SampleRate == targetSampleRate)
+        {
+            return buffer;
+        }
+
+        return Resample(buffer, (ulong)targetSampleRate);
     }
 
     public static AudioBuffer Resample(AudioBuffer buffer, ulong targetSampleRate)
@@ -262,9 +291,24 @@ public sealed record AudioDecodeOptions(
     int? TargetSampleRate = null,
     int? TargetChannels = null);
 
+public enum AudioContainerFormat
+{
+    Wav,
+    Mp3
+}
+
+public enum AudioSampleEncoding
+{
+    SignedInteger,
+    Float
+}
+
 public sealed record AudioEncodeOptions(
     int? TargetSampleRate = null,
-    int? TargetBitDepth = null);
+    int? TargetBitDepth = null,
+    AudioContainerFormat TargetFormat = AudioContainerFormat.Wav,
+    AudioSampleEncoding? TargetSampleEncoding = null,
+    int? TargetBitrateKbps = null);
 
 public sealed record SilenceDetectOptions
 {

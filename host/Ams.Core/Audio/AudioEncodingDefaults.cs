@@ -11,7 +11,8 @@ internal static class AudioEncodingDefaults
 
         return new AudioEncodeOptions(
             TargetSampleRate: sourceBuffer.SampleRate,
-            TargetBitDepth: ResolvePreferredBitDepth(sourceBuffer));
+            TargetBitDepth: ResolvePreferredBitDepth(sourceBuffer),
+            TargetSampleEncoding: ResolvePreferredSampleEncoding(sourceBuffer));
     }
 
     public static int ResolvePreferredBitDepth(AudioBuffer sourceBuffer)
@@ -25,6 +26,30 @@ internal static class AudioEncodingDefaults
         }
 
         return 16;
+    }
+
+    public static AudioSampleEncoding? ResolvePreferredSampleEncoding(AudioBuffer sourceBuffer)
+    {
+        ArgumentNullException.ThrowIfNull(sourceBuffer);
+
+        var codecName = sourceBuffer.Metadata.CodecName;
+        if (string.IsNullOrWhiteSpace(codecName))
+        {
+            return null;
+        }
+
+        var normalized = codecName.Trim().ToLowerInvariant();
+        if (normalized.Contains("pcm_f32", StringComparison.Ordinal))
+        {
+            return AudioSampleEncoding.Float;
+        }
+
+        if (normalized.Contains("pcm_s", StringComparison.Ordinal))
+        {
+            return AudioSampleEncoding.SignedInteger;
+        }
+
+        return null;
     }
 
     private static bool TryResolvePcmBitDepth(string? codecName, out int bitDepth)

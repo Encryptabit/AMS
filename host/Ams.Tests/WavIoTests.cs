@@ -162,6 +162,82 @@ public class WavIoTests
         Assert.Equal(buffer.Length * sizeof(short), dataSize);
     }
 
+    [Theory]
+    [InlineData(AudioSampleEncoding.Float, 3)]
+    [InlineData(AudioSampleEncoding.SignedInteger, 1)]
+    public void EncodeToCustomStream_WritesRequestedThirtyTwoBitPcmEncoding(
+        AudioSampleEncoding encoding,
+        ushort expectedAudioFormat)
+    {
+        if (FfmpegUnavailable()) return;
+
+        var buffer = new AudioBuffer(1, 44100, 4410);
+        var span = buffer.GetChannelSpan(0);
+        for (int i = 0; i < span.Length; i++)
+        {
+            span[i] = (float)(0.25 * Math.Sin(2 * Math.PI * 440 * i / buffer.SampleRate));
+        }
+
+        using var stream = new TrackingMemoryStream();
+        FfEncoder.EncodeToCustomStream(buffer, stream, new AudioEncodeOptions(
+            TargetSampleRate: 44100,
+            TargetBitDepth: 32,
+            TargetFormat: AudioContainerFormat.Wav,
+            TargetSampleEncoding: encoding));
+
+        var bytes = stream.ToArray();
+        var fmtOffset = FindChunk(bytes, "fmt ");
+        Assert.True(fmtOffset >= 0, "WAV stream should contain a fmt chunk.");
+
+        var fmtSize = BitConverter.ToInt32(bytes, fmtOffset + 4);
+        var audioFormat = BitConverter.ToUInt16(bytes, fmtOffset + 8);
+        var bitsPerSample = BitConverter.ToUInt16(bytes, fmtOffset + 22);
+        var effectiveAudioFormat = audioFormat == 0xFFFE && fmtSize >= 40
+            ? BitConverter.ToUInt16(bytes, fmtOffset + 32)
+            : audioFormat;
+
+        Assert.Equal(expectedAudioFormat, effectiveAudioFormat);
+        Assert.Equal(32, bitsPerSample);
+    }
+
+    [Fact]
+    public void EncodeAudio_Mp3_ProducesDecodableMp3()
+    {
+        if (FfmpegUnavailable()) return;
+
+        var buffer = new AudioBuffer(1, 48000, 4800);
+        var span = buffer.GetChannelSpan(0);
+        for (int i = 0; i < span.Length; i++)
+        {
+            span[i] = (float)(0.25 * Math.Sin(2 * Math.PI * 440 * i / buffer.SampleRate));
+        }
+
+        var path = Path.Combine(Path.GetTempPath(), $"ams-encode-{Guid.NewGuid():N}.mp3");
+        try
+        {
+            AudioProcessor.EncodeAudio(path, buffer, new AudioEncodeOptions(
+                TargetSampleRate: 44100,
+                TargetFormat: AudioContainerFormat.Mp3,
+                TargetBitrateKbps: 320));
+
+            var info = AudioProcessor.Probe(path);
+
+            Assert.Contains("mp3", info.Format, StringComparison.OrdinalIgnoreCase);
+            Assert.Equal(44100, info.SampleRate);
+        }
+        catch (InvalidOperationException ex) when (ex.Message.Contains("AV_CODEC_ID_MP3", StringComparison.Ordinal))
+        {
+            return;
+        }
+        finally
+        {
+            if (File.Exists(path))
+            {
+                File.Delete(path);
+            }
+        }
+    }
+
     private static string WriteTempWav(ushort audioFormat, ushort bitsPerSample, int sampleRate, byte[] data)
     {
         const ushort channels = 1;

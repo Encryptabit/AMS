@@ -919,7 +919,7 @@ public static class PipelineCommand
 
     private static Command CreatePrepStageCommand()
     {
-        var cmd = new Command("stage", "Collect WAVs into a batch folder for delivery");
+        var cmd = new Command("stage", "Collect and optionally reformat audio into a batch folder for delivery");
 
         var rootOption = new Option<DirectoryInfo?>(
             "--root",
@@ -945,11 +945,35 @@ public static class PipelineCommand
             () => false,
             "Stage pause-adjusted WAVs instead of treated WAVs. Equivalent to --tier adjusted.");
 
+        var sampleRateOption = new Option<string>(
+            "--sr",
+            () => "44.1",
+            "Output sample rate: 44.1/44100 or 48/48000.");
+
+        var bitrateOption = new Option<int?>(
+            "--br",
+            () => null,
+            "Output bitrate in kbps for MP3 exports; ignored for WAV.");
+
+        var bitDepthOption = new Option<string>(
+            "--bd",
+            () => "32f",
+            "WAV bit depth: 24, 32f, or 32int.");
+
+        var formatOption = new Option<string>(
+            "--fmt",
+            () => "wav",
+            "Output format: wav or mp3.");
+
         cmd.AddOption(rootOption);
         cmd.AddOption(outputOption);
         cmd.AddOption(overwriteOption);
         cmd.AddOption(tierOption);
         cmd.AddOption(adjustedOption);
+        cmd.AddOption(sampleRateOption);
+        cmd.AddOption(bitrateOption);
+        cmd.AddOption(bitDepthOption);
+        cmd.AddOption(formatOption);
 
         cmd.SetHandler(context =>
         {
@@ -975,6 +999,22 @@ public static class PipelineCommand
                     context.ParseResult.GetValueForOption(tierOption),
                     AudioTier.Treated,
                     allowAdjusted: true);
+            var format = ParseStageFormat(context.ParseResult.GetValueForOption(formatOption));
+            var sampleRate = ParseStageSampleRate(context.ParseResult.GetValueForOption(sampleRateOption));
+            var (bitDepth, sampleEncoding) = ParseStageBitDepth(context.ParseResult.GetValueForOption(bitDepthOption));
+            var bitrateKbps = ParseStageBitrate(context.ParseResult.GetValueForOption(bitrateOption));
+            var reformat = new StageReformatOptions(
+                format,
+                new AudioEncodeOptions(
+                    TargetSampleRate: sampleRate,
+                    TargetBitDepth: bitDepth,
+                    TargetFormat: format,
+                    TargetSampleEncoding: sampleEncoding,
+                    TargetBitrateKbps: format == AudioContainerFormat.Mp3 ? bitrateKbps ?? 320 : null));
+            if (format == AudioContainerFormat.Wav && bitrateKbps.HasValue)
+            {
+                Log.Debug("Ignoring --br for WAV output; PCM bitrate is derived from sample rate, channels, and bit depth.");
+            }
 
             var destNormalized = NormalizeDirectoryPath(destination.FullName);
 
@@ -989,33 +1029,46 @@ public static class PipelineCommand
             }
 
             Log.Debug(
-                "Staging {Count} {Tier} file(s) from {Root} to {Destination}",
+                "Staging {Count} {Tier} file(s) from {Root} to {Destination} as {Format} ({SampleRate}Hz, {BitDepth})",
                 stagedFiles.Count,
                 AudioTierResolver.Describe(tier),
                 root.FullName,
-                destination.FullName);
+                destination.FullName,
+                FormatStageContainer(format),
+                sampleRate,
+                FormatStageBitDepth(bitDepth, sampleEncoding));
+
+            var jobs = BuildStageJobs(stagedFiles, destination, reformat, overwrite);
 
             var stagedCount = 0;
-            foreach (var file in stagedFiles)
-            {
-                cancellationToken.ThrowIfCancellationRequested();
-
-                var targetName = GetStagedFileName(file);
-                var targetPath = Path.Combine(destination.FullName, targetName);
-
-                if (!overwrite && File.Exists(targetPath))
+            var skippedCount = 0;
+            Parallel.For(0, jobs.Count,
+                new ParallelOptions
                 {
-                    Log.Debug(
-                        "Skipping {Source}; destination already exists at {Destination} (use --overwrite to replace)",
-                        file.FullName, targetPath);
-                    continue;
-                }
+                    MaxDegreeOfParallelism = Environment.ProcessorCount,
+                    CancellationToken = cancellationToken
+                },
+                i =>
+                {
+                    var job = jobs[i];
+                    if (!overwrite && File.Exists(job.TargetPath))
+                    {
+                        Log.Debug(
+                            "Skipping {Source}; destination already exists at {Destination} (use --overwrite to replace)",
+                            job.Source.FullName, job.TargetPath);
+                        Interlocked.Increment(ref skippedCount);
+                        return;
+                    }
 
-                File.Copy(file.FullName, targetPath, overwrite);
-                stagedCount++;
-            }
+                    StageFile(job, reformat, overwrite);
+                    var done = Interlocked.Increment(ref stagedCount);
+                    Log.Debug("Staged {Index}/{Total}: {FileName}", done, jobs.Count, job.TargetName);
+                });
 
-            Log.Debug("Staged {Count} file(s) into {Destination}", stagedCount, destination.FullName);
+            Log.Debug("Staged {Count} file(s) into {Destination} ({Skipped} skipped)",
+                stagedCount,
+                destination.FullName,
+                skippedCount);
         });
 
         return cmd;
@@ -3535,6 +3588,142 @@ public static class PipelineCommand
         _ => throw new ArgumentOutOfRangeException(nameof(tier), tier, null)
     };
 
-    private static string GetStagedFileName(FileInfo source)
-        => AudioTierResolver.StripVariantMarkers(source.Name);
+    internal static AudioContainerFormat ParseStageFormat(string? value)
+    {
+        var token = NormalizeStageToken(value);
+        return token switch
+        {
+            "" or "wav" or "wave" => AudioContainerFormat.Wav,
+            "mp3" => AudioContainerFormat.Mp3,
+            _ => throw new ArgumentException(
+                $"Unsupported stage format '{value}'. Use wav or mp3.")
+        };
+    }
+
+    internal static int ParseStageSampleRate(string? value)
+    {
+        var token = NormalizeStageToken(value)
+            .Replace("hz", string.Empty, StringComparison.Ordinal)
+            .Replace("khz", "k", StringComparison.Ordinal);
+
+        return token switch
+        {
+            "" or "44.1" or "44.1k" or "44100" or "44100k" => 44_100,
+            "48" or "48k" or "48000" or "48000k" => 48_000,
+            _ => throw new ArgumentException(
+                $"Unsupported stage sample rate '{value}'. Use 44.1/44100 or 48/48000.")
+        };
+    }
+
+    internal static (int BitDepth, AudioSampleEncoding SampleEncoding) ParseStageBitDepth(string? value)
+    {
+        var token = NormalizeStageToken(value);
+        return token switch
+        {
+            "" or "32f" or "32float" or "float32" or "f32" => (32, AudioSampleEncoding.Float),
+            "24" or "24int" or "24i" or "s24" => (24, AudioSampleEncoding.SignedInteger),
+            "32" or "32int" or "32i" or "32integer" or "32(int)" or "s32" =>
+                (32, AudioSampleEncoding.SignedInteger),
+            _ => throw new ArgumentException(
+                $"Unsupported stage bit depth '{value}'. Use 24, 32f, or 32int.")
+        };
+    }
+
+    internal static int? ParseStageBitrate(int? value)
+    {
+        if (!value.HasValue)
+        {
+            return null;
+        }
+
+        if (value.Value <= 0)
+        {
+            throw new ArgumentException("Stage bitrate must be a positive kbps value.");
+        }
+
+        return value.Value;
+    }
+
+    internal static string GetStagedFileName(FileInfo source, AudioContainerFormat format = AudioContainerFormat.Wav)
+    {
+        var baseName = AudioTierResolver.StripVariantMarkers(source.Name);
+        var extension = format switch
+        {
+            AudioContainerFormat.Wav => ".wav",
+            AudioContainerFormat.Mp3 => ".mp3",
+            _ => throw new ArgumentOutOfRangeException(nameof(format), format, null)
+        };
+
+        return Path.ChangeExtension(baseName, extension);
+    }
+
+    private static IReadOnlyList<StageFileJob> BuildStageJobs(
+        IReadOnlyList<FileInfo> stagedFiles,
+        DirectoryInfo destination,
+        StageReformatOptions reformat,
+        bool overwrite)
+    {
+        var jobs = stagedFiles
+            .Select((source, index) =>
+            {
+                var targetName = GetStagedFileName(source, reformat.Format);
+                var targetPath = Path.Combine(destination.FullName, targetName);
+                return new StageFileJob(source, targetName, targetPath, index);
+            })
+            .ToList();
+
+        return jobs
+            .GroupBy(job => Path.GetFullPath(job.TargetPath), PathComparer)
+            .Select(group => overwrite
+                ? group.OrderBy(job => job.Index).Last()
+                : group.OrderBy(job => job.Index).First())
+            .OrderBy(job => job.Index)
+            .ToList();
+    }
+
+    private static void StageFile(StageFileJob job, StageReformatOptions reformat, bool overwrite)
+    {
+        var tempPath = $"{job.TargetPath}.{Guid.NewGuid():N}.tmp";
+        try
+        {
+            var buffer = AudioProcessor.Decode(job.Source.FullName);
+            AudioProcessor.EncodeAudio(tempPath, buffer, reformat.EncodeOptions);
+            File.Move(tempPath, job.TargetPath, overwrite);
+        }
+        finally
+        {
+            if (File.Exists(tempPath))
+            {
+                File.Delete(tempPath);
+            }
+        }
+    }
+
+    private static string FormatStageContainer(AudioContainerFormat format) => format switch
+    {
+        AudioContainerFormat.Wav => "wav",
+        AudioContainerFormat.Mp3 => "mp3",
+        _ => format.ToString()
+    };
+
+    private static string FormatStageBitDepth(int bitDepth, AudioSampleEncoding sampleEncoding)
+        => sampleEncoding == AudioSampleEncoding.Float ? $"{bitDepth}f" : $"{bitDepth}int";
+
+    private static string NormalizeStageToken(string? value)
+        => (value ?? string.Empty)
+            .Trim()
+            .ToLowerInvariant()
+            .Replace("_", string.Empty, StringComparison.Ordinal)
+            .Replace("-", string.Empty, StringComparison.Ordinal)
+            .Replace(" ", string.Empty, StringComparison.Ordinal);
+
+    private sealed record StageReformatOptions(
+        AudioContainerFormat Format,
+        AudioEncodeOptions EncodeOptions);
+
+    private sealed record StageFileJob(
+        FileInfo Source,
+        string TargetName,
+        string TargetPath,
+        int Index);
 }
