@@ -273,24 +273,32 @@ NUM_TO_WORD: Dict[int, str] = {v: k for k, v in WORD_TO_NUM.items()}
 def query_variants(chapter: ChapterTitle) -> List[str]:
     subtitle_norm = normalize_text(chapter.subtitle)
 
-    # Build the "chapter <word>" form for matching inside PDF text.
     chapter_word = NUM_TO_WORD.get(chapter.number, str(chapter.number))
-    chapter_heading = normalize_text(f"chapter {chapter_word}")
+    chapter_heading_word = normalize_text(f"chapter {chapter_word}")
+    chapter_heading_digit = normalize_text(f"chapter {chapter.number}")
 
     if not subtitle_norm:
-        # No subtitle — use the full "chapter <word>" heading so we don't
-        # false-match on bare page numbers.
-        return [chapter_heading]
+        # No subtitle — keep the "chapter " prefix so we don't false-match
+        # on bare page numbers, but try both word and digit forms.
+        variants = [chapter_heading_word, chapter_heading_digit]
+        deduped: List[str] = []
+        for item in variants:
+            if item and item not in deduped:
+                deduped.append(item)
+        return deduped
 
     tokens = subtitle_norm.split()
     variants = [
         normalize_text(f"chapter {chapter_word} {subtitle_norm}"),
+        normalize_text(f"chapter {chapter.number} {subtitle_norm}"),
         normalize_text(f"{chapter.number} {subtitle_norm}"),
         normalize_text(f"chapter {chapter_word} {' '.join(tokens[:2])}"),
+        normalize_text(f"chapter {chapter.number} {' '.join(tokens[:2])}"),
         normalize_text(f"{chapter.number} {' '.join(tokens[:2])}"),
-        chapter_heading,
+        chapter_heading_word,
+        chapter_heading_digit,
     ]
-    deduped: List[str] = []
+    deduped = []
     for item in variants:
         if item and item not in deduped:
             deduped.append(item)
