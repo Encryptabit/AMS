@@ -12,7 +12,21 @@ public sealed record DeEsserFilterParams(
     double MaxReduction = 0.5,
     string OutputMode = "o");
 
-public sealed record FftDenoiseFilterParams(double NoiseReductionDb = 12);
+public sealed record FftDenoiseFilterParams(
+    double NoiseReductionDb = 12,
+    double NoiseFloorDb = -50,
+    string NoiseType = "white",
+    string BandNoise = "",
+    double ResidualFloorDb = -38,
+    bool TrackNoise = false,
+    bool TrackResidual = false,
+    string OutputMode = "output",
+    double Adaptivity = 0.5,
+    double FloorOffset = 1.0,
+    string NoiseLink = "min",
+    double BandMultiplier = 1.25,
+    string SampleNoise = "none",
+    int GainSmooth = 0);
 
 public sealed record DeClickFilterParams(
     double Window = 55,

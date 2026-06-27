@@ -163,7 +163,25 @@ public sealed class FfFilterGraph
     public FfFilterGraph FftDenoise(FftDenoiseFilterParams? parameters)
     {
         var p = parameters ?? new FftDenoiseFilterParams();
-        return AddFilter("afftdn", ("nr", FormatDouble(p.NoiseReductionDb)));
+        var args = new List<(string Key, string? Value)>
+        {
+            ("nr", FormatDouble(Math.Clamp(p.NoiseReductionDb, 0.01, 97))),
+            ("nf", FormatDouble(Math.Clamp(p.NoiseFloorDb, -80, -20))),
+            ("nt", NormalizeFilterOption(p.NoiseType, "white")),
+            ("bn", string.IsNullOrWhiteSpace(p.BandNoise) ? null : p.BandNoise),
+            ("rf", FormatDouble(Math.Clamp(p.ResidualFloorDb, -80, -20))),
+            ("tn", p.TrackNoise ? "1" : "0"),
+            ("tr", p.TrackResidual ? "1" : "0"),
+            ("om", NormalizeFilterOption(p.OutputMode, "output")),
+            ("ad", FormatFraction(p.Adaptivity)),
+            ("fo", FormatDouble(Math.Clamp(p.FloorOffset, -2, 2))),
+            ("nl", NormalizeFilterOption(p.NoiseLink, "min")),
+            ("bm", FormatDouble(Math.Clamp(p.BandMultiplier, 0.2, 5))),
+            ("sn", NormalizeFilterOption(p.SampleNoise, "none")),
+            ("gs", FormatDouble(Math.Clamp(p.GainSmooth, 0, 50)))
+        };
+
+        return AddFilter("afftdn", args);
     }
 
     /// <summary>
@@ -692,6 +710,13 @@ public sealed class FfFilterGraph
             "1" or "s" or "save" => "save",
             _ => "add"
         };
+    }
+
+    private static string NormalizeFilterOption(string? value, string fallback)
+    {
+        return string.IsNullOrWhiteSpace(value)
+            ? fallback
+            : value.Trim().ToLowerInvariant();
     }
 
     private void EnsureDefaultFormatClause()

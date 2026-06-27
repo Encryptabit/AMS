@@ -126,6 +126,59 @@ public class AudioProcessorFilterTests
     }
 
     [Fact]
+    public void FftDenoiseParameters_SerializeConfigKnobs()
+    {
+        var json = System.Text.Json.JsonSerializer.Serialize(
+            new FftDenoiseFilterParams(NoiseReductionDb: 6),
+            new System.Text.Json.JsonSerializerOptions
+            {
+                DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull
+            });
+
+        Assert.Contains("\"NoiseReductionDb\":6", json);
+        Assert.Contains("\"NoiseFloorDb\":-50", json);
+        Assert.Contains("\"ResidualFloorDb\":-38", json);
+        Assert.Contains("\"TrackNoise\":false", json);
+        Assert.Contains("\"BandNoise\":\"\"", json);
+        Assert.Contains("\"OutputMode\":\"output\"", json);
+        Assert.Contains("\"Adaptivity\":0.5", json);
+        Assert.Contains("\"FloorOffset\":1", json);
+        Assert.Contains("\"NoiseLink\":\"min\"", json);
+        Assert.Contains("\"BandMultiplier\":1.25", json);
+        Assert.Contains("\"SampleNoise\":\"none\"", json);
+        Assert.Contains("\"GainSmooth\":0", json);
+    }
+
+    [Fact]
+    public void FftDenoise_BuildsAfftdnFilterWithConfiguredKnobs()
+    {
+        var buffer = CreateBuffer((440, 1.0));
+
+        var spec = FfFilterGraph
+            .FromBuffer(buffer)
+            .FftDenoise(new FftDenoiseFilterParams(
+                NoiseReductionDb: 18,
+                NoiseFloorDb: -55,
+                NoiseType: "custom",
+                BandNoise: "0 0 0",
+                ResidualFloorDb: -42,
+                TrackNoise: true,
+                TrackResidual: true,
+                OutputMode: "noise",
+                Adaptivity: 0.25,
+                FloorOffset: 0.75,
+                NoiseLink: "average",
+                BandMultiplier: 2,
+                SampleNoise: "start",
+                GainSmooth: 12))
+            .BuildSpec();
+
+        Assert.Contains(
+            "afftdn=nr=18:nf=-55:nt=custom:bn=0 0 0:rf=-42:tn=1:tr=1:om=noise:ad=0.25:fo=0.75:nl=average:bm=2:sn=start:gs=12",
+            spec);
+    }
+
+    [Fact]
     public void DeClick_BuildsNamedAdeclickFilter()
     {
         var buffer = CreateBuffer((440, 1.0));
